@@ -181,9 +181,12 @@ class ParallelArrayVisitor : public MInstructionVisitor
     COND_SAFE_OP(InterruptCheck) // FIXME---replace this with a version that bails
 };
 
-ParallelCompilationContext::ParallelCompilationContext(JSContext *cx)
+ParallelCompilationContext::ParallelCompilationContext(JSContext *cx, bool selfHosted,
+                                                       uint32_t bufferIndex)
     : cx_(cx),
-      invokedFunctions_(cx)
+      invokedFunctions_(cx),
+      bufferIndex_(bufferIndex),
+      selfHosted_(selfHosted)
 {
 }
 
@@ -418,11 +421,20 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
         return false;
     }
 
+    if (object->isUnbox())
+        object = object->toUnbox()->input();
+
     switch (object->op()) {
       case MDefinition::Op_ParNew:
           // MParNew will always be creating something thread-local, omit the guard
           IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
           return true;
+      case MDefinition::Op_Parameter:
+        if (compileContext_.canUnsafelyWrite(object)) {
+            IonSpew(IonSpew_ParallelArray, "Write to buffer in self-hosted code does not require guard");
+            return true;
+        }
+      break;
       default: break;
     }
 

@@ -119,6 +119,6 @@ static inline bool InParallelSection() {
 #   endif
 }
 
-#endif
-
 }
+
+#endif

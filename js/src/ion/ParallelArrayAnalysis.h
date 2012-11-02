@@ -43,6 +43,8 @@
 #ifndef jsion_parallel_array_analysis_h__
 #define jsion_parallel_array_analysis_h__
 
+#include "ion/MIR.h"
+
 namespace js {
 namespace ion {
 
@@ -54,14 +56,24 @@ class ParallelCompilationContext
 private:
     JSContext *cx_;
     AutoObjectVector invokedFunctions_;
+    uint32_t bufferIndex_ : 31;
+    bool selfHosted_ : 1;
 
     bool canCompileParallelArrayKernel(MIRGraph *graph);
 
 public:
-    ParallelCompilationContext(JSContext *cx);
+    ParallelCompilationContext(JSContext *cx, bool selfHosted = false, uint32_t bufferIndex_ = 0);
 
     CompileMode compileMode() {
         return COMPILE_MODE_PAR;
+    }
+
+    bool canUnsafelyWrite(MDefinition *obj) {
+        // By convention, allow the buffer argument of self-hosted parallel
+        // code to be written to, unsafely, without a guard.
+        return (selfHosted_ &&
+                obj->isParameter() &&
+                obj->toParameter()->index() == bufferIndex_);
     }
 
     bool addInvokedFunction(JSFunction *func);

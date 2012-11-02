@@ -44,6 +44,7 @@
 #include "jsworkers.h"
 #include "ion/Ion.h"
 #include "ion/IonFrames.h"
+#include "builtin/ParallelArray.h"
 
 #ifdef JS_METHODJIT
 # include "assembler/assembler/MacroAssembler.h"
@@ -321,14 +322,39 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static JSBool
+intrinsic_ParallelFillArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 2);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[1].isObject());
+    RootedObject buffer(cx, &args[0].toObject());
+    RootedObject fun(cx, &args[1].toObject());
+    JS_ASSERT(fun->isFunction());
+
+    switch (parallel::FillArray(cx, buffer, fun)) {
+      case parallel::ExecutionSucceeded:
+        args.rval().set(BooleanValue(true));
+        break;
+      default:
+        args.rval().set(BooleanValue(false));
+        break;
+    }
+
+    return true;
+}
+
 JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",           intrinsic_ToObject,             1,0),
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
+    JS_FN("ParallelFillArray",  intrinsic_ParallelFillArray,    2,0),
     JS_FS_END
 };
+
 bool
 JSRuntime::initSelfHosting(JSContext *cx)
 {
