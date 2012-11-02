@@ -365,7 +365,13 @@ class FillArrayTaskSet : public ArrayTaskSet
         // parallel code.
         // FIXME: Make resizing arrays work in parallel.
         uint32_t length = buffer_->getArrayLength();
-        buffer_->ensureDenseArrayElements(cx_, 0, length);
+        uint32_t initlen = buffer_->getDenseArrayInitializedLength();
+
+        JSObject::EnsureDenseResult result = JSObject::ED_SPARSE;
+        result = buffer_->ensureDenseArrayElements(cx_, initlen, length);
+        if (result != JSObject::ED_OK)
+            return false;
+
         return length >= numThreads;
     }
 
