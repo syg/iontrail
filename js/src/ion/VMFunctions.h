@@ -377,9 +377,9 @@ class AutoDetectInvalidation
     bool disabled_;
 
   public:
-    AutoDetectInvalidation(JSContext *cx, Value *rval, IonScript *ionScript = NULL)
+    AutoDetectInvalidation(JSContext *cx, Value *rval, IonScript *ionScript)
       : cx_(cx),
-        ionScript_(ionScript ? ionScript : GetTopIonJSScript(cx)->ion),
+        ionScript_(ionScript),
         rval_(rval),
         disabled_(false)
     { }

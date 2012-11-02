@@ -50,6 +50,8 @@ namespace ion {
     _(Safepoints)                           \
     /* Debug info about Pools*/             \
     _(Pools)                                \
+    /* Debug info about ParallelArray*/     \
+    _(ParallelArray)                        \
     /* Debug info about the I$ */           \
     _(CacheFlush)
 

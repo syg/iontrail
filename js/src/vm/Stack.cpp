@@ -12,6 +12,7 @@
 #include "ion/IonCompartment.h"
 #include "ion/Bailouts.h"
 #include "Stack.h"
+#include "jstaskset.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
@@ -1441,6 +1442,18 @@ StackIter::StackIter(JSRuntime *rt, StackSegment &seg)
     settleOnNewState();
 }
 
+/*static*/ JSRuntime *
+StackIter::GetRuntime(const StackIter &other)
+{
+    // Note: this code is not safe to execute in parallel worker
+    // threads at the moment, I don't think.
+    JS_ASSERT(!InParallelSection());
+    if (other.maybecx_) {
+        return other.maybecx_->runtime;
+    }
+    return TlsPerThreadData.get()->runtime;
+}
+
 StackIter::StackIter(const StackIter &other)
   : maybecx_(other.maybecx_),
     savedOption_(other.savedOption_),
@@ -1449,7 +1462,7 @@ StackIter::StackIter(const StackIter &other)
     calls_(other.calls_),
     seg_(other.seg_),
     pc_(other.pc_),
-    script_(other.maybecx_ ? other.maybecx_->runtime : TlsRuntime.get(), other.script_),
+    script_(GetRuntime(other), other.script_),
     args_(other.args_)
 #ifdef JS_ION
     , ionActivations_(other.ionActivations_),

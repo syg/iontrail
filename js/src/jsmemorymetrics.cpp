@@ -228,8 +228,11 @@ StatsCellCallback(JSRuntime *rt, void *data, void *thing, JSGCTraceKind traceKin
 #ifdef JS_METHODJIT
         cStats->jaegerData += script->sizeOfJitScripts(rtStats->mallocSizeOf);
 # ifdef JS_ION
-        if (script->hasIonScript())
-            cStats->ionData += script->ion->sizeOfIncludingThis(rtStats->mallocSizeOf);
+        for (EACH_COMPILE_MODE(cmode)) {
+            if (script->hasIonScript(cmode))
+                cStats->ionData +=
+                    script->ions[cmode]->sizeOfIncludingThis(rtStats->mallocSizeOf);
+        }
 # endif
 #endif
 

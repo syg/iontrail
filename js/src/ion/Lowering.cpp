@@ -119,6 +119,27 @@ LIRGenerator::visitCheckOverRecursed(MCheckOverRecursed *ins)
 }
 
 bool
+LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
+{
+    LParCheckOverRecursed *lir = new LParCheckOverRecursed(
+        useRegister(ins->threadContext()),
+        temp());
+    if (!add(lir))
+        return false;
+    return true;
+}
+
+bool
+LIRGenerator::visitTrace(MTrace *ins)
+{
+    LTrace *lir = new LTrace(temp());
+    lir->setMir(ins);
+    if (!add(lir))
+        return false;
+    return true;
+}
+
+bool
 LIRGenerator::visitDefVar(MDefVar *ins)
 {
     LDefVar *lir = new LDefVar(useFixed(ins->scopeChain(), CallTempReg0),
@@ -1242,6 +1263,39 @@ bool
 LIRGenerator::visitFunctionEnvironment(MFunctionEnvironment *ins)
 {
     return define(new LFunctionEnvironment(useRegisterAtStart(ins->function())), ins);
+}
+
+bool
+LIRGenerator::visitParThreadContext(MParThreadContext *ins)
+{
+    LParThreadContext *lir = new LParThreadContext(tempFixed(CallTempReg0));
+    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
+}
+
+bool
+LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
+{
+    return add(new LParWriteGuard(useFixed(ins->threadContext(), CallTempReg0),
+                                  useFixed(ins->object(), CallTempReg1),
+                                  tempFixed(CallTempReg2)));
+}
+
+bool
+LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
+{
+    return add(new LParCheckInterrupt(useFixed(ins->threadContext(), CallTempReg0),
+                                      tempFixed(CallTempReg1)));
+}
+
+bool
+LIRGenerator::visitParNew(MParNew *ins)
+{
+    LParNew *lir = new LParNew(useFixed(ins->threadContext(), CallTempReg0),
+                               tempFixed(CallTempReg1),
+                               tempFixed(CallTempReg2),
+                               tempFixed(CallTempReg3),
+                               tempFixed(CallTempReg4));
+    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
 }
 
 bool

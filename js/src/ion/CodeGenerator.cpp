@@ -13,6 +13,7 @@
 #include "jsnum.h"
 #include "jsmath.h"
 #include "jsinterpinlines.h"
+#include "ParFunctions.h"
 
 #include "vm/StringObject-inl.h"
 
@@ -557,6 +558,39 @@ CodeGenerator::visitFunctionEnvironment(LFunctionEnvironment *lir)
 }
 
 bool
+CodeGenerator::visitParThreadContext(LParThreadContext *lir)
+{
+    const Register tempReg = ToRegister(lir->getTempReg());
+
+    masm.setupUnalignedABICall(0, tempReg);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParThreadContext));
+    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
+    return true;
+}
+
+bool
+CodeGenerator::visitParWriteGuard(LParWriteGuard *lir)
+{
+    CompileMode cmode = gen->info().compileMode();
+    JS_ASSERT(cmode == COMPILE_MODE_PAR);
+
+    const Register tempReg = ToRegister(lir->getTempReg());
+    masm.setupUnalignedABICall(2, tempReg);
+    masm.passABIArg(ToRegister(lir->threadContext()));
+    masm.passABIArg(ToRegister(lir->object()));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParWriteGuard));
+
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+
+    // branch to the OOL failure code if false is returned
+    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+
+    return true;
+}
+
+bool
 CodeGenerator::visitTypeBarrier(LTypeBarrier *lir)
 {
     ValueOperand operand = ToValue(lir, LTypeBarrier::Input);
@@ -796,6 +830,18 @@ CodeGenerator::emitCallInvokeFunction(LInstruction *call, Register calleereg,
     return true;
 }
 
+static int32_t ionOffset(CompileMode cmode) {
+    // offsetof() requires a constant expression, so we can't write ions[cmode]
+    switch (cmode) {
+      case COMPILE_MODE_SEQ: return offsetof(JSScript, ions[COMPILE_MODE_SEQ]);
+      case COMPILE_MODE_PAR: return offsetof(JSScript, ions[COMPILE_MODE_PAR]);
+      case COMPILE_MODE_MAX: break;
+    }
+
+    JS_ASSERT(false);
+    return offsetof(JSScript, ions[COMPILE_MODE_SEQ]);
+}
+
 bool
 CodeGenerator::visitCallGeneric(LCallGeneric *call)
 {
@@ -833,7 +879,8 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    masm.movePtr(Address(objreg, offsetof(JSScript, ion)), objreg);
+    CompileMode cmode = gen->info().compileMode();
+    masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
 
     // Guard that the IonScript has been compiled.
     masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
@@ -889,43 +936,36 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 }
 
 bool
-CodeGenerator::visitCallKnown(LCallKnown *call)
+CodeGenerator::emitCallToKnownScript(
+    LCallKnown *call, Register calleereg, uint32 unusedStack,
+    Label *slowPath, Label *end)
 {
-    Register calleereg = ToRegister(call->getFunction());
     Register objreg    = ToRegister(call->getTempObject());
-    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     JSFunction *target = call->getSingleTarget();
-    Label end, invoke;
 
     // Native single targets are handled by LCallNative.
     JS_ASSERT(!target->isNative());
+
     // Missing arguments must have been explicitly appended by the IonBuilder.
     JS_ASSERT(target->nargs <= call->numStackArgs());
 
     masm.checkStackAlignment();
 
-    // If the function is known to be uncompilable, only emit the call to InvokeFunction.
-    if (target->script()->ion == ION_DISABLED_SCRIPT) {
-        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-            return false;
-
-        if (call->mir()->isConstructing()) {
-            Label notPrimitive;
-            masm.branchTestPrimitive(Assembler::NotEqual, JSReturnOperand, &notPrimitive);
-            masm.loadValue(Address(StackPointer, unusedStack), JSReturnOperand);
-            masm.bind(&notPrimitive);
-        }
-
-        dropArguments(call->numStackArgs() + 1);
+    // If we know that the script is disabled, just skip to the slow
+    // path.
+    CompileMode cmode = gen->info().compileMode();
+    if (target->script()->ions[cmode] == ION_DISABLED_SCRIPT)
+    {
+        masm.jump(slowPath);
         return true;
     }
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    masm.movePtr(Address(objreg, offsetof(JSScript, ion)), objreg);
+    masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
 
     // Load the start of the target IonCode.
     masm.movePtr(Address(objreg, IonScript::offsetOfMethod()), objreg);
@@ -949,12 +989,50 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     // The return address has already been removed from the Ion frame.
     int prefixGarbage = sizeof(IonJSFrameLayout) - sizeof(void *);
     masm.adjustStack(prefixGarbage - unusedStack);
-    masm.jump(&end);
+    masm.jump(end);
+    return true;
+}
 
-    // Handle uncompiled functions.
-    masm.bind(&invoke);
-    if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-        return false;
+bool
+CodeGenerator::visitCallKnown(LCallKnown *call)
+{
+    Register calleereg = ToRegister(call->getFunction());
+    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
+    Label end;
+
+    CompileMode cmode = gen->info().compileMode();
+    switch (cmode) {
+      case COMPILE_MODE_PAR: {
+          Label *bail;
+          if (!ensureOutOfLineParallelAbort(&bail))
+              return false;
+
+          if (!emitCallToKnownScript(call, calleereg, unusedStack,
+                                     bail, &end))
+              return false;
+
+          break;
+      }
+
+      case COMPILE_MODE_SEQ: {
+          Label invoke;
+
+          if (!emitCallToKnownScript(call, calleereg, unusedStack,
+                                     &invoke, &end))
+              return false;
+
+          // Handle uncompiled functions.
+          masm.bind(&invoke);
+          if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+              return false;
+
+          break;
+      }
+
+      case COMPILE_MODE_MAX:
+          JS_ASSERT(false);
+          break;
+    }
 
     masm.bind(&end);
 
@@ -1114,9 +1192,10 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     masm.checkStackAlignment();
 
     // If the function is known to be uncompilable, only emit the call to InvokeFunction.
+    CompileMode cmode = gen->info().compileMode();
     if (apply->hasSingleTarget() &&
         (!apply->getSingleTarget()->isInterpreted() ||
-         apply->getSingleTarget()->script()->ion == ION_DISABLED_SCRIPT))
+         apply->getSingleTarget()->script()->ions[cmode] == ION_DISABLED_SCRIPT))
     {
         if (!emitCallInvokeFunction(apply, copyreg))
             return false;
@@ -1141,7 +1220,7 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    masm.movePtr(Address(objreg, offsetof(JSScript, ion)), objreg);
+    masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
 
     // Guard that the IonScript has been compiled.
     masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
@@ -1293,6 +1372,50 @@ class CheckOverRecursedFailure : public OutOfLineCodeBase<CodeGenerator>
 };
 
 bool
+CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
+{
+    // See above: the only different between this code and
+    // visitCheckOverRecursed() is that this code runs in parallel mode
+    // and hence uses the ionStackLimit from the current thread state
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register limitReg = ToRegister(lir->getTempReg());
+
+    // Since Ion frames exist on the C stack, the stack limit may be
+    // dynamically set by JS_SetThreadStackLimit() and JS_SetNativeStackQuota().
+    masm.loadPtr(Address(threadContextReg, offsetof(ThreadContext, ionStackLimit)),
+                 limitReg);
+
+    // Conditional forward (unlikely) branch to failure.
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, limitReg, bail);
+
+    return true;
+}
+
+bool
+CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
+{
+    CompileMode cmode = gen->info().compileMode();
+    JS_ASSERT(cmode == COMPILE_MODE_PAR);
+
+    const Register tempReg = ToRegister(lir->getTempReg());
+    masm.setupUnalignedABICall(1, tempReg);
+    masm.passABIArg(ToRegister(lir->threadContext()));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
+
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+
+    // branch to the OOL failure code if false is returned
+    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+
+    return true;
+}
+
+bool
 CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed *lir)
 {
     // Ensure that this frame will not cross the stack limit.
@@ -1390,28 +1513,11 @@ CodeGenerator::generateBody()
     return true;
 }
 
-// Out-of-line object allocation for LNewArray.
-class OutOfLineNewArray : public OutOfLineCodeBase<CodeGenerator>
-{
-    LNewArray *lir_;
-
-  public:
-    OutOfLineNewArray(LNewArray *lir)
-      : lir_(lir)
-    { }
-
-    bool accept(CodeGenerator *codegen) {
-        return codegen->visitOutOfLineNewArray(this);
-    }
-
-    LNewArray *lir() const {
-        return lir_;
-    }
-};
-
 bool
 CodeGenerator::visitNewArrayCallVM(LNewArray *lir)
 {
+    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+
     Register objReg = ToRegister(lir->output());
 
     typedef JSObject *(*pf)(JSContext *, uint32, types::TypeObject *);
@@ -1460,68 +1566,128 @@ CodeGenerator::visitNewSlots(LNewSlots *lir)
     return true;
 }
 
+class SeqAllocMode
+{
+public:
+    LInstruction *lir;
+
+    SeqAllocMode(LInstruction *lir)
+        : lir(lir)
+    {
+    }
+
+    OutOfLineCode *slowPath(CodeGenerator *cg,
+                            gc::AllocKind allocKind,
+                            int thingSize,
+                            Register objReg) {
+        typedef JSObject *(*pf)(JSContext *cx, gc::AllocKind allocKind, size_t thingSize);
+        static const VMFunction NewGCThingInfo = FunctionInfo<pf>(js::ion::NewGCThing);
+        return cg->oolCallVM(
+            NewGCThingInfo, lir,
+            (ArgList(), Imm32(allocKind), Imm32(thingSize)),
+            StoreRegisterTo(objReg));
+    }
+
+    bool fastPath(MacroAssembler &masm,
+                  JSObject *templateObject,
+                  Register objReg,
+                  Label *slowPath) {
+        masm.newGCThing(objReg, templateObject, slowPath);
+        return true;
+    }
+};
+
+class OutOfLineParNew : public OutOfLineCodeBase<CodeGenerator>
+{
+public:
+    LParNew *lir;
+    gc::AllocKind allocKind;
+    int thingSize;
+
+    OutOfLineParNew(LParNew *lir,
+                    gc::AllocKind allocKind,
+                    int thingSize)
+        : lir(lir),
+          allocKind(allocKind),
+          thingSize(thingSize)
+    {}
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineParNew(this);
+    }
+};
+
+class ParAllocMode
+{
+    LParNew *ins_;
+
+public:
+    ParAllocMode(LParNew *ins)
+        : ins_(ins)
+    {}
+
+    OutOfLineCode *slowPath(CodeGenerator *cg,
+                            gc::AllocKind allocKind,
+                            int thingSize,
+                            Register objReg) {
+        OutOfLineCode *ool = cg->addOutOfLineParNew(ins_, allocKind, thingSize);
+        return ool;
+    }
+
+    bool fastPath(MacroAssembler &masm,
+                  JSObject *templateObject,
+                  Register objReg,
+                  Label *slowPath) {
+        masm.jump(slowPath); // TODO
+        return true;
+    }
+};
+
+template <typename T>
+bool
+CodeGenerator::initNewGCThing(T allocMode,
+                              JSObject *templateObject,
+                              Register objReg) {
+
+    // This case is handled differently for new objects, new arrays,
+    // and so forth, so we can't combine that into a single path.
+    JS_ASSERT(!templateObject->hasSingletonType());
+
+    // Allocate. If the FreeList is empty, call to VM, which may GC.
+    gc::AllocKind allocKind = templateObject->getAllocKind();
+    int thingSize = (int)gc::Arena::thingSize(allocKind);
+    OutOfLineCode *ool = allocMode.slowPath(this, allocKind, thingSize, objReg);
+    if (!ool)
+        return false;
+    if (!allocMode.fastPath(masm, templateObject, objReg, ool->entry()))
+        return false;
+
+    // Initialize based on the templateObject.
+    masm.bind(ool->rejoin());
+    masm.initGCThing(objReg, templateObject);
+
+    return true;
+}
+
 bool
 CodeGenerator::visitNewArray(LNewArray *lir)
 {
-    Register objReg = ToRegister(lir->output());
-    JSObject *templateObject = lir->mir()->templateObject();
-    uint32 count = lir->mir()->count();
+    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
 
-    JS_ASSERT(count < JSObject::NELEMENTS_LIMIT);
-
-    size_t maxArraySlots =
-        gc::GetGCKindSlots(gc::FINALIZE_OBJECT_LAST) - ObjectElements::VALUES_PER_HEADER;
-
-    // Allocate space using the VMCall
-    // when mir hints it needs to get allocated immediatly,
-    // but only when data doesn't fit the available array slots.
-    bool allocating = lir->mir()->isAllocating() && count > maxArraySlots;
-
-    if (templateObject->hasSingletonType() || allocating)
+    if (lir->mir()->shouldUseVM()) {
         return visitNewArrayCallVM(lir);
-
-    OutOfLineNewArray *ool = new OutOfLineNewArray(lir);
-    if (!addOutOfLineCode(ool))
-        return false;
-
-    masm.newGCThing(objReg, templateObject, ool->entry());
-    masm.initGCThing(objReg, templateObject);
-
-    masm.bind(ool->rejoin());
-    return true;
-}
-
-bool
-CodeGenerator::visitOutOfLineNewArray(OutOfLineNewArray *ool)
-{
-    if (!visitNewArrayCallVM(ool->lir()))
-        return false;
-    masm.jump(ool->rejoin());
-    return true;
-}
-
-// Out-of-line object allocation for JSOP_NEWOBJECT.
-class OutOfLineNewObject : public OutOfLineCodeBase<CodeGenerator>
-{
-    LNewObject *lir_;
-
-  public:
-    OutOfLineNewObject(LNewObject *lir)
-      : lir_(lir)
-    { }
-
-    bool accept(CodeGenerator *codegen) {
-        return codegen->visitOutOfLineNewObject(this);
     }
 
-    LNewObject *lir() const {
-        return lir_;
-    }
-};
+    JSObject *templateObject = lir->mir()->templateObject();
+    Register objReg = ToRegister(lir->output());
+    return initNewGCThing(SeqAllocMode(lir), templateObject, objReg);
+}
 
 bool
 CodeGenerator::visitNewObjectVMCall(LNewObject *lir)
 {
+    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+
     Register objReg = ToRegister(lir->output());
 
     typedef JSObject *(*pf)(JSContext *, HandleObject);
@@ -1544,31 +1710,14 @@ CodeGenerator::visitNewObjectVMCall(LNewObject *lir)
 bool
 CodeGenerator::visitNewObject(LNewObject *lir)
 {
-    Register objReg = ToRegister(lir->output());
+    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
 
-    JSObject *templateObject = lir->mir()->templateObject();
-
-    if (templateObject->hasSingletonType() || templateObject->hasDynamicSlots())
+    if (lir->mir()->shouldUseVM())
         return visitNewObjectVMCall(lir);
 
-    OutOfLineNewObject *ool = new OutOfLineNewObject(lir);
-    if (!addOutOfLineCode(ool))
-        return false;
-
-    masm.newGCThing(objReg, templateObject, ool->entry());
-    masm.initGCThing(objReg, templateObject);
-
-    masm.bind(ool->rejoin());
-    return true;
-}
-
-bool
-CodeGenerator::visitOutOfLineNewObject(OutOfLineNewObject *ool)
-{
-    if (!visitNewObjectVMCall(ool->lir()))
-        return false;
-    masm.jump(ool->rejoin());
-    return true;
+    JSObject *templateObject = lir->mir()->templateObject();
+    Register objReg = ToRegister(lir->output());
+    return initNewGCThing(SeqAllocMode(lir), templateObject, objReg);
 }
 
 bool
@@ -1638,6 +1787,52 @@ CodeGenerator::visitNewStringObject(LNewStringObject *lir)
 }
 
 bool
+CodeGenerator::visitParNew(LParNew *lir)
+{
+    JSObject *templateObject = lir->mir()->templateObject();
+    Register objReg = ToRegister(lir->output());
+    JS_ASSERT(objReg == ReturnReg);
+    return initNewGCThing(ParAllocMode(lir), templateObject, objReg);
+}
+
+OutOfLineCode*
+CodeGenerator::addOutOfLineParNew(LParNew *lir,
+                                  gc::AllocKind allocKind,
+                                  int thingSize)
+{
+    OutOfLineCode *ool = new OutOfLineParNew(lir, allocKind, thingSize);
+    if (ool)
+        addOutOfLineCode(ool);
+    return ool;
+}
+
+bool
+CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
+{
+    LParNew *lir = ool->lir;
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
+    Register tempReg3 = ToRegister(lir->getTemp2());
+    Register tempReg4 = ToRegister(lir->getTemp3());
+    Register objReg = ToRegister(lir->output());
+
+    masm.setupUnalignedABICall(4, tempReg4);
+    masm.passABIArg(threadContextReg);
+    masm.mov(ImmWord(gen->compartment), tempReg1);
+    masm.passABIArg(tempReg1);
+    masm.move32(Imm32(ool->allocKind), tempReg2);
+    masm.passABIArg(tempReg2);
+    masm.move32(Imm32(ool->thingSize), tempReg3);
+    masm.passABIArg(tempReg3);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
+    JS_ASSERT(objReg == ReturnReg);
+    masm.jump(ool->rejoin());
+
+    return true;
+}
+
+bool
 CodeGenerator::visitInitProp(LInitProp *lir)
 {
     Register objReg = ToRegister(lir->getObject());
@@ -1656,29 +1851,9 @@ bool
 CodeGenerator::visitCreateThis(LCreateThis *lir)
 {
     JS_ASSERT(lir->mir()->hasTemplateObject());
-
     JSObject *templateObject = lir->mir()->getTemplateObject();
-    gc::AllocKind allocKind = templateObject->getAllocKind();
-    int thingSize = (int)gc::Arena::thingSize(allocKind);
     Register objReg = ToRegister(lir->output());
-
-    typedef JSObject *(*pf)(JSContext *cx, gc::AllocKind allocKind, size_t thingSize);
-    static const VMFunction NewGCThingInfo = FunctionInfo<pf>(js::ion::NewGCThing);
-
-    OutOfLineCode *ool = oolCallVM(NewGCThingInfo, lir,
-                                   (ArgList(), Imm32(allocKind), Imm32(thingSize)),
-                                   StoreRegisterTo(objReg));
-    if (!ool)
-        return false;
-
-    // Allocate. If the FreeList is empty, call to VM, which may GC.
-    masm.newGCThing(objReg, templateObject, ool->entry());
-
-    // Initialize based on the templateObject.
-    masm.bind(ool->rejoin());
-    masm.initGCThing(objReg, templateObject);
-
-    return true;
+    return initNewGCThing(SeqAllocMode(lir), templateObject, objReg);
 }
 
 bool
@@ -2992,7 +3167,8 @@ CodeGenerator::generate()
     encodeSafepoints();
 
     RootedScript script(cx, gen->info().script());
-    JS_ASSERT(!script->hasIonScript());
+    CompileMode cmode = gen->info().compileMode();
+    JS_ASSERT(!script->hasIonScript(cmode));
 
     uint32 scriptFrameSize = frameClass_ == FrameSizeClass::None()
                            ? frameDepth_
@@ -3003,48 +3179,49 @@ CodeGenerator::generate()
     if (cx->compartment->types.compiledInfo.compilerOutput(cx)->isInvalidated())
         return true;
 
-    script->ion = IonScript::New(cx, slots, scriptFrameSize, snapshots_.size(),
-                                 bailouts_.length(), graph.numConstants(),
-                                 safepointIndices_.length(), osiIndices_.length(),
-                                 cacheList_.length(), barrierOffsets_.length(),
-                                 safepoints_.size(), graph.mir().numScripts());
-    if (!script->ion)
+    IonScript *ionScript = script->ions[cmode] =
+      IonScript::New(cx, slots, scriptFrameSize, snapshots_.size(),
+                     bailouts_.length(), graph.numConstants(),
+                     safepointIndices_.length(), osiIndices_.length(),
+                     cacheList_.length(), barrierOffsets_.length(),
+                     safepoints_.size(), graph.mir().numScripts());
+    if (!ionScript)
         return false;
     invalidateEpilogueData_.fixup(&masm);
     Assembler::patchDataWithValueCheck(CodeLocationLabel(code, invalidateEpilogueData_),
-                                       ImmWord(uintptr_t(script->ion)),
+                                       ImmWord(uintptr_t(ionScript)),
                                        ImmWord(uintptr_t(-1)));
 
     IonSpew(IonSpew_Codegen, "Created IonScript %p (raw %p)",
-            (void *) script->ion, (void *) code->raw());
+            (void *) ionScript, (void *) code->raw());
 
-    script->ion->setInvalidationEpilogueDataOffset(invalidateEpilogueData_.offset());
-    script->ion->setOsrPc(gen->info().osrPc());
-    script->ion->setOsrEntryOffset(getOsrEntryOffset());
+    ionScript->setInvalidationEpilogueDataOffset(invalidateEpilogueData_.offset());
+    ionScript->setOsrPc(gen->info().osrPc());
+    ionScript->setOsrEntryOffset(getOsrEntryOffset());
     ptrdiff_t real_invalidate = masm.actualOffset(invalidate_.offset());
-    script->ion->setInvalidationEpilogueOffset(real_invalidate);
+    ionScript->setInvalidationEpilogueOffset(real_invalidate);
 
-    script->ion->setMethod(code);
-    script->ion->setDeoptTable(deoptTable_);
+    ionScript->setMethod(code);
+    ionScript->setDeoptTable(deoptTable_);
     if (snapshots_.size())
-        script->ion->copySnapshots(&snapshots_);
+        ionScript->copySnapshots(&snapshots_);
     if (bailouts_.length())
-        script->ion->copyBailoutTable(&bailouts_[0]);
+        ionScript->copyBailoutTable(&bailouts_[0]);
     if (graph.numConstants())
-        script->ion->copyConstants(graph.constantPool());
+        ionScript->copyConstants(graph.constantPool());
     if (safepointIndices_.length())
-        script->ion->copySafepointIndices(&safepointIndices_[0], masm);
+        ionScript->copySafepointIndices(&safepointIndices_[0], masm);
     if (osiIndices_.length())
-        script->ion->copyOsiIndices(&osiIndices_[0], masm);
+        ionScript->copyOsiIndices(&osiIndices_[0], masm);
     if (cacheList_.length())
-        script->ion->copyCacheEntries(&cacheList_[0], masm);
+        ionScript->copyCacheEntries(&cacheList_[0], masm);
     if (barrierOffsets_.length())
-        script->ion->copyPrebarrierEntries(&barrierOffsets_[0], masm);
+        ionScript->copyPrebarrierEntries(&barrierOffsets_[0], masm);
     if (safepoints_.size())
-        script->ion->copySafepoints(&safepoints_);
+        ionScript->copySafepoints(&safepoints_);
 
     JS_ASSERT(graph.mir().numScripts() > 0);
-    script->ion->copyScriptEntries(graph.mir().scripts());
+    ionScript->copyScriptEntries(graph.mir().scripts());
 
     linkAbsoluteLabels();
 
@@ -3052,7 +3229,7 @@ CodeGenerator::generate()
     // since a GC can occur during code generation. All barriers are emitted
     // off-by-default, and are toggled on here if necessary.
     if (cx->compartment->needsBarrier())
-        script->ion->toggleBarriers(true);
+        ionScript->toggleBarriers(true);
 
     return true;
 }
@@ -4348,6 +4525,15 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
         default:
             JS_NOT_REACHED("invalid LFunctionBoundary type");
     }
+}
+
+bool
+CodeGenerator::visitTrace(LTrace *lir)
+{
+    const Register tempReg1 = ToRegister(lir->temp1());
+    masm.move32(Imm32(0xDEADBEEF), tempReg1);
+    masm.move32(Imm32(lir->id()), tempReg1);
+    return true;
 }
 
 } // namespace ion

@@ -799,7 +799,7 @@ stubs::TriggerIonCompile(VMFrame &f)
     RootedScript script(f.cx, f.script());
 
     if (ion::js_IonOptions.parallelCompilation) {
-        JS_ASSERT(!script->ion);
+        JS_ASSERT(!script->ions[COMPILE_MODE_SEQ]);
 
         jsbytecode *osrPC = f.regs.pc;
         if (*osrPC != JSOP_LOOPENTRY)
@@ -816,8 +816,10 @@ stubs::TriggerIonCompile(VMFrame &f)
     ExpandInlineFrames(f.cx->compartment);
     Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), script);
 
-    if (ion::IsEnabled(f.cx) && f.jit()->nchunks == 1 &&
-        script->canIonCompile() && !script->hasIonScript())
+    if (ion::IsEnabled(f.cx) &&
+        f.jit()->nchunks == 1 &&
+        script->canIonCompile(js::COMPILE_MODE_SEQ) &&
+        !script->hasIonScript(js::COMPILE_MODE_SEQ))
     {
         // After returning to the interpreter, IonMonkey will try to compile
         // this script. Don't destroy the JITChunk immediately so that Ion

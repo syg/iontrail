@@ -69,12 +69,16 @@ bool
 IonFrameIterator::checkInvalidation(IonScript **ionScriptOut) const
 {
     AutoAssertNoGC nogc;
+
+    // Currently, this code only executes in sequential execution.
+    CompileMode compileMode = COMPILE_MODE_SEQ;
+
     uint8 *returnAddr = returnAddressToFp();
     RawScript script = this->script();
     // N.B. the current IonScript is not the same as the frame's
     // IonScript if the frame has since been invalidated.
-    IonScript *currentIonScript = script->ion;
-    bool invalidated = !script->hasIonScript() ||
+    IonScript *currentIonScript = script->ions[compileMode];
+    bool invalidated = !script->hasIonScript(compileMode) ||
         !currentIonScript->containsReturnAddress(returnAddr);
     if (!invalidated)
         return false;
@@ -444,6 +448,9 @@ ReadAllocation(const IonFrameIterator &frame, const LAllocation *a)
 static void
 MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 {
+    // Currently, this code only executes in sequential execution.
+    CompileMode compileMode = COMPILE_MODE_SEQ;
+
     IonJSFrameLayout *layout = (IonJSFrameLayout *)frame.fp();
 
     MarkCalleeToken(trc, layout->calleeToken());
@@ -455,9 +462,9 @@ MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
         // is now NULL or recompiled). Manually trace it here.
         IonScript::Trace(trc, ionScript);
     } else if (CalleeTokenIsFunction(layout->calleeToken())) {
-        ionScript = CalleeTokenToFunction(layout->calleeToken())->script()->ion;
+        ionScript = CalleeTokenToFunction(layout->calleeToken())->script()->ions[compileMode];
     } else {
-        ionScript = CalleeTokenToScript(layout->calleeToken())->ion;
+        ionScript = CalleeTokenToScript(layout->calleeToken())->ions[compileMode];
     }
 
     if (CalleeTokenIsFunction(layout->calleeToken())) {
@@ -869,12 +876,15 @@ SnapshotIterator::slotValue(const Slot &slot)
 IonScript *
 IonFrameIterator::ionScript() const
 {
+    // Currently, this code only executes in sequential execution.
+    CompileMode compileMode = COMPILE_MODE_SEQ;
+
     JS_ASSERT(type() == IonFrame_JS);
 
     IonScript *ionScript;
     if (checkInvalidation(&ionScript))
         return ionScript;
-    return script()->ionScript();
+    return script()->ionScript(compileMode);
 }
 
 const SafepointIndex *

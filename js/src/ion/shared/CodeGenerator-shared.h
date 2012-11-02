@@ -25,6 +25,7 @@ namespace ion {
 class OutOfLineCode;
 class CodeGenerator;
 class MacroAssembler;
+class OutOfLineParallelAbort;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
@@ -34,6 +35,8 @@ class CodeGeneratorShared : public LInstructionVisitor
 {
     js::Vector<OutOfLineCode *, 0, SystemAllocPolicy> outOfLineCode_;
     OutOfLineCode *oolIns;
+    OutOfLineParallelAbort *oolParallelAbort;
+    uint32_t parallelBailoutIndex;
 
   protected:
     MacroAssembler masm;
@@ -288,6 +291,15 @@ class CodeGeneratorShared : public LInstructionVisitor
     bool visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo> *ool);
 
     bool visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool);
+
+  public:
+    // When compiling parallel code, all bailouts just abort funnel to
+    // this same point and hence abort execution altogether:
+    virtual bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool) = 0;
+
+  protected:
+    OutOfLineParallelAbort *outOfLineParallelAbort;
+    bool ensureOutOfLineParallelAbort(Label **result);
 };
 
 // Wrapper around Label, on the heap, to avoid a bogus assert with OOM.
@@ -522,6 +534,20 @@ CodeGeneratorShared::visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo>
     masm.jump(ool->rejoin());
     return true;
 }
+
+
+// An out-of-line parallel abort thunk.
+class OutOfLineParallelAbort : public OutOfLineCode
+{
+  public:
+    uint32_t index;
+
+    OutOfLineParallelAbort(uint32_t index)
+        : index(index)
+    { }
+
+    bool generate(CodeGeneratorShared *codegen);
+};
 
 } // namespace ion
 } // namespace js

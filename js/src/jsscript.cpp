@@ -1898,8 +1898,10 @@ JSScript::finalize(FreeOp *fop)
 #ifdef JS_METHODJIT
     mjit::ReleaseScriptCode(fop, this);
 # ifdef JS_ION
-    if (hasIonScript())
-        ion::IonScript::Destroy(fop, ion);
+    for (EACH_COMPILE_MODE(cmode)) {
+        if (hasIonScript(cmode))
+            ion::IonScript::Destroy(fop, ions[cmode]);
+    }
 # endif
 #endif
 
@@ -2591,8 +2593,10 @@ JSScript::markChildren(JSTracer *trc)
     }
 
 #ifdef JS_ION
-    if (hasIonScript())
-        ion::IonScript::Trace(trc, ion);
+    for (EACH_COMPILE_MODE(cmode)) {
+        if (hasIonScript(cmode))
+            ion::IonScript::Trace(trc, ions[cmode]);
+    }
 #endif
 }
 

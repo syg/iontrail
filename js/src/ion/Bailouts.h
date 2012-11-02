@@ -109,6 +109,7 @@ static const uint32 BAILOUT_RETURN_BOUNDS_CHECK = 6;
 static const uint32 BAILOUT_RETURN_INVALIDATE = 7;
 static const uint32 BAILOUT_RETURN_OVERRECURSED = 8;
 static const uint32 BAILOUT_RETURN_CACHED_SHAPE_GUARD = 9;
+static const uint32 BAILOUT_RETURN_PARALLEL = 10;
 
 // Attached to the compartment for easy passing through from ::Bailout to
 // ::ThunkToInterpreter.

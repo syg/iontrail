@@ -589,11 +589,12 @@ class CallCompiler : public BaseCompiler
 
         size_t argc = ic.frameSize.staticArgc();
 
-        /* Load fun->u.i.script->ion */
+        /* Load fun->u.i.script->ions[js::ion::COMPILE_MODE_SEQ] */
         RegisterID ionScript = regs.takeAnyReg().reg();
         Address scriptAddr(funObjReg, JSFunction::offsetOfNativeOrScript());
         masm.loadPtr(scriptAddr, ionScript);
-        masm.loadPtr(Address(ionScript, offsetof(JSScript, ion)), ionScript);
+        masm.loadPtr(Address(ionScript, offsetof(JSScript, ions[js::COMPILE_MODE_SEQ])),
+                     ionScript);
 
         /* Guard that the ion pointer is valid. */
         Jump noIonCode = masm.branchPtr(Assembler::BelowOrEqual, ionScript,
@@ -1250,7 +1251,7 @@ class CallCompiler : public BaseCompiler
                 !ic.hasIonStub() &&
                 ic.frameSize.isStatic() &&
                 ic.frameSize.staticArgc() <= ion::SNAPSHOT_MAX_NARGS &&
-                fun->script()->hasIonScript())
+                fun->script()->hasIonScript(js::COMPILE_MODE_SEQ))
             {
                 if (!generateIonStub())
                     THROWV(NULL);

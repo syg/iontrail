@@ -1735,6 +1735,7 @@ class StackIter
     ion::InlineFrameIterator ionInlineFrames_;
 #endif
 
+    static JSRuntime *GetRuntime(const StackIter &other);
     void poisonRegs();
     void popFrame();
     void popCall();

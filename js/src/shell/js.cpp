@@ -2785,24 +2785,24 @@ WatchdogMain(void *arg)
     while (gWatchdogThread) {
          int64_t now = PRMJ_Now();
          if (gWatchdogHasTimeout && !IsBefore(now, gWatchdogTimeout)) {
-            /*
-             * The timeout has just expired. Trigger the operation callback
-             * outside the lock.
-             */
-            gWatchdogHasTimeout = false;
-            PR_Unlock(gWatchdogLock);
-            CancelExecution(rt);
-            PR_Lock(gWatchdogLock);
+             /*
+              * The timeout has just expired. Trigger the operation callback
+              * outside the lock.
+              */
+             gWatchdogHasTimeout = false;
+             PR_Unlock(gWatchdogLock);
+             CancelExecution(rt);
+             PR_Lock(gWatchdogLock);
 
-            /* Wake up any threads doing sleep. */
-            PR_NotifyAllCondVar(gSleepWakeup);
+             /* Wake up any threads doing sleep. */
+             PR_NotifyAllCondVar(gSleepWakeup);
         } else {
-            int64_t sleepDuration = gWatchdogHasTimeout
-                                    ? gWatchdogTimeout - now
-                                    : PR_INTERVAL_NO_TIMEOUT;
-            DebugOnly<PRStatus> status =
-                PR_WaitCondVar(gWatchdogWakeup, sleepDuration);
-            JS_ASSERT(status == PR_SUCCESS);
+             int64_t sleepDuration = gWatchdogHasTimeout
+               ? (gWatchdogTimeout - now) / PRMJ_USEC_PER_SEC * PR_TicksPerSecond()
+               : PR_INTERVAL_NO_TIMEOUT;
+             DebugOnly<PRStatus> status =
+               PR_WaitCondVar(gWatchdogWakeup, sleepDuration);
+             JS_ASSERT(status == PR_SUCCESS);
         }
     }
     PR_Unlock(gWatchdogLock);
@@ -3417,7 +3417,7 @@ RelaxRootChecks(JSContext *cx, unsigned argc, jsval *vp)
     }
 
 #ifdef DEBUG
-    cx->runtime->gcRelaxRootChecks = true;
+    cx->runtime->mainThread.gcRelaxRootChecks = true;
 #endif
 
     return true;

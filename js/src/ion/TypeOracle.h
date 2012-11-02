@@ -31,7 +31,8 @@ enum MIRType
     MIRType_None,       // Invalid, used as a placeholder.
     MIRType_Slots,      // A slots vector
     MIRType_Elements,   // An elements vector
-    MIRType_StackFrame  // StackFrame pointer for OSR.
+    MIRType_StackFrame, // StackFrame pointer for OSR.
+    MIRType_ThreadContext // js::ThreadContext*
 };
 
 enum LazyArgumentsType {
@@ -353,6 +354,8 @@ StringFromMIRType(MIRType type)
       return "Elements";
     case MIRType_StackFrame:
       return "StackFrame";
+    case MIRType_ThreadContext:
+      return "ThreadContext";
     default:
       JS_NOT_REACHED("Unknown MIRType.");
       return "";

@@ -537,7 +537,8 @@ mjit::Compiler::performCompilation()
     JS_ASSERT(cx->compartment->activeInference);
 
     {
-        types::AutoEnterCompilation enter(cx, types::AutoEnterCompilation::JM);
+        types::AutoEnterCompilation enter(cx, types::AutoEnterCompilation::JM,
+                                          COMPILE_MODE_SEQ);
         if (!enter.init(outerScript, isConstructing, chunkIndex)) {
             js_ReportOutOfMemory(cx);
             return Compile_Error;
@@ -967,16 +968,17 @@ IonGetsFirstChance(JSContext *cx, JSScript *script, CompileRequest request)
         return false;
 
     // If there's no way this script is going to be Ion compiled, let JM take over.
-    if (!script->canIonCompile())
+    if (!script->canIonCompile(js::COMPILE_MODE_SEQ))
         return false;
 
     // If we cannot enter Ion because bailouts are expected, let JM take over.
-    if (script->hasIonScript() && script->ion->bailoutExpected())
+    if (script->hasIonScript(js::COMPILE_MODE_SEQ) &&
+        script->ions[js::COMPILE_MODE_SEQ]->bailoutExpected())
         return false;
 
     // If ion compilation is pending or in progress on another thread, continue
     // using JM until that compilation finishes.
-    if (script->ion == ION_COMPILING_SCRIPT)
+    if (script->ions[js::COMPILE_MODE_SEQ] == ION_COMPILING_SCRIPT)
         return false;
 
     return true;
@@ -3945,7 +3947,7 @@ MaybeIonCompileable(JSContext *cx, JSScript *script, bool *recompileCheckForIon)
 
     if (!ion::IsEnabled(cx))
         return false;
-    if (!script->canIonCompile())
+    if (!script->canIonCompile(js::COMPILE_MODE_SEQ))
         return false;
 
     // If this script is small, doesn't have any function calls, and doesn't have
@@ -3966,7 +3968,7 @@ mjit::Compiler::ionCompileHelper()
     JS_ASSERT(!inlining());
 
 #ifdef JS_ION
-    if (debugMode() || !globalObj || !cx->typeInferenceEnabled() || outerScript->hasIonScript())
+    if (debugMode() || !globalObj || !cx->typeInferenceEnabled() || outerScript->hasIonScript(COMPILE_MODE_SEQ))
         return;
 
     bool recompileCheckForIon = false;
@@ -3984,7 +3986,7 @@ mjit::Compiler::ionCompileHelper()
     if (!recompileCheckForIon)
         return;
 
-    void *ionScriptAddress = &script_->ion;
+    void *ionScriptAddress = &script_->ions[COMPILE_MODE_SEQ];
 
     // Trigger ion compilation if (a) the script has been used enough times for
     // this opcode, and (b) the script does not already have ion information
@@ -7358,7 +7360,7 @@ mjit::Compiler::constructThis()
          * newScript on its type, so make sure recompilation is triggered
          * should this information change later.
          */
-        if (templateObject->type()->newScript)
+        if (templateObject->type()->construct && templateObject->type()->construct->isNewScript())
             types::HeapTypeSet::WatchObjectStateChange(cx, templateObject->type());
 
         RegisterID result = frame.allocReg();

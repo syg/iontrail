@@ -39,6 +39,8 @@
 #include "jsscope.h"
 #include "jsstr.h"
 #include "jsversion.h"
+#include "jsthreadpool.h"
+#include "jstaskset.h"
 
 #include "builtin/RegExp.h"
 #include "js/HashTable.h"
@@ -1845,8 +1847,10 @@ struct ReplaceData
     ReplaceData(JSContext *cx)
       : str(cx), g(cx), lambda(cx), elembase(cx), repstr(cx),
         dollarRoot(cx, &dollar), dollarEndRoot(cx, &dollarEnd),
-        fig(cx, NullValue()), sb(cx)
-    {}
+        fig(cx, NullValue(), COMPILE_MODE_SEQ), sb(cx)
+    {
+        JS_ASSERT(!InParallelSection()); // due to COMPILE_MODE_SEQ above
+    }
 
     RootedString       str;            /* 'this' parameter object as a string */
     StringRegExpGuard  g;              /* regexp parameter object and private data */

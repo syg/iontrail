@@ -776,7 +776,8 @@ Chunk::fetchNextFreeArena(JSRuntime *rt)
 }
 
 ArenaHeader *
-Chunk::allocateArena(JSCompartment *comp, AllocKind thingKind)
+Chunk::allocateArena(JSCompartment *comp, AllocKind thingKind,
+                     bool inParallel)
 {
     JS_ASSERT(hasAvailableArenas());
 
@@ -795,8 +796,15 @@ Chunk::allocateArena(JSCompartment *comp, AllocKind thingKind)
     Probes::resizeHeap(comp, rt->gcBytes, rt->gcBytes + ArenaSize);
     rt->gcBytes += ArenaSize;
     comp->gcBytes += ArenaSize;
-    if (comp->gcBytes >= comp->gcTriggerBytes)
+    if (comp->gcBytes >= comp->gcTriggerBytes && !inParallel) {
+        /*
+         * If we've allocated more than gcTriggerBytes, run a gc on
+         * the next operational callback, rather than immediately.  If
+         * however we are executing in parallel, GC is disabled, so
+         * don't do that.
+         */
         TriggerCompartmentGC(comp, gcreason::ALLOC_TRIGGER);
+    }
 
     return aheader;
 }
@@ -992,6 +1000,7 @@ MarkExactStackRoots(JSTracer *trc)
         for (ContextIter cx(trc->runtime); !cx.done(); cx.next()) {
             MarkExactStackRooters(trc, cx->thingGCRooters[i], ThingRootKind(i));
         }
+        MarkExactStackRooters(trc, rt->mainThread.thingGCRooters[i], ThingRootKind(i));
         MarkExactStackRooters(trc, rt->thingGCRooters[i], ThingRootKind(i));
     }
 }
@@ -1125,7 +1134,8 @@ MarkIfGCThingWord(JSTracer *trc, uintptr_t w)
 
 #ifdef DEBUG
     if (trc->runtime->gcIncrementalState == MARK_ROOTS)
-        trc->runtime->gcSavedRoots.append(JSRuntime::SavedGCRoot(thing, traceKind));
+        trc->runtime->mainThread.gcSavedRoots.append(
+            JS::PerThreadData::SavedGCRoot(thing, traceKind));
 #endif
 
     return CGCT_VALID;
@@ -1186,8 +1196,8 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
 
 #ifdef DEBUG
     if (useSavedRoots) {
-        for (JSRuntime::SavedGCRoot *root = rt->gcSavedRoots.begin();
-             root != rt->gcSavedRoots.end();
+        for (JS::PerThreadData::SavedGCRoot *root = rt->mainThread.gcSavedRoots.begin();
+             root != rt->mainThread.gcSavedRoots.end();
              root++)
         {
             JS_SET_TRACING_NAME(trc, "cstack");
@@ -1197,7 +1207,7 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
     }
 
     if (rt->gcIncrementalState == MARK_ROOTS)
-        rt->gcSavedRoots.clearAndFree();
+        rt->mainThread.gcSavedRoots.clearAndFree();
 #endif
 
     ConservativeGCData *cgcd = &rt->conservativeGC;
@@ -1455,9 +1465,28 @@ PushArenaAllocatedDuringSweep(JSRuntime *runtime, ArenaHeader *arena)
     runtime->gcArenasAllocatedDuringSweep = arena;
 }
 
-inline void *
-ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind)
+void *
+ArenaLists::parallelAllocate(JSCompartment *comp, AllocKind thingKind, size_t thingSize)
 {
+    void *t = allocateFromFreeList(thingKind, thingSize);
+    if (t)
+        return t;
+
+    return allocateFromArena(comp, thingKind, true);
+}
+
+inline void *
+ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind,
+                              bool inParallel)
+{
+    // Threading Note:
+    //
+    // This function can be called from parallel threads all of which
+    // are associated with the same compartment. In that case, each
+    // thread will have a distinct ArenaLists.  Therefore, whenever we
+    // fall through to PickChunk() we must be sure that we are holding
+    // a lock.
+
     Chunk *chunk = NULL;
 
     ArenaList *al = &arenaLists[thingKind];
@@ -1537,7 +1566,7 @@ ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind)
      * for allocations improving cache locality.
      */
     JS_ASSERT(!*al->cursor);
-    ArenaHeader *aheader = chunk->allocateArena(comp, thingKind);
+    ArenaHeader *aheader = chunk->allocateArena(comp, thingKind, inParallel);
     if (!aheader)
         return NULL;
 
@@ -1767,7 +1796,7 @@ ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
          * always try to allocate twice.
          */
         for (bool secondAttempt = false; ; secondAttempt = true) {
-            void *thing = comp->arenas.allocateFromArena(comp, thingKind);
+            void *thing = comp->arenas.allocateFromArena(comp, thingKind, false);
             if (JS_LIKELY(!!thing))
                 return thing;
             if (secondAttempt)
@@ -4908,6 +4937,8 @@ CheckStackRoot(JSTracer *trc, uintptr_t *w)
         JSRuntime *rt = trc->runtime;
         for (unsigned i = 0; i < THING_ROOT_LIMIT; i++) {
             CheckStackRootThings(w, rt->thingGCRooters[i], ThingRootKind(i), &matched);
+            CheckStackRootThings(w, rt->mainThread.thingGCRooters[i],
+                                 ThingRootKind(i), &matched);
             for (ContextIter cx(rt); !cx.done(); cx.next()) {
                 CheckStackRootThings(w, cx->thingGCRooters[i], ThingRootKind(i), &matched);
                 SkipRoot *skip = cx->skipGCRooters;
@@ -5764,12 +5795,71 @@ PurgeJITCaches(JSCompartment *c)
 #ifdef JS_ION
 
         /* Discard Ion caches. */
-        if (script->hasIonScript())
-            script->ion->purgeCaches(c);
+        for (EACH_COMPILE_MODE(cmode)) {
+            if (script->hasIonScript(cmode))
+                script->ions[cmode]->purgeCaches(c);
+        }
 
 #endif
     }
 #endif
+}
+
+void
+ArenaLists::adoptArenas(JSRuntime *rt, ArenaLists *fromArenaLists)
+{
+    // The other parallel threads have all completed now, and GC
+    // should be inactive, but still take the lock as a kind of read
+    // fence.
+    AutoLockGC lock(rt);
+
+    fromArenaLists->purge();
+
+    for (size_t thingKind = 0; thingKind != FINALIZE_LIMIT; thingKind++) {
+#ifdef JS_THREADSAFE
+        // When we enter a parallel section, we join the background
+        // thread, and we do not run GC while in the parallel section,
+        // so no finalizer should be active!
+        volatile uintptr_t *bfs = &backgroundFinalizeState[thingKind];
+        switch (*bfs) {
+          case BFS_DONE:
+            break;
+          case BFS_JUST_FINISHED:
+            // No allocations between end of last sweep and now.
+            // Transfering over arenas is a kind of allocation.
+            *bfs = BFS_DONE;
+            break;
+          default:
+            JS_ASSERT(!"Background finalization in progress, but it should not be.");
+            break;
+        }
+#endif /* JS_THREADSAFE */
+
+        ArenaList *fromList = &fromArenaLists->arenaLists[thingKind];
+        ArenaList *toList = &arenaLists[thingKind];
+        while (fromList->head != NULL) {
+            ArenaHeader *fromHeader = fromList->head;
+            fromList->head = fromHeader->next;
+            fromHeader->next = NULL;
+
+            toList->insert(fromHeader);
+        }
+    }
+}
+
+bool
+ArenaLists::containsArena(JSRuntime *rt,
+                          ArenaHeader *needle)
+{
+    AutoLockGC lock(rt);
+    size_t allocKind = needle->getAllocKind();
+    for (ArenaHeader *header = arenaLists[allocKind].head;
+         header != NULL;
+         header = header->next) {
+        if (header == needle)
+            return true;
+    }
+    return false;
 }
 
 } /* namespace js */

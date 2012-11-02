@@ -27,6 +27,7 @@ namespace ion {
     _(OsrScopeChain)                                                        \
     _(ReturnFromCtor)                                                       \
     _(CheckOverRecursed)                                                    \
+    _(ParCheckOverRecursed)                                                 \
     _(RecompileCheck)                                                       \
     _(DefVar)                                                               \
     _(CreateThis)                                                           \
@@ -73,6 +74,7 @@ namespace ion {
     _(NewObject)                                                            \
     _(NewCallObject)                                                        \
     _(NewStringObject)                                                      \
+    _(ParNew)                                                               \
     _(InitProp)                                                             \
     _(Start)                                                                \
     _(OsrEntry)                                                             \
@@ -86,6 +88,8 @@ namespace ion {
     _(LoadSlot)                                                             \
     _(StoreSlot)                                                            \
     _(FunctionEnvironment)                                                  \
+    _(ParThreadContext)                                                     \
+    _(ParWriteGuard)                                                        \
     _(TypeBarrier)                                                          \
     _(MonitorTypes)                                                         \
     _(GetPropertyCache)                                                     \
@@ -133,6 +137,8 @@ namespace ion {
     _(In)                                                                   \
     _(InstanceOf)                                                           \
     _(InterruptCheck)                                                       \
+    _(ParCheckInterrupt)                                                    \
+    _(Trace)                                                                \
     _(FunctionBoundary)                                                     \
     _(GetDOMProperty)                                                       \
     _(SetDOMProperty)

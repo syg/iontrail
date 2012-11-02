@@ -89,6 +89,8 @@
 #include "jsobj.h"
 #include "jsscope.h"
 #include "jswrapper.h"
+#include "jsthreadpool.h"
+#include "jstaskset.h"
 #include "methodjit/MethodJIT.h"
 #include "methodjit/StubCalls.h"
 #include "methodjit/StubCalls-inl.h"
@@ -2173,7 +2175,9 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
                 result = vec.begin() + n;
             }
         } else {
-            FastInvokeGuard fig(cx, fval);
+            // note: currently, array.sort() cannot be used from parallel code
+            JS_ASSERT(!InParallelSection());
+            FastInvokeGuard fig(cx, fval, COMPILE_MODE_SEQ);
             if (!MergeSort(vec.begin(), n, vec.begin() + n,
                            SortComparatorFunction(cx, fval, fig))) {
                 return false;
@@ -3100,7 +3104,8 @@ array_readonlyCommon(JSContext *cx, CallArgs &args)
 
     /* Step 7. */
     RootedValue kValue(cx);
-    FastInvokeGuard fig(cx, ObjectValue(*callable));
+    JS_ASSERT(!InParallelSection());
+    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
     InvokeArgsGuard &ag = fig.args();
     while (k < len) {
         if (!JS_CHECK_OPERATION_LIMIT(cx))
@@ -3202,7 +3207,8 @@ array_map(JSContext *cx, unsigned argc, Value *vp)
 
     /* Step 8. */
     RootedValue kValue(cx);
-    FastInvokeGuard fig(cx, ObjectValue(*callable));
+    JS_ASSERT(!InParallelSection());
+    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
     InvokeArgsGuard &ag = fig.args();
     while (k < len) {
         if (!JS_CHECK_OPERATION_LIMIT(cx))
@@ -3282,7 +3288,8 @@ array_filter(JSContext *cx, unsigned argc, Value *vp)
     uint32_t to = 0;
 
     /* Step 9. */
-    FastInvokeGuard fig(cx, ObjectValue(*callable));
+    JS_ASSERT(!InParallelSection());
+    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
     InvokeArgsGuard &ag = fig.args();
     RootedValue kValue(cx);
     while (k < len) {
@@ -3402,7 +3409,8 @@ array_reduceCommon(JSContext *cx, CallArgs &args)
 
     /* Step 9. */
     RootedValue kValue(cx);
-    FastInvokeGuard fig(cx, ObjectValue(*callable));
+    JS_ASSERT(!InParallelSection());
+    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
     InvokeArgsGuard &ag = fig.args();
     while (k != end) {
         if (!JS_CHECK_OPERATION_LIMIT(cx))

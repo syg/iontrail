@@ -27,8 +27,10 @@
     _(NewSlots)                     \
     _(NewCallObject)                \
     _(NewStringObject)              \
+    _(ParNew)                       \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
+    _(ParCheckOverRecursed)         \
     _(RecompileCheck)               \
     _(DefVar)                       \
     _(CallKnown)                    \
@@ -109,6 +111,7 @@
     _(StoreSlotT)                   \
     _(GuardShape)                   \
     _(GuardClass)                   \
+    _(ParWriteGuard)                \
     _(TypeBarrier)                  \
     _(MonitorTypes)                 \
     _(InitializedLength)            \
@@ -139,6 +142,7 @@
     _(StoreFixedSlotV)              \
     _(StoreFixedSlotT)              \
     _(FunctionEnvironment)          \
+    _(ParThreadContext)             \
     _(GetPropertyCacheV)            \
     _(GetPropertyCacheT)            \
     _(GetElementCacheV)             \
@@ -170,10 +174,12 @@
     _(InstanceOfO)                  \
     _(InstanceOfV)                  \
     _(InterruptCheck)               \
+    _(ParCheckInterrupt)            \
     _(FunctionBoundary)             \
     _(GetDOMProperty)               \
     _(SetDOMProperty)               \
-    _(CallDOMNative)
+    _(CallDOMNative)                \
+    _(Trace)
 
 #if defined(JS_CPU_X86)
 # include "x86/LOpcodes-x86.h"

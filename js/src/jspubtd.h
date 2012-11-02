@@ -19,7 +19,7 @@
  * Unfortunately, typedefs (hence jsval) cannot be declared.
  */
 #ifdef __cplusplus
-namespace JS { class Value; }
+namespace JS { class Value; struct PerThreadData; }
 #endif
 
 /*
@@ -310,6 +310,11 @@ struct RuntimeFriendFields {
     /*
      * Stack allocated GC roots for stack GC heap pointers, which may be
      * overwritten if moved during a GC.
+     *
+     * The actual set of roots is split between the |JSContext*|, the
+     * |JSRuntime*|, and any active |JS::PerThread| data.  This is purely
+     * for efficiency.  A given |Rooted<T>| pointer is associated with
+     * precisely one of those.
      */
     Rooted<void*> *thingGCRooters[THING_ROOT_LIMIT];
 #endif
@@ -320,6 +325,20 @@ struct RuntimeFriendFields {
 
     static const RuntimeFriendFields *get(const JSRuntime *rt) {
         return reinterpret_cast<const RuntimeFriendFields *>(rt);
+    }
+};
+
+struct PerThreadDataFriendFields {
+#if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
+    /*
+     * Stack allocated GC roots for stack GC heap pointers, which may be
+     * overwritten if moved during a GC.
+     */
+    Rooted<void*> *thingGCRooters[THING_ROOT_LIMIT];
+#endif
+
+    static const PerThreadDataFriendFields *get(const JS::PerThreadData *pt) {
+        return reinterpret_cast<const PerThreadDataFriendFields *>(pt);
     }
 };
 

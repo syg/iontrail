@@ -55,13 +55,16 @@ IonBailoutIterator::IonBailoutIterator(const IonActivationIterator &activations,
   : IonFrameIterator(activations),
     machine_(bailout->machineState())
 {
+    // This kind of processing only occurs in sequential mode right now.
+    CompileMode compileMode = COMPILE_MODE_SEQ;
+
     uint8 *sp = bailout->parentStackPointer();
     uint8 *fp = sp + bailout->frameSize();
 
     current_ = fp;
     type_ = IonFrame_JS;
     topFrameSize_ = current_ - sp;
-    topIonScript_ = script()->ion;
+    topIonScript_ = script()->ions[compileMode];
     snapshotOffset_ = bailout->snapshotOffset();
 }
 

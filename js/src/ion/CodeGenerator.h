@@ -21,14 +21,13 @@
 namespace js {
 namespace ion {
 
-class OutOfLineNewArray;
-class OutOfLineNewObject;
 class CheckOverRecursedFailure;
 class OutOfLineUnboxDouble;
 class OutOfLineCache;
 class OutOfLineStoreElementHole;
 class OutOfLineTypeOfV;
 class OutOfLineLoadTypedArray;
+class OutOfLineParNew;
 
 class CodeGenerator : public CodeGeneratorSpecific
 {
@@ -78,6 +77,8 @@ class CodeGenerator : public CodeGeneratorSpecific
                                 uint32 argc, uint32 unusedStack);
     bool visitCallGeneric(LCallGeneric *call);
     bool visitCallKnown(LCallKnown *call);
+    bool emitCallToKnownScript(LCallKnown *call, Register calleereg, uint32 unusedStack,
+                               Label *slowPath, Label *end);
     bool visitCallConstructor(LCallConstructor *call);
     bool emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraStackSize);
     void emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSpace);
@@ -87,12 +88,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitNewSlots(LNewSlots *lir);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);
-    bool visitOutOfLineNewArray(OutOfLineNewArray *ool);
     bool visitNewObjectVMCall(LNewObject *lir);
     bool visitNewObject(LNewObject *lir);
-    bool visitOutOfLineNewObject(OutOfLineNewObject *ool);
     bool visitNewCallObject(LNewCallObject *lir);
     bool visitNewStringObject(LNewStringObject *lir);
+    bool visitParNew(LParNew *lir);
     bool visitInitProp(LInitProp *lir);
     bool visitCreateThis(LCreateThis *lir);
     bool visitCreateThisVM(LCreateThisVM *lir);
@@ -127,6 +127,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCharCodeAt(LCharCodeAt *lir);
     bool visitFromCharCode(LFromCharCode *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
+    bool visitParThreadContext(LParThreadContext *lir);
+    bool visitParWriteGuard(LParWriteGuard *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);
     bool visitCallSetElement(LCallSetElement *lir);
@@ -176,8 +178,13 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitSetDOMProperty(LSetDOMProperty *lir);
     bool visitCallDOMNative(LCallDOMNative *lir);
 
+    bool visitTrace(LTrace *lir);
+
     bool visitCheckOverRecursed(LCheckOverRecursed *lir);
     bool visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool);
+
+    bool visitParCheckOverRecursed(LParCheckOverRecursed *lir);
+    bool visitParCheckInterrupt(LParCheckInterrupt *lir);
 
     bool visitUnboxDouble(LUnboxDouble *lir);
     bool visitOutOfLineUnboxDouble(OutOfLineUnboxDouble *ool);
@@ -188,6 +195,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineSetPropertyCache(OutOfLineCache *ool);
     bool visitOutOfLineBindNameCache(OutOfLineCache *ool);
     bool visitOutOfLineGetNameCache(OutOfLineCache *ool);
+
+    OutOfLineCode *addOutOfLineParNew(LParNew *lir,
+                                      gc::AllocKind allocKind,
+                                      int thingSize);
+    bool visitOutOfLineParNew(OutOfLineParNew *ool);
 
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
         return visitCache(ins);
@@ -214,6 +226,11 @@ class CodeGenerator : public CodeGeneratorSpecific
   private:
     bool visitCache(LInstruction *load);
     bool visitCallSetProperty(LInstruction *ins);
+
+    template <typename T>
+    bool initNewGCThing(T allocMode,
+                        JSObject *templateObject,
+                        Register objReg);
 
     ConstantOrRegister getSetPropertyValue(LInstruction *ins);
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);

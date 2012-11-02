@@ -201,8 +201,8 @@ IonBuilder::canInlineTarget(JSFunction *target)
     }
 
     RootedScript inlineScript(cx, target->script());
-
-    if (!inlineScript->canIonCompile()) {
+    CompileMode compileMode = info().compileMode();
+    if (!inlineScript->canIonCompile(compileMode)) {
         IonSpew(IonSpew_Inlining, "Cannot inline due to disable Ion compilation");
         return false;
     }
@@ -2823,7 +2823,8 @@ IonBuilder::jsop_call_inline(HandleFunction callee, uint32 argc, bool constructi
     // lifetime.
     RootedScript calleeScript(cx, callee->script());
     CompileInfo *info = cx->tempLifoAlloc().new_<CompileInfo>(calleeScript.get(), callee,
-                                                              (jsbytecode *)NULL, constructing);
+                                                              (jsbytecode *)NULL, constructing,
+                                                              COMPILE_MODE_SEQ);
     if (!info)
         return false;
 
@@ -3542,7 +3543,7 @@ IonBuilder::createThisScriptedSingleton(HandleFunction target, HandleObject prot
         return NULL;
 
     // Trigger recompilation if the templateObject changes.
-    if (templateObject->type()->newScript)
+    if (templateObject->type()->construct && templateObject->type()->construct->isNewScript())
         types::HeapTypeSet::WatchObjectStateChange(cx, templateObject->type());
 
     MConstant *protoDef = MConstant::New(ObjectValue(*proto));

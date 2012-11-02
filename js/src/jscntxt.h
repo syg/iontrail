@@ -25,6 +25,7 @@
 #include "jsprototypes.h"
 #include "jsutil.h"
 #include "prmjtime.h"
+#include "jsthreadpool.h"
 
 #include "ds/LifoAlloc.h"
 #include "gc/Statistics.h"
@@ -388,6 +389,34 @@ struct JSAtomState
 #define NAME_OFFSET(name)       offsetof(JSAtomState, name)
 #define OFFSET_TO_NAME(rt,off)  (*(js::FixedHeapPtr<js::PropertyName>*)((char*)&(rt)->atomState + (off)))
 
+namespace JS {
+struct PerThreadData : public js::PerThreadDataFriendFields
+{
+    JSRuntime *runtime; // backpointer to the full shraed runtime
+
+    /*
+     * We save all conservative scanned roots in this vector so that
+     * conservative scanning can be "replayed" deterministically. In DEBUG mode,
+     * this allows us to run a non-incremental GC after every incremental GC to
+     * ensure that no objects were missed.
+     */
+#ifdef DEBUG
+    struct SavedGCRoot {
+        void *thing;
+        JSGCTraceKind kind;
+
+        SavedGCRoot(void *thing, JSGCTraceKind kind) : thing(thing), kind(kind) {}
+    };
+    js::Vector<SavedGCRoot, 0, js::SystemAllocPolicy> gcSavedRoots;
+
+    bool                gcRelaxRootChecks;
+    int                 gcAssertNoGCDepth;
+#endif
+
+    PerThreadData(JSRuntime *runtime);
+};
+}
+
 struct JSRuntime : js::RuntimeFriendFields
 {
     /* Default compartment. */
@@ -652,25 +681,6 @@ struct JSRuntime : js::RuntimeFriendFields
      * enabled, and is disabled if e4x has been used.
      */
     bool                gcExactScanningEnabled;
-
-    /*
-     * We save all conservative scanned roots in this vector so that
-     * conservative scanning can be "replayed" deterministically. In DEBUG mode,
-     * this allows us to run a non-incremental GC after every incremental GC to
-     * ensure that no objects were missed.
-     */
-#ifdef DEBUG
-    struct SavedGCRoot {
-        void *thing;
-        JSGCTraceKind kind;
-
-        SavedGCRoot(void *thing, JSGCTraceKind kind) : thing(thing), kind(kind) {}
-    };
-    js::Vector<SavedGCRoot, 0, js::SystemAllocPolicy> gcSavedRoots;
-
-    bool                gcRelaxRootChecks;
-    int                 gcAssertNoGCDepth;
-#endif
 
     bool                gcPoke;
 
@@ -950,6 +960,9 @@ struct JSRuntime : js::RuntimeFriendFields
 
     // Cache for ion::GetPcScript().
     js::ion::PcScriptCache *ionPcScriptCache;
+
+    js::ThreadPool threadPool;
+    JS::PerThreadData mainThread;
 
   private:
     // In certain cases, we want to optimize certain opcodes to typed instructions,

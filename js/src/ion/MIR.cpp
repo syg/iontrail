@@ -1540,3 +1540,28 @@ MBeta::recomputeRange()
     }
     return ret;
 }
+
+bool
+MNewObject::shouldUseVM() const
+{
+    JSObject *o = templateObject();
+    return o->hasSingletonType() || o->hasDynamicSlots();
+}
+
+bool
+MNewArray::shouldUseVM() const
+{
+    uint32 cnt = count();
+
+    JS_ASSERT(cnt < JSObject::NELEMENTS_LIMIT);
+
+    size_t maxArraySlots =
+        gc::GetGCKindSlots(gc::FINALIZE_OBJECT_LAST) - ObjectElements::VALUES_PER_HEADER;
+
+    // Allocate space using the VMCall
+    // when mir hints it needs to get allocated immediatly,
+    // but only when data doesn't fit the available array slots.
+    bool allocating = isAllocating() && cnt > maxArraySlots;
+
+    return templateObject()->hasSingletonType() || allocating;
+}

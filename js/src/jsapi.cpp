@@ -677,32 +677,32 @@ static JSBool js_NewRuntimeWasCalled = JS_FALSE;
  * Thread Local Storage slot for storing the runtime for a thread.
  */
 namespace JS {
-mozilla::ThreadLocal<JSRuntime *> TlsRuntime;
+mozilla::ThreadLocal<PerThreadData *> TlsPerThreadData;
 
 #ifdef DEBUG
 JS_FRIEND_API(void)
 EnterAssertNoGCScope()
 {
-    ++TlsRuntime.get()->gcAssertNoGCDepth;
+    ++TlsPerThreadData.get()->gcAssertNoGCDepth;
 }
 
 JS_FRIEND_API(void)
 LeaveAssertNoGCScope()
 {
-    --TlsRuntime.get()->gcAssertNoGCDepth;
-    JS_ASSERT(TlsRuntime.get()->gcAssertNoGCDepth >= 0);
+    --TlsPerThreadData.get()->gcAssertNoGCDepth;
+    JS_ASSERT(TlsPerThreadData.get()->gcAssertNoGCDepth >= 0);
 }
 
 JS_FRIEND_API(bool)
 InNoGCScope()
 {
-    return TlsRuntime.get()->gcAssertNoGCDepth > 0;
+    return TlsPerThreadData.get()->gcAssertNoGCDepth > 0;
 }
 
 JS_FRIEND_API(bool)
 NeedRelaxedRootChecks()
 {
-    return TlsRuntime.get()->gcRelaxRootChecks;
+    return TlsPerThreadData.get()->gcRelaxRootChecks;
 }
 #else
 JS_FRIEND_API(void) EnterAssertNoGCScope() {}
@@ -714,6 +714,14 @@ JS_FRIEND_API(bool) NeedRelaxedRootChecks() { return false; }
 } /* namespace JS */
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
+
+JS::PerThreadData::PerThreadData(JSRuntime *runtime)
+    : runtime(runtime)
+#ifdef DEBUG
+    , gcRelaxRootChecks(false)
+    , gcAssertNoGCDepth(0)
+#endif
+{}
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
   : atomsCompartment(NULL),
@@ -788,10 +796,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcSliceBudget(SliceBudget::Unlimited),
     gcIncrementalEnabled(true),
     gcExactScanningEnabled(true),
-#ifdef DEBUG
-    gcRelaxRootChecks(false),
-    gcAssertNoGCDepth(0),
-#endif
     gcPoke(false),
     heapState(Idle),
 #ifdef JS_GC_ZEAL
@@ -863,6 +867,8 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     ionStackLimit(0),
     ionActivation(NULL),
     ionPcScriptCache(NULL),
+    threadPool(this),
+    mainThread(this),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     useHelperThreads_(useHelperThreads)
 {
@@ -886,7 +892,7 @@ JSRuntime::init(uint32_t maxbytes)
     ownerThread_ = PR_GetCurrentThread();
 #endif
 
-    JS::TlsRuntime.set(this);
+    JS::TlsPerThreadData.set(&mainThread);
 
 #ifdef JS_METHODJIT_SPEW
     JMCheckLogging();
@@ -931,6 +937,9 @@ JSRuntime::init(uint32_t maxbytes)
         return false;
 
     if (!scriptFilenameTable.init())
+        return false;
+
+    if (!threadPool.init())
         return false;
 
 #ifdef JS_THREADSAFE
@@ -1019,9 +1028,9 @@ JSRuntime::setOwnerThread()
     JS_ASSERT(ownerThread_ == (void *)0xc1ea12);  /* "clear" */
     JS_ASSERT(requestDepth == 0);
     JS_ASSERT(js_NewRuntimeWasCalled);
-    JS_ASSERT(JS::TlsRuntime.get() == NULL);
+    JS_ASSERT(JS::TlsPerThreadData.get() == NULL);
     ownerThread_ = PR_GetCurrentThread();
-    JS::TlsRuntime.set(this);
+    JS::TlsPerThreadData.set(&mainThread);
     nativeStackBase = GetNativeStackBase();
     if (nativeStackQuota)
         JS_SetNativeStackQuota(this, nativeStackQuota);
@@ -1034,7 +1043,7 @@ JSRuntime::clearOwnerThread()
     JS_ASSERT(requestDepth == 0);
     JS_ASSERT(js_NewRuntimeWasCalled);
     ownerThread_ = (void *)0xc1ea12;  /* "clear" */
-    JS::TlsRuntime.set(NULL);
+    JS::TlsPerThreadData.set(NULL);
     nativeStackBase = 0;
 #if JS_STACK_GROWTH_DIRECTION > 0
     nativeStackLimit = UINTPTR_MAX;
@@ -1048,7 +1057,7 @@ JSRuntime::abortIfWrongThread() const
 {
     if (ownerThread_ != PR_GetCurrentThread())
         MOZ_CRASH();
-    if (this != JS::TlsRuntime.get())
+    if (this != JS::TlsPerThreadData.get()->runtime)
         MOZ_CRASH();
 }
 
@@ -1056,7 +1065,7 @@ JS_FRIEND_API(void)
 JSRuntime::assertValidThread() const
 {
     JS_ASSERT(ownerThread_ == PR_GetCurrentThread());
-    JS_ASSERT(this == JS::TlsRuntime.get());
+    JS_ASSERT(this == JS::TlsPerThreadData.get()->runtime);
 }
 #endif  /* JS_THREADSAFE */
 
@@ -1093,7 +1102,7 @@ JS_NewRuntime(uint32_t maxbytes, JSUseHelperThreads useHelperThreads)
 
         InitMemorySubsystem();
 
-        if (!JS::TlsRuntime.init())
+        if (!JS::TlsPerThreadData.init())
             return NULL;
 
         js_NewRuntimeWasCalled = JS_TRUE;

@@ -998,18 +998,20 @@ class FastInvokeGuard
     InvokeArgsGuard args_;
     RootedFunction fun_;
     RootedScript script_;
+    CompileMode cmode_;
 #ifdef JS_ION
     ion::IonContext ictx_;
     bool useIon_;
 #endif
 
   public:
-    FastInvokeGuard(JSContext *cx, const Value &fval)
-      : fun_(cx),
-        script_(cx)
+    FastInvokeGuard(JSContext *cx, const Value &fval, CompileMode cmode)
+      : fun_(cx)
+      , script_(cx)
+      , cmode_(cmode)
 #ifdef JS_ION
-        , ictx_(cx, cx->compartment, NULL),
-        useIon_(ion::IsEnabled(cx))
+      , ictx_(cx, cx->compartment, NULL)
+      , useIon_(ion::IsEnabled(cx))
 #endif
     {
         initFunction(fval);
@@ -1034,11 +1036,11 @@ class FastInvokeGuard
         if (useIon_ && fun_) {
             JS_ASSERT(fun_->script() == script_);
 
-            ion::MethodStatus status = ion::CanEnterUsingFastInvoke(cx, script_);
+            ion::MethodStatus status = ion::CanEnterUsingFastInvoke(cx, script_, cmode_);
             if (status == ion::Method_Error)
                 return false;
             if (status == ion::Method_Compiled) {
-                ion::IonExecStatus result = ion::FastInvoke(cx, fun_, args_);
+                ion::IonExecStatus result = ion::FastInvoke(cx, fun_, args_, cmode_);
                 if (result == ion::IonExec_Error)
                     return false;
 
@@ -1048,7 +1050,7 @@ class FastInvokeGuard
 
             JS_ASSERT(status == ion::Method_Skipped);
 
-            if (script_->canIonCompile()) {
+            if (script_->canIonCompile(cmode_)) {
                 // This script is not yet hot. Since calling into Ion is much
                 // faster here, bump the use count a bit to account for this.
                 script_->incUseCount(5);

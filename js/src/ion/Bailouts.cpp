@@ -231,7 +231,9 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
 #ifdef DEBUG
     // Use count is reset after invalidation. Log use count on bailouts to
     // determine if we have a critical sequence of bailout.
-    if (it.script()->ion == it.ionScript()) {
+    //
+    // Note: frame conversion only occurs in sequential mode
+    if (it.script()->ions[COMPILE_MODE_SEQ] == it.ionScript()) {
         IonSpew(IonSpew_Bailouts, " Current script use count is %u",
                 it.script()->getUseCount());
     }
@@ -557,8 +559,9 @@ ion::ForceInvalidation()
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = GetBailedJSScript(cx);
 
-    JS_ASSERT(script->hasIonScript());
-    JS_ASSERT(!script->ion->invalidated());
+    // invalidation after bailout only occurs in seq mode
+    JS_ASSERT(script->hasIonScript(COMPILE_MODE_SEQ));
+    JS_ASSERT(!script->ionScript(COMPILE_MODE_SEQ)->invalidated());
 
     IonSpew(IonSpew_Invalidate, "Forced invalidation bailout");
 
@@ -571,13 +574,14 @@ ion::CachedShapeGuardFailure()
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = GetBailedJSScript(cx);
 
-    JS_ASSERT(script->hasIonScript());
-    JS_ASSERT(!script->ion->invalidated());
+    JS_ASSERT(script->hasIonScript(COMPILE_MODE_SEQ));
+    JS_ASSERT(!script->ionScript(COMPILE_MODE_SEQ)->invalidated());
 
     // Purge JM caches in the script and all inlined script, to avoid baking in
     // the same shape guard next time.
-    for (size_t i = 0; i < script->ion->scriptEntries(); i++)
-        mjit::PurgeCaches(script->ion->getScript(i));
+    IonScript *scriptIon = script->ionScript(COMPILE_MODE_SEQ);
+    for (size_t i = 0; i < scriptIon->scriptEntries(); i++)
+        mjit::PurgeCaches(scriptIon->getScript(i));
 
     IonSpew(IonSpew_Invalidate, "Invalidating due to shape guard failure");
 

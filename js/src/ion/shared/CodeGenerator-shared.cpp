@@ -20,6 +20,10 @@ namespace ion {
 
 CodeGeneratorShared::CodeGeneratorShared(MIRGenerator *gen, LIRGraph &graph)
   : oolIns(NULL),
+#   ifndef TRACE_PAR_BAILOUTS
+    oolParallelAbort(NULL),
+#   endif
+    parallelBailoutIndex(0),
     masm(&sps_),
     gen(gen),
     graph(graph),
@@ -492,6 +496,30 @@ CodeGeneratorShared::markArgumentSlots(LSafepoint *safepoint)
             return false;
     }
     return true;
+}
+
+bool
+CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
+{
+#   ifdef TRACE_PAR_BAILOUTS
+    OutOfLineParallelAbort *oolParallelAbort = NULL;
+#   endif
+
+    if (!oolParallelAbort) {
+        oolParallelAbort = new OutOfLineParallelAbort(
+            parallelBailoutIndex++);
+        if (!addOutOfLineCode(oolParallelAbort))
+            return false;
+    }
+
+    *result = oolParallelAbort->entry();
+    return true;
+}
+
+bool
+OutOfLineParallelAbort::generate(CodeGeneratorShared *codegen)
+{
+    return codegen->visitOutOfLineParallelAbort(this);
 }
 
 } // namespace ion

@@ -89,6 +89,20 @@ CompilerOutput::CompilerOutput()
     isIonFlag(false),
     constructing(false),
     barriers(false),
+    compileModeFlag(false),
+    chunkIndex(false)
+{
+}
+
+inline
+CompilerOutput::CompilerOutput(JSScript *script,
+                               bool isIonFlag,
+                               CompileMode compileMode)
+  : script(script),
+    isIonFlag(isIonFlag),
+    constructing(false),
+    barriers(false),
+    compileModeFlag((int) compileMode),
     chunkIndex(false)
 {
 }
@@ -108,7 +122,7 @@ inline ion::IonScript *
 CompilerOutput::ion() const
 {
     JS_ASSERT(isIon() && isValid());
-    return script->ionScript();
+    return script->ionScript(compileMode());
 }
 
 inline bool
@@ -133,13 +147,12 @@ CompilerOutput::isValid() const
         return true;
     }
 #endif
-
     if (isIon()) {
-        if (script->hasIonScript()) {
-            JS_ASSERT(this == script->ion->recompileInfo().compilerOutput(types));
+        if (script->hasIonScript(compileMode())) {
+            JS_ASSERT(this == script->ions[compileMode()]->recompileInfo().compilerOutput(types));
             return true;
         }
-        if (script->isIonCompilingOffThread())
+        if (script->isIonCompilingOffThread(compileMode()))
             return true;
         return false;
     }
@@ -386,10 +399,13 @@ struct AutoEnterCompilation
     };
     Compiler mode;
 
-    AutoEnterCompilation(JSContext *cx, Compiler mode)
+    CompileMode compileMode;
+
+    AutoEnterCompilation(JSContext *cx, Compiler mode, CompileMode compileMode)
       : cx(cx),
         info(cx->compartment->types.compiledInfo),
-        mode(mode)
+        mode(mode),
+        compileMode(compileMode)
     {
         JS_ASSERT(cx->compartment->activeAnalysis);
         JS_ASSERT(info.outputIndex == RecompileInfo::NoCompilerRunning);
@@ -403,6 +419,9 @@ struct AutoEnterCompilation
         co.constructing = constructing;
         co.barriers = cx->compartment->compileBarriers();
         co.chunkIndex = chunkIndex;
+
+        JS_ASSERT(COMPILE_MODE_MAX == 2); // otherwise the bool is insufficient
+        co.compileModeFlag = (int) compileMode;
 
         // This flag is used to prevent adding the current compiled script in
         // the list of compiler output which should be invalided.  This is
@@ -1584,7 +1603,8 @@ TypeObject::setFlagsFromKey(JSContext *cx, JSProtoKey key)
     switch (key) {
       case JSProto_Array:
         flags = OBJECT_FLAG_NON_TYPED_ARRAY
-              | OBJECT_FLAG_NON_DOM;
+              | OBJECT_FLAG_NON_DOM
+              | OBJECT_FLAG_NON_PARALLEL_ARRAY;
         break;
 
       case JSProto_Int8Array:
@@ -1598,6 +1618,14 @@ TypeObject::setFlagsFromKey(JSContext *cx, JSProtoKey key)
       case JSProto_Uint8ClampedArray:
         flags = OBJECT_FLAG_NON_DENSE_ARRAY
               | OBJECT_FLAG_NON_PACKED_ARRAY
+              | OBJECT_FLAG_NON_DOM
+              | OBJECT_FLAG_NON_PARALLEL_ARRAY;
+        break;
+
+      case JSProto_ParallelArray:
+        flags = OBJECT_FLAG_NON_DENSE_ARRAY
+              | OBJECT_FLAG_NON_PACKED_ARRAY
+              | OBJECT_FLAG_NON_TYPED_ARRAY
               | OBJECT_FLAG_NON_DOM;
         break;
 
@@ -1605,7 +1633,8 @@ TypeObject::setFlagsFromKey(JSContext *cx, JSProtoKey key)
         flags = OBJECT_FLAG_NON_DENSE_ARRAY
               | OBJECT_FLAG_NON_PACKED_ARRAY
               | OBJECT_FLAG_NON_TYPED_ARRAY
-              | OBJECT_FLAG_NON_DOM;
+              | OBJECT_FLAG_NON_DOM
+              | OBJECT_FLAG_NON_PARALLEL_ARRAY;
         break;
     }
 
@@ -1648,22 +1677,31 @@ TypeObject::readBarrier(TypeObject *type)
 }
 
 inline void
-TypeNewScript::writeBarrierPre(TypeNewScript *newScript)
+TypeConstruction::writeBarrierPre(TypeConstruction *construct)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!newScript)
+    if (!construct)
         return;
 
-    JSCompartment *comp = newScript->fun->compartment();
-    if (comp->needsBarrier()) {
-        MarkObject(comp->barrierTracer(), &newScript->fun, "write barrier");
-        MarkShape(comp->barrierTracer(), &newScript->shape, "write barrier");
+    JSCompartment *comp;
+
+    if (construct->isNewScript()) {
+        comp = construct->fun->compartment();
+        if (comp->needsBarrier()) {
+            MarkObject(comp->barrierTracer(), &construct->fun, "write barrier");
+            MarkShape(comp->barrierTracer(), &construct->shape, "write barrier");
+        }
+    } else if (construct->isParallelArray() && construct->rowType) {
+        comp = construct->rowType->compartment();
+        if (comp->needsBarrier())
+            MarkTypeObject(comp->barrierTracer(), &construct->rowType, "write barrier");
+        return;
     }
 #endif
 }
 
 inline void
-TypeNewScript::writeBarrierPost(TypeNewScript *newScript, void *addr)
+TypeConstruction::writeBarrierPost(TypeConstruction *construct, void *addr)
 {
 }
 

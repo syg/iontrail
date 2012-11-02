@@ -551,6 +551,15 @@ class MAryInstruction : public MInstruction
 class MNullaryInstruction : public MAryInstruction<0>
 { };
 
+class MUnaryInstruction : public MAryInstruction<1>
+{
+  protected:
+    MUnaryInstruction(MDefinition *ins)
+    {
+        initOperand(0, ins);
+    }
+};
+
 // Generates an LSnapshot without further effect.
 class MStart : public MNullaryInstruction
 {
@@ -969,6 +978,10 @@ class MNewArray : public MNullaryInstruction
         return allocating_ == NewArray_Allocating;
     }
 
+    // Returns true if the code generator should call through to the
+    // VM rather than the fast path.
+    bool shouldUseVM() const;
+
     // NewArray is marked as non-effectful because all our allocations are
     // either lazy when we are using "new Array(length)" or bounded by the
     // script or the stack size when we are using "new Array(...)" or "[...]"
@@ -997,10 +1010,40 @@ class MNewObject : public MNullaryInstruction
         return new MNewObject(templateObject);
     }
 
+    // Returns true if the code generator should call through to the
+    // VM rather than the fast path.
+    bool shouldUseVM() const;
+
     JSObject *templateObject() const {
         return templateObject_;
     }
 };
+
+// Could be allocating either a new array or a new object.
+class MParNew : public MUnaryInstruction
+{
+    CompilerRootObject templateObject_;
+
+  public:
+    INSTRUCTION_HEADER(ParNew);
+
+    MParNew(MDefinition *threadContext,
+            JSObject *templateObject)
+      : MUnaryInstruction(threadContext),
+        templateObject_(templateObject)
+    {
+        setResultType(MIRType_Object);
+    }
+
+    MDefinition *threadContext() const {
+        return getOperand(0);
+    }
+
+    JSObject *templateObject() const {
+        return templateObject_;
+    }
+};
+
 
 // Slow path for adding a property to an object without a known base.
 class MInitProp
@@ -1206,15 +1249,6 @@ class MApplyArgs
 
     TypePolicy *typePolicy() {
         return this;
-    }
-};
-
-class MUnaryInstruction : public MAryInstruction<1>
-{
-  protected:
-    MUnaryInstruction(MDefinition *ins)
-    {
-        initOperand(0, ins);
     }
 };
 
@@ -2890,6 +2924,45 @@ class MCheckOverRecursed : public MNullaryInstruction
 {
   public:
     INSTRUCTION_HEADER(CheckOverRecursed);
+};
+
+// Check the current frame for over-recursion past the global stack limit.
+// Uses the per-thread recursion limit.
+class MParCheckOverRecursed : public MUnaryInstruction
+{
+  public:
+    INSTRUCTION_HEADER(ParCheckOverRecursed);
+
+    MParCheckOverRecursed(MDefinition *parThreadContext)
+      : MUnaryInstruction(parThreadContext)
+    {
+        setResultType(MIRType_None);
+        setGuard();
+        setMovable();
+    }
+
+    MDefinition *threadContext() const {
+        return getOperand(0);
+    }
+};
+
+// Check for an interrupt (or rendezvous) in parallel mode.
+class MParCheckInterrupt : public MUnaryInstruction
+{
+  public:
+    INSTRUCTION_HEADER(ParCheckInterrupt);
+
+    MParCheckInterrupt(MDefinition *parThreadContext)
+      : MUnaryInstruction(parThreadContext)
+    {
+        setResultType(MIRType_None);
+        setGuard();
+        setMovable();
+    }
+
+    MDefinition *threadContext() const {
+        return getOperand(0);
+    }
 };
 
 // Check the script's use count and trigger recompilation to inline
@@ -4630,6 +4703,27 @@ class MFunctionEnvironment
     }
 };
 
+// Load's the current js::ThreadContext*.
+// Only applicable in COMPILE_MODE_PAR.
+class MParThreadContext
+  : public MNullaryInstruction
+{
+  public:
+    MParThreadContext()
+        : MNullaryInstruction()
+    {
+        setResultType(MIRType_ThreadContext);
+    }
+
+    INSTRUCTION_HEADER(ParThreadContext);
+
+    AliasSet getAliasSet() const {
+        // Indicate that this instruction reads nothing, stores nothing.
+        // (For all intents and purposes)
+        return AliasSet::None();
+    }
+};
+
 // Store to vp[slot] (slots that are not inline in an object).
 class MStoreSlot
   : public MBinaryInstruction,
@@ -5300,6 +5394,38 @@ class MGetArgument
    }
 };
 
+class MParWriteGuard : public MBinaryInstruction
+{
+    MParWriteGuard(MDefinition *parThreadContext,
+                     MDefinition *obj)
+      : MBinaryInstruction(parThreadContext, obj)
+    {
+        setResultType(MIRType_None);
+        setGuard();
+        setMovable();
+    }
+
+  public:
+    INSTRUCTION_HEADER(ParWriteGuard);
+
+    static MParWriteGuard *New(MDefinition *parThreadContext, MDefinition *obj) {
+        return new MParWriteGuard(parThreadContext, obj);
+    }
+    MDefinition *threadContext() const {
+        return getOperand(0);
+    }
+    MDefinition *object() const {
+        return getOperand(1);
+    }
+    BailoutKind bailoutKind() const {
+        return Bailout_Invalidate;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+
 // Given a value, guard that the value is in a particular TypeSet, then returns
 // that value.
 class MTypeBarrier : public MUnaryInstruction
@@ -5456,6 +5582,24 @@ class MNewStringObject :
 
     TypePolicy *typePolicy() {
         return this;
+    }
+};
+
+// Debug node: dumps an id to stderr.
+class MTrace : public MNullaryInstruction
+{
+private:
+    unsigned id_;
+
+public:
+    INSTRUCTION_HEADER(Trace);
+
+    MTrace(unsigned id)
+        : id_(id)
+    {}
+
+    uint32_t id() {
+        return id_;
     }
 };
 

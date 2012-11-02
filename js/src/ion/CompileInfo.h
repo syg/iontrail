@@ -21,8 +21,10 @@ CountArgSlots(JSFunction *fun)
 class CompileInfo
 {
   public:
-    CompileInfo(JSScript *script, JSFunction *fun, jsbytecode *osrPc, bool constructing)
-      : script_(script), fun_(fun), osrPc_(osrPc), constructing_(constructing)
+    CompileInfo(JSScript *script, JSFunction *fun, jsbytecode *osrPc, bool constructing,
+                CompileMode compileMode)
+      : script_(script), fun_(fun), osrPc_(osrPc), constructing_(constructing),
+        compileMode_(compileMode)
     {
         JS_ASSERT_IF(osrPc, JSOp(*osrPc) == JSOP_LOOPENTRY);
         nslots_ = script->nslots + CountArgSlots(fun);
@@ -133,12 +135,21 @@ class CompileInfo
         return script()->argumentsHasVarBinding();
     }
 
+    CompileMode compileMode() const {
+        return compileMode_;
+    }
+
+    bool isParallelCompilation() const {
+        return compileMode_ == COMPILE_MODE_PAR;
+    }
+
   private:
     JSScript *script_;
     JSFunction *fun_;
     unsigned nslots_;
     jsbytecode *osrPc_;
     bool constructing_;
+    CompileMode compileMode_;
 };
 
 } // namespace ion

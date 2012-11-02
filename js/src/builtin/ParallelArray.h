@@ -11,6 +11,9 @@
 #include "jsapi.h"
 #include "jscntxt.h"
 #include "jsobj.h"
+#include "jsinfer.h"
+#include "jsthreadpool.h"
+#include "jstaskset.h"
 
 namespace js {
 
@@ -86,21 +89,25 @@ class ParallelArrayObject : public JSObject {
 
     struct IndexInfo {
         // Vector of indices. Should be large enough to hold up to
-        // dimensions.length indices.
+        // dimensions.length() indices.
         IndexVector indices;
 
         // Vector of dimensions of the ParallelArray object that the indices
         // are meant to index into.
         IndexVector dimensions;
 
-        // Cached partial products of the dimensions defined by the following
-        // recurrence:
+        // Cached partial products of the dimensions up to the packed
+        // dimension, d, defined by the following recurrence:
         //
         //   partialProducts[n] =
-        //     1                                      if n == |dimensions|
+        //     1                                      if n == d
         //     dimensions[n+1] * partialProducts[n+1] otherwise
         //
         // These are used for computing scalar offsets.
+        //
+        // This vector may be shorter than the dimensions vector, as these are
+        // only computed for the dimensions that we represent packed. That is,
+        // the first partialProducts.length() dimensions are packed.
         IndexVector partialProducts;
 
         IndexInfo(JSContext *cx)
@@ -109,13 +116,15 @@ class ParallelArrayObject : public JSObject {
 
         // Prepares indices and computes partial products. The space argument
         // is the index space. The indices vector is resized to be of length
-        // space.
+        // space. The d argument is how many dimensions are packed. Partial
+        // products are only computed for packed dimensions.
         //
-        // The dimensions vector must be filled already, and space must be <=
-        // dimensions.length().
-        inline bool initialize(uint32_t space);
+        // The dimensions vector must be filled already, and space and d must
+        // be <= dimensions.length().
+        inline bool initialize(uint32_t space, uint32_t d);
 
-        // Load dimensions from a source, then initialize as above.
+        // Load dimensions and the number of packed dimensions from a source,
+        // then initialize as above.
         inline bool initialize(JSContext *cx, HandleParallelArrayObject source,
                                uint32_t space);
 
@@ -123,15 +132,34 @@ class ParallelArrayObject : public JSObject {
         // the increment would go out of bounds.
         inline bool bump();
 
-        // Get the scalar length according to the dimensions vector, i.e. the
-        // product of the dimensions vector.
-        inline uint32_t scalarLengthOfDimensions();
+        // Return how many packed dimensions there are, i.e. the length of the
+        // partialProducts vector.
+        inline uint32_t packedDimensions();
 
-        // Compute the scalar index from the current index vector.
+        // Get the scalar length according to the partial products vector,
+        // i.e. the product of the dimensions vector for the packed
+        // dimensions.
+        inline uint32_t scalarLengthOfPackedDimensions();
+
+        // Compute the scalar index from the current index vector up to the
+        // packed dimension.
         inline uint32_t toScalar();
 
-        // Set the index vector according to a scalar index.
+        // Set the index vector up to the packed dimension according to a
+        // scalar index.
         inline bool fromScalar(uint32_t index);
+
+        // Split on partialProducts.length(), storing the tail of the split
+        // into siv and initializing it with sd dimensions packed.
+        //
+        // This is used when addressing an element that crosses packed
+        // dimension boundaries. That is, suppose a ParallelArray has D
+        // logical dimensions and P packed dimensions, addressing an element
+        // using N indices where P < N < D crosses the packed dimensions
+        // boundary. In this case we first need to get the leaf value
+        // according to the packed dimensions in the current array, then recur
+        // on the sub-array.
+        inline bool split(IndexInfo &siv, uint32_t sd);
 
         inline bool inBounds() const;
         bool isInitialized() const;
@@ -145,14 +173,17 @@ class ParallelArrayObject : public JSObject {
     static inline ParallelArrayObject *as(JSObject *obj);
 
     inline JSObject *dimensionArray();
+    inline uint32_t packedDimensions();
     inline JSObject *buffer();
     inline uint32_t bufferOffset();
     inline uint32_t outermostDimension();
     inline bool isOneDimensional();
+    inline bool isPackedOneDimensional();
     inline bool getDimensions(JSContext *cx, IndexVector &dims);
 
     // The general case; requires an initialized IndexInfo.
-    bool getParallelArrayElement(JSContext *cx, IndexInfo &iv, MutableHandleValue vp);
+    static bool getParallelArrayElement(JSContext *cx, HandleParallelArrayObject pa,
+                                        IndexInfo &iv, MutableHandleValue vp);
 
     // Get the element at index in the outermost dimension. This is a
     // convenience function designed to require an IndexInfo only if it is
@@ -162,15 +193,18 @@ class ParallelArrayObject : public JSObject {
     // an IndexInfo initialized to length 1, which is used to access the
     // array. This argument is modified. If the parallel array is
     // one-dimensional, then maybeIV may be null.
-    bool getParallelArrayElement(JSContext *cx, uint32_t index, IndexInfo *maybeIV,
-                                 MutableHandleValue vp);
+    static bool getParallelArrayElement(JSContext *cx, HandleParallelArrayObject pa,
+                                        uint32_t index, IndexInfo *maybeIV,
+                                        MutableHandleValue vp);
 
     // Get the element at index in the outermost dimension. This is a
     // convenience function that initializes a temporary
     // IndexInfo if the parallel array is multidimensional.
-    bool getParallelArrayElement(JSContext *cx, uint32_t index, MutableHandleValue vp);
+    static bool getParallelArrayElement(JSContext *cx, HandleParallelArrayObject pa,
+                                        uint32_t index, MutableHandleValue vp);
 
-    bool toStringBuffer(JSContext *cx, bool useLocale, StringBuffer &sb);
+    static bool toStringBuffer(JSContext *cx, HandleParallelArrayObject pa,
+                               bool useLocale, StringBuffer &sb);
 
     // Note that this is not an object op but called directly from the
     // iteration code, as we enumerate prototypes ourselves.
@@ -184,7 +218,17 @@ class ParallelArrayObject : public JSObject {
         // "dimensions" here.
         SLOT_DIMENSIONS = 0,
 
+        // The physical dimensions of this array is the part that we represent
+        // in a packed fashion instead of as rows of pointers to other
+        // parallel arrays. This is always a prefix of the logical dimensions
+        // (the slot above), so we only store the number of dimensions we
+        // represent packed here.
+        SLOT_PACKED_PREFIX_LENGTH,
+
         // Underlying dense array.
+        //
+        // Note that we do not attach TI information to the underlying
+        // array. All type information is on the ParallelArray object.
         SLOT_BUFFER,
 
         // First index of the underlying buffer to be considered in bounds.
@@ -194,8 +238,16 @@ class ParallelArrayObject : public JSObject {
     };
 
     enum ExecutionStatus {
-        ExecutionFailed = 0,
-        ExecutionCompiled,
+        // For some reason not eligible for parallel exec, use seq fallback
+        ExecutionDisqualified = 0,
+
+        // Parallel execution went off the safe path, use seq fallback
+        ExecutionBailout,
+
+        // Parallel or seq execution terminated in a fatal way, operation failed
+        ExecutionFatal,
+
+        // Parallel or seq op was successful
         ExecutionSucceeded
     };
 
@@ -206,42 +258,56 @@ class ParallelArrayObject : public JSObject {
     // Even though the base class |ExecutionMode| is purely abstract, we only
     // use dynamic dispatch when using the debug options. Almost always we
     // directly call the member function on one of the statics.
+    //
+    // XXX: The macros underneath are clunky, largely because warnings
+    // regarding empty macro arguments are still enabled. We should like to
+    // write:
+    //
+    //   #define DECLARE_ALL_OPS(QUALIFIERS, EXTRAS...)
+    //       QUALIFIERS ExecutionStatus op(args, ##EXTRAS);
+    //
+    // And call it either like DECLARE_ALL_OPS() or DECLARE_ALL_OPS(virtual)
+    // or DECLARE_ALL_OPS(virtual, uint32_t limit). But unused macro arguments
+    // makes gcc warn gratuitously.
 
 #define JS_PA_build_ARGS               \
     JSContext *cx,                     \
+    HandleParallelArrayObject result,  \
     IndexInfo &iv,                     \
-    HandleObject elementalFun,         \
-    HandleObject buffer
+    HandleObject elementalFun
 
 #define JS_PA_map_ARGS                 \
     JSContext *cx,                     \
     HandleParallelArrayObject source,  \
-    HandleObject elementalFun,         \
-    HandleObject buffer
+    HandleParallelArrayObject result,  \
+    HandleObject elementalFun
 
 #define JS_PA_reduce_ARGS              \
     JSContext *cx,                     \
     HandleParallelArrayObject source,  \
+    HandleParallelArrayObject result,  \
     HandleObject elementalFun,         \
-    HandleObject buffer,               \
     MutableHandleValue vp
 
 #define JS_PA_scatter_ARGS             \
     JSContext *cx,                     \
     HandleParallelArrayObject source,  \
+    HandleParallelArrayObject result,  \
     HandleObject targets,              \
-    const Value &defaultValue,         \
-    HandleObject conflictFun,          \
-    HandleObject buffer
+    HandleValue defaultValue,          \
+    HandleObject conflictFun
 
 #define JS_PA_filter_ARGS              \
     JSContext *cx,                     \
     HandleParallelArrayObject source,  \
-    HandleObject filters,              \
-    HandleObject buffer
+    HandleParallelArrayObject result,  \
+    HandleObject filters
 
 #define JS_PA_DECLARE_OP(NAME) \
     ExecutionStatus NAME(JS_PA_ ## NAME ## _ARGS)
+
+#define JS_PA_DECLARE_CUSTOM_OP1(NAME, BASE, EXTRA1) \
+    ExecutionStatus NAME(JS_PA_ ## BASE ## _ARGS, EXTRA1)
 
 #define JS_PA_DECLARE_ALL_OPS          \
     JS_PA_DECLARE_OP(build);           \
@@ -249,6 +315,13 @@ class ParallelArrayObject : public JSObject {
     JS_PA_DECLARE_OP(reduce);          \
     JS_PA_DECLARE_OP(scatter);         \
     JS_PA_DECLARE_OP(filter);
+
+#define JS_PA_DECLARE_ALL_CUSTOM_OPS1(SUFFIX, EXTRA1)             \
+    JS_PA_DECLARE_CUSTOM_OP1(build ## SUFFIX, build, EXTRA1);     \
+    JS_PA_DECLARE_CUSTOM_OP1(map ## SUFFIX, map, EXTRA1);         \
+    JS_PA_DECLARE_CUSTOM_OP1(reduce ## SUFFIX, reduce, EXTRA1);   \
+    JS_PA_DECLARE_CUSTOM_OP1(scatter ## SUFFIX, scatter, EXTRA1); \
+    JS_PA_DECLARE_CUSTOM_OP1(filter ## SUFFIX, filter, EXTRA1);
 
     class ExecutionMode {
       public:
@@ -269,7 +342,7 @@ class ParallelArrayObject : public JSObject {
         // Filter elements according to a truthy array.
         virtual JS_PA_DECLARE_OP(filter) = 0;
 
-        virtual const char *toString() = 0;
+        virtual const char *toString() const = 0;
     };
 
     // Fallback means try parallel first, and if unable to execute in
@@ -277,24 +350,43 @@ class ParallelArrayObject : public JSObject {
     class FallbackMode : public ExecutionMode {
       public:
         JS_PA_DECLARE_ALL_OPS
-        const char *toString() { return "fallback"; }
+        const char *toString() const { return "fallback"; }
+        bool shouldTrySequential(ExecutionStatus parStatus);
     };
 
     class ParallelMode : public ExecutionMode {
       public:
         JS_PA_DECLARE_ALL_OPS
-        const char *toString() { return "parallel"; }
+        const char *toString() const { return "parallel"; }
     };
 
-    class SequentialMode : public ExecutionMode {
+    // Implementation shared by both sequential and warmup modes. If
+    // writeElems is false, the operations are a "dry run" and do not write
+    // anything to the buffer. These operations perform up to a limit, thus
+    // the UpTo suffix. SequentialMode calls these up to the entire size of
+    // the array, but warmup usually calls these up to a much smaller number
+    // of iterations.
+    class BaseSequentialMode : public ExecutionMode {
+      protected:
+        JS_PA_DECLARE_ALL_CUSTOM_OPS1(UpTo, uint32_t limit)
+    };
+
+    class SequentialMode : public BaseSequentialMode {
       public:
         JS_PA_DECLARE_ALL_OPS
-        const char *toString() { return "sequential"; }
+        const char *toString() const { return "sequential"; }
+    };
+
+    class WarmupMode : public BaseSequentialMode {
+      public:
+        JS_PA_DECLARE_ALL_OPS
+        const char *toString() const { return "warmup"; }
     };
 
     static SequentialMode sequential;
     static ParallelMode parallel;
     static FallbackMode fallback;
+    static WarmupMode warmup;
 
 #undef JS_PA_build_ARGS
 #undef JS_PA_map_ARGS
@@ -302,22 +394,41 @@ class ParallelArrayObject : public JSObject {
 #undef JS_PA_scatter_ARGS
 #undef JS_PA_filter_ARGS
 #undef JS_PA_DECLARE_OP
+#undef JS_PA_DECLARE_CUSTOM_OP1
 #undef JS_PA_DECLARE_ALL_OPS
 
+    enum SpewChannel {
+        SpewOps,
+        SpewTypes,
+        NumSpewChannels
+    };
+
 #ifdef DEBUG
-    // Debug options can be passed in as an extra argument to the
+    // Assert options can be passed in as an extra argument to the
     // operations. The grammar is:
     //
     //   options ::= { mode: "par" | "seq",
-    //                 expect: "fail" | "bail" | "success" }
-    struct DebugOptions {
+    //                 expect: "fatal" | "disqualified" | "bail" | "success" }
+    struct AssertOptions {
         ExecutionMode *mode;
         ExecutionStatus expect;
-        bool init(JSContext *cx, const Value &v);
+        bool init(JSContext *cx, HandleValue v);
         bool check(JSContext *cx, ExecutionStatus actual);
     };
 
     static const char *ExecutionStatusToString(ExecutionStatus ss);
+
+    static bool IsSpewActive(SpewChannel channel);
+    static void Spew(JSContext *cx, SpewChannel channel, const char *fmt, ...);
+    static void SpewWarmup(JSContext *cx, const char *op, uint32_t limit);
+    static void SpewExecution(JSContext *cx, const char *op, const ExecutionMode &mode,
+                              ExecutionStatus status);
+#else
+    static bool IsSpewActive(SpewChannel channel) { return false; }
+    static void Spew(JSContext *cx, SpewChannel channel, const char *fmt, ...) {}
+    static void SpewWarmup(JSContext *cx, const char *op, uint32_t limit) {}
+    static void SpewExecution(JSContext *cx, const char *op, const ExecutionMode &mode,
+                              ExecutionStatus status) {}
 #endif
 
     static JSFunctionSpec methods[];
@@ -326,10 +437,48 @@ class ParallelArrayObject : public JSObject {
     static inline bool DenseArrayToIndexVector(JSContext *cx, HandleObject obj,
                                                IndexVector &indices);
 
-    static bool create(JSContext *cx, MutableHandleValue vp);
-    static bool create(JSContext *cx, HandleObject buffer, MutableHandleValue vp);
-    static bool create(JSContext *cx, HandleObject buffer, uint32_t offset,
-                       const IndexVector &dims, MutableHandleValue vp);
+    // Return the PACKED_PREFIX_LENGTH slot without asserts. This is used for
+    // while the object is in an interim state, that is, before finish is
+    // called and it escapes to script.
+    inline uint32_t packedDimensionsUnsafe();
+
+    // Get the type of an interior view on a packed multidimensional
+    // array. The d argument specifies the d-th interior dimension, and must
+    // be <= the number of packed dimensions. For example, the 0th interior
+    // dimension is the outer ParallelArray object itself.
+    types::TypeObject *maybeGetRowType(JSContext *cx, uint32_t d);
+
+    // Get a leaf value according to a scalar index. Rewraps ParallelArray
+    // leaves as necessary.
+    inline bool getLeaf(JSContext *cx, uint32_t index, MutableHandleValue vp);
+
+    // Create a ParallelArray object. Note that finish must be called before
+    // the instance escapes to script.
+    static ParallelArrayObject *create(JSContext *cx, uint32_t length, uint32_t npacked = 1);
+    static ParallelArrayObject *create(JSContext *cx, HandleObject buffer, uint32_t offset,
+                                       uint32_t npacked, bool newType = true);
+
+    // Finish creation: determine logical dimensions and set the dimensions
+    // and packed prefix slots. This needs to be called before the object
+    // escapes to script.
+    //
+    // If not given an IndexInfo, a temporary 1-dimensional IndexInfo base on
+    // the current length of the buffer is used.
+    static bool finish(JSContext *cx, HandleParallelArrayObject pa, MutableHandleValue vp);
+    static bool finish(JSContext *cx, HandleParallelArrayObject pa, IndexInfo &iv,
+                       MutableHandleValue vp);
+    static bool setDimensionsSlot(JSContext *cx, HandleParallelArrayObject pa,
+                                  const IndexVector &dims);
+
+    // Ensure that the TypeConstruction information is correct: if we have a
+    // construct and it is uninitialized, initialize it with our
+    // dimensions. If we already have a construct, ensure that it has the same
+    // dimensions, and if not, clear it.
+    bool initializeOrClearTypeConstruction(JSContext *cx, const IndexVector &dims);
+
+    // Clone an object, sharing the same backing store and shape array.
+    ParallelArrayObject *clone(JSContext *cx);
+
     static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
 
     static bool map(JSContext *cx, CallArgs args);
@@ -372,6 +521,8 @@ class ParallelArrayObject : public JSObject {
                               HandlePropertyName name, MutableHandleValue vp);
     static JSBool getElement(JSContext *cx, HandleObject obj, HandleObject receiver,
                              uint32_t index, MutableHandleValue vp);
+    static JSBool getElementIfPresent(JSContext *cx, HandleObject obj, HandleObject receiver,
+                                      uint32_t index, MutableHandleValue vp, bool *present);
     static JSBool getSpecial(JSContext *cx, HandleObject obj, HandleObject receiver,
                              HandleSpecialId sid, MutableHandleValue vp);
     static JSBool setGeneric(JSContext *cx, HandleObject obj, HandleId id,
@@ -380,8 +531,6 @@ class ParallelArrayObject : public JSObject {
                               MutableHandleValue vp, JSBool strict);
     static JSBool setElement(JSContext *cx, HandleObject obj, uint32_t index,
                              MutableHandleValue vp, JSBool strict);
-    static JSBool getElementIfPresent(JSContext *cx, HandleObject obj, HandleObject receiver,
-                                      uint32_t index, MutableHandleValue vp, bool *present);
     static JSBool setSpecial(JSContext *cx, HandleObject obj, HandleSpecialId sid,
                              MutableHandleValue vp, JSBool strict);
     static JSBool getGenericAttributes(JSContext *cx, HandleObject obj, HandleId id,
@@ -408,6 +557,300 @@ class ParallelArrayObject : public JSObject {
                                 MutableHandleValue rval, JSBool strict);
     static JSBool deleteSpecial(JSContext *cx, HandleObject obj, HandleSpecialId sid,
                                 MutableHandleValue rval, JSBool strict);
+
+    //////////////////////////////////////////////////////////////////////////
+    // Parallel execution
+    //////////////////////////////////////////////////////////////////////////
+    //
+    // The ParallelArrayTaskSet embodies the main logic for running
+    // any parallel operation.  It is parameterized by two types,
+    // OpDefn and Op.  OpDefn corresponds to the state for a
+    // particular operation that is shared between all threads.  The
+    // OpDefn instance is created by the method (e.g.,
+    // ParallelMode::map()) for the operation.  The Op class
+    // corresponds the per-thread state.  It will be instantiated and
+    // initialized once per worker.  The final template parameter,
+    // MaxArgc, indicates how large of an argc vector we should
+    // statically allocate.  The operation does not have to use the
+    // entire thing; the OpDefn returns a value (argc) for the actual
+    // number of arguments (sometimes it varies depending on the
+    // number of dimensions and so forth).  The ParallelArrayTaskSet
+    // will check that argc is less than MaxArgc and abort otherwise.
+
+    static ExecutionStatus ToExecutionStatus(JSContext *cx,
+                                             const char *opName,
+                                             ParallelResult pr);
+
+    template<typename OpDefn, uint32_t MaxArgc>
+    class ParallelArrayTaskSet : public TaskSet {
+    private:
+        JSContext *cx_;
+        OpDefn &opDefn_;
+        HandleObject elementalFun_;
+        HandleParallelArrayObject result_;
+
+    public:
+        ParallelArrayTaskSet(JSContext *cx,
+                             OpDefn &opDefn,
+                             HandleObject elementalFun,
+                             HandleParallelArrayObject result)
+            : cx_(cx)
+            , opDefn_(opDefn)
+            , elementalFun_(elementalFun)
+            , result_(result)
+        {}
+
+        ~ParallelArrayTaskSet();
+
+        ExecutionStatus apply();
+
+        bool compileForParallelExecution();
+
+        virtual bool pre(size_t numThreads);
+        virtual bool parallel(ThreadContext &taskSetCx);
+        virtual bool post(size_t numThreads);
+    };
+
+    struct ExecuteArgs;
+
+    // A base class for |OpDefns| that will apply to each member of the result
+    // vector.  The associated |Op| type should be |ApplyToEach<OpDefn,
+    // PerElemOp>|.  Here |OpDefn| is a subtype of |ApplyToEachOpDefn| and
+    // |PerElemOp| defines the code to apply per-element. An example would be
+    // |MapOpDefn| and |MapOp|.
+    //
+    // The type supplied |PerElemOp| must |init()| (which is called once) and
+    // |initializeArgv()| (which is called per element).
+    class ApplyToEachOpDefn {
+    public:
+        JSContext *cx;
+        HandleParallelArrayObject result;
+
+        // the type set of the buffer
+        types::TypeSet *typeSet;
+
+        ApplyToEachOpDefn(JSContext *cx,
+                          HandleParallelArrayObject result)
+            : cx(cx), result(result)
+        {}
+
+        bool pre(size_t numThreads, RootedTypeObject &resultType);
+    };
+
+    template<typename OpDefn>
+    class ApplyToEachOp {
+    protected:
+        OpDefn &opDefn_;
+
+    public:
+        ApplyToEachOp(OpDefn &opDefn);
+        bool execute(ExecuteArgs &args);
+    };
+
+    class MapOp;
+    class MapOpDefn : public ApplyToEachOpDefn {
+    public:
+        typedef MapOp Op;
+
+        HandleParallelArrayObject source;
+        HandleObject elementalFun;
+
+        MapOpDefn(JSContext *cx,
+                  HandleParallelArrayObject source,
+                  HandleParallelArrayObject result,
+                  HandleObject elementalFun)
+            : ApplyToEachOpDefn(cx, result),
+              source(source),
+              elementalFun(elementalFun)
+        {}
+
+        unsigned length() {
+            // Number of elements to process.
+            return source->outermostDimension();
+        }
+
+        uint32_t argc() {
+            // Number of arguments, *including* this.
+            return 4;
+        }
+
+        const char *toString() {
+            // For debugging.
+            return "map";
+        }
+
+        bool doWarmup();
+        bool pre(size_t numThreads);
+    };
+
+    class MapOp : public ApplyToEachOp<MapOpDefn> {
+    private:
+        HandleParallelArrayObject source;
+        RootedValue elem;
+
+    public:
+        MapOp(MapOpDefn &opDefn, size_t threadId, size_t numThreads);
+        bool init();
+        bool initializeArgv(Value *argv, unsigned i);
+    };
+
+    class BuildOp;
+    class BuildOpDefn : public ApplyToEachOpDefn {
+    public:
+        typedef BuildOp Op;
+
+        IndexInfo &iv;
+        HandleObject elementalFun;
+
+        BuildOpDefn(JSContext *cx,
+                    HandleParallelArrayObject result,
+                    IndexInfo &iv,
+                    HandleObject elementalFun)
+            : ApplyToEachOpDefn(cx, result),
+              iv(iv),
+              elementalFun(elementalFun)
+        {}
+
+        unsigned length() {
+            // See MapOpDefn::length()
+            return iv.scalarLengthOfPackedDimensions();
+        }
+
+        uint32_t argc() {
+            // See MapOpDefn::argc()
+            return iv.packedDimensions() + 1;
+        }
+
+        const char *toString() {
+            // See MapOpDefn::toString()
+            return "build";
+        }
+
+        bool doWarmup();
+        bool pre(size_t numThreads);
+    };
+
+    class BuildOp : public ApplyToEachOp<BuildOpDefn> {
+    private:
+        IndexInfo iv;
+
+    public:
+        BuildOp(BuildOpDefn &opDefn, size_t threadId,
+                size_t numThreads);
+        bool init();
+        bool initializeArgv(Value *argv, unsigned i);
+    };
+
+    class ReduceOp;
+    class ReduceOpDefn {
+    public:
+        typedef ReduceOp Op;
+
+        JSContext *cx;
+        HandleParallelArrayObject source;
+        HandleObject elementalFun;
+        AutoValueVector results;
+
+        ReduceOpDefn(JSContext *cx,
+                     HandleParallelArrayObject source,
+                     HandleObject elementalFun)
+            : cx(cx),
+              source(source),
+              elementalFun(elementalFun),
+              results(cx)
+        {}
+
+        unsigned length() {
+            // Number of elements to process.
+            return source->outermostDimension();
+        }
+
+        uint32_t argc() {
+            // Number of arguments, *including* this.
+            return 3;
+        }
+
+        const char *toString() {
+            // For debugging.
+            return "reduce";
+        }
+
+        bool doWarmup();
+        bool pre(size_t numThreads);
+        ExecutionStatus post(MutableHandleValue vp);
+    };
+
+    class ReduceOp {
+    private:
+        ReduceOpDefn &opDefn_;
+    public:
+        ReduceOp(ReduceOpDefn &opDefn, size_t threadId,
+                 size_t numThreads);
+        bool init();
+        bool execute(ExecuteArgs &args);
+    };
+
+    typedef Vector<uint32_t, 32> CountVector;
+
+    class FilterCountTaskSet : public js::TaskSet {
+    private:
+        JSContext *cx_;
+        HandleParallelArrayObject source_;
+        HandleObject filter_; // always a dense array of len >= source
+        uint32_t filterBase_;
+        CountVector counts_;
+
+    public:
+        FilterCountTaskSet(JSContext *cx,
+                           HandleParallelArrayObject source,
+                           HandleObject filter,
+                           uint32_t filterBase)
+            : cx_(cx)
+            , source_(source)
+            , filter_(filter)
+            , filterBase_(filterBase)
+            , counts_(cx)
+        {}
+
+        ~FilterCountTaskSet() {}
+
+        const CountVector &counts() { return counts_; }
+
+        virtual bool pre(size_t numThreads);
+        virtual bool parallel(ThreadContext &taskSetCx);
+        virtual bool post(size_t numThreads);
+    };
+
+    class FilterCopyTaskSet : public js::TaskSet {
+    private:
+        JSContext *cx_;
+        HandleParallelArrayObject source_;
+        HandleObject filter_; // always a dense array of len >= source
+        uint32_t filterBase_;
+        const CountVector &counts_;
+        HandleObject resultBuffer_;
+
+    public:
+        FilterCopyTaskSet(JSContext *cx,
+                          HandleParallelArrayObject source,
+                          HandleObject filter,
+                          uint32_t filterBase,
+                          const CountVector &counts,
+                          HandleObject resultBuffer)
+            : cx_(cx)
+            , source_(source)
+            , filter_(filter)
+            , filterBase_(filterBase)
+            , counts_(counts)
+            , resultBuffer_(resultBuffer)
+        {}
+
+        ~FilterCopyTaskSet() {}
+
+        virtual bool pre(size_t numThreads);
+        virtual bool parallel(ThreadContext &taskSetCx);
+        virtual bool post(size_t numThreads);
+    };
 };
 
 } // namespace js

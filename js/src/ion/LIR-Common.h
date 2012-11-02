@@ -266,6 +266,52 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
+class LParNew : public LInstructionHelper<1, 1, 4>
+{
+  public:
+    LIR_HEADER(ParNew);
+
+    LParNew(const LAllocation &parThreadContext,
+            const LDefinition &temp1,
+            const LDefinition &temp2,
+            const LDefinition &temp3,
+            const LDefinition &temp4) {
+        setOperand(0, parThreadContext);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+        setTemp(2, temp3);
+        setTemp(3, temp4);
+    }
+
+    MParNew *mir() const {
+        return mir_->toParNew();
+    }
+
+    bool isCall() const {
+        return true;
+    }
+
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+
+    const LAllocation *getTemp0() {
+        return getTemp(0)->output();
+    }
+
+    const LAllocation *getTemp1() {
+        return getTemp(1)->output();
+    }
+
+    const LAllocation *getTemp2() {
+        return getTemp(2)->output();
+    }
+
+    const LAllocation *getTemp3() {
+        return getTemp(2)->output();
+    }
+};
+
 // Allocates a new CallObject. The inputs are:
 //      slots: either a reg representing a HeapSlot *, or a placeholder
 //             meaning that no slots pointer is needed.
@@ -349,6 +395,48 @@ class LCheckOverRecursed : public LInstructionHelper<0, 0, 1>
 
     const LAllocation *limitTemp() {
         return getTemp(0)->output();
+    }
+};
+
+class LParCheckOverRecursed : public LInstructionHelper<0, 1, 1>
+{
+  public:
+    LIR_HEADER(ParCheckOverRecursed);
+
+    LParCheckOverRecursed(const LAllocation &parThreadContext,
+                          const LDefinition &tempReg)
+    {
+        setOperand(0, parThreadContext);
+        setTemp(0, tempReg);
+    }
+
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+
+    const LDefinition *getTempReg() {
+        return getTemp(0);
+    }
+};
+
+class LParCheckInterrupt : public LCallInstructionHelper<0, 1, 1>
+{
+  public:
+    LIR_HEADER(ParCheckInterrupt);
+
+    LParCheckInterrupt(const LAllocation &parThreadContext,
+                       const LDefinition &tempReg)
+    {
+        setOperand(0, parThreadContext);
+        setTemp(0, tempReg);
+    }
+
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+
+    const LDefinition *getTempReg() {
+        return getTemp(0);
     }
 };
 
@@ -2725,6 +2813,20 @@ class LFunctionEnvironment : public LInstructionHelper<1, 1, 0>
     }
 };
 
+class LParThreadContext : public LCallInstructionHelper<1, 0, 1>
+{
+  public:
+    LIR_HEADER(ParThreadContext);
+
+    LParThreadContext(const LDefinition &temp1) {
+        setTemp(0, temp1);
+    }
+
+    const LAllocation *getTempReg() {
+        return getTemp(0)->output();
+    }
+};
+
 class LCallGetProperty : public LCallInstructionHelper<BOX_PIECES, BOX_PIECES, 0>
 {
   public:
@@ -2970,6 +3072,36 @@ class LGetArgument : public LInstructionHelper<BOX_PIECES, 1, 0>
     }
 };
 
+class LParWriteGuard : public LCallInstructionHelper<0, 2, 1>
+{
+  public:
+    LIR_HEADER(ParWriteGuard);
+
+    LParWriteGuard(const LAllocation &parThreadContext,
+                   const LAllocation &object,
+                   const LDefinition &temp1) {
+        setOperand(0, parThreadContext);
+        setOperand(1, object);
+        setTemp(0, temp1);
+    }
+
+    bool isCall() const {
+        return true;
+    }
+
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+
+    const LAllocation *object() {
+        return getOperand(1);
+    }
+
+    const LAllocation *getTempReg() {
+        return getTemp(0)->output();
+    }
+};
+
 // Guard that a value is in a TypeSet.
 class LTypeBarrier : public LInstructionHelper<BOX_PIECES, BOX_PIECES, 1>
 {
@@ -3175,6 +3307,23 @@ class LFunctionBoundary : public LInstructionHelper<0, 0, 1>
     }
 };
 
+class LTrace : public LInstructionHelper<0, 0, 2>
+{
+public:
+    LIR_HEADER(Trace);
+
+    LTrace(const LDefinition &temp1) {
+        setTemp(0, temp1);
+    }
+
+    const LDefinition *temp1() {
+        return getTemp(0);
+    }
+
+    uint32_t id() {
+        return mir_->toTrace()->id();
+    }
+};
 
 } // namespace ion
 } // namespace js

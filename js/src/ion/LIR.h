@@ -530,6 +530,8 @@ class LDefinition
             return LDefinition::GENERAL;
           case MIRType_StackFrame:
             return LDefinition::GENERAL;
+          case MIRType_ThreadContext:
+            return LDefinition::GENERAL;
           default:
             JS_NOT_REACHED("unexpected type");
             return LDefinition::GENERAL;
@@ -730,9 +732,6 @@ class LBlock : public TempObject
     }
     LInstructionIterator begin() {
         return instructions_.begin();
-    }
-    LInstructionIterator begin(LInstruction *at) {
-        return instructions_.begin(at);
     }
     LInstructionIterator end() {
         return instructions_.end();

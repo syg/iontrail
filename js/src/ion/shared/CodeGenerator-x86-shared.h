@@ -122,6 +122,7 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     bool visitOutOfLineBailout(OutOfLineBailout *ool);
     bool visitMulNegativeZeroCheck(MulNegativeZeroCheck *ool);
     bool visitOutOfLineTruncate(OutOfLineTruncate *ool);
+    bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool);
     bool generateInvalidateEpilogue();
 };
 

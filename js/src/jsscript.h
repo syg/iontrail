@@ -546,24 +546,37 @@ struct JSScript : public js::gc::Cell
         return needsArgsObj() && !strictModeCode;
     }
 
-    js::ion::IonScript *ion;          /* Information attached by Ion */
+    /* Information attached by Ion: there is (potentially) one script per mode */
+    js::ion::IonScript *ions[js::COMPILE_MODE_MAX];
 
 #if defined(JS_METHODJIT) && JS_BITS_PER_WORD == 32
     void *padding_;
 #endif
 
-    bool hasIonScript() const {
-        return ion && ion != ION_DISABLED_SCRIPT && ion != ION_COMPILING_SCRIPT;
+
+    bool hasAnyIonScript() const {
+        for (EACH_COMPILE_MODE(cmode)) {
+            if (ions[cmode] &&
+                ions[cmode] != ION_DISABLED_SCRIPT &&
+                ions[cmode] != ION_COMPILING_SCRIPT)
+            {
+                return true;
+            }
+        }
+        return false;
     }
-    bool canIonCompile() const {
-        return ion != ION_DISABLED_SCRIPT;
+    bool hasIonScript(js::CompileMode compileMode) const {
+        return ions[compileMode] && ions[compileMode] != ION_DISABLED_SCRIPT;
     }
-    bool isIonCompilingOffThread() const {
-        return ion == ION_COMPILING_SCRIPT;
+    bool canIonCompile(js::CompileMode compileMode) const {
+        return ions[compileMode] != ION_DISABLED_SCRIPT;
     }
-    js::ion::IonScript *ionScript() const {
-        JS_ASSERT(hasIonScript());
-        return ion;
+    bool isIonCompilingOffThread(js::CompileMode compileMode) const {
+        return ions[compileMode] == ION_COMPILING_SCRIPT;
+    }
+    js::ion::IonScript *ionScript(js::CompileMode compileMode) const {
+        JS_ASSERT(hasIonScript(compileMode));
+        return ions[compileMode];
     }
 
     /*

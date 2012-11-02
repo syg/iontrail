@@ -35,18 +35,35 @@ function assertEqParallelArray(a, b) {
   } while (bump(iv));
 }
 
-function assertParallelArrayModesCommute(modes, pa, op) {
-  var args = Array.slice(arguments, 3);
-  var acc;
-  modes.forEach(function (mode) {
-    var result = op.apply(pa, args.concat([{ mode: mode, expect: "success" }]));
-    if (acc) {
-      if (acc instanceof ParallelArray)
-        assertEqParallelArray(acc, result);
-      else
-        assertEq(acc, result);
-    } else {
-      acc = result;
+function assertParallelArrayModesEq(modes, acc, opFunction) {
+    modes.forEach(function (mode) {
+        var result = opFunction({ mode: mode, expect: "success" });
+        if (acc instanceof ParallelArray)
+            assertEqParallelArray(acc, result);
+        else
+            assertEq(acc, result);
+    });
+}
+
+function assertParallelArrayModesCommute(modes, opFunction) {
+    var acc = opFunction({ mode: modes[0], expect: "success" });
+    assertParallelArrayModesEq(modes.slice(1), acc, opFunction);
+}
+
+function comparePerformance(opts) {
+    var measurements = [];
+    for (var i = 0; i < opts.length; i++) {
+        var start = new Date();
+        opts[i].func();
+        var end = new Date();
+        var diff = (end.getTime() - start.getTime());
+        measurements.push(diff);
+        print("Option " + opts[i].name + " took " + diff + "ms");
     }
-  });
+
+    for (var i = 1; i < opts.length; i++) {
+        var rel = (measurements[i] - measurements[0]) * 100 / measurements[0];
+        print("Option " + opts[i].name + " relative to option " +
+              opts[0].name + ": " + (rel|0) + "%");
+    }
 }

@@ -131,7 +131,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
         // fully recovered, so we try to mitigate observing this behavior by
         // detecting its use early.
         RawScript script = iter.script();
-        if (!script->hasIonScript())
+        if (!script->hasAnyIonScript())
             ion::ForbidCompilation(cx, script);
 #endif
 

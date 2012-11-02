@@ -238,6 +238,10 @@ IonCompartment::generateInvalidator(JSContext *cx)
 IonCode *
 IonCompartment::generateArgumentsRectifier(JSContext *cx)
 {
+    // Note: for now, we do not support function calls in parallel code,
+    // so this implies sequential mode
+    const CompileMode compileMode = COMPILE_MODE_SEQ;
+
     // Do not erase the frame pointer in this function.
 
     MacroAssembler masm(cx);
@@ -303,7 +307,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     // Call the target function.
     // Note that this code assumes the function is JITted.
     masm.movq(Operand(rax, offsetof(JSFunction, u.i.script_)), rax);
-    masm.movq(Operand(rax, offsetof(JSScript, ion)), rax);
+    masm.movq(Operand(rax, offsetof(JSScript, ions[compileMode])), rax);
     masm.movq(Operand(rax, IonScript::offsetOfMethod()), rax);
     masm.movq(Operand(rax, IonCode::offsetOfCode()), rax);
     masm.call(rax);

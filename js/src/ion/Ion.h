@@ -18,6 +18,7 @@ namespace js {
 namespace ion {
 
 class TempAllocator;
+class ParallelCompilationContext; // in ParallelArrayAnalysis.h
 
 struct IonOptions
 {
@@ -226,7 +227,9 @@ bool SetIonContext(IonContext *ctx);
 MethodStatus CanEnterAtBranch(JSContext *cx, HandleScript script,
                               StackFrame *fp, jsbytecode *pc);
 MethodStatus CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType);
-MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script);
+MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, CompileMode cmode);
+MethodStatus CanEnterParallelArrayKernel(JSContext *cx, HandleFunction fun,
+                                         ParallelCompilationContext &compileContext);
 
 enum IonExecStatus
 {
@@ -239,7 +242,8 @@ IonExecStatus Cannon(JSContext *cx, StackFrame *fp);
 IonExecStatus SideCannon(JSContext *cx, StackFrame *fp, jsbytecode *pc);
 
 // Used to enter Ion from C++ natives like Array.map. Called from FastInvokeGuard.
-IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgsList &args);
+IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgsList &args,
+                         CompileMode cmode);
 
 // Walk the stack and invalidate active Ion frames for the invalid scripts.
 void Invalidate(types::TypeCompartment &types, FreeOp *fop,

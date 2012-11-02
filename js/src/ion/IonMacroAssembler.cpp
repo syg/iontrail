@@ -475,7 +475,8 @@ MacroAssembler::performOsr()
     const Register ionScript = regs.takeAny();
     const Register osrEntry = regs.takeAny();
 
-    loadPtr(Address(script, offsetof(JSScript, ion)), ionScript);
+    // For the time being, OSR is only possible in sequential execution
+    loadPtr(Address(script, offsetof(JSScript, ions[COMPILE_MODE_SEQ])), ionScript);
     load32(Address(ionScript, IonScript::offsetOfOsrEntryOffset()), osrEntry);
 
     // Get ionScript->method->code, and scoot to the osrEntry.

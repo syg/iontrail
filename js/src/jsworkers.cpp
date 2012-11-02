@@ -292,7 +292,7 @@ WorkerThread::threadLoop()
 
         ionBuilder = state.ionWorklist.popCopy();
 
-        JS_ASSERT(ionBuilder->script()->ion == ION_COMPILING_SCRIPT);
+        JS_ASSERT(ionBuilder->script()->ions[ionBuilder->info().compileMode()] == ION_COMPILING_SCRIPT);
 
         state.unlock();
 

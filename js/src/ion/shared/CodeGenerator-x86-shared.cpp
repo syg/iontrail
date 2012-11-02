@@ -13,6 +13,7 @@
 #include "ion/IonFrames.h"
 #include "ion/MoveEmitter.h"
 #include "ion/IonCompartment.h"
+#include "ion/ParFunctions.h"
 
 using namespace js;
 using namespace js::ion;
@@ -340,6 +341,26 @@ class BailoutLabel {
 template <typename T> bool
 CodeGeneratorX86Shared::bailout(const T &binder, LSnapshot *snapshot)
 {
+    // There has got to be an easier way!
+    CompileInfo &info = snapshot->mir()->block()->info();
+    switch (info.compileMode()) {
+      case COMPILE_MODE_PAR: {
+        // in parallel mode, make no attempt to recover, just signal an error.
+        Label *ool;
+        if (!ensureOutOfLineParallelAbort(&ool))
+            return false;
+        binder(masm, ool);
+        return true;
+      }
+
+      case COMPILE_MODE_SEQ:
+        break;
+
+      case COMPILE_MODE_MAX:
+        JS_ASSERT(false);
+        break;
+    }
+
     if (!encode(snapshot))
         return false;
 
@@ -1307,6 +1328,21 @@ CodeGeneratorX86Shared::visitOutOfLineTruncate(OutOfLineTruncate *ool)
     }
 
     masm.jump(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGeneratorX86Shared::visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool)
+{
+#   ifdef TRACE_PAR_BAILOUTS
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.mov(Imm32(ool->index), CallTempReg0);
+    masm.passABIArg(CallTempReg0);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParBailout));
+#   endif
+
+    masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
+    masm.jump(returnLabel_);
     return true;
 }
 
