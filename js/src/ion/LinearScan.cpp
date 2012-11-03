@@ -460,7 +460,7 @@ IsTraceable(VirtualRegister *reg)
 static inline bool
 NextInstructionHasFixedUses(LBlock *block, LInstruction *ins)
 {
-    LInstructionIterator iter(block->begin());
+    LInstructionIterator iter(block->begin(ins));
     iter++;
     for (LInstruction::InputIterator alloc(**iter); alloc.more(); alloc.next()) {
         if (alloc->isUse() && alloc->toUse()->isFixedRegister())
