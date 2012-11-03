@@ -354,7 +354,7 @@ class FillArrayTaskSet : public ArrayTaskSet
         args.setThis(UndefinedValue());
 
         args[0].setObject(*buffer_);
-        args[1].setInt32(1);
+        args[1].setInt32(0);
         args[2].setInt32(numThreads);
 
         return fig.invoke(cx_);
@@ -368,7 +368,7 @@ class FillArrayTaskSet : public ArrayTaskSet
         uint32_t initlen = buffer_->getDenseArrayInitializedLength();
 
         JSObject::EnsureDenseResult result = JSObject::ED_SPARSE;
-        result = buffer_->ensureDenseArrayElements(cx_, initlen, length);
+        result = buffer_->ensureDenseArrayElements(cx_, initlen, length - initlen);
         if (result != JSObject::ED_OK)
             return false;
 
