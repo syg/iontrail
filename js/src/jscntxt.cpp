@@ -323,6 +323,78 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
+intrinsic_SetNonBuiltinCallerInitObjectType(JSContext *cx, unsigned argc, Value *vp)
+{
+    // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+    //
+    // The argument **cannot be used** after this function returns. Doing so
+    // will cause infer crashes.
+    //
+    // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+    //
+    // This is a _slow_ function to key the type of an object to the pc of the
+    // nearest non-builtin script. This is needed when we would like an
+    // allocated object in builtin code to really have the context of the user
+    // code in terms of type information.
+    //
+    // For example, for a function like Array.prototype.map, which allocates a
+    // new Array, it would be too imprecise if all newly allocated arrays from
+    // the function, ever, had the same TypeObject.
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() >= 1);
+    JS_ASSERT(args[0].isObject());
+    RootedObject obj(cx, &args[0].toObject());
+
+    if (!cx->typeInferenceEnabled()) {
+        args.rval().setObject(*obj);
+        return true;
+    }
+
+    NonBuiltinScriptFrameIter iter(cx);
+    if (iter.done()) {
+        args.rval().setObject(*obj);
+        return true;
+    }
+
+    JSProtoKey key = GetClassProtoKey(obj->getClass());
+    RootedScript script(cx, iter.script());
+    RootedTypeObject newtype(cx, types::TypeScript::InitObject(cx, script, iter.pc(), key));
+    if (!newtype)
+        return false;
+    obj->setType(newtype);
+
+    args.rval().setObject(*obj);
+    return true;
+}
+
+static JSBool
+intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+#ifndef JS_THREADSAFE_ION
+    args.rval().setUndefined();
+#else
+    ThreadPool *threadPool = &cx->runtime->threadPool;
+    RootedObject info(cx, NewBuiltinClassInstance(cx, &ObjectClass));
+    if (!info)
+        return false;
+
+    RootedAtom atom(cx);
+    RootedValue val(cx);
+
+    atom = Atomize(cx, "numWorkers", strlen("numWorkers"));
+    if (!atom)
+        return false;
+    val = Int32Value(threadPool->numWorkers());
+    if (!JSObject::defineProperty(cx, info, atom->asPropertyName(), val))
+        return false;
+
+    args.rval().setObject(*info);
+#endif
+    return true;
+}
+
+static JSBool
 intrinsic_ParallelFillArray(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -350,8 +422,11 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
-    JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
     JS_FN("ParallelFillArray",  intrinsic_ParallelFillArray,    2,0),
+
+    JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
+    JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
+    JS_FN("_SetNonBuiltinCallerInitObjectType", intrinsic_SetNonBuiltinCallerInitObjectType, 1,0),
     JS_FS_END
 };
 
@@ -372,6 +447,7 @@ JSRuntime::initSelfHosting(JSContext *cx)
     CompileOptions options(cx);
     options.setFileAndLine("self-hosted", 1);
     options.setSelfHostingMode(true);
+    options.setVersion(JSVERSION_LATEST);
 
     /*
      * Set a temporary error reporter printing to stderr because it is too
