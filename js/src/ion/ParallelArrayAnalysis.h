@@ -68,13 +68,7 @@ public:
         return COMPILE_MODE_PAR;
     }
 
-    bool canUnsafelyWrite(MDefinition *obj) {
-        // By convention, allow the buffer argument of self-hosted parallel
-        // code to be written to, unsafely, without a guard.
-        return (selfHosted_ &&
-                obj->isParameter() &&
-                obj->toParameter()->index() == bufferIndex_);
-    }
+    bool canUnsafelyWrite(MInstruction *write, MDefinition *obj);
 
     bool addInvokedFunction(JSFunction *func);
 

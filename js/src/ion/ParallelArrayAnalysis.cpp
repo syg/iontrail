@@ -213,6 +213,20 @@ ParallelCompilationContext::compileFunctionAndInvokedFunctions(HandleFunction fu
 }
 
 bool
+ParallelCompilationContext::canUnsafelyWrite(MInstruction *write, MDefinition *obj)
+{
+    // By convention, allow the elements of the buffer argument of
+    // self-hosted parallel code to be stored to, unsafely, without a
+    // guard.
+    if (!write->isStoreElement() && !write->isStoreElementHole())
+        return false;
+
+    return (selfHosted_ &&
+            obj->isParameter() &&
+            obj->toParameter()->index() == bufferIndex_);
+}
+
+bool
 ParallelCompilationContext::addInvokedFunction(JSFunction *fun)
 {
     JS_ASSERT(fun->isInterpreted());
@@ -430,8 +444,27 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
           IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
           return true;
       case MDefinition::Op_Parameter:
-        if (compileContext_.canUnsafelyWrite(object)) {
+        if (compileContext_.canUnsafelyWrite(writeInstruction, object)) {
+            // XXX: Super gross hack. We know the buffer in self-hosted code
+            // is initialized up to length, so we won't ever write to a hole.
             IonSpew(IonSpew_ParallelArray, "Write to buffer in self-hosted code does not require guard");
+
+            MStoreElement *store;
+            if (writeInstruction->isStoreElementHole()) {
+                IonSpew(IonSpew_ParallelArray, "Unholing already-unsafe buffer write");
+                MStoreElementHole *storeHole = writeInstruction->toStoreElementHole();
+                store = MStoreElement::New(storeHole->elements(), storeHole->index(),
+                                           storeHole->value());
+                replace(writeInstruction, store);
+            } else {
+                store = writeInstruction->toStoreElement();
+            }
+
+            // Since we initialize with the JS_ARRAY_HOLE, we also have to not
+            // emit typed stores that don't write the tag, so reset
+            // elementType to MIRType_Value.
+            store->setElementType(MIRType_Value);
+
             return true;
         }
       break;

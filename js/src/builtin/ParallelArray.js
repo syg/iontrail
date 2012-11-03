@@ -1,8 +1,10 @@
+// TODO: Use let over var when Ion compiles let.
+
 function ParallelArrayConstruct(buffer) {
   if (arguments.length === 0)
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
 
-  let buffer = %ToObject(buffer);
+  var buffer = %ToObject(buffer);
   // TODO: How do we check for Array-like?
   if (buffer.length >>> 0 !== buffer.length)
     %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
@@ -13,30 +15,30 @@ function ParallelArrayConstruct(buffer) {
   %_SetNonBuiltinCallerInitObjectType(this);
 }
 
-%_MakeConstructible(ParallelArray);
-
 function ComputeTileBounds(len, id, n) {
-  let slice = (len / n) | 0;
-  let start = slice * id;
-  let end = id === n - 1 ? len : slice * (id + 1);
+  var slice = (len / n) | 0;
+  var start = slice * id;
+  var end = id === n - 1 ? len : slice * (id + 1);
   return [start, end];
 }
 
 function ParallelArrayMap(f) {
-  function fill(buffer, id, n) {
-    let [start, end] = ComputeTileBounds(buffer.length, id, n);
-    buffer[0] = start;
-    buffer[1] = end;
+  // Allocate a new buffer and set it the same length as the source.
+  var source = this.buffer;
+  var result = %_SetNonBuiltinCallerInitObjectType([]);
+  result.length = source.length;
+
+  // Per-thread worker.
+  function fill(result, id, n) {
+    var [start, end] = ComputeTileBounds(result.length, id, n);
+    for (var i = start; i < end; i++)
+      result[i] = f(source[i]);
   }
 
-  let buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  buffer.length = 40;
+  if (!%ParallelFillArray(result, fill)) {
+    for (var i = 0; i < source.length; i++)
+      result[i] = f(source[i]);
+    }
 
-  if (!%ParallelFillArray(buffer, fill)) {
-    let v = this.buffer;
-    for (let i = 0; i < buffer.length; i++)
-      buffer[i] = f(v[i]);
-  }
-
-  return new global.ParallelArray(buffer);
+  return new global.ParallelArray(result);
 }
