@@ -1817,13 +1817,14 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register tempReg4 = ToRegister(lir->getTemp3());
     Register objReg = ToRegister(lir->output());
 
+    masm.mov(ImmWord(gen->compartment), tempReg1);
+    masm.move32(Imm32(ool->allocKind), tempReg2);
+    masm.move32(Imm32(ool->thingSize), tempReg3);
+
     masm.setupUnalignedABICall(4, tempReg4);
     masm.passABIArg(threadContextReg);
-    masm.mov(ImmWord(gen->compartment), tempReg1);
     masm.passABIArg(tempReg1);
-    masm.move32(Imm32(ool->allocKind), tempReg2);
     masm.passABIArg(tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg3);
     masm.passABIArg(tempReg3);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
     JS_ASSERT(objReg == ReturnReg);
