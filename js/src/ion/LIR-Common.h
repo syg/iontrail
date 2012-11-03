@@ -308,7 +308,7 @@ class LParNew : public LInstructionHelper<1, 1, 4>
     }
 
     const LAllocation *getTemp3() {
-        return getTemp(2)->output();
+        return getTemp(3)->output();
     }
 };
 

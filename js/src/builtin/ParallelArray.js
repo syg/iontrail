@@ -18,7 +18,7 @@ function ParallelArrayConstruct(buffer) {
 function ComputeTileBounds(len, id, n) {
   let slice = (len / n) | 0;
   let start = slice * id;
-  let end = id === n - 1 ? lend : slice * (id + 1);
+  let end = id === n - 1 ? len : slice * (id + 1);
   return [start, end];
 }
 

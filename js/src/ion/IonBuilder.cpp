@@ -956,6 +956,16 @@ IonBuilder::inspectOpcode(JSOp op)
         return jsop_getname(name);
       }
 
+      case JSOP_INTRINSICNAME:
+      case JSOP_CALLINTRINSIC:
+      {
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedValue vp(cx, UndefinedValue());
+        if (!cx->global().get()->getIntrinsicValue(cx, name, &vp))
+            return false;
+        return pushConstant(vp);
+      }
+
       case JSOP_BINDNAME:
         return jsop_bindname(info().getName(pc));
 
