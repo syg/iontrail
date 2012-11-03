@@ -266,7 +266,7 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LParNew : public LInstructionHelper<1, 1, 4>
+class LParNew : public LCallInstructionHelper<1, 1, 4>
 {
   public:
     LIR_HEADER(ParNew);
@@ -285,10 +285,6 @@ class LParNew : public LInstructionHelper<1, 1, 4>
 
     MParNew *mir() const {
         return mir_->toParNew();
-    }
-
-    bool isCall() const {
-        return true;
     }
 
     const LAllocation *threadContext() {
