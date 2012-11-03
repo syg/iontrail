@@ -1,4 +1,4 @@
-function ParallelArray(buffer) {
+function ParallelArrayConstruct(buffer) {
   if (arguments.length === 0)
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
 
@@ -9,15 +9,34 @@ function ParallelArray(buffer) {
 
   // TODO: Private names.
   this.buffer = buffer;
+
+  %_SetNonBuiltinCallerInitObjectType(this);
 }
 
 %_MakeConstructible(ParallelArray);
 
+function ComputeTileBounds(len, id, n) {
+  let slice = (len / n) | 0;
+  let start = slice * id;
+  let end = id === n - 1 ? lend : slice * (id + 1);
+  return [start, end];
+}
+
 function ParallelArrayMap(f) {
+  function fill(buffer, id, n) {
+    let [start, end] = ComputeTileBounds(buffer.length, id, n);
+    buffer[0] = start;
+    buffer[1] = end;
+  }
+
   let buffer = %_SetNonBuiltinCallerInitObjectType([]);
   buffer.length = 40;
-  return %ParallelFillArray(buffer, function (buffer, id, n) {
-    let slice = (buffer.length / n) | 0;
-    buffer[slice * id] = id;
-  });
+
+  if (!%ParallelFillArray(buffer, fill)) {
+    let v = this.buffer;
+    for (let i = 0; i < buffer.length; i++)
+      buffer[i] = f(v[i]);
+  }
+
+  return new global.ParallelArray(buffer);
 }

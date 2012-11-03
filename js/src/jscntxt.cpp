@@ -60,6 +60,7 @@
 #include "jscntxtinlines.h"
 #include "jscompartment.h"
 #include "jsobjinlines.h"
+#include "jsinferinlines.h"
 
 #include "selfhosted.out.h"
 
@@ -356,12 +357,9 @@ intrinsic_SetNonBuiltinCallerInitObjectType(JSContext *cx, unsigned argc, Value 
         return true;
     }
 
-    JSProtoKey key = GetClassProtoKey(obj->getClass());
     RootedScript script(cx, iter.script());
-    RootedTypeObject newtype(cx, types::TypeScript::InitObject(cx, script, iter.pc(), key));
-    if (!newtype)
+    if (!types::SetInitializerObjectType(cx, script, iter.pc(), obj))
         return false;
-    obj->setType(newtype);
 
     args.rval().setObject(*obj);
     return true;

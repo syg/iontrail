@@ -426,6 +426,37 @@ Class ParallelArrayObject::class_ = {
     JS_ConvertStub
 };
 
+JSBool
+ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
+{
+    RootedFunction ctor(cx, cx->runtime->getSelfHostedFunction(cx, "ParallelArrayConstruct"));
+    if (!ctor)
+        return false;
+
+    CallArgs args0 = CallArgsFromVp(argc, vp);
+    FastInvokeGuard fig(cx, ObjectValue(*ctor), COMPILE_MODE_SEQ);
+    InvokeArgsGuard &args = fig.args();
+
+    RootedObject result(cx, NewBuiltinClassInstance(cx, &class_));
+    if (!result)
+        return false;
+
+    if (!cx->stack.pushInvokeArgs(cx, 1, &args))
+        return false;
+
+    args.setCallee(ObjectValue(*ctor));
+    args.setThis(ObjectValue(*result));
+
+    for (uint32_t i = 0; i < args0.length(); i++)
+        args[i] = args0[i];
+
+    if (!fig.invoke(cx))
+        return false;
+
+    args0.rval().setObject(*result);
+    return true;
+}
+
 JSObject *
 ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
 {
@@ -438,7 +469,8 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
         return NULL;
 
     JSProtoKey key = JSProto_ParallelArray;
-    RootedFunction ctor(cx, cx->runtime->getSelfHostedFunction(cx, "ParallelArray"));
+    RootedFunction ctor(cx, global->createConstructor(cx, construct,
+                                                      cx->names().ParallelArray, 0));
     if (!ctor ||
         !LinkConstructorAndPrototype(cx, ctor, proto) ||
         !DefinePropertiesAndBrand(cx, proto, NULL, methods) ||
@@ -448,6 +480,12 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
     }
 
     return proto;
+}
+
+bool
+ParallelArrayObject::is(const Value &v)
+{
+    return v.isObject() && v.toObject().hasClass(&class_);
 }
 
 JSObject *
