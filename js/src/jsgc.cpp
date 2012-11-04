@@ -1001,7 +1001,6 @@ MarkExactStackRoots(JSTracer *trc)
             MarkExactStackRooters(trc, cx->thingGCRooters[i], ThingRootKind(i));
         }
         MarkExactStackRooters(trc, rt->mainThread.thingGCRooters[i], ThingRootKind(i));
-        MarkExactStackRooters(trc, rt->thingGCRooters[i], ThingRootKind(i));
     }
 }
 #endif /* JSGC_USE_EXACT_ROOTING */
@@ -1135,7 +1134,7 @@ MarkIfGCThingWord(JSTracer *trc, uintptr_t w)
 #ifdef DEBUG
     if (trc->runtime->gcIncrementalState == MARK_ROOTS)
         trc->runtime->mainThread.gcSavedRoots.append(
-            JS::PerThreadData::SavedGCRoot(thing, traceKind));
+            js::PerThreadData::SavedGCRoot(thing, traceKind));
 #endif
 
     return CGCT_VALID;
@@ -1196,7 +1195,7 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
 
 #ifdef DEBUG
     if (useSavedRoots) {
-        for (JS::PerThreadData::SavedGCRoot *root = rt->mainThread.gcSavedRoots.begin();
+        for (js::PerThreadData::SavedGCRoot *root = rt->mainThread.gcSavedRoots.begin();
              root != rt->mainThread.gcSavedRoots.end();
              root++)
         {
@@ -4936,7 +4935,6 @@ CheckStackRoot(JSTracer *trc, uintptr_t *w)
         bool matched = false;
         JSRuntime *rt = trc->runtime;
         for (unsigned i = 0; i < THING_ROOT_LIMIT; i++) {
-            CheckStackRootThings(w, rt->thingGCRooters[i], ThingRootKind(i), &matched);
             CheckStackRootThings(w, rt->mainThread.thingGCRooters[i],
                                  ThingRootKind(i), &matched);
             for (ContextIter cx(rt); !cx.done(); cx.next()) {

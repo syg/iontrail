@@ -34,7 +34,7 @@ namespace gc { struct ArenaLists; }
 struct ThreadContext
 {
 public:
-    JS::PerThreadData *perThreadData;
+    js::PerThreadData *perThreadData;
     const size_t threadId;
     const size_t numThreads;
     uintptr_t ionStackLimit;
@@ -43,7 +43,7 @@ public:
     // See |js::ion::ParFunctions::ParNewGCThing()|.
     gc::ArenaLists *const arenaLists;
 
-    ThreadContext(JS::PerThreadData *perThreadData, size_t threadId, size_t numThreads,
+    ThreadContext(js::PerThreadData *perThreadData, size_t threadId, size_t numThreads,
                   uintptr_t stackLimit, js::gc::ArenaLists *arenaLists,
                   TaskSetSharedContext *shared);
 

@@ -66,7 +66,7 @@ class TaskSetSharedContext
 
     // Executes slice #threadId of the work, either from a worker or
     // the main thread.
-    void executePortion(JS::PerThreadData *perThread, size_t threadId, uintptr_t stackLimit);
+    void executePortion(js::PerThreadData *perThread, size_t threadId, uintptr_t stackLimit);
 
     // Rendezvous protocol:
     //
@@ -289,10 +289,10 @@ TaskSetSharedContext::executeFromWorker(size_t workerId, uintptr_t stackLimit)
 {
     JS_ASSERT(workerId < numThreads_ - 1);
 
-    JS::PerThreadData thisThread(cx_->runtime);
-    JS::TlsPerThreadData.set(&thisThread);
+    js::PerThreadData thisThread(cx_->runtime);
+    js::TlsPerThreadData.set(&thisThread);
     executePortion(&thisThread, workerId, stackLimit);
-    JS::TlsPerThreadData.set(NULL);
+    js::TlsPerThreadData.set(NULL);
 
     AutoLockMonitor lock(*this);
     uncompleted_ -= 1;
@@ -311,7 +311,7 @@ TaskSetSharedContext::executeFromMainThread(uintptr_t stackLimit)
 }
 
 void
-TaskSetSharedContext::executePortion(JS::PerThreadData *perThread,
+TaskSetSharedContext::executePortion(js::PerThreadData *perThread,
                                      size_t threadId,
                                      uintptr_t stackLimit)
 {
@@ -449,7 +449,7 @@ TaskSetSharedContext::endRendezvous(ThreadContext &threadCx) {
  * ThreadContext
  */
 
-ThreadContext::ThreadContext(JS::PerThreadData *perThreadData,
+ThreadContext::ThreadContext(js::PerThreadData *perThreadData,
                              size_t threadId, size_t numThreads,
                              uintptr_t stackLimit, js::gc::ArenaLists *arenaLists,
                              TaskSetSharedContext *shared)

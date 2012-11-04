@@ -523,13 +523,13 @@ class Rooted : public RootedBase<T>
     void init(JSRuntime *rtArg)
     {
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
-        RuntimeFriendFields *rt =
-          const_cast<RuntimeFriendFields *>(RuntimeFriendFields::get(rtArg));
-        commonInit(rt->thingGCRooters);
+         PerThreadDataFriendFields *pt =
+           const_cast<PerThreadDataFriendFields *>(PerThreadDataFriendFields::get(ptArg));
+         commonInit(pt->thingGCRooters);
 #endif
     }
 
-    void init(JS::PerThreadData *ptArg)
+    void init(js::PerThreadData *ptArg)
     {
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
         PerThreadDataFriendFields *pt =
@@ -571,7 +571,7 @@ class Rooted : public RootedBase<T>
         init(cx);
     }
 
-    Rooted(JS::PerThreadData *pt
+    Rooted(js::PerThreadData *pt
            MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : ptr(RootMethods<T>::initial())
     {
@@ -579,7 +579,7 @@ class Rooted : public RootedBase<T>
         init(pt);
     }
 
-    Rooted(JS::PerThreadData *pt, T initial
+    Rooted(js::PerThreadData *pt, T initial
            MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : ptr(initial)
     {
@@ -597,7 +597,7 @@ class Rooted : public RootedBase<T>
     }
 
     template <typename S>
-    Rooted(JS::PerThreadData *pt, const Return<S> &initial
+    Rooted(js::PerThreadData *pt, const Return<S> &initial
            MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : ptr(initial.ptr_)
     {

@@ -306,19 +306,6 @@ struct RuntimeFriendFields {
     /* Limit pointer for checking native stack consumption. */
     uintptr_t           nativeStackLimit;
 
-#if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
-    /*
-     * Stack allocated GC roots for stack GC heap pointers, which may be
-     * overwritten if moved during a GC.
-     *
-     * The actual set of roots is split between the |JSContext*|, the
-     * |JSRuntime*|, and any active |JS::PerThread| data.  This is purely
-     * for efficiency.  A given |Rooted<T>| pointer is associated with
-     * precisely one of those.
-     */
-    Rooted<void*> *thingGCRooters[THING_ROOT_LIMIT];
-#endif
-
     RuntimeFriendFields()
       : interrupt(0),
         nativeStackLimit(0) { }
@@ -328,7 +315,11 @@ struct RuntimeFriendFields {
     }
 };
 
+class PerThreadData;
+
 struct PerThreadDataFriendFields {
+    PerThreadDataFriendFields();
+
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
     /*
      * Stack allocated GC roots for stack GC heap pointers, which may be
@@ -337,8 +328,15 @@ struct PerThreadDataFriendFields {
     Rooted<void*> *thingGCRooters[THING_ROOT_LIMIT];
 #endif
 
-    static const PerThreadDataFriendFields *get(const JS::PerThreadData *pt) {
+    static const PerThreadDataFriendFields *get(const js::PerThreadData *pt) {
         return reinterpret_cast<const PerThreadDataFriendFields *>(pt);
+    }
+
+    static const PerThreadDataFriendFields *getMainThread(const JSRuntime *pt) {
+        // mainThread must always appear directly after |RuntimeFriendFields|.
+        // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
+        return reinterpret_cast<const PerThreadDataFriendFields *>(
+            reinterpret_cast<const char*>(pt) + sizeof(RuntimeFriendFields));
     }
 };
 

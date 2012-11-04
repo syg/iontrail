@@ -676,8 +676,11 @@ static JSBool js_NewRuntimeWasCalled = JS_FALSE;
 /*
  * Thread Local Storage slot for storing the runtime for a thread.
  */
-namespace JS {
+namespace js {
 mozilla::ThreadLocal<PerThreadData *> TlsPerThreadData;
+}
+
+namespace JS {
 
 #ifdef DEBUG
 JS_FRIEND_API(void)
@@ -715,16 +718,17 @@ JS_FRIEND_API(bool) NeedRelaxedRootChecks() { return false; }
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
-JS::PerThreadData::PerThreadData(JSRuntime *runtime)
-    : runtime(runtime)
+js::PerThreadData::PerThreadData(JSRuntime *runtime)
+  : runtime_(runtime)
 #ifdef DEBUG
-    , gcRelaxRootChecks(false)
-    , gcAssertNoGCDepth(0)
+  , gcRelaxRootChecks(false)
+  , gcAssertNoGCDepth(0)
 #endif
 {}
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
-  : atomsCompartment(NULL),
+  : mainThread(this),
+    atomsCompartment(NULL),
 #ifdef JS_THREADSAFE
     ownerThread_(NULL),
 #endif
@@ -868,7 +872,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     ionActivation(NULL),
     ionPcScriptCache(NULL),
     threadPool(this),
-    mainThread(this),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     useHelperThreads_(useHelperThreads)
 {
@@ -892,14 +895,10 @@ JSRuntime::init(uint32_t maxbytes)
     ownerThread_ = PR_GetCurrentThread();
 #endif
 
-    JS::TlsPerThreadData.set(&mainThread);
+    js::TlsPerThreadData.set(&mainThread);
 
 #ifdef JS_METHODJIT_SPEW
     JMCheckLogging();
-#endif
-
-#if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
-    PodArrayZero(thingGCRooters);
 #endif
 
     if (!js_InitGC(this, maxbytes))
@@ -1028,9 +1027,9 @@ JSRuntime::setOwnerThread()
     JS_ASSERT(ownerThread_ == (void *)0xc1ea12);  /* "clear" */
     JS_ASSERT(requestDepth == 0);
     JS_ASSERT(js_NewRuntimeWasCalled);
-    JS_ASSERT(JS::TlsPerThreadData.get() == NULL);
+    JS_ASSERT(js::TlsPerThreadData.get() == NULL);
     ownerThread_ = PR_GetCurrentThread();
-    JS::TlsPerThreadData.set(&mainThread);
+    js::TlsPerThreadData.set(&mainThread);
     nativeStackBase = GetNativeStackBase();
     if (nativeStackQuota)
         JS_SetNativeStackQuota(this, nativeStackQuota);
@@ -1043,7 +1042,7 @@ JSRuntime::clearOwnerThread()
     JS_ASSERT(requestDepth == 0);
     JS_ASSERT(js_NewRuntimeWasCalled);
     ownerThread_ = (void *)0xc1ea12;  /* "clear" */
-    JS::TlsPerThreadData.set(NULL);
+    js::TlsPerThreadData.set(NULL);
     nativeStackBase = 0;
 #if JS_STACK_GROWTH_DIRECTION > 0
     nativeStackLimit = UINTPTR_MAX;
@@ -1057,7 +1056,7 @@ JSRuntime::abortIfWrongThread() const
 {
     if (ownerThread_ != PR_GetCurrentThread())
         MOZ_CRASH();
-    if (this != JS::TlsPerThreadData.get()->runtime)
+    if (!js::TlsPerThreadData.get()->associatedWith(this))
         MOZ_CRASH();
 }
 
@@ -1065,7 +1064,7 @@ JS_FRIEND_API(void)
 JSRuntime::assertValidThread() const
 {
     JS_ASSERT(ownerThread_ == PR_GetCurrentThread());
-    JS_ASSERT(this == JS::TlsPerThreadData.get()->runtime);
+    JS_ASSERT(js::TlsPerThreadData.get()->associatedWith(this));
 }
 #endif  /* JS_THREADSAFE */
 
@@ -1102,7 +1101,7 @@ JS_NewRuntime(uint32_t maxbytes, JSUseHelperThreads useHelperThreads)
 
         InitMemorySubsystem();
 
-        if (!JS::TlsPerThreadData.init())
+        if (!js::TlsPerThreadData.init())
             return NULL;
 
         js_NewRuntimeWasCalled = JS_TRUE;

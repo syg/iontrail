@@ -1711,6 +1711,7 @@ class GeneratorFrameGuard : public FrameGuard
 class StackIter
 {
     friend class ContextStack;
+    PerThreadData *perThread_;
     JSContext    *maybecx_;
   public:
     enum SavedOption { STOP_AT_SAVED, GO_THROUGH_SAVED };
@@ -1735,7 +1736,6 @@ class StackIter
     ion::InlineFrameIterator ionInlineFrames_;
 #endif
 
-    static JSRuntime *GetRuntime(const StackIter &other);
     void poisonRegs();
     void popFrame();
     void popCall();

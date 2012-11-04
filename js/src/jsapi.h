@@ -2885,9 +2885,6 @@ JS_IsInRequest(JSRuntime *rt);
 
 namespace JS {
 
-struct PerThreadData;
-extern mozilla::ThreadLocal<PerThreadData *> TlsPerThreadData;
-
 inline bool
 IsPoisonedId(jsid iden)
 {
