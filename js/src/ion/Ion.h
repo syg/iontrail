@@ -18,7 +18,7 @@ namespace js {
 namespace ion {
 
 class TempAllocator;
-class ParallelCompilationContext; // in ParallelArrayAnalysis.h
+class ParallelCompileContext; // in ParallelArrayAnalysis.h
 
 struct IonOptions
 {
@@ -146,6 +146,12 @@ struct IonOptions
     // stop running this function in IonMonkey. (default 512)
     uint32 slowCallLimit;
 
+    // Whether we are in parallel warmup mode. This is mutated during runtime
+    // from within the parallel intrinsics.
+    //
+    // Default: NULL
+    ParallelCompileContext *parallelWarmupContext;
+
     void setEagerCompilation() {
         eagerCompilation = true;
         usesBeforeCompile = usesBeforeCompileNoJaeger = 0;
@@ -155,6 +161,17 @@ struct IonOptions
         smallFunctionUsesBeforeInlining = 0;
 
         parallelCompilation = false;
+    }
+
+    void startParallelWarmup(ParallelCompileContext *compileContext) {
+        JS_ASSERT(compileContext);
+        JS_ASSERT(!parallelWarmupContext);
+        parallelWarmupContext = compileContext;
+    }
+
+    void finishParallelWarmup() {
+        JS_ASSERT(parallelWarmupContext);
+        parallelWarmupContext = NULL;
     }
 
     IonOptions()
@@ -179,7 +196,8 @@ struct IonOptions
         inlineMaxTotalBytecodeLength(800),
         inlineUseCountRatio(128),
         eagerCompilation(false),
-        slowCallLimit(512)
+        slowCallLimit(512),
+        parallelWarmupContext(NULL)
     {
     }
 };
@@ -228,8 +246,6 @@ MethodStatus CanEnterAtBranch(JSContext *cx, HandleScript script,
                               StackFrame *fp, jsbytecode *pc);
 MethodStatus CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType);
 MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, CompileMode cmode);
-MethodStatus CanEnterParallelArrayKernel(JSContext *cx, HandleFunction fun,
-                                         ParallelCompilationContext &compileContext);
 
 enum IonExecStatus
 {

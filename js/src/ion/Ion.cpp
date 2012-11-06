@@ -1412,9 +1412,47 @@ ion::CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType)
 }
 
 bool
-ParallelCompilationContext::compile(IonBuilder *builder,
-                                    MIRGraph *graph,
-                                    AutoDestroyAllocator &autoDestroy)
+ParallelCompileContext::compileFunction(HandleFunction fun)
+{
+    JS_ASSERT(ion::IsEnabled(cx_));
+    JS_ASSERT(fun->isInterpreted());
+
+    RootedScript script(cx_, fun->script());
+    IonScript *scriptIon = script->ions[COMPILE_MODE_PAR];
+
+    // To be able to be called from parallel code, we must have an enabled
+    // IonScript that doesn't bail.
+    if (scriptIon == ION_DISABLED_SCRIPT)
+        return false;
+
+    if (scriptIon && scriptIon->bailoutExpected())
+        return false;
+
+    // Attempt compilation. Returns Method_Compiled if already compiled.
+    MethodStatus status = Compile(cx_, script, fun, NULL, false, *this);
+    if (status != Method_Compiled) {
+        if (status == Method_CantCompile)
+            ForbidCompilation(cx_, script);
+        return status;
+    }
+
+    // Note: scriptIon may get GC'd or something like that!
+    scriptIon = script->ions[COMPILE_MODE_PAR];
+
+    // This can GC, so afterward, scriptIon is not guaranteed to be valid.
+    if (!cx_->compartment->ionCompartment()->enterJIT(cx_))
+        return false;
+
+    if (!scriptIon)
+        return false;
+
+    return Method_Compiled;
+}
+
+bool
+ParallelCompileContext::compile(IonBuilder *builder,
+                                MIRGraph *graph,
+                                AutoDestroyAllocator &autoDestroy)
 {
     JS_ASSERT(!builder->script()->ions[builder->info().compileMode()]);
 
@@ -1429,7 +1467,7 @@ ParallelCompilationContext::compile(IonBuilder *builder,
     if (!OptimizeMIR(builder))
         return false;
 
-    if (!canCompileParallelArrayKernel(graph))
+    if (!canCompile(graph))
         return false;
 
     LIRGraph *lir = GenerateLIR(builder);
@@ -1443,47 +1481,6 @@ ParallelCompilationContext::compile(IonBuilder *builder,
     IonSpewEndFunction();
 
     return true;
-}
-
-// Decide if we can compile a parallel array kernel.
-MethodStatus
-ion::CanEnterParallelArrayKernel(JSContext *cx,
-                                 HandleFunction fun,
-                                 ion::ParallelCompilationContext &compileContext)
-{
-    JS_ASSERT(ion::IsEnabled(cx));
-
-    RootedScript script(cx, fun->script());
-    IonScript *scriptIon = script->ions[COMPILE_MODE_PAR];
-
-    // Skip if the script has been disabled.
-    if (scriptIon == ION_DISABLED_SCRIPT)
-        return Method_Skipped;
-
-    // Skip if the code is expected to result in a bailout.
-    if (scriptIon && scriptIon->bailoutExpected())
-        return Method_Skipped;
-
-    // Attempt compilation. Returns Method_Compiled if already compiled.
-    MethodStatus status = Compile(cx, script, fun, NULL, false,
-                                  compileContext);
-    if (status != Method_Compiled) {
-        if (status == Method_CantCompile)
-            ForbidCompilation(cx, script);
-        return status;
-    }
-
-    // Note: scriptIon may get GC'd or something like that!
-    scriptIon = script->ions[COMPILE_MODE_PAR];
-
-    // This can GC, so afterward, scriptIon is not guaranteed to be valid.
-    if (!cx->compartment->ionCompartment()->enterJIT(cx))
-        return Method_Error;
-
-    if (!scriptIon)
-        return Method_Skipped;
-
-    return Method_Compiled;
 }
 
 MethodStatus

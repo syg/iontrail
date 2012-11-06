@@ -39,6 +39,7 @@ class ParallelArrayObject : public JSObject
 {
     static Class protoClass;
     static JSFunctionSpec methods[];
+    static FixedHeapPtr<PropertyName> ctorNames[3];
 
     static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
 

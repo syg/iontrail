@@ -46,35 +46,41 @@
 #include "ion/MIR.h"
 
 namespace js {
+
+class StackFrame;
+
 namespace ion {
 
 class MIRGraph;
 class AutoDestroyAllocator;
 
-class ParallelCompilationContext
+class ParallelCompileContext
 {
 private:
     JSContext *cx_;
-    AutoObjectVector invokedFunctions_;
-    uint32_t bufferIndex_ : 31;
-    bool selfHosted_ : 1;
 
-    bool canCompileParallelArrayKernel(MIRGraph *graph);
+    // Recorded invocations during parallel warmup.
+    AutoObjectVector invokedFunctions_;
+
+    // Are we current compiling a kernel that can unsafely write to the
+    // buffer?
+    bool compilingKernel_;
+
+    bool canCompile(MIRGraph *graph);
 
 public:
-    ParallelCompilationContext(JSContext *cx, bool selfHosted = false, uint32_t bufferIndex_ = 0);
+    ParallelCompileContext(JSContext *cx);
 
     CompileMode compileMode() {
         return COMPILE_MODE_PAR;
     }
 
     bool canUnsafelyWrite(MInstruction *write, MDefinition *obj);
+    bool addInvocation(StackFrame *fp);
+    bool compileKernelAndInvokedFunctions(HandleFunction kernel);
 
-    bool addInvokedFunction(JSFunction *func);
-
-    bool compileFunctionAndInvokedFunctions(HandleFunction fun);
-
-    // defined in Ion.cpp, so that it can make use of static fns defined there
+    // defined in Ion.cpp, so that they can make use of static fns defined there
+    bool compileFunction(HandleFunction fun);
     bool compile(IonBuilder *builder, MIRGraph *graph,
                  AutoDestroyAllocator &autoDestroy);
 };

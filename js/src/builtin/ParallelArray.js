@@ -1,19 +1,5 @@
 // TODO: Use let over var when Ion compiles let.
-
-function ParallelArrayConstruct(buffer) {
-  if (arguments.length === 0)
-    buffer = %_SetNonBuiltinCallerInitObjectType([]);
-
-  var buffer = %ToObject(buffer);
-  // TODO: How do we check for Array-like?
-  if (buffer.length >>> 0 !== buffer.length)
-    %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-
-  // TODO: Private names.
-  this.buffer = buffer;
-
-  %_SetNonBuiltinCallerInitObjectType(this);
-}
+// TODO: Private names.
 
 function ComputeTileBounds(len, id, n) {
   var slice = (len / n) | 0;
@@ -22,23 +8,52 @@ function ComputeTileBounds(len, id, n) {
   return [start, end];
 }
 
-function ParallelArrayMap(f) {
-  // Allocate a new buffer and set it the same length as the source.
-  var source = this.buffer;
-  var result = %_SetNonBuiltinCallerInitObjectType([]);
-  result.length = source.length;
+// Constructor
+//
+// We split the 3 construction cases so that we don't case on arguments, which
+// deoptimizes.
 
+function ParallelArrayConstruct0() {
+  this.buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  %_SetNonBuiltinCallerInitObjectType(this);
+}
+
+function ParallelArrayConstruct1(buffer) {
+  var buffer = %ToObject(buffer);
+  // TODO: How do we check for Array-like?
+  if (buffer.length >>> 0 !== buffer.length)
+    %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+
+  this.buffer = buffer;
+  %_SetNonBuiltinCallerInitObjectType(this);
+}
+
+function ParallelArrayConstruct2(length, f) {
   // Per-thread worker.
   function fill(result, id, n) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     for (var i = start; i < end; i++)
-      result[i] = f(source[i]);
+      result[i] = f(i);
   }
 
-  if (!%ParallelFillArray(result, fill)) {
-    for (var i = 0; i < source.length; i++)
-      result[i] = f(source[i]);
-    }
+  if (length >>> 0 !== length)
+    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  return new global.ParallelArray(result);
+  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  buffer.length = length;
+
+  if (!%ParallelFillArray(buffer, fill)) {
+    for (var i = 0; i < length; i++)
+      buffer[i] = f(i);
+  }
+
+  this.buffer = buffer;
+  %_SetNonBuiltinCallerInitObjectType(this);
+}
+
+function ParallelArrayMap(f) {
+  var source = this.buffer;
+  return new global.ParallelArray(source.length, function (i) {
+    return f(source[i]);
+  });
 }

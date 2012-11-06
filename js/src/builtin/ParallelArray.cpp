@@ -270,12 +270,10 @@ class ArrayTaskSet : public TaskSet {
     const char *name_;
     HandleObject buffer_;
     HandleObject fun_;
-    uint32_t bufferIndex_;
 
   public:
-    ArrayTaskSet(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun,
-                 uint32_t bufferIndex)
-      : cx_(cx), name_(name), buffer_(buffer), fun_(fun), bufferIndex_(bufferIndex)
+    ArrayTaskSet(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun)
+      : cx_(cx), name_(name), buffer_(buffer), fun_(fun)
     {}
 
     ExecutionStatus apply() {
@@ -308,42 +306,55 @@ class ArrayTaskSet : public TaskSet {
             AutoAssertNoGC nogc;
             hasIonScript = callee->script()->hasIonScript(COMPILE_MODE_PAR);
         }
+
         if (!hasIonScript) {
             // If the script has not been compiled in parallel, then type
-            // inference will have no particular information.  In that
-            // case, we need to do a few "warm-up" iterations to give type
-            // inference some data to work with.
-            if (!warmup())
+            // inference will have no particular information.  In that case,
+            // we need to do a few "warm-up" iterations to give type inference
+            // some data to work with and to record all functions called.
+            ParallelCompileContext compileContext(cx_);
+            ion::js_IonOptions.startParallelWarmup(&compileContext);
+            if (!warmup(3))
                 return false;
 
-            // Try to compile the kernel.
-            ion::ParallelCompilationContext compileContext(cx_, true, bufferIndex_);
-            if (!compileContext.compileFunctionAndInvokedFunctions(callee))
+            // If warmup returned false, assume that we finished warming up.
+            ion::js_IonOptions.finishParallelWarmup();
+
+            // After warming up, compile the outer kernel as a special
+            // self-hosted kernel that can unsafely write to the buffer.
+            if (!compileContext.compileKernelAndInvokedFunctions(callee))
                 return false;
         }
 
         return true;
     }
 
-    virtual bool warmup() { return true; }
+    virtual bool warmup(uint32_t limit) { return true; }
     virtual bool pre(size_t numThreads) { return true; }
     virtual bool parallel(ThreadContext &taskSetCx) = 0;
     virtual bool post(size_t numThreads) { return true; }
 };
 
+static inline bool
+InWarmup() {
+    return ion::js_IonOptions.parallelWarmupContext != NULL;
+}
+
 class FillArrayTaskSet : public ArrayTaskSet
 {
   public:
     FillArrayTaskSet(JSContext *cx, HandleObject buffer, HandleObject fun)
-      : ArrayTaskSet(cx, "fill", buffer, fun, 0)
+      : ArrayTaskSet(cx, "fill", buffer, fun)
     {
         JS_ASSERT(buffer->isDenseArray());
     }
 
-    bool warmup() {
+    bool warmup(uint32_t limit) {
+        JS_ASSERT(InWarmup());
+
         // Warm up with a high enough (and fake) number of threads so that
         // we don't run for too long.
-        uint32_t numThreads = buffer_->getArrayLength() / 3;
+        uint32_t numThreads = buffer_->getArrayLength() / limit;
 
         FastInvokeGuard fig(cx_, ObjectValue(*fun_), COMPILE_MODE_SEQ);
         InvokeArgsGuard &args = fig.args();
@@ -357,7 +368,10 @@ class FillArrayTaskSet : public ArrayTaskSet
         args[1].setInt32(0);
         args[2].setInt32(numThreads);
 
-        return fig.invoke(cx_);
+        if (!fig.invoke(cx_))
+            return false;
+
+        return InWarmup();
     }
 
     bool pre(size_t numThreads) {
@@ -376,6 +390,7 @@ class FillArrayTaskSet : public ArrayTaskSet
     }
 
     bool parallel(ThreadContext &threadCx) {
+        printf("%ld %ld\n", threadCx.threadId, threadCx.numThreads);
         // 3 arguments: buffer, thread id, and number of threads.
         FastestIonInvoke<3> fii(cx_, fun_);
         fii.args[0] = ObjectValue(*buffer_);
@@ -395,6 +410,8 @@ js::parallel::FillArray(JSContext *cx, HandleObject buffer, HandleObject fun)
 //
 // ParallelArrayObject
 //
+
+FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[3];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
@@ -429,22 +446,25 @@ Class ParallelArrayObject::class_ = {
 JSBool
 ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
 {
-    RootedFunction ctor(cx, cx->runtime->getSelfHostedFunction(cx, "ParallelArrayConstruct"));
-    if (!ctor)
+    CallArgs args0 = CallArgsFromVp(argc, vp);
+
+    // See comment in ParallelArray.js about splitting constructors.
+    uint32_t whichCtor = args0.length() > 1 ? 2 : args0.length();
+    RootedValue ctor(cx, UndefinedValue());
+    if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctor))
         return false;
 
-    CallArgs args0 = CallArgsFromVp(argc, vp);
-    FastInvokeGuard fig(cx, ObjectValue(*ctor), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ctor, COMPILE_MODE_SEQ);
     InvokeArgsGuard &args = fig.args();
 
     RootedObject result(cx, NewBuiltinClassInstance(cx, &class_));
     if (!result)
         return false;
 
-    if (!cx->stack.pushInvokeArgs(cx, 1, &args))
+    if (!cx->stack.pushInvokeArgs(cx, args0.length(), &args))
         return false;
 
-    args.setCallee(ObjectValue(*ctor));
+    args.setCallee(ctor);
     args.setThis(ObjectValue(*result));
 
     for (uint32_t i = 0; i < args0.length(); i++)
@@ -461,6 +481,17 @@ JSObject *
 ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
 {
     JS_ASSERT(obj->isNative());
+
+    // Cache constructor names.
+    const char *ctorStrs[3] = { "ParallelArrayConstruct0",
+                                "ParallelArrayConstruct1",
+                                "ParallelArrayConstruct2" };
+    for (uint32_t i = 0; i < 3; i++) {
+        JSAtom *atom = Atomize(cx, ctorStrs[i], strlen(ctorStrs[i]), InternAtom);
+        if (!atom)
+            return NULL;
+        ctorNames[i].init(atom->asPropertyName());
+    }
 
     Rooted<GlobalObject *> global(cx, &obj->asGlobal());
 

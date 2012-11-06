@@ -849,7 +849,24 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     Register objreg    = ToRegister(call->getTempObject());
     Register nargsreg  = ToRegister(call->getNargsReg());
     uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
-    Label invoke, thunk, makeCall, end;
+    CompileMode cmode  = gen->info().compileMode();
+    Label invoke, thunk, makeCall, end, *slowPath;
+
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    switch (cmode) {
+      case COMPILE_MODE_SEQ:
+        slowPath = &invoke;
+        break;
+      case COMPILE_MODE_PAR:
+        if (!ensureOutOfLineParallelAbort(&slowPath))
+            return false;
+        break;
+      case COMPILE_MODE_MAX:
+        JS_NOT_REACHED("Bad compile mode");
+    }
 
     // Known-target case is handled by LCallKnown.
     JS_ASSERT(!call->hasSingleTarget());
@@ -875,15 +892,14 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     // This is equivalent to testing if any of the bits in JSFUN_KINDMASK are set.
     Address flags(calleereg, offsetof(JSFunction, flags));
     masm.load16ZeroExtend_mask(flags, Imm32(JSFUN_INTERPRETED), nargsreg);
-    masm.branch32(Assembler::NotEqual, nargsreg, Imm32(JSFUN_INTERPRETED), &invoke);
+    masm.branch32(Assembler::NotEqual, nargsreg, Imm32(JSFUN_INTERPRETED), slowPath);
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    CompileMode cmode = gen->info().compileMode();
     masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
 
     // Nestle the StackPointer up to the argument vector.
     masm.freeStack(unusedStack);
@@ -926,9 +942,11 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     masm.jump(&end);
 
     // Handle uncompiled or native functions.
-    masm.bind(&invoke);
-    if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-        return false;
+    if (slowPath == &invoke) {
+        masm.bind(&invoke);
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
+    }
 
     masm.bind(&end);
     dropArguments(call->numStackArgs() + 1);
@@ -936,27 +954,53 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 }
 
 bool
-CodeGenerator::emitCallToKnownScript(
-    LCallKnown *call, Register calleereg, uint32 unusedStack,
-    Label *slowPath, Label *end)
+CodeGenerator::visitCallKnown(LCallKnown *call)
 {
+    Register calleereg = ToRegister(call->getFunction());
     Register objreg    = ToRegister(call->getTempObject());
+    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     JSFunction *target = call->getSingleTarget();
+    CompileMode cmode  = gen->info().compileMode();
+    Label end, invoke, *slowPath;
 
-    // Native single targets are handled by LCallNative.
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    switch (cmode) {
+      case COMPILE_MODE_SEQ:
+        slowPath = &invoke;
+        break;
+      case COMPILE_MODE_PAR:
+        if (!ensureOutOfLineParallelAbort(&slowPath))
+            return false;
+        break;
+      case COMPILE_MODE_MAX:
+        JS_NOT_REACHED("Bad compile mode");
+    }
+
+     // Native single targets are handled by LCallNative.
     JS_ASSERT(!target->isNative());
-
     // Missing arguments must have been explicitly appended by the IonBuilder.
     JS_ASSERT(target->nargs <= call->numStackArgs());
 
     masm.checkStackAlignment();
 
-    // If we know that the script is disabled, just skip to the slow
-    // path.
-    CompileMode cmode = gen->info().compileMode();
-    if (target->script()->ions[cmode] == ION_DISABLED_SCRIPT)
-    {
-        masm.jump(slowPath);
+    // If the function is known to be uncompilable, just emit the call to
+    // Invoke in sequential mode, else mark as cannot compile.
+    if (target->script()->ions[cmode] == ION_DISABLED_SCRIPT) {
+        if (cmode == COMPILE_MODE_PAR)
+            return false;
+
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
+
+        if (call->mir()->isConstructing()) {
+            Label notPrimitive;
+            masm.branchTestPrimitive(Assembler::NotEqual, JSReturnOperand, &notPrimitive);
+            masm.loadValue(Address(StackPointer, unusedStack), JSReturnOperand);
+            masm.bind(&notPrimitive);
+        }
+
+        dropArguments(call->numStackArgs() + 1);
         return true;
     }
 
@@ -989,49 +1033,13 @@ CodeGenerator::emitCallToKnownScript(
     // The return address has already been removed from the Ion frame.
     int prefixGarbage = sizeof(IonJSFrameLayout) - sizeof(void *);
     masm.adjustStack(prefixGarbage - unusedStack);
-    masm.jump(end);
-    return true;
-}
+    masm.jump(&end);
 
-bool
-CodeGenerator::visitCallKnown(LCallKnown *call)
-{
-    Register calleereg = ToRegister(call->getFunction());
-    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
-    Label end;
-
-    CompileMode cmode = gen->info().compileMode();
-    switch (cmode) {
-      case COMPILE_MODE_PAR: {
-          Label *bail;
-          if (!ensureOutOfLineParallelAbort(&bail))
-              return false;
-
-          if (!emitCallToKnownScript(call, calleereg, unusedStack,
-                                     bail, &end))
-              return false;
-
-          break;
-      }
-
-      case COMPILE_MODE_SEQ: {
-          Label invoke;
-
-          if (!emitCallToKnownScript(call, calleereg, unusedStack,
-                                     &invoke, &end))
-              return false;
-
-          // Handle uncompiled functions.
-          masm.bind(&invoke);
-          if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-              return false;
-
-          break;
-      }
-
-      case COMPILE_MODE_MAX:
-          JS_ASSERT(false);
-          break;
+    // Handle uncompiled functions.
+    if (slowPath == &invoke) {
+        masm.bind(&invoke);
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
     }
 
     masm.bind(&end);
