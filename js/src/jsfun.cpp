@@ -408,8 +408,6 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
             return false;
         if (!JSObject::clearParent(cx, fun))
             return false;
-        if (!JSObject::clearType(cx, fun))
-            return false;
         atom = NULL;
         script = NULL;
     }
@@ -460,8 +458,6 @@ js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleF
     if (!clone)
         return NULL;
     if (!JSObject::clearParent(cx, clone))
-        return NULL;
-    if (!JSObject::clearType(cx, clone))
         return NULL;
 
     RootedScript srcScript(cx, srcFun->script());
@@ -1525,7 +1521,7 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
          * (JS_CloneFunctionObject) which dynamically ensures that 'script' has
          * no enclosing lexical scope (only the global scope).
          */
-        if (clone->isInterpreted()) {
+        if (cx->compartment != fun->compartment() && clone->isInterpreted()) {
             RootedScript script(cx, clone->script());
             JS_ASSERT(script);
             JS_ASSERT(script->compartment() == fun->compartment());
