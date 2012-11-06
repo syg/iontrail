@@ -1943,6 +1943,19 @@ ion::Invalidate(JSContext *cx, JSScript *script, bool resetUses)
     return true;
 }
 
+bool
+ion::Invalidate(JSContext *cx, JSScript *script, CompileMode cmode, bool resetUses)
+{
+    JS_ASSERT(script->hasIonScript(cmode));
+
+    Vector<types::RecompileInfo> scripts(cx);
+    if (!scripts.append(script->ionScript(cmode)->recompileInfo()))
+        return false;
+
+    Invalidate(cx, scripts, resetUses);
+    return true;
+}
+
 void
 ion::FinishInvalidation(FreeOp *fop, JSScript *script)
 {

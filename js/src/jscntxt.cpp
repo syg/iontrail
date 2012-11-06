@@ -401,7 +401,6 @@ intrinsic_ParallelFillArray(JSContext *cx, unsigned argc, Value *vp)
     JS_ASSERT(args[1].isObject());
     RootedObject buffer(cx, &args[0].toObject());
     RootedObject fun(cx, &args[1].toObject());
-    JS_ASSERT(fun->isFunction());
 
     switch (parallel::FillArray(cx, buffer, fun)) {
       case parallel::ExecutionSucceeded:

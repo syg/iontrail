@@ -403,8 +403,21 @@ class FillArrayTaskSet : public ArrayTaskSet
 ExecutionStatus
 js::parallel::FillArray(JSContext *cx, HandleObject buffer, HandleObject fun)
 {
+    JS_ASSERT(fun->isFunction());
+
     FillArrayTaskSet taskSet(cx, buffer, fun);
-    return taskSet.apply();
+    ExecutionStatus status = taskSet.apply();
+
+    // If we bailed out, invalidate the kernel to be reanalyzed (all the way
+    // down) and recompiled.
+    //
+    // TODO: This is too coarse grained.
+    if (status == ExecutionBailout) {
+        RootedScript script(cx, fun->toFunction()->script());
+        Invalidate(cx, script, COMPILE_MODE_PAR);
+    }
+
+    return status;
 }
 
 //

@@ -266,6 +266,7 @@ void Invalidate(types::TypeCompartment &types, FreeOp *fop,
                 const Vector<types::RecompileInfo> &invalid, bool resetUses = true);
 void Invalidate(JSContext *cx, const Vector<types::RecompileInfo> &invalid, bool resetUses = true);
 bool Invalidate(JSContext *cx, JSScript *script, bool resetUses = true);
+bool Invalidate(JSContext *cx, JSScript *script, CompileMode cmode, bool resetUses = true);
 
 void MarkFromIon(JSCompartment *comp, Value *vp);
 
