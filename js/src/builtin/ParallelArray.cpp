@@ -651,7 +651,7 @@ bool
 ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::parallel(
     ThreadContext &threadCx)
 {
-    JS::PerThreadData *pt = threadCx.perThreadData;
+    js::PerThreadData *pt = threadCx.perThreadData;
 
     // compute number of arguments
     const uint32_t argc = opDefn_.argc();
