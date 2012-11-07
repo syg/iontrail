@@ -2047,3 +2047,41 @@ AutoFlushCache::AutoFlushCache(const char *nonce, IonCompartment *comp)
     myCompartment_ = comp;
 }
 int js::ion::LabelBase::id_count = 0;
+
+void
+ion::PurgeCaches(JSScript *script, JSCompartment *c)
+{
+    for (EACH_COMPILE_MODE(cmode)) {
+        if (script->hasIonScript(cmode))
+            script->ions[cmode]->purgeCaches(c);
+    }
+}
+
+size_t
+ion::MemoryUsed(JSScript *script, JSMallocSizeOfFun mallocSizeOf)
+{
+    size_t total = 0;
+    for (EACH_COMPILE_MODE(cmode)) {
+        if (script->hasIonScript(cmode))
+            total += script->ions[cmode]->sizeOfIncludingThis(mallocSizeOf);
+    }
+    return total;
+}
+
+void
+ion::DestroyIonScripts(FreeOp *fop, JSScript *script)
+{
+    for (EACH_COMPILE_MODE(cmode)) {
+        if (script->hasIonScript(cmode))
+            ion::IonScript::Destroy(fop, script->ions[cmode]);
+    }
+}
+
+void
+ion::TraceIonScripts(JSTracer *trc, JSScript *script)
+{
+    for (EACH_COMPILE_MODE(cmode)) {
+        if (script->hasIonScript(cmode))
+            ion::IonScript::Trace(trc, script->ions[cmode]);
+    }
+}
