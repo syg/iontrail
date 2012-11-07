@@ -960,10 +960,7 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_CALLINTRINSIC:
       {
         RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
-        RootedValue vp(cx, UndefinedValue());
-        if (!cx->global().get()->getIntrinsicValue(cx, name, &vp))
-            return false;
-        return pushConstant(vp);
+        return jsop_intrinsicname(name);
       }
 
       case JSOP_BINDNAME:
@@ -3808,6 +3805,8 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32 argc, bool constructing
     MDefinition *fun = current->pop();
     if (fun->isDOMFunction())
         call->setDOMFunction();
+    else if (fun->isIntrinsic())
+        call->setIntrinsic();
     call->initFunction(fun);
 
     current->add(call);
@@ -4494,6 +4493,9 @@ IonBuilder::pushTypeBarrier(MInstruction *ins, types::StackTypeSet *actual,
             replace = MConstant::New(NullValue());
             break;
           case JSVAL_TYPE_UNKNOWN:
+            // Intrinsics that we haven't called yet need to be monitored.
+            if (ins->isIntrinsic())
+                monitorResult(ins, observed, actual);
             break;
           default: {
             MIRType replaceType = MIRTypeFromValueType(type);
@@ -4749,6 +4751,19 @@ IonBuilder::jsop_getname(HandlePropertyName name)
 
     monitorResult(ins, barrier, types);
     return pushTypeBarrier(ins, types, barrier);
+}
+
+bool
+IonBuilder::jsop_intrinsicname(HandlePropertyName name)
+{
+    RootedValue vp(cx, UndefinedValue());
+    if (!cx->global().get()->getIntrinsicValue(cx, name, &vp))
+        return false;
+    MConstant *ins = MConstant::New(vp);
+    ins->setIntrinsic();
+    current->add(ins);
+    current->push(ins);
+    return true;
 }
 
 bool

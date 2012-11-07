@@ -51,7 +51,8 @@ MIRType MIRTypeFromValue(const js::Value &vp)
      * points.
      */                                                                         \
     _(Unused)                                                                   \
-    _(DOMFunction)   /* Contains or uses a common DOM method function */
+    _(DOMFunction)   /* Contains or uses a common DOM method function */        \
+    _(Intrinsic)     /* Contains or uses an intrinsic function */
 
 class MDefinition;
 class MInstruction;
