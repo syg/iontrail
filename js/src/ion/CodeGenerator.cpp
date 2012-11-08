@@ -1813,7 +1813,6 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register tempReg2 = ToRegister(lir->getTemp1());
     Register tempReg3 = ToRegister(lir->getTemp2());
     Register tempReg4 = ToRegister(lir->getTemp3());
-    DebugOnly<Register> objReg = ToRegister(lir->output());
 
     masm.mov(ImmWord(gen->compartment), tempReg1);
     masm.move32(Imm32(ool->allocKind), tempReg2);
@@ -1825,7 +1824,7 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     masm.passABIArg(tempReg2);
     masm.passABIArg(tempReg3);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
-    JS_ASSERT(objReg == ReturnReg);
+    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
     masm.jump(ool->rejoin());
 
     return true;

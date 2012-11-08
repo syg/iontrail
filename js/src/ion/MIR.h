@@ -5419,7 +5419,7 @@ class MParWriteGuard : public MBinaryInstruction
         return getOperand(1);
     }
     BailoutKind bailoutKind() const {
-        return Bailout_Invalidate;
+        return Bailout_Normal;
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();

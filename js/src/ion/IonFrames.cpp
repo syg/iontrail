@@ -862,6 +862,9 @@ SnapshotIterator::slotValue(const Slot &slot)
 IonScript *
 IonFrameIterator::ionScript() const
 {
+    // Currently, this code only executes in sequential execution.
+    CompileMode compileMode = COMPILE_MODE_SEQ;
+
     JS_ASSERT(type() == IonFrame_OptimizedJS);
 
     IonScript *ionScript;
