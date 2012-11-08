@@ -712,7 +712,7 @@ Load(JSContext *cx, unsigned argc, jsval *vp)
             return false;
         errno = 0;
         CompileOptions opts(cx);
-        opts.setCompileAndGo(true).setNoScriptRval(true);
+        opts.setUTF8(true).setCompileAndGo(true).setNoScriptRval(true);
         if ((compileOnly && !Compile(cx, thisobj, opts, filename.ptr())) ||
             !Evaluate(cx, thisobj, opts, filename.ptr(), NULL))
         {
@@ -4921,13 +4921,6 @@ main(int argc, char **argv, char **envp)
         OOM_maxAllocations = op.getIntOption('A');
     if (op.getBoolOption('O'))
         OOM_printAllocationCount = true;
-#endif
-
-#ifdef XP_WIN
-    // Set the timer calibration delay count to 0 so we get high
-    // resolution right away, which we need for precise benchmarking.
-    extern int CALIBRATION_DELAY_COUNT;
-    CALIBRATION_DELAY_COUNT = 0;
 #endif
 
     /* Use the same parameters as the browser in xpcjsruntime.cpp. */

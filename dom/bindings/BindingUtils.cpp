@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
 #include <stdarg.h>
 
 #include "BindingUtils.h"
@@ -43,6 +44,58 @@ ThrowErrorMessage(JSContext* aCx, const ErrNum aErrorNumber, ...)
   va_end(ap);
   return false;
 }
+
+} // namespace dom
+
+struct ErrorResult::Message {
+  nsTArray<nsString> mArgs;
+  dom::ErrNum mErrorNumber;
+};
+
+void
+ErrorResult::ThrowTypeError(const dom::ErrNum errorNumber, ...)
+{
+  va_list ap;
+  va_start(ap, errorNumber);
+  if (IsTypeError()) {
+    delete mMessage;
+  }
+  mResult = NS_ERROR_TYPE_ERR;
+  Message* message = new Message();
+  message->mErrorNumber = errorNumber;
+  uint16_t argCount =
+    dom::GetErrorMessage(nullptr, nullptr, errorNumber)->argCount;
+  MOZ_ASSERT(argCount <= 10);
+  argCount = std::min<uint16_t>(argCount, 10);
+  while (argCount--) {
+    message->mArgs.AppendElement(*va_arg(ap, nsString*));
+  }
+  mMessage = message;
+  va_end(ap);
+}
+
+void
+ErrorResult::ReportTypeError(JSContext* aCx)
+{
+  MOZ_ASSERT(mMessage, "ReportTypeError() can be called only once");
+
+  Message* message = mMessage;
+  const uint32_t argCount = message->mArgs.Length();
+  const jschar* args[11];
+  for (uint32_t i = 0; i < argCount; ++i) {
+    args[i] = message->mArgs.ElementAt(i).get();
+  }
+  args[argCount] = nullptr;
+
+  JS_ReportErrorNumberUCArray(aCx, dom::GetErrorMessage, nullptr,
+                              static_cast<const unsigned>(message->mErrorNumber),
+                              argCount > 0 ? args : nullptr);
+
+  delete message;
+  mMessage = nullptr;
+}
+
+namespace dom {
 
 bool
 DefineConstants(JSContext* cx, JSObject* obj, ConstantSpec* cs)
@@ -811,7 +864,7 @@ XrayResolveNativeProperty(JSContext* cx, JSObject* wrapper, JSObject* obj,
 bool
 XrayEnumerateAttributes(Prefable<JSPropertySpec>* attributes,
                         jsid* attributeIds, JSPropertySpec* attributeSpecs,
-                        JS::AutoIdVector& props)
+                        unsigned flags, JS::AutoIdVector& props)
 {
   for (; attributes->specs; ++attributes) {
     if (attributes->enabled) {
@@ -819,7 +872,8 @@ XrayEnumerateAttributes(Prefable<JSPropertySpec>* attributes,
       // looking at now.
       size_t i = attributes->specs - attributeSpecs;
       for ( ; attributeIds[i] != JSID_VOID; ++i) {
-        if ((attributeSpecs[i].flags & JSPROP_ENUMERATE) &&
+        if (((flags & JSITER_HIDDEN) ||
+             (attributeSpecs[i].flags & JSPROP_ENUMERATE)) &&
             !props.append(attributeIds[i])) {
           return false;
         }
@@ -830,7 +884,8 @@ XrayEnumerateAttributes(Prefable<JSPropertySpec>* attributes,
 }
 
 bool
-XrayEnumerateProperties(JS::AutoIdVector& props, DOMObjectType type,
+XrayEnumerateProperties(unsigned flags, JS::AutoIdVector& props,
+                        DOMObjectType type,
                         const NativeProperties* nativeProperties)
 {
   Prefable<JSFunctionSpec>* methods;
@@ -853,7 +908,8 @@ XrayEnumerateProperties(JS::AutoIdVector& props, DOMObjectType type,
         // looking at now.
         size_t i = method->specs - methodsSpecs;
         for ( ; methodIds[i] != JSID_VOID; ++i) {
-          if ((methodsSpecs[i].flags & JSPROP_ENUMERATE) &&
+          if (((flags & JSITER_HIDDEN) ||
+               (methodsSpecs[i].flags & JSPROP_ENUMERATE)) &&
               !props.append(methodIds[i])) {
             return false;
           }
@@ -867,21 +923,22 @@ XrayEnumerateProperties(JS::AutoIdVector& props, DOMObjectType type,
         !XrayEnumerateAttributes(nativeProperties->staticAttributes,
                                  nativeProperties->staticAttributeIds,
                                  nativeProperties->staticAttributeSpecs,
-                                 props)) {
+                                 flags, props)) {
       return false;
     }
   } else {
     if (nativeProperties->attributes &&
         !XrayEnumerateAttributes(nativeProperties->attributes,
                                  nativeProperties->attributeIds,
-                                 nativeProperties->attributeSpecs, props)) {
+                                 nativeProperties->attributeSpecs,
+                                 flags, props)) {
       return false;
     }
     if (nativeProperties->unforgeableAttributes &&
         !XrayEnumerateAttributes(nativeProperties->unforgeableAttributes,
                                  nativeProperties->unforgeableAttributeIds,
                                  nativeProperties->unforgeableAttributeSpecs,
-                                 props)) {
+                                 flags, props)) {
       return false;
     }
   }
@@ -909,7 +966,7 @@ bool
 XrayEnumerateNativeProperties(JSContext* cx, JSObject* wrapper,
                               const NativePropertyHooks* nativePropertyHooks,
                               DOMObjectType type, JSObject* obj,
-                              JS::AutoIdVector& props)
+                              unsigned flags, JS::AutoIdVector& props)
 {
   if (type == eInterface &&
       nativePropertyHooks->mPrototypeID != prototypes::id::_ID_Count &&
@@ -919,6 +976,7 @@ XrayEnumerateNativeProperties(JSContext* cx, JSObject* wrapper,
 
   if (type == eInterfacePrototype &&
       nativePropertyHooks->mConstructorID != constructors::id::_ID_Count &&
+      (flags & JSITER_HIDDEN) &&
       !AddStringToIDVector(cx, props, "constructor")) {
     return false;
   }
@@ -927,13 +985,13 @@ XrayEnumerateNativeProperties(JSContext* cx, JSObject* wrapper,
     nativePropertyHooks->mNativeProperties;
 
   if (nativeProperties.regular &&
-      !XrayEnumerateProperties(props, type, nativeProperties.regular)) {
+      !XrayEnumerateProperties(flags, props, type, nativeProperties.regular)) {
     return false;
   }
 
   if (nativeProperties.chromeOnly &&
       xpc::AccessCheck::isChrome(js::GetObjectCompartment(wrapper)) &&
-      !XrayEnumerateProperties(props, type, nativeProperties.chromeOnly)) {
+      !XrayEnumerateProperties(flags, props, type, nativeProperties.chromeOnly)) {
     return false;
   }
 
@@ -942,7 +1000,7 @@ XrayEnumerateNativeProperties(JSContext* cx, JSObject* wrapper,
 
 bool
 XrayEnumerateProperties(JSContext* cx, JSObject* wrapper, JSObject* obj,
-                        bool ownOnly, JS::AutoIdVector& props)
+                        unsigned flags, JS::AutoIdVector& props)
 {
   DOMObjectType type;
   const NativePropertyHooks* nativePropertyHooks =
@@ -955,7 +1013,7 @@ XrayEnumerateProperties(JSContext* cx, JSObject* wrapper, JSObject* obj,
       return false;
     }
 
-    if (ownOnly) {
+    if (flags & JSITER_OWNONLY) {
       return true;
     }
 
@@ -967,8 +1025,12 @@ XrayEnumerateProperties(JSContext* cx, JSObject* wrapper, JSObject* obj,
   if (type == eInterfacePrototype) {
     do {
       if (!XrayEnumerateNativeProperties(cx, wrapper, nativePropertyHooks, type,
-                                         obj, props)) {
+                                         obj, flags, props)) {
         return false;
+      }
+
+      if (flags & JSITER_OWNONLY) {
+        return true;
       }
     } while ((nativePropertyHooks = nativePropertyHooks->mProtoHooks));
 
@@ -976,7 +1038,7 @@ XrayEnumerateProperties(JSContext* cx, JSObject* wrapper, JSObject* obj,
   }
 
   return XrayEnumerateNativeProperties(cx, wrapper, nativePropertyHooks, type,
-                                       obj, props);
+                                       obj, flags, props);
 }
 
 NativePropertyHooks sWorkerNativePropertyHooks = {
@@ -1163,7 +1225,8 @@ NativeToString(JSContext* cx, JSObject* wrapper, JSObject* obj, const char* pre,
         str = ConcatJSString(cx, "[object ",
                              JS_NewStringCopyZ(cx, JS_GetClass(obj)->name),
                                                "]");
-      } else if (JS_IsNativeFunction(obj, Constructor)) {
+      } else {
+        MOZ_ASSERT(JS_IsNativeFunction(obj, Constructor));
         str = JS_DecompileFunction(cx, JS_GetObjectFunction(obj), 0);
       }
       str = ConcatJSString(cx, pre, str, post);

@@ -51,6 +51,7 @@ let DebuggerController = {
     window.removeEventListener("load", this._startupDebugger, true);
 
     DebuggerView.initialize(function() {
+      DebuggerView._isInitialized = true;
       window.dispatchEvent("Debugger:Loaded");
       this._connect();
     }.bind(this));
@@ -67,6 +68,7 @@ let DebuggerController = {
     window.removeEventListener("unload", this._shutdownDebugger, true);
 
     DebuggerView.destroy(function() {
+      DebuggerView._isDestroyed = true;
       this.SourceScripts.disconnect();
       this.StackFrames.disconnect();
       this.ThreadState.disconnect();
@@ -155,8 +157,13 @@ let DebuggerController = {
 
     client.connect(function(aType, aTraits) {
       client.listTabs(function(aResponse) {
-        let tab = aResponse.tabs[aResponse.selected];
-        this._startDebuggingTab(client, tab);
+        if (window._isChromeDebugger) {
+          let dbg = aResponse.chromeDebugger;
+          this._startChromeDebugging(client, dbg);
+        } else {
+          let tab = aResponse.tabs[aResponse.selected];
+          this._startDebuggingTab(client, tab);
+        }
         window.dispatchEvent("Debugger:Connected");
       }.bind(this));
     }.bind(this));
@@ -231,6 +238,36 @@ let DebuggerController = {
         aThreadClient.resume();
 
       }.bind(this));
+    }.bind(this));
+  },
+
+  /**
+   * Sets up a chrome debugging session.
+   *
+   * @param DebuggerClient aClient
+   *        The debugger client.
+   * @param object aChromeDebugger
+   *        The remote protocol grip of the chrome debugger.
+   */
+  _startChromeDebugging: function DC__startChromeDebugging(aClient, aChromeDebugger) {
+    if (!aClient) {
+      Cu.reportError("No client found!");
+      return;
+    }
+    this.client = aClient;
+
+    aClient.attachThread(aChromeDebugger, function(aResponse, aThreadClient) {
+      if (!aThreadClient) {
+        Cu.reportError("Couldn't attach to thread: " + aResponse.error);
+        return;
+      }
+      this.activeThread = aThreadClient;
+
+      this.ThreadState.connect();
+      this.StackFrames.connect();
+      this.SourceScripts.connect();
+      aThreadClient.resume();
+
     }.bind(this));
   },
 
@@ -623,9 +660,9 @@ StackFrames.prototype = {
 
       // Add the variable's __proto__.
       if (prototype.type != "null") {
-        aVar.addProperties({ "__proto__ ": { value: prototype } });
+        aVar.addProperty("__proto__", { value: prototype });
         // Expansion handlers must be set after the properties are added.
-        this._addExpander(aVar.get("__proto__ "), prototype);
+        this._addExpander(aVar.get("__proto__"), prototype);
       }
 
       aVar.fetched = true;
@@ -685,6 +722,7 @@ StackFrames.prototype = {
  */
 function SourceScripts() {
   this._onNewScript = this._onNewScript.bind(this);
+  this._onNewGlobal = this._onNewGlobal.bind(this);
   this._onScriptsAdded = this._onScriptsAdded.bind(this);
 }
 
@@ -696,7 +734,9 @@ SourceScripts.prototype = {
    * Connect to the current thread client.
    */
   connect: function SS_connect() {
+    dumpn("SourceScripts is connecting...");
     this.debuggerClient.addListener("newScript", this._onNewScript);
+    this.debuggerClient.addListener("newGlobal", this._onNewGlobal);
     this._handleTabNavigation();
   },
 
@@ -707,7 +747,9 @@ SourceScripts.prototype = {
     if (!this.activeThread) {
       return;
     }
+    dumpn("SourceScripts is disconnecting...");
     this.debuggerClient.removeListener("newScript", this._onNewScript);
+    this.debuggerClient.removeListener("newGlobal", this._onNewGlobal);
   },
 
   /**
@@ -767,6 +809,14 @@ SourceScripts.prototype = {
 
     // Signal that a new script has been added.
     window.dispatchEvent("Debugger:AfterNewScript");
+  },
+
+  /**
+   * Handler for the debugger client's unsolicited newGlobal notification.
+   */
+  _onNewGlobal: function SS__onNewGlobal(aNotification, aPacket) {
+    // TODO: bug 806775, update the globals list using aPacket.hostAnnotations
+    // from bug 801084.
   },
 
   /**
@@ -1200,7 +1250,8 @@ XPCOMUtils.defineLazyGetter(L10N, "ellipsis", function() {
 const STACKFRAMES_WIDTH = "devtools.debugger.ui.stackframes-width";
 const VARIABLES_WIDTH = "devtools.debugger.ui.variables-width";
 const PANES_VISIBLE_ON_STARTUP = "devtools.debugger.ui.panes-visible-on-startup";
-const NON_ENUM_VISIBLE = "devtools.debugger.ui.non-enum-visible";
+const VARIABLES_NON_ENUM_VISIBLE = "devtools.debugger.ui.variables-non-enum-visible";
+const VARIABLES_SEARCHBOX_VISIBLE = "devtools.debugger.ui.variables-searchbox-visible";
 const REMOTE_HOST = "devtools.debugger.remote-host";
 const REMOTE_PORT = "devtools.debugger.remote-port";
 const REMOTE_AUTO_CONNECT = "devtools.debugger.remote-autoconnect";
@@ -1276,11 +1327,11 @@ let Prefs = {
    * properties and variables in the scope view.
    * @return boolean
    */
-  get nonEnumVisible() {
-    if (this._nonEnumVisible === undefined) {
-      this._nonEnumVisible = Services.prefs.getBoolPref(NON_ENUM_VISIBLE);
+  get variablesNonEnumVisible() {
+    if (this._varNonEnum === undefined) {
+      this._varNonEnum = Services.prefs.getBoolPref(VARIABLES_NON_ENUM_VISIBLE);
     }
-    return this._nonEnumVisible;
+    return this._varNonEnum;
   },
 
   /**
@@ -1288,9 +1339,29 @@ let Prefs = {
    * properties and variables in the scope view.
    * @param boolean value
    */
-  set nonEnumVisible(value) {
-    Services.prefs.setBoolPref(NON_ENUM_VISIBLE, value);
-    this._nonEnumVisible = value;
+  set variablesNonEnumVisible(value) {
+    Services.prefs.setBoolPref(VARIABLES_NON_ENUM_VISIBLE, value);
+    this._varNonEnum = value;
+  },
+
+  /**
+   * Gets a flag specifying if the a variables searchbox should be shown.
+   * @return boolean
+   */
+  get variablesSearchboxVisible() {
+    if (this._varSearchbox === undefined) {
+      this._varSearchbox = Services.prefs.getBoolPref(VARIABLES_SEARCHBOX_VISIBLE);
+    }
+    return this._varSearchbox;
+  },
+
+  /**
+   * Sets a flag specifying if the a variables searchbox should be shown.
+   * @param boolean value
+   */
+  set variablesSearchboxVisible(value) {
+    Services.prefs.setBoolPref(VARIABLES_SEARCHBOX_VISIBLE, value);
+    this._varSearchbox = value;
   },
 
   /**

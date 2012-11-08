@@ -136,15 +136,8 @@ PathSkia::ContainsPoint(const Point &aPoint, const Matrix &aTransform) const
     return false;
   }
 
-  SkRegion pointRect;
-  pointRect.setRect(int32_t(SkFloatToScalar(transformed.x - 1)),
-                    int32_t(SkFloatToScalar(transformed.y - 1)),
-                    int32_t(SkFloatToScalar(transformed.x + 1)),
-                    int32_t(SkFloatToScalar(transformed.y + 1)));
-
-  SkRegion pathRegion;
-  
-  return pathRegion.setPath(mPath, pointRect);
+  return mPath.contains(SkFloatToScalar(transformed.x),
+                        SkFloatToScalar(transformed.y));
 }
 
 static Rect SkRectToRect(const SkRect& aBounds)
@@ -153,6 +146,32 @@ static Rect SkRectToRect(const SkRect& aBounds)
               SkScalarToFloat(aBounds.fTop),
               SkScalarToFloat(aBounds.fRight - aBounds.fLeft),
               SkScalarToFloat(aBounds.fBottom - aBounds.fTop));
+}
+
+bool
+PathSkia::StrokeContainsPoint(const StrokeOptions &aStrokeOptions,
+                              const Point &aPoint,
+                              const Matrix &aTransform) const
+{
+  Matrix inverse = aTransform;
+  inverse.Invert();
+  Point transformed = inverse * aPoint;
+
+  SkPaint paint;
+  StrokeOptionsToPaint(paint, aStrokeOptions);
+
+  SkPath strokePath;
+  paint.getFillPath(mPath, &strokePath);
+
+  Rect bounds = aTransform.TransformBounds(SkRectToRect(strokePath.getBounds()));
+
+  if (aPoint.x < bounds.x || aPoint.y < bounds.y ||
+      aPoint.x > bounds.XMost() || aPoint.y > bounds.YMost()) {
+    return false;
+  }
+
+  return strokePath.contains(SkFloatToScalar(transformed.x),
+                             SkFloatToScalar(transformed.y));
 }
 
 Rect

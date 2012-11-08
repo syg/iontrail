@@ -118,7 +118,7 @@ namespace mozilla {
 namespace safebrowsing {
 
 const uint32_t STORE_MAGIC = 0x1231af3b;
-const uint32_t CURRENT_VERSION = 2;
+const uint32_t CURRENT_VERSION = 3;
 
 void
 TableUpdate::NewAddPrefix(uint32_t aAddChunk, const Prefix& aHash)
@@ -510,6 +510,17 @@ HashStore::Rebuild()
   UpdateHeader();
 
   return NS_OK;
+}
+
+void
+HashStore::ClearCompletes()
+{
+  NS_ASSERTION(mInUpdate, "Must be in update to clear completes.");
+
+  mAddCompletes.Clear();
+  mSubCompletes.Clear();
+
+  UpdateHeader();
 }
 
 template<class T>

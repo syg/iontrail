@@ -14,6 +14,7 @@
 interface mozAudioContext {
 
     readonly attribute AudioDestinationNode destination;
+    readonly attribute AudioListener listener;
 
     [Creator, Throws]
     AudioBuffer createBuffer(unsigned long numberOfChannels, unsigned long length, float sampleRate);
@@ -24,6 +25,16 @@ interface mozAudioContext {
     // AudioNode creation 
     [Creator]
     AudioBufferSourceNode createBufferSource();
+
+    [Creator]
+    GainNode createGain();
+    [Creator]
+    DelayNode createDelay(optional float maxDelayTime = 1);
+    [Creator]
+    PannerNode createPanner();
+
+    [Creator]
+    DynamicsCompressorNode createDynamicsCompressor();
 
 };
 

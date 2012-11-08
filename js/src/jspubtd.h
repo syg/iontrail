@@ -201,6 +201,7 @@ typedef struct JSTracer                     JSTracer;
 
 #ifdef __cplusplus
 class                                       JSFlatString;
+class                                       JSStableString;  // long story
 class                                       JSString;
 #else
 typedef struct JSFlatString                 JSFlatString;
@@ -317,7 +318,8 @@ struct RuntimeFriendFields {
 
 class PerThreadData;
 
-struct PerThreadDataFriendFields {
+struct PerThreadDataFriendFields
+{
     PerThreadDataFriendFields();
 
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
@@ -328,15 +330,15 @@ struct PerThreadDataFriendFields {
     Rooted<void*> *thingGCRooters[THING_ROOT_LIMIT];
 #endif
 
-    static const PerThreadDataFriendFields *get(const js::PerThreadData *pt) {
-        return reinterpret_cast<const PerThreadDataFriendFields *>(pt);
+    static PerThreadDataFriendFields *get(js::PerThreadData *pt) {
+        return reinterpret_cast<PerThreadDataFriendFields *>(pt);
     }
 
-    static const PerThreadDataFriendFields *getMainThread(const JSRuntime *pt) {
+    static PerThreadDataFriendFields *getMainThread(JSRuntime *rt) {
         // mainThread must always appear directly after |RuntimeFriendFields|.
         // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
-        return reinterpret_cast<const PerThreadDataFriendFields *>(
-            reinterpret_cast<const char*>(pt) + sizeof(RuntimeFriendFields));
+        return reinterpret_cast<PerThreadDataFriendFields *>(
+            reinterpret_cast<char*>(rt) + sizeof(RuntimeFriendFields));
     }
 };
 

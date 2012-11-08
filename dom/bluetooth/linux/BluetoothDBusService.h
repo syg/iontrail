@@ -139,16 +139,19 @@ public:
           const uint16_t aProfileId,
           BluetoothReplyRunnable* aRunnable);
 
+  virtual bool
+  IsConnected(uint16_t aProfileId);
+
   virtual void
   Disconnect(const uint16_t aProfileId, BluetoothReplyRunnable* aRunnable);
 
-  virtual bool
+  virtual void
   SendFile(const nsAString& aDeviceAddress,
            BlobParent* aBlobParent,
            BlobChild* aBlobChild,
            BluetoothReplyRunnable* aRunnable);
 
-  virtual bool
+  virtual void
   StopSendingFile(const nsAString& aDeviceAddress,
                   BluetoothReplyRunnable* aRunnable);
 

@@ -403,7 +403,6 @@ RasterImage::~RasterImage()
              num_discardable_containers,
              total_source_bytes,
              discardable_source_bytes));
-    DiscardTracker::Remove(&mDiscardTrackerNode);
   }
 
   if (mDecoder) {
@@ -421,6 +420,10 @@ RasterImage::~RasterImage()
   // Total statistics
   num_containers--;
   total_source_bytes -= mSourceData.Length();
+
+  if (NS_IsMainThread()) {
+    DiscardTracker::Remove(&mDiscardTrackerNode);
+  }
 }
 
 void
@@ -3276,7 +3279,7 @@ RasterImage::DecodeWorker::MarkAsASAP(RasterImage* aImg)
     // If the decode request is in a list, it must be in the normal decode
     // requests list -- if it had been in the ASAP list, then mIsASAP would
     // have been true above.  Move the request to the ASAP list.
-    request->remove();
+    request->removeFrom(mNormalDecodeRequests);
     mASAPDecodeRequests.insertBack(request);
 
     // Since request is in a list, one of the decode worker's lists is

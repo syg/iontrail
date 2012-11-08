@@ -1195,7 +1195,7 @@ Debugger::onSingleStep(JSContext *cx, Value *vp)
     {
         AutoAssertNoGC nogc;
         uint32_t stepperCount = 0;
-        JSScript *trappingScript = fp->script();
+        JSScript *trappingScript = fp->script().get(nogc);
         GlobalObject *global = &fp->global();
         if (GlobalObject::DebuggerVector *debuggers = global->getDebuggers()) {
             for (Debugger **p = debuggers->begin(); p != debuggers->end(); p++) {
@@ -1870,6 +1870,16 @@ Debugger::removeDebuggee(JSContext *cx, unsigned argc, Value *vp)
 }
 
 JSBool
+Debugger::removeAllDebuggees(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "removeAllDebuggees", args, dbg);
+    for (GlobalObjectSet::Enum e(dbg->debuggees); !e.empty(); e.popFront())
+        dbg->removeDebuggeeGlobal(cx->runtime->defaultFreeOp(), e.front(), NULL, &e);
+    args.rval().setUndefined();
+    return true;
+}
+
+JSBool
 Debugger::hasDebuggee(JSContext *cx, unsigned argc, Value *vp)
 {
     REQUIRE_ARGC("Debugger.hasDebuggee", 1);
@@ -2494,6 +2504,7 @@ JSPropertySpec Debugger::properties[] = {
 JSFunctionSpec Debugger::methods[] = {
     JS_FN("addDebuggee", Debugger::addDebuggee, 1, 0),
     JS_FN("removeDebuggee", Debugger::removeDebuggee, 1, 0),
+    JS_FN("removeAllDebuggees", Debugger::removeAllDebuggees, 0, 0),
     JS_FN("hasDebuggee", Debugger::hasDebuggee, 1, 0),
     JS_FN("getDebuggees", Debugger::getDebuggees, 0, 0),
     JS_FN("getNewestFrame", Debugger::getNewestFrame, 0, 0),
@@ -3451,7 +3462,7 @@ DebuggerFrame_getOffset(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_FRAME(cx, argc, vp, "get offset", args, thisobj, fp);
     AutoAssertNoGC nogc;
-    RawScript script = fp->script();
+    RawScript script = fp->script().get(nogc);
     jsbytecode *pc = fp->pcQuadratic(cx);
     JS_ASSERT(script->code <= pc);
     JS_ASSERT(pc < script->code + script->length);

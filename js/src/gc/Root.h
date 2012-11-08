@@ -77,6 +77,8 @@ class MutableHandleBase {};
 
 namespace JS {
 
+class AutoAssertNoGC;
+
 template <typename T> class MutableHandle;
 
 JS_FRIEND_API(void) EnterAssertNoGCScope();
@@ -405,16 +407,16 @@ class Return
     Return(NullPtr) : ptr_(NULL) {}
 
     /*
-     * |operator const T &| is the safest way to access a Return<T> without
-     * rooting it first: it will assert when used outside of an AutoAssertNoGC
-     * guard scope.
+     * |get(AutoAssertNoGC &)| is the safest way to access a Return<T> without
+     * rooting it first: it is impossible to call this method without an
+     * AutoAssertNoGC in scope, so the compiler will automatically catch any
+     * incorrect usage.
      *
      * Example:
      *     AutoAssertNoGC nogc;
-     *     RawScript script = fun->script();
+     *     RawScript script = fun->script().get(nogc);
      */
-    operator const T &() const {
-        JS_ASSERT(InNoGCScope());
+    const T &get(AutoAssertNoGC &) const {
         return ptr_;
     }
 
@@ -477,6 +479,7 @@ class Return
      *       instead of direct pointer comparison.
      */
     bool operator==(const T &other) { return ptr_ == other; }
+    bool operator!=(const T &other) { return ptr_ != other; }
     bool operator==(const Return<T> &other) { return ptr_ == other.ptr_; }
     bool operator==(const JS::Handle<T> &other) { return ptr_ == other.get(); }
     inline bool operator==(const Rooted<T> &other);
@@ -523,17 +526,15 @@ class Rooted : public RootedBase<T>
     void init(JSRuntime *rtArg)
     {
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
-         PerThreadDataFriendFields *pt =
-           const_cast<PerThreadDataFriendFields *>(PerThreadDataFriendFields::get(ptArg));
-         commonInit(pt->thingGCRooters);
+        PerThreadDataFriendFields *pt = PerThreadDataFriendFields::getMainThread(rtArg);
+        commonInit(pt->thingGCRooters);
 #endif
     }
 
     void init(js::PerThreadData *ptArg)
     {
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
-        PerThreadDataFriendFields *pt =
-          const_cast<PerThreadDataFriendFields *>(PerThreadDataFriendFields::get(ptArg));
+        PerThreadDataFriendFields *pt = PerThreadDataFriendFields::get(ptArg);
         commonInit(pt->thingGCRooters);
 #endif
     }
@@ -664,6 +665,12 @@ class Rooted : public RootedBase<T>
 
     Rooted(const Rooted &) MOZ_DELETE;
 };
+
+#if !(defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING))
+// Defined in vm/String.h.
+template <>
+class Rooted<JSStableString *>;
+#endif
 
 template <typename T>
 bool

@@ -361,7 +361,7 @@ nsGenericHTMLElement::Dataset()
 }
 
 nsresult
-nsGenericHTMLElement::GetDataset(nsIDOMDOMStringMap** aDataset)
+nsGenericHTMLElement::GetDataset(nsISupports** aDataset)
 {
   *aDataset = Dataset().get();
   return NS_OK;
@@ -451,11 +451,13 @@ nsGenericHTMLElement::GetAccessKeyLabel(nsAString& aLabel)
 {
   nsPresContext *presContext = GetPresContext();
 
-  if (presContext &&
-    presContext->EventStateManager()->GetAccessKeyLabelPrefix(aLabel)) {
-      nsAutoString suffix;
-      GetAccessKey(suffix);
+  if (presContext) {
+    nsAutoString suffix;
+    GetAccessKey(suffix);
+    if (!suffix.IsEmpty() && 
+        presContext->EventStateManager()->GetAccessKeyLabelPrefix(aLabel)) {
       aLabel.Append(suffix);
+    }
   }
 
   return NS_OK;
@@ -2049,12 +2051,6 @@ nsGenericHTMLElement::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
       if (manager) {
         manager->RemoveEventHandler(aAttribute);
       }
-    }
-
-    // Remove dataset property if necessary.
-    nsDOMSlots *slots = GetExistingDOMSlots();
-    if (slots && slots->mDataset) {
-      slots->mDataset->RemoveProp(aAttribute);
     }
   }
 

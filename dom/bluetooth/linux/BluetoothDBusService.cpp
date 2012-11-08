@@ -879,10 +879,9 @@ bool
 IsDeviceConnectedTypeBoolean()
 {
 #if defined(MOZ_WIDGET_GONK)
-
   char connProp[PROPERTY_VALUE_MAX];
 
-  property_get(PROP_DEVICE_CONNECTED_TYPE, connProp, "array");
+  property_get(PROP_DEVICE_CONNECTED_TYPE, connProp, "boolean");
   if (strcmp(connProp, "boolean") == 0) {
     return true;
   }
@@ -2368,7 +2367,8 @@ void
 BluetoothDBusService::Disconnect(const uint16_t aProfileId,
                                  BluetoothReplyRunnable* aRunnable)
 {
-  if (aProfileId == (uint16_t)(BluetoothServiceUuid::Handsfree >> 32)) {
+  if (aProfileId == (uint16_t)(BluetoothServiceUuid::Handsfree >> 32) ||
+      aProfileId == (uint16_t)(BluetoothServiceUuid::Headset >> 32)) {
     BluetoothHfpManager* hfp = BluetoothHfpManager::Get();
     hfp->Disconnect();
   } else if (aProfileId == (uint16_t)(BluetoothServiceUuid::ObjectPush >> 32)) {
@@ -2387,44 +2387,22 @@ BluetoothDBusService::Disconnect(const uint16_t aProfileId,
   DispatchBluetoothReply(aRunnable, v, replyError);
 }
 
-class CreateBluetoothScoSocket : public nsRunnable
+bool
+BluetoothDBusService::IsConnected(const uint16_t aProfileId)
 {
-public:
-  CreateBluetoothScoSocket(UnixSocketConsumer* aConsumer,
-                           const nsAString& aAddress,
-                           bool aAuth,
-                           bool aEncrypt)
-    : mConsumer(aConsumer),
-      mAddress(aAddress),
-      mAuth(aAuth),
-      mEncrypt(aEncrypt)
-  {
+  NS_ASSERTION(NS_IsMainThread(), "Must be called from main thread!");
+
+  if (aProfileId == (uint16_t)(BluetoothServiceUuid::Handsfree >> 32)
+      || aProfileId == (uint16_t)(BluetoothServiceUuid::Headset >> 32)) {
+    BluetoothHfpManager* hfp = BluetoothHfpManager::Get();
+    return hfp->GetConnectionStatus() == SocketConnectionStatus::SOCKET_CONNECTED;
+  } else if (aProfileId == (uint16_t)(BluetoothServiceUuid::ObjectPush >> 32)) {
+    BluetoothOppManager* opp = BluetoothOppManager::Get();
+    return opp->GetConnectionStatus() == SocketConnectionStatus::SOCKET_CONNECTED;
   }
 
-  nsresult
-  Run()
-  {
-    MOZ_ASSERT(!NS_IsMainThread());
-
-    nsString replyError;
-    BluetoothUnixSocketConnector* c =
-      new BluetoothUnixSocketConnector(BluetoothSocketType::SCO, -1,
-                                       mAuth, mEncrypt);
-
-    if (!mConsumer->ConnectSocket(c, NS_ConvertUTF16toUTF8(mAddress).get())) {
-      replyError.AssignLiteral("SocketConnectionError");
-      return NS_ERROR_FAILURE;
-    }
-
-    return NS_OK;
-  }
-
-private:
-  nsRefPtr<UnixSocketConsumer> mConsumer;
-  nsString mAddress;
-  bool mAuth;
-  bool mEncrypt;
-};
+  return false;
+}
 
 class ConnectBluetoothSocketRunnable : public nsRunnable
 {
@@ -2583,19 +2561,20 @@ BluetoothDBusService::GetScoSocket(const nsAString& aAddress,
     return NS_ERROR_FAILURE;
   }
 
-  nsRefPtr<nsRunnable> func(new CreateBluetoothScoSocket(aConsumer,
-                                                         aAddress,
-                                                         aAuth,
-                                                         aEncrypt));
-  if (NS_FAILED(mBluetoothCommandThread->Dispatch(func, NS_DISPATCH_NORMAL))) {
-    NS_WARNING("Cannot dispatch firmware loading task!");
+  nsString replyError;
+  BluetoothUnixSocketConnector* c =
+    new BluetoothUnixSocketConnector(BluetoothSocketType::SCO, -1,
+                                     aAuth, aEncrypt);
+
+  if (!aConsumer->ConnectSocket(c, NS_ConvertUTF16toUTF8(aAddress).get())) {
+    replyError.AssignLiteral("SocketConnectionError");
     return NS_ERROR_FAILURE;
   }
 
   return NS_OK;
 }
 
-bool
+void
 BluetoothDBusService::SendFile(const nsAString& aDeviceAddress,
                                BlobParent* aBlobParent,
                                BlobChild* aBlobChild,
@@ -2608,12 +2587,17 @@ BluetoothDBusService::SendFile(const nsAString& aDeviceAddress,
   // has been determined when calling 'Connect()'. Nevertheless, keep
   // it for future use.
   BluetoothOppManager* opp = BluetoothOppManager::Get();
-  opp->SendFile(aBlobParent, aRunnable);
+  BluetoothValue v = true;
+  nsString errorStr;
 
-  return true;
+  if (!opp->SendFile(aBlobParent)) {
+    errorStr.AssignLiteral("Calling SendFile() failed");
+  }
+
+  DispatchBluetoothReply(aRunnable, v, errorStr);
 }
 
-bool
+void
 BluetoothDBusService::StopSendingFile(const nsAString& aDeviceAddress,
                                       BluetoothReplyRunnable* aRunnable)
 {
@@ -2624,9 +2608,14 @@ BluetoothDBusService::StopSendingFile(const nsAString& aDeviceAddress,
   // has been determined when calling 'Connect()'. Nevertheless, keep
   // it for future use.
   BluetoothOppManager* opp = BluetoothOppManager::Get();
-  opp->StopSendingFile(aRunnable);
+  BluetoothValue v = true;
+  nsString errorStr;
 
-  return true;
+  if (!opp->StopSendingFile()) {
+    errorStr.AssignLiteral("Calling StopSendingFile() failed");
+  }
+
+  DispatchBluetoothReply(aRunnable, v, errorStr);
 }
 
 void
@@ -2641,7 +2630,14 @@ BluetoothDBusService::ConfirmReceivingFile(const nsAString& aDeviceAddress,
   // has been determined when calling 'Connect()'. Nevertheless, keep
   // it for future use.
   BluetoothOppManager* opp = BluetoothOppManager::Get();
-  opp->ConfirmReceivingFile(aConfirm, aRunnable);
+  BluetoothValue v = true;
+  nsString errorStr;
+
+  if (!opp->ConfirmReceivingFile(aConfirm)) {
+    errorStr.AssignLiteral("Calling ConfirmReceivingFile() failed");
+  }
+
+  DispatchBluetoothReply(aRunnable, v, errorStr);
 }
 
 nsresult

@@ -209,9 +209,8 @@ public class LayerView extends FrameLayout {
         mLayerClient.setZoomConstraints(constraints);
     }
 
-    /** The LayerRenderer calls this to indicate that the window has changed size. */
-    public void setViewportSize(IntSize size) {
-        mLayerClient.setViewportSize(new FloatSize(size));
+    public void setViewportSize(int width, int height) {
+        mLayerClient.setViewportSize(width, height);
     }
 
     public void setInputConnectionHandler(InputConnectionHandler inputConnectionHandler) {
@@ -258,6 +257,13 @@ public class LayerView extends FrameLayout {
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (mInputConnectionHandler != null)
             return mInputConnectionHandler.onKeyUp(keyCode, event);
+        return false;
+    }
+
+    public boolean isIMEEnabled() {
+        if (mInputConnectionHandler != null) {
+            return mInputConnectionHandler.isIMEEnabled();
+        }
         return false;
     }
 

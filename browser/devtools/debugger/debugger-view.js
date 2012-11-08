@@ -15,6 +15,7 @@ const GLOBAL_SEARCH_ACTION_DELAY = 150; // ms
 const SEARCH_GLOBAL_FLAG = "!";
 const SEARCH_LINE_FLAG = ":";
 const SEARCH_TOKEN_FLAG = "#";
+const SEARCH_VARIABLE_FLAG = "*";
 
 /**
  * Object defining the debugger view components.
@@ -38,14 +39,15 @@ let DebuggerView = {
     this.GlobalSearch.initialize();
 
     this.Variables = new VariablesView(document.getElementById("variables"));
+    this.Variables.searchPlaceholder = L10N.getStr("emptyVariablesFilterText");
     this.Variables.emptyText = L10N.getStr("emptyVariablesText");
-    this.Variables.nonEnumVisible = Prefs.nonEnumVisible;
+    this.Variables.nonEnumVisible = Prefs.variablesNonEnumVisible;
+    this.Variables.searchEnabled = Prefs.variablesSearchboxVisible;
     this.Variables.eval = DebuggerController.StackFrames.evaluate;
     this.Variables.lazyEmpty = true;
 
     this._initializePanes();
     this._initializeEditor(aCallback)
-    this._isInitialized = true;
   },
 
   /**
@@ -157,8 +159,11 @@ let DebuggerView = {
    *        The script url.
    * @param string aContentType [optional]
    *        The script content type.
+   * @param string aTextContent [optional]
+   *        The script text content.
    */
-  setEditorMode: function DV_setEditorMode(aUrl, aContentType) {
+  setEditorMode:
+  function DV_setEditorMode(aUrl, aContentType = "", aTextContent = "") {
     if (!this.editor) {
       return;
     }
@@ -171,12 +176,16 @@ let DebuggerView = {
       } else {
         this.editor.setMode(SourceEditor.MODES.HTML);
       }
+    } else if (aTextContent.match(/^\s*</)) {
+      // Use HTML mode for files in which the first non whitespace character is
+      // &lt;, regardless of extension.
+      this.editor.setMode(SourceEditor.MODES.HTML);
     } else {
       // Use JS mode for files with .js and .jsm extensions.
       if (/\.jsm?$/.test(SourceUtils.trimUrlQuery(aUrl))) {
         this.editor.setMode(SourceEditor.MODES.JAVASCRIPT);
       } else {
-        this.editor.setMode(SourceEditor.MODES.HTML);
+        this.editor.setMode(SourceEditor.MODES.TEXT);
       }
     }
   },
@@ -216,7 +225,9 @@ let DebuggerView = {
     // If the source is already loaded, display it immediately.
     else {
       if (aSource.text.length < SOURCE_SYNTAX_HIGHLIGHT_MAX_FILE_SIZE) {
-        this.setEditorMode(aSource.url, aSource.contentType);
+        this.setEditorMode(aSource.url, aSource.contentType, aSource.text);
+      } else {
+        this.editor.setMode(SourceEditor.MODES.TEXT);
       }
       this.editor.setText(aSource.text);
       this.editor.resetUndo();
@@ -419,6 +430,7 @@ let DebuggerView = {
   _stackframesAndBreakpoints: null,
   _variables: null,
   _isInitialized: false,
+  _isDestroyed: false
 };
 
 /**
@@ -752,7 +764,7 @@ MenuContainer.prototype = {
    * @param string aLabel
    */
   set selectedLabel(aLabel) {
-    let item = this._itemsByLabel.get(aValue);
+    let item = this._itemsByLabel.get(aLabel);
     if (item) {
       this._container.selectedItem = item.target;
     }

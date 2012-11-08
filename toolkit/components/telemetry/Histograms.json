@@ -429,6 +429,10 @@
     "n_buckets": 20,
     "description": "Startup cache age (hours)"
   },
+  "STARTUP_CACHE_INVALID": {
+    "kind": "flag",
+    "description": "Was the disk startup cache file detected as invalid"
+  },
   "WORD_CACHE_HITS": {
     "kind": "exponential",
     "high": "256",
@@ -1093,6 +1097,12 @@
     "n_buckets": 50,
     "description": "Time spent waiting on the cache service lock (ms) on the main thread in NSCACHESERVICE_EVICTENTRIESFORCLIENT"
   },
+  "CACHE_SERVICE_LOCK_WAIT_MAINTHREAD_NSCACHESERVICE_DISKDEVICEHEAPSIZE": {
+    "kind": "exponential",
+    "high": "10 * 1000",
+    "n_buckets": 50,
+    "description": "Time spent waiting on the cache service lock (ms) on the main thread in NSCACHESERVICE_DISKDEVICEHEAPSIZE"
+  },
   "CACHE_SERVICE_LOCK_WAIT_MAINTHREAD_NSCACHEENTRYDESCRIPTOR_DOOM": {
     "kind": "exponential",
     "high": "10 * 1000",
@@ -1750,6 +1760,20 @@
     "n_buckets": 10,
     "description": "PLACES: Number of keywords"
   },
+  "FENNEC_FAVICONS_COUNT": {
+    "kind": "exponential",
+    "high": "2000",
+    "n_buckets": 10,
+    "cpp_guard": "ANDROID",
+    "description": "FENNEC: (Places) Number of favicons stored"
+  },
+  "FENNEC_THUMBNAILS_COUNT": {
+    "kind": "exponential",
+    "high": "2000",
+    "n_buckets": 10,
+    "cpp_guard": "ANDROID",
+    "description": "FENNEC: (Places) Number of thumbnails stored"
+  },
   "PLACES_SORTED_BOOKMARKS_PERC": {
     "kind": "linear",
     "high": "100",
@@ -2145,6 +2169,12 @@
     "n_buckets": 10,
     "description": "Time to flush dirty entries from the cache (ms)"
   },
+  "LOCALDOMSTORAGE_PERCENT_FLUSHED": {
+    "kind": "linear",
+    "high": "100",
+    "n_buckets": 12,
+    "description": "Percentage of dirty entries during a flush"
+  },
   "LOCALDOMSTORAGE_KEY_SIZE_BYTES": {
     "kind": "exponential",
     "low": 1024,
@@ -2279,6 +2309,13 @@
     "description": "Fennec: Time for the Awesomebar Top Sites query to return with no filter set (ms)",
     "cpp_guard": "ANDROID"
   },
+  "FENNEC_LOWMEM_TAB_COUNT": {
+    "kind": "exponential",
+    "high": 100,
+    "n_buckets": 30,
+    "description": "How many tabs were open when a low-memory event was received",
+    "cpp_guard": "ANDROID"
+  },
   "FENNEC_RESTORING_ACTIVITY": {
     "kind": "flag",
     "description": "Fennec is starting up but the Gecko thread was still running",
@@ -2312,6 +2349,22 @@
     "kind": "enumerated",
     "n_values": 4,
     "description": "The way the GeckoApp was launched. (Normal, URL, Prefetch, Redirector)",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_TAB_EXPIRED": {
+    "kind": "exponential",
+    "low": 10,
+    "high": 604800,
+    "n_buckets": 20,
+    "description": "How long (in seconds) a tab was inactive before it was expired",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_TAB_ZOMBIFIED": {
+    "kind": "exponential",
+    "low": 10,
+    "high": 604800,
+    "n_buckets": 20,
+    "description": "How long (in seconds) a tab was inactive when it was OOM-zombified",
     "cpp_guard": "ANDROID"
   },
   "FENNEC_WAS_KILLED": {
@@ -2348,5 +2401,13 @@
   "COMPONENTS_OBJECT_ACCESSED_BY_CONTENT": {
     "kind": "flag",
     "description": "Whether content ever accesed the Components object in this session"
+  },
+  "COMPONENTS_LOOKUPMETHOD_ACCESSED_BY_CONTENT": {
+    "kind": "flag",
+    "description": "Whether content ever accesed Components.lookupMethod in this session"
+  },
+  "COMPONENTS_INTERFACES_ACCESSED_BY_CONTENT": {
+    "kind": "flag",
+    "description": "Whether content ever accesed Components.interfaces in this session"
   }
 }

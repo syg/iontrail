@@ -812,7 +812,7 @@ create({ constructor: GlobalSearchView, proto: MenuContainer.prototype }, {
    */
   _fetchSources: function DVGS__fetchSources(aFetchCallback, aFetchedCallback, aLocations) {
     // If all the sources were already fetched, then don't do anything.
-    if (this._cache.size() == aLocations.length) {
+    if (this._cache.size == aLocations.length) {
       aFetchedCallback();
       return;
     }
@@ -840,7 +840,7 @@ create({ constructor: GlobalSearchView, proto: MenuContainer.prototype }, {
     this._cache.set(aLocation, aContents);
 
     // Check if all sources were fetched and stored in the cache.
-    if (this._cache.size() == this._sourcesCount) {
+    if (this._cache.size == this._sourcesCount) {
       this._onFetchSourcesFinished();
     }
   },
@@ -1151,7 +1151,7 @@ GlobalResults.prototype = {
   /**
    * Gets the number of source results in this store.
    */
-  get itemCount() this._store.size(),
+  get itemCount() this._store.size,
 
   _store: null
 };
@@ -1212,7 +1212,7 @@ SourceResults.prototype = {
    */
   toggle: function SR_toggle(e) {
     if (e instanceof Event) {
-      this._toggled = true;
+      this._userToggled = true;
     }
     this.expanded ^= 1;
   },
@@ -1230,9 +1230,10 @@ SourceResults.prototype = {
   set expanded(aFlag) this[aFlag ? "expand" : "collapse"](),
 
   /**
-   * Returns true if this element was toggled via user interaction.
+   * Returns if this element was ever toggled via user interaction.
+   * @return boolean
    */
-  get toggled() this._toggled,
+  get toggled() this._userToggled,
 
   /**
    * Gets the element associated with this item.
@@ -1313,7 +1314,7 @@ SourceResults.prototype = {
 
   _store: null,
   _target: null,
-  _toggled: false
+  _userToggled: false
 };
 
 /**

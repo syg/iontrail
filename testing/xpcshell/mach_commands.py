@@ -10,9 +10,12 @@ import os
 
 from StringIO import StringIO
 
-from mozbuild.base import MozbuildObject
+from mozbuild.base import (
+    MachCommandBase,
+    MozbuildObject,
+)
 
-from mach.base import (
+from mach.decorators import (
     CommandArgument,
     CommandProvider,
     Command,
@@ -111,7 +114,7 @@ class XPCShellRunner(MozbuildObject):
 
 
 @CommandProvider
-class MachCommands(MozbuildObject):
+class MachCommands(MachCommandBase):
     @Command('xpcshell-test', help='Run an xpcshell test.')
     @CommandArgument('test_file', default='all', nargs='?', metavar='TEST',
         help='Test to run. Can be specified as a single JS file, a directory, '
@@ -125,6 +128,11 @@ class MachCommands(MozbuildObject):
     @CommandArgument('--shuffle', '-s', action='store_true',
         help='Randomize the execution order of tests.')
     def run_xpcshell_test(self, **params):
+        # We should probably have a utility function to ensure the tree is
+        # ready to run tests. Until then, we just create the state dir (in
+        # case the tree wasn't built with mach).
+        self._ensure_state_subdir_exists('.')
+
         xpcshell = self._spawn(XPCShellRunner)
         xpcshell.run_test(**params)
 

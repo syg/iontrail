@@ -323,7 +323,7 @@ BluetoothServiceChildProcess::Disconnect(
   SendRequest(aRunnable, DisconnectRequest(aProfileId));
 }
 
-bool
+void
 BluetoothServiceChildProcess::SendFile(
   const nsAString& aDeviceAddress,
   BlobParent* aBlobParent,
@@ -332,17 +332,15 @@ BluetoothServiceChildProcess::SendFile(
 {
   SendRequest(aRunnable,
               SendFileRequest(nsString(aDeviceAddress), nullptr, aBlobChild));
-  return true;
 }
 
-bool
+void
 BluetoothServiceChildProcess::StopSendingFile(
   const nsAString& aDeviceAddress,
   BluetoothReplyRunnable* aRunnable)
 {
   SendRequest(aRunnable,
               StopSendingFileRequest(nsString(aDeviceAddress)));
-  return true;
 }
 
 void
@@ -392,4 +390,11 @@ BluetoothServiceChildProcess::StopInternal()
 {
   MOZ_NOT_REACHED("This should never be called!");
   return NS_ERROR_FAILURE;
+}
+
+bool
+BluetoothServiceChildProcess::IsConnected(uint16_t aProfileId)
+{
+  MOZ_NOT_REACHED("This should never be called!");
+  return false;
 }

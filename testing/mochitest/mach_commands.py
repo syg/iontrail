@@ -6,11 +6,14 @@ from __future__ import unicode_literals
 
 import os
 
-from mozbuild.base import MozbuildObject
+from mozbuild.base import (
+    MachCommandBase,
+    MozbuildObject,
+)
 
 from moztesting.util import parse_test_path
 
-from mach.base import (
+from mach.decorators import (
     CommandArgument,
     CommandProvider,
     Command,
@@ -83,7 +86,7 @@ class MochitestRunner(MozbuildObject):
 
 
 @CommandProvider
-class MachCommands(MozbuildObject):
+class MachCommands(MachCommandBase):
     @Command('mochitest-plain', help='Run a plain mochitest.')
     @CommandArgument('test_file', default=None, nargs='?', metavar='TEST',
         help=generic_help)
@@ -109,5 +112,7 @@ class MachCommands(MozbuildObject):
         self.run_mochitest(test_file, 'a11y')
 
     def run_mochitest(self, test_file, flavor):
+        self._ensure_state_subdir_exists('.')
+
         mochitest = self._spawn(MochitestRunner)
         mochitest.run_mochitest_test(test_file, flavor)

@@ -8,9 +8,11 @@
 #include "jscntxt.h"
 #include "gc/Marking.h"
 #include "methodjit/MethodJIT.h"
+#ifdef JS_ION
 #include "ion/IonFrames.h"
 #include "ion/IonCompartment.h"
 #include "ion/Bailouts.h"
+#endif
 #include "Stack.h"
 #include "jstaskset.h"
 
@@ -218,7 +220,7 @@ StackFrame::pcQuadratic(const ContextStack &stack, size_t maxDepth)
 }
 
 bool
-StackFrame::copyRawFrameSlots(CopyVector *vec)
+StackFrame::copyRawFrameSlots(AutoValueVector *vec)
 {
     if (!vec->resize(numFormalArgs() + script()->nfixed))
         return false;

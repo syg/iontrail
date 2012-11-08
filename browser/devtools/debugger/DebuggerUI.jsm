@@ -20,10 +20,10 @@ XPCOMUtils.defineLazyModuleGetter(this,
   "DebuggerServer", "resource://gre/modules/devtools/dbg-server.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this,
-  "Services", "resource:///modules/Services.jsm");
+  "Services", "resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this,
-  "FileUtils", "resource:///modules/FileUtils.jsm");
+  "FileUtils", "resource://gre/modules/FileUtils.jsm");
 
 this.EXPORTED_SYMBOLS = ["DebuggerUI"];
 
@@ -261,8 +261,7 @@ DebuggerPane.prototype = {
    */
   _initServer: function DP__initServer() {
     if (!DebuggerServer.initialized) {
-      // Always allow connections from nsIPipe transports.
-      DebuggerServer.init(function() true);
+      DebuggerServer.init();
       DebuggerServer.addBrowserActors();
     }
   },
