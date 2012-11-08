@@ -4493,9 +4493,6 @@ IonBuilder::pushTypeBarrier(MInstruction *ins, types::StackTypeSet *actual,
             replace = MConstant::New(NullValue());
             break;
           case JSVAL_TYPE_UNKNOWN:
-            // Intrinsics that we haven't called yet need to be monitored.
-            if (ins->isIntrinsic())
-                monitorResult(ins, observed, actual);
             break;
           default: {
             MIRType replaceType = MIRTypeFromValueType(type);
@@ -4759,10 +4756,17 @@ IonBuilder::jsop_intrinsicname(HandlePropertyName name)
     RootedValue vp(cx, UndefinedValue());
     if (!cx->global().get()->getIntrinsicValue(cx, name, &vp))
         return false;
+
     MConstant *ins = MConstant::New(vp);
     ins->setIntrinsic();
     current->add(ins);
     current->push(ins);
+
+    if (types::StackTypeSet *types = oracle->propertyRead(script_, pc)) {
+        if (types->getKnownTypeTag() == JSVAL_TYPE_UNKNOWN)
+            types->addType(cx, types::GetValueType(cx, vp));
+    }
+
     return true;
 }
 

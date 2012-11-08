@@ -14,8 +14,8 @@ function ComputeTileBounds(len, id, n) {
 // deoptimizes.
 
 function ParallelArrayConstruct0() {
-  this.buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  %_SetNonBuiltinCallerInitObjectType(this);
+  var self = %_SetNonBuiltinCallerInitObjectType(this);
+  self.buffer = %_SetNonBuiltinCallerInitObjectType([]);
 }
 
 function ParallelArrayConstruct1(buffer) {
@@ -24,8 +24,8 @@ function ParallelArrayConstruct1(buffer) {
   if (buffer.length >>> 0 !== buffer.length)
     %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
 
-  this.buffer = buffer;
-  %_SetNonBuiltinCallerInitObjectType(this);
+  var self = %_SetNonBuiltinCallerInitObjectType(this);
+  self.buffer = buffer;
 }
 
 function ParallelArrayConstruct2(length, f) {
@@ -40,6 +40,8 @@ function ParallelArrayConstruct2(length, f) {
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  // FIXME: Hack to un-specialize the set since it's full of holes?
+  buffer[0] = undefined;
   buffer.length = length;
 
   if (!%ParallelFillArray(buffer, fill)) {
@@ -47,8 +49,8 @@ function ParallelArrayConstruct2(length, f) {
       buffer[i] = f(i);
   }
 
-  this.buffer = buffer;
-  %_SetNonBuiltinCallerInitObjectType(this);
+  var self = %_SetNonBuiltinCallerInitObjectType(this);
+  self.buffer = buffer;
 }
 
 function ParallelArrayMap(f) {
