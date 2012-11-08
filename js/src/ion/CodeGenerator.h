@@ -21,6 +21,8 @@
 namespace js {
 namespace ion {
 
+class OutOfLineNewArray;
+class OutOfLineNewObject;
 class CheckOverRecursedFailure;
 class OutOfLineUnboxDouble;
 class OutOfLineCache;
@@ -88,8 +90,10 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitNewSlots(LNewSlots *lir);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);
+    bool visitOutOfLineNewArray(OutOfLineNewArray *ool);
     bool visitNewObjectVMCall(LNewObject *lir);
     bool visitNewObject(LNewObject *lir);
+    bool visitOutOfLineNewObject(OutOfLineNewObject *ool);
     bool visitNewCallObject(LNewCallObject *lir);
     bool visitNewStringObject(LNewStringObject *lir);
     bool visitParNew(LParNew *lir);
@@ -226,11 +230,6 @@ class CodeGenerator : public CodeGeneratorSpecific
   private:
     bool visitCache(LInstruction *load);
     bool visitCallSetProperty(LInstruction *ins);
-
-    template <typename T>
-    bool initNewGCThing(T allocMode,
-                        JSObject *templateObject,
-                        Register objReg);
 
     ConstantOrRegister getSetPropertyValue(LInstruction *ins);
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);

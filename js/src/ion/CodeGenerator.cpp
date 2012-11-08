@@ -571,8 +571,7 @@ CodeGenerator::visitParThreadContext(LParThreadContext *lir)
 bool
 CodeGenerator::visitParWriteGuard(LParWriteGuard *lir)
 {
-    CompileMode cmode = gen->info().compileMode();
-    JS_ASSERT(cmode == COMPILE_MODE_PAR);
+    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_PAR);
 
     const Register tempReg = ToRegister(lir->getTempReg());
     masm.setupUnalignedABICall(2, tempReg);
@@ -1397,8 +1396,7 @@ CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
 bool
 CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
 {
-    CompileMode cmode = gen->info().compileMode();
-    JS_ASSERT(cmode == COMPILE_MODE_PAR);
+    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_PAR);
 
     const Register tempReg = ToRegister(lir->getTempReg());
     masm.setupUnalignedABICall(1, tempReg);
@@ -1513,6 +1511,25 @@ CodeGenerator::generateBody()
     return true;
 }
 
+// Out-of-line object allocation for LNewArray.
+class OutOfLineNewArray : public OutOfLineCodeBase<CodeGenerator>
+{
+    LNewArray *lir_;
+
+  public:
+    OutOfLineNewArray(LNewArray *lir)
+      : lir_(lir)
+    { }
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineNewArray(this);
+    }
+
+    LNewArray *lir() const {
+        return lir_;
+    }
+};
+
 bool
 CodeGenerator::visitNewArrayCallVM(LNewArray *lir)
 {
@@ -1566,37 +1583,6 @@ CodeGenerator::visitNewSlots(LNewSlots *lir)
     return true;
 }
 
-class SeqAllocMode
-{
-public:
-    LInstruction *lir;
-
-    SeqAllocMode(LInstruction *lir)
-        : lir(lir)
-    {
-    }
-
-    OutOfLineCode *slowPath(CodeGenerator *cg,
-                            gc::AllocKind allocKind,
-                            int thingSize,
-                            Register objReg) {
-        typedef JSObject *(*pf)(JSContext *cx, gc::AllocKind allocKind, size_t thingSize);
-        static const VMFunction NewGCThingInfo = FunctionInfo<pf>(js::ion::NewGCThing);
-        return cg->oolCallVM(
-            NewGCThingInfo, lir,
-            (ArgList(), Imm32(allocKind), Imm32(thingSize)),
-            StoreRegisterTo(objReg));
-    }
-
-    bool fastPath(MacroAssembler &masm,
-                  JSObject *templateObject,
-                  Register objReg,
-                  Label *slowPath) {
-        masm.newGCThing(objReg, templateObject, slowPath);
-        return true;
-    }
-};
-
 class OutOfLineParNew : public OutOfLineCodeBase<CodeGenerator>
 {
 public:
@@ -1617,71 +1603,54 @@ public:
     }
 };
 
-class ParAllocMode
-{
-    LParNew *ins_;
-
-public:
-    ParAllocMode(LParNew *ins)
-        : ins_(ins)
-    {}
-
-    OutOfLineCode *slowPath(CodeGenerator *cg,
-                            gc::AllocKind allocKind,
-                            int thingSize,
-                            Register objReg) {
-        OutOfLineCode *ool = cg->addOutOfLineParNew(ins_, allocKind, thingSize);
-        return ool;
-    }
-
-    bool fastPath(MacroAssembler &masm,
-                  JSObject *templateObject,
-                  Register objReg,
-                  Label *slowPath) {
-        masm.jump(slowPath); // TODO
-        return true;
-    }
-};
-
-template <typename T>
-bool
-CodeGenerator::initNewGCThing(T allocMode,
-                              JSObject *templateObject,
-                              Register objReg) {
-
-    // This case is handled differently for new objects, new arrays,
-    // and so forth, so we can't combine that into a single path.
-    JS_ASSERT(!templateObject->hasSingletonType());
-
-    // Allocate. If the FreeList is empty, call to VM, which may GC.
-    gc::AllocKind allocKind = templateObject->getAllocKind();
-    int thingSize = (int)gc::Arena::thingSize(allocKind);
-    OutOfLineCode *ool = allocMode.slowPath(this, allocKind, thingSize, objReg);
-    if (!ool)
-        return false;
-    if (!allocMode.fastPath(masm, templateObject, objReg, ool->entry()))
-        return false;
-
-    // Initialize based on the templateObject.
-    masm.bind(ool->rejoin());
-    masm.initGCThing(objReg, templateObject);
-
-    return true;
-}
-
 bool
 CodeGenerator::visitNewArray(LNewArray *lir)
 {
     JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+    Register objReg = ToRegister(lir->output());
+    JSObject *templateObject = lir->mir()->templateObject();
 
-    if (lir->mir()->shouldUseVM()) {
+    if (lir->mir()->shouldUseVM())
         return visitNewArrayCallVM(lir);
+
+    OutOfLineNewArray *ool = new OutOfLineNewArray(lir);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    masm.newGCThing(objReg, templateObject, ool->entry());
+    masm.initGCThing(objReg, templateObject);
+
+    masm.bind(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineNewArray(OutOfLineNewArray *ool)
+{
+    if (!visitNewArrayCallVM(ool->lir()))
+        return false;
+    masm.jump(ool->rejoin());
+    return true;
+}
+
+// Out-of-line object allocation for JSOP_NEWOBJECT.
+class OutOfLineNewObject : public OutOfLineCodeBase<CodeGenerator>
+{
+    LNewObject *lir_;
+
+  public:
+    OutOfLineNewObject(LNewObject *lir)
+      : lir_(lir)
+    { }
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineNewObject(this);
     }
 
-    JSObject *templateObject = lir->mir()->templateObject();
-    Register objReg = ToRegister(lir->output());
-    return initNewGCThing(SeqAllocMode(lir), templateObject, objReg);
-}
+    LNewObject *lir() const {
+        return lir_;
+    }
+};
 
 bool
 CodeGenerator::visitNewObjectVMCall(LNewObject *lir)
@@ -1711,13 +1680,30 @@ bool
 CodeGenerator::visitNewObject(LNewObject *lir)
 {
     JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+    Register objReg = ToRegister(lir->output());
+    JSObject *templateObject = lir->mir()->templateObject();
 
     if (lir->mir()->shouldUseVM())
         return visitNewObjectVMCall(lir);
 
-    JSObject *templateObject = lir->mir()->templateObject();
-    Register objReg = ToRegister(lir->output());
-    return initNewGCThing(SeqAllocMode(lir), templateObject, objReg);
+    OutOfLineNewObject *ool = new OutOfLineNewObject(lir);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    masm.newGCThing(objReg, templateObject, ool->entry());
+    masm.initGCThing(objReg, templateObject);
+
+    masm.bind(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineNewObject(OutOfLineNewObject *ool)
+{
+    if (!visitNewObjectVMCall(ool->lir()))
+        return false;
+    masm.jump(ool->rejoin());
+    return true;
 }
 
 bool
@@ -1790,9 +1776,21 @@ bool
 CodeGenerator::visitParNew(LParNew *lir)
 {
     JSObject *templateObject = lir->mir()->templateObject();
-    Register objReg = ToRegister(lir->output());
-    JS_ASSERT(objReg == ReturnReg);
-    return initNewGCThing(ParAllocMode(lir), templateObject, objReg);
+
+    gc::AllocKind allocKind = templateObject->getAllocKind();
+    int thingSize = (int)gc::Arena::thingSize(allocKind);
+    OutOfLineCode *ool = addOutOfLineParNew(lir, allocKind, thingSize);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    //masm.newGCThing(objReg, templateObject, ool->entry());
+    //masm.initGCThing(objReg, templateObject);
+    //masm.bind(ool->rejoin());
+
+    // TODO use fast path but extract from the arena lists found in
+    // the thread context
+    masm.jump(ool->entry());
+    return true;
 }
 
 OutOfLineCode*
@@ -1815,7 +1813,7 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register tempReg2 = ToRegister(lir->getTemp1());
     Register tempReg3 = ToRegister(lir->getTemp2());
     Register tempReg4 = ToRegister(lir->getTemp3());
-    Register objReg = ToRegister(lir->output());
+    DebugOnly<Register> objReg = ToRegister(lir->output());
 
     masm.setupUnalignedABICall(4, tempReg4);
     masm.passABIArg(threadContextReg);
@@ -1852,8 +1850,27 @@ CodeGenerator::visitCreateThis(LCreateThis *lir)
 {
     JS_ASSERT(lir->mir()->hasTemplateObject());
     JSObject *templateObject = lir->mir()->getTemplateObject();
+    gc::AllocKind allocKind = templateObject->getAllocKind();
+    int thingSize = (int)gc::Arena::thingSize(allocKind);
     Register objReg = ToRegister(lir->output());
-    return initNewGCThing(SeqAllocMode(lir), templateObject, objReg);
+
+    typedef JSObject *(*pf)(JSContext *cx, gc::AllocKind allocKind, size_t thingSize);
+    static const VMFunction NewGCThingInfo = FunctionInfo<pf>(js::ion::NewGCThing);
+
+    OutOfLineCode *ool = oolCallVM(NewGCThingInfo, lir,
+                                   (ArgList(), Imm32(allocKind), Imm32(thingSize)),
+                                   StoreRegisterTo(objReg));
+    if (!ool)
+        return false;
+
+    // Allocate. If the FreeList is empty, call to VM, which may GC.
+    masm.newGCThing(objReg, templateObject, ool->entry());
+
+    // Initialize based on the templateObject.
+    masm.bind(ool->rejoin());
+    masm.initGCThing(objReg, templateObject);
+
+    return true;
 }
 
 bool
