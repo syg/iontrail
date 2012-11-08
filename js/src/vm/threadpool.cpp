@@ -84,11 +84,10 @@ ThreadPoolWorker::init()
 bool
 ThreadPoolWorker::start()
 {
-    // Holding lock here permits us to modify state_ below without
-    // fear of the thread having started in its main loop already.
-    AutoLockMonitor lock(*this);
-
     JS_ASSERT(state_ == CREATED);
+
+    // Set state to active now, *before* the thread starts:
+    state_ = ACTIVE;
 
     if (!PR_CreateThread(PR_USER_THREAD,
                          ThreadMain, this,
@@ -96,10 +95,11 @@ ThreadPoolWorker::start()
                          PR_UNJOINABLE_THREAD,
                          WORKER_THREAD_STACK_SIZE))
     {
+        // If the thread failed to start, call it TERMINATED.
+        state_ = TERMINATED;
         return false;
     }
 
-    state_ = ACTIVE;
     return true;
 }
 
@@ -121,7 +121,7 @@ ThreadPoolWorker::run()
                              stackLimitOffset * JS_STACK_GROWTH_DIRECTION);
 
     AutoLockMonitor lock(*this);
-    JS_ASSERT(state_ == ACTIVE);
+
     for (;;) {
         while (!worklist_.empty()) {
             TaskExecutor *task = worklist_.popCopy();
@@ -134,10 +134,12 @@ ThreadPoolWorker::run()
         if (state_ == TERMINATING)
             break;
 
+        JS_ASSERT(state_ == ACTIVE);
+
         lock.wait();
     }
 
-    JS_ASSERT(worklist_.empty());
+    JS_ASSERT(worklist_.empty() && state_ == TERMINATING);
     state_ = TERMINATED;
     lock.notify();
 }
@@ -161,15 +163,14 @@ ThreadPoolWorker::terminate()
     if (state_ == CREATED) {
         state_ = TERMINATED;
         return;
-    }
-
-    JS_ASSERT(state_ == ACTIVE);
-
-    state_ = TERMINATING;
-    lock.notify();
-
-    while (state_ != TERMINATED) {
-        lock.wait();
+    } else if (state_ == ACTIVE) {
+        state_ = TERMINATING;
+        lock.notify();
+        while (state_ != TERMINATED) {
+            lock.wait();
+        }
+    } else {
+        JS_ASSERT(state_ == TERMINATED);
     }
 }
 
