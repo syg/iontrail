@@ -12,8 +12,8 @@
 #include "jscntxt.h"
 #include "jsobj.h"
 #include "jsinfer.h"
-#include "jsthreadpool.h"
-#include "jstaskset.h"
+#include "vm/threadpool.h"
+#include "vm/forkjoin.h"
 
 namespace js {
 
@@ -563,65 +563,66 @@ class ParallelArrayObject : public JSObject {
     //////////////////////////////////////////////////////////////////////////
     //
     // The ParallelArrayTaskSet embodies the main logic for running
-    // any parallel operation.  It is parameterized by two types,
-    // OpDefn and Op.  OpDefn corresponds to the state for a
-    // particular operation that is shared between all threads.  The
-    // OpDefn instance is created by the method (e.g.,
-    // ParallelMode::map()) for the operation.  The Op class
-    // corresponds the per-thread state.  It will be instantiated and
-    // initialized once per worker.  The final template parameter,
-    // MaxArgc, indicates how large of an argc vector we should
-    // statically allocate.  The operation does not have to use the
-    // entire thing; the OpDefn returns a value (argc) for the actual
-    // number of arguments (sometimes it varies depending on the
-    // number of dimensions and so forth).  The ParallelArrayTaskSet
-    // will check that argc is less than MaxArgc and abort otherwise.
+    // any parallel operation.  It is parameterized by a types
+    // BodyDefn.  BodyDefn corresponds to the state for a particular
+    // operation that is shared between all threads.  The BodyDefn
+    // instance is created by the method (e.g., ParallelMode::map())
+    // for the operation.  Each BodyDefn must define an associated
+    // type BodyDefn::Instance that corresponds the per-thread state.
+    // It will be instantiated and initialized once per worker.  The
+    // final template parameter, MaxArgc, indicates how large of an
+    // argc vector we should statically allocate.  The operation does
+    // not have to use the entire thing; the BodyDefn returns a value
+    // (argc) for the actual number of arguments (sometimes it varies
+    // depending on the number of dimensions and so forth).  The
+    // ParallelArrayTaskSet will check that argc is less than MaxArgc
+    // and abort otherwise.
 
     static ExecutionStatus ToExecutionStatus(JSContext *cx,
                                              const char *opName,
                                              ParallelResult pr);
 
-    template<typename OpDefn, uint32_t MaxArgc>
-    class ParallelArrayTaskSet : public TaskSet {
+    template<typename BodyDefn, uint32_t MaxArgc>
+    class ParallelArrayOp : public ForkJoinOp {
     private:
         JSContext *cx_;
-        OpDefn &opDefn_;
+        BodyDefn &bodyDefn_;
         HandleObject elementalFun_;
         HandleParallelArrayObject result_;
 
     public:
-        ParallelArrayTaskSet(JSContext *cx,
-                             OpDefn &opDefn,
-                             HandleObject elementalFun,
-                             HandleParallelArrayObject result)
+        ParallelArrayOp(JSContext *cx,
+                       BodyDefn &bodyDefn,
+                       HandleObject elementalFun,
+                       HandleParallelArrayObject result)
             : cx_(cx)
-            , opDefn_(opDefn)
+            , bodyDefn_(bodyDefn)
             , elementalFun_(elementalFun)
             , result_(result)
         {}
 
-        ~ParallelArrayTaskSet();
+        ~ParallelArrayOp();
 
         ExecutionStatus apply();
 
         bool compileForParallelExecution();
 
-        virtual bool pre(size_t numThreads);
-        virtual bool parallel(ThreadContext &taskSetCx);
-        virtual bool post(size_t numThreads);
+        virtual bool pre(size_t numSlices);
+        virtual bool parallel(ForkJoinSlice &slice);
+        virtual bool post(size_t numSlices);
     };
 
     struct ExecuteArgs;
 
-    // A base class for |OpDefns| that will apply to each member of the result
-    // vector.  The associated |Op| type should be |ApplyToEach<OpDefn,
-    // PerElemOp>|.  Here |OpDefn| is a subtype of |ApplyToEachOpDefn| and
+    // A base class for |BodyDefns| that will apply to each member of the result
+    // vector.  The associated |Op| type should be |ApplyToEach<BodyDefn,
+    // PerElemOp>|.  Here |BodyDefn| is a subtype of |ApplyToEachBodyDefn| and
     // |PerElemOp| defines the code to apply per-element. An example would be
-    // |MapOpDefn| and |MapOp|.
+    // |MapBodyDefn| and |MapOp|.
     //
     // The type supplied |PerElemOp| must |init()| (which is called once) and
     // |initializeArgv()| (which is called per element).
-    class ApplyToEachOpDefn {
+    class ApplyToEachBodyDefn {
     public:
         JSContext *cx;
         HandleParallelArrayObject result;
@@ -629,37 +630,37 @@ class ParallelArrayObject : public JSObject {
         // the type set of the buffer
         types::TypeSet *typeSet;
 
-        ApplyToEachOpDefn(JSContext *cx,
+        ApplyToEachBodyDefn(JSContext *cx,
                           HandleParallelArrayObject result)
             : cx(cx), result(result)
         {}
 
-        bool pre(size_t numThreads, RootedTypeObject &resultType);
+        bool pre(size_t numSlices, RootedTypeObject &resultType);
     };
 
-    template<typename OpDefn>
-    class ApplyToEachOp {
+    template<typename BodyDefn>
+    class ApplyToEachBodyInstance {
     protected:
-        OpDefn &opDefn_;
+        BodyDefn &bodyDefn_;
 
     public:
-        ApplyToEachOp(OpDefn &opDefn);
+        ApplyToEachBodyInstance(BodyDefn &bodyDefn);
         bool execute(ExecuteArgs &args);
     };
 
-    class MapOp;
-    class MapOpDefn : public ApplyToEachOpDefn {
+    class MapBodyInstance;
+    class MapBodyDefn : public ApplyToEachBodyDefn {
     public:
-        typedef MapOp Op;
+        typedef MapBodyInstance Instance;
 
         HandleParallelArrayObject source;
         HandleObject elementalFun;
 
-        MapOpDefn(JSContext *cx,
+        MapBodyDefn(JSContext *cx,
                   HandleParallelArrayObject source,
                   HandleParallelArrayObject result,
                   HandleObject elementalFun)
-            : ApplyToEachOpDefn(cx, result),
+            : ApplyToEachBodyDefn(cx, result),
               source(source),
               elementalFun(elementalFun)
         {}
@@ -680,78 +681,78 @@ class ParallelArrayObject : public JSObject {
         }
 
         bool doWarmup();
-        bool pre(size_t numThreads);
+        bool pre(size_t numSlices);
     };
 
-    class MapOp : public ApplyToEachOp<MapOpDefn> {
+    class MapBodyInstance : public ApplyToEachBodyInstance<MapBodyDefn> {
     private:
         HandleParallelArrayObject source;
         RootedValue elem;
 
     public:
-        MapOp(MapOpDefn &opDefn, size_t threadId, size_t numThreads);
+        MapBodyInstance(MapBodyDefn &bodyDefn, size_t sliceId, size_t numSlices);
         bool init();
         bool initializeArgv(Value *argv, unsigned i);
     };
 
-    class BuildOp;
-    class BuildOpDefn : public ApplyToEachOpDefn {
+    class BuildBodyInstance;
+    class BuildBodyDefn : public ApplyToEachBodyDefn {
     public:
-        typedef BuildOp Op;
+        typedef BuildBodyInstance Instance;
 
         IndexInfo &iv;
         HandleObject elementalFun;
 
-        BuildOpDefn(JSContext *cx,
+        BuildBodyDefn(JSContext *cx,
                     HandleParallelArrayObject result,
                     IndexInfo &iv,
                     HandleObject elementalFun)
-            : ApplyToEachOpDefn(cx, result),
+            : ApplyToEachBodyDefn(cx, result),
               iv(iv),
               elementalFun(elementalFun)
         {}
 
         unsigned length() {
-            // See MapOpDefn::length()
+            // See MapBodyDefn::length()
             return iv.scalarLengthOfPackedDimensions();
         }
 
         uint32_t argc() {
-            // See MapOpDefn::argc()
+            // See MapBodyDefn::argc()
             return iv.packedDimensions() + 1;
         }
 
         const char *toString() {
-            // See MapOpDefn::toString()
+            // See MapBodyDefn::toString()
             return "build";
         }
 
         bool doWarmup();
-        bool pre(size_t numThreads);
+        bool pre(size_t numSlices);
     };
 
-    class BuildOp : public ApplyToEachOp<BuildOpDefn> {
+    class BuildBodyInstance : public ApplyToEachBodyInstance<BuildBodyDefn> {
     private:
         IndexInfo iv;
 
     public:
-        BuildOp(BuildOpDefn &opDefn, size_t threadId,
-                size_t numThreads);
+        BuildBodyInstance(BuildBodyDefn &bodyDefn, size_t sliceId,
+                          size_t numSlices);
         bool init();
         bool initializeArgv(Value *argv, unsigned i);
     };
 
-    class ReduceOp;
-    class ReduceOpDefn {
+    class ReduceBodyInstance;
+    class ReduceBodyDefn {
     public:
-        typedef ReduceOp Op;
+        typedef ReduceBodyInstance Instance;
 
         JSContext *cx;
         HandleParallelArrayObject source;
         HandleObject elementalFun;
         AutoValueVector results;
 
-        ReduceOpDefn(JSContext *cx,
+        ReduceBodyDefn(JSContext *cx,
                      HandleParallelArrayObject source,
                      HandleObject elementalFun)
             : cx(cx),
@@ -776,23 +777,23 @@ class ParallelArrayObject : public JSObject {
         }
 
         bool doWarmup();
-        bool pre(size_t numThreads);
+        bool pre(size_t numSlices);
         ExecutionStatus post(MutableHandleValue vp);
     };
 
-    class ReduceOp {
+    class ReduceBodyInstance {
     private:
-        ReduceOpDefn &opDefn_;
+        ReduceBodyDefn &bodyDefn_;
     public:
-        ReduceOp(ReduceOpDefn &opDefn, size_t threadId,
-                 size_t numThreads);
+        ReduceBodyInstance(ReduceBodyDefn &bodyDefn, size_t sliceId,
+                           size_t numSlices);
         bool init();
         bool execute(ExecuteArgs &args);
     };
 
     typedef Vector<uint32_t, 32> CountVector;
 
-    class FilterCountTaskSet : public js::TaskSet {
+    class FilterCountOp : public ForkJoinOp {
     private:
         JSContext *cx_;
         HandleParallelArrayObject source_;
@@ -801,7 +802,7 @@ class ParallelArrayObject : public JSObject {
         CountVector counts_;
 
     public:
-        FilterCountTaskSet(JSContext *cx,
+        FilterCountOp(JSContext *cx,
                            HandleParallelArrayObject source,
                            HandleObject filter,
                            uint32_t filterBase)
@@ -812,16 +813,16 @@ class ParallelArrayObject : public JSObject {
             , counts_(cx)
         {}
 
-        ~FilterCountTaskSet() {}
+        ~FilterCountOp() {}
 
         const CountVector &counts() { return counts_; }
 
-        virtual bool pre(size_t numThreads);
-        virtual bool parallel(ThreadContext &taskSetCx);
-        virtual bool post(size_t numThreads);
+        virtual bool pre(size_t numSlices);
+        virtual bool parallel(ForkJoinSlice &slice);
+        virtual bool post(size_t numSlices);
     };
 
-    class FilterCopyTaskSet : public js::TaskSet {
+    class FilterCopyOp : public ForkJoinOp {
     private:
         JSContext *cx_;
         HandleParallelArrayObject source_;
@@ -831,7 +832,7 @@ class ParallelArrayObject : public JSObject {
         HandleObject resultBuffer_;
 
     public:
-        FilterCopyTaskSet(JSContext *cx,
+        FilterCopyOp(JSContext *cx,
                           HandleParallelArrayObject source,
                           HandleObject filter,
                           uint32_t filterBase,
@@ -845,11 +846,11 @@ class ParallelArrayObject : public JSObject {
             , resultBuffer_(resultBuffer)
         {}
 
-        ~FilterCopyTaskSet() {}
+        ~FilterCopyOp() {}
 
-        virtual bool pre(size_t numThreads);
-        virtual bool parallel(ThreadContext &taskSetCx);
-        virtual bool post(size_t numThreads);
+        virtual bool pre(size_t numSlices);
+        virtual bool parallel(ForkJoinSlice &slice);
+        virtual bool post(size_t numSlices);
     };
 };
 

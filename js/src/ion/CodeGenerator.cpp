@@ -563,7 +563,7 @@ CodeGenerator::visitParThreadContext(LParThreadContext *lir)
     const Register tempReg = ToRegister(lir->getTempReg());
 
     masm.setupUnalignedABICall(0, tempReg);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParThreadContext));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParForkJoinSlice));
     JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
     return true;
 }
@@ -1381,7 +1381,7 @@ CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
 
     // Since Ion frames exist on the C stack, the stack limit may be
     // dynamically set by JS_SetThreadStackLimit() and JS_SetNativeStackQuota().
-    masm.loadPtr(Address(threadContextReg, offsetof(ThreadContext, ionStackLimit)),
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, ionStackLimit)),
                  limitReg);
 
     // Conditional forward (unlikely) branch to failure.

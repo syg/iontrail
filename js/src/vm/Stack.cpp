@@ -14,7 +14,7 @@
 #include "ion/Bailouts.h"
 #endif
 #include "Stack.h"
-#include "jstaskset.h"
+#include "forkjoin.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"

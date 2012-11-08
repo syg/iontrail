@@ -1,4 +1,4 @@
-#include "jsmonitor.h"
+#include "vm/monitor.h"
 
 namespace js {
 

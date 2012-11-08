@@ -19,8 +19,8 @@
 #include "LinearScan.h"
 #include "ParallelArrayAnalysis.h"
 #include "jscompartment.h"
-#include "jsthreadpool.h"
-#include "jstaskset.h"
+#include "vm/threadpool.h"
+#include "vm/forkjoin.h"
 #include "IonCompartment.h"
 #include "CodeGenerator.h"
 #include "jsworkers.h"
@@ -119,7 +119,7 @@ ion::InitializeIon()
         if (status != PR_SUCCESS)
             return false;
 
-        if (!ThreadContext::Initialize())
+        if (!ForkJoinSlice::Initialize())
             return false;
 
         IonTLSInitialized = true;

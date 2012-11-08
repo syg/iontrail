@@ -5,8 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jstaskset.h"
-#include "jsmonitor.h"
+#include "forkjoin.h"
+#include "monitor.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "prthread.h"
@@ -22,7 +22,7 @@ class ForkJoinShared
 
     JSContext *const cx_;          //< Current context
     ThreadPool *const threadPool_; //< The thread pool.
-    TaskSet &taskSet_;             //< User-defined operations to be perf. in par.
+    ForkJoinOp &op_;               //< User-defined operations to be perf. in par.
     const size_t numThreads_;      //< Total number of threads.
     PRCondVar *rendezvousEnd_;     //< Cond. var used to signal end of rendezvous.
 
@@ -31,7 +31,7 @@ class ForkJoinShared
     //
     // Each worker thread gets an arena to use when allocating.
 
-    Vector<js::gc::ArenaLists *, 16> arenaListss_;
+    Vector<gc::ArenaLists *, 16> arenaListss_;
 
     ////////////////////////////////////////////////////////////////////////
     // Locked Fields
@@ -66,7 +66,7 @@ class ForkJoinShared
 
     // Executes slice #threadId of the work, either from a worker or
     // the main thread.
-    void executePortion(js::PerThreadData *perThread, size_t threadId, uintptr_t stackLimit);
+    void executePortion(PerThreadData *perThread, size_t threadId, uintptr_t stackLimit);
 
     // Rendezvous protocol:
     //
@@ -89,10 +89,10 @@ class ForkJoinShared
 
 public:
     ForkJoinShared(JSContext *cx,
-                         ThreadPool *threadPool,
-                         TaskSet &taskSet,
-                         size_t numThreads,
-                         size_t uncompleted);
+                   ThreadPool *threadPool,
+                   ForkJoinOp &op,
+                   size_t numThreads,
+                   size_t uncompleted);
     ~ForkJoinShared();
 
     bool init();
@@ -110,7 +110,7 @@ public:
     // Invoked during processing by worker threads to "check in"
     bool check(ForkJoinSlice &threadCx);
 
-    // See comment on |ForkJoinSlice::setFatal()| in jstaskset.h
+    // See comment on |ForkJoinSlice::setFatal()| in forkjoin.h
     bool setFatal();
 
     JSRuntime *runtime() { return cx_->runtime; }
@@ -156,7 +156,7 @@ ForkJoinSlice::Initialize()
     return status == PR_SUCCESS;
 }
 
-ParallelResult ExecuteTaskSet(JSContext *cx, TaskSet &taskSet)
+ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
 {
 #   ifndef JS_THREADSAFE_ION
     return TP_RETRY_SEQUENTIALLY;
@@ -166,11 +166,11 @@ ParallelResult ExecuteTaskSet(JSContext *cx, TaskSet &taskSet)
     ThreadPool *threadPool = &cx->runtime->threadPool;
     size_t numThreads = threadPool->numWorkers() + 1; // parallel workers plus this main thread
 
-    ForkJoinShared taskSetSharedCx(cx, threadPool, taskSet, numThreads, numThreads - 1);
-    if (!taskSetSharedCx.init())
+    ForkJoinShared shared(cx, threadPool, op, numThreads, numThreads - 1);
+    if (!shared.init())
         return TP_RETRY_SEQUENTIALLY;
 
-    return taskSetSharedCx.execute();
+    return shared.execute();
 #   endif
 }
 
@@ -178,12 +178,14 @@ ParallelResult ExecuteTaskSet(JSContext *cx, TaskSet &taskSet)
  * ForkJoinShared
  */
 
-ForkJoinShared::ForkJoinShared(JSContext *cx, ThreadPool *threadPool,
-                                           TaskSet &taskSet, size_t numThreads,
-                                           size_t uncompleted)
+ForkJoinShared::ForkJoinShared(JSContext *cx,
+                               ThreadPool *threadPool,
+                               ForkJoinOp &op,
+                               size_t numThreads,
+                               size_t uncompleted)
     : cx_(cx),
       threadPool_(threadPool),
-      taskSet_(taskSet),
+      op_(op),
       numThreads_(numThreads),
       arenaListss_(cx),
       uncompleted_(uncompleted),
@@ -215,7 +217,7 @@ ForkJoinShared::init()
         return false;
 
     for (unsigned i = 0; i < numThreads_; i++) {
-        js::gc::ArenaLists *arenaLists = cx_->new_<js::gc::ArenaLists>();
+        gc::ArenaLists *arenaLists = cx_->new_<gc::ArenaLists>();
         if (!arenaLists)
             return false;
 
@@ -243,7 +245,7 @@ ForkJoinShared::execute()
     AutoLockMonitor lock(*this);
 
     // give the task set a chance to prepare for parallel workload
-    if (!taskSet_.pre(numThreads_))
+    if (!op_.pre(numThreads_))
         return TP_RETRY_SEQUENTIALLY;
 
     // notify workers to start and execute one portion on this thread
@@ -268,7 +270,7 @@ ForkJoinShared::execute()
     transferArenasToCompartment();
 
     // give task set a chance to cleanup after parallel execution
-    if (!taskSet_.post(numThreads_))
+    if (!op_.post(numThreads_))
         return TP_RETRY_SEQUENTIALLY;
 
     return TP_SUCCESS; // everything went swimmingly. give yourself a pat on the back.
@@ -289,10 +291,10 @@ ForkJoinShared::executeFromWorker(size_t workerId, uintptr_t stackLimit)
 {
     JS_ASSERT(workerId < numThreads_ - 1);
 
-    js::PerThreadData thisThread(cx_->runtime);
-    js::TlsPerThreadData.set(&thisThread);
+    PerThreadData thisThread(cx_->runtime);
+    TlsPerThreadData.set(&thisThread);
     executePortion(&thisThread, workerId, stackLimit);
-    js::TlsPerThreadData.set(NULL);
+    TlsPerThreadData.set(NULL);
 
     AutoLockMonitor lock(*this);
     uncompleted_ -= 1;
@@ -311,16 +313,16 @@ ForkJoinShared::executeFromMainThread(uintptr_t stackLimit)
 }
 
 void
-ForkJoinShared::executePortion(js::PerThreadData *perThread,
+ForkJoinShared::executePortion(PerThreadData *perThread,
                                size_t threadId,
                                uintptr_t stackLimit)
 {
     gc::ArenaLists *arenaLists = arenaListss_[threadId];
-    ForkJoinSlice threadCx(perThread, threadId, numThreads_,
-                           stackLimit, arenaLists, this);
-    AutoSetForkJoinSlice autoContext(&threadCx);
+    ForkJoinSlice slice(perThread, threadId, numThreads_,
+                        stackLimit, arenaLists, this);
+    AutoSetForkJoinSlice autoContext(&slice);
 
-    if (!taskSet_.parallel(threadCx))
+    if (!op_.parallel(slice))
         abort_ = true;
 }
 
@@ -335,30 +337,30 @@ ForkJoinShared::setFatal()
 }
 
 bool
-ForkJoinShared::check(ForkJoinSlice &threadCx)
+ForkJoinShared::check(ForkJoinSlice &slice)
 {
     if (abort_)
         return false;
 
-    if (threadCx.isMainThread()) {
+    if (slice.isMainThread()) {
         if (cx_->runtime->interrupt) {
             // If interrupt is requested, bring worker threads to a
             // halt, service the interrupt, then let them start back
             // up again.
-            AutoRendezvous autoRendezvous(threadCx);
+            AutoRendezvous autoRendezvous(slice);
             if (!js_HandleExecutionInterrupt(cx_)) {
                 return setFatal();
             }
         }
     } else if (rendezvous_) {
-        joinRendezvous(threadCx);
+        joinRendezvous(slice);
     }
 
     return true;
 }
 
 void
-ForkJoinShared::initiateRendezvous(ForkJoinSlice &threadCx) {
+ForkJoinShared::initiateRendezvous(ForkJoinSlice &slice) {
     /*
       The rendezvous protocol is always initiated by the main thread.
       The main thread sets the rendezvous flag to true.  Seeing this
@@ -395,7 +397,7 @@ ForkJoinShared::initiateRendezvous(ForkJoinSlice &threadCx) {
      */
 
 
-    JS_ASSERT(threadCx.isMainThread());
+    JS_ASSERT(slice.isMainThread());
     JS_ASSERT(!rendezvous_ && blocked_ == 0);
 
     AutoLockMonitor lock(*this);
@@ -410,8 +412,8 @@ ForkJoinShared::initiateRendezvous(ForkJoinSlice &threadCx) {
 }
 
 void
-ForkJoinShared::joinRendezvous(ForkJoinSlice &threadCx) {
-    JS_ASSERT(!threadCx.isMainThread());
+ForkJoinShared::joinRendezvous(ForkJoinSlice &slice) {
+    JS_ASSERT(!slice.isMainThread());
     JS_ASSERT(rendezvous_);
 
     AutoLockMonitor lock(*this);
@@ -433,8 +435,8 @@ ForkJoinShared::joinRendezvous(ForkJoinSlice &threadCx) {
 }
 
 void
-ForkJoinShared::endRendezvous(ForkJoinSlice &threadCx) {
-    JS_ASSERT(threadCx.isMainThread());
+ForkJoinShared::endRendezvous(ForkJoinSlice &slice) {
+    JS_ASSERT(slice.isMainThread());
 
     AutoLockMonitor lock(*this);
     rendezvous_ = false;
@@ -449,13 +451,13 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &threadCx) {
  * ForkJoinSlice
  */
 
-ForkJoinSlice::ForkJoinSlice(js::PerThreadData *perThreadData,
-                             size_t threadId, size_t numThreads,
-                             uintptr_t stackLimit, js::gc::ArenaLists *arenaLists,
+ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
+                             size_t sliceId, size_t numSlices,
+                             uintptr_t stackLimit, gc::ArenaLists *arenaLists,
                              ForkJoinShared *shared)
     : perThreadData(perThreadData),
-      threadId(threadId),
-      numThreads(numThreads),
+      sliceId(sliceId),
+      numSlices(numSlices),
       ionStackLimit(stackLimit),
       arenaLists(arenaLists),
       shared(shared)
@@ -464,7 +466,7 @@ ForkJoinSlice::ForkJoinSlice(js::PerThreadData *perThreadData,
 bool
 ForkJoinSlice::isMainThread()
 {
-    return threadId == numThreads - 1;
+    return perThreadData == &shared->runtime()->mainThread;
 }
 
 JSRuntime *

@@ -8,7 +8,7 @@
 #ifndef jstaskset_h___
 #define jstaskset_h___
 
-#include "jsthreadpool.h"
+#include "threadpool.h"
 
 /*
  * ForkJoin
@@ -105,7 +105,7 @@ struct ForkJoinSlice
 {
 public:
     // PerThreadData corresponding to the current worker thread.
-    JS::PerThreadData *perThreadData;
+    PerThreadData *perThreadData;
 
     // Which slice should you process? Ranges from 0 to |numSlices|.
     const size_t sliceId;
@@ -117,12 +117,12 @@ public:
     uintptr_t ionStackLimit;
 
     // Arenas to use when allocating on this thread.  See
-    // |js::ion::ParFunctions::ParNewGCThing()|.  This should move
+    // |ion::ParFunctions::ParNewGCThing()|.  This should move
     // into |perThreadData|.
     gc::ArenaLists *const arenaLists;
 
-    ForkJoinSlice(JS::PerThreadData *perThreadData, size_t threadId, size_t numThreads,
-                  uintptr_t stackLimit, js::gc::ArenaLists *arenaLists,
+    ForkJoinSlice(PerThreadData *perThreadData, size_t sliceId, size_t numSlices,
+                  uintptr_t stackLimit, gc::ArenaLists *arenaLists,
                   ForkJoinShared *shared);
 
     // True if this is the main thread, false if it is one of the parallel workers
@@ -148,7 +148,7 @@ public:
     JSRuntime *runtime();
 
     // Access current context using thread-local data.
-    static inline ForkJoinShared *current();
+    static inline ForkJoinSlice *current();
     static bool Initialize();
 
 private:

@@ -19,12 +19,12 @@
 #include "vm/Stack.h"
 #include "vm/StringBuffer.h"
 
-#include "jsthreadpool.h"
+#include "vm/threadpool.h"
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 #include "jsarrayinlines.h"
-#include "jsthreadpoolinlines.h"
+#include "vm/forkjoininlines.h"
 
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
@@ -546,62 +546,62 @@ public:
 };
 
 static void
-ComputeTileBounds(ThreadContext &threadCx, unsigned length, unsigned *start, unsigned *end)
+ComputeTileBounds(ForkJoinSlice &slice, unsigned length, unsigned *start, unsigned *end)
 {
-    size_t threadId = threadCx.threadId;
-    size_t numThreads = threadCx.numThreads;
+    size_t sliceId = slice.sliceId;
+    size_t numSlices = slice.numSlices;
 
     // compute our tile bounds
-    double perTask = ((double)length) / numThreads;
-    *start = perTask * threadId;
-    if (threadId == (numThreads - 1))
+    double perTask = ((double)length) / numSlices;
+    *start = perTask * sliceId;
+    if (sliceId == (numSlices - 1))
         *end = length;
     else
-        *end = perTask * (threadId + 1);
+        *end = perTask * (sliceId + 1);
 }
 
 struct ParallelArrayObject::ExecuteArgs
 {
-    ThreadContext &threadCx;
+    ForkJoinSlice &slice;
     EnterIonCode enter;
     void *jitcode;
     void *calleeToken;
     uint32_t argc;
     Value *argv;
 
-    ExecuteArgs(ThreadContext &threadCx, EnterIonCode enter,
+    ExecuteArgs(ForkJoinSlice &slice, EnterIonCode enter,
                 void *jitcode, void *calleeToken, uint32_t argc, Value *argv)
-        : threadCx(threadCx), enter(enter), jitcode(jitcode),
+        : slice(slice), enter(enter), jitcode(jitcode),
           calleeToken(calleeToken), argc(argc), argv(argv)
     {}
 };
 
-template<typename OpDefn, uint32_t MaxArgc>
-ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::~ParallelArrayTaskSet() {
+template<typename BodyDefn, uint32_t MaxArgc>
+ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::~ParallelArrayOp() {
 }
 
-template<typename OpDefn, uint32_t MaxArgc>
+template<typename BodyDefn, uint32_t MaxArgc>
 ParallelArrayObject::ExecutionStatus
-ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::apply()
+ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::apply()
 {
-    if (opDefn_.argc() > MaxArgc)
+    if (bodyDefn_.argc() > MaxArgc)
         return ExecutionDisqualified;
 
     Spew(cx_, SpewOps, "%s: attempting parallel compilation",
-         opDefn_.toString());
+         bodyDefn_.toString());
     if (!compileForParallelExecution())
         return ExecutionDisqualified;
 
     Spew(cx_, SpewOps, "%s: entering parallel section",
-         opDefn_.toString());
+         bodyDefn_.toString());
     AutoEnterParallelSection enter(cx_);
-    ParallelResult pr = js::ExecuteTaskSet(cx_, *this);
-    return ToExecutionStatus(cx_, opDefn_.toString(), pr);
+    ParallelResult pr = js::ExecuteForkJoinOp(cx_, *this);
+    return ToExecutionStatus(cx_, bodyDefn_.toString(), pr);
 }
 
-template<typename OpDefn, uint32_t MaxArgc>
+template<typename BodyDefn, uint32_t MaxArgc>
 bool
-ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::compileForParallelExecution()
+ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::compileForParallelExecution()
 {
     if (!ion::IsEnabled(cx_))
         return false;
@@ -626,7 +626,7 @@ ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::compileForParallelEx
         // inference will have no particular information.  In that
         // case, we need to do a few "warm-up" iterations to give type
         // inference some data to work with.
-        if (!opDefn_.doWarmup())
+        if (!bodyDefn_.doWarmup())
             return false;
 
         // Try to compile the kernel.
@@ -638,23 +638,23 @@ ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::compileForParallelEx
     return true;
 }
 
-template<typename OpDefn, uint32_t MaxArgc>
+template<typename BodyDefn, uint32_t MaxArgc>
 bool
-ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::pre(
-    size_t numThreads)
+ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::pre(
+    size_t numSlices)
 {
-    return opDefn_.pre(numThreads);
+    return bodyDefn_.pre(numSlices);
 }
 
-template<typename OpDefn, uint32_t MaxArgc>
+template<typename BodyDefn, uint32_t MaxArgc>
 bool
-ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::parallel(
-    ThreadContext &threadCx)
+ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::parallel(
+    ForkJoinSlice &slice)
 {
-    js::PerThreadData *pt = threadCx.perThreadData;
+    js::PerThreadData *pt = slice.perThreadData;
 
     // compute number of arguments
-    const uint32_t argc = opDefn_.argc();
+    const uint32_t argc = bodyDefn_.argc();
     JS_ASSERT(argc <= MaxArgc); // other compilation should have failed
     Value actualArgv[MaxArgc + 1], *argv = actualArgv + 1;
 
@@ -671,17 +671,17 @@ ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::parallel(
     void *calleeToken = CalleeToToken(callee);
 
     // Prepare and execute the per-thread state for the operation:
-    typename OpDefn::Op op(opDefn_, threadCx.threadId, threadCx.numThreads);
+    typename BodyDefn::Instance op(bodyDefn_, slice.sliceId, slice.numSlices);
     if (!op.init())
         return false;
-    ExecuteArgs args(threadCx, enter, jitcode, calleeToken, argc, argv);
+    ExecuteArgs args(slice, enter, jitcode, calleeToken, argc, argv);
     return op.execute(args);
 }
 
-template<typename OpDefn, uint32_t MaxArgc>
+template<typename BodyDefn, uint32_t MaxArgc>
 bool
-ParallelArrayObject::ParallelArrayTaskSet<OpDefn, MaxArgc>::post(
-    size_t numThreads)
+ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::post(
+    size_t numSlices)
 {
     return true;
 }
@@ -1362,13 +1362,13 @@ ParallelArrayObject::ExecutionStatus
 ParallelArrayObject::ParallelMode::build(JSContext *cx, HandleParallelArrayObject buffer,
                                          IndexInfo &iv, HandleObject elementalFun)
 {
-    BuildOpDefn opDefn(cx, buffer, iv, elementalFun);
-    ParallelArrayTaskSet<BuildOpDefn, 31> taskSet(cx, opDefn, elementalFun, buffer);
+    BuildBodyDefn bodyDefn(cx, buffer, iv, elementalFun);
+    ParallelArrayOp<BuildBodyDefn, 31> taskSet(cx, bodyDefn, elementalFun, buffer);
     return taskSet.apply();
 }
 
 bool
-ParallelArrayObject::ApplyToEachOpDefn::pre(size_t numThreads,
+ParallelArrayObject::ApplyToEachBodyDefn::pre(size_t numSlices,
                                             RootedTypeObject &resultType)
 {
     // Find the TI object for the results we will be writing.  This
@@ -1403,23 +1403,23 @@ ParallelArrayObject::ToExecutionStatus(JSContext *cx,
     }
 }
 
-template<typename OpDefn>
-ParallelArrayObject::ApplyToEachOp<OpDefn>::ApplyToEachOp(OpDefn &opDefn)
-    : opDefn_(opDefn)
+template<typename BodyDefn>
+ParallelArrayObject::ApplyToEachBodyInstance<BodyDefn>::ApplyToEachBodyInstance(BodyDefn &bodyDefn)
+    : bodyDefn_(bodyDefn)
 {}
 
-template<typename OpDefn>
+template<typename BodyDefn>
 bool
-ParallelArrayObject::ApplyToEachOp<OpDefn>::execute(ExecuteArgs &args)
+ParallelArrayObject::ApplyToEachBodyInstance<BodyDefn>::execute(ExecuteArgs &args)
 {
     unsigned start, end;
-    ComputeTileBounds(args.threadCx, opDefn_.length(), &start, &end);
+    ComputeTileBounds(args.slice, bodyDefn_.length(), &start, &end);
 
-    typename OpDefn::Op *self = static_cast<typename OpDefn::Op*>(this);
+    typename BodyDefn::Instance *self = static_cast<typename BodyDefn::Instance*>(this);
 
-    RootedObject buffer(opDefn_.cx, opDefn_.result->buffer());
+    RootedObject buffer(bodyDefn_.cx, bodyDefn_.result->buffer());
     for (unsigned i = start; i < end; i++) {
-        if (!args.threadCx.check())
+        if (!args.slice.check())
             return false;
 
         if (!self->initializeArgv(args.argv, i))
@@ -1435,8 +1435,8 @@ ParallelArrayObject::ApplyToEachOp<OpDefn>::execute(ExecuteArgs &args)
             // check that the type of this value is already present
             // in the typeset: this must be true because we cannot
             // safely update type sets in parallel.
-            Type resultType = GetValueType(opDefn_.cx, result);
-            if (!opDefn_.typeSet->hasType(resultType))
+            Type resultType = GetValueType(bodyDefn_.cx, result);
+            if (!bodyDefn_.typeSet->hasType(resultType))
                 return false;
 
             // because we know that the type is already present, we
@@ -1449,7 +1449,7 @@ ParallelArrayObject::ApplyToEachOp<OpDefn>::execute(ExecuteArgs &args)
 }
 
 bool
-ParallelArrayObject::BuildOpDefn::doWarmup() {
+ParallelArrayObject::BuildBodyDefn::doWarmup() {
     ExecutionStatus warmupStatus = warmup.build(cx, result, iv, elementalFun);
 
     // reset the various indices after the warmup, since it modifies iv in place
@@ -1461,33 +1461,33 @@ ParallelArrayObject::BuildOpDefn::doWarmup() {
 }
 
 bool
-ParallelArrayObject::BuildOpDefn::pre(size_t numThreads) {
+ParallelArrayObject::BuildBodyDefn::pre(size_t numSlices) {
     RootedTypeObject resultType(cx, result->maybeGetRowType(cx, iv.packedDimensions() - 1));
-    return ApplyToEachOpDefn::pre(numThreads, resultType);
+    return ApplyToEachBodyDefn::pre(numSlices, resultType);
 }
 
-ParallelArrayObject::BuildOp::BuildOp(BuildOpDefn &opDefn, size_t threadId,
-                                      size_t numThreads)
-    : ApplyToEachOp(opDefn),
-      iv(opDefn.cx) // FIXME--not thread safe!!
+ParallelArrayObject::BuildBodyInstance::BuildBodyInstance(BuildBodyDefn &bodyDefn, size_t sliceId,
+                                      size_t numSlices)
+    : ApplyToEachBodyInstance(bodyDefn),
+      iv(bodyDefn.cx) // FIXME--not thread safe!!
 {}
 
 bool
-ParallelArrayObject::BuildOp::init()
+ParallelArrayObject::BuildBodyInstance::init()
 {
-    if (!iv.dimensions.append(opDefn_.iv.dimensions.begin(),
-                              opDefn_.iv.dimensions.end()))
+    if (!iv.dimensions.append(bodyDefn_.iv.dimensions.begin(),
+                              bodyDefn_.iv.dimensions.end()))
         return false;
 
-    if (!iv.initialize(opDefn_.iv.dimensions.length(),
-                       opDefn_.iv.dimensions.length()))
+    if (!iv.initialize(bodyDefn_.iv.dimensions.length(),
+                       bodyDefn_.iv.dimensions.length()))
         return false;
 
     return true;
 }
 
 bool
-ParallelArrayObject::BuildOp::initializeArgv(Value *argv, unsigned idx) {
+ParallelArrayObject::BuildBodyInstance::initializeArgv(Value *argv, unsigned idx) {
     if (!iv.fromScalar(idx))
         return false;
 
@@ -1510,39 +1510,40 @@ ParallelArrayObject::ParallelMode::map(JSContext *cx, HandleParallelArrayObject 
     if (!source->isPackedOneDimensional())
         return ExecutionDisqualified;
 
-    MapOpDefn opDefn(cx, source, result, elementalFun);
-    ParallelArrayTaskSet<MapOpDefn, 4> taskSet(cx, opDefn, elementalFun, result);
+    MapBodyDefn bodyDefn(cx, source, result, elementalFun);
+    ParallelArrayOp<MapBodyDefn, 4> taskSet(cx, bodyDefn, elementalFun, result);
     return taskSet.apply();
 }
 
 bool
-ParallelArrayObject::MapOpDefn::doWarmup() {
+ParallelArrayObject::MapBodyDefn::doWarmup() {
     ExecutionStatus warmupStatus = warmup.map(cx, source, result, elementalFun);
     return (warmupStatus == ExecutionSucceeded);
 }
 
 bool
-ParallelArrayObject::MapOpDefn::pre(size_t numThreads) {
+ParallelArrayObject::MapBodyDefn::pre(size_t numSlices) {
     RootedTypeObject resultType(cx, result->type());
-    return ApplyToEachOpDefn::pre(numThreads, resultType);
+    return ApplyToEachBodyDefn::pre(numSlices, resultType);
 }
 
-ParallelArrayObject::MapOp::MapOp(MapOpDefn &opDefn, size_t threadId,
-                                  size_t numThreads)
-    : ApplyToEachOp(opDefn),
-      source(opDefn.source),
-      elem(opDefn.cx)
+ParallelArrayObject::MapBodyInstance::MapBodyInstance(
+    MapBodyDefn &bodyDefn, size_t sliceId,
+    size_t numSlices)
+    : ApplyToEachBodyInstance(bodyDefn),
+      source(bodyDefn.source),
+      elem(bodyDefn.cx)
 {}
 
 bool
-ParallelArrayObject::MapOp::init() {
+ParallelArrayObject::MapBodyInstance::init() {
     return true;
 }
 
 bool
-ParallelArrayObject::MapOp::initializeArgv(Value *argv, unsigned i) {
+ParallelArrayObject::MapBodyInstance::initializeArgv(Value *argv, unsigned i) {
     // XXX should not use cx
-    if (!getParallelArrayElement(opDefn_.cx, source, i, &elem))
+    if (!getParallelArrayElement(bodyDefn_.cx, source, i, &elem))
         return false;
 
     // Arguments are in eic(h) order.
@@ -1569,16 +1570,16 @@ ParallelArrayObject::ParallelMode::reduce(JSContext *cx, HandleParallelArrayObje
     if (result) // we don't support scan in parallel right now
         return ExecutionDisqualified;
 
-    ReduceOpDefn opDefn(cx, source, elementalFun);
-    ParallelArrayTaskSet<ReduceOpDefn, 4> taskSet(cx, opDefn, elementalFun, result);
+    ReduceBodyDefn bodyDefn(cx, source, elementalFun);
+    ParallelArrayOp<ReduceBodyDefn, 4> taskSet(cx, bodyDefn, elementalFun, result);
     ExecutionStatus es;
     if ((es = taskSet.apply()) != ExecutionSucceeded)
         return es;
-    return opDefn.post(vp);
+    return bodyDefn.post(vp);
 }
 
 bool
-ParallelArrayObject::ReduceOpDefn::doWarmup()
+ParallelArrayObject::ReduceBodyDefn::doWarmup()
 {
     RootedValue temp(cx);
     ExecutionStatus warmupStatus = warmup.reduce(cx, source, NullPtr(),
@@ -1587,18 +1588,18 @@ ParallelArrayObject::ReduceOpDefn::doWarmup()
 }
 
 bool
-ParallelArrayObject::ReduceOpDefn::pre(size_t numThreads)
+ParallelArrayObject::ReduceBodyDefn::pre(size_t numSlices)
 {
     // to simplify parallel execution, we require at least ONE item
     // per parallel thread, so that none of them have to reduce an
     // empty vector.  In truth the threshold should probably be
     // significantly higher, for perf reasons, but that ought to be
     // enforced in the fallback code (i.e., before we even get here)
-    if (length() < numThreads) {
+    if (length() < numSlices) {
         return false;
     }
 
-    for (size_t i = 0; i < numThreads; i++) {
+    for (size_t i = 0; i < numSlices; i++) {
         if (!results.append(JSVAL_NULL))
             return false;
     }
@@ -1627,7 +1628,7 @@ public:
 };
 
 ParallelArrayObject::ExecutionStatus
-ParallelArrayObject::ReduceOpDefn::post(MutableHandleValue vp)
+ParallelArrayObject::ReduceBodyDefn::post(MutableHandleValue vp)
 {
     // Reduce the results from each thread into a single result:
     AutoValueVectorSource avsource(results);
@@ -1637,42 +1638,42 @@ ParallelArrayObject::ReduceOpDefn::post(MutableHandleValue vp)
     return ExecutionSucceeded;
 }
 
-ParallelArrayObject::ReduceOp::ReduceOp(ReduceOpDefn &opDefn, size_t threadId,
-                                        size_t numThreads)
-    : opDefn_(opDefn)
+ParallelArrayObject::ReduceBodyInstance::ReduceBodyInstance(ReduceBodyDefn &bodyDefn, size_t sliceId,
+                                        size_t numSlices)
+    : bodyDefn_(bodyDefn)
 {}
 
 bool
-ParallelArrayObject::ReduceOp::init()
+ParallelArrayObject::ReduceBodyInstance::init()
 {
     return true;
 }
 
 bool
-ParallelArrayObject::ReduceOp::execute(ExecuteArgs &args)
+ParallelArrayObject::ReduceBodyInstance::execute(ExecuteArgs &args)
 {
     unsigned start, end;
-    ComputeTileBounds(args.threadCx, opDefn_.length(), &start, &end);
+    ComputeTileBounds(args.slice, bodyDefn_.length(), &start, &end);
 
-    // ReduceOpDefn::pre() ensures that there is at least one element
+    // ReduceBodyDefn::pre() ensures that there is at least one element
     // for each thread to process:
     JS_ASSERT(end - start > 1);
 
     // NB---I am not 100% comfortable with using RootedValue here, but
     // there doesn't seem to be an easy alternative.
 
-    PerThreadData *pt = args.threadCx.perThreadData;
-    HandleParallelArrayObject source = opDefn_.source;
+    PerThreadData *pt = args.slice.perThreadData;
+    HandleParallelArrayObject source = bodyDefn_.source;
     RootedValue acc(pt);
-    if (!getParallelArrayElement(opDefn_.cx, source, start, &acc))
+    if (!getParallelArrayElement(bodyDefn_.cx, source, start, &acc))
         return false;
 
     RootedValue elem(pt);
     for (unsigned i = start + 1; i < end; i++) {
-        if (!args.threadCx.check())
+        if (!args.slice.check())
             return false;
 
-        if (!getParallelArrayElement(opDefn_.cx, source, i, &elem))
+        if (!getParallelArrayElement(bodyDefn_.cx, source, i, &elem))
             return false;
 
         args.argv[1] = acc;
@@ -1689,7 +1690,7 @@ ParallelArrayObject::ReduceOp::execute(ExecuteArgs &args)
         }
     }
 
-    opDefn_.results[args.threadCx.threadId] = acc;
+    bodyDefn_.results[args.slice.sliceId] = acc;
     return true;
 }
 
@@ -1743,8 +1744,8 @@ ParallelArrayObject::ParallelMode::filter(JSContext *cx, HandleParallelArrayObje
     // For each worker thread, count how many non-zeros are present in
     // its slice.
     JS_ASSERT(filterArray->isDenseArray());
-    FilterCountTaskSet count(cx, source, filterArray, filterBase);
-    ParallelResult pr = js::ExecuteTaskSet(cx, count);
+    FilterCountOp count(cx, source, filterArray, filterBase);
+    ParallelResult pr = js::ExecuteForkJoinOp(cx, count);
     if (pr != TP_SUCCESS)
         return ToExecutionStatus(cx, "filter", pr);
 
@@ -1760,59 +1761,59 @@ ParallelArrayObject::ParallelMode::filter(JSContext *cx, HandleParallelArrayObje
 
     // Now, do a second pass to copy the data.
     JS_ASSERT(filterArray->isDenseArray());
-    FilterCopyTaskSet copy(cx, source, filterArray, filterBase, count.counts(),
+    FilterCopyOp copy(cx, source, filterArray, filterBase, count.counts(),
                            resultBuffer);
-    pr = js::ExecuteTaskSet(cx, copy);
+    pr = js::ExecuteForkJoinOp(cx, copy);
     return ToExecutionStatus(cx, "filter", pr);
 }
 
 bool
-ParallelArrayObject::FilterCountTaskSet::pre(size_t numThreads) {
-    for (size_t i = 0; i < numThreads; i++)
+ParallelArrayObject::FilterCountOp::pre(size_t numSlices) {
+    for (size_t i = 0; i < numSlices; i++)
         if (!counts_.append(0))
             return false;
     return true;
 }
 
 bool
-ParallelArrayObject::FilterCountTaskSet::parallel(ThreadContext &threadCx) {
+ParallelArrayObject::FilterCountOp::parallel(ForkJoinSlice &slice) {
     size_t count = 0;
     unsigned length, start, end;
     length = source_->outermostDimension();
-    ComputeTileBounds(threadCx, length, &start, &end);
+    ComputeTileBounds(slice, length, &start, &end);
     for (unsigned i = start; i < end; i++) {
         Value felem = filter_->getDenseArrayElement(i + filterBase_);
         count += (int)(ToBoolean(felem));
     }
-    counts_[threadCx.threadId] = count;
+    counts_[slice.sliceId] = count;
     return true;
 }
 
 bool
-ParallelArrayObject::FilterCountTaskSet::post(size_t numThreads) {
+ParallelArrayObject::FilterCountOp::post(size_t numSlices) {
     return true;
 }
 
 bool
-ParallelArrayObject::FilterCopyTaskSet::pre(size_t numThreads) {
-    JS_ASSERT(counts_.length() == numThreads);
+ParallelArrayObject::FilterCopyOp::pre(size_t numSlices) {
+    JS_ASSERT(counts_.length() == numSlices);
     return true;
 }
 
 bool
-ParallelArrayObject::FilterCopyTaskSet::parallel(ThreadContext &threadCx) {
+ParallelArrayObject::FilterCopyOp::parallel(ForkJoinSlice &slice) {
     size_t count = 0;
 
-    for (int i = 0; i < threadCx.threadId; i++)
+    for (int i = 0; i < slice.sliceId; i++)
         count += counts_[i];
 
     unsigned length, start, end;
     length = source_->outermostDimension();
-    ComputeTileBounds(threadCx, length, &start, &end);
+    ComputeTileBounds(slice, length, &start, &end);
     for (unsigned i = start; i < end; i++) {
         Value felem = filter_->getDenseArrayElement(i + filterBase_);
         if (ToBoolean(felem)) {
-            RootedValue elem(threadCx.perThreadData);
+            RootedValue elem(slice.perThreadData);
             if (!getParallelArrayElement(cx_, source_, i, &elem))
                 return false;
             resultBuffer_->setDenseArrayElement(count++, elem);
@@ -1822,7 +1823,7 @@ ParallelArrayObject::FilterCopyTaskSet::parallel(ThreadContext &threadCx) {
 }
 
 bool
-ParallelArrayObject::FilterCopyTaskSet::post(size_t numThreads) {
+ParallelArrayObject::FilterCopyOp::post(size_t numSlices) {
     return true;
 }
 

@@ -6,9 +6,9 @@
 
 #include "jscntxt.h"
 #include "jslock.h"
-#include "jsthreadpool.h"
+#include "vm/threadpool.h"
 #include "prthread.h"
-#include "jsmonitor.h"
+#include "monitor.h"
 
 namespace js {
 

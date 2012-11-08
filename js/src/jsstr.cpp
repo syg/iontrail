@@ -39,8 +39,8 @@
 #include "jsscope.h"
 #include "jsstr.h"
 #include "jsversion.h"
-#include "jsthreadpool.h"
-#include "jstaskset.h"
+#include "vm/threadpool.h"
+#include "vm/forkjoin.h"
 
 #include "builtin/RegExp.h"
 #include "js/HashTable.h"
