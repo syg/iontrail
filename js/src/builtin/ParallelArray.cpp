@@ -1401,6 +1401,9 @@ ParallelArrayObject::ToExecutionStatus(JSContext *cx,
         SpewExecution(cx, opName, ParallelArrayObject::parallel, ExecutionFatal);
         return ExecutionFatal;
     }
+
+    JS_ASSERT(false);
+    return ExecutionFatal;
 }
 
 template<typename BodyDefn>
@@ -1831,14 +1834,18 @@ bool
 ParallelArrayObject::FallbackMode::shouldTrySequential(ExecutionStatus parStatus)
 {
     switch (parStatus) {
-      case ExecutionDisqualified:
-      case ExecutionBailout:
-        return true;
-
       case ExecutionFatal:
       case ExecutionSucceeded:
         return false;
+
+      case ExecutionDisqualified:
+      case ExecutionBailout:
+        break;
     }
+
+    // put the return true out here in case parStatus is corrupted.
+    // do not add default: so we get warnings if enum is incomplete.
+    return true;
 }
 
 #define FALLBACK_OP_BODY(NM,OP) do {                    \
