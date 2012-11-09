@@ -1603,8 +1603,7 @@ TypeObject::setFlagsFromKey(JSContext *cx, JSProtoKey key)
     switch (key) {
       case JSProto_Array:
         flags = OBJECT_FLAG_NON_TYPED_ARRAY
-              | OBJECT_FLAG_NON_DOM
-              | OBJECT_FLAG_NON_PARALLEL_ARRAY;
+              | OBJECT_FLAG_NON_DOM;
         break;
 
       case JSProto_Int8Array:
@@ -1618,8 +1617,7 @@ TypeObject::setFlagsFromKey(JSContext *cx, JSProtoKey key)
       case JSProto_Uint8ClampedArray:
         flags = OBJECT_FLAG_NON_DENSE_ARRAY
               | OBJECT_FLAG_NON_PACKED_ARRAY
-              | OBJECT_FLAG_NON_DOM
-              | OBJECT_FLAG_NON_PARALLEL_ARRAY;
+              | OBJECT_FLAG_NON_DOM;
         break;
 
       case JSProto_ParallelArray:
@@ -1633,8 +1631,7 @@ TypeObject::setFlagsFromKey(JSContext *cx, JSProtoKey key)
         flags = OBJECT_FLAG_NON_DENSE_ARRAY
               | OBJECT_FLAG_NON_PACKED_ARRAY
               | OBJECT_FLAG_NON_TYPED_ARRAY
-              | OBJECT_FLAG_NON_DOM
-              | OBJECT_FLAG_NON_PARALLEL_ARRAY;
+              | OBJECT_FLAG_NON_DOM;
         break;
     }
 
@@ -1677,31 +1674,22 @@ TypeObject::readBarrier(TypeObject *type)
 }
 
 inline void
-TypeConstruction::writeBarrierPre(TypeConstruction *construct)
+TypeNewScript::writeBarrierPre(TypeNewScript *newScript)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!construct)
+    if (!newScript)
         return;
 
-    JSCompartment *comp;
-
-    if (construct->isNewScript()) {
-        comp = construct->fun->compartment();
-        if (comp->needsBarrier()) {
-            MarkObject(comp->barrierTracer(), &construct->fun, "write barrier");
-            MarkShape(comp->barrierTracer(), &construct->shape, "write barrier");
-        }
-    } else if (construct->isParallelArray() && construct->rowType) {
-        comp = construct->rowType->compartment();
-        if (comp->needsBarrier())
-            MarkTypeObject(comp->barrierTracer(), &construct->rowType, "write barrier");
-        return;
+    JSCompartment *comp = newScript->fun->compartment();
+    if (comp->needsBarrier()) {
+        MarkObject(comp->barrierTracer(), &newScript->fun, "write barrier");
+        MarkShape(comp->barrierTracer(), &newScript->shape, "write barrier");
     }
 #endif
 }
 
 inline void
-TypeConstruction::writeBarrierPost(TypeConstruction *construct, void *addr)
+TypeNewScript::writeBarrierPost(TypeNewScript *newScript, void *addr)
 {
 }
 
