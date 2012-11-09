@@ -200,9 +200,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineBindNameCache(OutOfLineCache *ool);
     bool visitOutOfLineGetNameCache(OutOfLineCache *ool);
 
-    OutOfLineCode *addOutOfLineParNew(LParNew *lir,
-                                      gc::AllocKind allocKind,
-                                      int thingSize);
     bool visitOutOfLineParNew(OutOfLineParNew *ool);
 
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins) {

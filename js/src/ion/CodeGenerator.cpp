@@ -1770,8 +1770,8 @@ CodeGenerator::visitParNew(LParNew *lir)
 
     gc::AllocKind allocKind = templateObject->getAllocKind();
     int thingSize = (int)gc::Arena::thingSize(allocKind);
-    OutOfLineCode *ool = addOutOfLineParNew(lir, allocKind, thingSize);
-    if (!addOutOfLineCode(ool))
+    OutOfLineCode *ool = new OutOfLineParNew(lir, allocKind, thingSize);
+    if (!ool || !addOutOfLineCode(ool))
         return false;
 
     //masm.newGCThing(objReg, templateObject, ool->entry());
@@ -1781,18 +1781,8 @@ CodeGenerator::visitParNew(LParNew *lir)
     // TODO use fast path but extract from the arena lists found in
     // the thread context
     masm.jump(ool->entry());
+    masm.bind(ool->rejoin());
     return true;
-}
-
-OutOfLineCode*
-CodeGenerator::addOutOfLineParNew(LParNew *lir,
-                                  gc::AllocKind allocKind,
-                                  int thingSize)
-{
-    OutOfLineCode *ool = new OutOfLineParNew(lir, allocKind, thingSize);
-    if (ool)
-        addOutOfLineCode(ool);
-    return ool;
 }
 
 bool
