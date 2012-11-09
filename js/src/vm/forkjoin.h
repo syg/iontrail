@@ -113,17 +113,13 @@ public:
     // How many slices are there in total?
     const size_t numSlices;
 
-    // Top of the stack.  This should move into |perThreadData|.
-    uintptr_t ionStackLimit;
-
     // Arenas to use when allocating on this thread.  See
     // |ion::ParFunctions::ParNewGCThing()|.  This should move
     // into |perThreadData|.
     gc::ArenaLists *const arenaLists;
 
     ForkJoinSlice(PerThreadData *perThreadData, size_t sliceId, size_t numSlices,
-                  uintptr_t stackLimit, gc::ArenaLists *arenaLists,
-                  ForkJoinShared *shared);
+                  gc::ArenaLists *arenaLists, ForkJoinShared *shared);
 
     // True if this is the main thread, false if it is one of the parallel workers
     bool isMainThread();

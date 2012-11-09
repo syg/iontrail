@@ -1379,10 +1379,8 @@ CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
     Register threadContextReg = ToRegister(lir->threadContext());
     Register limitReg = ToRegister(lir->getTempReg());
 
-    // Since Ion frames exist on the C stack, the stack limit may be
-    // dynamically set by JS_SetThreadStackLimit() and JS_SetNativeStackQuota().
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, ionStackLimit)),
-                 limitReg);
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, perThreadData)), limitReg);
+    masm.loadPtr(Address(limitReg, offsetof(PerThreadData, ionStackLimit)), limitReg);
 
     // Conditional forward (unlikely) branch to failure.
     Label *bail;
@@ -1430,7 +1428,7 @@ CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed *lir)
 
     // Since Ion frames exist on the C stack, the stack limit may be
     // dynamically set by JS_SetThreadStackLimit() and JS_SetNativeStackQuota().
-    uintptr_t *limitAddr = &rt->ionStackLimit;
+    uintptr_t *limitAddr = &rt->mainThread.ionStackLimit;
     masm.loadPtr(AbsoluteAddress(limitAddr), limitReg);
 
     CheckOverRecursedFailure *ool = new CheckOverRecursedFailure(lir);

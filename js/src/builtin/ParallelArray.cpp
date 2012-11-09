@@ -518,30 +518,19 @@ class AutoEnterParallelSection
 private:
     JSContext *cx_;
     uint8 *prevIonTop_;
-    uintptr_t ionStackLimit_;
     AutoEnterTypeInference enter_;
 
 public:
     AutoEnterParallelSection(JSContext *cx)
         : cx_(cx)
-        , prevIonTop_(cx->runtime->ionTop)
-        , ionStackLimit_(cx->runtime->ionStackLimit)
+        , prevIonTop_(cx->runtime->mainThread.ionTop)
         , enter_(cx)
     {
-        // Temporarily suspend native stack limit while par code
-        // is executing, since it doesn't apply to the par threads:
-#       if JS_STACK_GROWTH_DIRECTION > 0
-        cx->runtime->ionStackLimit = UINTPTR_MAX;
-#       else
-        cx->runtime->ionStackLimit = 0;
-#       endif
-
         cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
     }
 
     ~AutoEnterParallelSection() {
-        cx_->runtime->ionStackLimit = ionStackLimit_;
-        cx_->runtime->ionTop = prevIonTop_;
+        cx_->runtime->mainThread.ionTop = prevIonTop_;
     }
 };
 

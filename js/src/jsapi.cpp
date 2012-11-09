@@ -724,6 +724,10 @@ js::PerThreadData::PerThreadData(JSRuntime *runtime)
   , gcRelaxRootChecks(false)
   , gcAssertNoGCDepth(0)
 #endif
+  , ionTop(NULL)
+  , ionJSContext(NULL)
+  , ionStackLimit(0)
+  , ionActivation(NULL)
 {}
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
@@ -866,10 +870,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #endif
     inOOMReport(0),
     jitHardening(false),
-    ionTop(NULL),
-    ionJSContext(NULL),
-    ionStackLimit(0),
-    ionActivation(NULL),
     ionPcScriptCache(NULL),
     threadPool(this),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),

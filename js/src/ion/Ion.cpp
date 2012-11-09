@@ -267,30 +267,30 @@ IonCompartment::~IonCompartment()
 IonActivation::IonActivation(JSContext *cx, StackFrame *fp)
   : cx_(cx),
     compartment_(cx->compartment),
-    prev_(cx->runtime->ionActivation),
+    prev_(cx->runtime->mainThread.ionActivation),
     entryfp_(fp),
     bailout_(NULL),
-    prevIonTop_(cx->runtime->ionTop),
-    prevIonJSContext_(cx->runtime->ionJSContext),
+    prevIonTop_(cx->runtime->mainThread.ionTop),
+    prevIonJSContext_(cx->runtime->mainThread.ionJSContext),
     prevpc_(NULL)
 {
     if (fp)
         fp->setRunningInIon();
-    cx->runtime->ionJSContext = cx;
-    cx->runtime->ionActivation = this;
-    cx->runtime->ionStackLimit = cx->runtime->nativeStackLimit;
+    cx->runtime->mainThread.ionJSContext = cx;
+    cx->runtime->mainThread.ionActivation = this;
+    cx->runtime->mainThread.ionStackLimit = cx->runtime->nativeStackLimit;
 }
 
 IonActivation::~IonActivation()
 {
-    JS_ASSERT(cx_->runtime->ionActivation == this);
+    JS_ASSERT(cx_->runtime->mainThread.ionActivation == this);
     JS_ASSERT(!bailout_);
 
     if (entryfp_)
         entryfp_->clearRunningInIon();
-    cx_->runtime->ionActivation = prev();
-    cx_->runtime->ionTop = prevIonTop_;
-    cx_->runtime->ionJSContext = prevIonJSContext_;
+    cx_->runtime->mainThread.ionActivation = prev();
+    cx_->runtime->mainThread.ionTop = prevIonTop_;
+    cx_->runtime->mainThread.ionJSContext = prevIonJSContext_;
 }
 
 IonCode *

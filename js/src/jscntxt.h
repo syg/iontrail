@@ -434,6 +434,15 @@ class PerThreadData : public js::PerThreadDataFriendFields
     int                 gcAssertNoGCDepth;
 #endif
 
+    // If Ion code is on the stack, and has called into C++, this will be
+    // aligned to an Ion exit frame.
+    uint8_t             *ionTop;
+    JSContext           *ionJSContext;
+    uintptr_t            ionStackLimit;
+
+    // This points to the most recent Ion activation running on the thread.
+    js::ion::IonActivation  *ionActivation;
+
     PerThreadData(JSRuntime *runtime);
 
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
@@ -980,18 +989,9 @@ struct JSRuntime : js::RuntimeFriendFields
 
     bool                jitHardening;
 
-    // If Ion code is on the stack, and has called into C++, this will be
-    // aligned to an Ion exit frame.
-    uint8_t             *ionTop;
-    JSContext           *ionJSContext;
-    uintptr_t            ionStackLimit;
-
     void resetIonStackLimit() {
-        ionStackLimit = nativeStackLimit;
+        mainThread.ionStackLimit = nativeStackLimit;
     }
-
-    // This points to the most recent Ion activation running on the thread.
-    js::ion::IonActivation  *ionActivation;
 
     // Cache for ion::GetPcScript().
     js::ion::PcScriptCache *ionPcScriptCache;

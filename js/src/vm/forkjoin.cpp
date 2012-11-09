@@ -62,11 +62,11 @@ class ForkJoinShared
     volatile bool rendezvous_;
 
     // Invoked only from the main thread:
-    void executeFromMainThread(uintptr_t stackLimit);
+    void executeFromMainThread();
 
     // Executes slice #threadId of the work, either from a worker or
     // the main thread.
-    void executePortion(PerThreadData *perThread, size_t threadId, uintptr_t stackLimit);
+    void executePortion(PerThreadData *perThread, size_t threadId);
 
     // Rendezvous protocol:
     //
@@ -252,7 +252,7 @@ ForkJoinShared::execute()
     {
         AutoUnlockMonitor unlock(*this);
         threadPool_->submitAll(this);
-        executeFromMainThread(cx_->runtime->ionStackLimit);
+        executeFromMainThread();
     }
 
     // wait for workers to complete
@@ -293,7 +293,8 @@ ForkJoinShared::executeFromWorker(size_t workerId, uintptr_t stackLimit)
 
     PerThreadData thisThread(cx_->runtime);
     TlsPerThreadData.set(&thisThread);
-    executePortion(&thisThread, workerId, stackLimit);
+    thisThread.ionStackLimit = stackLimit;
+    executePortion(&thisThread, workerId);
     TlsPerThreadData.set(NULL);
 
     AutoLockMonitor lock(*this);
@@ -307,19 +308,17 @@ ForkJoinShared::executeFromWorker(size_t workerId, uintptr_t stackLimit)
 }
 
 void
-ForkJoinShared::executeFromMainThread(uintptr_t stackLimit)
+ForkJoinShared::executeFromMainThread()
 {
-    executePortion(&cx_->runtime->mainThread, numThreads_ - 1, stackLimit);
+    executePortion(&cx_->runtime->mainThread, numThreads_ - 1);
 }
 
 void
 ForkJoinShared::executePortion(PerThreadData *perThread,
-                               size_t threadId,
-                               uintptr_t stackLimit)
+                               size_t threadId)
 {
     gc::ArenaLists *arenaLists = arenaListss_[threadId];
-    ForkJoinSlice slice(perThread, threadId, numThreads_,
-                        stackLimit, arenaLists, this);
+    ForkJoinSlice slice(perThread, threadId, numThreads_, arenaLists, this);
     AutoSetForkJoinSlice autoContext(&slice);
 
     if (!op_.parallel(slice))
@@ -453,12 +452,10 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &slice) {
 
 ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
                              size_t sliceId, size_t numSlices,
-                             uintptr_t stackLimit, gc::ArenaLists *arenaLists,
-                             ForkJoinShared *shared)
+                             gc::ArenaLists *arenaLists, ForkJoinShared *shared)
     : perThreadData(perThreadData),
       sliceId(sliceId),
       numSlices(numSlices),
-      ionStackLimit(stackLimit),
       arenaLists(arenaLists),
       shared(shared)
 {}

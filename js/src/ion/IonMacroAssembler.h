@@ -156,11 +156,11 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void loadJSContext(const Register &dest) {
         movePtr(ImmWord(GetIonContext()->cx->runtime), dest);
-        loadPtr(Address(dest, offsetof(JSRuntime, ionJSContext)), dest);
+        loadPtr(Address(dest, offsetof(JSRuntime, mainThread.ionJSContext)), dest);
     }
     void loadIonActivation(const Register &dest) {
         movePtr(ImmWord(GetIonContext()->cx->runtime), dest);
-        loadPtr(Address(dest, offsetof(JSRuntime, ionActivation)), dest);
+        loadPtr(Address(dest, offsetof(JSRuntime, mainThread.ionActivation)), dest);
     }
 
     template<typename T>
