@@ -163,13 +163,11 @@ class AutoEnterParallelSection
 private:
     JSContext *cx_;
     uint8_t *prevIonTop_;
-    types::AutoEnterTypeInference enter_;
 
 public:
     AutoEnterParallelSection(JSContext *cx)
         : cx_(cx)
         , prevIonTop_(cx->runtime->mainThread.ionTop)
-        , enter_(cx)
     {
         cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
     }

@@ -1336,7 +1336,7 @@ ParallelArrayObject::ParallelMode::build(JSContext *cx, HandleParallelArrayObjec
 
 bool
 ParallelArrayObject::ApplyToEachBodyDefn::pre(size_t numSlices,
-                                            RootedTypeObject &resultType)
+                                              RootedTypeObject &resultType)
 {
     // Find the TI object for the results we will be writing.  This
     // may be NULL if we are doing a multidim op and there is no
@@ -1344,9 +1344,12 @@ ParallelArrayObject::ApplyToEachBodyDefn::pre(size_t numSlices,
     if (!resultType.get())
         return false;
 
-    typeSet = resultType->getProperty(cx, JSID_VOID, true);
-    if (!typeSet)
-        return false;
+    {
+        types::AutoEnterTypeInference enter(cx);
+        typeSet = resultType->getProperty(cx, JSID_VOID, true);
+        if (!typeSet)
+            return false;
+    }
 
     return true;
 }
