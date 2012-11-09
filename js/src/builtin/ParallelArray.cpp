@@ -513,27 +513,6 @@ IndexInfoIsSane(JSContext *cx, HandleParallelArrayObject obj, IndexInfo &iv)
 // Parallel Utilities
 //
 
-class AutoEnterParallelSection
-{
-private:
-    JSContext *cx_;
-    uint8 *prevIonTop_;
-    AutoEnterTypeInference enter_;
-
-public:
-    AutoEnterParallelSection(JSContext *cx)
-        : cx_(cx)
-        , prevIonTop_(cx->runtime->mainThread.ionTop)
-        , enter_(cx)
-    {
-        cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
-    }
-
-    ~AutoEnterParallelSection() {
-        cx_->runtime->mainThread.ionTop = prevIonTop_;
-    }
-};
-
 static void
 ComputeTileBounds(ForkJoinSlice &slice, unsigned length, unsigned *start, unsigned *end)
 {
@@ -583,7 +562,6 @@ ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::apply()
 
     Spew(cx_, SpewOps, "%s: entering parallel section",
          bodyDefn_.toString());
-    AutoEnterParallelSection enter(cx_);
     ParallelResult pr = js::ExecuteForkJoinOp(cx_, *this);
     return ToExecutionStatus(cx_, bodyDefn_.toString(), pr);
 }

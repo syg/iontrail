@@ -10,6 +10,8 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "prthread.h"
+#include "gc/Marking.h"
+#include "jsinferinlines.h"
 
 namespace js {
 
@@ -156,11 +158,33 @@ ForkJoinSlice::Initialize()
     return status == PR_SUCCESS;
 }
 
+class AutoEnterParallelSection
+{
+private:
+    JSContext *cx_;
+    uint8_t *prevIonTop_;
+    types::AutoEnterTypeInference enter_;
+
+public:
+    AutoEnterParallelSection(JSContext *cx)
+        : cx_(cx)
+        , prevIonTop_(cx->runtime->mainThread.ionTop)
+        , enter_(cx)
+    {
+        cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
+    }
+
+    ~AutoEnterParallelSection() {
+        cx_->runtime->mainThread.ionTop = prevIonTop_;
+    }
+};
+
 ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
 {
 #   ifndef JS_THREADSAFE_ION
     return TP_RETRY_SEQUENTIALLY;
 #   else
+    AutoEnterParallelSection enter(cx);
     JS_ASSERT(!InParallelSection()); // Recursive use of the ThreadPool is not supported.
 
     ThreadPool *threadPool = &cx->runtime->threadPool;
