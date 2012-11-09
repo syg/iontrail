@@ -4762,11 +4762,8 @@ IonBuilder::jsop_intrinsicname(HandlePropertyName name)
     current->add(ins);
     current->push(ins);
 
-    if (types::StackTypeSet *types = oracle->propertyRead(script_, pc)) {
-        if (types->getKnownTypeTag() == JSVAL_TYPE_UNKNOWN)
-            types->addType(cx, types::GetValueType(cx, vp));
-    }
-
+    RootedScript script(cx, script_);
+    types::TypeScript::Monitor(cx, script, pc, vp);
     return true;
 }
 
