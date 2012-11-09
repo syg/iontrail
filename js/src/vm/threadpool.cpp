@@ -29,10 +29,7 @@ enum WorkerState {
 
 class ThreadPoolWorker : public Monitor
 {
-    /* Initialized at startup and never changed thereafter: */
     const size_t workerId_;
-
-    /* Initialized at startup and never changed thereafter: */
     ThreadPool *const threadPool_;
 
     /* Currrent point in the worker's lifecycle.
@@ -126,6 +123,8 @@ ThreadPoolWorker::run()
         while (!worklist_.empty()) {
             TaskExecutor *task = worklist_.popCopy();
             {
+                // Unlock so that new things can be added to the
+                // worklist while we are processing the current item:
                 AutoUnlockMonitor unlock(*this);
                 task->executeFromWorker(workerId_, stackLimit);
             }
@@ -243,12 +242,13 @@ ThreadPool::terminateWorkers()
 
 bool
 ThreadPool::submitOne(TaskExecutor *executor) {
+    runtime_->assertValidThread();
+
     if (numWorkers() == 0)
         return false;
 
     // Find next worker in round-robin fashion.
-    size_t id = nextId_;
-    nextId_ = (nextId_ + 1) % workers_.length();
+    size_t id = JS_ATOMIC_INCREMENT(&nextId_) % workers_.length();
     return workers_[id]->submit(executor);
 }
 

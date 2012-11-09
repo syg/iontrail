@@ -22,11 +22,11 @@ class ForkJoinShared
     ////////////////////////////////////////////////////////////////////////
     // Constant fields
 
-    JSContext *const cx_;          //< Current context
-    ThreadPool *const threadPool_; //< The thread pool.
-    ForkJoinOp &op_;               //< User-defined operations to be perf. in par.
-    const size_t numThreads_;      //< Total number of threads.
-    PRCondVar *rendezvousEnd_;     //< Cond. var used to signal end of rendezvous.
+    JSContext *const cx_;          // Current context
+    ThreadPool *const threadPool_; // The thread pool.
+    ForkJoinOp &op_;               // User-defined operations to be perf. in par.
+    const size_t numThreads_;      // Total number of threads.
+    PRCondVar *rendezvousEnd_;     // Cond. var used to signal end of rendezvous.
 
     ////////////////////////////////////////////////////////////////////////
     // Per-thread arenas
@@ -40,9 +40,9 @@ class ForkJoinShared
     //
     // Only to be accessed while holding the lock.
 
-    size_t uncompleted_;     //< Number of uncompleted worker threads.
-    size_t blocked_;         //< Number of threads that have joined the rendezvous.
-    size_t rendezvousIndex_; //< Number of rendezvous attempts
+    size_t uncompleted_;     // Number of uncompleted worker threads.
+    size_t blocked_;         // Number of threads that have joined the rendezvous.
+    size_t rendezvousIndex_; // Number of rendezvous attempts
 
     ////////////////////////////////////////////////////////////////////////
     // Asynchronous Flags

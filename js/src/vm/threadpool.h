@@ -61,7 +61,7 @@ public:
  * The second way to submit a job is using |submitAll()|---in this
  * case, the job will be executed by all worker threads.  This does
  * not fail if there are no worker threads, it simply does nothing.
- * Of course, each thread may have any number of preivously submitted
+ * Of course, each thread may have any number of previously submitted
  * things that they are already working on, and so they will finish
  * those before they get to this job.  Therefore it is possible to
  * have some worker threads pick up (and even finish) their piece of
@@ -72,17 +72,12 @@ class ThreadPool
 private:
     friend struct ThreadPoolWorker;
 
-    // Note:
-    //
-    // All fields here should only be modified during start-up or
-    // while holding the ThreadPool lock.
-
-    JSRuntime *runtime_;
-
-    size_t nextId_;
-
-    /* Array of worker threads; lazilly spawned */
+    // Initialized at startup only:
+    JSRuntime *const runtime_;
     js::Vector<ThreadPoolWorker*, 8, SystemAllocPolicy> workers_;
+
+    // Next worker for |submitOne()|. Atomically modified.
+    size_t nextId_;
 
     void terminateWorkers();
 
@@ -92,17 +87,16 @@ public:
 
     bool init();
 
-    // Find out how many worker threads are in the pool.
+    // Return number of worker threads in the pool.
     size_t numWorkers() { return workers_.length(); }
 
-    // Submits a job that will execute once by some worker.
+    // See comment on class:
     bool submitOne(TaskExecutor *executor);
-
-    // Submits a job that will be executed by all workers.
     bool submitAll(TaskExecutor *executor);
 
-    // Waits until all worker threads have finished their current set
-    // of jobs and then returns.
+    // Wait until all worker threads have finished their current set
+    // of jobs and then return.  You must not submit new jobs after
+    // invoking |terminate()|.
     bool terminate();
 };
 

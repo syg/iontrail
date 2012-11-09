@@ -18,19 +18,27 @@
  * that you have some (typically data-parallel) operation which you
  * wish to execute in parallel across as many threads as you have
  * available.  An example might be applying |map()| to a vector in
- * parallel.  You would then extend the class |ForkJoinOp| to
- * implement this operation and invoke |ExecuteForkJoinOp()|.
+ * parallel. To implement such a thing, you would define a subclass of
+ * |ForkJoinOp| to implement the operation and then invoke
+ * |ExecuteForkJoinOp()|, as follows:
+ *
+ * > class MyForkJoinOp {
+ * >   ... define callbacks as appropriate for your operation ...
+ * > };
+ * > MyForkJoinOp op;
+ * > ExecuteForkJoinOp(cx, op);
+ *
  * |ExecuteForkJoinOp()| will fire up the workers in the runtime's
  * thread pool, have them execute the callbacks defined in the
- * |ForkJoinOp| class (described below), and then return once all the
- * workers have completed.
+ * |ForkJoinOp| class, and then return once all the workers have
+ * completed.
  *
- * The |ForkJoinOp| class defines three callback functions.  The
- * first, |pre()|, is invoked before the parallel section begins.  It
- * informs you how many slices your problem will be divided into
- * (effectively, how many worker threads there will be).  This is
- * often useful for allocating an array for the workers to store their
- * result or something like that.
+ * There are three callbacks defined in |ForkJoinOp|.  The first,
+ * |pre()|, is invoked before the parallel section begins.  It informs
+ * you how many slices your problem will be divided into (effectively,
+ * how many worker threads there will be).  This is often useful for
+ * allocating an array for the workers to store their result or
+ * something like that.
  *
  * Next, you will receive |N| calls to the |parallel()| callback,
  * where |N| is the number of slices that were specified in |pre()|.
@@ -140,10 +148,9 @@ public:
     // also rendesvous to perform GC or do other similar things.
     bool check();
 
-    // Returns the runtime.  Be wary, this is shared between all threads!
+    // Be wary, the runtime is shared between all threads!
     JSRuntime *runtime();
 
-    // Access current context using thread-local data.
     static inline ForkJoinSlice *current();
     static bool Initialize();
 
