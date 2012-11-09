@@ -14,7 +14,6 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/JNI.jsm");
-Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 #ifdef ACCESSIBILITY
 Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
@@ -42,6 +41,11 @@ XPCOMUtils.defineLazyGetter(this, "SafeBrowsing", function() {
   return tmp.SafeBrowsing;
 });
 #endif
+
+XPCOMUtils.defineLazyGetter(this, "PrivateBrowsingUtils", function() {
+  Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+  return PrivateBrowsingUtils;
+});
 
 // Lazily-loaded browser scripts:
 [
@@ -308,12 +312,6 @@ var BrowserApp = {
   },
 
   restoreSession: function (restoringOOM, sessionString) {
-    sendMessageToJava({
-      gecko: {
-        type: "Session:RestoreBegin"
-      }
-    });
-
     // Be ready to handle any restore failures by making sure we have a valid tab opened
     let restoreCleanup = {
       observe: function (aSubject, aTopic, aData) {
@@ -326,6 +324,7 @@ var BrowserApp = {
           });
         }
 
+        // Let Java know we're done restoring tabs so tabs added after this can be animated
         sendMessageToJava({
           gecko: {
             type: "Session:RestoreEnd"
@@ -4121,7 +4120,8 @@ var BrowserEventHandler = {
 
       if (isTouchClick) {
         let rect = rects[0];
-        if (rect.width != 0 || rect.height != 0) {
+        // if either width or height is zero, we don't want to move the click to the edge of the element. See bug 757208
+        if (rect.width != 0 && rect.height != 0) {
           aX = Math.min(Math.floor(rect.left + rect.width), Math.max(Math.ceil(rect.left), aX));
           aY = Math.min(Math.floor(rect.top + rect.height), Math.max(Math.ceil(rect.top),  aY));
         }

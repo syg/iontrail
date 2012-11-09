@@ -129,7 +129,6 @@ static NS_DEFINE_CID(kXTFServiceCID, NS_XTFSERVICE_CID);
 #include "nsISVGChildFrame.h"
 #include "nsRenderingContext.h"
 #include "gfxSVGGlyphs.h"
-#include "mozilla/dom/EncodingUtils.h"
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
@@ -1529,8 +1528,7 @@ nsContentUtils::Shutdown()
   sModifierSeparator = nullptr;
 
   NS_IF_RELEASE(sSameOriginChecker);
-  
-  EncodingUtils::Shutdown();
+
   nsTextEditorState::ShutDown();
 }
 
@@ -6660,7 +6658,7 @@ nsContentUtils::FindInternalContentViewer(const char* aType,
 #endif
 
 #ifdef MOZ_MEDIA_PLUGINS
-  if (nsHTMLMediaElement::IsMediaPluginsEnabled() &&
+  if (nsMediaDecoder::IsMediaPluginsEnabled() &&
       nsHTMLMediaElement::IsMediaPluginsType(nsDependentCString(aType))) {
     docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
     if (docFactory && aLoaderType) {

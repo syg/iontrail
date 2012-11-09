@@ -200,6 +200,7 @@ public:
     virtual bool RecvUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics);
     virtual bool RecvHandleDoubleTap(const nsIntPoint& aPoint);
     virtual bool RecvHandleSingleTap(const nsIntPoint& aPoint);
+    virtual bool RecvHandleLongTap(const nsIntPoint& aPoint);
     virtual bool RecvActivate();
     virtual bool RecvDeactivate();
     virtual bool RecvMouseEvent(const nsString& aType,
@@ -291,6 +292,14 @@ public:
     void NotifyPainted();
 
     bool IsAsyncPanZoomEnabled();
+
+    /**
+     * Signal to this TabChild that it should be made visible:
+     * activated widget, retained layer tree, etc.  (Respectively,
+     * made not visible.)
+     */
+    void MakeVisible();
+    void MakeHidden();
 
 protected:
     virtual PRenderFrameChild* AllocPRenderFrame(ScrollingBehavior* aScrolling,

@@ -124,7 +124,7 @@ class BailoutClosure
         BailoutFrameGuard bfg;
     };
 
-    Maybe<Guards> guards_;
+    mozilla::Maybe<Guards> guards_;
 
     StackFrame *entryfp_;
     jsbytecode *bailoutPc_;

@@ -1823,6 +1823,8 @@ GetPseudoRestriction(nsStyleContext *aContext)
       pseudoRestriction = CSS_PROPERTY_APPLIES_TO_FIRST_LETTER;
     } else if (pseudoType == nsCSSPseudoElements::firstLine) {
       pseudoRestriction = CSS_PROPERTY_APPLIES_TO_FIRST_LINE;
+    } else if (pseudoType == nsCSSPseudoElements::mozPlaceholder) {
+      pseudoRestriction = CSS_PROPERTY_APPLIES_TO_PLACEHOLDER;
     }
   }
   return pseudoRestriction;
@@ -4811,6 +4813,12 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
     display->mBreakAfter = parentDisplay->mBreakAfter;
   }
   // end temp fix
+
+  // page-break-inside: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForPageBreakInside(),
+              display->mBreakInside, canStoreInRuleTree,
+              SETDSC_ENUMERATED, parentDisplay->mBreakInside,
+              NS_STYLE_PAGE_BREAK_AUTO, 0, 0, 0, 0);
 
   // float: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForCssFloat(),

@@ -112,7 +112,6 @@ class PostMessageEvent;
 class nsRunnable;
 class nsDOMEventTargetHelper;
 class nsDOMOfflineResourceList;
-class nsDOMMozURLProperty;
 class nsDOMWindowUtils;
 class nsIIdleService;
 
@@ -125,6 +124,7 @@ class nsWindowSizes;
 namespace mozilla {
 namespace dom {
 class Navigator;
+class URL;
 } // namespace dom
 } // namespace mozilla
 
@@ -273,8 +273,6 @@ class nsGlobalWindow : public nsPIDOMWindow,
 #endif // MOZ_B2G
 {
 public:
-  friend class nsDOMMozURLProperty;
-
   typedef mozilla::TimeStamp TimeStamp;
   typedef mozilla::TimeDuration TimeDuration;
   typedef mozilla::dom::Navigator Navigator;
@@ -1104,8 +1102,6 @@ protected:
   // window (e.g. when we are closing the tab and therefore are guaranteed to be
   // destroying this window).
   bool                          mDialogsPermanentlyDisabled;
-
-  nsRefPtr<nsDOMMozURLProperty> mURLProperty;
 
   nsTHashtable<nsPtrHashKey<nsDOMEventTargetHelper> > mEventTargetObjects;
 

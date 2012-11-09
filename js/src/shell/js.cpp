@@ -77,9 +77,11 @@
 #include "TraceLogging.h"
 #endif
 
-using namespace mozilla;
 using namespace js;
 using namespace js::cli;
+
+using mozilla::ArrayLength;
+using mozilla::Maybe;
 
 typedef enum JSShellExitCode {
     EXITCODE_RUNTIME_ERROR      = 3,
@@ -1751,18 +1753,20 @@ DisassembleScript(JSContext *cx, JSScript *script_, JSFunction *fun, bool lines,
 {
     Rooted<JSScript*> script(cx, script_);
 
-    if (fun && (fun->flags & ~7U)) {
-        uint16_t flags = fun->flags;
+    if (fun) {
         Sprint(sp, "flags:");
-
-#define SHOW_FLAG(flag) if (flags & JSFUN_##flag) Sprint(sp, " " #flag);
-
-        SHOW_FLAG(LAMBDA);
-        SHOW_FLAG(HEAVYWEIGHT);
-        SHOW_FLAG(EXPR_CLOSURE);
-
-#undef SHOW_FLAG
-
+        if (fun->isLambda())
+            Sprint(sp, " LAMBDA");
+        if (fun->isHeavyweight())
+            Sprint(sp, " HEAVYWEIGHT");
+        if (fun->isExprClosure())
+            Sprint(sp, " EXPRESSION CLOSURE");
+        if (fun->isFunctionPrototype())
+            Sprint(sp, " Function.prototype");
+        if (fun->isSelfHostedBuiltin())
+            Sprint(sp, " SELF_HOSTED");
+        if (fun->isSelfHostedConstructor())
+            Sprint(sp, " SELF_HOSTED_CTOR");
         Sprint(sp, "\n");
     }
 
@@ -2800,7 +2804,7 @@ WatchdogMain(void *arg)
              int64_t sleepDuration = gWatchdogHasTimeout
                ? (gWatchdogTimeout - now) / PRMJ_USEC_PER_SEC * PR_TicksPerSecond()
                : PR_INTERVAL_NO_TIMEOUT;
-             DebugOnly<PRStatus> status =
+             mozilla::DebugOnly<PRStatus> status =
                PR_WaitCondVar(gWatchdogWakeup, sleepDuration);
              JS_ASSERT(status == PR_SUCCESS);
         }
@@ -4573,6 +4577,14 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     if (op->getBoolOption('c'))
         compileOnly = true;
 
+    if (op->getBoolOption('w'))
+        reportWarnings = JS_TRUE;
+    else if (op->getBoolOption('W'))
+        reportWarnings = JS_FALSE;
+
+    if (op->getBoolOption('s'))
+        JS_ToggleOptions(cx, JSOPTION_STRICT);
+
     if (op->getBoolOption("no-jm")) {
         enableMethodJit = false;
         JS_ToggleOptions(cx, JSOPTION_METHODJIT);
@@ -4850,6 +4862,9 @@ main(int argc, char **argv, char **envp)
         || !op.addBoolOption('n', "ti", "Enable type inference (default)")
         || !op.addBoolOption('\0', "no-ti", "Disable type inference")
         || !op.addBoolOption('c', "compileonly", "Only compile, don't run (syntax checking mode)")
+        || !op.addBoolOption('w', "warnings", "Emit warnings")
+        || !op.addBoolOption('W', "nowarnings", "Don't emit warnings")
+        || !op.addBoolOption('s', "strict", "Check strictness")
         || !op.addBoolOption('d', "debugjit", "Enable runtime debug mode for method JIT code")
         || !op.addBoolOption('a', "always-mjit",
                              "Do not try to run in the interpreter before method jitting.")
