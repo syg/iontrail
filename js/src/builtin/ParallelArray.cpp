@@ -395,7 +395,7 @@ js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
 {
     JS_ASSERT(fun->isFunction());
 
-    // Make a new buffer, 
+    // Make a new buffer and initialize it up to length.
     RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
     if (!buffer)
         return ExecutionFatal;
