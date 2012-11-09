@@ -477,9 +477,8 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
                 store = writeInstruction->toStoreElement();
             }
 
-            // Since we initialize with the JS_ARRAY_HOLE, we also have to not
-            // emit typed stores that don't write the tag, so reset
-            // elementType to MIRType_Value.
+            // Since we initialize with the JS_ARRAY_HOLE, we have to always
+            // write the tag.
             store->setElementType(MIRType_Value);
 
             return true;

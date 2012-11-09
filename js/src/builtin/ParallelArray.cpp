@@ -340,10 +340,10 @@ InWarmup() {
     return ion::js_IonOptions.parallelWarmupContext != NULL;
 }
 
-class FillArrayTaskSet : public ArrayTaskSet
+class BuildArrayTaskSet : public ArrayTaskSet
 {
   public:
-    FillArrayTaskSet(JSContext *cx, HandleObject buffer, HandleObject fun)
+    BuildArrayTaskSet(JSContext *cx, HandleObject buffer, HandleObject fun)
       : ArrayTaskSet(cx, "fill", buffer, fun)
     {
         JS_ASSERT(buffer->isDenseArray());
@@ -375,18 +375,7 @@ class FillArrayTaskSet : public ArrayTaskSet
     }
 
     bool pre(size_t numThreads) {
-        // Ensure initialized length up to actual length so we don't crash in
-        // parallel code.
-        // FIXME: Make resizing arrays work in parallel.
-        uint32_t length = buffer_->getArrayLength();
-        uint32_t initlen = buffer_->getDenseArrayInitializedLength();
-
-        JSObject::EnsureDenseResult result = JSObject::ED_SPARSE;
-        result = buffer_->ensureDenseArrayElements(cx_, initlen, length - initlen);
-        if (result != JSObject::ED_OK)
-            return false;
-
-        return length >= numThreads;
+        return buffer_->getDenseArrayInitializedLength() >= numThreads;
     }
 
     bool parallel(ThreadContext &threadCx) {
@@ -401,18 +390,35 @@ class FillArrayTaskSet : public ArrayTaskSet
 };
 
 ExecutionStatus
-js::parallel::FillArray(JSContext *cx, HandleObject buffer, HandleObject fun)
+js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
+                         MutableHandleValue rval)
 {
     JS_ASSERT(fun->isFunction());
 
-    FillArrayTaskSet taskSet(cx, buffer, fun);
+    // Make a new buffer, 
+    RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
+    if (!buffer)
+        return ExecutionFatal;
+    JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
+    if (edr != JSObject::ED_OK)
+        return ExecutionFatal;
+
+    NonBuiltinScriptFrameIter iter(cx);
+    JS_ASSERT(!iter.done());
+    RootedScript script(cx, iter.script());
+    if (!types::SetInitializerObjectType(cx, script, iter.pc(), buffer))
+        return ExecutionFatal;
+
+    BuildArrayTaskSet taskSet(cx, buffer, fun);
     ExecutionStatus status = taskSet.apply();
 
     // If we bailed out, invalidate the kernel to be reanalyzed (all the way
     // down) and recompiled.
     //
     // TODO: This is too coarse grained.
-    if (status == ExecutionBailout) {
+    if (status == ExecutionSucceeded) {
+        rval.setObject(*buffer);
+    } else if (status == ExecutionBailout) {
         RootedScript script(cx, fun->toFunction()->script());
         Invalidate(cx, script, COMPILE_MODE_PAR);
     }

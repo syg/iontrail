@@ -39,12 +39,9 @@ function ParallelArrayConstruct2(length, f) {
   if (length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  // FIXME: Hack to un-specialize the set since it's full of holes?
-  buffer[0] = undefined;
-  buffer.length = length;
-
-  if (!%ParallelFillArray(buffer, fill)) {
+  var buffer = %ParallelBuildArray(length, fill);
+  if (!buffer) {
+    buffer = %_SetNonBuiltinCallerInitObjectType([]);
     for (var i = 0; i < length; i++)
       buffer[i] = f(i);
   }

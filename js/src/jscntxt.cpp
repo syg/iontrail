@@ -393,21 +393,22 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_ParallelFillArray(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args.length() == 2);
-    JS_ASSERT(args[0].isObject());
     JS_ASSERT(args[1].isObject());
-    RootedObject buffer(cx, &args[0].toObject());
+
+    uint32_t length;
+    if (!ToUint32(cx, args[0], &length))
+        return false;
     RootedObject fun(cx, &args[1].toObject());
 
-    switch (parallel::FillArray(cx, buffer, fun)) {
+    switch (parallel::BuildArray(cx, length, fun, args.rval())) {
       case parallel::ExecutionSucceeded:
-        args.rval().set(BooleanValue(true));
         break;
       default:
-        args.rval().set(BooleanValue(false));
+        args.rval().setUndefined();
         break;
     }
 
@@ -419,7 +420,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
-    JS_FN("ParallelFillArray",  intrinsic_ParallelFillArray,    2,0),
+    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,    2,0),
 
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
     JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
