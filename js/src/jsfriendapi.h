@@ -690,6 +690,7 @@ GetRuntimeCompartments(JSRuntime *rt);
     D(DEBUG_GC)                                 \
     D(DEBUG_MODE_GC)                            \
     D(TRANSPLANT)                               \
+    D(START_PARALLEL_BLOCK)                     \
     D(RESET)                                    \
                                                 \
     /* Reasons from Firefox */                  \

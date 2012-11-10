@@ -169,6 +169,16 @@ public:
         : cx_(cx)
         , prevIonTop_(cx->runtime->mainThread.ionTop)
     {
+        // Note: we do not allow GC during parallel sections.
+        // Moreover, we do not wish to worry about making
+        // write barriers thread-safe.  Therefore, we guarantee
+        // that there is no incremental GC in progress:
+
+        if (IsIncrementalGCInProgress(cx->runtime)) {
+            PrepareForIncrementalGC(cx->runtime);
+            FinishIncrementalGC(cx->runtime, gcreason::START_PARALLEL_BLOCK);
+        }
+
         cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
     }
 
