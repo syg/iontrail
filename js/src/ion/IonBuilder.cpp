@@ -4016,6 +4016,14 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
         needsBarrier = false;
     }
 
+    // In parallel execution, we never require write barriers.  See
+    // forkjoin.cpp for more information.
+    switch (info().compileMode()) {
+      case COMPILE_MODE_SEQ: break;
+      case COMPILE_MODE_PAR: needsBarrier = false; break;
+      case COMPILE_MODE_MAX: break;
+    }
+
     if (templateObject->isFixedSlot(shape->slot())) {
         MStoreFixedSlot *store = MStoreFixedSlot::New(obj, shape->slot(), value);
         if (needsBarrier)

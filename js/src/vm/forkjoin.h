@@ -76,6 +76,35 @@
  * unexpected path that cannot safely be executed in parallel (writes
  * to shared state, say).
  *
+ * Garbage collection and allocation:
+ *
+ * Code which executes on these parallel threads must be very careful
+ * with respect to garbage collection and allocation.  Currently, we
+ * do not permit GC to occur when executing in parallel.  Furthermore,
+ * the typical allocation paths are UNSAFE in parallel code because
+ * they access shared state (the compartment's ArenaLists object)
+ * without any synchronization.
+ *
+ * To deal with this, the forkjoin code creates a distinct ArenaLists
+ * object for each slice.  You can access the appropriate object via
+ * the |ForkJoinSlice| object that is provided to the callbacks.  Once
+ * the execution is complete, all the objects found in these distinct
+ * ArenaLists is merged back into the main compartment lists and
+ * things proceed normally.
+ *
+ * In Ion-generated code, we will do allocation through the ArenaLists
+ * found in |ForkJoinSlice| (which is obtained via TLS).  Also, no
+ * write barriers are emitted.  Conceptually, we should never need a
+ * write barrier because we only permit writes to objects that are
+ * newly allocated, and such objects are always black (to use inc. GC
+ * terminology).  However, to be safe, we also block upon entering a
+ * parallel section to ensure that any concurrent marking or inc. GC
+ * has completed.
+ *
+ * In the future, it should be possible to lift the restriction that
+ * we must block until inc. GC has completed and also to permit GC
+ * during parallel exeution. But we're not there yet.
+ *
  * Current Limitations:
  *
  * - The API does not support recursive or nested use.  That is, the
