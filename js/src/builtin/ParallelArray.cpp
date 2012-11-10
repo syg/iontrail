@@ -356,8 +356,7 @@ class BuildArrayTaskSet : public ArrayTaskSet
         // we don't run for too long.
         uint32_t numThreads = buffer_->getArrayLength() / limit;
 
-        FastInvokeGuard fig(cx_, ObjectValue(*fun_), COMPILE_MODE_SEQ);
-        InvokeArgsGuard &args = fig.args();
+        InvokeArgsGuard args;
         if (!cx_->stack.pushInvokeArgs(cx_, 3, &args))
             return false;
 
@@ -368,7 +367,7 @@ class BuildArrayTaskSet : public ArrayTaskSet
         args[1].setInt32(0);
         args[2].setInt32(numThreads);
 
-        if (!fig.invoke(cx_))
+        if (!Invoke(cx_, args))
             return false;
 
         return InWarmup();
@@ -427,6 +426,27 @@ js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
 }
 
 //
+// Cloning bandaid for sensitivity.
+//
+
+struct CallerSiteKey {
+    JSScript *script;
+    uint32_t offset;
+
+    CallerSiteKey() { PodZero(this); }
+
+    typedef CallerSiteKey Lookup;
+
+    static inline uint32_t hash(CallerSiteKey key) {
+        return static_cast<uint32_t>(static_cast<size_t>(key.script->code + key.offset));
+    }
+
+    static inline bool match(const CallerSiteKey &a, const CallerSiteKey &b) {
+        return a.script == b.script && a.offset == b.offset;
+    }
+};
+
+//
 // ParallelArrayObject
 //
 
@@ -473,13 +493,11 @@ ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
     if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctor))
         return false;
 
-    FastInvokeGuard fig(cx, ctor, COMPILE_MODE_SEQ);
-    InvokeArgsGuard &args = fig.args();
-
     RootedObject result(cx, NewBuiltinClassInstance(cx, &class_));
     if (!result)
         return false;
 
+    InvokeArgsGuard args;
     if (!cx->stack.pushInvokeArgs(cx, args0.length(), &args))
         return false;
 
@@ -489,7 +507,7 @@ ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
     for (uint32_t i = 0; i < args0.length(); i++)
         args[i] = args0[i];
 
-    if (!fig.invoke(cx))
+    if (!Invoke(cx, args))
         return false;
 
     args0.rval().setObject(*result);
