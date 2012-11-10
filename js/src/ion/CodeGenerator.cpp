@@ -1766,6 +1766,7 @@ CodeGenerator::visitNewStringObject(LNewStringObject *lir)
 bool
 CodeGenerator::visitParNew(LParNew *lir)
 {
+    Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
     gc::AllocKind allocKind = templateObject->getAllocKind();
@@ -1782,6 +1783,9 @@ CodeGenerator::visitParNew(LParNew *lir)
     // the thread context
     masm.jump(ool->entry());
     masm.bind(ool->rejoin());
+
+    masm.initGCThing(objReg, templateObject);
+
     return true;
 }
 
@@ -2678,25 +2682,45 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.jump(ool->rejoinStore());
     }
 
-    masm.bind(&callStub);
-    saveLive(ins);
-
     typedef bool (*pf)(JSContext *, HandleObject, HandleValue, HandleValue, JSBool strict);
     static const VMFunction Info = FunctionInfo<pf>(SetObjectElement);
 
-    pushArg(Imm32(current->mir()->strictModeCode()));
-    pushArg(value);
-    if (index->isConstant())
-        pushArg(*index->toConstant());
-    else
-        pushArg(TypedOrValueRegister(MIRType_Int32, ToAnyRegister(index)));
-    pushArg(object);
-    if (!callVM(Info, ins))
-        return false;
+    switch (gen->info().compileMode()) {
+      case COMPILE_MODE_SEQ:
+        masm.bind(&callStub);
+        saveLive(ins);
 
-    restoreLive(ins);
-    masm.jump(ool->rejoin());
-    return true;
+        pushArg(Imm32(current->mir()->strictModeCode()));
+        pushArg(value);
+        if (index->isConstant())
+            pushArg(*index->toConstant());
+        else
+            pushArg(TypedOrValueRegister(MIRType_Int32, ToAnyRegister(index)));
+        pushArg(object);
+        if (!callVM(Info, ins))
+            return false;
+
+        restoreLive(ins);
+        masm.jump(ool->rejoin());
+        return true;
+
+      case COMPILE_MODE_PAR:
+        masm.bind(&callStub);
+
+        // TODO---No reason we can't support reallocating the array in
+        // parallel mode too
+        Label *bail;
+        if (!ensureOutOfLineParallelAbort(&bail))
+            return false;
+        masm.jump(bail);
+        return true;
+
+      case COMPILE_MODE_MAX:
+        break;
+    }
+
+    JS_ASSERT(false);
+    return false;
 }
 
 bool
