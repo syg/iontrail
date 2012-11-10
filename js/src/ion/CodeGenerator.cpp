@@ -1579,11 +1579,11 @@ class OutOfLineParNew : public OutOfLineCodeBase<CodeGenerator>
 public:
     LParNew *lir;
     gc::AllocKind allocKind;
-    int thingSize;
+    uint32_t thingSize;
 
     OutOfLineParNew(LParNew *lir,
                     gc::AllocKind allocKind,
-                    int thingSize)
+                    uint32_t thingSize)
         : lir(lir),
           allocKind(allocKind),
           thingSize(thingSize)
@@ -1770,7 +1770,8 @@ CodeGenerator::visitParNew(LParNew *lir)
     JSObject *templateObject = lir->mir()->templateObject();
 
     gc::AllocKind allocKind = templateObject->getAllocKind();
-    int thingSize = (int)gc::Arena::thingSize(allocKind);
+    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
+
     OutOfLineCode *ool = new OutOfLineParNew(lir, allocKind, thingSize);
     if (!ool || !addOutOfLineCode(ool))
         return false;

@@ -2,7 +2,6 @@ load(libdir + "parallelarray-helpers.js");
 
 function buildSimple() {
 
-    /*
     new ParallelArray([256], function(i) {
         var x = [];
         for (var i = 0; i < 4; i++) {
@@ -10,7 +9,6 @@ function buildSimple() {
         }
         return x;
     }, {mode: "par", expect: "success"});
-    */
 
     // Eventually, this should work, but right now it
     // bails out because we overflow the size of the array

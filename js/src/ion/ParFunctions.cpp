@@ -29,7 +29,7 @@ ForkJoinSlice *ParForkJoinSlice() {
 // IonMonkey is setup, near as I can tell right now.
 JSObject *
 ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
-              gc::AllocKind allocKind, size_t thingSize) {
+              gc::AllocKind allocKind, uint32_t thingSize) {
     gc::ArenaLists *arenaLists = threadContext->arenaLists;
     void *t = arenaLists->parallelAllocate(compartment, allocKind, thingSize);
     return static_cast<JSObject *>(t);

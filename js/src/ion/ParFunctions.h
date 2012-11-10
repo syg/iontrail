@@ -17,7 +17,7 @@ namespace ion {
 
 ForkJoinSlice *ParForkJoinSlice();
 JSObject *ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
-                        gc::AllocKind allocKind, size_t thingSize);
+                        gc::AllocKind allocKind, uint32_t thingSize);
 bool ParWriteGuard(ForkJoinSlice *context, JSObject *object);
 void ParBailout(uint32_t id);
 bool ParCheckInterrupt(ForkJoinSlice *context);
