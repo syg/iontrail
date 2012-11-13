@@ -28,31 +28,45 @@ function ParallelArrayConstruct1(buffer) {
   self.buffer = buffer;
 }
 
-function ParallelArrayConstruct2(length, f) {
-  // Per-thread worker.
-  function fill(result, id, n) {
-    var [start, end] = ComputeTileBounds(result.length, id, n);
-    for (var i = start; i < end; i++)
-      result[i] = f(i);
-  }
+function Construct2Fill(result, id, n, f) {
+  var [start, end] = ComputeTileBounds(result.length, id, n);
+  for (var i = start; i < end; i++)
+    result[i] = f(i);
+}
 
+function ParallelArrayConstruct2(length, f) {
   if (length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var buffer = %ParallelBuildArray(length, fill);
+  var fill = %KeyedCloneFunction(f, Construct2Fill);
+  var buffer = %ParallelBuildArray(length, fill, f);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
-    for (var i = 0; i < length; i++)
-      buffer[i] = f(i);
+    buffer.length = length;
+    fill(buffer, 0, 1, f);
   }
 
   var self = %_SetNonBuiltinCallerInitObjectType(this);
   self.buffer = buffer;
 }
 
+function MapFill(result, id, n, f, source) {
+  var [start, end] = ComputeTileBounds(result.length, id, n);
+  for (var i = start; i < end; i++)
+    result[i] = f(source[i]);
+}
+
 function ParallelArrayMap(f) {
   var source = this.buffer;
-  return new global.ParallelArray(source.length, function (i) {
-    return f(source[i]);
-  });
+  var length = source.length;
+
+  var fill = %KeyedCloneFunction(f, MapFill);
+  var buffer = %ParallelBuildArray(length, fill, f, source);
+  if (!buffer) {
+    buffer = %_SetNonBuiltinCallerInitObjectType([]);
+    buffer.length = length;
+    fill(buffer, 0, 1, f, source);
+  }
+
+  return new global.ParallelArray(buffer);
 }

@@ -197,22 +197,26 @@ ToExecutionStatus(JSContext *cx, const char *opName, ParallelResult pr)
 }
 
 // Can only enter callees with a valid IonScript.
-template <uint32_t argc>
+template <uint32_t maxArgc>
 class FastestIonInvoke
 {
     EnterIonCode enter_;
     void *jitcode_;
     void *calleeToken_;
-    Value argv_[argc + 2];
+    Value argv_[maxArgc + 2];
+    uint32_t argc_;
 
   public:
     Value *args;
 
-    FastestIonInvoke(JSContext *cx, HandleObject fun)
-      : args(argv_ + 2)
+    FastestIonInvoke(JSContext *cx, HandleObject fun, uint32_t argc)
+      : argc_(argc),
+        args(argv_ + 2)
     {
-        // Set 'callee' and 'this'.
+        JS_ASSERT(argc <= maxArgc + 2);
         JS_ASSERT(fun->isFunction());
+
+        // Set 'callee' and 'this'.
         RootedFunction callee(cx, fun->toFunction());
         argv_[0] = ObjectValue(*callee);
         argv_[1] = UndefinedValue();
@@ -227,7 +231,7 @@ class FastestIonInvoke
 
     bool invoke() {
         Value result;
-        enter_(jitcode_, argc + 1, argv_ + 1, NULL, calleeToken_, &result);
+        enter_(jitcode_, argc_ + 1, argv_ + 1, NULL, calleeToken_, &result);
         return !result.isMagic();
     }
 };
@@ -342,10 +346,17 @@ InWarmup() {
 
 class BuildArrayTaskSet : public ArrayTaskSet
 {
+    Value *funArgs_;
+    uint32_t funArgc_;
+
   public:
-    BuildArrayTaskSet(JSContext *cx, HandleObject buffer, HandleObject fun)
-      : ArrayTaskSet(cx, "fill", buffer, fun)
+    BuildArrayTaskSet(JSContext *cx, HandleObject buffer, HandleObject fun,
+                      Value *funArgs, uint32_t funArgc)
+      : ArrayTaskSet(cx, "fill", buffer, fun),
+        funArgs_(funArgs),
+        funArgc_(funArgc)
     {
+        JS_ASSERT(funArgc <= 2);
         JS_ASSERT(buffer->isDenseArray());
     }
 
@@ -357,7 +368,7 @@ class BuildArrayTaskSet : public ArrayTaskSet
         uint32_t numThreads = buffer_->getArrayLength() / limit;
 
         InvokeArgsGuard args;
-        if (!cx_->stack.pushInvokeArgs(cx_, 3, &args))
+        if (!cx_->stack.pushInvokeArgs(cx_, 3 + funArgc_, &args))
             return false;
 
         args.setCallee(ObjectValue(*fun_));
@@ -366,6 +377,8 @@ class BuildArrayTaskSet : public ArrayTaskSet
         args[0].setObject(*buffer_);
         args[1].setInt32(0);
         args[2].setInt32(numThreads);
+        for (uint32_t i = 0; i < funArgc_; i++)
+            args[3 + i] = funArgs_[i];
 
         if (!Invoke(cx_, args))
             return false;
@@ -378,21 +391,31 @@ class BuildArrayTaskSet : public ArrayTaskSet
     }
 
     bool parallel(ThreadContext &threadCx) {
-        printf("%ld %ld\n", threadCx.threadId, threadCx.numThreads);
-        // 3 arguments: buffer, thread id, and number of threads.
-        FastestIonInvoke<3> fii(cx_, fun_);
+        // Setting maximum argc at 5: the constructor uses 1 extra (the
+        // kernel), and everything else uses 2 extra (the kernel and the
+        // source array).
+        FastestIonInvoke<5> fii(cx_, fun_, funArgc_ + 3);
+
+        // The first 3 arguments: buffer, thread id, and number of threads.
         fii.args[0] = ObjectValue(*buffer_);
         fii.args[1] = Int32Value(threadCx.threadId);
         fii.args[2] = Int32Value(threadCx.numThreads);
+        for (uint32_t i = 0; i < funArgc_; i++)
+            fii.args[3 + i] = funArgs_[i];
         return fii.invoke();
     }
 };
 
 ExecutionStatus
-js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
-                         MutableHandleValue rval)
+js::parallel::BuildArray(JSContext *cx, CallArgs args)
 {
-    JS_ASSERT(fun->isFunction());
+    JS_ASSERT(args[1].isObject());
+    JS_ASSERT(args[1].toObject().isFunction());
+
+    uint32_t length;
+    if (!ToUint32(cx, args[0], &length))
+        return ExecutionFatal;
+    RootedObject fun(cx, &args[1].toObject());
 
     // Make a new buffer and initialize it up to length.
     RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
@@ -408,7 +431,7 @@ js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
     if (!types::SetInitializerObjectType(cx, script, iter.pc(), buffer))
         return ExecutionFatal;
 
-    BuildArrayTaskSet taskSet(cx, buffer, fun);
+    BuildArrayTaskSet taskSet(cx, buffer, fun, args.array() + 2, args.length() - 2);
     ExecutionStatus status = taskSet.apply();
 
     // If we bailed out, invalidate the kernel to be reanalyzed (all the way
@@ -416,10 +439,14 @@ js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
     //
     // TODO: This is too coarse grained.
     if (status == ExecutionSucceeded) {
-        rval.setObject(*buffer);
-    } else if (status == ExecutionBailout) {
-        RootedScript script(cx, fun->toFunction()->script());
-        Invalidate(cx, script, COMPILE_MODE_PAR);
+        args.rval().setObject(*buffer);
+    } else {
+        if (status == ExecutionBailout) {
+            RootedScript script(cx, fun->toFunction()->script());
+            Invalidate(cx, script, COMPILE_MODE_PAR);
+        }
+
+        args.rval().setUndefined();
     }
 
     return status;
@@ -429,22 +456,6 @@ js::parallel::BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
 // Cloning bandaid for sensitivity.
 //
 
-struct CallerSiteKey {
-    JSScript *script;
-    uint32_t offset;
-
-    CallerSiteKey() { PodZero(this); }
-
-    typedef CallerSiteKey Lookup;
-
-    static inline uint32_t hash(CallerSiteKey key) {
-        return static_cast<uint32_t>(static_cast<size_t>(key.script->code + key.offset));
-    }
-
-    static inline bool match(const CallerSiteKey &a, const CallerSiteKey &b) {
-        return a.script == b.script && a.offset == b.offset;
-    }
-};
 
 //
 // ParallelArrayObject
@@ -560,4 +571,17 @@ JSObject *
 js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj)
 {
     return ParallelArrayObject::initClass(cx, obj);
+}
+
+void
+JSCompartment::sweepClonedFunctionTable()
+{
+    if (clonedFunctionTable.initialized()) {
+        for (ClonedFunctionTable::Enum e(clonedFunctionTable); !e.empty(); e.popFront()) {
+            JSObject *key = e.front().key;
+            JSFunction *fun = e.front().value;
+            if (!key->isMarked() || !fun->isMarked())
+                e.removeFront();
+        }
+    }
 }

@@ -55,6 +55,11 @@ namespace js {
 
 typedef HashSet<JSObject *> ObjectSet;
 
+typedef HashMap<EncapsulatedPtrObject,
+                ReadBarriered<JSFunction>,
+                DefaultHasher<EncapsulatedPtrObject>,
+                SystemAllocPolicy> ClonedFunctionTable;
+
 /* Detects cycles when traversing an object graph. */
 class AutoCycleDetector
 {

@@ -311,6 +311,13 @@ struct JSCompartment
     js::types::TypeObject *getLazyType(JSContext *cx, js::Handle<js::TaggedProto> proto);
 
     /*
+     * Hash table of all manually cloned functions from within self-hosted
+     * code. Bandaid for lack of enough sensitivity in the JIT.
+     */
+    js::ClonedFunctionTable      clonedFunctionTable;
+    void sweepClonedFunctionTable();
+
+    /*
      * Keeps track of the total number of malloc bytes connected to a
      * compartment's GC things. This counter should be used in preference to
      * gcMallocBytes. These counters affect collection in the same way as

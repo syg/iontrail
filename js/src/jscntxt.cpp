@@ -393,26 +393,50 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_KeyedCloneFunction(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args.length() == 2);
+    JS_ASSERT(args[0].isObject());
     JS_ASSERT(args[1].isObject());
+    JS_ASSERT(args[1].toObject().isFunction() &&
+              args[1].toObject().toFunction()->isInterpreted());
 
-    uint32_t length;
-    if (!ToUint32(cx, args[0], &length))
+    RootedObject key(cx, &args[0].toObject());
+    RootedFunction fun(cx, args[1].toObject().toFunction());
+
+    ClonedFunctionTable &table = cx->compartment->clonedFunctionTable;
+    if (!table.initialized() && !table.init())
         return false;
-    RootedObject fun(cx, &args[1].toObject());
 
-    switch (parallel::BuildArray(cx, length, fun, args.rval())) {
-      case parallel::ExecutionSucceeded:
-        break;
-      default:
-        args.rval().setUndefined();
-        break;
+    ClonedFunctionTable::AddPtr p = table.lookupForAdd(key);
+
+    if (p) {
+        args.rval().setObject(*p->value);
+        return true;
     }
 
+    RootedObject clone(cx, JS_CloneFunctionObject(cx, fun, cx->global()));
+    if (!clone)
+        return false;
+
+    // Ensure the script is also cloned, since that's how we get the extra
+    // sensitivity.
+    RootedFunction cloneFun(cx, clone->toFunction());
+    if (!CloneFunctionScript(cx, fun, cloneFun))
+        return false;
+
+    if (!table.add(p, key, clone->toFunction()))
+        return false;
+    args.rval().setObject(*clone);
     return true;
+}
+
+static JSBool
+intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return parallel::BuildArray(cx, args) != parallel::ExecutionFatal;
 }
 
 JSFunctionSpec intrinsic_functions[] = {
@@ -420,7 +444,8 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
-    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,    2,0),
+    JS_FN("KeyedCloneFunction", intrinsic_KeyedCloneFunction,   2,0),
+    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
 
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
     JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
@@ -432,6 +457,7 @@ bool
 JSRuntime::initSelfHosting(JSContext *cx)
 {
     JS_ASSERT(!selfHostedGlobal_);
+
     RootedObject savedGlobal(cx, JS_GetGlobalObject(cx));
     if (!(selfHostedGlobal_ = JS_NewGlobalObject(cx, &self_hosting_global_class, NULL)))
         return false;

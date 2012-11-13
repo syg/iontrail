@@ -1521,30 +1521,8 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
          * (JS_CloneFunctionObject) which dynamically ensures that 'script' has
          * no enclosing lexical scope (only the global scope).
          */
-        if (cx->compartment != fun->compartment() && clone->isInterpreted()) {
-            RootedScript script(cx, clone->script());
-            JS_ASSERT(script);
-            JS_ASSERT(script->compartment() == fun->compartment());
-            JS_ASSERT_IF(script->compartment() != cx->compartment,
-                         !script->enclosingStaticScope());
-
-            RootedObject scope(cx, script->enclosingStaticScope());
-
-            clone->mutableScript().init(NULL);
-
-            RawScript cscript = CloneScript(cx, scope, clone, script);
-            if (!cscript)
-                return NULL;
-
-            clone->setScript(cscript);
-            cscript->setFunction(clone);
-
-            GlobalObject *global = script->compileAndGo ? &script->global() : NULL;
-
-            script = clone->script();
-            js_CallNewScriptHook(cx, script, clone);
-            Debugger::onNewScript(cx, script, global);
-        }
+        if (clone->isInterpreted() && !CloneFunctionScript(cx, fun, clone))
+            return NULL;
     }
     return clone;
 }

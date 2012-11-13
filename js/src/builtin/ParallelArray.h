@@ -31,8 +31,7 @@ enum ExecutionStatus {
     ExecutionSucceeded
 };
 
-ExecutionStatus BuildArray(JSContext *cx, uint32_t length, HandleObject fun,
-                           MutableHandleValue rval);
+ExecutionStatus BuildArray(JSContext *cx, CallArgs args);
 
 } // namespace parallel
 
