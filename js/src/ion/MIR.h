@@ -51,8 +51,7 @@ MIRType MIRTypeFromValue(const js::Value &vp)
      * points.
      */                                                                         \
     _(Unused)                                                                   \
-    _(DOMFunction)   /* Contains or uses a common DOM method function */        \
-    _(Intrinsic)     /* Contains or uses an intrinsic function */
+    _(DOMFunction)   /* Contains or uses a common DOM method function */
 
 class MDefinition;
 class MInstruction;
@@ -4822,6 +4821,27 @@ class MGetNameCache
     }
     AccessKind accessKind() const {
         return kind_;
+    }
+};
+
+class MCallGetIntrinsicValue : public MNullaryInstruction
+{
+    CompilerRootPropertyName name_;
+
+    MCallGetIntrinsicValue(HandlePropertyName name)
+      : name_(name)
+    {
+        setResultType(MIRType_Value);
+    }
+
+  public:
+    INSTRUCTION_HEADER(CallGetIntrinsicValue);
+
+    static MCallGetIntrinsicValue *New(HandlePropertyName name) {
+        return new MCallGetIntrinsicValue(name);
+    }
+    PropertyName *name() const {
+        return name_;
     }
 };
 
