@@ -391,10 +391,11 @@ class BuildArrayTaskSet : public ArrayTaskSet
     }
 
     bool parallel(ThreadContext &threadCx) {
-        // Setting maximum argc at 5: the constructor uses 1 extra (the
-        // kernel), and everything else uses 2 extra (the kernel and the
-        // source array).
-        FastestIonInvoke<5> fii(cx_, fun_, funArgc_ + 3);
+        // Setting maximum argc at 7: the constructor uses 1 extra (the
+        // kernel); map, reduce, scan use 2 extra (the kernel and the source
+        // array); scatter uses 4 extra (the kernel, the default value, the
+        // conflict resolution function, and the source array).
+        FastestIonInvoke<7> fii(cx_, fun_, funArgc_ + 3);
 
         // The first 3 arguments: buffer, thread id, and number of threads.
         fii.args[0] = ObjectValue(*buffer_);
@@ -460,7 +461,13 @@ FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[3];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
-    { "map", JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayMap" },
+    { "map",      JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayMap"      },
+    { "reduce",   JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayReduce"   },
+    { "scan",     JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayScan"     },
+    { "scatter",  JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayScatter"  },
+    { "filter",   JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayFilter"   },
+    { "get",      JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayGet"      },
+    { "toString", JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayToString" },
     JS_FS_END
 };
 
@@ -549,6 +556,21 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
         !LinkConstructorAndPrototype(cx, ctor, proto) ||
         !DefinePropertiesAndBrand(cx, proto, NULL, methods) ||
         !DefineConstructorAndPrototype(cx, global, key, ctor, proto))
+    {
+        return NULL;
+    }
+
+    // Define the length getter.
+    RootedObject lengthGetter(cx, cx->runtime->getSelfHostedFunction(cx, "ParallelArrayLength"));
+    if (!lengthGetter)
+        return NULL;
+
+    RootedId lengthId(cx, AtomToId(cx->names().length));
+    unsigned flags = JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_GETTER;
+    RootedValue value(cx, UndefinedValue());
+    if (!DefineNativeProperty(cx, proto, lengthId, value,
+                              JS_DATA_TO_FUNC_PTR(PropertyOp, lengthGetter.get()), NULL,
+                              flags, 0, 0))
     {
         return NULL;
     }
