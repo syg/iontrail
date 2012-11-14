@@ -524,6 +524,9 @@ struct JSRuntime : js::RuntimeFriendFields
         JS_ASSERT(execAlloc_);
         return *execAlloc_;
     }
+    JSC::ExecutableAllocator *maybeExecAlloc() {
+        return execAlloc_;
+    }
     WTF::BumpPointerAllocator *getBumpPointerAllocator(JSContext *cx) {
         return bumpAlloc_ ? bumpAlloc_ : createBumpPointerAllocator(cx);
     }
@@ -725,6 +728,24 @@ struct JSRuntime : js::RuntimeFriendFields
      * enabled, and is disabled if e4x has been used.
      */
     bool                gcExactScanningEnabled;
+
+
+    /*
+     * This is true if we are in the middle of a brain transplant (e.g.,
+     * JS_TransplantObject) or some other operation that can manipulate
+     * dead compartments.
+     */
+    bool                gcManipulatingDeadCompartments;
+
+    /*
+     * This field is incremented each time we mark an object inside a
+     * compartment with no incoming cross-compartment pointers. Typically if
+     * this happens it signals that an incremental GC is marking too much
+     * stuff. At various times we check this counter and, if it has changed, we
+     * run an immediate, non-incremental GC to clean up the dead
+     * compartments. This should happen very rarely.
+     */
+    unsigned            gcObjectsMarkedInDeadCompartments;
 
     bool                gcPoke;
 
@@ -2179,6 +2200,7 @@ class RuntimeAllocPolicy
     RuntimeAllocPolicy(JSRuntime *rt) : runtime(rt) {}
     RuntimeAllocPolicy(JSContext *cx) : runtime(cx->runtime) {}
     void *malloc_(size_t bytes) { return runtime->malloc_(bytes); }
+    void *calloc_(size_t bytes) { return runtime->calloc_(bytes); }
     void *realloc_(void *p, size_t bytes) { return runtime->realloc_(p, bytes); }
     void free_(void *p) { js_free(p); }
     void reportAllocOverflow() const {}
@@ -2195,6 +2217,7 @@ class ContextAllocPolicy
     ContextAllocPolicy(JSContext *cx) : cx(cx) {}
     JSContext *context() const { return cx; }
     void *malloc_(size_t bytes) { return cx->malloc_(bytes); }
+    void *calloc_(size_t bytes) { return cx->calloc_(bytes); }
     void *realloc_(void *p, size_t oldBytes, size_t bytes) { return cx->realloc_(p, oldBytes, bytes); }
     void free_(void *p) { js_free(p); }
     void reportAllocOverflow() const { js_ReportAllocationOverflow(cx); }

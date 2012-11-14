@@ -260,7 +260,7 @@ ShouldJaegerCompileCallee(JSContext *cx, JSScript *caller, JSScript *callee, JIT
         return true;
 
     // If we know Ion cannot compile either the caller or callee, use JM.
-    if (!callee->canIonCompile(js::COMPILE_MODE_SEQ))
+    if (!callee->canIonCompile())
         return true;
 
     // Use JM if the callee has no loops. In this case calling into Ion

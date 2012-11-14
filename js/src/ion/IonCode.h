@@ -134,9 +134,6 @@ class IonCache;
 struct IonScript
 {
   private:
-    // Compilation mode used for this script
-    CompileMode compileMode_;
-
     // Code pointer containing the actual method.
     HeapPtr<IonCode> method_;
 

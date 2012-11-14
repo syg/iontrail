@@ -32,19 +32,15 @@ ShouldMonitorReturnType(JSFunction *fun)
 bool
 InvokeFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *argv, Value *rval)
 {
-    // Use COMPILE_MODE_SEQ, since (for now, at least) this operation
-    // is only supported in sequential mode.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
-
     Value fval = ObjectValue(*fun);
 
     // In order to prevent massive bouncing between Ion and JM, see if we keep
     // hitting functions that are uncompilable.
 
-    if (fun->isInterpreted() && !fun->script()->canIonCompile(compileMode)) {
+    if (fun->isInterpreted() && !fun->script()->canIonCompile()) {
         JSScript *script = GetTopIonJSScript(cx);
-        if (script->hasIonScript(compileMode) &&
-            ++script->ions[compileMode]->slowCallCount >= js_IonOptions.slowCallLimit)
+        if (script->hasIonScript() &&
+            ++script->ion->slowCallCount >= js_IonOptions.slowCallLimit)
         {
             AutoFlushCache afc("InvokeFunction");
 
@@ -288,11 +284,8 @@ ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 {
     JS_ASSERT(obj->isDenseArray());
 
-    // Find current script based on ionTop using COMPILE_MODE_SEQ,
-    // since (for now, at least) this operation is only supported in
-    // sequential mode.
     AutoDetectInvalidation adi(cx, rval.address(),
-                               GetTopIonJSScript(cx)->ionScript(COMPILE_MODE_SEQ));
+                               GetTopIonJSScript(cx)->ionScript());
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj) };
     AutoValueArray ava(cx, argv, 2);
@@ -326,11 +319,8 @@ ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 {
     JS_ASSERT(obj->isDenseArray());
 
-    // Find current script based on ionTop using COMPILE_MODE_SEQ,
-    // since (for now, at least) this operation is only supported in
-    // sequential mode.
     AutoDetectInvalidation adi(cx, rval.address(),
-                               GetTopIonJSScript(cx)->ionScript(COMPILE_MODE_SEQ));
+                               GetTopIonJSScript(cx)->ionScript());
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj) };
     AutoValueArray ava(cx, argv, 2);

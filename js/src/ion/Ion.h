@@ -227,9 +227,13 @@ bool SetIonContext(IonContext *ctx);
 MethodStatus CanEnterAtBranch(JSContext *cx, HandleScript script,
                               StackFrame *fp, jsbytecode *pc);
 MethodStatus CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType);
-MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, CompileMode cmode);
-MethodStatus CanEnterParallelArrayKernel(JSContext *cx, HandleFunction fun,
-                                         ParallelCompilationContext &compileContext);
+MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, uint32_t numActualArgs);
+
+MethodStatus
+CanEnterParallelArrayKernel(JSContext *cx,
+                            HandleFunction fun,
+                            ParallelCompilationContext &compileContext);
+
 
 enum IonExecStatus
 {
@@ -242,8 +246,7 @@ IonExecStatus Cannon(JSContext *cx, StackFrame *fp);
 IonExecStatus SideCannon(JSContext *cx, StackFrame *fp, jsbytecode *pc);
 
 // Used to enter Ion from C++ natives like Array.map. Called from FastInvokeGuard.
-IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgsList &args,
-                         CompileMode cmode);
+IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgsList &args);
 
 // Walk the stack and invalidate active Ion frames for the invalid scripts.
 void Invalidate(types::TypeCompartment &types, FreeOp *fop,

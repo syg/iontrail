@@ -14,6 +14,7 @@
 #include "jsmath.h"
 #include "jsinterpinlines.h"
 #include "ParFunctions.h"
+#include "ExecutionModeInlines.h"
 
 #include "vm/StringObject-inl.h"
 
@@ -573,7 +574,7 @@ CodeGenerator::visitParThreadContext(LParThreadContext *lir)
 bool
 CodeGenerator::visitParWriteGuard(LParWriteGuard *lir)
 {
-    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_PAR);
+    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
 
     const Register tempReg = ToRegister(lir->getTempReg());
     masm.setupUnalignedABICall(2, tempReg);
@@ -831,16 +832,15 @@ CodeGenerator::emitCallInvokeFunction(LInstruction *call, Register calleereg,
     return true;
 }
 
-static int32_t ionOffset(CompileMode cmode) {
-    // offsetof() requires a constant expression, so we can't write ions[cmode]
-    switch (cmode) {
-      case COMPILE_MODE_SEQ: return offsetof(JSScript, ions[COMPILE_MODE_SEQ]);
-      case COMPILE_MODE_PAR: return offsetof(JSScript, ions[COMPILE_MODE_PAR]);
-      case COMPILE_MODE_MAX: break;
+static inline int32_t ionOffset(ExecutionMode executionMode)
+{
+    switch (executionMode) {
+      case SequentialExecution: return offsetof(JSScript, ion);
+      case ParallelExecution: return offsetof(JSScript, parallelIon);
     }
 
     JS_ASSERT(false);
-    return offsetof(JSScript, ions[COMPILE_MODE_SEQ]);
+    return offsetof(JSScript, ion);
 }
 
 bool
@@ -876,8 +876,8 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    CompileMode cmode = gen->info().compileMode();
-    masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
+    ExecutionMode executionMode = gen->info().executionMode();
+    masm.movePtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
     masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
@@ -937,6 +937,7 @@ CodeGenerator::emitCallToKnownScript(
     LCallKnown *call, Register calleereg, uint32 unusedStack,
     Label *slowPath, Label *end)
 {
+    JSContext *cx = GetIonContext()->cx;
     Register objreg    = ToRegister(call->getTempObject());
     JSFunction *target = call->getSingleTarget();
 
@@ -948,18 +949,27 @@ CodeGenerator::emitCallToKnownScript(
 
     masm.checkStackAlignment();
 
-    // If we know that the script is disabled, just skip to the slow
-    // path.
-    CompileMode cmode = gen->info().compileMode();
-    if (target->script()->ions[cmode] == ION_DISABLED_SCRIPT)
-    {
-        masm.jump(slowPath);
+    // If the function is known to be uncompilable, only emit the call to InvokeFunction.
+    ExecutionMode executionMode = gen->info().executionMode();
+    RootedScript targetScript(cx, target->script());
+    if (GetIonScript(targetScript, executionMode) == ION_DISABLED_SCRIPT) {
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
+
+        if (call->mir()->isConstructing()) {
+            Label notPrimitive;
+            masm.branchTestPrimitive(Assembler::NotEqual, JSReturnOperand, &notPrimitive);
+            masm.loadValue(Address(StackPointer, unusedStack), JSReturnOperand);
+            masm.bind(&notPrimitive);
+        }
+
+        dropArguments(call->numStackArgs() + 1);
         return true;
     }
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
+    masm.movePtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
     masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
@@ -997,9 +1007,8 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     Label end;
 
-    CompileMode cmode = gen->info().compileMode();
-    switch (cmode) {
-      case COMPILE_MODE_PAR: {
+    switch (gen->info().executionMode()) {
+      case ParallelExecution: {
           Label *bail;
           if (!ensureOutOfLineParallelAbort(&bail))
               return false;
@@ -1011,7 +1020,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
           break;
       }
 
-      case COMPILE_MODE_SEQ: {
+      case SequentialExecution: {
           Label invoke;
 
           if (!emitCallToKnownScript(call, calleereg, unusedStack,
@@ -1025,10 +1034,6 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
 
           break;
       }
-
-      case COMPILE_MODE_MAX:
-          JS_ASSERT(false);
-          break;
     }
 
     masm.bind(&end);
@@ -1165,6 +1170,8 @@ CodeGenerator::emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSpa
 bool
 CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 {
+    JSContext *cx = GetIonContext()->cx;
+
     // Holds the function object.
     Register calleereg = ToRegister(apply->getFunction());
 
@@ -1189,15 +1196,15 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     masm.checkStackAlignment();
 
     // If the function is known to be uncompilable, only emit the call to InvokeFunction.
-    CompileMode cmode = gen->info().compileMode();
-    if (apply->hasSingleTarget() &&
-        (!apply->getSingleTarget()->isInterpreted() ||
-         apply->getSingleTarget()->script()->ions[cmode] == ION_DISABLED_SCRIPT))
-    {
-        if (!emitCallInvokeFunction(apply, copyreg))
-            return false;
-        emitPopArguments(apply, copyreg);
-        return true;
+    ExecutionMode executionMode = gen->info().executionMode();
+    if (apply->hasSingleTarget()) {
+        RootedFunction target(cx, apply->getSingleTarget());
+        if (!CanIonCompile(cx, target, executionMode)) {
+            if (!emitCallInvokeFunction(apply, copyreg))
+                return false;
+            emitPopArguments(apply, copyreg);
+            return true;
+        }
     }
 
     Label end, invoke;
@@ -1212,7 +1219,7 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    masm.movePtr(Address(objreg, ionOffset(cmode)), objreg);
+    masm.movePtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
     masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
@@ -1387,7 +1394,7 @@ CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
 bool
 CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
 {
-    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_PAR);
+    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
 
     const Register tempReg = ToRegister(lir->getTempReg());
     masm.setupUnalignedABICall(1, tempReg);
@@ -1524,7 +1531,7 @@ class OutOfLineNewArray : public OutOfLineCodeBase<CodeGenerator>
 bool
 CodeGenerator::visitNewArrayCallVM(LNewArray *lir)
 {
-    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
 
     Register objReg = ToRegister(lir->output());
 
@@ -1597,7 +1604,7 @@ public:
 bool
 CodeGenerator::visitNewArray(LNewArray *lir)
 {
-    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
@@ -1646,7 +1653,7 @@ class OutOfLineNewObject : public OutOfLineCodeBase<CodeGenerator>
 bool
 CodeGenerator::visitNewObjectVMCall(LNewObject *lir)
 {
-    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
 
     Register objReg = ToRegister(lir->output());
 
@@ -1670,7 +1677,7 @@ CodeGenerator::visitNewObjectVMCall(LNewObject *lir)
 bool
 CodeGenerator::visitNewObject(LNewObject *lir)
 {
-    JS_ASSERT(gen->info().compileMode() == COMPILE_MODE_SEQ);
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
@@ -2686,8 +2693,8 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
     typedef bool (*pf)(JSContext *, HandleObject, HandleValue, HandleValue, JSBool strict);
     static const VMFunction Info = FunctionInfo<pf>(SetObjectElement);
 
-    switch (gen->info().compileMode()) {
-      case COMPILE_MODE_SEQ:
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
         masm.bind(&callStub);
         saveLive(ins);
 
@@ -2705,7 +2712,7 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.jump(ool->rejoin());
         return true;
 
-      case COMPILE_MODE_PAR:
+      case ParallelExecution:
         masm.bind(&callStub);
 
         // TODO---No reason we can't support reallocating the array in
@@ -2715,9 +2722,6 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
             return false;
         masm.jump(bail);
         return true;
-
-      case COMPILE_MODE_MAX:
-        break;
     }
 
     JS_ASSERT(false);
@@ -3190,8 +3194,8 @@ CodeGenerator::generate()
     encodeSafepoints();
 
     RootedScript script(cx, gen->info().script());
-    CompileMode cmode = gen->info().compileMode();
-    JS_ASSERT(!script->hasIonScript(cmode));
+    ExecutionMode executionMode = gen->info().executionMode();
+    JS_ASSERT(!HasIonScript(script, executionMode));
 
     uint32 scriptFrameSize = frameClass_ == FrameSizeClass::None()
                            ? frameDepth_
@@ -3202,12 +3206,14 @@ CodeGenerator::generate()
     if (cx->compartment->types.compiledInfo.compilerOutput(cx)->isInvalidated())
         return true;
 
-    IonScript *ionScript = script->ions[cmode] =
+    IonScript *ionScript =
       IonScript::New(cx, slots, scriptFrameSize, snapshots_.size(),
                      bailouts_.length(), graph.numConstants(),
                      safepointIndices_.length(), osiIndices_.length(),
                      cacheList_.length(), barrierOffsets_.length(),
                      safepoints_.size(), graph.mir().numScripts());
+    SetIonScript(script, executionMode, ionScript);
+
     if (!ionScript)
         return false;
     invalidateEpilogueData_.fixup(&masm);
@@ -4227,17 +4233,27 @@ CodeGenerator::emitInstanceOf(LInstruction *ins, Register rhs)
     Register rhsFlags = ToRegister(ins->getTemp(0));
     Register lhsTmp = ToRegister(ins->getTemp(0));
 
-    Label callHasInstance;
     Label boundFunctionCheck;
     Label boundFunctionDone;
     Label done;
     Label loopPrototypeChain;
 
+    JS_ASSERT(ins->isInstanceOfO() || ins->isInstanceOfV());
+    bool lhsIsValue = ins->isInstanceOfV();
+
     typedef bool (*pf)(JSContext *, HandleObject, HandleValue, JSBool *);
     static const VMFunction HasInstanceInfo = FunctionInfo<pf>(js::HasInstance);
 
-    OutOfLineCode *call = oolCallVM(HasInstanceInfo, ins, (ArgList(), rhs, ToValue(ins, 0)),
-                                   StoreRegisterTo(output));
+    // If the lhs is an object, then the ValueOperand that gets sent to
+    // HasInstance must be boxed first.  If the lhs is a value, it can
+    // be sent directly.  Hence the choice between ToValue and ToTempValue
+    // below.  Note that the same check is done below in the generated code
+    // and explicit boxing instructions emitted before calling the OOL code
+    // if we're handling a LInstanceOfO.
+
+    OutOfLineCode *call = oolCallVM(HasInstanceInfo, ins,
+        (ArgList(), rhs, lhsIsValue ? ToValue(ins, 0) : ToTempValue(ins, 0)),
+        StoreRegisterTo(output));
     if (!call)
         return false;
 
@@ -4259,7 +4275,18 @@ CodeGenerator::emitInstanceOf(LInstruction *ins, Register rhs)
 
     masm.loadBaseShape(rhsTmp, output);
     masm.cmpPtr(Address(output, BaseShape::offsetOfClass()), ImmWord(&js::FunctionClass));
-    masm.j(Assembler::NotEqual, call->entry());
+    if (lhsIsValue) {
+        // If the input LHS is a value, no boxing necessary.
+        masm.j(Assembler::NotEqual, call->entry());
+    } else {
+        // If the input LHS is raw object pointer, it must be boxed before
+        // calling into js::HasInstance.
+        Label dontCallHasInstance;
+        masm.j(Assembler::Equal, &dontCallHasInstance);
+        masm.boxNonDouble(JSVAL_TYPE_OBJECT, ToRegister(ins->getOperand(0)), ToTempValue(ins, 0));
+        masm.jump(call->entry());
+        masm.bind(&dontCallHasInstance);
+    }
 
     // Check Bound Function
     masm.loadPtr(Address(output, BaseShape::offsetOfFlags()), rhsFlags);
@@ -4293,7 +4320,7 @@ CodeGenerator::emitInstanceOf(LInstruction *ins, Register rhs)
     // When lhs is a value: The HasInstance for function objects always
     // return false when lhs isn't an object. So check if
     // lhs is an object and otherwise return false
-    if (ins->isInstanceOfV()) {
+    if (lhsIsValue) {
         Label isObject;
         ValueOperand lhsValue = ToValue(ins, LInstanceOfV::LHS);
         masm.branchTestObject(Assembler::Equal, lhsValue, &isObject);
@@ -4332,7 +4359,17 @@ CodeGenerator::emitInstanceOf(LInstruction *ins, Register rhs)
     masm.loadPtr(Address(lhsTmp, offsetof(types::TypeObject, proto)), lhsTmp);
 
     // Bail out if we hit a lazy proto
-    masm.branch32(Assembler::Equal, lhsTmp, Imm32(1), call->entry());
+    if (lhsIsValue) {
+        masm.branch32(Assembler::Equal, lhsTmp, Imm32(1), call->entry());
+    } else {
+        // If the input LHS is raw object pointer, it must be boxed before
+        // calling into js::HasInstance.
+        Label dontCallHasInstance;
+        masm.branch32(Assembler::NotEqual, lhsTmp, Imm32(1), &dontCallHasInstance);
+        masm.boxNonDouble(JSVAL_TYPE_OBJECT, ToRegister(ins->getOperand(0)), ToTempValue(ins, 0));
+        masm.jump(call->entry());
+        masm.bind(&dontCallHasInstance);
+    }
 
     masm.testPtr(lhsTmp, lhsTmp);
     masm.j(Assembler::Zero, &done);

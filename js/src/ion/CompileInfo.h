@@ -17,14 +17,23 @@ CountArgSlots(JSFunction *fun)
     return fun ? fun->nargs + 2 : 1; // +2 for |scopeChain| and |this|, or +1 for |scopeChain|
 }
 
+enum ExecutionMode {
+    // Normal JavaScript execution
+    SequentialExecution,
+
+    // JavaScript code to be executed in parallel worker threads,
+    // e.g. by ParallelArray
+    ParallelExecution
+};
+
 // Contains information about the compilation source for IR being generated.
 class CompileInfo
 {
   public:
     CompileInfo(JSScript *script, JSFunction *fun, jsbytecode *osrPc, bool constructing,
-                CompileMode compileMode)
+                ExecutionMode executionMode)
       : script_(script), fun_(fun), osrPc_(osrPc), constructing_(constructing),
-        compileMode_(compileMode)
+        executionMode_(executionMode)
     {
         JS_ASSERT_IF(osrPc, JSOp(*osrPc) == JSOP_LOOPENTRY);
         nslots_ = script->nslots + CountArgSlots(fun);
@@ -135,12 +144,12 @@ class CompileInfo
         return script()->argumentsHasVarBinding();
     }
 
-    CompileMode compileMode() const {
-        return compileMode_;
+    ExecutionMode executionMode() const {
+        return executionMode_;
     }
 
-    bool isParallelCompilation() const {
-        return compileMode_ == COMPILE_MODE_PAR;
+    bool isParallelExecution() const {
+        return executionMode_ == ParallelExecution;
     }
 
   private:
@@ -149,7 +158,7 @@ class CompileInfo
     unsigned nslots_;
     jsbytecode *osrPc_;
     bool constructing_;
-    CompileMode compileMode_;
+    ExecutionMode executionMode_;
 };
 
 } // namespace ion

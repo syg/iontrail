@@ -2180,7 +2180,7 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
         } else {
             // note: currently, array.sort() cannot be used from parallel code
             JS_ASSERT(!InParallelSection());
-            FastInvokeGuard fig(cx, fval, COMPILE_MODE_SEQ);
+            FastInvokeGuard fig(cx, fval);
             if (!MergeSort(vec.begin(), n, vec.begin() + n,
                            SortComparatorFunction(cx, fval, fig))) {
                 return false;
@@ -3106,7 +3106,7 @@ array_readonlyCommon(JSContext *cx, CallArgs &args)
     /* Step 7. */
     RootedValue kValue(cx);
     JS_ASSERT(!InParallelSection());
-    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     while (k < len) {
         if (!JS_CHECK_OPERATION_LIMIT(cx))
@@ -3209,7 +3209,7 @@ array_map(JSContext *cx, unsigned argc, Value *vp)
     /* Step 8. */
     RootedValue kValue(cx);
     JS_ASSERT(!InParallelSection());
-    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     while (k < len) {
         if (!JS_CHECK_OPERATION_LIMIT(cx))
@@ -3290,7 +3290,7 @@ array_filter(JSContext *cx, unsigned argc, Value *vp)
 
     /* Step 9. */
     JS_ASSERT(!InParallelSection());
-    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     RootedValue kValue(cx);
     while (k < len) {
@@ -3411,7 +3411,7 @@ array_reduceCommon(JSContext *cx, CallArgs &args)
     /* Step 9. */
     RootedValue kValue(cx);
     JS_ASSERT(!InParallelSection());
-    FastInvokeGuard fig(cx, ObjectValue(*callable), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     while (k != end) {
         if (!JS_CHECK_OPERATION_LIMIT(cx))

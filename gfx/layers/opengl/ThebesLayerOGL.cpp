@@ -679,14 +679,14 @@ BasicBufferOGL::BeginPaint(ContentType aContentType,
           if (mBufferRotation != nsIntPoint(0, 0)) {
             // draw the remaining quadrants
             if (!srcRectDrawTopRight.IsEmpty())
-              gl()->BlitTextureImage(mTexImage, srcRectDrawTopRight,
-                                     destBuffer, dstRectDrawTopRight);
+              gl()->BlitTextureImage(mTexImageOnWhite, srcRectDrawTopRight,
+                                     destBufferOnWhite, dstRectDrawTopRight);
             if (!srcRectDrawTopLeft.IsEmpty())
-              gl()->BlitTextureImage(mTexImage, srcRectDrawTopLeft,
-                                     destBuffer, dstRectDrawTopLeft);
+              gl()->BlitTextureImage(mTexImageOnWhite, srcRectDrawTopLeft,
+                                     destBufferOnWhite, dstRectDrawTopLeft);
             if (!srcRectDrawBottomLeft.IsEmpty())
-              gl()->BlitTextureImage(mTexImage, srcRectDrawBottomLeft,
-                                     destBuffer, dstRectDrawBottomLeft);
+              gl()->BlitTextureImage(mTexImageOnWhite, srcRectDrawBottomLeft,
+                                     destBufferOnWhite, dstRectDrawBottomLeft);
           }
 
           destBufferOnWhite->MarkValid();

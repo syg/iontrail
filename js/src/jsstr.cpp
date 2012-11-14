@@ -1847,7 +1847,7 @@ struct ReplaceData
     ReplaceData(JSContext *cx)
       : str(cx), g(cx), lambda(cx), elembase(cx), repstr(cx),
         dollarRoot(cx, &dollar), dollarEndRoot(cx, &dollarEnd),
-        fig(cx, NullValue(), COMPILE_MODE_SEQ), sb(cx)
+        fig(cx, NullValue()), sb(cx)
     {
         JS_ASSERT(!InParallelSection()); // due to COMPILE_MODE_SEQ above
     }

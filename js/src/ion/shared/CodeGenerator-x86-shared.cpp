@@ -343,8 +343,8 @@ CodeGeneratorX86Shared::bailout(const T &binder, LSnapshot *snapshot)
 {
     // There has got to be an easier way!
     CompileInfo &info = snapshot->mir()->block()->info();
-    switch (info.compileMode()) {
-      case COMPILE_MODE_PAR: {
+    switch (info.executionMode()) {
+      case ParallelExecution: {
         // in parallel mode, make no attempt to recover, just signal an error.
         Label *ool;
         if (!ensureOutOfLineParallelAbort(&ool))
@@ -353,12 +353,7 @@ CodeGeneratorX86Shared::bailout(const T &binder, LSnapshot *snapshot)
         return true;
       }
 
-      case COMPILE_MODE_SEQ:
-        break;
-
-      case COMPILE_MODE_MAX:
-        JS_ASSERT(false);
-        break;
+      case SequentialExecution: break;
     }
 
     if (!encode(snapshot))

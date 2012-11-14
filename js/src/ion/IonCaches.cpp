@@ -665,7 +665,7 @@ IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *o
 
     // Need to set correct framePushed on the masm so that exit frame descriptors are
     // properly constructed.
-    masm.setFramePushed(script->ionScript(COMPILE_MODE_SEQ)->frameSize());
+    masm.setFramePushed(script->ionScript()->frameSize());
 
     GetNativePropertyStub getprop;
     if (!getprop.generateCallGetter(cx, masm, obj, name(), holder, shape, liveRegs,
@@ -791,14 +791,11 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
 bool
 js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
-
     AutoFlushCache afc ("GetPropertyCache");
     const SafepointIndex *safepointIndex;
     void *returnAddr;
     JSScript *topScript = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
-    IonScript *ion = topScript->ionScript(compileMode);
+    IonScript *ion = topScript->ionScript();
 
     IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
     RootedPropertyName name(cx, cache.name());
@@ -838,7 +835,7 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
         topScript->invalidatedIdempotentCache = true;
 
         // Do not re-invalidate if the lookup already caused invalidation.
-        if (!topScript->hasIonScript(compileMode))
+        if (!topScript->hasIonScript())
             return true;
 
         return Invalidate(cx, topScript);
@@ -1341,14 +1338,12 @@ bool
 js::ion::SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value,
                           bool isSetName)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("SetPropertyCache");
 
     void *returnAddr;
     const SafepointIndex *safepointIndex;
     JSScript *script = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
-    IonScript *ion = script->ions[compileMode];
+    IonScript *ion = script->ion;
     IonCacheSetProperty &cache = ion->getCache(cacheIndex).toSetProperty();
     RootedPropertyName name(cx, cache.name());
     RootedId id(cx, AtomToId(name));
@@ -1544,11 +1539,9 @@ bool
 js::ion::GetElementCache(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
                          MutableHandleValue res)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("GetElementCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript(compileMode);
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
 
     IonCacheGetElement &cache = ion->getCache(cacheIndex).toGetElement();
 
@@ -1768,11 +1761,9 @@ IsCacheableScopeChain(JSObject *scopeChain, JSObject *holder)
 JSObject *
 js::ion::BindNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("BindNameCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript(compileMode);
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
     IonCacheBindName &cache = ion->getCache(cacheIndex).toBindName();
     HandlePropertyName name = cache.name();
 
@@ -1907,11 +1898,9 @@ IsCacheableName(JSContext *cx, HandleObject scopeChain, HandleObject obj, Handle
 bool
 js::ion::GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("GetNameCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript(compileMode);
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
 
     IonCacheName &cache = ion->getCache(cacheIndex).toName();
     RootedPropertyName name(cx, cache.name());

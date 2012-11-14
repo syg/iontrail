@@ -2027,8 +2027,14 @@ AddPendingRecompile(JSContext *cx, HandleScript script, jsbytecode *pc,
     RecompileInfo& info = cx->compartment->types.compiledInfo;
     if (info.outputIndex != RecompileInfo::NoCompilerRunning) {
         CompilerOutput *co = info.compilerOutput(cx);
-        if (co->isIon() && co->script == script) {
-            co->invalidate();
+        switch (co->kind()) {
+          case CompilerOutput::MethodJIT:
+            break;
+          case CompilerOutput::Ion:
+          case CompilerOutput::ParallelIon:
+            if (co->script == script)
+                co->invalidate();
+            break;
         }
     }
 
@@ -2419,11 +2425,16 @@ TypeCompartment::processPendingRecompiles(FreeOp *fop)
 
     for (unsigned i = 0; i < pending->length(); i++) {
         CompilerOutput &co = *(*pending)[i].compilerOutput(*this);
-        if (co.isJM()) {
+        switch (co.kind()) {
+          case CompilerOutput::MethodJIT:
             JS_ASSERT(co.isValid());
             mjit::Recompiler::clearStackReferences(fop, co.script);
             co.mjit()->destroyChunk(fop, co.chunkIndex);
             JS_ASSERT(co.script == NULL);
+            break;
+          case CompilerOutput::Ion:
+          case CompilerOutput::ParallelIon:
+            break;
         }
     }
 
@@ -2585,10 +2596,11 @@ TypeCompartment::addPendingRecompile(JSContext *cx, HandleScript script, jsbytec
 # ifdef JS_ION
     CancelOffThreadIonCompile(cx->compartment, script);
 
-    for (EACH_COMPILE_MODE(cmode)) {
-        if (script->hasIonScript(cmode))
-            addPendingRecompile(cx, script->ionScript(cmode)->recompileInfo());
-    }
+    if (script->hasIonScript())
+        addPendingRecompile(cx, script->ionScript()->recompileInfo());
+
+    if (script->hasParallelIonScript())
+        addPendingRecompile(cx, script->parallelIonScript()->recompileInfo());
 # endif
 #endif
 }

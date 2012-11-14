@@ -586,7 +586,7 @@ ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::compileForParallelExecu
     bool hasIonScript;
     {
         AutoAssertNoGC nogc;
-        hasIonScript = callee->script()->hasIonScript(COMPILE_MODE_PAR);
+        hasIonScript = callee->script()->hasParallelIonScript();
     }
     if (!hasIonScript) {
         // If the script has not been compiled in parallel, then type
@@ -631,7 +631,7 @@ ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::parallel(
     argv[0] = UndefinedValue();
 
     // find jitcode ptr
-    IonScript *ion = callee->script()->ionScript(COMPILE_MODE_PAR);
+    IonScript *ion = callee->script()->parallelIonScript();
     IonCode *code = ion->method();
     void *jitcode = code->raw();
     EnterIonCode enter = cx_->compartment->ionCompartment()->enterJITInfallible();
@@ -868,7 +868,7 @@ ParallelArrayObject::BaseSequentialMode::buildUpTo(JSContext *cx,
     JS_ASSERT(iv.isInitialized());
     JS_ASSERT(limit <= iv.scalarLengthOfPackedDimensions());
 
-    FastInvokeGuard fig(cx, ObjectValue(*elementalFun), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*elementalFun));
     InvokeArgsGuard &args = fig.args();
     if (!cx->stack.pushInvokeArgs(cx, iv.dimensions.length(), &args))
         return ExecutionFatal;
@@ -914,7 +914,7 @@ ParallelArrayObject::BaseSequentialMode::mapUpTo(JSContext *cx,
     if (!source->isPackedOneDimensional() && !iv.initialize(cx, source, 1))
         return ExecutionFatal;
 
-    FastInvokeGuard fig(cx, ObjectValue(*elementalFun), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*elementalFun));
     InvokeArgsGuard &args = fig.args();
     if (!cx->stack.pushInvokeArgs(cx, 3, &args))
         return ExecutionFatal;
@@ -961,7 +961,7 @@ static bool ReduceUpToGeneric(JSContext *cx, Source &source, Result &result,
 
     result.update(cx, 0, acc);
 
-    FastInvokeGuard fig(cx, ObjectValue(*elementalFun), COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, ObjectValue(*elementalFun));
     InvokeArgsGuard &args = fig.args();
     if (!cx->stack.pushInvokeArgs(cx, 2, &args))
         return false;
@@ -1097,8 +1097,7 @@ ParallelArrayObject::BaseSequentialMode::scatterUpTo(JSContext *cx,
     // If we don't have a conflict fun, pass in a sentinel undefined as the
     // function; we'll never invoke anyways but it is nice to lift the guard
     // out of the loop.
-    FastInvokeGuard fig(cx, conflictFun ? ObjectValue(*conflictFun) : UndefinedValue(),
-                        COMPILE_MODE_SEQ);
+    FastInvokeGuard fig(cx, conflictFun ? ObjectValue(*conflictFun) : UndefinedValue());
     InvokeArgsGuard &args = fig.args();
 
     // Iterate over the scatter vector, but not more than the length of the

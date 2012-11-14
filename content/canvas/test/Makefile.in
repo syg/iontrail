@@ -10,8 +10,6 @@ VPATH		= @srcdir@
 relativesrcdir  = @relativesrcdir@
 DIRS		+= webgl crossorigin chrome
 
-# TEST_DIRS += compiled
-
 include $(DEPTH)/config/autoconf.mk
 MOCHITEST_FILES = \
 	test_canvas.html \
@@ -62,6 +60,7 @@ MOCHITEST_FILES = \
 	test_bug764125.html \
 	test_drawImage_edge_cases.html \
 	test_drawImage_document_domain.html \
+  test_mozDashOffset.html \
 	file_drawImage_document_domain.html \
 	$(NULL)
 

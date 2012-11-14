@@ -43,6 +43,8 @@
 #ifndef jsion_parallel_array_analysis_h__
 #define jsion_parallel_array_analysis_h__
 
+#include "CompileInfo.h"
+
 namespace js {
 namespace ion {
 
@@ -60,8 +62,8 @@ private:
 public:
     ParallelCompilationContext(JSContext *cx);
 
-    CompileMode compileMode() {
-        return COMPILE_MODE_PAR;
+    ExecutionMode executionMode() {
+        return ParallelExecution;
     }
 
     bool addInvokedFunction(JSFunction *func);

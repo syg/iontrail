@@ -593,7 +593,7 @@ class CallCompiler : public BaseCompiler
         RegisterID ionScript = regs.takeAnyReg().reg();
         Address scriptAddr(funObjReg, JSFunction::offsetOfNativeOrScript());
         masm.loadPtr(scriptAddr, ionScript);
-        masm.loadPtr(Address(ionScript, offsetof(JSScript, ions[js::COMPILE_MODE_SEQ])),
+        masm.loadPtr(Address(ionScript, offsetof(JSScript, ion)),
                      ionScript);
 
         /* Guard that the ion pointer is valid. */
@@ -1251,7 +1251,7 @@ class CallCompiler : public BaseCompiler
                 !ic.hasIonStub() &&
                 ic.frameSize.isStatic() &&
                 ic.frameSize.staticArgc() <= ion::SNAPSHOT_MAX_NARGS &&
-                fun->script()->hasIonScript(js::COMPILE_MODE_SEQ))
+                fun->script()->hasIonScript())
             {
                 if (!generateIonStub())
                     THROWV(NULL);

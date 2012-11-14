@@ -199,7 +199,7 @@ ParallelCompilationContext::compileFunctionAndInvokedFunctions(HandleFunction fu
         RootedFunction rootedFun(cx_, invokedFunctions_[i]->toFunction());
         HandleFunction fun(rootedFun);
 
-        if (fun->script()->hasIonScript(COMPILE_MODE_PAR))
+        if (fun->script()->hasParallelIonScript())
             continue; // Already compiled.
 
         if (CanEnterParallelArrayKernel(cx_, fun, *this) != Method_Compiled)
@@ -215,7 +215,7 @@ ParallelCompilationContext::addInvokedFunction(JSFunction *fun)
     JS_ASSERT(fun->isInterpreted());
 
     // Already compiled for parallel execution? Our work is done.
-    if (fun->script()->hasIonScript(COMPILE_MODE_PAR)) {
+    if (fun->script()->hasParallelIonScript()) {
         return true;
     }
 

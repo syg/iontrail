@@ -15,6 +15,7 @@
 
 #include "jsscriptinlines.h"
 #include "jstypedarrayinlines.h"
+#include "ExecutionModeInlines.h"
 
 #ifdef JS_THREADSAFE
 # include "prthread.h"
@@ -204,8 +205,8 @@ IonBuilder::canInlineTarget(JSFunction *target)
     }
 
     RootedScript inlineScript(cx, target->script());
-    CompileMode compileMode = info().compileMode();
-    if (!inlineScript->canIonCompile(compileMode)) {
+    ExecutionMode executionMode = info().executionMode();
+    if (!CanIonCompile(inlineScript, executionMode)) {
         IonSpew(IonSpew_Inlining, "Cannot inline due to disable Ion compilation");
         return false;
     }
@@ -2830,7 +2831,7 @@ IonBuilder::jsop_call_inline(HandleFunction callee, uint32 argc, bool constructi
     RootedScript calleeScript(cx, callee->script());
     CompileInfo *info = cx->tempLifoAlloc().new_<CompileInfo>(calleeScript.get(), callee,
                                                               (jsbytecode *)NULL, constructing,
-                                                              COMPILE_MODE_SEQ);
+                                                              SequentialExecution);
     if (!info)
         return false;
 
@@ -4018,10 +4019,9 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
 
     // In parallel execution, we never require write barriers.  See
     // forkjoin.cpp for more information.
-    switch (info().compileMode()) {
-      case COMPILE_MODE_SEQ: break;
-      case COMPILE_MODE_PAR: needsBarrier = false; break;
-      case COMPILE_MODE_MAX: break;
+    switch (info().executionMode()) {
+      case SequentialExecution: break;
+      case ParallelExecution: needsBarrier = false; break;
     }
 
     if (templateObject->isFixedSlot(shape->slot())) {
