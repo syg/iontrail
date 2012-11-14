@@ -453,11 +453,6 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
 }
 
 //
-// Cloning bandaid for sensitivity.
-//
-
-
-//
 // ParallelArrayObject
 //
 
