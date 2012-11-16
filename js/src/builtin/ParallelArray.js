@@ -1,5 +1,12 @@
+// FIXME: ICs must work in parallel.
+// FIXME: Must be able to call native intrinsics in parallel with a JSContext,
+//        or have native intrinsics provide both a sequential and a parallel
+//        version.
+// TODO: Multi-dimensional.
 // TODO: Use let over var when Ion compiles let.
 // TODO: Private names.
+// XXX: Experiment with cloning the whole op.
+// XXX: Hide buffer?
 
 function ComputeTileBounds(len, id, n) {
   var slice = (len / n) | 0;
