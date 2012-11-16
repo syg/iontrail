@@ -809,11 +809,28 @@ CodeGenerator::visitCallDOMNative(LCallDOMNative *call)
 bool
 CodeGenerator::visitCallGetIntrinsicValue(LCallGetIntrinsicValue *lir)
 {
-    typedef bool (*pf)(JSContext *cx, HandlePropertyName, MutableHandleValue);
-    static const VMFunction Info = FunctionInfo<pf>(GetIntrinsicValue);
+    // When compiling parallel kernels, always bail.
+    switch (gen->info().compileMode()) {
+      case COMPILE_MODE_SEQ: {
+        typedef bool (*pf)(JSContext *cx, HandlePropertyName, MutableHandleValue);
+        static const VMFunction Info = FunctionInfo<pf>(GetIntrinsicValue);
 
-    pushArg(ImmGCPtr(lir->mir()->name()));
-    return callVM(Info, lir);
+        pushArg(ImmGCPtr(lir->mir()->name()));
+        return callVM(Info, lir);
+      }
+
+      case COMPILE_MODE_PAR: {
+        Label *bail;
+        if (!ensureOutOfLineParallelAbort(&bail))
+            return false;
+
+        masm.jump(bail);
+        return true;
+      }
+
+      case COMPILE_MODE_MAX:
+        JS_NOT_REACHED("Bad compile mode");
+    }
 }
 
 bool
@@ -861,8 +878,6 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     CompileMode cmode  = gen->info().compileMode();
     Label invoke, thunk, makeCall, end, *slowPath;
 
-    // When compiling parallel kernels, the slow path is a bail instead of
-    // calling Invoke.
     // When compiling parallel kernels, the slow path is a bail instead of
     // calling Invoke.
     switch (cmode) {

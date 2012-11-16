@@ -165,6 +165,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     WRITE_GUARDED_OP(StoreFixedSlot, object)
     UNSAFE_OP(CallGetProperty)
     UNSAFE_OP(GetNameCache)
+    SAFE_OP(CallGetIntrinsicValue) // Bails in parallel mode
     UNSAFE_OP(CallGetElement)
     UNSAFE_OP(CallSetElement)
     UNSAFE_OP(CallSetProperty)
@@ -181,7 +182,6 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(Round)
     SAFE_OP(InstanceOf)
     COND_SAFE_OP(InterruptCheck) // FIXME---replace this with a version that bails
-    UNSAFE_OP(CallGetIntrinsicValue)
 };
 
 ParallelCompileContext::ParallelCompileContext(JSContext *cx)
