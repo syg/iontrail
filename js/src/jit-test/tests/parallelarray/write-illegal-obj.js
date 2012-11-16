@@ -11,6 +11,19 @@ function buildSimple() {
         return obj;
     }, {mode: "par", expect: "bail"});
 
+    // new ParallelArray([256], function(i) {
+    //     var o;
+    //     if ((i % 2) == 0) {
+    //         o = obj;
+    //     } else {
+    //         o = {x: 1, y: 2, z: 3};
+    //     }
+    //     o.x += 1;
+    //     o.y += 1;
+    //     o.z += 1;
+    //     return o;
+    // }, {mode: "par", expect: "bail"});
+
 }
 
 buildSimple();
