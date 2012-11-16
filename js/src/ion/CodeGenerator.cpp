@@ -1783,15 +1783,46 @@ CodeGenerator::visitParNew(LParNew *lir)
     if (!ool || !addOutOfLineCode(ool))
         return false;
 
-    //masm.newGCThing(objReg, templateObject, ool->entry());
-    //masm.initGCThing(objReg, templateObject);
-    //masm.bind(ool->rejoin());
+    // This is an inlined version of newGCThing.  The normal version
+    // uses absolute addresses to reach precisely into the
+    // JSCompartment, which requires fewer temp registers.  This one
+    // can't do that as it must be per-thread.  Also, we ignore the
+    // gcZeal setting, as this is not relevant in parallel execution.
 
-    // TODO use fast path but extract from the arena lists found in
-    // the thread context
-    masm.jump(ool->entry());
+    // Subtle: I wanted to use `objReg` for one of these temporaries,
+    // but the register allocator was assigning it to the same
+    // register as `threadContextReg`.  Then we overwrite that
+    // register which messed up the OOL code.
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
+    Register tempReg3 = ToRegister(lir->getTemp2());
+
+    // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, arenaLists)), tempReg1);
+
+    // tempReg1 = (FreeSpan*) &objReg.freeLists[thingKind]
+    uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
+    masm.addPtr(Imm32(freeSpanOffset), tempReg1);
+
+    // tempReg2 = (uintptr_t) objReg->first
+    // tempReg3 = (uintptr_t) objReg->last
+    masm.loadPtr(Address(objReg, offsetof(gc::FreeSpan, first)), tempReg2);
+    masm.loadPtr(Address(objReg, offsetof(gc::FreeSpan, last)), tempReg3);
+
+    // If last <= first, bail to OOL code
+    masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
+
+    // objReg->first = tempReg2 + thingSize
+    masm.addPtr(Imm32(thingSize), tempReg2);
+    masm.storePtr(tempReg2, Address(objReg, offsetof(gc::FreeSpan, first)));
+
+    // objReg = tempReg2 - thingSize
+    masm.movePtr(tempReg2, objReg);
+    masm.subPtr(Imm32(thingSize), objReg);
+
+    // Slow path joins us here to complete the initialization
     masm.bind(ool->rejoin());
-
     masm.initGCThing(objReg, templateObject);
 
     return true;

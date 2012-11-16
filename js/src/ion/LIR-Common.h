@@ -266,7 +266,11 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LParNew : public LInstructionHelper<1, 1, 4>
+// TODO---this class should not be a CallInstructionHelper, and it
+// should not require so many temporaries!  These are intended for the
+// OOL slow path; but we should just use the masm instructions to
+// locally push/pop the state in that case.
+class LParNew : public LCallInstructionHelper<1, 1, 4>
 {
   public:
     LIR_HEADER(ParNew);
@@ -285,10 +289,6 @@ class LParNew : public LInstructionHelper<1, 1, 4>
 
     MParNew *mir() const {
         return mir_->toParNew();
-    }
-
-    bool isCall() const {
-        return true;
     }
 
     const LAllocation *threadContext() {
