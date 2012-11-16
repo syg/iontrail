@@ -5415,10 +5415,12 @@ class MGetArgument
    }
 };
 
-class MParWriteGuard : public MBinaryInstruction
+class MParWriteGuard
+  : public MBinaryInstruction,
+    public ObjectPolicy<1>
 {
     MParWriteGuard(MDefinition *parThreadContext,
-                     MDefinition *obj)
+                   MDefinition *obj)
       : MBinaryInstruction(parThreadContext, obj)
     {
         setResultType(MIRType_None);

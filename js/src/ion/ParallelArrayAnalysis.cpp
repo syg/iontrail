@@ -181,6 +181,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(Round)
     SAFE_OP(InstanceOf)
     COND_SAFE_OP(InterruptCheck) // FIXME---replace this with a version that bails
+    UNSAFE_OP(CallGetIntrinsicValue)
 };
 
 ParallelCompileContext::ParallelCompileContext(JSContext *cx)
@@ -491,6 +492,7 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
     MBasicBlock *block = writeInstruction->block();
     MParWriteGuard *writeGuard = MParWriteGuard::New(threadContext, object);
     block->insertBefore(writeInstruction, writeGuard);
+    writeGuard->adjustInputs(writeGuard);
     return true;
 }
 

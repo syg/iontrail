@@ -413,6 +413,12 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
     JS_ASSERT(args[1].isObject());
     JS_ASSERT(args[1].toObject().isFunction());
 
+    // Nesting is not allowed.
+    if (InWarmup()) {
+        args.rval().setUndefined();
+        return ExecutionDisqualified;
+    }
+
     uint32_t length;
     if (!ToUint32(cx, args[0], &length))
         return ExecutionFatal;
