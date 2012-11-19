@@ -20,8 +20,7 @@ using mozilla::DebugOnly;
 bool
 js::OffThreadCompilationAvailable(JSContext *cx)
 {
-    WorkerThreadState &state = *cx->runtime->workerThreadState;
-    return state.numThreads > 0;
+    return cx->runtime->useHelperThreads();
 }
 
 bool
@@ -77,6 +76,8 @@ CompiledScriptMatches(JSCompartment *compartment, JSScript *script, JSScript *ta
 void
 js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
 {
+    AutoAssertNoGC nogc;
+
     if (!compartment->rt->workerThreadState)
         return;
 
@@ -282,6 +283,9 @@ WorkerThread::threadLoop()
     WorkerThreadState &state = *runtime->workerThreadState;
     state.lock();
 
+    threadData.construct(runtime);
+    js::TlsPerThreadData.set(threadData.addr());
+
     while (true) {
         JS_ASSERT(!ionBuilder);
 
@@ -302,7 +306,7 @@ WorkerThread::threadLoop()
 
         {
             ion::IonContext ictx(NULL, ionBuilder->script()->compartment(), &ionBuilder->temp());
-            ionBuilder->backgroundCompiledLir = ion::CompileBackEnd(ionBuilder);
+            ionBuilder->setBackgroundCodegen(ion::CompileBackEnd(ionBuilder));
         }
 
         state.lock();

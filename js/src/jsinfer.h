@@ -448,7 +448,6 @@ class TypeSet
     void print();
 
     inline void sweep(JSCompartment *compartment);
-    inline size_t computedSizeOfExcludingThis();
 
     /* Whether this set contains a specific type. */
     inline bool hasType(Type type);
@@ -1111,8 +1110,6 @@ struct TypeObject : gc::Cell
 
     inline void clearProperties();
     inline void sweep(FreeOp *fop);
-
-    inline size_t computedSizeOfExcludingThis();
 
     void sizeOfExcludingThis(TypeInferenceSizes *sizes, JSMallocSizeOfFun mallocSizeOf);
 

@@ -31,6 +31,7 @@
   border-top-right-radius: 6px;
 }
 
+#downloadsSummary,
 #downloadsPanel[hasdownloads] > #downloadsHistory {
   background: #e5e5e5;
   border-top: 1px solid hsla(0,0%,0%,.1);
@@ -53,17 +54,34 @@
   border-bottom-right-radius: 6px;
 }
 
-/*** List items ***/
+/*** Downloads Summary and List items ***/
 
+#downloadsSummary,
 richlistitem[type="download"] {
   height: 7em;
+  -moz-padding-end: 0;
+  color: inherit;
+}
+
+#downloadsSummary {
+  padding: 8px 38px 8px 12px;
+  cursor: pointer;
+}
+
+#downloadsSummary > .downloadTypeIcon {
+  list-style-image: url("chrome://mozapps/skin/downloads/downloadIcon.png");
+}
+
+#downloadsSummaryDescription {
+  color: -moz-nativehyperlinktext;
+}
+
+richlistitem[type="download"] {
   margin: 0;
   border-top: 1px solid hsla(0,0%,100%,.07);
   border-bottom: 1px solid hsla(0,0%,0%,.2);
   background: transparent;
   padding: 8px;
-  -moz-padding-end: 0;
-  color: inherit;
 }
 
 richlistitem[type="download"]:first-child {
@@ -175,8 +193,7 @@ richlistitem[type="download"][state="1"]:hover > .downloadButton.downloadShow:ac
 
 #downloads-indicator[attention]
 #downloads-indicator-icon {
-  background: -moz-image-rect(url("chrome://browser/skin/downloads/download-glow.png"),
-                              14, 34, 34, 14) center no-repeat;
+  background-image: url("chrome://browser/skin/downloads/download-glow.png");
 }
 
 #downloads-indicator:not([counter])
@@ -188,8 +205,7 @@ richlistitem[type="download"][state="1"]:hover > .downloadButton.downloadShow:ac
 
 #downloads-indicator:not([counter])[attention]
 #downloads-indicator-counter {
-  background-image: -moz-image-rect(url("chrome://browser/skin/downloads/download-glow.png"),
-                                    14, 34, 34, 14);
+  background-image: url("chrome://browser/skin/downloads/download-glow.png");
 }
 
 @media (min-resolution: 2dppx) {
@@ -200,6 +216,16 @@ richlistitem[type="download"][state="1"]:hover > .downloadButton.downloadShow:ac
 
   #downloads-indicator:not([counter]) #downloads-indicator-counter {
     background-image: -moz-image-rect(url("chrome://browser/skin/Toolbar@2x.png"), 0, 280, 40, 240);
+  }
+
+  #downloads-indicator[attention]
+  #downloads-indicator-icon {
+    background-image: url("chrome://browser/skin/downloads/download-glow@2x.png");
+  }
+
+  #downloads-indicator:not([counter])[attention]
+  #downloads-indicator-counter {
+    background-image: url("chrome://browser/skin/downloads/download-glow@2x.png");
   }
 }
 

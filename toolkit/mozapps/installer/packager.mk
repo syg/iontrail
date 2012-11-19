@@ -247,7 +247,11 @@ ifeq ($(MOZ_PKG_FORMAT),APK)
 JAVA_CLASSPATH = $(ANDROID_SDK)/android.jar
 include $(MOZILLA_DIR)/config/android-common.mk
 
+ifdef MOZ_SIGN_CMD
+JARSIGNER := $(MOZ_SIGN_CMD) -f jar
+else
 JARSIGNER ?= echo
+endif
 
 DIST_FILES =
 
@@ -997,7 +1001,7 @@ UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PACKAGE).asc)
 endif
 
 ifdef MOZ_STUB_INSTALLER
-UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_INST_PATH)$(PKG_INST_BASENAME)-stub.exe)
+UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_INST_PATH)$(PKG_STUB_BASENAME).exe)
 endif
 
 checksum:

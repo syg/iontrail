@@ -747,6 +747,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #ifdef JS_METHODJIT
     jaegerRuntime_(NULL),
 #endif
+    ionRuntime_(NULL),
     selfHostedGlobal_(NULL),
     nativeStackBase(0),
     nativeStackQuota(0),
@@ -1018,6 +1019,9 @@ JSRuntime::~JSRuntime()
     js_delete(mathCache_);
 #ifdef JS_METHODJIT
     js_delete(jaegerRuntime_);
+#endif
+#ifdef JS_ION
+    js_delete(ionRuntime_);
 #endif
     js_delete(execAlloc_);  /* Delete after jaegerRuntime_. */
 

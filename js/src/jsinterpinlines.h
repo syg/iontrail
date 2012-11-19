@@ -405,9 +405,8 @@ inline bool
 IntrinsicNameOperation(JSContext *cx, JSScript *script, jsbytecode *pc, MutableHandleValue vp)
 {
     JSOp op = JSOp(*pc);
-    RootedPropertyName name(cx,  GetNameFromBytecode(cx, script, pc, op));
-    cx->global()->getIntrinsicValue(cx, name, vp);
-    return true;
+    RootedPropertyName name(cx, GetNameFromBytecode(cx, script, pc, op));
+    return cx->global()->getIntrinsicValue(cx, name, vp);
 }
 
 inline bool
@@ -1041,7 +1040,7 @@ class FastInvokeGuard
                 return false;
             if (status == ion::Method_Compiled) {
                 ion::IonExecStatus result = ion::FastInvoke(cx, fun_, args_);
-                if (result == ion::IonExec_Error)
+                if (IsErrorStatus(result))
                     return false;
 
                 JS_ASSERT(result == ion::IonExec_Ok);

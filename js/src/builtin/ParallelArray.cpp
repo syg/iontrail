@@ -634,7 +634,7 @@ ParallelArrayObject::ParallelArrayOp<BodyDefn, MaxArgc>::parallel(
     IonScript *ion = callee->script()->parallelIonScript();
     IonCode *code = ion->method();
     void *jitcode = code->raw();
-    EnterIonCode enter = cx_->compartment->ionCompartment()->enterJITInfallible();
+    EnterIonCode enter = cx_->compartment->ionCompartment()->enterJIT();
     void *calleeToken = CalleeToToken(callee);
 
     // Prepare and execute the per-thread state for the operation:
