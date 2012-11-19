@@ -190,7 +190,7 @@ ThreadPool::~ThreadPool() {
     terminateWorkers();
     while (workers_.length() > 0) {
         ThreadPoolWorker *worker = workers_.popCopy();
-        delete worker;
+        js_delete(worker);
     }
 }
 
@@ -207,20 +207,17 @@ ThreadPool::init()
         numWorkers = GetCPUCount() - 1;
     }
 
-    if (numWorkers == 0)
-        return false;
-
     // Allocate workers array and then start the worker threads.
     // Ensure that the field numWorkers_ always tracks the number of
     // *successfully initialized* workers.
     for (size_t workerId = 0; workerId < numWorkers; workerId++) {
-        ThreadPoolWorker *worker = runtime_->new_<ThreadPoolWorker>(workerId, this);
+        ThreadPoolWorker *worker = js_new<ThreadPoolWorker>(workerId, this);
         if (!worker->init()) {
-            delete worker;
+            js_delete(worker);
             return false;
         }
         if (!workers_.append(worker)) {
-            delete worker;
+            js_delete(worker);
             return false;
         }
         if (!worker->start()) {
