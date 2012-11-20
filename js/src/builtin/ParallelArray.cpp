@@ -239,8 +239,8 @@ class ArrayOp : public ForkJoinOp {
   protected:
     JSContext *cx_;
     const char *name_;
-    HandleObject buffer_;
-    HandleObject fun_;
+    HeapPtrObject buffer_;
+    HeapPtrObject fun_;
 
   public:
     ArrayOp(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun)
@@ -364,7 +364,9 @@ class BuildArrayOp : public ArrayOp
         // kernel); map, reduce, scan use 2 extra (the kernel and the source
         // array); scatter uses 4 extra (the kernel, the default value, the
         // conflict resolution function, and the source array).
-        FastestIonInvoke<7> fii(cx_, fun_, funArgc_ + 3);
+        js::PerThreadData *pt = slice.perThreadData;
+        RootedObject fun(pt, fun_);
+        FastestIonInvoke<7> fii(cx_, fun, funArgc_ + 3);
 
         // The first 3 arguments: buffer, thread id, and number of threads.
         fii.args[0] = ObjectValue(*buffer_);
