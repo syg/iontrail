@@ -53,7 +53,7 @@ using namespace js::ion;
 IonOptions ion::js_IonOptions;
 
 // Assert that IonCode is gc::Cell aligned.
-JS_STATIC_ASSERT(sizeof(IonCode) % gc::Cell::CellSize == 0);
+JS_STATIC_ASSERT(sizeof(IonCode) % gc::CellSize == 0);
 
 #ifdef JS_THREADSAFE
 static bool IonTLSInitialized = false;
@@ -209,6 +209,12 @@ IonCompartment::IonCompartment(IonRuntime *rt)
   : rt(rt),
     flusher_(NULL)
 {
+}
+
+bool
+IonCompartment::initialize(JSContext *cx)
+{
+    return true;
 }
 
 void
