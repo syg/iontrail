@@ -12,7 +12,6 @@
 #include "nsISeekableStream.h"
 
 #include "jsfriendapi.h"
-#include "nsCharsetAlias.h"
 #include "nsEventDispatcher.h"
 #include "nsNetUtil.h"
 #include "nsDOMClassInfoID.h"
@@ -33,9 +32,12 @@
 #include "nsError.h"
 #include "nsContentUtils.h"
 
+#include "mozilla/dom/EncodingUtils.h"
+
 #define STREAM_COPY_BLOCK_SIZE 32768
 
 USING_FILE_NAMESPACE
+using mozilla::dom::EncodingUtils;
 
 namespace {
 
@@ -216,9 +218,9 @@ GetInputStreamForJSVal(const jsval& aValue, JSContext* aCx,
 
   if (!JSVAL_IS_PRIMITIVE(aValue)) {
     JSObject* obj = JSVAL_TO_OBJECT(aValue);
-    if (JS_IsArrayBufferObject(obj, aCx)) {
-      char* data = reinterpret_cast<char*>(JS_GetArrayBufferData(obj, aCx));
-      uint32_t length = JS_GetArrayBufferByteLength(obj, aCx);
+    if (JS_IsArrayBufferObject(obj)) {
+      char* data = reinterpret_cast<char*>(JS_GetArrayBufferData(obj));
+      uint32_t length = JS_GetArrayBufferByteLength(obj);
 
       rv = NS_NewByteInputStream(aInputStream, data, length,
                                  NS_ASSIGNMENT_COPY);
@@ -325,13 +327,12 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(LockedFile)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(LockedFile,
                                                   nsDOMEventTargetHelper)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mFileHandle,
-                                                       nsIDOMEventTarget)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFileHandle)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(LockedFile,
                                                 nsDOMEventTargetHelper)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFileHandle)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFileHandle)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(LockedFile)
@@ -1054,8 +1055,9 @@ ReadTextHelper::GetSuccessResult(JSContext* aCx,
   }
 
   nsCString charset;
-  rv = nsCharsetAlias::GetPreferred(charsetGuess, charset);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (!EncodingUtils::FindEncodingForLabel(charsetGuess, charset)) {
+    return NS_ERROR_DOM_ENCODING_NOT_SUPPORTED_ERR;
+  }
 
   nsString tmpString;
   rv = nsContentUtils::ConvertStringFromCharset(charset, mStream->Data(),

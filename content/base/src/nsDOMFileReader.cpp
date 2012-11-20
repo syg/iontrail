@@ -10,7 +10,6 @@
 #include "nsDOMClassInfoID.h"
 #include "nsDOMFile.h"
 #include "nsError.h"
-#include "nsCharsetAlias.h"
 #include "nsICharsetConverterManager.h"
 #include "nsIConverterInputStream.h"
 #include "nsIFile.h"
@@ -39,8 +38,9 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsLayoutStatics.h"
 #include "nsIScriptObjectPrincipal.h"
-#include "nsBlobProtocolHandler.h"
+#include "nsHostObjectProtocolHandler.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/dom/EncodingUtils.h"
 #include "xpcpublic.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsDOMJSUtils.h"
@@ -54,21 +54,22 @@ using namespace mozilla;
 #define LOADSTART_STR "loadstart"
 #define LOADEND_STR "loadend"
 
+using mozilla::dom::EncodingUtils;
 using mozilla::dom::FileIOObject;
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMFileReader)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsDOMFileReader,
                                                   FileIOObject)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFile)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPrincipal)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFile)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrincipal)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsDOMFileReader,
                                                 FileIOObject)
   tmp->mResultArrayBuffer = nullptr;
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFile)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mPrincipal)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFile)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPrincipal)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 
@@ -308,7 +309,7 @@ nsDOMFileReader::DoOnDataAvailable(nsIRequest *aRequest,
   }
   else if (mDataFormat == FILE_AS_ARRAYBUFFER) {
     uint32_t bytesRead = 0;
-    aInputStream->Read((char*)JS_GetArrayBufferData(mResultArrayBuffer, NULL) + aOffset,
+    aInputStream->Read((char*)JS_GetArrayBufferData(mResultArrayBuffer) + aOffset,
                        aCount, &bytesRead);
     NS_ASSERTION(bytesRead == aCount, "failed to read data");
   }
@@ -463,8 +464,9 @@ nsDOMFileReader::GetAsText(const nsACString &aCharset,
   }
 
   nsAutoCString charset;
-  rv = nsCharsetAlias::GetPreferred(charsetGuess, charset);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (!EncodingUtils::FindEncodingForLabel(charsetGuess, charset)) {
+    return NS_ERROR_DOM_ENCODING_NOT_SUPPORTED_ERR;
+  }
 
   rv = ConvertStream(aFileData, aDataLen, charset.get(), aResult);
 

@@ -127,7 +127,9 @@ nsRuleNode::ChildrenHashOps = {
 //  - if the display value (argument) is not a block-type
 //    then we set it to a valid block display value
 //  - For enforcing the floated/positioned element CSS2 rules
-static void EnsureBlockDisplay(uint8_t& display)
+/* static */
+void
+nsRuleNode::EnsureBlockDisplay(uint8_t& display)
 {
   // see if the display value is already a block
   switch (display) {
@@ -370,8 +372,9 @@ static nscoord CalcLengthWith(const nsCSSValue& aValue,
   }
   switch (aValue.GetUnit()) {
     case eCSSUnit_EM: {
+      // CSS2.1 specifies that this unit scales to the computed font
+      // size, not the em-width in the font metrics, despite the name.
       return ScaleCoord(aValue, float(aFontSize));
-      // XXX scale against font metrics height instead?
     }
     case eCSSUnit_XHeight: {
       nsRefPtr<nsFontMetrics> fm =
@@ -1320,7 +1323,7 @@ nsRuleNode::~nsRuleNode()
 {
   MOZ_COUNT_DTOR(nsRuleNode);
   if (mStyleData.mResetData || mStyleData.mInheritedData)
-    mStyleData.Destroy(0, mPresContext);
+    mStyleData.Destroy(mDependentBits, mPresContext);
   NS_IF_RELEASE(mRule);
 }
 
@@ -1377,6 +1380,30 @@ nsRuleNode::Transition(nsIStyleRule* aRule, uint8_t aLevel,
   return next;
 }
 
+void nsRuleNode::SetUsedDirectly()
+{
+  mDependentBits |= NS_RULE_NODE_USED_DIRECTLY;
+
+  // Maintain the invariant that any rule node that is used directly has
+  // all structs that live in the rule tree cached (which
+  // nsRuleNode::GetStyleData depends on for speed).
+  if (mDependentBits & NS_STYLE_INHERIT_MASK) {
+    for (nsStyleStructID sid = nsStyleStructID(0); sid < nsStyleStructID_Length;
+         sid = nsStyleStructID(sid + 1)) {
+      uint32_t bit = nsCachedStyleData::GetBitForSID(sid);
+      if (mDependentBits & bit) {
+        nsRuleNode *source = mParent;
+        while ((source->mDependentBits & bit) && !source->IsUsedDirectly()) {
+          source = source->mParent;
+        }
+        void *data = source->mStyleData.GetStyleData(sid);
+        NS_ASSERTION(data, "unexpected null struct");
+        mStyleData.SetStyleData(sid, mPresContext, data);
+      }
+    }
+  }
+}
+
 void
 nsRuleNode::ConvertChildrenToHash()
 {
@@ -1411,20 +1438,28 @@ nsRuleNode::PropagateNoneBit(uint32_t aBit, nsRuleNode* aHighestNode)
 }
 
 inline void
-nsRuleNode::PropagateDependentBit(uint32_t aBit, nsRuleNode* aHighestNode)
+nsRuleNode::PropagateDependentBit(nsStyleStructID aSID, nsRuleNode* aHighestNode,
+                                  void* aStruct)
 {
+  NS_ASSERTION(aStruct, "expected struct");
+
+  uint32_t bit = nsCachedStyleData::GetBitForSID(aSID);
   for (nsRuleNode* curr = this; curr != aHighestNode; curr = curr->mParent) {
-    if (curr->mDependentBits & aBit) {
+    if (curr->mDependentBits & bit) {
 #ifdef DEBUG
       while (curr != aHighestNode) {
-        NS_ASSERTION(curr->mDependentBits & aBit, "bit not set");
+        NS_ASSERTION(curr->mDependentBits & bit, "bit not set");
         curr = curr->mParent;
       }
 #endif
       break;
     }
 
-    curr->mDependentBits |= aBit;
+    curr->mDependentBits |= bit;
+
+    if (curr->IsUsedDirectly()) {
+      curr->mStyleData.SetStyleData(aSID, mPresContext, aStruct);
+    }
   }
 }
 
@@ -1469,7 +1504,7 @@ CheckFontCallback(const nsRuleData* aRuleData,
   // and 'narrower' values of 'font-stretch' depend on the parent.
   const nsCSSValue& size = *aRuleData->ValueForFontSize();
   const nsCSSValue& weight = *aRuleData->ValueForFontWeight();
-  if (size.IsRelativeLengthUnit() ||
+  if ((size.IsRelativeLengthUnit() && size.GetUnit() != eCSSUnit_RootEM) ||
       size.GetUnit() == eCSSUnit_Percent ||
       (size.GetUnit() == eCSSUnit_Enumerated &&
        (size.GetIntValue() == NS_STYLE_FONT_SIZE_SMALLER ||
@@ -1789,6 +1824,8 @@ GetPseudoRestriction(nsStyleContext *aContext)
       pseudoRestriction = CSS_PROPERTY_APPLIES_TO_FIRST_LETTER;
     } else if (pseudoType == nsCSSPseudoElements::firstLine) {
       pseudoRestriction = CSS_PROPERTY_APPLIES_TO_FIRST_LINE;
+    } else if (pseudoType == nsCSSPseudoElements::mozPlaceholder) {
+      pseudoRestriction = CSS_PROPERTY_APPLIES_TO_PLACEHOLDER;
     }
   }
   return pseudoRestriction;
@@ -1893,7 +1930,10 @@ nsRuleNode::WalkRuleTree(const nsStyleStructID aSID,
 
     // If the dependent bit is set on a rule node for this struct, that
     // means its rule won't have any information to add, so skip it.
-    while (ruleNode->mDependentBits & bit) {
+    // NOTE: If we exit the loop because of the !IsUsedDirectly() check,
+    // then we're guaranteed to break immediately afterwards due to a
+    // non-null startStruct.
+    while ((ruleNode->mDependentBits & bit) && !ruleNode->IsUsedDirectly()) {
       NS_ASSERTION(ruleNode->mStyleData.GetStyleData(aSID) == nullptr,
                    "dependent bit with cached data makes no sense");
       // Climb up to the next rule in the tree (a less specific rule).
@@ -1969,7 +2009,7 @@ nsRuleNode::WalkRuleTree(const nsStyleStructID aSID,
     // node in the tree to the node that specified the data that tells nodes on that
     // branch that they never need to examine their rules for this particular struct type
     // ever again.
-    PropagateDependentBit(bit, ruleNode);
+    PropagateDependentBit(aSID, ruleNode, startStruct);
     return startStruct;
   }
   // FIXME Do we need to check for mPostResolveCallback?
@@ -2042,197 +2082,151 @@ nsRuleNode::SetDefaultOnRoot(const nsStyleStructID aSID, nsStyleContext* aContex
     case eStyleStruct_Font:
     {
       nsStyleFont* fontData = new (mPresContext) nsStyleFont(mPresContext);
-      if (MOZ_LIKELY(fontData != nullptr)) {
-        nscoord minimumFontSize = mPresContext->MinFontSize(fontData->mLanguage);
+      nscoord minimumFontSize = mPresContext->MinFontSize(fontData->mLanguage);
 
-        if (minimumFontSize > 0 && !mPresContext->IsChrome()) {
-          fontData->mFont.size = NS_MAX(fontData->mSize, minimumFontSize);
-        }
-        else {
-          fontData->mFont.size = fontData->mSize;
-        }
-        aContext->SetStyle(eStyleStruct_Font, fontData);
+      if (minimumFontSize > 0 && !mPresContext->IsChrome()) {
+        fontData->mFont.size = NS_MAX(fontData->mSize, minimumFontSize);
       }
+      else {
+        fontData->mFont.size = fontData->mSize;
+      }
+      aContext->SetStyle(eStyleStruct_Font, fontData);
       return fontData;
     }
     case eStyleStruct_Display:
     {
       nsStyleDisplay* disp = new (mPresContext) nsStyleDisplay();
-      if (MOZ_LIKELY(disp != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Display, disp);
-      }
+      aContext->SetStyle(eStyleStruct_Display, disp);
       return disp;
     }
     case eStyleStruct_Visibility:
     {
       nsStyleVisibility* vis = new (mPresContext) nsStyleVisibility(mPresContext);
-      if (MOZ_LIKELY(vis != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Visibility, vis);
-      }
+      aContext->SetStyle(eStyleStruct_Visibility, vis);
       return vis;
     }
     case eStyleStruct_Text:
     {
       nsStyleText* text = new (mPresContext) nsStyleText();
-      if (MOZ_LIKELY(text != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Text, text);
-      }
+      aContext->SetStyle(eStyleStruct_Text, text);
       return text;
     }
     case eStyleStruct_TextReset:
     {
       nsStyleTextReset* text = new (mPresContext) nsStyleTextReset();
-      if (MOZ_LIKELY(text != nullptr)) {
-        aContext->SetStyle(eStyleStruct_TextReset, text);
-      }
+      aContext->SetStyle(eStyleStruct_TextReset, text);
       return text;
     }
     case eStyleStruct_Color:
     {
       nsStyleColor* color = new (mPresContext) nsStyleColor(mPresContext);
-      if (MOZ_LIKELY(color != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Color, color);
-      }
+      aContext->SetStyle(eStyleStruct_Color, color);
       return color;
     }
     case eStyleStruct_Background:
     {
       nsStyleBackground* bg = new (mPresContext) nsStyleBackground();
-      if (MOZ_LIKELY(bg != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Background, bg);
-      }
+      aContext->SetStyle(eStyleStruct_Background, bg);
       return bg;
     }
     case eStyleStruct_Margin:
     {
       nsStyleMargin* margin = new (mPresContext) nsStyleMargin();
-      if (MOZ_LIKELY(margin != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Margin, margin);
-      }
+      aContext->SetStyle(eStyleStruct_Margin, margin);
       return margin;
     }
     case eStyleStruct_Border:
     {
       nsStyleBorder* border = new (mPresContext) nsStyleBorder(mPresContext);
-      if (MOZ_LIKELY(border != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Border, border);
-      }
+      aContext->SetStyle(eStyleStruct_Border, border);
       return border;
     }
     case eStyleStruct_Padding:
     {
       nsStylePadding* padding = new (mPresContext) nsStylePadding();
-      if (MOZ_LIKELY(padding != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Padding, padding);
-      }
+      aContext->SetStyle(eStyleStruct_Padding, padding);
       return padding;
     }
     case eStyleStruct_Outline:
     {
       nsStyleOutline* outline = new (mPresContext) nsStyleOutline(mPresContext);
-      if (MOZ_LIKELY(outline != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Outline, outline);
-      }
+      aContext->SetStyle(eStyleStruct_Outline, outline);
       return outline;
     }
     case eStyleStruct_List:
     {
       nsStyleList* list = new (mPresContext) nsStyleList();
-      if (MOZ_LIKELY(list != nullptr)) {
-        aContext->SetStyle(eStyleStruct_List, list);
-      }
+      aContext->SetStyle(eStyleStruct_List, list);
       return list;
     }
     case eStyleStruct_Position:
     {
       nsStylePosition* pos = new (mPresContext) nsStylePosition();
-      if (MOZ_LIKELY(pos != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Position, pos);
-      }
+      aContext->SetStyle(eStyleStruct_Position, pos);
       return pos;
     }
     case eStyleStruct_Table:
     {
       nsStyleTable* table = new (mPresContext) nsStyleTable();
-      if (MOZ_LIKELY(table != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Table, table);
-      }
+      aContext->SetStyle(eStyleStruct_Table, table);
       return table;
     }
     case eStyleStruct_TableBorder:
     {
       nsStyleTableBorder* table = new (mPresContext) nsStyleTableBorder(mPresContext);
-      if (MOZ_LIKELY(table != nullptr)) {
-        aContext->SetStyle(eStyleStruct_TableBorder, table);
-      }
+      aContext->SetStyle(eStyleStruct_TableBorder, table);
       return table;
     }
     case eStyleStruct_Content:
     {
       nsStyleContent* content = new (mPresContext) nsStyleContent();
-      if (MOZ_LIKELY(content != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Content, content);
-      }
+      aContext->SetStyle(eStyleStruct_Content, content);
       return content;
     }
     case eStyleStruct_Quotes:
     {
       nsStyleQuotes* quotes = new (mPresContext) nsStyleQuotes();
-      if (MOZ_LIKELY(quotes != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Quotes, quotes);
-      }
+      aContext->SetStyle(eStyleStruct_Quotes, quotes);
       return quotes;
     }
     case eStyleStruct_UserInterface:
     {
       nsStyleUserInterface* ui = new (mPresContext) nsStyleUserInterface();
-      if (MOZ_LIKELY(ui != nullptr)) {
-        aContext->SetStyle(eStyleStruct_UserInterface, ui);
-      }
+      aContext->SetStyle(eStyleStruct_UserInterface, ui);
       return ui;
     }
     case eStyleStruct_UIReset:
     {
       nsStyleUIReset* ui = new (mPresContext) nsStyleUIReset();
-      if (MOZ_LIKELY(ui != nullptr)) {
-        aContext->SetStyle(eStyleStruct_UIReset, ui);
-      }
+      aContext->SetStyle(eStyleStruct_UIReset, ui);
       return ui;
     }
 
     case eStyleStruct_XUL:
     {
       nsStyleXUL* xul = new (mPresContext) nsStyleXUL();
-      if (MOZ_LIKELY(xul != nullptr)) {
-        aContext->SetStyle(eStyleStruct_XUL, xul);
-      }
+      aContext->SetStyle(eStyleStruct_XUL, xul);
       return xul;
     }
 
     case eStyleStruct_Column:
     {
       nsStyleColumn* column = new (mPresContext) nsStyleColumn(mPresContext);
-      if (MOZ_LIKELY(column != nullptr)) {
-        aContext->SetStyle(eStyleStruct_Column, column);
-      }
+      aContext->SetStyle(eStyleStruct_Column, column);
       return column;
     }
 
     case eStyleStruct_SVG:
     {
       nsStyleSVG* svg = new (mPresContext) nsStyleSVG();
-      if (MOZ_LIKELY(svg != nullptr)) {
-        aContext->SetStyle(eStyleStruct_SVG, svg);
-      }
+      aContext->SetStyle(eStyleStruct_SVG, svg);
       return svg;
     }
 
     case eStyleStruct_SVGReset:
     {
       nsStyleSVGReset* svgReset = new (mPresContext) nsStyleSVGReset();
-      if (MOZ_LIKELY(svgReset != nullptr)) {
-        aContext->SetStyle(eStyleStruct_SVGReset, svgReset);
-      }
+      aContext->SetStyle(eStyleStruct_SVGReset, svgReset);
       return svgReset;
     }
     default:
@@ -2240,6 +2234,7 @@ nsRuleNode::SetDefaultOnRoot(const nsStyleStructID aSID, nsStyleContext* aContex
        * unhandled case: nsStyleStructID_Length.
        * last item of nsStyleStructID, to know its length.
        */
+      NS_ABORT_IF_FALSE(false, "unexpected SID");
       return nullptr;
   }
   return nullptr;
@@ -2350,8 +2345,6 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
       data_ = new (mPresContext) nsStyle##type_ ctorargs_;                    \
   }                                                                           \
                                                                               \
-  if (MOZ_UNLIKELY(!data_))                                                   \
-    return nullptr;  /* Out Of Memory */                                      \
   if (!parentdata_)                                                           \
     parentdata_ = data_;
 
@@ -2386,9 +2379,6 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
   else                                                                        \
     data_ = new (mPresContext) nsStyle##type_ ctorargs_;                      \
                                                                               \
-  if (MOZ_UNLIKELY(!data_))                                                   \
-    return nullptr;  /* Out Of Memory */                                      \
-                                                                              \
   /* If |canStoreInRuleTree| might be true by the time we're done, we */      \
   /* can't call parentContext->GetStyle##type_() since it could recur into */ \
   /* setting the same struct on the same rule node, causing a leak. */        \
@@ -2418,10 +2408,6 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
     if (!aHighestNode->mStyleData.mInheritedData) {                           \
       aHighestNode->mStyleData.mInheritedData =                               \
         new (mPresContext) nsInheritedStyleData;                              \
-      if (MOZ_UNLIKELY(!aHighestNode->mStyleData.mInheritedData)) {           \
-        data_->Destroy(mPresContext);                                         \
-        return nullptr;                                                       \
-      }                                                                       \
     }                                                                         \
     NS_ASSERTION(!aHighestNode->mStyleData.mInheritedData->                   \
                    mStyleStructs[eStyleStruct_##type_],                       \
@@ -2429,7 +2415,7 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
     aHighestNode->mStyleData.mInheritedData->                                 \
       mStyleStructs[eStyleStruct_##type_] = data_;                            \
     /* Propagate the bit down. */                                             \
-    PropagateDependentBit(NS_STYLE_INHERIT_BIT(type_), aHighestNode);         \
+    PropagateDependentBit(eStyleStruct_##type_, aHighestNode, data_);         \
     /* Tell the style context that it doesn't own the data */                 \
     aContext->                                                                \
       AddStyleBit(nsCachedStyleData::GetBitForSID(eStyleStruct_##type_));     \
@@ -2462,10 +2448,6 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
     if (!aHighestNode->mStyleData.mResetData) {                               \
       aHighestNode->mStyleData.mResetData =                                   \
         new (mPresContext) nsResetStyleData;                                  \
-      if (MOZ_UNLIKELY(!aHighestNode->mStyleData.mResetData)) {               \
-        data_->Destroy(mPresContext);                                         \
-        return nullptr;                                                       \
-      }                                                                       \
     }                                                                         \
     NS_ASSERTION(!aHighestNode->mStyleData.mResetData->                       \
                    mStyleStructs[eStyleStruct_##type_],                       \
@@ -2473,7 +2455,7 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
     aHighestNode->mStyleData.mResetData->                                     \
       mStyleStructs[eStyleStruct_##type_] = data_;                            \
     /* Propagate the bit down. */                                             \
-    PropagateDependentBit(NS_STYLE_INHERIT_BIT(type_), aHighestNode);         \
+    PropagateDependentBit(eStyleStruct_##type_, aHighestNode, data_);         \
   }                                                                           \
                                                                               \
   return data_;
@@ -4774,6 +4756,12 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
     display->mBreakAfter = parentDisplay->mBreakAfter;
   }
   // end temp fix
+
+  // page-break-inside: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForPageBreakInside(),
+              display->mBreakInside, canStoreInRuleTree,
+              SETDSC_ENUMERATED, parentDisplay->mBreakInside,
+              NS_STYLE_PAGE_BREAK_AUTO, 0, 0, 0, 0);
 
   // float: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForCssFloat(),
@@ -7621,65 +7609,17 @@ nsRuleNode::ComputeSVGResetData(void* aStartStruct,
   COMPUTE_END_RESET(SVGReset, svgReset)
 }
 
-inline const void*
-nsRuleNode::GetParentData(const nsStyleStructID aSID)
-{
-  NS_PRECONDITION(mDependentBits & nsCachedStyleData::GetBitForSID(aSID),
-                  "should be called when node depends on parent data");
-  NS_ASSERTION(mStyleData.GetStyleData(aSID) == nullptr,
-               "both struct and dependent bits present");
-  // Walk up the rule tree from this rule node (towards less specific
-  // rules).
-  uint32_t bit = nsCachedStyleData::GetBitForSID(aSID);
-  nsRuleNode *ruleNode = mParent;
-  while (ruleNode->mDependentBits & bit) {
-    NS_ASSERTION(ruleNode->mStyleData.GetStyleData(aSID) == nullptr,
-                 "both struct and dependent bits present");
-    ruleNode = ruleNode->mParent;
-  }
-
-  return ruleNode->mStyleData.GetStyleData(aSID);
-}
-
-#define STYLE_STRUCT(name_, checkdata_cb_, ctor_args_)                      \
-inline const nsStyle##name_ *                                               \
-nsRuleNode::GetParent##name_()                                              \
-{                                                                           \
-  NS_PRECONDITION(mDependentBits &                                          \
-                  nsCachedStyleData::GetBitForSID(eStyleStruct_##name_),    \
-                  "should be called when node depends on parent data");     \
-  NS_ASSERTION(mStyleData.GetStyle##name_() == nullptr,                      \
-               "both struct and dependent bits present");                   \
-  /* Walk up the rule tree from this rule node (towards less specific */    \
-  /* rules). */                                                             \
-  uint32_t bit = nsCachedStyleData::GetBitForSID(eStyleStruct_##name_);     \
-  nsRuleNode *ruleNode = mParent;                                           \
-  while (ruleNode->mDependentBits & bit) {                                  \
-    NS_ASSERTION(ruleNode->mStyleData.GetStyle##name_() == nullptr,          \
-                 "both struct and dependent bits present");                 \
-    ruleNode = ruleNode->mParent;                                           \
-  }                                                                         \
-                                                                            \
-  return ruleNode->mStyleData.GetStyle##name_();                            \
-}
-#include "nsStyleStructList.h"
-#undef STYLE_STRUCT
-
 const void*
 nsRuleNode::GetStyleData(nsStyleStructID aSID,
                          nsStyleContext* aContext,
                          bool aComputeData)
 {
-  const void *data;
-  if (mDependentBits & nsCachedStyleData::GetBitForSID(aSID)) {
-    // We depend on an ancestor for this struct since the cached struct
-    // it has is also appropriate for this rule node.  Just go up the
-    // rule tree and return the first cached struct we find.
-    data = GetParentData(aSID);
-    NS_ASSERTION(data, "dependent bits set but no cached struct present");
-    return data;
-  }
+  NS_ASSERTION(IsUsedDirectly(),
+               "if we ever call this on rule nodes that aren't used "
+               "directly, we should adjust handling of mDependentBits "
+               "in some way.");
 
+  const void *data;
   data = mStyleData.GetStyleData(aSID);
   if (MOZ_LIKELY(data != nullptr))
     return data; // We have a fully specified struct. Just return it.
@@ -7690,18 +7630,8 @@ nsRuleNode::GetStyleData(nsStyleStructID aSID,
   // Nothing is cached.  We'll have to delve further and examine our rules.
   data = WalkRuleTree(aSID, aContext);
 
-  if (MOZ_LIKELY(data != nullptr))
-    return data;
-
-  NS_NOTREACHED("could not create style struct");
-  // To ensure that |GetStyleData| never returns null (even when we're
-  // out of memory), we'll get the style set and get a copy of the
-  // default values for the given style struct from the set.  Note that
-  // this works fine even if |this| is a rule node that has been
-  // destroyed (leftover from a previous rule tree) but is somehow still
-  // used.
-  return mPresContext->PresShell()->StyleSet()->
-    DefaultStyleData()->GetStyleData(aSID);
+  NS_ABORT_IF_FALSE(data, "should have aborted on out-of-memory");
+  return data;
 }
 
 // See comments above in GetStyleData for an explanation of what the
@@ -7710,14 +7640,12 @@ nsRuleNode::GetStyleData(nsStyleStructID aSID,
 const nsStyle##name_*                                                         \
 nsRuleNode::GetStyle##name_(nsStyleContext* aContext, bool aComputeData)    \
 {                                                                             \
-  const nsStyle##name_ *data;                                                 \
-  if (mDependentBits &                                                        \
-      nsCachedStyleData::GetBitForSID(eStyleStruct_##name_)) {                \
-    data = GetParent##name_();                                                \
-    NS_ASSERTION(data, "dependent bits set but no cached struct present");    \
-    return data;                                                              \
-  }                                                                           \
+  NS_ASSERTION(IsUsedDirectly(),                                              \
+               "if we ever call this on rule nodes that aren't used "         \
+               "directly, we should adjust handling of mDependentBits "       \
+               "in some way.");                                               \
                                                                               \
+  const nsStyle##name_ *data;                                                 \
   data = mStyleData.GetStyle##name_();                                        \
   if (MOZ_LIKELY(data != nullptr))                                            \
     return data;                                                              \
@@ -7728,14 +7656,8 @@ nsRuleNode::GetStyle##name_(nsStyleContext* aContext, bool aComputeData)    \
   data = static_cast<const nsStyle##name_ *>                                  \
            (WalkRuleTree(eStyleStruct_##name_, aContext));                    \
                                                                               \
-  if (MOZ_LIKELY(data != nullptr))                                            \
-    return data;                                                              \
-                                                                              \
-  NS_NOTREACHED("could not create style struct");                             \
-  return                                                                      \
-    static_cast<const nsStyle##name_ *>(                                      \
-                   mPresContext->PresShell()->StyleSet()->                    \
-                     DefaultStyleData()->GetStyleData(eStyleStruct_##name_)); \
+  NS_ABORT_IF_FALSE(data, "should have aborted on out-of-memory");            \
+  return data;                                                                \
 }
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT

@@ -69,13 +69,14 @@
 
 "use strict";
 
-const EXPORTED_SYMBOLS = ["SignInToWebsiteController"];
+this.EXPORTED_SYMBOLS = ["SignInToWebsiteController"];
 
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/IdentityUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "IdentityService",
                                   "resource://gre/modules/identity/MinimalIdentity.jsm");
@@ -92,6 +93,7 @@ const kOpenIdentityDialog = "open-id-dialog";
 const kCloseIdentityDialog = "close-id-dialog";
 
 // Observer messages to communicate to shim
+const kReceivedIdentityAssertion = "received-id-assertion";
 const kIdentityDelegateWatch = "identity-delegate-watch";
 const kIdentityDelegateRequest = "identity-delegate-request";
 const kIdentityDelegateLogout = "identity-delegate-logout";
@@ -100,16 +102,8 @@ const kIdentityDelegateReady = "identity-delegate-ready";
 
 const kIdentityControllerDoMethod = "identity-controller-doMethod";
 
-XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
-                                   "@mozilla.org/uuid-generator;1",
-                                   "nsIUUIDGenerator");
-
 function log(...aMessageArgs) {
   Logger.log.apply(Logger, ["SignInToWebsiteController"].concat(aMessageArgs));
-}
-
-function getRandomId() {
-  return uuidgen.generateUUID().toString();
 }
 
 /*
@@ -143,7 +137,7 @@ let Pipe = {
    * provide a callback for handling messages.
    *
    * @param aRpOptions        options describing the Relying Party's
-   *        (dicitonary)      call, such as origin and loggedInEmail.
+   *        (dictionary)      call, such as origin and loggedInUser.
    *
    * @param aGaiaOptions      showUI:   boolean
    *        (dictionary)      message:  name of the message to emit
@@ -206,8 +200,8 @@ let Pipe = {
       let frameLoader = frame.QueryInterface(Ci.nsIFrameLoaderOwner).frameLoader;
       let mm = frameLoader.messageManager;
       try {
-        log("about to load frame script");
         mm.loadFrameScript(kIdentityShimFile, true);
+        log("Loaded shim " + kIdentityShimFile + "\n");
       } catch (e) {
         log("Error loading ", kIdentityShimFile, " as a frame script: ", e);
       }
@@ -218,9 +212,20 @@ let Pipe = {
       // If we receive a "finished" event, then the delegate is done, so
       // we shut down the pipe and clean up.
       mm.addMessageListener(kIdentityControllerDoMethod, aMessageCallback);
-      mm.addMessageListener(kIdentityDelegateFinished, function identityDelegateFinished(message) {
+      mm.addMessageListener(kIdentityDelegateFinished, function identityDelegateFinished() {
+        // clean up listeners
         mm.removeMessageListener(kIdentityDelegateFinished, identityDelegateFinished);
         mm.removeMessageListener(kIdentityControllerDoMethod, aMessageCallback);
+
+        let id = kReceivedIdentityAssertion + "-" + getRandomId();
+        let detail = {
+          type: kReceivedIdentityAssertion,
+          showUI: aGaiaOptions.showUI || false,
+          id: id
+        };
+        log('telling gaia to close the dialog');
+        // tell gaia to close the dialog
+        GaiaInterface.sendChromeEvent(detail);
       });
 
       mm.sendAsyncMessage(aGaiaOptions.message, aRpOptions);
@@ -241,7 +246,7 @@ let Pipe = {
  * controller into IdentityService and DOM, and ultimately up to the
  * Relying Party, which is open in a different window context.
  */
-let SignInToWebsiteController = {
+this.SignInToWebsiteController = {
 
   /*
    * Initialize the controller.  To use a different gaia communication pipe,
@@ -289,11 +294,11 @@ let SignInToWebsiteController = {
    */
   _makeDoMethodCallback: function SignInToWebsiteController__makeDoMethodCallback(aRpId) {
     return function SignInToWebsiteController_methodCallback(aOptions) {
-      log("doMethod:", aOptions);
       let message = aOptions.json;
       if (typeof message === 'string') {
         message = JSON.parse(message);
       }
+
       switch(message.method) {
         case "ready":
           IdentityService.doReady(aRpId);
@@ -314,39 +319,38 @@ let SignInToWebsiteController = {
     };
   },
 
-  doWatch: function SignInToWebsiteController_doWatch(aOptions) {
+  doWatch: function SignInToWebsiteController_doWatch(aRpOptions) {
     // dom prevents watch from  being called twice
-    log("doWatch:", aOptions);
     var gaiaOptions = {
       message: kIdentityDelegateWatch,
       showUI: false
     };
-    this.pipe.communicate(aOptions, gaiaOptions, this._makeDoMethodCallback(aOptions.rpId));
+    this.pipe.communicate(aRpOptions, gaiaOptions, this._makeDoMethodCallback(aRpOptions.id));
   },
 
   /**
    * The website is requesting login so the user must choose an identity to use.
    */
-  doRequest: function SignInToWebsiteController_doRequest(aOptions) {
-    log("doRequest", aOptions);
+  doRequest: function SignInToWebsiteController_doRequest(aRpOptions) {
+    log("doRequest", aRpOptions);
     // tell gaia to open the identity popup
     var gaiaOptions = {
       message: kIdentityDelegateRequest,
       showUI: true
     };
-    this.pipe.communicate(aOptions, gaiaOptions, this._makeDoMethodCallback(aOptions.rpId));
+    this.pipe.communicate(aRpOptions, gaiaOptions, this._makeDoMethodCallback(aRpOptions.id));
   },
 
   /*
    *
    */
-  doLogout: function SignInToWebsiteController_doLogout(aOptions) {
-    log("doLogout", aOptions);
+  doLogout: function SignInToWebsiteController_doLogout(aRpOptions) {
+    log("doLogout", aRpOptions);
     var gaiaOptions = {
       message: kIdentityDelegateLogout,
       showUI: false
     };
-    this.pipe.communicate(aOptions, gaiaOptions, this._makeDoMethodCallback(aOptions.rpId));
+    this.pipe.communicate(aRpOptions, gaiaOptions, this._makeDoMethodCallback(aRpOptions.id));
   }
 
 };

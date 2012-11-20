@@ -16,6 +16,8 @@
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 
+#include "mozilla/Preferences.h"
+
 USING_FILE_NAMESPACE
 
 ArchiveReader::ArchiveReader()
@@ -33,6 +35,12 @@ ArchiveReader::~ArchiveReader()
   nsLayoutStatics::Release();
 }
 
+bool
+ArchiveReader::PrefEnabled()
+{
+  return Preferences::GetBool("dom.archivereader.enabled", true);
+}
+
 NS_IMETHODIMP
 ArchiveReader::Initialize(nsISupports* aOwner,
                           JSContext* aCx,
@@ -40,11 +48,15 @@ ArchiveReader::Initialize(nsISupports* aOwner,
                           uint32_t aArgc,
                           JS::Value* aArgv)
 {
-  NS_ENSURE_TRUE(aArgc > 0, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(aArgc == 1 || aArgc == 2, NS_ERROR_INVALID_ARG);
+
+  if (!PrefEnabled()) {
+    return NS_ERROR_UNEXPECTED;
+  }
 
   // We expect to get a Blob object
   if (!aArgv[0].isObject()) {
-    return NS_ERROR_UNEXPECTED; // We're not interested
+    return NS_ERROR_INVALID_ARG; // We're not interested
   }
 
   JSObject* obj = &aArgv[0].toObject();
@@ -52,15 +64,21 @@ ArchiveReader::Initialize(nsISupports* aOwner,
   nsCOMPtr<nsIDOMBlob> blob;
   blob = do_QueryInterface(nsContentUtils::XPConnect()->GetNativeOfWrapper(aCx, obj));
   if (!blob) {
-    return NS_ERROR_UNEXPECTED;
+    return NS_ERROR_INVALID_ARG;
   }
 
-  mBlob = blob;
+  // Extra param is an object
+  if (aArgc > 1) {
+    nsresult rv = mOptions.Init(aCx, &aArgv[1]);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   mWindow = do_QueryInterface(aOwner);
   if (!mWindow) {
     return NS_ERROR_UNEXPECTED;
   }
+
+  mBlob = blob;
 
   return NS_OK;
 }
@@ -122,7 +140,7 @@ ArchiveReader::OpenArchive()
   nsRefPtr<ArchiveReaderEvent> event;
 
   /* FIXME: If we want to support more than 1 format we should check the content type here: */
-  event = new ArchiveReaderZipEvent(this);
+  event = new ArchiveReaderZipEvent(this, mOptions);
   rv = target->Dispatch(event, NS_DISPATCH_NORMAL);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -186,6 +204,17 @@ ArchiveReader::GetFile(const nsAString& filename,
   return NS_OK;
 }
 
+/* nsIDOMArchiveRequest getFiles (); */
+NS_IMETHODIMP
+ArchiveReader::GetFiles(nsIDOMArchiveRequest** _retval)
+{
+  nsRefPtr<ArchiveRequest> request = GenerateArchiveRequest();
+  request->OpGetFiles();
+
+  request.forget(_retval);
+  return NS_OK;
+}
+
 already_AddRefed<ArchiveRequest>
 ArchiveReader::GenerateArchiveRequest()
 {
@@ -197,9 +226,9 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(ArchiveReader)
 
 // C++ traverse
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ArchiveReader)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBlob)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mWindow)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mData.fileList)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBlob)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWindow)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mData.fileList)
 
   for (uint32_t i = 0; i < tmp->mRequests.Length(); i++) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mRequests[i]");
@@ -210,10 +239,10 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 // Unlink
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ArchiveReader)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBlob)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mWindow)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mData.fileList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mRequests)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mBlob)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindow)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mData.fileList)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRequests)
   tmp->mRequests.Clear();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 

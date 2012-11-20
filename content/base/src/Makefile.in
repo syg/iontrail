@@ -37,7 +37,6 @@ EXPORTS		= \
 		nsAttrValueInlines.h \
 		nsCrossSiteListenerProxy.h \
 		nsDOMAttributeMap.h \
-		nsGenericElement.h \
 		nsMappedAttributeElement.h \
 		nsStyledElement.h \
     nsSandboxFlags.h \
@@ -46,11 +45,14 @@ EXPORTS		= \
 EXPORTS_NAMESPACES = mozilla/dom
 
 EXPORTS_mozilla/dom = \
+  Comment.h \
+  DocumentFragment.h \
   DOMImplementation.h \
   Link.h \
   $(NULL)
 
 CPPSRCS		= \
+		Comment.cpp \
 		DirectionalityUtils.cpp \
 		DOMImplementation.cpp \
 		nsAtomListUtils.cpp \
@@ -59,7 +61,6 @@ CPPSRCS		= \
 		nsAttrValueOrString.cpp \
 		nsCCUncollectableMarker.cpp \
 		nsChannelPolicy.cpp \
-		nsCommentNode.cpp \
 		nsContentAreaDragDrop.cpp \
 		nsContentIterator.cpp \
 		nsContentList.cpp \
@@ -83,12 +84,12 @@ CPPSRCS		= \
 		nsDOMSettableTokenList.cpp \
 		nsDocument.cpp \
 		nsDocumentEncoder.cpp \
-		nsDocumentFragment.cpp \
+		DocumentFragment.cpp \
 		nsFrameLoader.cpp \
+		Element.cpp \
 		nsFormData.cpp \
 		nsGenConImageContent.cpp \
 		nsGenericDOMDataNode.cpp \
-		nsGenericElement.cpp \
 		nsGkAtoms.cpp \
 		nsHTMLContentSerializer.cpp \
 		nsImageLoadingContent.cpp \
@@ -126,8 +127,8 @@ CPPSRCS		= \
 		nsXMLNameSpaceMap.cpp \
 		FragmentOrElement.cpp \
 		Link.cpp \
-		nsBlobProtocolHandler.cpp \
-		nsBlobURI.cpp \
+		nsHostObjectProtocolHandler.cpp \
+		nsHostObjectURI.cpp \
 		nsFrameMessageManager.cpp \
 		nsInProcessTabChildGlobal.cpp \
 		ThirdPartyUtil.cpp \

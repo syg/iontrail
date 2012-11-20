@@ -12,6 +12,7 @@
 #include "nsTArray.h"
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
+#include "nsCycleCollectionNoteChild.h"
 
 #include "nsIDocShell.h"
 
@@ -841,18 +842,18 @@ public:
     void StencilOp(WebGLenum sfail, WebGLenum dpfail, WebGLenum dppass);
     void StencilOpSeparate(WebGLenum face, WebGLenum sfail, WebGLenum dpfail,
                            WebGLenum dppass);
-    void TexImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+    void TexImage2D(WebGLenum target, WebGLint level,
                     WebGLenum internalformat, WebGLsizei width,
                     WebGLsizei height, WebGLint border, WebGLenum format,
                     WebGLenum type, dom::ArrayBufferView *pixels,
                     ErrorResult& rv);
-    void TexImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+    void TexImage2D(WebGLenum target, WebGLint level,
                     WebGLenum internalformat, WebGLenum format, WebGLenum type,
                     dom::ImageData* pixels, ErrorResult& rv);
     // Allow whatever element types the bindings are willing to pass
     // us in TexImage2D
     template<class ElementType>
-    void TexImage2D(JSContext* /* unused */, WebGLenum target, WebGLint level,
+    void TexImage2D(WebGLenum target, WebGLint level,
                     WebGLenum internalformat, WebGLenum format, WebGLenum type,
                     ElementType* elt, ErrorResult& rv) {
         if (!IsContextStable())
@@ -878,18 +879,18 @@ public:
         TexParameter_base(target, pname, &param, nullptr);
     }
     
-    void TexSubImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+    void TexSubImage2D(WebGLenum target, WebGLint level,
                        WebGLint xoffset, WebGLint yoffset,
                        WebGLsizei width, WebGLsizei height, WebGLenum format,
                        WebGLenum type, dom::ArrayBufferView* pixels,
                        ErrorResult& rv);
-    void TexSubImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+    void TexSubImage2D(WebGLenum target, WebGLint level,
                        WebGLint xoffset, WebGLint yoffset, WebGLenum format,
                        WebGLenum type, dom::ImageData* pixels, ErrorResult& rv);
     // Allow whatever element types the bindings are willing to pass
     // us in TexSubImage2D
     template<class ElementType>
-    void TexSubImage2D(JSContext* /* unused */, WebGLenum target, WebGLint level,
+    void TexSubImage2D(WebGLenum target, WebGLint level,
                        WebGLint xoffset, WebGLint yoffset, WebGLenum format,
                        WebGLenum type, ElementType* elt, ErrorResult& rv) {
         if (!IsContextStable())
@@ -1526,11 +1527,6 @@ struct WebGLVertexAttribData {
         if (stride) return stride;
         return size * componentSize();
     }
-
-    // for cycle collection
-    WebGLBuffer* get() {
-        return buf.get();
-    }
 };
 
 class WebGLBuffer MOZ_FINAL
@@ -1562,7 +1558,7 @@ public:
         mContext->gl->fDeleteBuffers(1, &mGLName);
         mByteLength = 0;
         mCache = nullptr;
-        LinkedListElement<WebGLBuffer>::remove(); // remove from mContext->mBuffers
+        LinkedListElement<WebGLBuffer>::removeFrom(mContext->mBuffers);
     }
 
     size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const {
@@ -1655,7 +1651,7 @@ public:
         mImageInfos.Clear();
         mContext->MakeContextCurrent();
         mContext->gl->fDeleteTextures(1, &mGLName);
-        LinkedListElement<WebGLTexture>::remove(); // remove from mContext->mTextures
+        LinkedListElement<WebGLTexture>::removeFrom(mContext->mTextures);
     }
 
     bool HasEverBeenBound() { return mHasEverBeenBound; }
@@ -2173,7 +2169,7 @@ public:
         mTranslationLog.Truncate();
         mContext->MakeContextCurrent();
         mContext->gl->fDeleteShader(mGLName);
-        LinkedListElement<WebGLShader>::remove(); // remove from mContext->mShaders
+        LinkedListElement<WebGLShader>::removeFrom(mContext->mShaders);
     }
 
     WebGLuint GLName() { return mGLName; }
@@ -2295,7 +2291,7 @@ public:
         DetachShaders();
         mContext->MakeContextCurrent();
         mContext->gl->fDeleteProgram(mGLName);
-        LinkedListElement<WebGLProgram>::remove(); // remove from mContext->mPrograms
+        LinkedListElement<WebGLProgram>::removeFrom(mContext->mPrograms);
     }
 
     void DetachShaders() {
@@ -2578,7 +2574,7 @@ public:
     void Delete() {
         mContext->MakeContextCurrent();
         mContext->gl->fDeleteRenderbuffers(1, &mGLName);
-        LinkedListElement<WebGLRenderbuffer>::remove(); // remove from mContext->mRenderbuffers
+        LinkedListElement<WebGLRenderbuffer>::removeFrom(mContext->mRenderbuffers);
     }
 
     bool HasEverBeenBound() { return mHasEverBeenBound; }
@@ -2823,7 +2819,7 @@ public:
         mDepthStencilAttachment.Reset();
         mContext->MakeContextCurrent();
         mContext->gl->fDeleteFramebuffers(1, &mGLName);
-        LinkedListElement<WebGLFramebuffer>::remove(); // remove from mContext->mFramebuffers
+        LinkedListElement<WebGLFramebuffer>::removeFrom(mContext->mFramebuffers);
     }
 
     bool HasEverBeenBound() { return mHasEverBeenBound; }
@@ -2866,11 +2862,21 @@ public:
         }
 
         mContext->MakeContextCurrent();
-        WebGLuint renderbuffername = wrb ? wrb->GLName() : 0;
+        WebGLuint parambuffername = wrb ? wrb->GLName() : 0;
         if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
-            mContext->gl->fFramebufferRenderbuffer(target, LOCAL_GL_DEPTH_ATTACHMENT, rbtarget, renderbuffername);
-            mContext->gl->fFramebufferRenderbuffer(target, LOCAL_GL_STENCIL_ATTACHMENT, rbtarget, renderbuffername);
+            WebGLuint depthbuffername = parambuffername;
+            WebGLuint stencilbuffername = parambuffername;
+            if (!parambuffername){
+                depthbuffername   = mDepthAttachment.Renderbuffer()   ? mDepthAttachment.Renderbuffer()->GLName()   : 0;
+                stencilbuffername = mStencilAttachment.Renderbuffer() ? mStencilAttachment.Renderbuffer()->GLName() : 0;
+            }
+            mContext->gl->fFramebufferRenderbuffer(target, LOCAL_GL_DEPTH_ATTACHMENT, rbtarget, depthbuffername);
+            mContext->gl->fFramebufferRenderbuffer(target, LOCAL_GL_STENCIL_ATTACHMENT, rbtarget, stencilbuffername);
         } else {
+            WebGLuint renderbuffername = parambuffername;
+            if(!parambuffername && (attachment == LOCAL_GL_DEPTH_ATTACHMENT || attachment == LOCAL_GL_STENCIL_ATTACHMENT)){
+                renderbuffername = mDepthStencilAttachment.Renderbuffer() ? mDepthStencilAttachment.Renderbuffer()->GLName() : 0;
+            }
             mContext->gl->fFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffername);
         }
     }
@@ -2918,11 +2924,21 @@ public:
         }
 
         mContext->MakeContextCurrent();
-        WebGLuint texturename = wtex ? wtex->GLName() : 0;
+        WebGLuint paramtexturename = wtex ? wtex->GLName() : 0;
         if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
-            mContext->gl->fFramebufferTexture2D(target, LOCAL_GL_DEPTH_ATTACHMENT, textarget, texturename, level);
-            mContext->gl->fFramebufferTexture2D(target, LOCAL_GL_STENCIL_ATTACHMENT, textarget, texturename, level);
+            WebGLuint depthtexturename = paramtexturename;
+            WebGLuint stenciltexturename = paramtexturename;
+            if(!paramtexturename){
+                depthtexturename   = mDepthAttachment.Texture()   ? mDepthAttachment.Texture()->GLName()   : 0;
+                stenciltexturename = mStencilAttachment.Texture() ? mStencilAttachment.Texture()->GLName() : 0;
+            }
+            mContext->gl->fFramebufferTexture2D(target, LOCAL_GL_DEPTH_ATTACHMENT, textarget, depthtexturename, level);
+            mContext->gl->fFramebufferTexture2D(target, LOCAL_GL_STENCIL_ATTACHMENT, textarget, stenciltexturename, level);
         } else {
+            WebGLuint texturename = paramtexturename;
+            if(!paramtexturename && (attachment == LOCAL_GL_DEPTH_ATTACHMENT || attachment == LOCAL_GL_STENCIL_ATTACHMENT)){
+                texturename = mDepthStencilAttachment.Texture() ? mDepthStencilAttachment.Texture()->GLName() : 0;
+            }
             mContext->gl->fFramebufferTexture2D(target, attachment, textarget, texturename, level);
         }
 
@@ -3432,6 +3448,39 @@ private:
   WebGLContext *mContext;
 };
 
+} // namespace mozilla
+
+inline void ImplCycleCollectionUnlink(mozilla::WebGLVertexAttribData& aField)
+{
+  aField.buf = nullptr;
+}
+
+inline void
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            mozilla::WebGLVertexAttribData& aField,
+                            const char* aName,
+                            uint32_t aFlags = 0)
+{
+  CycleCollectionNoteEdgeName(aCallback, aName, aFlags);
+  aCallback.NoteXPCOMChild(aField.buf);
+}
+
+template <typename T>
+inline void
+ImplCycleCollectionUnlink(mozilla::WebGLRefPtr<T>& aField)
+{
+  aField = nullptr;
+}
+
+template <typename T>
+inline void
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            mozilla::WebGLRefPtr<T>& aField,
+                            const char* aName,
+                            uint32_t aFlags = 0)
+{
+  CycleCollectionNoteEdgeName(aCallback, aName, aFlags);
+  aCallback.NoteXPCOMChild(aField);
 }
 
 #endif

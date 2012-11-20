@@ -33,6 +33,15 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_propertyview-09.js \
 	browser_dbg_propertyview-10.js \
 	browser_dbg_propertyview-edit.js \
+	browser_dbg_propertyview-data.js \
+	browser_dbg_propertyview-filter-01.js \
+	browser_dbg_propertyview-filter-02.js \
+	browser_dbg_propertyview-filter-03.js \
+	browser_dbg_propertyview-filter-04.js \
+	browser_dbg_propertyview-filter-05.js \
+	browser_dbg_propertyview-filter-06.js \
+	browser_dbg_propertyview-filter-07.js \
+	browser_dbg_propertyview-filter-08.js \
 	browser_dbg_propertyview-reexpand.js \
 	browser_dbg_reload-same-script.js \
 	browser_dbg_pane-collapse.js \
@@ -63,6 +72,10 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_clean-exit.js \
 	browser_dbg_bug723069_editor-breakpoints.js \
 	browser_dbg_bug723071_editor-breakpoints-pane.js \
+	browser_dbg_bug740825_conditional-breakpoints-01.js \
+	browser_dbg_bug740825_conditional-breakpoints-02.js \
+	browser_dbg_bug727429_watch-expressions-01.js \
+	browser_dbg_bug727429_watch-expressions-02.js \
 	browser_dbg_bug731394_editor-contextmenu.js \
 	browser_dbg_bug786070_hide_nonenums.js \
 	browser_dbg_displayName.js \
@@ -73,17 +86,12 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_bfcache.js \
 	browser_dbg_breakpoint-new-script.js \
 	browser_dbg_bug737803_editor_actual_location.js \
+	browser_dbg_progress-listener-bug.js \
+	browser_dbg_chrome-debugging.js \
 	head.js \
 	$(NULL)
 
-# Disabled on Windows for frequent intermittent failures
-ifneq ($(OS_ARCH), WINNT)
-MOCHITEST_BROWSER_TESTS += \
-	browser_dbg_createRemote.js \
-	$(NULL)
-else
-$(warning browser_dbg_createRemote.js is disabled on Windows for intermittent failures. Bug 753225)
-endif
+$(warning browser_dbg_createRemote.js is disabled for intermittent failures. Bug 753225)
 
 MOCHITEST_BROWSER_PAGES = \
 	browser_dbg_tab1.html \
@@ -101,6 +109,8 @@ MOCHITEST_BROWSER_PAGES = \
 	browser_dbg_with-frame.html \
 	browser_dbg_pause-exceptions.html \
 	browser_dbg_breakpoint-new-script.html \
+	browser_dbg_conditional-breakpoints.html \
+	browser_dbg_watch-expressions.html \
 	$(NULL)
 
 MOCHITEST_BROWSER_FILES_PARTS = MOCHITEST_BROWSER_TESTS MOCHITEST_BROWSER_PAGES

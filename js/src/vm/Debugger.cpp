@@ -27,7 +27,9 @@
 #include "vm/Stack-inl.h"
 
 using namespace js;
+
 using js::frontend::IsIdentifier;
+using mozilla::Maybe;
 
 
 /*** Forward declarations ************************************************************************/
@@ -1195,7 +1197,7 @@ Debugger::onSingleStep(JSContext *cx, Value *vp)
     {
         AutoAssertNoGC nogc;
         uint32_t stepperCount = 0;
-        JSScript *trappingScript = fp->script();
+        JSScript *trappingScript = fp->script().get(nogc);
         GlobalObject *global = &fp->global();
         if (GlobalObject::DebuggerVector *debuggers = global->getDebuggers()) {
             for (Debugger **p = debuggers->begin(); p != debuggers->end(); p++) {
@@ -1817,9 +1819,11 @@ Debugger::unwrapDebuggeeArgument(JSContext *cx, const Value &v)
     }
 
     /* If we have a cross-compartment wrapper, dereference as far as is secure. */
-    obj = UnwrapObjectChecked(cx, obj);
-    if (!obj)
+    obj = UnwrapObjectChecked(obj);
+    if (!obj) {
+        JS_ReportError(cx, "Permission denied to access object");
         return NULL;
+    }
 
     /* If that produced an outer window, innerize it. */
     obj = GetInnerObject(cx, obj);
@@ -1865,6 +1869,16 @@ Debugger::removeDebuggee(JSContext *cx, unsigned argc, Value *vp)
         return false;
     if (dbg->debuggees.has(global))
         dbg->removeDebuggeeGlobal(cx->runtime->defaultFreeOp(), global, NULL, NULL);
+    args.rval().setUndefined();
+    return true;
+}
+
+JSBool
+Debugger::removeAllDebuggees(JSContext *cx, unsigned argc, Value *vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "removeAllDebuggees", args, dbg);
+    for (GlobalObjectSet::Enum e(dbg->debuggees); !e.empty(); e.popFront())
+        dbg->removeDebuggeeGlobal(cx->runtime->defaultFreeOp(), e.front(), NULL, &e);
     args.rval().setUndefined();
     return true;
 }
@@ -2463,6 +2477,8 @@ Debugger::findAllGlobals(JSContext *cx, unsigned argc, Value *vp)
         return false;
 
     for (CompartmentsIter c(cx->runtime); !c.done(); c.next()) {
+        c->scheduledForDestruction = false;
+
         GlobalObject *global = c->maybeGlobal();
         if (global) {
             Value globalValue(ObjectValue(*global));
@@ -2494,6 +2510,7 @@ JSPropertySpec Debugger::properties[] = {
 JSFunctionSpec Debugger::methods[] = {
     JS_FN("addDebuggee", Debugger::addDebuggee, 1, 0),
     JS_FN("removeDebuggee", Debugger::removeDebuggee, 1, 0),
+    JS_FN("removeAllDebuggees", Debugger::removeAllDebuggees, 0, 0),
     JS_FN("hasDebuggee", Debugger::hasDebuggee, 1, 0),
     JS_FN("getDebuggees", Debugger::getDebuggees, 0, 0),
     JS_FN("getNewestFrame", Debugger::getNewestFrame, 0, 0),
@@ -3395,8 +3412,9 @@ DebuggerFrame_getArguments(JSContext *cx, unsigned argc, Value *vp)
         RootedValue undefinedValue(cx, UndefinedValue());
         for (unsigned i = 0; i < fargc; i++) {
             RootedFunction getobj(cx);
-            getobj = js_NewFunction(cx, NullPtr(), DebuggerArguments_getArg, 0, 0, global,
-                                    NullPtr(), JSFunction::ExtendedFinalizeKind);
+            getobj = js_NewFunction(cx, NullPtr(), DebuggerArguments_getArg, 0,
+                                    JSFunction::NATIVE_FUN, global, NullPtr(),
+                                    JSFunction::ExtendedFinalizeKind);
             if (!getobj)
                 return false;
             id = INT_TO_JSID(i);
@@ -3451,7 +3469,7 @@ DebuggerFrame_getOffset(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_FRAME(cx, argc, vp, "get offset", args, thisobj, fp);
     AutoAssertNoGC nogc;
-    RawScript script = fp->script();
+    RawScript script = fp->script().get(nogc);
     jsbytecode *pc = fp->pcQuadratic(cx);
     JS_ASSERT(script->code <= pc);
     JS_ASSERT(pc < script->code + script->length);
@@ -4449,18 +4467,8 @@ static JSBool
 DebuggerObject_unwrap(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, "unwrap", args, dbg, referent);
-    JSObject *unwrapped = UnwrapOneChecked(cx, referent);
+    JSObject *unwrapped = UnwrapOneChecked(referent);
     if (!unwrapped) {
-        // If we were terminated, then pass that along.
-        if (!cx->isExceptionPending())
-            return false;
-
-        // If the unwrap operation threw an exception, assume it's a
-        // security exception, and return null. It seems like the wrappers
-        // in use in Firefox just call JS_ReportError, so we have no way to
-        // distinguish genuine should-not-unwrap errors from other kinds of
-        // errors.
-        cx->clearPendingException();
         vp->setNull();
         return true;
     }

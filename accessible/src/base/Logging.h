@@ -10,10 +10,6 @@
 #include "nscore.h"
 #include "nsAString.h"
 
-class AccEvent;
-class Accessible;
-class DocAccessible;
-
 class nsIDocument;
 class nsINode;
 class nsIRequest;
@@ -23,6 +19,9 @@ class nsIWebProgress;
 namespace mozilla {
 namespace a11y {
 
+class AccEvent;
+class Accessible;
+class DocAccessible;
 class OuterDocAccessible;
 
 namespace logging {
@@ -49,6 +48,11 @@ enum EModules {
  * Return true if any of the given modules is logged.
  */
 bool IsEnabled(uint32_t aModules);
+
+/**
+ * Return true if the given module is logged.
+ */
+bool IsEnabled(const nsAString& aModules);
 
 /**
  * Log the document loading progress.

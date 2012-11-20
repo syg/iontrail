@@ -45,6 +45,8 @@ using namespace js::mjit::ic;
 #endif
 using namespace js::analyze;
 
+using mozilla::DebugOnly;
+
 #define RETURN_IF_OOM(retval)                                   \
     JS_BEGIN_MACRO                                              \
         if (oomInVector || masm.oom() || stubcc.masm.oom())     \
@@ -95,6 +97,7 @@ mjit::Compiler::Compiler(JSContext *cx, JSScript *outerScript,
 #endif
     callPatches(CompilerAllocPolicy(cx, *thisFromCtor())),
     callSites(CompilerAllocPolicy(cx, *thisFromCtor())),
+    compileTriggers(CompilerAllocPolicy(cx, *thisFromCtor())),
     doubleList(CompilerAllocPolicy(cx, *thisFromCtor())),
     rootedTemplates(CompilerAllocPolicy(cx, *thisFromCtor())),
     rootedRegExps(CompilerAllocPolicy(cx, *thisFromCtor())),
@@ -537,8 +540,7 @@ mjit::Compiler::performCompilation()
     JS_ASSERT(cx->compartment->activeInference);
 
     {
-        types::AutoEnterCompilation enter(cx, types::AutoEnterCompilation::JM,
-                                          COMPILE_MODE_SEQ);
+        types::AutoEnterCompilation enter(cx, types::CompilerOutput::MethodJIT);
         if (!enter.init(outerScript, isConstructing, chunkIndex)) {
             js_ReportOutOfMemory(cx);
             return Compile_Error;
@@ -968,17 +970,17 @@ IonGetsFirstChance(JSContext *cx, JSScript *script, CompileRequest request)
         return false;
 
     // If there's no way this script is going to be Ion compiled, let JM take over.
-    if (!script->canIonCompile(js::COMPILE_MODE_SEQ))
+    if (!script->canIonCompile())
         return false;
 
     // If we cannot enter Ion because bailouts are expected, let JM take over.
-    if (script->hasIonScript(js::COMPILE_MODE_SEQ) &&
-        script->ions[js::COMPILE_MODE_SEQ]->bailoutExpected())
+    if (script->hasIonScript() &&
+        script->ion->bailoutExpected())
         return false;
 
     // If ion compilation is pending or in progress on another thread, continue
     // using JM until that compilation finishes.
-    if (script->ions[js::COMPILE_MODE_SEQ] == ION_COMPILING_SCRIPT)
+    if (script->ion == ION_COMPILING_SCRIPT)
         return false;
 
     return true;
@@ -1418,6 +1420,7 @@ mjit::Compiler::finishThisUp()
                       sizeof(NativeMapEntry) * nNmapLive +
                       sizeof(InlineFrame) * inlineFrames.length() +
                       sizeof(CallSite) * callSites.length() +
+                      sizeof(CompileTrigger) * compileTriggers.length() +
                       sizeof(JSObject*) * rootedTemplates.length() +
                       sizeof(RegExpShared*) * rootedRegExps.length() +
                       sizeof(uint32_t) * monitoredBytecodes.length() +
@@ -1550,6 +1553,16 @@ mjit::Compiler::finishThisUp()
          */
         if (from.loopPatch.hasPatch)
             stubCode.patch(from.loopPatch.codePatch, result + codeOffset);
+    }
+
+    CompileTrigger *jitCompileTriggers = (CompileTrigger *)cursor;
+    chunk->nCompileTriggers = compileTriggers.length();
+    cursor += sizeof(CompileTrigger) * chunk->nCompileTriggers;
+    for (size_t i = 0; i < chunk->nCompileTriggers; i++) {
+        const InternalCompileTrigger &trigger = compileTriggers[i];
+        jitCompileTriggers[i].initialize(trigger.pc - outerScript->code,
+                                         fullCode.locationOf(trigger.inlineJump),
+                                         stubCode.locationOf(trigger.stubLabel));
     }
 
     JSObject **jitRootedTemplates = (JSObject **)cursor;
@@ -3947,7 +3960,7 @@ MaybeIonCompileable(JSContext *cx, JSScript *script, bool *recompileCheckForIon)
 
     if (!ion::IsEnabled(cx))
         return false;
-    if (!script->canIonCompile(js::COMPILE_MODE_SEQ))
+    if (!script->canIonCompile())
         return false;
 
     // If this script is small, doesn't have any function calls, and doesn't have
@@ -3964,11 +3977,13 @@ MaybeIonCompileable(JSContext *cx, JSScript *script, bool *recompileCheckForIon)
 void
 mjit::Compiler::ionCompileHelper()
 {
+    JS_ASSERT(script_ == outerScript);
+
     JS_ASSERT(IsIonEnabled(cx));
     JS_ASSERT(!inlining());
 
 #ifdef JS_ION
-    if (debugMode() || !globalObj || !cx->typeInferenceEnabled() || outerScript->hasIonScript(COMPILE_MODE_SEQ))
+    if (debugMode() || !globalObj || !cx->typeInferenceEnabled() || outerScript->hasIonScript())
         return;
 
     bool recompileCheckForIon = false;
@@ -3980,55 +3995,72 @@ mjit::Compiler::ionCompileHelper()
     uint32_t *useCountAddress = script_->addressOfUseCount();
     masm.add32(Imm32(1), AbsoluteAddress(useCountAddress));
 
+    // We cannot inline a JM -> Ion constructing call.
+    // Compiling this function is pointless and would disable the JM -> JM fastpath.
+    // This function will start running in Ion, when caller runs in Ion/Interpreter.
+    if (isConstructing && outerScript->code == PC)
+        return;
+
     // If we don't want to do a recompileCheck for Ion, then this just needs to
     // increment the useCount so that we know when to recompile this function
     // from an Ion call.  No need to call out to recompiler stub.
     if (!recompileCheckForIon)
         return;
 
-    void *ionScriptAddress = &script_->ions[COMPILE_MODE_SEQ];
+    void *ionScriptAddress = &script_->ion;
+
+    InternalCompileTrigger trigger;
+    trigger.pc = PC;
+    trigger.stubLabel = stubcc.syncExitAndJump(Uses(0));
 
     // Trigger ion compilation if (a) the script has been used enough times for
     // this opcode, and (b) the script does not already have ion information
     // (whether successful, failed, or in progress off thread compilation)
     // *OR* off thread compilation is not being used.
     //
-    // (b) prevents repetitive stub calls while off thread compilation is in
-    // progress, but is otherwise unnecessary and negatively affects tuning
-    // on some benchmarks (see bug 774253).
-    Jump last;
+    // If off thread compilation is in use, we retain the CompileTrigger so
+    // that (b) can be short circuited to force a call to TriggerIonCompile
+    // (see DisableScriptAtPC).
+    //
+    // If off thread compilation is not in use, (b) is unnecessary and
+    // negatively affects tuning on some benchmarks (see bug 774253). Thus,
+    // we immediately short circuit the check for (b).
+
+    Label secondTest = stubcc.masm.label();
 
 #if defined(JS_CPU_X86) || defined(JS_CPU_ARM)
-    if (ion::js_IonOptions.parallelCompilation) {
-        Jump first = masm.branch32(Assembler::LessThan, AbsoluteAddress(useCountAddress),
-                                   Imm32(minUses));
-        last = masm.branch32(Assembler::Equal, AbsoluteAddress(ionScriptAddress),
-                             Imm32(0));
-        first.linkTo(masm.label(), &masm);
-    } else {
-        last = masm.branch32(Assembler::GreaterThanOrEqual, AbsoluteAddress(useCountAddress),
-                             Imm32(minUses));
-    }
-#else
+    trigger.inlineJump = masm.branch32(Assembler::GreaterThanOrEqual,
+                                       AbsoluteAddress(useCountAddress),
+                                       Imm32(minUses));
+    Jump scriptJump = stubcc.masm.branch32(Assembler::Equal, AbsoluteAddress(ionScriptAddress),
+                                           Imm32(0));
+#elif defined(JS_CPU_X64)
     /* Handle processors that can't load from absolute addresses. */
     RegisterID reg = frame.allocReg();
     masm.move(ImmPtr(useCountAddress), reg);
-    if (ion::js_IonOptions.parallelCompilation) {
-        Jump first = masm.branch32(Assembler::LessThan, Address(reg), Imm32(minUses));
-        masm.move(ImmPtr(ionScriptAddress), reg);
-        last = masm.branchPtr(Assembler::Equal, Address(reg), ImmPtr(NULL));
-        first.linkTo(masm.label(), &masm);
-    } else {
-        last = masm.branch32(Assembler::GreaterThanOrEqual, Address(reg), Imm32(minUses));
-    }
+    trigger.inlineJump = masm.branch32(Assembler::GreaterThanOrEqual,
+                                       Address(reg),
+                                       Imm32(minUses));
+    stubcc.masm.move(ImmPtr(ionScriptAddress), reg);
+    Jump scriptJump = stubcc.masm.branchPtr(Assembler::Equal, Address(reg), ImmPtr(NULL));
     frame.freeReg(reg);
+#else
+#error "Unknown platform"
 #endif
 
-    stubcc.linkExit(last, Uses(0));
-    stubcc.leave();
+    stubcc.linkExitDirect(trigger.inlineJump,
+                          ion::js_IonOptions.parallelCompilation
+                          ? secondTest
+                          : trigger.stubLabel);
 
+    scriptJump.linkTo(trigger.stubLabel, &stubcc.masm);
+    stubcc.crossJump(stubcc.masm.jump(), masm.label());
+
+    stubcc.leave();
     OOL_STUBCALL(stubs::TriggerIonCompile, REJOIN_RESUME);
     stubcc.rejoin(Changes(0));
+
+    compileTriggers.append(trigger);
 #endif /* JS_ION */
 }
 
@@ -4431,7 +4463,7 @@ mjit::Compiler::inlineCallHelper(uint32_t argc, bool callingNew, FrameSize &call
         /* Test if the function is scripted. */
         stubcc.masm.load16(Address(icCalleeData, offsetof(JSFunction, flags)), tmp);
         Jump isNative = stubcc.masm.branchTest32(Assembler::Zero, tmp,
-                                                 Imm32(JSFUN_INTERPRETED));
+                                                 Imm32(JSFunction::INTERPRETED));
         tempRegs.putReg(tmp);
 
         /*

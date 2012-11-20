@@ -1452,6 +1452,20 @@ LIRGenerator::visitBoundsCheckLower(MBoundsCheckLower *ins)
 }
 
 bool
+LIRGenerator::visitInArray(MInArray *ins)
+{
+    JS_ASSERT(ins->elements()->type() == MIRType_Elements);
+    JS_ASSERT(ins->index()->type() == MIRType_Int32);
+    JS_ASSERT(ins->initLength()->type() == MIRType_Int32);
+    JS_ASSERT(ins->type() == MIRType_Boolean);
+
+    LInArray *lir = new LInArray(useRegister(ins->elements()),
+                                 useRegisterOrConstant(ins->index()),
+                                 useRegister(ins->initLength()));
+    return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitLoadElement(MLoadElement *ins)
 {
     JS_ASSERT(ins->elements()->type() == MIRType_Elements);
@@ -1725,7 +1739,7 @@ LIRGenerator::visitGetNameCache(MGetNameCache *ins)
 bool
 LIRGenerator::visitCallGetIntrinsicValue(MCallGetIntrinsicValue *ins)
 {
-    LCallGetIntrinsicValue *lir = new LCallGetIntrinsicValue;
+    LCallGetIntrinsicValue *lir = new LCallGetIntrinsicValue();
     if (!defineVMReturn(lir, ins))
         return false;
     return assignSafepoint(lir, ins);

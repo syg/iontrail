@@ -105,6 +105,7 @@ namespace ion {
     _(Not)                                                                  \
     _(BoundsCheck)                                                          \
     _(BoundsCheckLower)                                                     \
+    _(InArray)                                                              \
     _(LoadElement)                                                          \
     _(LoadElementHole)                                                      \
     _(StoreElement)                                                         \

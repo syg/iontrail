@@ -120,7 +120,7 @@ BrowserElementParentFactory.prototype = {
 
     var os = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);
     os.addObserver(this, 'remote-browser-frame-shown', /* ownsWeak = */ true);
-    os.addObserver(this, 'in-process-browser-frame-shown', /* ownsWeak = */ true);
+    os.addObserver(this, 'in-process-browser-or-app-frame-shown', /* ownsWeak = */ true);
   },
 
   _browserFramesPrefEnabled: function() {
@@ -161,7 +161,7 @@ BrowserElementParentFactory.prototype = {
     case 'remote-browser-frame-shown':
       this._observeRemoteBrowserFrameShown(subject);
       break;
-    case 'in-process-browser-frame-shown':
+    case 'in-process-browser-or-app-frame-shown':
       this._observeInProcessBrowserFrameShown(subject);
       break;
     case 'content-document-global-created':
@@ -215,6 +215,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   addMessageListener("firstpaint", this._fireEventFromMsg);
   addMessageListener("keyevent", this._fireKeyEvent);
   addMessageListener("showmodalprompt", this._handleShowModalPrompt);
+  addMessageListener('got-purge-history', this._gotDOMRequestResult);
   addMessageListener('got-screenshot', this._gotDOMRequestResult);
   addMessageListener('got-can-go-back', this._gotDOMRequestResult);
   addMessageListener('got-can-go-forward', this._gotDOMRequestResult);
@@ -254,13 +255,14 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   defineMethod('goForward', this._goForward);
   defineMethod('reload', this._reload);
   defineMethod('stop', this._stop);
+  defineMethod('purgeHistory', this._purgeHistory);
   defineMethod('getScreenshot', this._getScreenshot);
   defineDOMRequestMethod('getCanGoBack', 'get-can-go-back');
   defineDOMRequestMethod('getCanGoForward', 'get-can-go-forward');
 
-  // Listen to mozvisibilitychange on the iframe's owner window, and forward it
+  // Listen to visibilitychange on the iframe's owner window, and forward it
   // down to the child.
-  this._window.addEventListener('mozvisibilitychange',
+  this._window.addEventListener('visibilitychange',
                                 this._ownerVisibilityChange.bind(this),
                                 /* useCapture = */ false,
                                 /* wantsUntrusted = */ false);
@@ -363,7 +365,7 @@ BrowserElementParent.prototype = {
     // that we must do so here, rather than in the BrowserElementParent
     // constructor, because the BrowserElementChild may not be initialized when
     // we run our constructor.
-    if (this._window.document.mozHidden) {
+    if (this._window.document.hidden) {
       this._ownerVisibilityChange();
     }
   },
@@ -576,6 +578,10 @@ BrowserElementParent.prototype = {
     this._sendAsyncMsg('stop');
   },
 
+  _purgeHistory: function() {
+    return this._sendDOMRequest('purge-history');
+  },
+
   _getScreenshot: function(_width, _height) {
     let width = parseInt(_width);
     let height = parseInt(_height);
@@ -603,7 +609,7 @@ BrowserElementParent.prototype = {
    */
   _ownerVisibilityChange: function() {
     this._sendAsyncMsg('owner-visibility-change',
-                       {visible: !this._window.document.mozHidden});
+                       {visible: !this._window.document.hidden});
   },
 
   _exitFullscreen: function() {

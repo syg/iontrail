@@ -55,6 +55,7 @@
 #include "jsxml.h"
 
 #include "builtin/Eval.h"
+#include "builtin/Intl.h"
 #include "builtin/MapObject.h"
 #include "builtin/RegExp.h"
 #include "builtin/ParallelArray.h"
@@ -94,6 +95,9 @@
 using namespace js;
 using namespace js::gc;
 using namespace js::types;
+
+using mozilla::Maybe;
+
 using js::frontend::Parser;
 
 bool
@@ -676,8 +680,11 @@ static JSBool js_NewRuntimeWasCalled = JS_FALSE;
 /*
  * Thread Local Storage slot for storing the runtime for a thread.
  */
-namespace JS {
+namespace js {
 mozilla::ThreadLocal<PerThreadData *> TlsPerThreadData;
+}
+
+namespace JS {
 
 #ifdef DEBUG
 JS_FRIEND_API(void)
@@ -715,16 +722,21 @@ JS_FRIEND_API(bool) NeedRelaxedRootChecks() { return false; }
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
-JS::PerThreadData::PerThreadData(JSRuntime *runtime)
-    : runtime(runtime)
+js::PerThreadData::PerThreadData(JSRuntime *runtime)
+  : runtime_(runtime)
 #ifdef DEBUG
-    , gcRelaxRootChecks(false)
-    , gcAssertNoGCDepth(0)
+  , gcRelaxRootChecks(false)
+  , gcAssertNoGCDepth(0)
 #endif
+  , ionTop(NULL)
+  , ionJSContext(NULL)
+  , ionStackLimit(0)
+  , ionActivation(NULL)
 {}
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
-  : atomsCompartment(NULL),
+  : mainThread(this),
+    atomsCompartment(NULL),
 #ifdef JS_THREADSAFE
     ownerThread_(NULL),
 #endif
@@ -735,6 +747,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #ifdef JS_METHODJIT
     jaegerRuntime_(NULL),
 #endif
+    ionRuntime_(NULL),
     selfHostedGlobal_(NULL),
     nativeStackBase(0),
     nativeStackQuota(0),
@@ -796,6 +809,8 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcSliceBudget(SliceBudget::Unlimited),
     gcIncrementalEnabled(true),
     gcExactScanningEnabled(true),
+    gcManipulatingDeadCompartments(false),
+    gcObjectsMarkedInDeadCompartments(0),
     gcPoke(false),
     heapState(Idle),
 #ifdef JS_GC_ZEAL
@@ -862,18 +877,12 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #endif
     inOOMReport(0),
     jitHardening(false),
-    ionTop(NULL),
-    ionJSContext(NULL),
-    ionStackLimit(0),
-    ionActivation(NULL),
     ionPcScriptCache(NULL),
     threadPool(this),
-    mainThread(this),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     useHelperThreads_(useHelperThreads)
 {
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
-    JS_INIT_CLIST(&contextList);
     JS_INIT_CLIST(&debuggerList);
     JS_INIT_CLIST(&onNewGlobalObjectWatchers);
 
@@ -892,14 +901,10 @@ JSRuntime::init(uint32_t maxbytes)
     ownerThread_ = PR_GetCurrentThread();
 #endif
 
-    JS::TlsPerThreadData.set(&mainThread);
+    js::TlsPerThreadData.set(&mainThread);
 
 #ifdef JS_METHODJIT_SPEW
     JMCheckLogging();
-#endif
-
-#if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
-    PodArrayZero(thingGCRooters);
 #endif
 
     if (!js_InitGC(this, maxbytes))
@@ -984,7 +989,7 @@ JSRuntime::~JSRuntime()
 
 #ifdef DEBUG
     /* Don't hurt everyone in leaky ol' Mozilla with a fatal JS_ASSERT! */
-    if (!JS_CLIST_IS_EMPTY(&contextList)) {
+    if (hasContexts()) {
         unsigned cxcount = 0;
         for (ContextIter acx(this); !acx.done(); acx.next()) {
             fprintf(stderr,
@@ -1015,6 +1020,9 @@ JSRuntime::~JSRuntime()
 #ifdef JS_METHODJIT
     js_delete(jaegerRuntime_);
 #endif
+#ifdef JS_ION
+    js_delete(ionRuntime_);
+#endif
     js_delete(execAlloc_);  /* Delete after jaegerRuntime_. */
 
     if (ionPcScriptCache)
@@ -1028,9 +1036,9 @@ JSRuntime::setOwnerThread()
     JS_ASSERT(ownerThread_ == (void *)0xc1ea12);  /* "clear" */
     JS_ASSERT(requestDepth == 0);
     JS_ASSERT(js_NewRuntimeWasCalled);
-    JS_ASSERT(JS::TlsPerThreadData.get() == NULL);
+    JS_ASSERT(js::TlsPerThreadData.get() == NULL);
     ownerThread_ = PR_GetCurrentThread();
-    JS::TlsPerThreadData.set(&mainThread);
+    js::TlsPerThreadData.set(&mainThread);
     nativeStackBase = GetNativeStackBase();
     if (nativeStackQuota)
         JS_SetNativeStackQuota(this, nativeStackQuota);
@@ -1043,7 +1051,7 @@ JSRuntime::clearOwnerThread()
     JS_ASSERT(requestDepth == 0);
     JS_ASSERT(js_NewRuntimeWasCalled);
     ownerThread_ = (void *)0xc1ea12;  /* "clear" */
-    JS::TlsPerThreadData.set(NULL);
+    js::TlsPerThreadData.set(NULL);
     nativeStackBase = 0;
 #if JS_STACK_GROWTH_DIRECTION > 0
     nativeStackLimit = UINTPTR_MAX;
@@ -1057,7 +1065,7 @@ JSRuntime::abortIfWrongThread() const
 {
     if (ownerThread_ != PR_GetCurrentThread())
         MOZ_CRASH();
-    if (this != JS::TlsPerThreadData.get()->runtime)
+    if (!js::TlsPerThreadData.get()->associatedWith(this))
         MOZ_CRASH();
 }
 
@@ -1065,7 +1073,7 @@ JS_FRIEND_API(void)
 JSRuntime::assertValidThread() const
 {
     JS_ASSERT(ownerThread_ == PR_GetCurrentThread());
-    JS_ASSERT(this == JS::TlsPerThreadData.get()->runtime);
+    JS_ASSERT(js::TlsPerThreadData.get()->associatedWith(this));
 }
 #endif  /* JS_THREADSAFE */
 
@@ -1102,7 +1110,7 @@ JS_NewRuntime(uint32_t maxbytes, JSUseHelperThreads useHelperThreads)
 
         InitMemorySubsystem();
 
-        if (!JS::TlsPerThreadData.init())
+        if (!js::TlsPerThreadData.init())
             return NULL;
 
         js_NewRuntimeWasCalled = JS_TRUE;
@@ -1280,8 +1288,7 @@ JS_PUBLIC_API(JSContext *)
 JS_ContextIterator(JSRuntime *rt, JSContext **iterp)
 {
     JSContext *cx = *iterp;
-    JSCList *next = cx ? cx->link.next : rt->contextList.next;
-    cx = (next == &rt->contextList) ? NULL : JSContext::fromLinkField(next);
+    cx = cx ? cx->getNext() : rt->contextList.getFirst();
     *iterp = cx;
     return cx;
 }
@@ -1559,16 +1566,7 @@ JS_TransplantObject(JSContext *cx, JSObject *origobjArg, JSObject *targetArg)
     JS_ASSERT(!IsCrossCompartmentWrapper(origobj));
     JS_ASSERT(!IsCrossCompartmentWrapper(target));
 
-    /*
-     * Transplantation typically allocates new wrappers in every compartment. If
-     * an incremental GC is active, this causes every compartment to be leaked
-     * for that GC. Hence, we finish any ongoing incremental GC before the
-     * transplant to avoid leaks.
-     */
-    if (IsIncrementalGCInProgress(cx->runtime)) {
-        PrepareForIncrementalGC(cx->runtime);
-        FinishIncrementalGC(cx->runtime, gcreason::TRANSPLANT);
-    }
+    AutoMaybeTouchDeadCompartments agc(cx);
 
     JSCompartment *destination = target->compartment();
     WrapperMap &map = destination->crossCompartmentWrappers;
@@ -1641,6 +1639,8 @@ js_TransplantObjectWithWrapper(JSContext *cx,
     RootedObject origwrapper(cx, origwrapperArg);
     RootedObject targetobj(cx, targetobjArg);
     RootedObject targetwrapper(cx, targetwrapperArg);
+
+    AutoMaybeTouchDeadCompartments agc(cx);
 
     AssertHeapIsIdle(cx);
     JS_ASSERT(!IsCrossCompartmentWrapper(origobj));
@@ -1797,10 +1797,14 @@ static JSStdName standard_class_atoms[] = {
 #endif
     {js_InitJSONClass,                  EAGER_ATOM_AND_CLASP(JSON)},
     {js_InitTypedArrayClasses,          EAGER_CLASS_ATOM(ArrayBuffer), &js::ArrayBufferObject::protoClass},
-    {js_InitWeakMapClass,               EAGER_CLASS_ATOM(WeakMap), &js::WeakMapClass},
+    {js_InitWeakMapClass,               EAGER_ATOM_AND_CLASP(WeakMap)},
     {js_InitMapClass,                   EAGER_CLASS_ATOM(Map), &js::MapObject::class_},
     {js_InitSetClass,                   EAGER_CLASS_ATOM(Set), &js::SetObject::class_},
     {js_InitParallelArrayClass,         EAGER_CLASS_ATOM(ParallelArray), &js::ParallelArrayObject::class_},
+    {js_InitProxyClass,                 EAGER_ATOM_AND_CLASP(Proxy)},
+#if ENABLE_INTL_API
+    {js_InitIntlClass,                  EAGER_ATOM_AND_CLASP(Intl)},
+#endif
     {NULL,                              0, NULL}
 };
 
@@ -1861,9 +1865,6 @@ static JSStdName standard_class_names[] = {
     {js_InitTypedArrayClasses,  EAGER_CLASS_ATOM(Uint8ClampedArray),
                                 TYPED_ARRAY_CLASP(TYPE_UINT8_CLAMPED)},
     {js_InitTypedArrayClasses,  EAGER_CLASS_ATOM(DataView),     &DataViewClass},
-
-    {js_InitWeakMapClass,       EAGER_ATOM_AND_CLASP(WeakMap)},
-    {js_InitProxyClass,         EAGER_ATOM_AND_CLASP(Proxy)},
 
     {NULL,                      0, NULL}
 };
@@ -4713,6 +4714,8 @@ JS_SetReservedSlot(RawObject obj, uint32_t index, RawValue value)
 JS_PUBLIC_API(JSObject *)
 JS_NewArrayObject(JSContext *cx, int length, jsval *vector)
 {
+    AutoArrayRooter tvr(cx, length, vector);
+
     JS_THREADSAFE_ASSERT(cx->compartment != cx->runtime->atomsCompartment);
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
@@ -4824,7 +4827,8 @@ JS_NewFunction(JSContext *cx, JSNative native, unsigned nargs, unsigned flags,
             return NULL;
     }
 
-    return js_NewFunction(cx, NullPtr(), native, nargs, flags, parent, atom);
+    JSFunction::Flags funFlags = JSAPIToJSFunctionFlags(flags);
+    return js_NewFunction(cx, NullPtr(), native, nargs, funFlags, parent, atom);
 }
 
 JS_PUBLIC_API(JSFunction *)
@@ -4839,7 +4843,8 @@ JS_NewFunctionById(JSContext *cx, JSNative native, unsigned nargs, unsigned flag
     assertSameCompartment(cx, parent);
 
     RootedAtom atom(cx, JSID_TO_ATOM(id));
-    return js_NewFunction(cx, NullPtr(), native, nargs, flags, parent, atom);
+    JSFunction::Flags funFlags = JSAPIToJSFunctionFlags(flags);
+    return js_NewFunction(cx, NullPtr(), native, nargs, funFlags, parent, atom);
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -4897,12 +4902,6 @@ JS_GetFunctionDisplayId(JSFunction *fun)
     return fun->displayAtom();
 }
 
-JS_PUBLIC_API(unsigned)
-JS_GetFunctionFlags(JSFunction *fun)
-{
-    return fun->flags;
-}
-
 JS_PUBLIC_API(uint16_t)
 JS_GetFunctionArity(JSFunction *fun)
 {
@@ -4928,6 +4927,12 @@ JS_IsNativeFunction(JSRawObject funobj, JSNative call)
         return false;
     JSFunction *fun = funobj->toFunction();
     return fun->isNative() && fun->native() == call;
+}
+
+extern JS_PUBLIC_API(JSBool)
+JS_IsConstructor(JSFunction *fun)
+{
+    return fun->isNativeConstructor() || fun->isInterpretedConstructor();
 }
 
 JS_PUBLIC_API(JSObject*)
@@ -4969,18 +4974,15 @@ js_generic_native_method_dispatcher(JSContext *cx, unsigned argc, Value *vp)
 JS_PUBLIC_API(JSBool)
 JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
 {
-    RootedObject obj(cx, objArg);
     JS_THREADSAFE_ASSERT(cx->compartment != cx->runtime->atomsCompartment);
-    unsigned flags;
-    RootedObject ctor(cx);
-    JSFunction *fun;
-
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
-    assertSameCompartment(cx, obj);
-    for (; fs->name; fs++) {
-        flags = fs->flags;
+    assertSameCompartment(cx, objArg);
 
+    RootedObject obj(cx, objArg);
+    RootedObject ctor(cx);
+
+    for (; fs->name; fs++) {
         RootedAtom atom(cx, Atomize(cx, fs->name, strlen(fs->name)));
         if (!atom)
             return JS_FALSE;
@@ -4991,6 +4993,7 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
          * Define a generic arity N+1 static method for the arity N prototype
          * method if flags contains JSFUN_GENERIC_NATIVE.
          */
+        unsigned flags = fs->flags;
         if (flags & JSFUN_GENERIC_NATIVE) {
             if (!ctor) {
                 ctor = JS_GetConstructor(cx, obj);
@@ -4999,8 +5002,9 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
             }
 
             flags &= ~JSFUN_GENERIC_NATIVE;
-            fun = js_DefineFunction(cx, ctor, id, js_generic_native_method_dispatcher,
-                                    fs->nargs + 1, flags, NULL, JSFunction::ExtendedFinalizeKind);
+            JSFunction *fun = js_DefineFunction(cx, ctor, id, js_generic_native_method_dispatcher,
+                                    fs->nargs + 1, flags, NullPtr(),
+                                    JSFunction::ExtendedFinalizeKind);
             if (!fun)
                 return JS_FALSE;
 
@@ -5021,7 +5025,15 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
         if (fs->selfHostedName && cx->runtime->isSelfHostedGlobal(cx->global()))
             return JS_TRUE;
 
-        fun = js_DefineFunction(cx, obj, id, fs->call.op, fs->nargs, flags, fs->selfHostedName);
+        Rooted<PropertyName*> selfHostedPropertyName(cx);
+        if (fs->selfHostedName) {
+            JSAtom *selfHostedAtom = Atomize(cx, fs->selfHostedName, strlen(fs->selfHostedName));
+            if (!selfHostedAtom)
+                return JS_FALSE;
+            selfHostedPropertyName = selfHostedAtom->asPropertyName();
+        }
+        JSFunction *fun = js_DefineFunction(cx, obj, id, fs->call.op, fs->nargs, flags,
+                                            selfHostedPropertyName);
         if (!fun)
             return JS_FALSE;
         if (fs->call.info)
@@ -5345,41 +5357,6 @@ JS_BufferIsCompilableUnit(JSContext *cx, JSObject *objArg, const char *utf8, siz
     return result;
 }
 
-JS_PUBLIC_API(JSScript *)
-JS_CompileUTF8File(JSContext *cx, JSObject *objArg, const char *filename)
-{
-    RootedObject obj(cx, objArg);
-    CompileOptions options(cx);
-    options.setUTF8(true)
-           .setFileAndLine(filename, 1);
-
-    return Compile(cx, obj, options, filename);
-}
-
-JS_PUBLIC_API(JSScript *)
-JS_CompileUTF8FileHandleForPrincipals(JSContext *cx, JSObject *objArg, const char *filename,
-                                      FILE *file, JSPrincipals *principals)
-{
-    RootedObject obj(cx, objArg);
-    CompileOptions options(cx);
-    options.setUTF8(true)
-           .setFileAndLine(filename, 1)
-           .setPrincipals(principals);
-
-    return Compile(cx, obj, options, file);
-}
-
-JS_PUBLIC_API(JSScript *)
-JS_CompileUTF8FileHandle(JSContext *cx, JSObject *objArg, const char *filename, FILE *file)
-{
-    RootedObject obj(cx, objArg);
-    CompileOptions options(cx);
-    options.setUTF8(true)
-           .setFileAndLine(filename, 1);
-
-    return Compile(cx, obj, options, file);
-}
-
 JS_PUBLIC_API(JSObject *)
 JS_GetGlobalFromScript(JSScript *script)
 {
@@ -5420,7 +5397,7 @@ JS::CompileFunction(JSContext *cx, HandleObject obj, CompileOptions options,
             return NULL;
     }
 
-    RootedFunction fun(cx, js_NewFunction(cx, NullPtr(), NULL, 0, JSFUN_INTERPRETED, obj, funAtom));
+    RootedFunction fun(cx, js_NewFunction(cx, NullPtr(), NULL, 0, JSFunction::INTERPRETED, obj, funAtom));
     if (!fun)
         return NULL;
 
@@ -6197,15 +6174,6 @@ JS_DecodeBytes(JSContext *cx, const char *src, size_t srclen, jschar *dst, size_
     return InflateStringToBuffer(cx, src, srclen, dst, dstlenp);
 }
 
-JS_PUBLIC_API(JSBool)
-JS_DecodeUTF8(JSContext *cx, const char *src, size_t srclen, jschar *dst,
-              size_t *dstlenp)
-{
-    AssertHeapIsIdle(cx);
-    CHECK_REQUEST(cx);
-    return InflateUTF8StringToBuffer(cx, src, srclen, dst, dstlenp);
-}
-
 JS_PUBLIC_API(char *)
 JS_EncodeString(JSContext *cx, JSRawString strArg)
 {
@@ -6557,7 +6525,7 @@ JS_ReportErrorNumberVA(JSContext *cx, JSErrorCallback errorCallback,
 
 JS_PUBLIC_API(void)
 JS_ReportErrorNumberUC(JSContext *cx, JSErrorCallback errorCallback,
-                     void *userRef, const unsigned errorNumber, ...)
+                       void *userRef, const unsigned errorNumber, ...)
 {
     va_list ap;
 
@@ -6566,6 +6534,16 @@ JS_ReportErrorNumberUC(JSContext *cx, JSErrorCallback errorCallback,
     js_ReportErrorNumberVA(cx, JSREPORT_ERROR, errorCallback, userRef,
                            errorNumber, JS_FALSE, ap);
     va_end(ap);
+}
+
+JS_PUBLIC_API(void)
+JS_ReportErrorNumberUCArray(JSContext *cx, JSErrorCallback errorCallback,
+                            void *userRef, const unsigned errorNumber,
+                            const jschar **args)
+{
+    AssertHeapIsIdle(cx);
+    js_ReportErrorNumberUCArray(cx, JSREPORT_ERROR, errorCallback, userRef,
+                                errorNumber, args);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -7090,9 +7068,9 @@ JS_DescribeScriptedCaller(JSContext *cx, JSScript **script, unsigned *lineno)
         return JS_FALSE;
 
     if (script)
-        *script = i.script();
+        *script = i.script().get(nogc);
     if (lineno)
-        *lineno = js::PCToLineNumber(i.script(), i.pc());
+        *lineno = js::PCToLineNumber(i.script().get(nogc), i.pc());
     return JS_TRUE;
 }
 

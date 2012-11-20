@@ -223,7 +223,7 @@ ParallelCompileContext::addInvocation(StackFrame *fp)
     fun->script()->incUseCount();
 
     // Already compiled for parallel execution? Our work is done.
-    if (fun->script()->hasIonScript(COMPILE_MODE_PAR))
+    if (fun->script()->hasParallelIonScript())
         return true;
 
     if (!invokedFunctions_.append(fun)) {
@@ -234,17 +234,20 @@ ParallelCompileContext::addInvocation(StackFrame *fp)
     return true;
 }
 
-bool
+MethodStatus
 ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 {
     JS_ASSERT(!compilingKernel_);
 
+    MethodStatus status;
+
     // Compile the kernel first as it can unsafely write to a buffer argument.
-    if (!kernel->script()->hasIonScript(COMPILE_MODE_PAR)) {
+    if (!kernel->script()->hasParallelIonScript()) {
         compilingKernel_ = true;
-        if (!compileFunction(kernel)) {
+        status = compileFunction(kernel);
+        if (status != Method_Compiled) {
             compilingKernel_ = false;
-            return false;
+            return status;
         }
         compilingKernel_ = false;
     }
@@ -252,14 +255,15 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
     for (size_t i = 0; i < invokedFunctions_.length(); i++) {
         RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
 
-        if (fun->script()->hasIonScript(COMPILE_MODE_PAR))
+        if (fun->script()->hasParallelIonScript())
             continue; // Already compiled.
 
-        if (!compileFunction(fun))
-            return false;
+        status = compileFunction(fun);
+        if (status != Method_Compiled)
+            return status;
     }
 
-    return true;
+    return status;
 }
 
 bool

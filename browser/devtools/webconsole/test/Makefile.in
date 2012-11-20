@@ -84,7 +84,6 @@ MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_bug_632817.js \
 	browser_webconsole_bug_611795.js \
 	browser_webconsole_bug_618311_close_panels.js \
-	browser_webconsole_bug_618311_private_browsing.js \
 	browser_webconsole_bug_626484_output_copy_order.js \
 	browser_webconsole_bug_632347_iterators_generators.js \
 	browser_webconsole_bug_642108_pruneTest.js \
@@ -119,8 +118,16 @@ MOCHITEST_BROWSER_FILES = \
 	browser_output_breaks_after_console_dir_uninspectable.js \
 	browser_console_log_inspectable_object.js \
 	browser_bug_638949_copy_link_location.js \
+	browser_output_longstring_expand.js \
+	browser_netpanel_longstring_expand.js \
 	head.js \
 	$(NULL)
+
+ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
+MOCHITEST_BROWSER_FILES += \
+        browser_webconsole_bug_618311_private_browsing.js \
+        $(NULL)
+endif
 
 MOCHITEST_BROWSER_FILES += \
 	test-console.html \
@@ -131,6 +138,7 @@ MOCHITEST_BROWSER_FILES += \
 	test-filter.html \
 	test-observe-http-ajax.html \
 	test-data.json \
+	test-data.json^headers^ \
 	test-property-provider.html \
 	test-error.html \
 	test-duplicate-error.html \

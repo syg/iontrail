@@ -26,8 +26,10 @@
 #include "jspropertycacheinlines.h"
 #include "jstypedarrayinlines.h"
 
+#ifdef JS_ION
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
+#endif
 
 #include "vm/Stack-inl.h"
 
@@ -322,7 +324,7 @@ SetPropertyOperation(JSContext *cx, jsbytecode *pc, HandleValue lval, HandleValu
          * The entry predicts a set either an existing "own" property, or
          * on a prototype property that has a setter.
          */
-        Shape *shape = entry->prop;
+        RootedShape shape(cx, entry->prop);
         JS_ASSERT_IF(shape->isDataDescriptor(), shape->writable());
         JS_ASSERT_IF(shape->hasSlot(), entry->isOwnPropertyHit());
 
@@ -997,17 +999,15 @@ class FastInvokeGuard
     InvokeArgsGuard args_;
     RootedFunction fun_;
     RootedScript script_;
-    CompileMode cmode_;
 #ifdef JS_ION
     ion::IonContext ictx_;
     bool useIon_;
 #endif
 
   public:
-    FastInvokeGuard(JSContext *cx, const Value &fval, CompileMode cmode)
+    FastInvokeGuard(JSContext *cx, const Value &fval)
       : fun_(cx)
       , script_(cx)
-      , cmode_(cmode)
 #ifdef JS_ION
       , ictx_(cx, cx->compartment, NULL)
       , useIon_(ion::IsEnabled(cx))
@@ -1035,12 +1035,12 @@ class FastInvokeGuard
         if (useIon_ && fun_) {
             JS_ASSERT(fun_->script() == script_);
 
-            ion::MethodStatus status = ion::CanEnterUsingFastInvoke(cx, script_, cmode_);
+            ion::MethodStatus status = ion::CanEnterUsingFastInvoke(cx, script_, args_.length());
             if (status == ion::Method_Error)
                 return false;
             if (status == ion::Method_Compiled) {
-                ion::IonExecStatus result = ion::FastInvoke(cx, fun_, args_, cmode_);
-                if (result == ion::IonExec_Error)
+                ion::IonExecStatus result = ion::FastInvoke(cx, fun_, args_);
+                if (IsErrorStatus(result))
                     return false;
 
                 JS_ASSERT(result == ion::IonExec_Ok);
@@ -1049,7 +1049,7 @@ class FastInvokeGuard
 
             JS_ASSERT(status == ion::Method_Skipped);
 
-            if (script_->canIonCompile(cmode_)) {
+            if (script_->canIonCompile()) {
                 // This script is not yet hot. Since calling into Ion is much
                 // faster here, bump the use count a bit to account for this.
                 script_->incUseCount(5);

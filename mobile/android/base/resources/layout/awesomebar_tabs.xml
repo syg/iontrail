@@ -30,8 +30,14 @@
         </LinearLayout>
 
         <FrameLayout android:id="@android:id/tabcontent"
-                     android:layout_width="fill_parent"
-                     android:layout_height="fill_parent"/>
+                     android:visibility="gone"
+                     android:layout_width="wrap_content"
+                     android:layout_height="wrap_content"/>
+
+        <android.support.v4.view.ViewPager
+                        android:id="@+id/tabviewpager"
+                        android:layout_width="fill_parent"
+                        android:layout_height="fill_parent"/>
 
     </view>
 

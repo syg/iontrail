@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Bitmap;
 import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -96,6 +97,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private TranslateAnimation mTitleSlideRight;
 
     private int mCount;
+    private int mFaviconSize;
 
     private static final int TABS_CONTRACTED = 1;
     private static final int TABS_EXPANDED = 2;
@@ -225,6 +227,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mFavicon.setOnClickListener(faviconListener);
         if (Build.VERSION.SDK_INT >= 16)
             mFavicon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        mFaviconSize = Math.round(mActivity.getResources().getDimension(R.dimen.browser_toolbar_favicon_size));
 
         mSiteSecurity = (ImageButton) mLayout.findViewById(R.id.site_security);
         mSiteSecurity.setOnClickListener(faviconListener);
@@ -375,9 +378,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 }
                 break;
             case RESTORED:
+                updateTabCount(Tabs.getInstance().getCount());
+                break;
             case SELECTED:
-                // We should not animate the lock icon when switching or
-                // restoring tabs.
                 mAnimateSiteSecurity = false;
                 // fall through
             case LOCATION_CHANGE:
@@ -659,7 +662,19 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     }
 
     public void setShadowVisibility(boolean visible) {
-        mShadow.setVisibility(visible ? View.VISIBLE : View.GONE);
+        Tab tab = Tabs.getInstance().getSelectedTab();
+        if (tab == null) {
+            return;
+        }
+
+        String url = tab.getURL();
+
+        // Only set shadow to visible when not on about screens.
+        visible &= !(url == null || url.startsWith("about:"));
+
+        if ((mShadow.getVisibility() == View.VISIBLE) != visible) {
+            mShadow.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
     }
 
     public void setTitle(CharSequence title) {
@@ -678,14 +693,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mAwesomeBar.setContentDescription(title != null ? title : mTitle.getHint());
     }
 
-    public void setFavicon(Drawable image) {
+    public void setFavicon(Bitmap image) {
         if (Tabs.getInstance().getSelectedTab().getState() == Tab.STATE_LOADING)
             return;
 
-        if (image != null)
-            mFavicon.setImageDrawable(image);
-        else
+        if (image != null && image.getWidth() > 0 && image.getHeight() > 0) {
+            image = Bitmap.createScaledBitmap(image, mFaviconSize, mFaviconSize, false);
+            mFavicon.setImageBitmap(image);
+        } else {
             mFavicon.setImageResource(R.drawable.favicon);
+        }
     }
     
     public void setSecurityMode(String mode) {
@@ -762,7 +779,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             setProgressVisibility(tab.getState() == Tab.STATE_LOADING);
             setSecurityMode(tab.getSecurityMode());
             setReaderMode(tab.getReaderEnabled());
-            setShadowVisibility((url == null) || !url.startsWith("about:"));
+            setShadowVisibility(true);
             updateTabCount(Tabs.getInstance().getCount());
             updateBackButton(tab.canDoBack());
             updateForwardButton(tab.canDoForward());

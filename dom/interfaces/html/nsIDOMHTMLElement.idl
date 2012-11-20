@@ -6,7 +6,6 @@
 #include "nsIDOMElement.idl"
 #include "nsIVariant.idl"
 
-interface nsIDOMDOMStringMap;
 interface nsIDOMHTMLMenuElement;
 interface nsIDOMHTMLPropertiesCollection;
 
@@ -30,7 +29,7 @@ interface nsIDOMHTMLElement : nsIDOMElement
            attribute DOMString        lang;
            attribute DOMString        dir;
            attribute DOMString        className;
-  readonly attribute nsIDOMDOMStringMap dataset;
+  readonly attribute nsISupports      dataset;
 
            attribute boolean                        itemScope;
            attribute nsIVariant                     itemType;
@@ -52,8 +51,8 @@ interface nsIDOMHTMLElement : nsIDOMElement
   [binaryname(DOMClick)]
   void click();
            attribute long             tabIndex;
-  [binaryname(DOMFocus)]
   void focus();
+  [binaryname(DOMBlur)]
   void blur();
            attribute DOMString        accessKey;
   readonly attribute DOMString        accessKeyLabel;
@@ -65,7 +64,6 @@ interface nsIDOMHTMLElement : nsIDOMElement
 
 
   // DOM Parsing and Serialization
-  [binaryname(DOMInnerHTML)]
            attribute DOMString        innerHTML;
            attribute DOMString        outerHTML;
   void insertAdjacentHTML(in DOMString position,

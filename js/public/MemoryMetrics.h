@@ -38,22 +38,37 @@ namespace JS {
 struct TypeInferenceSizes
 {
     TypeInferenceSizes()
-      : scripts(0)
-      , objects(0)
-      , tables(0)
-      , temporary(0)
+      : typeScripts(0)
+      , typeResults(0)
+      , analysisPool(0)
+      , typePool(0)
+      , pendingArrays(0)
+      , allocationSiteTables(0)
+      , arrayTypeTables(0)
+      , objectTypeTables(0)
+      , typeObjects(0)
     {}
 
-    size_t scripts;
-    size_t objects;
-    size_t tables;
-    size_t temporary;
+    size_t typeScripts;
+    size_t typeResults;
+    size_t analysisPool;
+    size_t typePool;
+    size_t pendingArrays;
+    size_t allocationSiteTables;
+    size_t arrayTypeTables;
+    size_t objectTypeTables;
+    size_t typeObjects;
 
     void add(TypeInferenceSizes &sizes) {
-        this->scripts   += sizes.scripts;
-        this->objects   += sizes.objects;
-        this->tables    += sizes.tables;
-        this->temporary += sizes.temporary;
+        this->typeScripts          += sizes.typeScripts;
+        this->typeResults          += sizes.typeResults;
+        this->analysisPool         += sizes.analysisPool;
+        this->typePool             += sizes.typePool;
+        this->pendingArrays        += sizes.pendingArrays;
+        this->allocationSiteTables += sizes.allocationSiteTables;
+        this->arrayTypeTables      += sizes.arrayTypeTables;
+        this->objectTypeTables     += sizes.objectTypeTables;
+        this->typeObjects          += sizes.typeObjects;
     }
 };
 
@@ -146,10 +161,12 @@ struct CompartmentStats
 #if JS_HAS_XML_SUPPORT
       , gcHeapXML(0)
 #endif
-      , objectSlots(0)
-      , objectElements(0)
-      , objectMisc(0)
-      , objectPrivate(0)
+      , objectsExtraSlots(0)
+      , objectsExtraElements(0)
+      , objectsExtraArgumentsData(0)
+      , objectsExtraRegExpStatics(0)
+      , objectsExtraPropertyIteratorData(0)
+      , objectsExtraPrivate(0)
       , stringCharsNonHuge(0)
       , shapesExtraTreeTables(0)
       , shapesExtraDictTables(0)
@@ -186,10 +203,12 @@ struct CompartmentStats
 #if JS_HAS_XML_SUPPORT
       , gcHeapXML(other.gcHeapXML)
 #endif
-      , objectSlots(other.objectSlots)
-      , objectElements(other.objectElements)
-      , objectMisc(other.objectMisc)
-      , objectPrivate(other.objectPrivate)
+      , objectsExtraSlots(other.objectsExtraSlots)
+      , objectsExtraElements(other.objectsExtraElements)
+      , objectsExtraArgumentsData(other.objectsExtraArgumentsData)
+      , objectsExtraRegExpStatics(other.objectsExtraRegExpStatics)
+      , objectsExtraPropertyIteratorData(other.objectsExtraPropertyIteratorData)
+      , objectsExtraPrivate(other.objectsExtraPrivate)
       , stringCharsNonHuge(other.stringCharsNonHuge)
       , shapesExtraTreeTables(other.shapesExtraTreeTables)
       , shapesExtraDictTables(other.shapesExtraDictTables)
@@ -234,10 +253,12 @@ struct CompartmentStats
     size_t gcHeapXML;
 #endif
 
-    size_t objectSlots;
-    size_t objectElements;
-    size_t objectMisc;
-    size_t objectPrivate;
+    size_t objectsExtraSlots;
+    size_t objectsExtraElements;
+    size_t objectsExtraArgumentsData;
+    size_t objectsExtraRegExpStatics;
+    size_t objectsExtraPropertyIteratorData;
+    size_t objectsExtraPrivate;
     size_t stringCharsNonHuge;
     size_t shapesExtraTreeTables;
     size_t shapesExtraDictTables;
@@ -280,10 +301,12 @@ struct CompartmentStats
         ADD(gcHeapXML);
     #endif
 
-        ADD(objectSlots);
-        ADD(objectElements);
-        ADD(objectMisc);
-        ADD(objectPrivate);
+        ADD(objectsExtraSlots);
+        ADD(objectsExtraElements);
+        ADD(objectsExtraArgumentsData);
+        ADD(objectsExtraRegExpStatics);
+        ADD(objectsExtraPropertyIteratorData);
+        ADD(objectsExtraPrivate);
         ADD(stringCharsNonHuge);
         ADD(shapesExtraTreeTables);
         ADD(shapesExtraDictTables);

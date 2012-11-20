@@ -76,7 +76,7 @@ add_test(function test_dh_is_from_places()
   // Test that this nsIDownloadHistory is the one places implements.
   do_check_true(gDownloadHistory instanceof Ci.mozIAsyncHistory);
 
-  waitForClearHistory(run_next_test);
+  promiseClearHistory().then(run_next_test);
 });
 
 add_test(function test_dh_addDownload()
@@ -87,7 +87,7 @@ add_test(function test_dh_addDownload()
     // Verify that the URI is already available in results at this time.
     uri_in_db(DOWNLOAD_URI, true);
 
-    waitForClearHistory(run_next_test);
+    promiseClearHistory().then(run_next_test);
   });
 
   gDownloadHistory.addDownload(DOWNLOAD_URI, null, Date.now() * 1000);
@@ -107,7 +107,7 @@ add_test(function test_dh_addDownload_referrer()
       // Verify that the URI is already available in results at this time.
       uri_in_db(DOWNLOAD_URI, true);
 
-      waitForClearHistory(run_next_test);
+      promiseClearHistory().then(run_next_test);
     });
 
     gDownloadHistory.addDownload(DOWNLOAD_URI, REFERRER_URI, Date.now() * 1000);
@@ -124,41 +124,6 @@ add_test(function test_dh_addDownload_referrer()
   });
 });
 
-add_test(function test_dh_addDownload_privateBrowsing()
-{
-  if (!("@mozilla.org/privatebrowsing;1" in Cc)) {
-    do_log_info("Private Browsing service is not available, bail out.");
-    run_next_test();
-    return;
-  }
-
-  waitForOnVisit(function DHAD_onVisit(aURI) {
-    // We should only receive the notification for the non-private URI.  This
-    // test is based on the assumption that visit notifications are received
-    // in the same order of the addDownload calls, which is currently true
-    // because database access is serialized on the same worker thread.
-    do_check_true(aURI.equals(DOWNLOAD_URI));
-
-    uri_in_db(DOWNLOAD_URI, true);
-    uri_in_db(PRIVATE_URI, false);
-
-    waitForClearHistory(run_next_test);
-  });
-
-  let pb = Cc["@mozilla.org/privatebrowsing;1"]
-           .getService(Ci.nsIPrivateBrowsingService);
-  Services.prefs.setBoolPref("browser.privatebrowsing.keep_current_session",
-                             true);
-  pb.privateBrowsingEnabled = true;
-  gDownloadHistory.addDownload(PRIVATE_URI, REFERRER_URI, Date.now() * 1000);
-
-  // The addDownload functions calls CanAddURI synchronously, thus we can
-  // exit Private Browsing Mode immediately.
-  pb.privateBrowsingEnabled = false;
-  Services.prefs.clearUserPref("browser.privatebrowsing.keep_current_session");
-  gDownloadHistory.addDownload(DOWNLOAD_URI, REFERRER_URI, Date.now() * 1000);
-});
-
 add_test(function test_dh_addDownload_disabledHistory()
 {
   waitForOnVisit(function DHAD_onVisit(aURI) {
@@ -171,7 +136,7 @@ add_test(function test_dh_addDownload_disabledHistory()
     uri_in_db(DOWNLOAD_URI, true);
     uri_in_db(PRIVATE_URI, false);
 
-    waitForClearHistory(run_next_test);
+    promiseClearHistory().then(run_next_test);
   });
 
   Services.prefs.setBoolPref("places.history.enabled", false);
@@ -207,7 +172,7 @@ add_test(function test_dh_details()
       PlacesUtils.annotations.removeObserver(annoObserver);
       PlacesUtils.history.removeObserver(historyObserver);
 
-      waitForClearHistory(run_next_test);
+      promiseClearHistory().then(run_next_test);
     }
   };
 

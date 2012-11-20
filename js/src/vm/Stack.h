@@ -9,7 +9,9 @@
 #define Stack_h__
 
 #include "jsfun.h"
+#ifdef JS_ION
 #include "ion/IonFrameIterator.h"
+#endif
 #include "jsautooplen.h"
 
 struct JSContext;
@@ -497,8 +499,7 @@ class StackFrame
     inline Value &unaliasedActual(unsigned i, MaybeCheckAliasing = CHECK_ALIASING);
     template <class Op> inline void forEachUnaliasedActual(Op op);
 
-    typedef Vector<Value, 16, SystemAllocPolicy> CopyVector;
-    bool copyRawFrameSlots(CopyVector *v);
+    bool copyRawFrameSlots(AutoValueVector *v);
 
     inline unsigned numFormalArgs() const;
     inline unsigned numActualArgs() const;
@@ -1198,7 +1199,7 @@ class FrameRegs
 
     void setToEndOfScript() {
         AutoAssertNoGC nogc;
-        RawScript script = fp()->script();
+        RawScript script = fp()->script().get(nogc);
         sp = fp()->base();
         pc = script->code + script->length - JSOP_STOP_LENGTH;
         JS_ASSERT(*pc == JSOP_STOP);
@@ -1711,6 +1712,7 @@ class GeneratorFrameGuard : public FrameGuard
 class StackIter
 {
     friend class ContextStack;
+    PerThreadData *perThread_;
     JSContext    *maybecx_;
   public:
     enum SavedOption { STOP_AT_SAVED, GO_THROUGH_SAVED };
@@ -1735,7 +1737,6 @@ class StackIter
     ion::InlineFrameIterator ionInlineFrames_;
 #endif
 
-    static JSRuntime *GetRuntime(const StackIter &other);
     void poisonRegs();
     void popFrame();
     void popCall();

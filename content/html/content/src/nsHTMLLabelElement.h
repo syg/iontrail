@@ -19,14 +19,7 @@ public:
   nsHTMLLabelElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~nsHTMLLabelElement();
 
-  static nsHTMLLabelElement* FromContent(nsIContent* aPossibleLabel)
-  {
-    if (aPossibleLabel->IsHTML(nsGkAtoms::label)) {
-      return static_cast<nsHTMLLabelElement*>(aPossibleLabel);
-    }
-
-    return nullptr;
-  }
+  NS_IMPL_FROMCONTENT_HTML_WITH_TAG(nsHTMLLabelElement, label)
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -35,13 +28,14 @@ public:
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLLabelElement
   NS_DECL_NSIDOMHTMLLABELELEMENT
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
+
   virtual void Focus(mozilla::ErrorResult& aError) MOZ_OVERRIDE;
 
   // nsIFormControl

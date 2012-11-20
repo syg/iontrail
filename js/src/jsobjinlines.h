@@ -27,6 +27,7 @@
 #include "jswrapper.h"
 
 #include "builtin/MapObject.h"
+#include "builtin/Iterator-inl.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
 #include "gc/Root.h"
@@ -989,9 +990,9 @@ JSObject::computedSizeOfThisSlotsElements() const
 }
 
 inline void
-JSObject::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf,
-                              size_t *slotsSize, size_t *elementsSize,
-                              size_t *miscSize) const
+JSObject::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *slotsSize,
+                              size_t *elementsSize, size_t *argumentsDataSize,
+                              size_t *regExpStaticsSize, size_t *propertyIteratorDataSize) const
 {
     *slotsSize = 0;
     if (hasDynamicSlots()) {
@@ -1004,11 +1005,15 @@ JSObject::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf,
     }
 
     /* Other things may be measured in the future if DMD indicates it is worthwhile. */
-    *miscSize = 0;
+    *argumentsDataSize = 0;
+    *regExpStaticsSize = 0;
+    *propertyIteratorDataSize = 0;
     if (isArguments()) {
-        *miscSize += asArguments().sizeOfMisc(mallocSizeOf);
+        *argumentsDataSize += asArguments().sizeOfMisc(mallocSizeOf);
     } else if (isRegExpStatics()) {
-        *miscSize += js::SizeOfRegExpStaticsData(this, mallocSizeOf);
+        *regExpStaticsSize += js::SizeOfRegExpStaticsData(this, mallocSizeOf);
+    } else if (isPropertyIterator()) {
+        *propertyIteratorDataSize += asPropertyIterator().sizeOfMisc(mallocSizeOf);
     }
 }
 
@@ -1199,11 +1204,13 @@ JSObject::isWrapper() const
 inline js::GlobalObject &
 JSObject::global() const
 {
+#ifdef DEBUG
     JSObject *obj = const_cast<JSObject *>(this);
     while (JSObject *parent = obj->getParent())
         obj = parent;
     JS_ASSERT(&obj->asGlobal() == compartment()->maybeGlobal());
-    return obj->asGlobal();
+#endif
+    return *compartment()->maybeGlobal();
 }
 
 static inline bool
@@ -1309,7 +1316,7 @@ inline bool
 IsInternalFunctionObject(JSObject *funobj)
 {
     JSFunction *fun = funobj->toFunction();
-    return (fun->flags & JSFUN_LAMBDA) && !funobj->getParent();
+    return fun->isLambda() && !funobj->getParent();
 }
 
 class AutoPropDescArrayRooter : private AutoGCRooter

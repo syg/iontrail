@@ -7,12 +7,13 @@ package org.mozilla.gecko.db;
 
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.Combined;
-import org.mozilla.gecko.db.BrowserContract.History;
-import org.mozilla.gecko.db.BrowserContract.ImageColumns;
-import org.mozilla.gecko.db.BrowserContract.Images;
-import org.mozilla.gecko.db.BrowserContract.SyncColumns;
-import org.mozilla.gecko.db.BrowserContract.URLColumns;
 import org.mozilla.gecko.db.BrowserContract.ExpirePriority;
+import org.mozilla.gecko.db.BrowserContract.Favicons;
+import org.mozilla.gecko.db.BrowserContract.FaviconColumns;
+import org.mozilla.gecko.db.BrowserContract.History;
+import org.mozilla.gecko.db.BrowserContract.SyncColumns;
+import org.mozilla.gecko.db.BrowserContract.Thumbnails;
+import org.mozilla.gecko.db.BrowserContract.URLColumns;
 
 import android.content.ContentProviderOperation;
 import android.content.ContentResolver;
@@ -31,6 +32,7 @@ import android.util.Log;
 import java.io.ByteArrayOutputStream;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 
 public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     // Calculate these once, at initialization. isLoggable is too expensive to
@@ -56,10 +58,11 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     private final Uri mParentsUriWithProfile;
     private final Uri mHistoryUriWithProfile;
     private final Uri mHistoryExpireUriWithProfile;
-    private final Uri mImagesUriWithProfile;
     private final Uri mCombinedUriWithProfile;
     private final Uri mDeletedHistoryUriWithProfile;
     private final Uri mUpdateHistoryUriWithProfile;
+    private final Uri mFaviconsUriWithProfile;
+    private final Uri mThumbnailsUriWithProfile;
 
     private static final String[] DEFAULT_BOOKMARK_COLUMNS =
             new String[] { Bookmarks._ID,
@@ -81,8 +84,9 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         mParentsUriWithProfile = appendProfile(Bookmarks.PARENTS_CONTENT_URI);
         mHistoryUriWithProfile = appendProfile(History.CONTENT_URI);
         mHistoryExpireUriWithProfile = appendProfile(History.CONTENT_OLD_URI);
-        mImagesUriWithProfile = appendProfile(Images.CONTENT_URI);
         mCombinedUriWithProfile = appendProfile(Combined.CONTENT_URI);
+        mFaviconsUriWithProfile = appendProfile(Favicons.CONTENT_URI);
+        mThumbnailsUriWithProfile = appendProfile(Thumbnails.CONTENT_URI);
 
         mDeletedHistoryUriWithProfile = mHistoryUriWithProfile.buildUpon().
             appendQueryParameter(BrowserContract.PARAM_SHOW_DELETED, "1").build();
@@ -129,8 +133,8 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         return uriBuilder.build();
     }
 
-    private Uri getAllImagesUri() {
-        Uri.Builder uriBuilder = mImagesUriWithProfile.buildUpon()
+    private Uri getAllFaviconsUri() {
+        Uri.Builder uriBuilder = mFaviconsUriWithProfile.buildUpon()
             .appendQueryParameter(BrowserContract.PARAM_SHOW_DELETED, "1");
         return uriBuilder.build();
     }
@@ -176,12 +180,41 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         return new LocalDBCursor(c);
     }
 
+    public int getCount(ContentResolver cr, String database) {
+        Cursor cursor = null;
+        int count = 0;
+        String constraint = null;
+        try {
+            Uri uri = null;
+            if ("history".equals(database)) {
+                uri = mHistoryUriWithProfile;
+                constraint = Combined.VISITS + " > 0";
+            } else if ("bookmarks".equals(database)) {
+                uri = mBookmarksUriWithProfile;
+                // ignore folders, tags, keywords, separators, etc.
+                constraint = Bookmarks.TYPE + " = " + Bookmarks.TYPE_BOOKMARK;
+            } else if ("thumbnails".equals(database)) {
+                uri = mThumbnailsUriWithProfile;
+            } else if ("favicons".equals(database)) {
+                uri = mFaviconsUriWithProfile;
+            }
+            if (uri != null) {
+                cursor = cr.query(uri, null, constraint, null, null);
+                count = cursor.getCount();
+            }
+        } finally {
+            if (cursor != null)
+                cursor.close();
+        }
+        debug("Got count " + count + " for " + database);
+        return count;
+    }
+
     public Cursor filter(ContentResolver cr, CharSequence constraint, int limit) {
         return filterAllSites(cr,
                               new String[] { Combined._ID,
                                              Combined.URL,
                                              Combined.TITLE,
-                                             Combined.FAVICON,
                                              Combined.DISPLAY,
                                              Combined.BOOKMARK_ID,
                                              Combined.HISTORY_ID },
@@ -194,8 +227,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         return filterAllSites(cr,
                               new String[] { Combined._ID,
                                              Combined.URL,
-                                             Combined.TITLE,
-                                             Combined.THUMBNAIL },
+                                             Combined.TITLE },
                               "",
                               limit,
                               BrowserDB.ABOUT_PAGES_URL_FILTER);
@@ -426,18 +458,23 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     }
 
     public boolean isReadingListItem(ContentResolver cr, String uri) {
-        Cursor cursor = cr.query(mBookmarksUriWithProfile,
-                                 new String[] { Bookmarks._ID },
-                                 Bookmarks.URL + " = ? AND " +
-                                 Bookmarks.PARENT + " == ?",
-                                 new String[] { uri,
-                                                String.valueOf(Bookmarks.FIXED_READING_LIST_ID) },
-                                 Bookmarks.URL);
+        int count = 0;
+        try {
+            Cursor c = cr.query(mBookmarksUriWithProfile,
+                                new String[] { Bookmarks._ID },
+                                Bookmarks.URL + " = ? AND " +
+                                Bookmarks.PARENT + " == ?",
+                                new String[] { uri,
+                                               String.valueOf(Bookmarks.FIXED_READING_LIST_ID) },
+                                Bookmarks.URL);
 
-        int count = cursor.getCount();
-        cursor.close();
+            count = c.getCount();
+            c.close();
+        } catch (NullPointerException e) {
+            Log.e(LOGTAG, "NullPointerException in isReadingListItem");
+        }
 
-        return (count == 1);
+        return (count > 0);
     }
 
     public String getUrlForKeyword(ContentResolver cr, String keyword) {
@@ -588,6 +625,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         values.put(Browser.BookmarkColumns.TITLE, title);
         values.put(Bookmarks.URL, uri);
         values.put(Bookmarks.KEYWORD, keyword);
+        values.put(Bookmarks.DATE_MODIFIED, System.currentTimeMillis());
 
         cr.update(mBookmarksUriWithProfile,
                   values,
@@ -595,10 +633,10 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                   new String[] { String.valueOf(id) });
     }
 
-    public BitmapDrawable getFaviconForUrl(ContentResolver cr, String uri) {
-        Cursor c = cr.query(mImagesUriWithProfile,
-                            new String[] { Images.FAVICON },
-                            Images.URL + " = ?",
+    public Bitmap getFaviconForUrl(ContentResolver cr, String uri) {
+        Cursor c = cr.query(mCombinedUriWithProfile,
+                            new String[] { Combined.FAVICON },
+                            Combined.URL + " = ?",
                             new String[] { uri },
                             null);
 
@@ -607,7 +645,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             return null;
         }
 
-        int faviconIndex = c.getColumnIndexOrThrow(Images.FAVICON);
+        int faviconIndex = c.getColumnIndexOrThrow(Combined.FAVICON);
 
         byte[] b = c.getBlob(faviconIndex);
         c.close();
@@ -615,33 +653,69 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         if (b == null)
             return null;
 
-        Bitmap bitmap = BitmapFactory.decodeByteArray(b, 0, b.length);
-        return new BitmapDrawable(bitmap);
+        return BitmapFactory.decodeByteArray(b, 0, b.length);
     }
 
-    public void updateFaviconForUrl(ContentResolver cr, String uri,
-            BitmapDrawable favicon) {
-        Bitmap bitmap = favicon.getBitmap();
-        if (bitmap == null)
-            return;
+    public String getFaviconUrlForHistoryUrl(ContentResolver cr, String uri) {
+        Cursor c = cr.query(mHistoryUriWithProfile,
+                            new String[] { History.FAVICON_URL },
+                            Combined.URL + " = ?",
+                            new String[] { uri },
+                            null);
 
+        if (!c.moveToFirst()) {
+            c.close();
+            return null;
+        }
+
+        String faviconUrl = c.getString(c.getColumnIndexOrThrow(History.FAVICON_URL));
+        c.close();
+
+        return faviconUrl;
+    }
+
+    public Cursor getFaviconsForUrls(ContentResolver cr, List<String> urls) {
+        StringBuffer selection = new StringBuffer();
+        String[] selectionArgs = new String[urls.size()];
+
+        for (int i = 0; i < urls.size(); i++) {
+          final String url = urls.get(i);
+
+          if (i > 0)
+            selection.append(" OR ");
+
+          selection.append(Favicons.URL + " = ?");
+          selectionArgs[i] = url;
+        }
+
+        return cr.query(mCombinedUriWithProfile,
+                        new String[] { Combined.URL, Combined.FAVICON },
+                        selection.toString(),
+                        selectionArgs,
+                        null);
+    }
+
+    public void updateFaviconForUrl(ContentResolver cr, String pageUri,
+            Bitmap favicon, String faviconUri) {
         ByteArrayOutputStream stream = new ByteArrayOutputStream();
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
+        favicon.compress(Bitmap.CompressFormat.PNG, 100, stream);
 
         ContentValues values = new ContentValues();
-        values.put(Images.FAVICON, stream.toByteArray());
-        values.put(Images.URL, uri);
+        values.put(Favicons.URL, faviconUri);
+        values.put(Favicons.DATA, stream.toByteArray());
+        values.put(Favicons.PAGE_URL, pageUri);
 
-        // Restore deleted record if possible
-        values.put(Images.IS_DELETED, 0);
+        // Update or insert
+        Uri faviconsUri = getAllFaviconsUri().buildUpon().
+                appendQueryParameter(BrowserContract.PARAM_INSERT_IF_NEEDED, "true").build();
 
-        int updated = cr.update(mImagesUriWithProfile,
+        int updated = cr.update(faviconsUri,
                                 values,
-                                Images.URL + " = ?",
-                                new String[] { uri });
+                                Favicons.URL + " = ?",
+                                new String[] { faviconUri });
 
         if (updated == 0)
-            cr.insert(mImagesUriWithProfile, values);
+            cr.insert(mFaviconsUriWithProfile, values);
     }
 
     public void updateThumbnailForUrl(ContentResolver cr, String uri,
@@ -652,25 +726,22 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         bitmap.compress(Bitmap.CompressFormat.PNG, 0, stream);
 
         ContentValues values = new ContentValues();
-        values.put(Images.THUMBNAIL, stream.toByteArray());
-        values.put(Images.URL, uri);
+        values.put(Thumbnails.DATA, stream.toByteArray());
+        values.put(Thumbnails.URL, uri);
 
-        // Restore deleted record if possible
-        values.put(Images.IS_DELETED, 0);
-
-        int updated = cr.update(mImagesUriWithProfile,
+        int updated = cr.update(mThumbnailsUriWithProfile,
                                 values,
-                                Images.URL + " = ?",
+                                Thumbnails.URL + " = ?",
                                 new String[] { uri });
 
         if (updated == 0)
-            cr.insert(mImagesUriWithProfile, values);
+            cr.insert(mThumbnailsUriWithProfile, values);
     }
 
     public byte[] getThumbnailForUrl(ContentResolver cr, String uri) {
-        Cursor c = cr.query(mImagesUriWithProfile,
-                            new String[] { Images.THUMBNAIL },
-                            Images.URL + " = ?",
+        Cursor c = cr.query(mThumbnailsUriWithProfile,
+                            new String[] { Thumbnails.DATA },
+                            Thumbnails.URL + " = ?",
                             new String[] { uri },
                             null);
 
@@ -679,7 +750,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             return null;
         }
 
-        int thumbnailIndex = c.getColumnIndexOrThrow(Images.THUMBNAIL);
+        int thumbnailIndex = c.getColumnIndexOrThrow(Thumbnails.DATA);
 
         byte[] b = c.getBlob(thumbnailIndex);
         c.close();
@@ -687,10 +758,29 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         return b;
     }
 
+    public Cursor getThumbnailsForUrls(ContentResolver cr, List<String> urls) {
+        StringBuffer selection = new StringBuffer();
+        String[] selectionArgs = new String[urls.size()];
+
+        for (int i = 0; i < urls.size(); i++) {
+          final String url = urls.get(i);
+
+          if (i > 0)
+            selection.append(" OR ");
+
+          selection.append(Thumbnails.URL + " = ?");
+          selectionArgs[i] = url;
+        }
+
+        return cr.query(mThumbnailsUriWithProfile,
+                        new String[] { Thumbnails.URL, Thumbnails.DATA },
+                        selection.toString(),
+                        selectionArgs,
+                        null);
+    }
+
     public void removeThumbnails(ContentResolver cr) {
-        ContentValues values = new ContentValues();
-        values.putNull(Images.THUMBNAIL);
-        cr.update(mImagesUriWithProfile, values, null, null);
+        cr.delete(mThumbnailsUriWithProfile, null, null);
     }
 
     // Utility function for updating existing history using batch operations
@@ -841,25 +931,20 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                                      String url, String faviconUrl,
                                      String faviconGuid, byte[] data) {
         ContentValues values = new ContentValues();
-        values.put(Images.FAVICON, data);
-        values.put(Images.URL, url);
+        values.put(Favicons.DATA, data);
+        values.put(Favicons.PAGE_URL, url);
         if (faviconUrl != null) {
-            values.put(Images.FAVICON_URL, faviconUrl);
-        }
-        // Restore deleted record if possible
-        values.put(Images.IS_DELETED, 0);
-        if (faviconGuid != null) {
-            values.put(Images.GUID, faviconGuid);
+            values.put(Favicons.URL, faviconUrl);
         }
 
         // Update or insert
-        Uri imagesUri = getAllImagesUri().buildUpon().
+        Uri faviconsUri = getAllFaviconsUri().buildUpon().
             appendQueryParameter(BrowserContract.PARAM_INSERT_IF_NEEDED, "true").build();
         // Update or insert
         ContentProviderOperation.Builder builder =
-            ContentProviderOperation.newUpdate(imagesUri);
+            ContentProviderOperation.newUpdate(faviconsUri);
         builder.withValues(values);
-        builder.withSelection(Images.URL + " = ?", new String[] { url });
+        builder.withSelection(Favicons.PAGE_URL + " = ?", new String[] { url });
         // Queue the operation
         operations.add(builder.build());
     }
@@ -966,9 +1051,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             } else if (columnName.equals(BrowserDB.URLColumns.TITLE)) {
                 columnName = URLColumns.TITLE;
             } else if (columnName.equals(BrowserDB.URLColumns.FAVICON)) {
-                columnName = ImageColumns.FAVICON;
-            } else if (columnName.equals(BrowserDB.URLColumns.THUMBNAIL)) {
-                columnName = ImageColumns.THUMBNAIL;
+                columnName = FaviconColumns.FAVICON;
             } else if (columnName.equals(BrowserDB.URLColumns.DATE_LAST_VISITED)) {
                 columnName = History.DATE_LAST_VISITED;
             } else if (columnName.equals(BrowserDB.URLColumns.VISITS)) {

@@ -70,9 +70,8 @@ struct EnterJITStack
  *   ...using standard EABI calling convention
  */
 IonCode *
-IonCompartment::generateEnterJIT(JSContext *cx)
+IonRuntime::generateEnterJIT(JSContext *cx)
 {
-    AutoFlushCache afc("GenerateEnterJIT", cx->compartment->ionCompartment());
 
     const Register reg_code  = r0;
     const Register reg_argc  = r1;
@@ -85,6 +84,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     JS_ASSERT(OsrFrameReg == reg_frame);
 
     MacroAssembler masm(cx);
+    AutoFlushCache afc("GenerateEnterJIT", cx->compartment->ionCompartment());
     Assembler *aasm = &masm;
 
     // Save non-volatile registers. These must be saved by the trampoline,
@@ -199,22 +199,9 @@ IonCompartment::generateEnterJIT(JSContext *cx)
 }
 
 IonCode *
-IonCompartment::generateReturnError(JSContext *cx)
+IonRuntime::generateInvalidator(JSContext *cx)
 {
-    MacroAssembler masm(cx);
-    // This is where the stack size is stored on x86. where is it stored here?
-    masm.ma_pop(r0);
-    masm.ma_add(r0, sp, sp);
-
-    GenerateReturn(masm, JS_FALSE);
-    Linker linker(masm);
-    return linker.newCode(cx);
-}
-
-IonCode *
-IonCompartment::generateInvalidator(JSContext *cx)
-{
-    // See large comment in x86's IonCompartment::generateInvalidator.
+    // See large comment in x86's IonRuntime::generateInvalidator.
     AutoIonContextAlloc aica(cx);
     MacroAssembler masm(cx);
     //masm.as_bkpt();
@@ -261,7 +248,7 @@ IonCompartment::generateInvalidator(JSContext *cx)
 }
 
 IonCode *
-IonCompartment::generateArgumentsRectifier(JSContext *cx)
+IonRuntime::generateArgumentsRectifier(JSContext *cx)
 {
     MacroAssembler masm(cx);
     // ArgumentsRectifierReg contains the |nargs| pushed onto the current frame.
@@ -448,7 +435,7 @@ GenerateBailoutThunk(MacroAssembler &masm, uint32 frameClass)
 }
 
 IonCode *
-IonCompartment::generateBailoutTable(JSContext *cx, uint32 frameClass)
+IonRuntime::generateBailoutTable(JSContext *cx, uint32 frameClass)
 {
     MacroAssembler masm;
 
@@ -464,7 +451,7 @@ IonCompartment::generateBailoutTable(JSContext *cx, uint32 frameClass)
 }
 
 IonCode *
-IonCompartment::generateBailoutHandler(JSContext *cx)
+IonRuntime::generateBailoutHandler(JSContext *cx)
 {
     MacroAssembler masm;
     GenerateBailoutThunk(masm, NO_FRAME_SIZE_CLASS_ID);
@@ -474,7 +461,7 @@ IonCompartment::generateBailoutHandler(JSContext *cx)
 }
 
 IonCode *
-IonCompartment::generateVMWrapper(JSContext *cx, const VMFunction &f)
+IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 {
     typedef MoveResolver::MoveOperand MoveOperand;
 
@@ -622,7 +609,7 @@ IonCompartment::generateVMWrapper(JSContext *cx, const VMFunction &f)
 }
 
 IonCode *
-IonCompartment::generatePreBarrier(JSContext *cx)
+IonRuntime::generatePreBarrier(JSContext *cx)
 {
     MacroAssembler masm;
 
@@ -631,7 +618,7 @@ IonCompartment::generatePreBarrier(JSContext *cx)
     masm.PushRegsInMask(save);
 
     JS_ASSERT(PreBarrierReg == r1);
-    masm.movePtr(ImmWord(cx->compartment), r0);
+    masm.movePtr(ImmWord(cx->runtime), r0);
 
     masm.setupUnalignedABICall(2, r2);
     masm.passABIArg(r0);

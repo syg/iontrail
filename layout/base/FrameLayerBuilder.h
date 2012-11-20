@@ -300,7 +300,8 @@ public:
   Layer* GetOldLayerFor(nsDisplayItem* aItem, 
                         nsDisplayItemGeometry** aOldGeometry = nullptr, 
                         Clip** aOldClip = nullptr,
-                        nsTArray<nsIFrame*>* aChangedFrames = nullptr);
+                        nsTArray<nsIFrame*>* aChangedFrames = nullptr,
+                        bool *aIsInvalid = nullptr);
 
   static Layer* GetDebugOldLayerFor(nsIFrame* aFrame, uint32_t aDisplayItemKey);
 
@@ -321,20 +322,15 @@ public:
   LayerManager* GetRetainingLayerManager() { return mRetainingManager; }
 
   /**
-   * Returns true if the given item (which we assume here is
-   * background-attachment:fixed) needs to be repainted as we scroll in its
-   * document.
-   * Returns false if it doesn't need to be repainted because the layer system
-   * is ensuring its fixed-ness for us.
-   */
-  static bool NeedToInvalidateFixedDisplayItem(nsDisplayListBuilder* aBuilder,
-                                                 nsDisplayItem* aItem);
-
-  /**
    * Returns true if the given display item was rendered during the previous
    * paint. Returns false otherwise.
    */
   static bool HasRetainedDataFor(nsIFrame* aFrame, uint32_t aDisplayItemKey);
+
+  class DisplayItemData;
+  typedef void (*DisplayItemDataCallback)(nsIFrame *aFrame, DisplayItemData* aItem);
+
+  static void IterateRetainedDataFor(nsIFrame* aFrame, DisplayItemDataCallback aCallback);
 
   /**
    * Save transform that was in aLayer when we last painted, and the position
@@ -466,7 +462,6 @@ public:
   NS_DECLARE_FRAME_PROPERTY_WITH_FRAME_IN_DTOR(LayerManagerDataProperty,
                                                RemoveFrameFromLayerManager)
 
-protected:
   /**
    * Retained data storage:
    *
@@ -485,6 +480,12 @@ protected:
    */
   class DisplayItemData {
   public:
+    friend class FrameLayerBuilder;
+
+    uint32_t GetDisplayItemKey() { return mDisplayItemKey; }
+    Layer* GetLayer() { return mLayer; }
+    void Invalidate() { mIsInvalid = true; }
+  protected:
 
     DisplayItemData(LayerManagerData* aParent, uint32_t aKey, Layer* aLayer, LayerState aLayerState, uint32_t aGeneration);
     DisplayItemData(DisplayItemData &toCopy);
@@ -496,6 +497,7 @@ protected:
     ~DisplayItemData();
 
     NS_INLINE_DECL_REFCOUNTING(DisplayItemData)
+
 
     /**
      * Associates this DisplayItemData with a frame, and adds it
@@ -531,7 +533,10 @@ protected:
      * paint) has been updated in the current paint.
      */
     bool            mUsed;
+    bool            mIsInvalid;
   };
+
+protected:
 
   friend class LayerManagerData;
 

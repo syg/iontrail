@@ -77,9 +77,11 @@
 #include "TraceLogging.h"
 #endif
 
-using namespace mozilla;
 using namespace js;
 using namespace js::cli;
+
+using mozilla::ArrayLength;
+using mozilla::Maybe;
 
 typedef enum JSShellExitCode {
     EXITCODE_RUNTIME_ERROR      = 3,
@@ -429,7 +431,10 @@ Process(JSContext *cx, JSObject *obj_, const char *filename, bool forceTTY)
         oldopts = JS_GetOptions(cx);
         gGotError = false;
         JS_SetOptions(cx, oldopts | JSOPTION_COMPILE_N_GO | JSOPTION_NO_SCRIPT_RVAL);
-        script = JS_CompileUTF8FileHandle(cx, obj, filename, file);
+        CompileOptions options(cx);
+        options.setUTF8(true)
+               .setFileAndLine(filename, 1);
+        script = JS::Compile(cx, obj, options, file);
         JS_SetOptions(cx, oldopts);
         JS_ASSERT_IF(!script, gGotError);
         if (script && !compileOnly) {
@@ -511,14 +516,14 @@ Process(JSContext *cx, JSObject *obj_, const char *filename, bool forceTTY)
         if (hitEOF && !buffer)
             break;
 
-        if (!JS_DecodeUTF8(cx, buffer, len, NULL, &uc_len)) {
+        if (!InflateUTF8StringToBuffer(cx, buffer, len, NULL, &uc_len)) {
             JS_ReportError(cx, "Invalid UTF-8 in input");
             gExitCode = EXITCODE_RUNTIME_ERROR;
             return;
         }
 
         uc_buffer = (jschar*)malloc(uc_len * sizeof(jschar));
-        JS_DecodeUTF8(cx, buffer, len, uc_buffer, &uc_len);
+        InflateUTF8StringToBuffer(cx, buffer, len, uc_buffer, &uc_len);
 
         /* Clear any pending exception from previous failed compiles. */
         JS_ClearPendingException(cx);
@@ -712,7 +717,7 @@ Load(JSContext *cx, unsigned argc, jsval *vp)
             return false;
         errno = 0;
         CompileOptions opts(cx);
-        opts.setCompileAndGo(true).setNoScriptRval(true);
+        opts.setUTF8(true).setCompileAndGo(true).setNoScriptRval(true);
         if ((compileOnly && !Compile(cx, thisobj, opts, filename.ptr())) ||
             !Evaluate(cx, thisobj, opts, filename.ptr(), NULL))
         {
@@ -964,14 +969,14 @@ FileAsString(JSContext *cx, const char *pathname)
 
                     len = (size_t)cc;
 
-                    if (!JS_DecodeUTF8(cx, buf, len, NULL, &uclen)) {
+                    if (!InflateUTF8StringToBuffer(cx, buf, len, NULL, &uclen)) {
                         JS_ReportError(cx, "Invalid UTF-8 in file '%s'", pathname);
                         gExitCode = EXITCODE_RUNTIME_ERROR;
                         return NULL;
                     }
 
                     ucbuf = (jschar*)malloc(uclen * sizeof(jschar));
-                    JS_DecodeUTF8(cx, buf, len, ucbuf, &uclen);
+                    InflateUTF8StringToBuffer(cx, buf, len, ucbuf, &uclen);
                     str = JS_NewUCStringCopyN(cx, ucbuf, uclen);
                     free(ucbuf);
                 }
@@ -1751,18 +1756,20 @@ DisassembleScript(JSContext *cx, JSScript *script_, JSFunction *fun, bool lines,
 {
     Rooted<JSScript*> script(cx, script_);
 
-    if (fun && (fun->flags & ~7U)) {
-        uint16_t flags = fun->flags;
+    if (fun) {
         Sprint(sp, "flags:");
-
-#define SHOW_FLAG(flag) if (flags & JSFUN_##flag) Sprint(sp, " " #flag);
-
-        SHOW_FLAG(LAMBDA);
-        SHOW_FLAG(HEAVYWEIGHT);
-        SHOW_FLAG(EXPR_CLOSURE);
-
-#undef SHOW_FLAG
-
+        if (fun->isLambda())
+            Sprint(sp, " LAMBDA");
+        if (fun->isHeavyweight())
+            Sprint(sp, " HEAVYWEIGHT");
+        if (fun->isExprClosure())
+            Sprint(sp, " EXPRESSION CLOSURE");
+        if (fun->isFunctionPrototype())
+            Sprint(sp, " Function.prototype");
+        if (fun->isSelfHostedBuiltin())
+            Sprint(sp, " SELF_HOSTED");
+        if (fun->isSelfHostedConstructor())
+            Sprint(sp, " SELF_HOSTED_CTOR");
         Sprint(sp, "\n");
     }
 
@@ -1904,7 +1911,10 @@ DisassFile(JSContext *cx, unsigned argc, jsval *vp)
 
     uint32_t oldopts = JS_GetOptions(cx);
     JS_SetOptions(cx, oldopts | JSOPTION_COMPILE_N_GO | JSOPTION_NO_SCRIPT_RVAL);
-    JSScript *script = JS_CompileUTF8File(cx, thisobj, filename.ptr());
+    CompileOptions options(cx);
+    options.setUTF8(true)
+           .setFileAndLine(filename.ptr(), 1);
+    JSScript *script = JS::Compile(cx, thisobj, options, filename.ptr());
     JS_SetOptions(cx, oldopts);
     if (!script)
         return false;
@@ -2797,10 +2807,10 @@ WatchdogMain(void *arg)
              /* Wake up any threads doing sleep. */
              PR_NotifyAllCondVar(gSleepWakeup);
         } else {
-             int64_t sleepDuration = gWatchdogHasTimeout
-               ? (gWatchdogTimeout - now) / PRMJ_USEC_PER_SEC * PR_TicksPerSecond()
-               : PR_INTERVAL_NO_TIMEOUT;
-             DebugOnly<PRStatus> status =
+             uint64_t sleepDuration = PR_INTERVAL_NO_TIMEOUT;
+             if (gWatchdogHasTimeout)
+                 sleepDuration = (gWatchdogTimeout - now) / PRMJ_USEC_PER_SEC * PR_TicksPerSecond();
+             mozilla::DebugOnly<PRStatus> status =
                PR_WaitCondVar(gWatchdogWakeup, sleepDuration);
              JS_ASSERT(status == PR_SUCCESS);
         }
@@ -4573,6 +4583,14 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     if (op->getBoolOption('c'))
         compileOnly = true;
 
+    if (op->getBoolOption('w'))
+        reportWarnings = JS_TRUE;
+    else if (op->getBoolOption('W'))
+        reportWarnings = JS_FALSE;
+
+    if (op->getBoolOption('s'))
+        JS_ToggleOptions(cx, JSOPTION_STRICT);
+
     if (op->getBoolOption("no-jm")) {
         enableMethodJit = false;
         JS_ToggleOptions(cx, JSOPTION_METHODJIT);
@@ -4850,6 +4868,9 @@ main(int argc, char **argv, char **envp)
         || !op.addBoolOption('n', "ti", "Enable type inference (default)")
         || !op.addBoolOption('\0', "no-ti", "Disable type inference")
         || !op.addBoolOption('c', "compileonly", "Only compile, don't run (syntax checking mode)")
+        || !op.addBoolOption('w', "warnings", "Emit warnings")
+        || !op.addBoolOption('W', "nowarnings", "Don't emit warnings")
+        || !op.addBoolOption('s', "strict", "Check strictness")
         || !op.addBoolOption('d', "debugjit", "Enable runtime debug mode for method JIT code")
         || !op.addBoolOption('a', "always-mjit",
                              "Do not try to run in the interpreter before method jitting.")
@@ -4921,13 +4942,6 @@ main(int argc, char **argv, char **envp)
         OOM_maxAllocations = op.getIntOption('A');
     if (op.getBoolOption('O'))
         OOM_printAllocationCount = true;
-#endif
-
-#ifdef XP_WIN
-    // Set the timer calibration delay count to 0 so we get high
-    // resolution right away, which we need for precise benchmarking.
-    extern int CALIBRATION_DELAY_COUNT;
-    CALIBRATION_DELAY_COUNT = 0;
 #endif
 
     /* Use the same parameters as the browser in xpcjsruntime.cpp. */

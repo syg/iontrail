@@ -49,7 +49,8 @@
 
 using namespace js;
 using namespace js::gc;
-using namespace mozilla;
+
+using mozilla::DebugOnly;
 
 JS_PUBLIC_API(JSBool)
 JS_GetDebugMode(JSContext *cx)
@@ -452,7 +453,7 @@ JS_PUBLIC_API(JSScript *)
 JS_GetFunctionScript(JSContext *cx, JSFunction *fun)
 {
     AutoAssertNoGC nogc;
-    return fun->maybeScript();
+    return fun->maybeScript().get(nogc);
 }
 
 JS_PUBLIC_API(JSNative)
@@ -501,7 +502,7 @@ JS_PUBLIC_API(JSScript *)
 JS_GetFrameScript(JSContext *cx, JSStackFrame *fpArg)
 {
     AutoAssertNoGC nogc;
-    return Valueify(fpArg)->script();
+    return Valueify(fpArg)->script().get(nogc);
 }
 
 JS_PUBLIC_API(jsbytecode *)
@@ -546,14 +547,14 @@ JS_SetTopFrameAnnotation(JSContext *cx, void *annotation)
     // because we will never EnterIon on a frame with an annotation.
     fp->setAnnotation(annotation);
 
-    RawScript script = fp->script();
+    RawScript script = fp->script().get(nogc);
 
     ReleaseAllJITCode(cx->runtime->defaultFreeOp());
 
     // Ensure that we'll never try to compile this again.
     JS_ASSERT(!script->hasAnyIonScript());
-    for (EACH_COMPILE_MODE(cmode))
-        script->ions[cmode] = ION_DISABLED_SCRIPT;
+    script->ion = ION_DISABLED_SCRIPT;
+    script->parallelIon = ION_DISABLED_SCRIPT;
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -1016,7 +1017,7 @@ JS_GetFunctionTotalSize(JSContext *cx, JSFunction *fun)
     size_t nbytes = sizeof *fun;
     nbytes += JS_GetObjectTotalSize(cx, fun);
     if (fun->isInterpreted())
-        nbytes += JS_GetScriptTotalSize(cx, fun->script());
+        nbytes += JS_GetScriptTotalSize(cx, fun->script().get(nogc));
     if (fun->displayAtom())
         nbytes += GetAtomTotalSize(cx, fun->displayAtom());
     return nbytes;
@@ -1208,8 +1209,8 @@ JS::DescribeStack(JSContext *cx, unsigned maxFrames)
 
     for (ScriptFrameIter i(cx); !i.done(); ++i) {
         FrameDescription desc;
-        desc.script = i.script();
-        desc.lineno = PCToLineNumber(i.script(), i.pc());
+        desc.script = i.script().get(nogc);
+        desc.lineno = PCToLineNumber(i.script().get(nogc), i.pc());
         desc.fun = i.maybeCallee();
         if (!frames.append(desc))
             return NULL;

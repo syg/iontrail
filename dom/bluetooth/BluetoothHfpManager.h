@@ -36,6 +36,7 @@ public:
                           const char* aNumber, bool aIsActive);
   void SetupCIND(int aCallIndex, int aCallState, bool aInitial);
   bool Listen();
+  void SetVolume(int aVolume);
 
 private:
   friend class BluetoothHfpManagerObserver;
@@ -57,6 +58,7 @@ private:
   enum mozilla::ipc::SocketConnectionStatus mSocketStatus;
   nsTArray<int> mCurrentCallStateArray;
   nsAutoPtr<BluetoothRilListener> mListener;
+  nsRefPtr<BluetoothReplyRunnable> mRunnable;
 };
 
 END_BLUETOOTH_NAMESPACE

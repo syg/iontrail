@@ -153,6 +153,7 @@ function MarionetteDriverActor(aConnection)
   this.curFrame = null; //subframe that currently has focus
   this.importedScripts = FileUtils.getFile('TmpD', ['marionettescriptchrome']);
   this.currentRemoteFrame = null; // a member of remoteFrames
+  this.testName = null;
 
   //register all message listeners
   this.addMessageManagerListeners(this.messageManager);
@@ -689,7 +690,9 @@ MarionetteDriverActor.prototype = {
     }
 
     let curWindow = this.getCurrentWindow();
-    let marionette = new Marionette(this, curWindow, "chrome", this.marionetteLog, this.marionettePerf);
+    let marionette = new Marionette(this, curWindow, "chrome",
+                                    this.marionetteLog, this.marionettePerf,
+                                    this.scriptTimeout, this.testName);
     let _chromeSandbox = this.createExecuteSandbox(curWindow, marionette, aRequest.args, aRequest.specialPowers);
     if (!_chromeSandbox)
       return;
@@ -799,7 +802,8 @@ MarionetteDriverActor.prototype = {
     let original_onerror = curWindow.onerror;
     let that = this;
     let marionette = new Marionette(this, curWindow, "chrome",
-                                    this.marionetteLog, this.marionettePerf);
+                                    this.marionetteLog, this.marionettePerf,
+                                    this.scriptTimeout, this.testName);
     marionette.command_id = this.command_id;
 
     function chromeAsyncReturnFunc(value, status) {
@@ -1019,13 +1023,27 @@ MarionetteDriverActor.prototype = {
    *                of the frame to switch to
    */
   switchToFrame: function MDA_switchToFrame(aRequest) {
+    let checkTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+    let checkLoad = function() { 
+      let errorRegex = /about:.+(error)|(blocked)\?/;
+      if (curWindow.document.readyState == "complete") { 
+        this.sendOk();
+        return;
+      } 
+      else if (curWindow.document.readyState == "interactive" && errorRegex.exec(curWindow.document.baseURI)) {
+        this.sendError("Error loading page", 13, null);
+        return;
+      }
+      
+      checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
+    }
     let curWindow = this.getCurrentWindow();
     if (this.context == "chrome") {
       let foundFrame = null;
       if ((aRequest.value == null) && (aRequest.element == null)) {
         this.curFrame = null;
         this.mainFrame.focus();
-        this.sendOk();
+        checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
         return;
       }
       if (aRequest.element != undefined) {
@@ -1037,7 +1055,7 @@ MarionetteDriverActor.prototype = {
               curWindow = curWindow.frames[i]; 
               this.curFrame = curWindow;
               this.curFrame.focus();
-              this.sendOk();
+              checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
               return;
           }
         }
@@ -1072,7 +1090,7 @@ MarionetteDriverActor.prototype = {
         curWindow = curWindow.frames[foundFrame];
         this.curFrame = curWindow;
         this.curFrame.focus();
-        this.sendOk();
+        checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
       } else {
         this.sendError("Unable to locate frame: " + aRequest.value, 8, null);
       }
@@ -1379,6 +1397,16 @@ MarionetteDriverActor.prototype = {
   },
 
   /**
+   * Sets the test name
+   *
+   * The test name is used in logging messages.
+   */
+  setTestName: function MDA_setTestName(aRequest) {
+    this.testName = aRequest.value;
+    this.sendAsync("setTestName", {value: aRequest.value});
+  },
+
+  /**
    * Clear the text of an element
    *
    * @param object aRequest
@@ -1484,6 +1512,11 @@ MarionetteDriverActor.prototype = {
     this.sendOk();
     this.removeMessageManagerListeners(this.globalMessageManager);
     this.switchToGlobalMessageManager();
+    // reset frame to the top-most frame
+    this.curFrame = null;
+    if (this.mainFrame) {
+      this.mainFrame.focus();
+    }
     this.curBrowser = null;
     try {
       this.importedScripts.remove(false);
@@ -1607,7 +1640,7 @@ MarionetteDriverActor.prototype = {
                                  .getInterface(Ci.nsIDOMWindowUtils)
                                  .getOuterWindowWithId(message.json.win);
         let thisFrame = frameWindow.document.getElementsByTagName("iframe")[message.json.frame];
-        let mm = thisFrame.QueryInterface(Ci.nsIFrameLoaderOwner).frameLoader.messageManager
+        let mm = thisFrame.QueryInterface(Ci.nsIFrameLoaderOwner).frameLoader.messageManager;
 
         // See if this frame already has our frame script loaded in it; if so,
         // just wake it up.
@@ -1641,13 +1674,15 @@ MarionetteDriverActor.prototype = {
                                    .getInterface(Ci.nsIDOMWindowUtils)
                                    .getOuterWindowWithId(message.json.value);
 
-        if ((listenerWindow.location.href != message.json.href) &&
+        if (!listenerWindow || (listenerWindow.location.href != message.json.href) &&
             (this.currentRemoteFrame !== null)) {
-          // If there is a mismatch between the calculated href and the one
-          // sent from the frame script, it means that the frame script is
-          // running in a separate process.  Currently this only happens
+          // The outerWindowID from an OOP frame will not be meaningful to
+          // the parent process here, since each process maintains its own
+          // independent window list.  So, it will either be null (!listenerWindow)
+          // or it will point to some random window, which will hopefully 
+          // cause an href mistmach.  Currently this only happens
           // in B2G for OOP frames registered in Marionette:switchToFrame, so
-          //  we'll acknowledge the switchToFrame message here.
+          // we'll acknowledge the switchToFrame message here.
           // XXX: Should have a better way of determining that this message
           // is from a remote frame.
           this.sendOk();
@@ -1728,7 +1763,8 @@ MarionetteDriverActor.prototype.requestTypes = {
   "emulatorCmdResult": MarionetteDriverActor.prototype.emulatorCmdResult,
   "importScript": MarionetteDriverActor.prototype.importScript,
   "getAppCacheStatus": MarionetteDriverActor.prototype.getAppCacheStatus,
-  "closeWindow": MarionetteDriverActor.prototype.closeWindow
+  "closeWindow": MarionetteDriverActor.prototype.closeWindow,
+  "setTestName": MarionetteDriverActor.prototype.setTestName
 };
 
 /**

@@ -2711,7 +2711,7 @@ nsXPCComponents_Utils::LookupMethod(const JS::Value& object,
     // we don't have full access to the other compartment, in which case we throw.
     // Otherwise, enter the compartment.
     if (js::IsCrossCompartmentWrapper(obj)) {
-        obj = js::UnwrapOneChecked(cx, obj);
+        obj = js::UnwrapOneChecked(obj);
         if (!obj)
             return NS_ERROR_XPC_BAD_CONVERT_JS;
     }
@@ -3863,7 +3863,7 @@ xpc_EvalInSandbox(JSContext *cx, JSObject *sandbox, const nsAString& source,
 {
     JS_AbortIfWrongThread(JS_GetRuntime(cx));
 
-    sandbox = js::UnwrapObjectChecked(cx, sandbox);
+    sandbox = js::UnwrapObjectChecked(sandbox);
     if (!sandbox || js::GetObjectJSClass(sandbox) != &SandboxClass) {
         return NS_ERROR_INVALID_ARG;
     }
@@ -4786,7 +4786,7 @@ ContentComponentsGetterOp(JSContext *cx, JSHandleObject obj, JSHandleId id,
     // Warn once.
     JSAutoCompartment ac(cx, obj);
     nsCOMPtr<nsPIDOMWindow> win =
-        do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(cx, obj));
+        do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(obj));
     if (win) {
         nsCOMPtr<nsIDocument> doc =
             do_QueryInterface(win->GetExtantDocument());
@@ -4864,6 +4864,12 @@ nsXPCComponents::CanCallMethod(const nsIID * iid, const PRUnichar *methodName, c
 {
     static const char* allowed[] = { "isSuccessCode", "lookupMethod", nullptr };
     *_retval = xpc_CheckAccessList(methodName, allowed);
+    if (*_retval &&
+        methodName[0] == 'l' &&
+        !AccessCheck::callerIsXBL(nsContentUtils::GetCurrentJSContext()))
+    {
+        Telemetry::Accumulate(Telemetry::COMPONENTS_LOOKUPMETHOD_ACCESSED_BY_CONTENT, true);
+    }
     return NS_OK;
 }
 
@@ -4873,6 +4879,12 @@ nsXPCComponents::CanGetProperty(const nsIID * iid, const PRUnichar *propertyName
 {
     static const char* allowed[] = { "interfaces", "interfacesByID", "results", nullptr};
     *_retval = xpc_CheckAccessList(propertyName, allowed);
+    if (*_retval &&
+        propertyName[0] == 'i' &&
+        !AccessCheck::callerIsXBL(nsContentUtils::GetCurrentJSContext()))
+    {
+        Telemetry::Accumulate(Telemetry::COMPONENTS_INTERFACES_ACCESSED_BY_CONTENT, true);
+    }
     return NS_OK;
 }
 

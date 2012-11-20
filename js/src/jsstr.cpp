@@ -39,8 +39,8 @@
 #include "jsscope.h"
 #include "jsstr.h"
 #include "jsversion.h"
-#include "jsthreadpool.h"
-#include "jstaskset.h"
+#include "vm/threadpool.h"
+#include "vm/forkjoin.h"
 
 #include "builtin/RegExp.h"
 #include "js/HashTable.h"
@@ -1847,7 +1847,7 @@ struct ReplaceData
     ReplaceData(JSContext *cx)
       : str(cx), g(cx), lambda(cx), elembase(cx), repstr(cx),
         dollarRoot(cx, &dollar), dollarEndRoot(cx, &dollarEnd),
-        fig(cx, NullValue(), COMPILE_MODE_SEQ), sb(cx)
+        fig(cx, NullValue()), sb(cx)
     {
         JS_ASSERT(!InParallelSection()); // due to COMPILE_MODE_SEQ above
     }
@@ -2373,7 +2373,7 @@ LambdaIsGetElem(JSObject &lambda)
     if (!fun->isInterpreted())
         return NULL;
 
-    RawScript script = fun->script();
+    RawScript script = fun->script().get(nogc);
     jsbytecode *pc = script->code;
 
     /*
@@ -2761,8 +2761,8 @@ js::str_split(JSContext *cx, unsigned argc, Value *vp)
 
     /* Step 10. */
     if (!sepDefined) {
-        Value v = StringValue(str);
-        JSObject *aobj = NewDenseCopiedArray(cx, 1, &v);
+        RootedValue v(cx, StringValue(str));
+        JSObject *aobj = NewDenseCopiedArray(cx, 1, v.address());
         if (!aobj)
             return false;
         aobj->setType(type);

@@ -11,8 +11,8 @@
 #include "jsapi.h"
 #include "jscntxt.h"
 #include "jsobj.h"
-#include "jsthreadpool.h"
-#include "jstaskset.h"
+#include "vm/threadpool.h"
+#include "vm/forkjoin.h"
 
 namespace js {
 namespace parallel {

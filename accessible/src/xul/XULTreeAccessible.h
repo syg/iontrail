@@ -49,7 +49,6 @@ public:
   virtual uint32_t ChildCount() const;
 
   // SelectAccessible
-  virtual bool IsSelect();
   virtual already_AddRefed<nsIArray> SelectedItems();
   virtual uint32_t SelectedItemCount();
   virtual Accessible* GetSelectedItem(uint32_t aIndex);
@@ -270,17 +269,17 @@ protected:
                                          nsresult *aError = nullptr) const;
 };
 
-} // namespace a11y
-} // namespace mozilla
 
 ////////////////////////////////////////////////////////////////////////////////
 // Accessible downcasting method
 
-inline mozilla::a11y::XULTreeAccessible*
+inline XULTreeAccessible*
 Accessible::AsXULTree()
 {
-  return IsXULTree() ?
-    static_cast<mozilla::a11y::XULTreeAccessible*>(this) : nullptr;
+  return IsXULTree() ? static_cast<XULTreeAccessible*>(this) : nullptr;
 }
+
+} // namespace a11y
+} // namespace mozilla
 
 #endif

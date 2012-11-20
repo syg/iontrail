@@ -13,6 +13,8 @@ var gTab = null;
 var gDebugger = null;
 var gDebuggee = null;
 
+requestLongerTimeout(2);
+
 function test()
 {
   debug_tab_pane(TAB_URL, function(aTab, aDebuggee, aPane) {
@@ -33,6 +35,9 @@ function addBreakpoint()
   }, function() {
     // Wait for the resume...
     gDebugger.gClient.addOneTimeListener("resumed", function() {
+      gDebugger.DebuggerController.StackFrames.autoScopeExpand = true;
+      gDebugger.DebuggerView.Variables.nonEnumVisible = false;
+      gDebugger.DebuggerView.Variables.commitHierarchyIgnoredItems = Object.create(null);
       testVariablesExpand();
     });
   });
@@ -69,6 +74,44 @@ function testVariablesExpand()
         loadScope.querySelector(".name").getAttribute("value"));
       let globalScopeItem = gDebugger.DebuggerView.Variables._currHierarchy.get(
         globalScope.querySelector(".name").getAttribute("value"));
+
+      is(innerScope.querySelector(".arrow").hasAttribute("open"), true,
+        "The innerScope arrow should initially be expanded");
+      is(mathScope.querySelector(".arrow").hasAttribute("open"), true,
+        "The mathScope arrow should initially be expanded");
+      is(testScope.querySelector(".arrow").hasAttribute("open"), true,
+        "The testScope arrow should initially be expanded");
+      is(loadScope.querySelector(".arrow").hasAttribute("open"), true,
+        "The loadScope arrow should initially be expanded");
+      is(globalScope.querySelector(".arrow").hasAttribute("open"), true,
+        "The globalScope arrow should initially be expanded");
+
+      is(innerScope.querySelector(".details").hasAttribute("open"), true,
+        "The innerScope enumerables should initially be expanded");
+      is(mathScope.querySelector(".details").hasAttribute("open"), true,
+        "The mathScope enumerables should initially be expanded");
+      is(testScope.querySelector(".details").hasAttribute("open"), true,
+        "The testScope enumerables should initially be expanded");
+      is(loadScope.querySelector(".details").hasAttribute("open"), true,
+        "The loadScope enumerables should initially be expanded");
+      is(globalScope.querySelector(".details").hasAttribute("open"), true,
+        "The globalScope enumerables should initially be expanded");
+
+      is(innerScopeItem.expanded, true,
+        "The innerScope expanded getter should return true");
+      is(mathScopeItem.expanded, true,
+        "The mathScope expanded getter should return true");
+      is(testScopeItem.expanded, true,
+        "The testScope expanded getter should return true");
+      is(loadScopeItem.expanded, true,
+        "The loadScope expanded getter should return true");
+      is(globalScopeItem.expanded, true,
+        "The globalScope expanded getter should return true");
+
+      mathScopeItem.collapse();
+      testScopeItem.collapse();
+      loadScopeItem.collapse();
+      globalScopeItem.collapse();
 
       is(innerScope.querySelector(".arrow").hasAttribute("open"), true,
         "The innerScope arrow should initially be expanded");
@@ -194,15 +237,6 @@ function testVariablesExpand()
                       is(locationItem.target.querySelector(".details").hasAttribute("open"), true,
                         "The locationItem enumerables should still be expanded (1)");
 
-                      is(thisItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                        "The thisItem non-enumerables should still be expanded (1)");
-                      is(windowItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                        "The windowItem non-enumerables should still be expanded (1)");
-                      is(documentItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                        "The documentItem non-enumerables should still be expanded (1)");
-                      is(locationItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                        "The locationItem non-enumerables should still be expanded (1)");
-
                       is(thisItem.expanded, true,
                         "The local scope 'this' should still be expanded (1)");
                       is(windowItem.expanded, true,
@@ -274,15 +308,6 @@ function testVariablesExpand()
                             "The documentItem enumerables should still be expanded (2)");
                           is(locationItem.target.querySelector(".details").hasAttribute("open"), true,
                             "The locationItem enumerables should still be expanded (2)");
-
-                          is(thisItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                            "The thisItem non-enumerables should still be expanded (2)");
-                          is(windowItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                            "The windowItem non-enumerables should still be expanded (2)");
-                          is(documentItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                            "The documentItem non-enumerables should still be expanded (2)");
-                          is(locationItem.target.querySelector(".details.nonenum").hasAttribute("open"), true,
-                            "The locationItem non-enumerables should still be expanded (2)");
 
                           is(thisItem.expanded, true,
                             "The local scope 'this' should still be expanded (2)");

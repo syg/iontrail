@@ -24,8 +24,6 @@
 #include "nsARIAMap.h"
 #include "nsEventShell.h"
 #include "nsIAccessibleProvider.h"
-#include "nsXFormsFormControlsAccessible.h"
-#include "nsXFormsWidgetsAccessible.h"
 #include "OuterDocAccessible.h"
 #include "Role.h"
 #include "RootAccessibleWrap.h"
@@ -77,6 +75,46 @@
 
 using namespace mozilla;
 using namespace mozilla::a11y;
+
+////////////////////////////////////////////////////////////////////////////////
+// Statics
+////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Return true if the element must be accessible.
+ */
+static bool
+MustBeAccessible(nsIContent* aContent, DocAccessible* aDocument)
+{
+  if (aContent->GetPrimaryFrame()->IsFocusable())
+    return true;
+
+  PRUint32 attrCount = aContent->GetAttrCount();
+  for (PRUint32 attrIdx = 0; attrIdx < attrCount; attrIdx++) {
+    const nsAttrName* attr = aContent->GetAttrNameAt(attrIdx);
+    if (attr->NamespaceEquals(kNameSpaceID_None)) {
+      nsIAtom* attrAtom = attr->Atom();
+      nsDependentAtomString attrStr(attrAtom);
+      if (!StringBeginsWith(attrStr, NS_LITERAL_STRING("aria-")))
+        continue; // not ARIA
+
+      // A global state or a property and in case of token defined.
+      uint8_t attrFlags = nsAccUtils::GetAttributeCharacteristics(attrAtom);
+      if ((attrFlags & ATTR_GLOBAL) && (!(attrFlags & ATTR_VALTOKEN) ||
+           nsAccUtils::HasDefinedARIAToken(aContent, attrAtom))) {
+        return true;
+      }
+    }
+  }
+
+  // If the given ID is referred by relation attribute then create an accessible
+  // for it.
+  nsAutoString id;
+  if (nsCoreUtils::GetID(aContent, id) && !id.IsEmpty())
+    return aDocument->IsDependentID(id);
+
+  return false;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsAccessibilityService
@@ -250,6 +288,7 @@ nsAccessibilityService::ContentRangeInserted(nsIPresShell* aPresShell,
       logging::Node("content", child);
     }
     logging::MsgEnd();
+    logging::Stack();
   }
 #endif
 
@@ -269,6 +308,7 @@ nsAccessibilityService::ContentRemoved(nsIPresShell* aPresShell,
     logging::Node("container", aContainer);
     logging::Node("content", aChild);
     logging::MsgEnd();
+    logging::Stack();
   }
 #endif
 
@@ -620,21 +660,21 @@ nsAccessibilityService::SetLogging(const nsACString& aModules)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsAccessibilityService::IsLogged(const nsAString& aModule, bool* aIsLogged)
+{
+  NS_ENSURE_ARG_POINTER(aIsLogged);
+  *aIsLogged = false;
+
+#ifdef A11Y_LOG
+  *aIsLogged = logging::IsEnabled(aModule);
+#endif
+
+  return NS_OK;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // nsAccessibilityService public
-
-static bool HasRelatedContent(nsIContent *aContent)
-{
-  nsAutoString id;
-  if (!aContent || !nsCoreUtils::GetID(aContent, id) || id.IsEmpty()) {
-    return false;
-  }
-
-  // If the given ID is referred by relation attribute then create an accessible
-  // for it. Take care of HTML elements only for now.
-  return aContent->IsHTML() &&
-    nsAccUtils::GetDocAccessibleFor(aContent)->IsDependentID(id);
-}
 
 Accessible*
 nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
@@ -762,8 +802,7 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
   // it is referenced by ARIA relationship then treat role="presentation" on
   // the element as the role is not there.
   if (roleMapEntry && roleMapEntry->Is(nsGkAtoms::presentation)) {
-    if (!content->IsFocusable() && !HasUniversalAriaProperty(content) &&
-        !HasRelatedContent(content))
+    if (!MustBeAccessible(content, aDoc))
       return nullptr;
 
     roleMapEntry = nullptr;
@@ -810,7 +849,7 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
                        "No accessible for parent table and it didn't have role of presentation");
 #endif
 
-          if (!roleMapEntry && !content->IsFocusable()) {
+          if (!roleMapEntry && !MustBeAccessible(content, aDoc)) {
             // Table-related descendants of presentation table are also
             // presentation if they aren't focusable and have not explicit ARIA
             // role (don't create accessibles for them unless they need to fire
@@ -912,10 +951,8 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
   // We don't do this for <body>, <html>, <window>, <dialog> etc. which
   // correspond to the doc accessible and will be created in any case
   if (!newAcc && content->Tag() != nsGkAtoms::body && content->GetParent() &&
-      (frame->IsFocusable() ||
-       (isHTML && nsCoreUtils::HasClickListener(content)) ||
-       HasUniversalAriaProperty(content) || roleMapEntry ||
-       HasRelatedContent(content) || nsCoreUtils::IsXLink(content))) {
+      (roleMapEntry || MustBeAccessible(content, aDoc) ||
+       (isHTML && nsCoreUtils::HasClickListener(content)))) {
     // This content is focusable or has an interesting dynamic content accessibility property.
     // If it's interesting we need it in the accessibility hierarchy so that events or
     // other accessibles can point to it, or so that it can hold a state, etc.
@@ -1006,29 +1043,6 @@ nsAccessibilityService::Shutdown()
   gApplicationAccessible->Shutdown();
   NS_RELEASE(gApplicationAccessible);
   gApplicationAccessible = nullptr;
-}
-
-bool
-nsAccessibilityService::HasUniversalAriaProperty(nsIContent *aContent)
-{
-  // ARIA attributes that take token values (NMTOKEN, bool) are special cased
-  // because of special value "undefined" (see HasDefinedARIAToken).
-  return nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_atomic) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_busy) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_controls) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_describedby) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_disabled) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_dropeffect) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_flowto) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_grabbed) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_haspopup) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_hidden) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_invalid) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_label) ||
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_labelledby) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_live) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_owns) ||
-         nsAccUtils::HasDefinedARIAToken(aContent, nsGkAtoms::aria_relevant);
 }
 
 already_AddRefed<Accessible>
@@ -1230,83 +1244,6 @@ nsAccessibilityService::CreateAccessibleByType(nsIContent* aContent,
       break;
 
 #endif // MOZ_XUL
-
-    // XForms elements
-    case nsIAccessibleProvider::XFormsContainer:
-      accessible = new nsXFormsContainerAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsLabel:
-      accessible = new nsXFormsLabelAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsOutput:
-      accessible = new nsXFormsOutputAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsTrigger:
-      accessible = new nsXFormsTriggerAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsInput:
-      accessible = new nsXFormsInputAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsInputBoolean:
-      accessible = new nsXFormsInputBooleanAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsInputDate:
-      accessible = new nsXFormsInputDateAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsSecret:
-      accessible = new nsXFormsSecretAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsSliderRange:
-      accessible = new nsXFormsRangeAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsSelect:
-      accessible = new nsXFormsSelectAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsChoices:
-      accessible = new nsXFormsChoicesAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsSelectFull:
-      accessible = new nsXFormsSelectFullAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsItemCheckgroup:
-      accessible = new nsXFormsItemCheckgroupAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsItemRadiogroup:
-      accessible = new nsXFormsItemRadiogroupAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsSelectCombobox:
-      accessible = new nsXFormsSelectComboboxAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsItemCombobox:
-      accessible = new nsXFormsItemComboboxAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsDropmarkerWidget:
-      accessible = new nsXFormsDropmarkerWidgetAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsCalendarWidget:
-      accessible = new nsXFormsCalendarWidgetAccessible(aContent, aDoc);
-      break;
-
-    case nsIAccessibleProvider::XFormsComboboxPopupWidget:
-      accessible = new nsXFormsComboboxPopupWidgetAccessible(aContent, aDoc);
-      break;
 
     default:
       return nullptr;

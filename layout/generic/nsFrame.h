@@ -99,7 +99,7 @@
 //----------------------------------------------------------------------
 
 struct nsBoxLayoutMetrics;
-class nsDisplayBackground;
+class nsDisplayBackgroundImage;
 
 /**
  * Implementation of a simple frame that's not splittable and has no
@@ -335,7 +335,6 @@ public:
                                       nsHTMLReflowMetrics&     aDesiredSize,
                                       const nsHTMLReflowState& aReflowState,
                                       nsReflowStatus&          aStatus);
-  void DestroyAbsoluteFrames(nsIFrame* aDestructRoot);
   virtual bool CanContinueTextRun() const;
 
   virtual bool UpdateOverflow();
@@ -408,6 +407,15 @@ public:
 
   virtual const void* GetStyleDataExternal(nsStyleStructID aSID) const;
 
+
+  /**
+   * @return true if we should avoid a page/column break in this frame.
+   */
+  bool ShouldAvoidBreakInside(const nsHTMLReflowState& aReflowState) const {
+    return !aReflowState.mFlags.mIsTopOfPage &&
+           NS_STYLE_PAGE_BREAK_AVOID == GetStyleDisplay()->mBreakInside &&
+           !GetPrevInFlow();
+  }
 
 #ifdef DEBUG
   /**
@@ -502,7 +510,7 @@ public:
   nsresult DisplayBackgroundUnconditional(nsDisplayListBuilder*   aBuilder,
                                           const nsDisplayListSet& aLists,
                                           bool aForceBackground,
-                                          nsDisplayBackground** aBackground);
+                                          nsDisplayBackgroundImage** aBackground);
   /**
    * Adds display items for standard CSS borders, background and outline for
    * for this frame, as necessary. Checks IsVisibleForPainting and won't

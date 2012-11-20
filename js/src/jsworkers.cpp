@@ -8,17 +8,19 @@
 
 #if JS_ION
 # include "ion/IonBuilder.h"
+# include "ion/ExecutionModeInlines.h"
 #endif
 
 using namespace js;
+
+using mozilla::DebugOnly;
 
 #ifdef JS_PARALLEL_COMPILATION
 
 bool
 js::OffThreadCompilationAvailable(JSContext *cx)
 {
-    WorkerThreadState &state = *cx->runtime->workerThreadState;
-    return state.numThreads > 0;
+    return cx->runtime->useHelperThreads();
 }
 
 bool
@@ -74,6 +76,8 @@ CompiledScriptMatches(JSCompartment *compartment, JSScript *script, JSScript *ta
 void
 js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
 {
+    AutoAssertNoGC nogc;
+
     if (!compartment->rt->workerThreadState)
         return;
 
@@ -88,7 +92,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
     /* Cancel any pending entries for which processing hasn't started. */
     for (size_t i = 0; i < state.ionWorklist.length(); i++) {
         ion::IonBuilder *builder = state.ionWorklist[i];
-        if (CompiledScriptMatches(compartment, script, builder->script())) {
+        if (CompiledScriptMatches(compartment, script, builder->script().unsafeGet())) {
             FinishOffThreadIonCompile(builder);
             state.ionWorklist[i--] = state.ionWorklist.back();
             state.ionWorklist.popBack();
@@ -99,7 +103,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
     for (size_t i = 0; i < state.numThreads; i++) {
         const WorkerThread &helper = state.threads[i];
         while (helper.ionBuilder &&
-               CompiledScriptMatches(compartment, script, helper.ionBuilder->script()))
+               CompiledScriptMatches(compartment, script, helper.ionBuilder->script().unsafeGet()))
         {
             helper.ionBuilder->cancel();
             state.wait(WorkerThreadState::MAIN);
@@ -111,7 +115,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
     /* Cancel code generation for any completed entries. */
     for (size_t i = 0; i < compilations.length(); i++) {
         ion::IonBuilder *builder = compilations[i];
-        if (CompiledScriptMatches(compartment, script, builder->script())) {
+        if (CompiledScriptMatches(compartment, script, builder->script().unsafeGet())) {
             ion::FinishOffThreadBuilder(builder);
             compilations[i--] = compilations.back();
             compilations.popBack();
@@ -279,6 +283,9 @@ WorkerThread::threadLoop()
     WorkerThreadState &state = *runtime->workerThreadState;
     state.lock();
 
+    threadData.construct(runtime);
+    js::TlsPerThreadData.set(threadData.addr());
+
     while (true) {
         JS_ASSERT(!ionBuilder);
 
@@ -292,13 +299,14 @@ WorkerThread::threadLoop()
 
         ionBuilder = state.ionWorklist.popCopy();
 
-        JS_ASSERT(ionBuilder->script()->ions[ionBuilder->info().compileMode()] == ION_COMPILING_SCRIPT);
+        ion::ExecutionMode executionMode = ionBuilder->info().executionMode();
+        JS_ASSERT(GetIonScript(ionBuilder->script().unsafeGet(), executionMode) == ION_COMPILING_SCRIPT);
 
         state.unlock();
 
         {
             ion::IonContext ictx(NULL, ionBuilder->script()->compartment(), &ionBuilder->temp());
-            ionBuilder->backgroundCompiledLir = ion::CompileBackEnd(ionBuilder);
+            ionBuilder->setBackgroundCodegen(ion::CompileBackEnd(ionBuilder));
         }
 
         state.lock();

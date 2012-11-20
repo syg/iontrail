@@ -90,6 +90,9 @@ MOCHITEST_FILES = \
 		test_browserElement_inproc_PromptCheck.html \
 		browserElement_PromptConfirm.js \
 		test_browserElement_inproc_PromptConfirm.html \
+		browserElement_CookiesNotThirdParty.js \
+		file_browserElement_CookiesNotThirdParty.html \
+		test_browserElement_inproc_CookiesNotThirdParty.html \
 		browserElement_Close.js \
 		test_browserElement_inproc_Close.html \
 		browserElement_CloseFromOpener.js \
@@ -150,6 +153,8 @@ MOCHITEST_FILES = \
 		file_post_request.html \
 		test_browserElement_inproc_ReloadPostRequest.html \
 		browserElement_ReloadPostRequest.js \
+		browserElement_PurgeHistory.js \
+		test_browserElement_inproc_PurgeHistory.html \
 		$(NULL)
 
 # Disabled due to https://bugzilla.mozilla.org/show_bug.cgi?id=774100
@@ -194,6 +199,7 @@ MOCHITEST_FILES += \
 		test_browserElement_oop_TargetBlank.html \
 		test_browserElement_oop_PromptCheck.html \
 		test_browserElement_oop_PromptConfirm.html \
+		test_browserElement_oop_CookiesNotThirdParty.html \
 		test_browserElement_oop_Close.html \
 		test_browserElement_oop_CloseFromOpener.html \
 		test_browserElement_oop_CloseApp.html \
@@ -216,6 +222,7 @@ MOCHITEST_FILES += \
 		test_browserElement_oop_ExposableURI.html \
 		test_browserElement_oop_FrameWrongURI.html \
 		test_browserElement_oop_ReloadPostRequest.html \
+		test_browserElement_oop_PurgeHistory.html \
 	$(NULL)
 endif #}
 endif #}

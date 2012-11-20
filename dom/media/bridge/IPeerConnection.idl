@@ -5,6 +5,19 @@
 interface nsIDOMMediaStream;
 interface nsIDOMDataChannel;
 
+/*
+ * Manager interface to PeerConnection.js so it is accessible from C++.
+ */
+[scriptable, uuid(c2218bd2-2648-4701-8fa6-305d3379e9f8)]
+interface IPeerConnectionManager : nsISupports
+{
+  boolean hasActivePeerConnection(in unsigned long innerWindowID);
+};
+
+%{C++
+#define IPEERCONNECTION_MANAGER_CONTRACTID "@mozilla.org/dom/peerconnectionmanager;1"
+%}
+
 /* Do not confuse with nsIDOMRTCPeerConnection. This interface is purely for
  * communication between the PeerConnection JS DOM binding and the C++
  * implementation in SIPCC.
@@ -52,7 +65,7 @@ interface IPeerConnectionObserver : nsISupports
   void foundIceCandidate(in string candidate);
 };
 
-[scriptable, uuid(f6819246-f5af-40f2-ab82-e166d5da7ba0)]
+[scriptable, uuid(c86903c7-0a2e-42b4-903c-1518f03b9ba5)]
 interface IPeerConnection : nsISupports
 {
   const unsigned long kHintAudio = 0x00000001;
@@ -68,6 +81,11 @@ interface IPeerConnection : nsISupports
   const long kIceChecking = 2;
   const long kIceConnected = 3;
   const long kIceFailed = 4;
+
+  /* for 'type' in DataChannelInit dictionary */
+  const unsigned short kDataChannelReliable = 0;
+  const unsigned short kDataChannelPartialReliableRexmit = 1;
+  const unsigned short kDataChannelPartialReliableTimed = 2;
 
   /* Must be called first. Observer events will be dispatched on the thread provided */
   void initialize(in IPeerConnectionObserver observer, in nsIDOMWindow window,
@@ -95,7 +113,7 @@ interface IPeerConnection : nsISupports
   void addIceCandidate(in string candidate, in string mid, in unsigned short level);
 
   /* Puts the SIPCC engine back to 'kIdle', shuts down threads, deletes state */
-  void close();
+  void close(in bool isSynchronous);
 
   /* Attributes */
   readonly attribute string localDescription;

@@ -8,19 +8,19 @@
 #ifndef jsion_par_functions_h__
 #define jsion_par_functions_h__
 
-#include "jsthreadpool.h"
-#include "jstaskset.h"
+#include "vm/threadpool.h"
+#include "vm/forkjoin.h"
 #include "gc/Heap.h"
 
 namespace js {
 namespace ion {
 
-ThreadContext *ParThreadContext();
-JSObject *ParNewGCThing(ThreadContext *threadContext, JSCompartment *compartment,
-                        gc::AllocKind allocKind, size_t thingSize);
-bool ParWriteGuard(ThreadContext *context, JSObject *object);
+ForkJoinSlice *ParForkJoinSlice();
+JSObject *ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
+                        gc::AllocKind allocKind, uint32_t thingSize);
+bool ParWriteGuard(ForkJoinSlice *context, JSObject *object);
 void ParBailout(uint32_t id);
-bool ParCheckInterrupt(ThreadContext *context);
+bool ParCheckInterrupt(ForkJoinSlice *context);
 
 }
 }

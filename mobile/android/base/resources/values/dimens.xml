@@ -15,10 +15,15 @@
     <dimen name="autocomplete_row_height">32dp</dimen>
     <dimen name="awesomebar_header_row_height">20dp</dimen>
     <dimen name="awesomebar_row_height">48dp</dimen>
+    <dimen name="awesomebar_row_favicon_size_small">16dp</dimen>
+    <dimen name="awesomebar_row_favicon_size_large">32dp</dimen>
+    <dimen name="awesomebar_row_favicon_bg">32dp</dimen>
+    <dimen name="awesomebar_row_favicon_bg_radius">1dp</dimen>
     <dimen name="awesomebar_tab_transparency_height">38dp</dimen>
     <dimen name="browser_toolbar_height">48dp</dimen>
     <dimen name="browser_toolbar_icon_width">36dp</dimen>
     <dimen name="browser_toolbar_lock_width">21.33dp</dimen>
+    <dimen name="browser_toolbar_favicon_size">29.33dip</dimen>
     <dimen name="doorhanger_arrow_width">44dp</dimen>
     <dimen name="flow_layout_spacing">6dp</dimen>
     <dimen name="local_tab_row_height">108dp</dimen>
@@ -45,4 +50,9 @@
     <dimen name="validation_message_margin_top">6dp</dimen>
     <dimen name="widget_padding">8dp</dimen>
 
+    <dimen name="app_defaultsize_w">632.0dip</dimen>
+    <dimen name="app_defaultsize_h">598.0dip</dimen>
+    <dimen name="app_minimumsize_w">632.0dip</dimen>
+    <dimen name="app_minimumsize_h">598.0dip</dimen>
+   
 </resources>

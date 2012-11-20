@@ -73,9 +73,9 @@ TabParent *TabParent::mIMETabParent = nullptr;
 
 NS_IMPL_ISUPPORTS3(TabParent, nsITabParent, nsIAuthPromptProvider, nsISecureBrowserUI)
 
-TabParent::TabParent(mozIApplication* aApp, bool aIsBrowserElement)
-  : mFrameElement(NULL)
-  , mApp(aApp)
+TabParent::TabParent(const TabContext& aContext)
+  : TabContext(aContext)
+  , mFrameElement(NULL)
   , mIMESelectionAnchor(0)
   , mIMESelectionFocus(0)
   , mIMEComposing(false)
@@ -85,8 +85,8 @@ TabParent::TabParent(mozIApplication* aApp, bool aIsBrowserElement)
   , mEventCaptureDepth(0)
   , mDimensions(0, 0)
   , mDPI(0)
-  , mIsBrowserElement(aIsBrowserElement)
   , mShown(false)
+  , mIsDestroyed(false)
 {
 }
 
@@ -104,6 +104,10 @@ TabParent::SetOwnerElement(nsIDOMElement* aElement)
 void
 TabParent::Destroy()
 {
+  if (mIsDestroyed) {
+    return;
+  }
+
   // If this fails, it's most likely due to a content-process crash,
   // and auto-cleanup will kick in.  Otherwise, the child side will
   // destroy itself and send back __delete__().
@@ -118,6 +122,7 @@ TabParent::Destroy()
   if (RenderFrameParent* frame = GetRenderFrame()) {
     frame->Destroy();
   }
+  mIsDestroyed = true;
 }
 
 bool
@@ -188,7 +193,7 @@ TabParent::AnswerCreateWindow(PBrowserParent** retval)
     }
 
     // Only non-app, non-browser processes may call CreateWindow.
-    if (GetApp() || IsBrowserElement()) {
+    if (IsBrowserOrApp()) {
         return false;
     }
 
@@ -215,6 +220,9 @@ TabParent::AnswerCreateWindow(PBrowserParent** retval)
 void
 TabParent::LoadURL(nsIURI* aURI)
 {
+    if (mIsDestroyed) {
+      return;
+    }
     if (!mShown) {
       nsAutoCString spec;
       if (aURI) {
@@ -237,12 +245,17 @@ TabParent::Show(const nsIntSize& size)
     // sigh
     mShown = true;
     mDimensions = size;
-    unused << SendShow(size);
+    if (!mIsDestroyed) {
+      unused << SendShow(size);
+    }
 }
 
 void
 TabParent::UpdateDimensions(const nsRect& rect, const nsIntSize& size)
 {
+  if (mIsDestroyed) {
+    return;
+  }
   unused << SendUpdateDimensions(rect, size);
   if (RenderFrameParent* rfp = GetRenderFrame()) {
     rfp->NotifyDimensionsChanged(size.width, size.height);
@@ -253,29 +266,46 @@ TabParent::UpdateDimensions(const nsRect& rect, const nsIntSize& size)
 void
 TabParent::UpdateFrame(const FrameMetrics& aFrameMetrics)
 {
-  unused << SendUpdateFrame(aFrameMetrics);
+  if (!mIsDestroyed) {
+    unused << SendUpdateFrame(aFrameMetrics);
+  }
 }
 
 void TabParent::HandleDoubleTap(const nsIntPoint& aPoint)
 {
-  unused << SendHandleDoubleTap(aPoint);
+  if (!mIsDestroyed) {
+    unused << SendHandleDoubleTap(aPoint);
+  }
 }
 
 void TabParent::HandleSingleTap(const nsIntPoint& aPoint)
 {
-  unused << SendHandleSingleTap(aPoint);
+  if (!mIsDestroyed) {
+    unused << SendHandleSingleTap(aPoint);
+  }
+}
+
+void TabParent::HandleLongTap(const nsIntPoint& aPoint)
+{
+  if (!mIsDestroyed) {
+    unused << SendHandleLongTap(aPoint);
+  }
 }
 
 void
 TabParent::Activate()
 {
+  if (!mIsDestroyed) {
     unused << SendActivate();
+  }
 }
 
 void
 TabParent::Deactivate()
 {
-  unused << SendDeactivate();
+  if (!mIsDestroyed) {
+    unused << SendDeactivate();
+  }
 }
 
 NS_IMETHODIMP
@@ -319,9 +349,9 @@ TabParent::DeallocPDocumentRenderer(PDocumentRendererParent* actor)
 }
 
 PContentPermissionRequestParent*
-TabParent::AllocPContentPermissionRequest(const nsCString& type, const IPC::Principal& principal)
+TabParent::AllocPContentPermissionRequest(const nsCString& type, const nsCString& access, const IPC::Principal& principal)
 {
-  return new ContentPermissionRequestParent(type, mFrameElement, principal);
+  return new ContentPermissionRequestParent(type, access, mFrameElement, principal);
 }
 
 bool
@@ -336,9 +366,11 @@ TabParent::SendMouseEvent(const nsAString& aType, float aX, float aY,
                           int32_t aButton, int32_t aClickCount,
                           int32_t aModifiers, bool aIgnoreRootScrollFrame)
 {
-  unused << PBrowserParent::SendMouseEvent(nsString(aType), aX, aY,
-                                           aButton, aClickCount,
-                                           aModifiers, aIgnoreRootScrollFrame);
+  if (!mIsDestroyed) {
+    unused << PBrowserParent::SendMouseEvent(nsString(aType), aX, aY,
+                                             aButton, aClickCount,
+                                             aModifiers, aIgnoreRootScrollFrame);
+  }
 }
 
 void
@@ -348,12 +380,17 @@ TabParent::SendKeyEvent(const nsAString& aType,
                         int32_t aModifiers,
                         bool aPreventDefault)
 {
-  unused << PBrowserParent::SendKeyEvent(nsString(aType), aKeyCode, aCharCode,
-                                         aModifiers, aPreventDefault);
+  if (!mIsDestroyed) {
+    unused << PBrowserParent::SendKeyEvent(nsString(aType), aKeyCode, aCharCode,
+                                           aModifiers, aPreventDefault);
+  }
 }
 
 bool TabParent::SendRealMouseEvent(nsMouseEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   nsMouseEvent e(event);
   MaybeForwardEventToRenderFrame(event, &e);
   return PBrowserParent::SendRealMouseEvent(e);
@@ -361,6 +398,9 @@ bool TabParent::SendRealMouseEvent(nsMouseEvent& event)
 
 bool TabParent::SendMouseWheelEvent(WheelEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   WheelEvent e(event);
   MaybeForwardEventToRenderFrame(event, &e);
   return PBrowserParent::SendMouseWheelEvent(event);
@@ -368,6 +408,9 @@ bool TabParent::SendMouseWheelEvent(WheelEvent& event)
 
 bool TabParent::SendRealKeyEvent(nsKeyEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   nsKeyEvent e(event);
   MaybeForwardEventToRenderFrame(event, &e);
   return PBrowserParent::SendRealKeyEvent(e);
@@ -375,6 +418,9 @@ bool TabParent::SendRealKeyEvent(nsKeyEvent& event)
 
 bool TabParent::SendRealTouchEvent(nsTouchEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   if (event.message == NS_TOUCH_START) {
     MOZ_ASSERT((!sEventCapturer && mEventCaptureDepth == 0) ||
                (sEventCapturer == this && mEventCaptureDepth > 0));
@@ -515,22 +561,20 @@ TabParent::RecvNotifyIMEFocus(const bool& aFocus,
                               uint32_t* aSeqno)
 {
   nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (!widget)
+  if (!widget) {
+    aPreference->mWantUpdates = false;
+    aPreference->mWantHints = false;
     return true;
+  }
 
   *aSeqno = mIMESeqno;
   mIMETabParent = aFocus ? this : nullptr;
   mIMESelectionAnchor = 0;
   mIMESelectionFocus = 0;
-  nsresult rv = widget->OnIMEFocusChange(aFocus);
+  widget->OnIMEFocusChange(aFocus);
 
   if (aFocus) {
-    if (NS_SUCCEEDED(rv)) {
-      *aPreference = widget->GetIMEUpdatePreference();
-    } else {
-      aPreference->mWantUpdates = false;
-      aPreference->mWantHints = false;
-    }
+    *aPreference = widget->GetIMEUpdatePreference();
   } else {
     mIMECacheText.Truncate(0);
   }
@@ -645,6 +689,9 @@ TabParent::HandleQueryContentEvent(nsQueryContentEvent& aEvent)
 bool
 TabParent::SendCompositionEvent(nsCompositionEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   mIMEComposing = event.message != NS_COMPOSITION_END;
   mIMECompositionStart = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
   if (mIMECompositionEnding)
@@ -663,6 +710,9 @@ TabParent::SendCompositionEvent(nsCompositionEvent& event)
 bool
 TabParent::SendTextEvent(nsTextEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   if (mIMECompositionEnding) {
     mIMECompositionText = event.theText;
     return true;
@@ -683,6 +733,9 @@ TabParent::SendTextEvent(nsTextEvent& event)
 bool
 TabParent::SendSelectionEvent(nsSelectionEvent& event)
 {
+  if (mIsDestroyed) {
+    return false;
+  }
   mIMESelectionAnchor = event.mOffset + (event.mReversed ? event.mLength : 0);
   mIMESelectionFocus = event.mOffset + (!event.mReversed ? event.mLength : 0);
   event.seqno = ++mIMESeqno;
@@ -891,17 +944,23 @@ TabParent::RecvPIndexedDBConstructor(PIndexedDBParent* aActor,
 
   // XXXbent Need to make sure we have a whitelist for chrome databases!
 
-  // Verify the appID in the origin first.
-  if (mApp && !aASCIIOrigin.EqualsLiteral("chrome")) {
-    uint32_t appId;
-    rv = mApp->GetLocalId(&appId);
-    NS_ENSURE_SUCCESS(rv, false);
+  // Verify that the child is requesting to access a database it's allowed to
+  // see.  (aASCIIOrigin here specifies a TabContext + a website origin, and
+  // we're checking that the TabContext may access it.)
+  //
+  // We have to check IsBrowserOrApp() because TabContextMayAccessOrigin will
+  // fail if we're not a browser-or-app, since aASCIIOrigin will be a plain URI,
+  // but TabContextMayAccessOrigin will construct an extended origin using
+  // app-id 0.  Note that as written below, we allow a non browser-or-app child
+  // to read any database.  That's a security hole, but we don't ship a
+  // configuration which creates non browser-or-app children, so it's not a big
+  // deal.
+  if (!aASCIIOrigin.EqualsLiteral("chrome") && IsBrowserOrApp() &&
+      !IndexedDatabaseManager::TabContextMayAccessOrigin(*this, aASCIIOrigin)) {
 
-    if (!IndexedDatabaseManager::OriginMatchesApp(aASCIIOrigin, appId)) {
-      NS_WARNING("App attempted to open databases that it does not have "
-                 "permission to access!");
-      return false;
-    }
+    NS_WARNING("App attempted to open databases that it does not have "
+               "permission to access!");
+    return false;
   }
 
   nsCOMPtr<nsINode> node = do_QueryInterface(GetOwnerElement());
@@ -1159,28 +1218,13 @@ TabParent::GetWidget() const
 }
 
 bool
-TabParent::IsForMozBrowser()
-{
-  nsCOMPtr<nsIContent> content = do_QueryInterface(mFrameElement);
-  nsCOMPtr<nsIMozBrowserFrame> browserFrame = do_QueryInterface(content);
-  if (browserFrame) {
-    bool isBrowser = false;
-    browserFrame->GetReallyIsBrowser(&isBrowser);
-    return isBrowser;
-  }
-  return false;
-}
-
-bool
 TabParent::UseAsyncPanZoom()
 {
   bool usingOffMainThreadCompositing = !!CompositorParent::CompositorLoop();
   bool asyncPanZoomEnabled =
     Preferences::GetBool("layers.async-pan-zoom.enabled", false);
-  ContentParent* cp = static_cast<ContentParent*>(Manager());
   return (usingOffMainThreadCompositing &&
-          !cp->IsForApp() && IsForMozBrowser() &&
-          asyncPanZoomEnabled);
+          IsBrowserElement() && asyncPanZoomEnabled);
 }
 
 void

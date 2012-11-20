@@ -326,17 +326,17 @@ SHELL_WRAPPER0(schedulePauseComposition)
 SHELL_WRAPPER2(scheduleResumeComposition, jint, jint)
 SHELL_WRAPPER0_WITH_RETURN(computeRenderIntegrity, jfloat)
 SHELL_WRAPPER3_WITH_RETURN(saveMessageInSentbox, jint, jstring, jstring, jlong)
-SHELL_WRAPPER6(notifySmsSent, jint, jstring, jstring, jlong, jint, jlong)
+SHELL_WRAPPER5(notifySmsSent, jint, jstring, jstring, jlong, jint)
 SHELL_WRAPPER5(notifySmsDelivery, jint, jint, jstring, jstring, jlong)
-SHELL_WRAPPER3(notifySmsSendFailed, jint, jint, jlong)
-SHELL_WRAPPER8(notifyGetSms, jint, jint, jstring, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER3(notifyGetSmsFailed, jint, jint, jlong)
-SHELL_WRAPPER3(notifySmsDeleted, jboolean, jint, jlong)
-SHELL_WRAPPER3(notifySmsDeleteFailed, jint, jint, jlong)
-SHELL_WRAPPER2(notifyNoMessageInList, jint, jlong)
-SHELL_WRAPPER9(notifyListCreated, jint, jint, jint, jstring, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER8(notifyGotNextMessage, jint, jint, jstring, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER3(notifyReadingMessageListFailed, jint, jint, jlong)
+SHELL_WRAPPER2(notifySmsSendFailed, jint, jint)
+SHELL_WRAPPER7(notifyGetSms, jint, jint, jstring, jstring, jstring, jlong, jint)
+SHELL_WRAPPER2(notifyGetSmsFailed, jint, jint)
+SHELL_WRAPPER2(notifySmsDeleted, jboolean, jint)
+SHELL_WRAPPER2(notifySmsDeleteFailed, jint, jint)
+SHELL_WRAPPER1(notifyNoMessageInList, jint)
+SHELL_WRAPPER8(notifyListCreated, jint, jint, jint, jstring, jstring, jstring, jlong, jint)
+SHELL_WRAPPER7(notifyGotNextMessage, jint, jint, jstring, jstring, jstring, jlong, jint)
+SHELL_WRAPPER2(notifyReadingMessageListFailed, jint, jint)
 SHELL_WRAPPER2(notifyFilePickerResult, jstring, jlong)
 SHELL_WRAPPER1_WITH_RETURN(getSurfaceBits, jobject, jobject)
 SHELL_WRAPPER1(onFullScreenPluginHidden, jobject)
@@ -643,7 +643,8 @@ extractBuf(const char * path, Zip *zip)
   if (!zip->GetStream(path, &s))
     return NULL;
 
-  void * buf = malloc(s.GetUncompressedSize());
+  // allocate space for a trailing null byte
+  void * buf = malloc(s.GetUncompressedSize() + 1);
   if (buf == (void *)-1) {
     __android_log_print(ANDROID_LOG_ERROR, "GeckoLibLoad", "Couldn't alloc decompression buffer for %s", path);
     return NULL;
@@ -652,6 +653,9 @@ extractBuf(const char * path, Zip *zip)
     extractLib(s, buf);
   else
     memcpy(buf, s.GetBuffer(), s.GetUncompressedSize());
+
+  // null terminate it
+  ((unsigned char*) buf)[s.GetUncompressedSize()] = 0;
 
   return buf;
 }

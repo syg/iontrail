@@ -353,16 +353,16 @@ public:
   void SetEnumAttribute(TestEnum);
 
   // Callback types
-  void PassCallback(JSContext*, JSObject&);
-  void PassNullableCallback(JSContext*, JSObject*);
-  void PassOptionalCallback(JSContext*, const Optional<NonNull<JSObject> >&);
-  void PassOptionalNullableCallback(JSContext*, const Optional<JSObject*>&);
-  void PassOptionalNullableCallbackWithDefaultValue(JSContext*, JSObject*);
-  JSObject* ReceiveCallback(JSContext*);
-  JSObject* ReceiveNullableCallback(JSContext*);
-  void PassNullableTreatAsNullCallback(JSContext*, JSObject*);
-  void PassOptionalNullableTreatAsNullCallback(JSContext*, const Optional<JSObject*>&);
-  void PassOptionalNullableTreatAsNullCallbackWithDefaultValue(JSContext*, JSObject*);
+  void PassCallback(TestCallback&);
+  void PassNullableCallback(TestCallback*);
+  void PassOptionalCallback(const Optional<OwningNonNull<TestCallback> >&);
+  void PassOptionalNullableCallback(const Optional<nsRefPtr<TestCallback> >&);
+  void PassOptionalNullableCallbackWithDefaultValue(TestCallback*);
+  already_AddRefed<TestCallback> ReceiveCallback();
+  already_AddRefed<TestCallback> ReceiveNullableCallback();
+  void PassNullableTreatAsNullCallback(TestTreatAsNullCallback*);
+  void PassOptionalNullableTreatAsNullCallback(const Optional<nsRefPtr<TestTreatAsNullCallback> >&);
+  void PassOptionalNullableTreatAsNullCallbackWithDefaultValue(TestTreatAsNullCallback*);
 
   // Any types
   void PassAny(JSContext*, JS::Value);
@@ -403,7 +403,7 @@ public:
   void PassUnionWithArrayBuffer(const ArrayBufferOrLong&);
   void PassUnionWithString(JSContext*, const StringOrObject&);
   //void PassUnionWithEnum(JSContext*, const TestEnumOrObject&);
-  void PassUnionWithCallback(JSContext*, const TestCallbackOrLong&);
+  //void PassUnionWithCallback(JSContext*, const TestCallbackOrLong&);
   void PassUnionWithObject(JSContext*, const ObjectOrLong&);
 
   // binaryNames tests
@@ -422,6 +422,7 @@ public:
   void PassDictionaryOrLong(int32_t);
   void PassDictContainingDict(const DictContainingDict&);
   void PassDictContainingSequence(const DictContainingSequence&);
+  void ReceiveDictContainingSequence(DictContainingSequence&);
 
   // Typedefs
   void ExerciseTypedefInterfaces1(TestInterface&);
@@ -438,10 +439,18 @@ public:
   void SetAttrWithLenientThis(int32_t);
   uint32_t UnforgeableAttr();
   uint32_t UnforgeableAttr2();
+  void Stringify(nsString&);
   void PassRenamedInterface(nsRenamedInterface&);
   TestInterface* PutForwardsAttr();
   TestInterface* PutForwardsAttr2();
   TestInterface* PutForwardsAttr3();
+  void ThrowingMethod(ErrorResult& aRv);
+  bool GetThrowingAttr(ErrorResult& aRv) const;
+  void SetThrowingAttr(bool arg, ErrorResult& aRv);
+  bool GetThrowingGetterAttr(ErrorResult& aRv) const;
+  void SetThrowingGetterAttr(bool arg);
+  bool ThrowingSetterAttr() const;
+  void SetThrowingSetterAttr(bool arg, ErrorResult& aRv);
 
   // Methods and properties imported via "implements"
   bool ImplementedProperty();
@@ -612,6 +621,23 @@ public:
   virtual nsISupports* GetParentObject();
 
   void NamedGetter(const nsAString&, bool&, nsAString&);
+  void GetSupportedNames(nsTArray<nsString>&);
+};
+
+class TestIndexedGetterAndSetterAndNamedGetterInterface : public nsISupports,
+                                                          public nsWrapperCache
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  void NamedGetter(const nsAString&, bool&, nsAString&);
+  void GetSupportedNames(nsTArray<nsString>&);
+  int32_t IndexedGetter(uint32_t, bool&);
+  void IndexedSetter(uint32_t, int32_t);
+  uint32_t Length();
 };
 
 class TestIndexedAndNamedGetterInterface : public nsISupports,
@@ -627,6 +653,7 @@ public:
   void NamedGetter(const nsAString&, bool&, nsAString&);
   void NamedItem(const nsAString&, nsAString&);
   uint32_t Length();
+  void GetSupportedNames(nsTArray<nsString>&);
 };
 
 class TestIndexedSetterInterface : public nsISupports,
@@ -639,6 +666,8 @@ public:
   virtual nsISupports* GetParentObject();
 
   void IndexedSetter(uint32_t, const nsAString&);
+  void IndexedGetter(uint32_t, bool&, nsString&);
+  uint32_t Length();
   void SetItem(uint32_t, const nsAString&);
 };
 
@@ -652,6 +681,8 @@ public:
   virtual nsISupports* GetParentObject();
 
   void NamedSetter(const nsAString&, TestIndexedSetterInterface&);
+  TestIndexedSetterInterface* NamedGetter(const nsAString&, bool&);
+  void GetSupportedNames(nsTArray<nsString>&);
 };
 
 class TestIndexedAndNamedSetterInterface : public nsISupports,
@@ -664,8 +695,12 @@ public:
   virtual nsISupports* GetParentObject();
 
   void IndexedSetter(uint32_t, TestIndexedSetterInterface&);
+  TestIndexedSetterInterface* IndexedGetter(uint32_t, bool&);
+  uint32_t Length();
   void NamedSetter(const nsAString&, TestIndexedSetterInterface&);
+  TestIndexedSetterInterface* NamedGetter(const nsAString&, bool&);
   void SetNamedItem(const nsAString&, TestIndexedSetterInterface&);
+  void GetSupportedNames(nsTArray<nsString>&);
 };
 
 class TestIndexedAndNamedGetterAndSetterInterface : public TestIndexedSetterInterface
@@ -680,6 +715,7 @@ public:
   void NamedSetter(const nsAString&, const nsAString&);
   void Stringify(nsAString&);
   uint32_t Length();
+  void GetSupportedNames(nsTArray<nsString>&);
 };
 
 class TestCppKeywordNamedMethodsInterface : public nsISupports,
@@ -694,6 +730,92 @@ public:
   bool Continue();
   bool Delete();
   int32_t Volatile();
+};
+
+class TestIndexedDeleterInterface : public nsISupports,
+                                    public nsWrapperCache
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  void IndexedDeleter(uint32_t, bool&);
+  void IndexedDeleter(uint32_t) MOZ_DELETE;
+  long IndexedGetter(uint32_t, bool&);
+  uint32_t Length();
+  void DelItem(uint32_t);
+  void DelItem(uint32_t, bool&) MOZ_DELETE;
+};
+
+class TestIndexedDeleterWithRetvalInterface : public nsISupports,
+                                              public nsWrapperCache
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  bool IndexedDeleter(uint32_t, bool&);
+  bool IndexedDeleter(uint32_t) MOZ_DELETE;
+  long IndexedGetter(uint32_t, bool&);
+  uint32_t Length();
+  bool DelItem(uint32_t);
+  bool DelItem(uint32_t, bool&) MOZ_DELETE;
+};
+
+class TestNamedDeleterInterface : public nsISupports,
+                                  public nsWrapperCache
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  void NamedDeleter(const nsAString&, bool&);
+  long NamedGetter(const nsAString&, bool&);
+  void GetSupportedNames(nsTArray<nsString>&);
+};
+
+class TestNamedDeleterWithRetvalInterface : public nsISupports,
+                                            public nsWrapperCache
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  bool NamedDeleter(const nsAString&, bool&);
+  bool NamedDeleter(const nsAString&) MOZ_DELETE;
+  long NamedGetter(const nsAString&, bool&);
+  bool DelNamedItem(const nsAString&);
+  bool DelNamedItem(const nsAString&, bool&) MOZ_DELETE;
+  void GetSupportedNames(nsTArray<nsString>&);
+};
+
+class TestIndexedAndNamedDeleterInterface : public nsISupports,
+                                            public nsWrapperCache
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  void IndexedDeleter(uint32_t, bool&);
+  long IndexedGetter(uint32_t, bool&);
+  uint32_t Length();
+
+  void NamedDeleter(const nsAString&, bool&);
+  void NamedDeleter(const nsAString&) MOZ_DELETE;
+  long NamedGetter(const nsAString&, bool&);
+  void DelNamedItem(const nsAString&);
+  void DelNamedItem(const nsAString&, bool&) MOZ_DELETE;
+  void GetSupportedNames(nsTArray<nsString>&);
 };
 
 } // namespace dom

@@ -220,6 +220,14 @@ IDBTransaction::OnRequestFinished()
 }
 
 void
+IDBTransaction::OnRequestDisconnected()
+{
+  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  NS_ASSERTION(mPendingRequests, "Mismatched calls!");
+  --mPendingRequests;
+}
+
+void
 IDBTransaction::RemoveObjectStore(const nsAString& aName)
 {
   NS_ASSERTION(mMode == IDBTransaction::VERSION_CHANGE,
@@ -588,9 +596,8 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(IDBTransaction)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IDBTransaction,
                                                   IDBWrapperCache)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mDatabase,
-                                                       nsIDOMEventTarget)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mError);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDatabase)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mError);
 
   for (uint32_t i = 0; i < tmp->mCreatedObjectStores.Length(); i++) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mCreatedObjectStores[i]");
@@ -606,7 +613,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(IDBTransaction, IDBWrapperCache)
   // Don't unlink mDatabase!
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mError);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mError);
 
   tmp->mCreatedObjectStores.Clear();
   tmp->mDeletedObjectStores.Clear();

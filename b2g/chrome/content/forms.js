@@ -18,6 +18,14 @@ XPCOMUtils.defineLazyServiceGetter(Services, "fm",
                                    "@mozilla.org/focus-manager;1",
                                    "nsIFocusManager");
 
+XPCOMUtils.defineLazyGetter(this, "domWindowUtils", function () {
+  return content.QueryInterface(Ci.nsIInterfaceRequestor)
+                .getInterface(Ci.nsIDOMWindowUtils);
+});
+
+const FOCUS_CHANGE_DELAY = 20;
+const RESIZE_SCROLL_DELAY = 20;
+
 let HTMLInputElement = Ci.nsIDOMHTMLInputElement;
 let HTMLTextAreaElement = Ci.nsIDOMHTMLTextAreaElement;
 let HTMLSelectElement = Ci.nsIDOMHTMLSelectElement;
@@ -28,7 +36,6 @@ let FormAssistant = {
   init: function fa_init() {
     addEventListener("focus", this, true, false);
     addEventListener("blur", this, true, false);
-    addEventListener("keypress", this, true, false);
     addEventListener("resize", this, true, false);
     addMessageListener("Forms:Select:Choice", this);
     addMessageListener("Forms:Input:Value", this);
@@ -37,10 +44,15 @@ let FormAssistant = {
     Services.obs.addObserver(this, "xpcom-shutdown", false);
   },
 
+  ignoredInputTypes: new Set([
+    'button', 'file', 'checkbox', 'radio', 'reset', 'submit', 'image'
+  ]),
+
   isKeyboardOpened: false,
   selectionStart: 0,
   selectionEnd: 0,
-
+  blurTimeout: null,
+  scrollIntoViewTimeout: null,
   _focusedElement: null,
 
   get focusedElement() {
@@ -80,43 +92,24 @@ let FormAssistant = {
 
     switch (evt.type) {
       case "focus":
-        if (this.isKeyboardOpened)
+        if (this.isTextInputElement(target) && this.isIMEDisabled())
           return;
 
-        let ignore = {
-          button: true,
-          file: true,
-          checkbox: true,
-          radio: true,
-          reset: true,
-          submit: true,
-          image: true
-        };
-    
-        if (target instanceof HTMLSelectElement) { 
-          content.setTimeout(function showIMEForSelect() {
-            sendAsyncMessage("Forms:Input", getJSON(target));
-          });
-          this.setFocusedElement(target);
-        } else if (target instanceof HTMLOptionElement &&
-                   target.parentNode instanceof HTMLSelectElement) {
-          target = target.parentNode;
-          content.setTimeout(function showIMEForSelect() {
-            sendAsyncMessage("Forms:Input", getJSON(target));
-          });
-          this.setFocusedElement(target);
-        } else if ((target instanceof HTMLInputElement && !ignore[target.type]) ||
-                    target instanceof HTMLTextAreaElement) {
-          this.isKeyboardOpened = this.tryShowIme(target);
-          this.setFocusedElement(target);
+        if (target && this.isFocusableElement(target)) {
+          if (this.blurTimeout) {
+            this.blurTimeout = content.clearTimeout(this.blurTimeout);
+            this.handleIMEStateDisabled();
+          }
+          this.handleIMEStateEnabled(target);
         }
         break;
 
       case "blur":
         if (this.focusedElement) {
-          sendAsyncMessage("Forms:Input", { "type": "blur" });
-          this.setFocusedElement(null);
-          this.isKeyboardOpened = false;
+          this.blurTimeout = content.setTimeout(function () {
+            this.blurTimeout = null;
+            this.handleIMEStateDisabled();
+          }.bind(this), FOCUS_CHANGE_DELAY);
         }
         break;
 
@@ -142,20 +135,21 @@ let FormAssistant = {
         if (!this.isKeyboardOpened)
           return;
 
-        if (this.focusedElement) {
-          this.focusedElement.scrollIntoView(false);
+        if (this.scrollIntoViewTimeout) {
+          content.clearTimeout(this.scrollIntoViewTimeout);
+          this.scrollIntoViewTimeout = null;
         }
-        break;
 
-      case "keypress":
-        if (evt.keyCode != evt.DOM_VK_ESCAPE || !this.isKeyboardOpened)
-          return;
-
-        sendAsyncMessage("Forms:Input", { "type": "blur" });
-        this.isKeyboardOpened = false;
-
-        evt.preventDefault();
-        evt.stopPropagation();
+        // We may receive multiple resize events in quick succession, so wait
+        // a bit before scrolling the input element into view.
+        if (this.focusedElement) {
+          this.scrollIntoViewTimeout = content.setTimeout(function () {
+            this.scrollIntoViewTimeout = null;
+            if (this.focusedElement) {
+              this.focusedElement.scrollIntoView(false);
+            }
+          }.bind(this), RESIZE_SCROLL_DELAY);
+        }
         break;
     }
   },
@@ -213,21 +207,17 @@ let FormAssistant = {
   observe: function fa_observe(subject, topic, data) {
     switch (topic) {
       case "ime-enabled-state-changed":
-        let isOpen = this.isKeyboardOpened;
         let shouldOpen = parseInt(data);
-        if (shouldOpen && !isOpen) {
-          let target = Services.fm.focusedElement;
+        let target = Services.fm.focusedElement;
+        if (!target || !this.isTextInputElement(target))
+          return;
 
-          if (!target || !this.tryShowIme(target)) {
-            this.setFocusedElement(null);
-            return;
-          } else {
-            this.setFocusedElement(target);
-          }
-        } else if (!shouldOpen && isOpen) {
-          sendAsyncMessage("Forms:Input", { "type": "blur" });
+        if (shouldOpen) {
+          if (!this.focusedElement && this.isFocusableElement(target))
+            this.handleIMEStateEnabled(target);
+        } else if (this._focusedElement == target) {
+          this.handleIMEStateDisabled();
         }
-        this.isKeyboardOpened = shouldOpen;
         break;
 
       case "xpcom-shutdown":
@@ -239,11 +229,59 @@ let FormAssistant = {
     }
   },
 
-  tryShowIme: function(element) {
-    if (!element) {
+  isIMEDisabled: function fa_isIMEDisabled() {
+    let disabled = false;
+    try {
+      disabled = domWindowUtils.IMEStatus == domWindowUtils.IME_STATUS_DISABLED;
+    } catch (e) {}
+
+    return disabled;
+  },
+
+  handleIMEStateEnabled: function fa_handleIMEStateEnabled(target) {
+    if (this.isKeyboardOpened)
       return;
+
+    if (target instanceof HTMLOptionElement)
+      target = target.parentNode;
+
+    let kbOpened = this.tryShowIme(target);
+    if (this.isTextInputElement(target))
+      this.isKeyboardOpened = kbOpened;
+
+    this.setFocusedElement(target);
+  },
+
+  handleIMEStateDisabled: function fa_handleIMEStateDisabled() {
+    sendAsyncMessage("Forms:Input", { "type": "blur" });
+    this.isKeyboardOpened = false;
+    this.setFocusedElement(null);
+  },
+
+  isFocusableElement: function fa_isFocusableElement(element) {
+    if (element.contentEditable && element.contentEditable == "true") {
+      return true;
     }
 
+    if (element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement)
+      return true;
+
+    if (element instanceof HTMLOptionElement &&
+        element.parentNode instanceof HTMLSelectElement)
+      return true;
+
+    return (element instanceof HTMLInputElement &&
+            !this.ignoredInputTypes.has(element.type));
+  },
+
+  isTextInputElement: function fa_isTextInputElement(element) {
+    return element instanceof HTMLInputElement ||
+           element instanceof HTMLTextAreaElement ||
+           (element.contentEditable && element.contentEditable == "true");
+  },
+
+  tryShowIme: function(element) {
     // FIXME/bug 729623: work around apparent bug in the IME manager
     // in gecko.
     let readonly = element.getAttribute("readonly");
@@ -261,6 +299,13 @@ FormAssistant.init();
 
 function getJSON(element) {
   let type = element.type || "";
+  let value = element.value || ""
+
+  // Treat contenteditble element as a special text field
+  if (element.contentEditable && element.contentEditable == "true") {
+    type = "text";
+    value = element.textContent;
+  }
 
   // Until the input type=date/datetime/time have been implemented
   // let's return their real type even if the platform returns 'text'
@@ -280,13 +325,13 @@ function getJSON(element) {
     }
   }
 
-  // Gecko supports the inputmode attribute on text fields (but not textareas).
-  // But it doesn't recognize "verbatim" and other modes that we're interested
-  // in in Gaia, and the inputmode property returns "auto" for any value
-  // that gecko does not support. So we must query the inputmode attribute
-  // with getAttribute() rather than just using the inputmode property here.
-  // See https://bugzilla.mozilla.org/show_bug.cgi?id=746142
-  let inputmode = element.getAttribute('inputmode');
+  // Gecko has some support for @inputmode but behind a preference and
+  // it is disabled by default.
+  // Gaia is then using @x-inputmode has its proprietary way to set
+  // inputmode for fields. This shouldn't be used outside of pre-installed
+  // apps because the attribute is going to disappear as soon as a definitive
+  // solution will be find.
+  let inputmode = element.getAttribute('x-inputmode');
   if (inputmode) {
     inputmode = inputmode.toLowerCase();
   } else {
@@ -296,7 +341,7 @@ function getJSON(element) {
   return {
     "type": type.toLowerCase(),
     "choices": getListForElement(element),
-    "value": element.value,
+    "value": value,
     "inputmode": inputmode,
     "selectionStart": element.selectionStart,
     "selectionEnd": element.selectionEnd

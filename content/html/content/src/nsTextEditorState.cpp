@@ -27,7 +27,7 @@
 #include "nsAttrValueInlines.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIDOMEventListener.h"
-#include "EditActionListener.h"
+#include "nsIEditorObserver.h"
 #include "nsINativeKeyBindings.h"
 #include "nsIDocumentEncoder.h"
 #include "nsISelectionPrivate.h"
@@ -38,6 +38,7 @@
 #include "mozilla/Selection.h"
 #include "nsEventListenerManager.h"
 #include "nsContentUtils.h"
+#include "mozilla/Preferences.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -616,7 +617,7 @@ nsTextInputSelectionImpl::CheckVisibilityContent(nsIContent* aNode,
 
 class nsTextInputListener : public nsISelectionListener,
                             public nsIDOMEventListener,
-                            public EditActionListener,
+                            public nsIEditorObserver,
                             public nsSupportsWeakReference
 {
 public:
@@ -641,7 +642,7 @@ public:
 
   NS_DECL_NSIDOMEVENTLISTENER
 
-  virtual void EditAction();
+  NS_DECL_NSIEDITOROBSERVER
 
 protected:
 
@@ -698,8 +699,9 @@ nsTextInputListener::~nsTextInputListener()
 {
 }
 
-NS_IMPL_ISUPPORTS3(nsTextInputListener,
+NS_IMPL_ISUPPORTS4(nsTextInputListener,
                    nsISelectionListener,
+                   nsIEditorObserver,
                    nsISupportsWeakReference,
                    nsIDOMEventListener)
 
@@ -830,7 +832,9 @@ nsTextInputListener::HandleEvent(nsIDOMEvent* aEvent)
   return NS_OK;
 }
 
-void
+// BEGIN nsIEditorObserver
+
+NS_IMETHODIMP
 nsTextInputListener::EditAction()
 {
   nsWeakFrame weakFrame = mFrame;
@@ -859,7 +863,7 @@ nsTextInputListener::EditAction()
   }
 
   if (!weakFrame.IsAlive()) {
-    return;
+    return NS_OK;
   }
 
   // Make sure we know we were changed (do NOT set this to false if there are
@@ -871,7 +875,12 @@ nsTextInputListener::EditAction()
   if (!mSettingValue) {
     mTxtCtrlElement->OnValueChanged(true);
   }
+
+  return NS_OK;
 }
+
+// END nsIEditorObserver
+
 
 nsresult
 nsTextInputListener::UpdateTextInputCommands(const nsAString& commandsToUpdate)
@@ -933,7 +942,8 @@ nsTextEditorState::nsTextEditorState(nsITextControlElement* aOwningElement)
     mInitializing(false),
     mValueTransferInProgress(false),
     mSelectionCached(true),
-    mSelectionRestoreEagerInit(false)
+    mSelectionRestoreEagerInit(false),
+    mPlaceholderVisibility(false)
 {
   MOZ_COUNT_CTOR(nsTextEditorState);
 }
@@ -966,19 +976,19 @@ void nsTextEditorState::Unlink()
 {
   nsTextEditorState* tmp = this;
   tmp->Clear();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mSelCon)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mEditor)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRootNode)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mPlaceholderDiv)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelCon)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mEditor)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRootNode)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPlaceholderDiv)
 }
 
 void nsTextEditorState::Traverse(nsCycleCollectionTraversalCallback& cb)
 {
   nsTextEditorState* tmp = this;
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mSelCon, nsISelectionController)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mEditor)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRootNode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPlaceholderDiv)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelCon)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEditor)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRootNode)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPlaceholderDiv)
 }
 
 nsFrameSelection*
@@ -1025,6 +1035,8 @@ public:
     if (!mCurrentValue.IsEmpty()) {
       value = &mCurrentValue;
     }
+
+    nsAutoScriptBlocker scriptBlocker;
 
     mState->PrepareEditor(value);
 
@@ -1198,7 +1210,7 @@ nsTextEditorState::PrepareEditor(const nsAString *aValue)
     preDestroyer.Init(newEditor);
 
     // Make sure we clear out the non-breaking space before we initialize the editor
-    rv = mBoundFrame->UpdateValueDisplay(false, true);
+    rv = mBoundFrame->UpdateValueDisplay(true, true);
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
     if (aValue || !mEditorInitialized) {
@@ -1376,7 +1388,7 @@ nsTextEditorState::PrepareEditor(const nsAString *aValue)
   }
 
   if (mTextListener)
-    newEditor->SetEditorObserver(mTextListener);
+    newEditor->AddEditorObserver(mTextListener);
 
   // Restore our selection after being bound to a new frame
   if (mSelectionCached) {
@@ -1400,7 +1412,7 @@ nsTextEditorState::DestroyEditor()
   // notify the editor that we are going away
   if (mEditorInitialized) {
     if (mTextListener)
-      mEditor->RemoveEditorObserver();
+      mEditor->RemoveEditorObserver(mTextListener);
 
     mEditor->PreDestroy(true);
     mEditorInitialized = false;
@@ -1668,8 +1680,8 @@ bool
 nsTextEditorState::GetMaxLength(int32_t* aMaxLength)
 {
   nsCOMPtr<nsIContent> content = do_QueryInterface(mTextCtrlElement);
-  NS_ENSURE_TRUE(content, false);
-  nsGenericHTMLElement* element = nsGenericHTMLElement::FromContent(content);
+  nsGenericHTMLElement* element =
+    nsGenericHTMLElement::FromContentOrNull(content);
   NS_ENSURE_TRUE(element, false);
 
   const nsAttrValue* attr = element->GetParsedAttr(nsGkAtoms::maxlength);
@@ -1965,9 +1977,7 @@ nsTextEditorState::ValueWasChanged(bool aNotify)
     return;
   }
 
-  nsAutoString valueString;
-  GetValue(valueString, true);
-  SetPlaceholderClass(valueString.IsEmpty(), aNotify);
+  UpdatePlaceholderVisibility(aNotify);
 }
 
 void
@@ -1991,28 +2001,25 @@ nsTextEditorState::UpdatePlaceholderText(bool aNotify)
 }
 
 void
-nsTextEditorState::SetPlaceholderClass(bool aVisible,
-                                       bool aNotify)
+nsTextEditorState::UpdatePlaceholderVisibility(bool aNotify)
 {
   NS_ASSERTION(mPlaceholderDiv, "This function should not be called if "
                                 "mPlaceholderDiv isn't set");
 
-  // No need to do anything if we don't have a frame yet
-  if (!mBoundFrame)
-    return;
+  nsAutoString value;
+  GetValue(value, true);
 
-  nsAutoString classValue;
+  mPlaceholderVisibility = value.IsEmpty();
 
-  classValue.Assign(NS_LITERAL_STRING("anonymous-div placeholder"));
+  if (mPlaceholderVisibility &&
+      !Preferences::GetBool("dom.placeholder.show_on_focus", true)) {
+    nsCOMPtr<nsIContent> content = do_QueryInterface(mTextCtrlElement);
+    mPlaceholderVisibility = !nsContentUtils::IsFocusedContent(content);
+  }
 
-  if (!aVisible)
-    classValue.AppendLiteral(" hidden");
-
-  nsIContent* placeholderDiv = GetPlaceholderNode();
-  NS_ENSURE_TRUE_VOID(placeholderDiv);
-
-  placeholderDiv->SetAttr(kNameSpaceID_None, nsGkAtoms::_class,
-                          classValue, aNotify);
+  if (mBoundFrame && aNotify) {
+    mBoundFrame->InvalidateFrame();
+  }
 }
 
 void

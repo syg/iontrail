@@ -1387,8 +1387,7 @@ nsWindow::SetFocus(bool aRaise)
     if (gRaiseWindows && aRaise && toplevelWidget &&
         !gtk_widget_has_focus(owningWidget) &&
         !gtk_widget_has_focus(toplevelWidget)) {
-        GtkWidget* top_window = nullptr;
-        GetToplevelWidget(&top_window);
+        GtkWidget* top_window = GetToplevelWidget();
         if (top_window && (gtk_widget_get_visible(top_window)))
         {
             gdk_window_show_unraised(gtk_widget_get_window(top_window));
@@ -1689,7 +1688,7 @@ nsWindow::GetNativeData(uint32_t aDataType)
         break;
 
     case NS_NATIVE_SHELLWIDGET:
-        return (void *) mShell;
+        return GetToplevelWidget();
 
     case NS_NATIVE_SHAREABLE_WINDOW:
         return (void *) GDK_WINDOW_XID(gdk_window_get_toplevel(mGdkWindow));
@@ -1873,11 +1872,9 @@ nsWindow::GetAttention(int32_t aCycleCount)
 {
     LOG(("nsWindow::GetAttention [%p]\n", (void *)this));
 
-    GtkWidget* top_window = nullptr;
-    GtkWidget* top_focused_window = nullptr;
-    GetToplevelWidget(&top_window);
-    if (gFocusWindow)
-        gFocusWindow->GetToplevelWidget(&top_focused_window);
+    GtkWidget* top_window = GetToplevelWidget();
+    GtkWidget* top_focused_window =
+        gFocusWindow ? gFocusWindow->GetToplevelWidget() : nullptr;
 
     // Don't get attention if the window is focused anyway.
     if (top_window && (gtk_widget_get_visible(top_window)) &&
@@ -2790,8 +2787,7 @@ nsWindow::OnContainerFocusInEvent(GdkEventFocus *aEvent)
     LOGFOCUS(("OnContainerFocusInEvent [%p]\n", (void *)this));
 
     // Unset the urgency hint, if possible
-    GtkWidget* top_window = nullptr;
-    GetToplevelWidget(&top_window);
+    GtkWidget* top_window = GetToplevelWidget();
     if (top_window && (gtk_widget_get_visible(top_window)))
         SetUrgencyHint(top_window, false);
 
@@ -3470,18 +3466,13 @@ nsWindow::Create(nsIWidget        *aParent,
             mShell = gtk_window_new(type);
             gtk_window_set_wmclass(GTK_WINDOW(mShell), "Popup",
                                    gdk_get_program_class());
-            
-            if (!aInitData->mNoAutoHide) {
-                GdkScreen *screen = gtk_widget_get_screen(mShell);
-                // Use an RGBA visual for all short-lived popup windows if
-                // we are on a compositing window manager. We don't do this in
+
+            if (aInitData->mSupportTranslucency) {
+                // We need to select an ARGB visual here instead of in
                 // SetTransparencyMode() because it has to be done before the
-                // widget is realized.
-                // Normally we would need to hook up to the screen's
-                // "composited-changed" signal, but we don't do that because
-                // we are only changing the visual on short-lived windows,
-                // so it doesn't matter too much if the screens compositor
-                // goes away
+                // widget is realized.  An ARGB visual is only useful if we
+                // are on a compositing window manager.
+                GdkScreen *screen = gtk_widget_get_screen(mShell);
                 if (gdk_screen_is_composited(screen)) {
 #if defined(MOZ_WIDGET_GTK2)
                     GdkColormap *colormap =
@@ -3492,7 +3483,8 @@ nsWindow::Create(nsIWidget        *aParent,
                     gtk_widget_set_visual(mShell, visual);
 #endif
                 }
-            } else {
+            }
+            if (aInitData->mNoAutoHide) {
                 // ... but the window manager does not decorate this window,
                 // nor provide a separate taskbar icon.
                 if (mBorderStyle == eBorderStyle_default) {
@@ -3580,7 +3572,8 @@ nsWindow::Create(nsIWidget        *aParent,
         gtk_widget_realize(container);
 
         // make sure this is the focus widget in the container
-        gtk_window_set_focus(GTK_WINDOW(mShell), container);
+        gtk_widget_show(container);
+        gtk_widget_grab_focus(container);
 
         // the drawing window
         mGdkWindow = gtk_widget_get_window(mShell);
@@ -3914,7 +3907,6 @@ nsWindow::NativeShow(bool aAction)
                 SetUserTimeAndStartupIDForActivatedWindow(mShell);
             }
 
-            gtk_widget_show(GTK_WIDGET(mContainer));
             gtk_widget_show(mShell);
         }
         else if (mContainer) {
@@ -3927,7 +3919,6 @@ nsWindow::NativeShow(bool aAction)
     else {
         if (mIsTopLevel) {
             gtk_widget_hide(GTK_WIDGET(mShell));
-            gtk_widget_hide(GTK_WIDGET(mContainer));
 
             ClearTransparencyBitmap(); // Release some resources
         }
@@ -4028,8 +4019,7 @@ nsWindow::SetTransparencyMode(nsTransparencyMode aMode)
 {
     if (!mShell) {
         // Pass the request to the toplevel window
-        GtkWidget *topWidget = nullptr;
-        GetToplevelWidget(&topWidget);
+        GtkWidget *topWidget = GetToplevelWidget();
         if (!topWidget)
             return;
 
@@ -4062,8 +4052,7 @@ nsWindow::GetTransparencyMode()
 {
     if (!mShell) {
         // Pass the request to the toplevel window
-        GtkWidget *topWidget = nullptr;
-        GetToplevelWidget(&topWidget);
+        GtkWidget *topWidget = GetToplevelWidget();
         if (!topWidget) {
             return eTransparencyOpaque;
         }
@@ -4378,8 +4367,7 @@ nsWindow::UpdateTranslucentWindowAlphaInternal(const nsIntRect& aRect,
 {
     if (!mShell) {
         // Pass the request to the toplevel window
-        GtkWidget *topWidget = nullptr;
-        GetToplevelWidget(&topWidget);
+        GtkWidget *topWidget = GetToplevelWidget();
         if (!topWidget)
             return NS_ERROR_FAILURE;
 
@@ -4474,21 +4462,18 @@ nsWindow::ReleaseGrabs(void)
     gdk_pointer_ungrab(GDK_CURRENT_TIME);
 }
 
-void
-nsWindow::GetToplevelWidget(GtkWidget **aWidget)
+GtkWidget *
+nsWindow::GetToplevelWidget()
 {
-    *aWidget = nullptr;
-
     if (mShell) {
-        *aWidget = mShell;
-        return;
+        return mShell;
     }
 
     GtkWidget *widget = GetMozContainerWidget();
     if (!widget)
-        return;
+        return nullptr;
 
-    *aWidget = gtk_widget_get_toplevel(widget);
+    return gtk_widget_get_toplevel(widget);
 }
 
 GtkWidget *
@@ -4724,8 +4709,7 @@ nsWindow::HideWindowChrome(bool aShouldHide)
 {
     if (!mShell) {
         // Pass the request to the toplevel window
-        GtkWidget *topWidget = nullptr;
-        GetToplevelWidget(&topWidget);
+        GtkWidget *topWidget = GetToplevelWidget();
         if (!topWidget)
             return NS_ERROR_FAILURE;
 
@@ -5652,7 +5636,7 @@ drag_motion_event_cb(GtkWidget *aWidget,
 
     return nsDragService::GetInstance()->
         ScheduleMotionEvent(innerMostWindow, aDragContext,
-                            nsIntPoint(aX, aY), aTime);
+                            nsIntPoint(retx, rety), aTime);
 }
 
 static void
@@ -5722,7 +5706,7 @@ drag_drop_event_cb(GtkWidget *aWidget,
 
     return nsDragService::GetInstance()->
         ScheduleDropEvent(innerMostWindow, aDragContext,
-                          nsIntPoint(aX, aY), aTime);
+                          nsIntPoint(retx, rety), aTime);
 }
 
 static void
@@ -5838,7 +5822,7 @@ nsWindow::DispatchEventToRootAccessible(uint32_t aEventType)
     }
 
     // Get the root document accessible and fire event to it.
-    Accessible *acc = GetAccessible();
+    a11y::Accessible* acc = GetAccessible();
     if (acc) {
         accService->FireAccessibleEvent(aEventType, acc);
     }
@@ -5932,8 +5916,7 @@ nsWindow::OnIMEFocusChange(bool aFocus)
     if (mIMModule) {
       mIMModule->OnFocusChangeInGecko(aFocus);
     }
-    // XXX Return NS_ERROR_NOT_IMPLEMENTED, see bug 496360.
-    return NS_ERROR_NOT_IMPLEMENTED;
+    return NS_OK;
 }
 
 NS_IMETHODIMP

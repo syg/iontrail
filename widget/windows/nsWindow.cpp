@@ -1953,7 +1953,7 @@ nsWindow::ResetLayout()
   // Send a gecko size event to trigger reflow.
   RECT clientRc = {0};
   GetClientRect(mWnd, &clientRc);
-  nsIntRect evRect(nsWindowGfx::ToIntRect(clientRc));
+  nsIntRect evRect(WinUtils::ToIntRect(clientRc));
   OnResize(evRect);
 
   // Invalidate and update
@@ -3259,11 +3259,11 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
         prefs.mDisableAcceleration ||
         windowRect.right - windowRect.left > MAX_ACCELERATED_DIMENSION ||
         windowRect.bottom - windowRect.top > MAX_ACCELERATED_DIMENSION)
-      mUseAcceleratedRendering = false;
+      mUseLayersAcceleration = false;
     else if (prefs.mAccelerateByDefault)
-      mUseAcceleratedRendering = true;
+      mUseLayersAcceleration = true;
 
-    if (mUseAcceleratedRendering) {
+    if (mUseLayersAcceleration) {
       if (aPersistence == LAYER_MANAGER_PERSISTENT && !sAllowD3D9) {
         MOZ_ASSERT(!mLayerManager || !mLayerManager->IsInTransaction());
 
@@ -4014,12 +4014,6 @@ void nsWindow::DispatchFocusToTopLevelWindow(bool aIsActivate)
     sJustGotActivate = false;
   sJustGotDeactivate = false;
 
-  if (!aIsActivate && BlurEventsSuppressed())
-    return;
-
-  if (!mWidgetListener)
-    return;
-
   // retrive the toplevel window or dialog
   HWND curWnd = mWnd;
   HWND toplevelWnd = NULL;
@@ -4039,11 +4033,14 @@ void nsWindow::DispatchFocusToTopLevelWindow(bool aIsActivate)
 
   if (toplevelWnd) {
     nsWindow *win = WinUtils::GetNSWindowPtr(toplevelWnd);
-    if (win) {
-      if (aIsActivate)
-        mWidgetListener->WindowActivated();
-      else
-        mWidgetListener->WindowDeactivated();
+    if (win && win->mWidgetListener) {
+      if (aIsActivate) {
+        win->mWidgetListener->WindowActivated();
+      } else {
+        if (!win->BlurEventsSuppressed()) {
+          win->mWidgetListener->WindowDeactivated();
+        }
+      }
     }
   }
 }
@@ -5141,7 +5138,7 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       // for details).
       DWORD objId = static_cast<DWORD>(lParam);
       if (objId == OBJID_CLIENT) { // oleacc.dll will be loaded dynamically
-        Accessible* rootAccessible = GetRootAccessible(); // Held by a11y cache
+        a11y::Accessible* rootAccessible = GetRootAccessible(); // Held by a11y cache
         if (rootAccessible) {
           IAccessible *msaaAccessible = NULL;
           rootAccessible->GetNativeInterface((void**)&msaaAccessible); // does an addref
@@ -5549,7 +5546,8 @@ void nsWindow::PostSleepWakeNotification(const bool aIsSleepMode)
     mozilla::services::GetObserverService();
   if (observerService)
     observerService->NotifyObservers(nullptr,
-      aIsSleepMode ? "sleep_notification" : "wake_notification", nullptr);
+      aIsSleepMode ? NS_WIDGET_SLEEP_OBSERVER_TOPIC :
+                     NS_WIDGET_WAKE_OBSERVER_TOPIC, nullptr);
 }
 
 // RemoveNextCharMessage() should be called by WM_KEYDOWN or WM_SYSKEYDOWM
@@ -7403,7 +7401,7 @@ nsWindow::OnIMEFocusChange(bool aFocus)
   nsresult rv = nsTextStore::OnFocusChange(aFocus, this,
                                            mInputContext.mIMEState.mEnabled);
   if (rv == NS_ERROR_NOT_AVAILABLE)
-    rv = NS_ERROR_NOT_IMPLEMENTED; // TSF is not enabled, maybe.
+    rv = NS_OK; // TSF is not enabled, maybe.
   return rv;
 }
 
@@ -7420,6 +7418,13 @@ nsWindow::OnIMESelectionChange(void)
 {
   return nsTextStore::OnSelectionChange();
 }
+
+nsIMEUpdatePreference
+nsWindow::GetIMEUpdatePreference()
+{
+  return nsTextStore::GetIMEUpdatePreference();
+}
+
 #endif //NS_ENABLE_TSF
 
 bool nsWindow::AssociateDefaultIMC(bool aAssociate)
@@ -7462,7 +7467,7 @@ bool nsWindow::AssociateDefaultIMC(bool aAssociate)
 
 #ifdef DEBUG_WMGETOBJECT
 #define NS_LOG_WMGETOBJECT_WNDACC(aWnd)                                        \
-  Accessible* acc = aWnd ? aWind->GetAccessible() : nullptr;                   \
+  a11y::Accessible* acc = aWnd ? aWind->GetAccessible() : nullptr;             \
   PR_LOG(gWindowsLog, PR_LOG_ALWAYS, ("     acc: %p", acc));                   \
   if (acc) {                                                                   \
     nsAutoString name;                                                         \
@@ -7500,7 +7505,7 @@ bool nsWindow::AssociateDefaultIMC(bool aAssociate)
 #define NS_LOG_WMGETOBJECT_WND(aMsg, aHwnd)
 #endif // DEBUG_WMGETOBJECT
 
-Accessible*
+a11y::Accessible*
 nsWindow::GetRootAccessible()
 {
   // If the pref was ePlatformIsDisabled, return null here, disabling a11y.

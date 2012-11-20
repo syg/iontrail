@@ -12,20 +12,44 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 const PC_CONTRACT = "@mozilla.org/dom/peerconnection;1";
 const PC_ICE_CONTRACT = "@mozilla.org/dom/rtcicecandidate;1";
 const PC_SESSION_CONTRACT = "@mozilla.org/dom/rtcsessiondescription;1";
+const PC_MANAGER_CONTRACT = "@mozilla.org/dom/peerconnectionmanager;1";
 
 const PC_CID = Components.ID("{7cb2b368-b1ce-4560-acac-8e0dbda7d3d0}");
 const PC_ICE_CID = Components.ID("{8c5dbd70-2c8e-4ecb-a5ad-2fc919099f01}");
 const PC_SESSION_CID = Components.ID("{5f21ffd9-b73f-4ba0-a685-56b4667aaf1c}");
+const PC_MANAGER_CID = Components.ID("{7293e901-2be3-4c02-b4bd-cbef6fc24f78}");
 
 // Global list of PeerConnection objects, so they can be cleaned up when
 // a page is torn down. (Maps inner window ID to an array of PC objects).
 function GlobalPCList() {
-  this._list = {};
+  this._list = [];
   Services.obs.addObserver(this, "inner-window-destroyed", true);
+  Services.obs.addObserver(this, "profile-change-net-teardown", true);
+  Services.obs.addObserver(this, "network:offline-about-to-go-offline", true);
 }
 GlobalPCList.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
-                                         Ci.nsISupportsWeakReference]),
+                                         Ci.nsISupportsWeakReference,
+                                         Ci.IPeerConnectionManager]),
+
+  classID: PC_MANAGER_CID,
+  classInfo: XPCOMUtils.generateCI({classID: PC_MANAGER_CID,
+                                    contractID: PC_MANAGER_CONTRACT,
+                                    classDescription: "PeerConnectionManager",
+                                    interfaces: [
+                                      Ci.nsIObserver,
+                                      Ci.nsISupportsWeakReference,
+                                      Ci.IPeerConnectionManager
+                                    ]}),
+
+  _xpcom_factory: {
+    createInstance: function(outer, iid) {
+      if (outer) {
+        throw Components.results.NS_ERROR_NO_AGGREGATION;
+      }
+      return _globalPCList.QueryInterface(iid);
+    }
+  },
 
   addPC: function(pc) {
     let winID = pc._winID;
@@ -36,20 +60,37 @@ GlobalPCList.prototype = {
     }
   },
 
+  hasActivePeerConnection: function(winID) {
+    return this._list[winID] ? true : false;
+  },
+
   observe: function(subject, topic, data) {
-    if (topic != "inner-window-destroyed") {
-      return;
+    if (topic == "inner-window-destroyed") {
+      let winID = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
+      if (this._list[winID]) {
+        this._list[winID].forEach(function(pc) {
+          pc._pc.close(false);
+          delete pc._observer;
+          pc._pc = null;
+        });
+        delete this._list[winID];
+      }
+    } else if (topic == "profile-change-net-teardown" ||
+               topic == "network:offline-about-to-go-offline") {
+      // Delete all peerconnections on shutdown - synchronously (we need
+      // them to be done deleting transports before we return)!
+      // Also kill them if "Work Offline" is selected - more can be created 
+      // while offline, but attempts to connect them should fail.
+      let array;
+      while ((array = this._list.pop()) != undefined) {
+        array.forEach(function(pc) {
+          pc._pc.close(true);
+          delete pc._observer;
+          pc._pc = null;
+        });
+      };
     }
-    let winID = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
-    if (this._list[winID]) {
-      this._list[winID].forEach(function(pc) {
-        pc._pc.close();
-        delete pc._observer;
-        pc._pc = null;
-      });
-      delete this._list[winID];
-    }
-  }
+  },
 };
 let _globalPCList = new GlobalPCList();
 
@@ -427,7 +468,7 @@ PeerConnection.prototype = {
   close: function() {
     this._queueOrRun({
       func: this._pc.close,
-      args: [],
+      args: [false],
       wait: false
     });
     this._closed = true;
@@ -450,11 +491,11 @@ PeerConnection.prototype = {
     // Must determine the type where we still know if entries are undefined.
     let type;
     if (dict.maxRetransmitTime != undefined) {
-      type = Ci.IPeerConnection.DATACHANNEL_PARTIAL_RELIABLE_TIMED;
+      type = Ci.IPeerConnection.kDataChannelPartialReliableTimed;
     } else if (dict.maxRetransmitNum != undefined) {
-      type = Ci.IPeerConnection.DATACHANNEL_PARTIAL_RELIABLE_REXMIT;
+      type = Ci.IPeerConnection.kDataChannelPartialReliableRexmit;
     } else {
-      type = Ci.IPeerConnection.DATACHANNEL_RELIABLE;
+      type = Ci.IPeerConnection.kDataChannelReliable;
     }
 
     // Synchronous since it doesn't block.
@@ -675,5 +716,5 @@ PeerConnectionObserver.prototype = {
 };
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory(
-  [IceCandidate, SessionDescription, PeerConnection]
+  [GlobalPCList, IceCandidate, SessionDescription, PeerConnection]
 );

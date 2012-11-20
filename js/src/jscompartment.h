@@ -9,6 +9,7 @@
 #define jscompartment_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Util.h"
 
 #include "jscntxt.h"
 #include "jsfun.h"
@@ -121,6 +122,7 @@ struct JSCompartment
     JSPrincipals                 *principals;
 
   private:
+    friend struct JSRuntime;
     friend struct JSContext;
     js::GlobalObject             *global_;
   public:
@@ -155,6 +157,7 @@ struct JSCompartment
 
   private:
     bool                         needsBarrier_;
+    bool                         ionUsingBarriers_;
   public:
 
     bool needsBarrier() const {
@@ -169,7 +172,12 @@ struct JSCompartment
         return compileBarriers(needsBarrier());
     }
 
-    void setNeedsBarrier(bool needs);
+    enum ShouldUpdateIon {
+        DontUpdateIon,
+        UpdateIon
+    };
+
+    void setNeedsBarrier(bool needs, ShouldUpdateIon updateIon);
 
     static size_t OffsetOfNeedsBarrier() {
         return offsetof(JSCompartment, needsBarrier_);
@@ -273,6 +281,13 @@ struct JSCompartment
     bool                         active;  // GC flag, whether there are active frames
     js::WrapperMap               crossCompartmentWrappers;
 
+    /*
+     * These flags help us to discover if a compartment that shouldn't be alive
+     * manages to outlive a GC.
+     */
+    bool                         scheduledForDestruction;
+    bool                         maybeAlive;
+
     /* Last time at which an animation was played for a global in this compartment. */
     int64_t                      lastAnimationTime;
 
@@ -351,10 +366,10 @@ struct JSCompartment
     /* Mark cross-compartment wrappers. */
     void markCrossCompartmentWrappers(JSTracer *trc);
 
-    bool wrap(JSContext *cx, js::Value *vp);
+    bool wrap(JSContext *cx, js::Value *vp, JSObject *existing = NULL);
     bool wrap(JSContext *cx, JSString **strp);
     bool wrap(JSContext *cx, js::HeapPtrString *strp);
-    bool wrap(JSContext *cx, JSObject **objp);
+    bool wrap(JSContext *cx, JSObject **objp, JSObject *existing = NULL);
     bool wrapId(JSContext *cx, jsid *idp);
     bool wrap(JSContext *cx, js::PropertyOp *op);
     bool wrap(JSContext *cx, js::StrictPropertyOp *op);
@@ -573,11 +588,11 @@ class AutoEnterAtomsCompartment
  */
 class ErrorCopier
 {
-    Maybe<AutoCompartment> &ac;
+    mozilla::Maybe<AutoCompartment> &ac;
     RootedObject scope;
 
   public:
-    ErrorCopier(Maybe<AutoCompartment> &ac, JSObject *scope)
+    ErrorCopier(mozilla::Maybe<AutoCompartment> &ac, JSObject *scope)
       : ac(ac), scope(ac.ref().context(), scope) {}
     ~ErrorCopier();
 };
@@ -606,6 +621,84 @@ class CompartmentsIter {
 
     operator JSCompartment *() const { return get(); }
     JSCompartment *operator->() const { return get(); }
+};
+
+/*
+ * AutoWrapperVector and AutoWrapperRooter can be used to store wrappers that
+ * are obtained from the cross-compartment map. However, these classes should
+ * not be used if the wrapper will escape. For example, it should not be stored
+ * in the heap.
+ *
+ * The AutoWrapper rooters are different from other autorooters because their
+ * wrappers are marked on every GC slice rather than just the first one. If
+ * there's some wrapper that we want to use temporarily without causing it to be
+ * marked, we can use these AutoWrapper classes. If we get unlucky and a GC
+ * slice runs during the code using the wrapper, the GC will mark the wrapper so
+ * that it doesn't get swept out from under us. Otherwise, the wrapper needn't
+ * be marked. This is useful in functions like JS_TransplantObject that
+ * manipulate wrappers in compartments that may no longer be alive.
+ */
+
+/*
+ * This class stores the data for AutoWrapperVector and AutoWrapperRooter. It
+ * should not be used in any other situations.
+ */
+struct WrapperValue
+{
+    /*
+     * We use unsafeGet() in the constructors to avoid invoking a read barrier
+     * on the wrapper, which may be dead (see the comment about bug 803376 in
+     * jsgc.cpp regarding this). If there is an incremental GC while the wrapper
+     * is in use, the AutoWrapper rooter will ensure the wrapper gets marked.
+     */
+    explicit WrapperValue(const WrapperMap::Ptr &ptr)
+      : value(*ptr->value.unsafeGet())
+    {}
+
+    explicit WrapperValue(const WrapperMap::Enum &e)
+      : value(*e.front().value.unsafeGet())
+    {}
+
+    Value &get() { return value; }
+    Value get() const { return value; }
+    operator const Value &() const { return value; }
+    JSObject &toObject() const { return value.toObject(); }
+
+  private:
+    Value value;
+};
+
+class AutoWrapperVector : public AutoVectorRooter<WrapperValue>
+{
+  public:
+    explicit AutoWrapperVector(JSContext *cx
+                               JS_GUARD_OBJECT_NOTIFIER_PARAM)
+        : AutoVectorRooter<WrapperValue>(cx, WRAPVECTOR)
+    {
+        JS_GUARD_OBJECT_NOTIFIER_INIT;
+    }
+
+    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+};
+
+class AutoWrapperRooter : private AutoGCRooter {
+  public:
+    AutoWrapperRooter(JSContext *cx, WrapperValue v
+                      JS_GUARD_OBJECT_NOTIFIER_PARAM)
+      : AutoGCRooter(cx, WRAPPER), value(v)
+    {
+        JS_GUARD_OBJECT_NOTIFIER_INIT;
+    }
+
+    operator JSObject *() const {
+        return value.get().toObjectOrNull();
+    }
+
+    friend void AutoGCRooter::trace(JSTracer *trc);
+
+  private:
+    WrapperValue value;
+    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 } /* namespace js */

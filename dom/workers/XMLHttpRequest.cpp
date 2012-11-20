@@ -32,6 +32,7 @@
 
 using namespace mozilla;
 
+using namespace mozilla::dom;
 USING_WORKERS_NAMESPACE
 
 using mozilla::dom::workers::exceptions::ThrowDOMExceptionForNSResult;
@@ -154,12 +155,26 @@ public:
     NS_ASSERTION(mWorkerPrivate, "Must have a worker here!");
 
     if (!mXHR) {
+      nsPIDOMWindow* ownerWindow = mWorkerPrivate->GetWindow();
+      if (ownerWindow) {
+        ownerWindow = ownerWindow->GetOuterWindow();
+        if (!ownerWindow) {
+          NS_ERROR("No outer window?!");
+          return false;
+        }
+
+        nsPIDOMWindow* innerWindow = ownerWindow->GetCurrentInnerWindow();
+        if (mWorkerPrivate->GetWindow() != innerWindow) {
+          NS_WARNING("Window has navigated, cannot create XHR here.");
+          return false;
+        }
+      }
+
       mXHR = new nsXMLHttpRequest();
 
       if (NS_FAILED(mXHR->Init(mWorkerPrivate->GetPrincipal(),
                                mWorkerPrivate->GetScriptContext(),
-                               mWorkerPrivate->GetWindow(),
-                               mWorkerPrivate->GetBaseURI()))) {
+                               ownerWindow, mWorkerPrivate->GetBaseURI()))) {
         mXHR = nullptr;
         return false;
       }
@@ -1994,7 +2009,7 @@ XMLHttpRequest::Send(JSObject* aBody, ErrorResult& aRv)
   JSContext* cx = GetJSContext();
 
   jsval valToClone;
-  if (JS_IsArrayBufferObject(aBody, cx) || file::GetDOMBlobFromJSObject(aBody)) {
+  if (JS_IsArrayBufferObject(aBody) || file::GetDOMBlobFromJSObject(aBody)) {
     valToClone = OBJECT_TO_JSVAL(aBody);
   }
   else {

@@ -1185,6 +1185,38 @@ let RIL = {
   },
 
   /**
+   * Get EF_phase.
+   * This EF is only available in SIM.
+   */
+  getICCPhase: function getICCPhase() {
+    function callback() {
+      let length = Buf.readUint32();
+
+      let phase = GsmPDUHelper.readHexOctet();
+      // If EF_phase is coded '03' or greater, an ME supporting STK shall
+      // perform the PROFILE DOWNLOAD procedure.
+      if (phase >= ICC_PHASE_2_PROFILE_DOWNLOAD_REQUIRED) {
+        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+      }
+
+      Buf.readStringDelimiter(length);
+    }
+
+    this.iccIO({
+      command:   ICC_COMMAND_GET_RESPONSE,
+      fileId:    ICC_EF_PHASE,
+      pathId:    EF_PATH_MF_SIM + EF_PATH_DF_GSM,
+      p1:        0, // For GET_RESPONSE, p1 = 0
+      p2:        0, // For GET_RESPONSE, p2 = 0
+      p3:        GET_RESPONSE_EF_SIZE_BYTES,
+      data:      null,
+      pin2:      null,
+      type:      EF_TYPE_TRANSPARENT,
+      callback:  callback,
+    });
+  },
+
+  /**
    * Get IMSI.
    *
    * @param [optional] aid
@@ -2376,8 +2408,22 @@ let RIL = {
       case MMI_SC_CF_NOT_REACHABLE:
       case MMI_SC_CF_ALL:
       case MMI_SC_CF_ALL_CONDITIONAL:
-        // TODO: Bug 793192 - MMI Codes: support call forwarding.
-        _sendMMIError("CALL_FORWARDING_NOT_SUPPORTED_VIA_MMI");
+        // Call forwarding requires at least an action, given by the MMI
+        // procedure, and a reason, given by the MMI service code, but there
+        // is no way that we get this far without a valid procedure or service
+        // code.
+        options.action = MMI_PROC_TO_CF_ACTION[mmi.procedure];
+        options.rilMessageType = "sendMMI";
+        options.reason = MMI_SC_TO_CF_REASON[sc];
+        options.number = mmi.sia;
+        options.serviceClass = mmi.sib;
+        if (options.action == CALL_FORWARD_ACTION_QUERY_STATUS) {
+          this.queryCallForwardStatus(options);
+          return;
+        }
+
+        options.timeSeconds = mmi.sic;
+        this.setCallForward(options);
         return;
 
       // Change the current ICC PIN number.
@@ -2567,6 +2613,21 @@ let RIL = {
      Buf.writeUint32(1);
      Buf.writeUint32(options.hasConfirmed ? 1 : 0);
      Buf.sendParcel();
+  },
+
+  /**
+   * Send STK Profile Download.
+   *
+   * @param profile Profile supported by ME.
+   */
+  sendStkTerminalProfile: function sendStkTerminalProfile(profile) {
+    Buf.newParcel(REQUEST_STK_SET_PROFILE);
+    Buf.writeUint32(profile.length * 2);
+    for (let i = 0; i < profile.length; i++) {
+      GsmPDUHelper.writeHexOctet(profile[i]);
+    }
+    Buf.writeUint32(0);
+    Buf.sendParcel();
   },
 
   /**
@@ -2895,6 +2956,13 @@ let RIL = {
    },
 
   /**
+   * Report STK Service is running.
+   */
+  reportStkServiceIsRunning: function reportStkServiceIsRunning() {
+    Buf.simpleRequest(REQUEST_REPORT_STK_SERVICE_IS_RUNNING);
+  },
+
+  /**
    * Process ICC status.
    */
   _processICCStatus: function _processICCStatus(iccStatus) {
@@ -2960,7 +3028,15 @@ let RIL = {
     this.requestNetworkInfo();
     this.getSignalStrength();
     if (newCardState == GECKO_CARDSTATE_READY) {
+      // For type SIM, we need to check EF_phase first.
+      // Other types of ICC we can send Terminal_Profile immediately.
+      if (this.appType == CARD_APPTYPE_SIM) {
+        this.getICCPhase();
+      } else {
+        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+      }
       this.fetchICCRecords();
+      this.reportStkServiceIsRunning();
     }
 
     this.cardState = newCardState;
@@ -3473,9 +3549,13 @@ let RIL = {
       }
 
       if (!updatedDataCall) {
-        currentDataCall.state = GECKO_NETWORK_STATE_DISCONNECTED;
-        currentDataCall.rilMessageType = "datacallstatechange";
-        this.sendDOMMessage(currentDataCall);
+        // If datacalls list is coming from REQUEST_SETUP_DATA_CALL response,
+        // we do not change state for any currentDataCalls not in datacalls list.
+        if (!newDataCallOptions) {
+          currentDataCall.state = GECKO_NETWORK_STATE_DISCONNECTED;
+          currentDataCall.rilMessageType = "datacallstatechange";
+          this.sendDOMMessage(currentDataCall);
+        }
         continue;
       }
 
@@ -3866,7 +3946,7 @@ let RIL = {
       this.sendDOMMessage(message);
     }
 
-    if (message.messageClass == GECKO_SMS_MESSAGE_CLASSES[PDU_DCS_MSG_CLASS_2]) {
+    if (message && message.messageClass == GECKO_SMS_MESSAGE_CLASSES[PDU_DCS_MSG_CLASS_2]) {
       // `MS shall ensure that the message has been to the SMS data field in
       // the (U)SIM before sending an ACK to the SC.`  ~ 3GPP 23.038 clause 4
       return PDU_FCS_RESERVED;
@@ -4119,6 +4199,10 @@ let RIL = {
       if (DEBUG) debug("Handling parcel as " + method.name);
       method.call(this, length, options);
     }
+  },
+
+  setDebugEnabled: function setDebugEnabled(options) {
+    DEBUG = DEBUG_WORKER || options.enabled;
   }
 };
 
@@ -5868,20 +5952,25 @@ let GsmPDUHelper = {
 
     // Type-of-Address
     let toa = this.readHexOctet();
+    let addr = "";
 
-    // Address-Value
-    let addr = this.readSwappedNibbleBcdString(len / 2);
+    if ((toa & 0xF0) == PDU_TOA_ALPHANUMERIC) {
+      addr = this.readSeptetsToString(Math.floor(len * 4 / 7), 0,
+          PDU_NL_IDENTIFIER_DEFAULT , PDU_NL_IDENTIFIER_DEFAULT );
+      return addr;
+    }
+    addr = this.readSwappedNibbleBcdString(len / 2);
     if (addr.length <= 0) {
       if (DEBUG) debug("PDU error: no number provided");
       return null;
     }
-    if ((toa >> 4) == (PDU_TOA_INTERNATIONAL >> 4)) {
+    if ((toa & 0xF0) == (PDU_TOA_INTERNATIONAL)) {
       addr = '+' + addr;
     }
 
     return addr;
   },
-  
+
   /**
    * Read Alpha Identifier.
    *

@@ -166,7 +166,7 @@ protected:
     bool DrawTo(gfxASurface *targetSurface);
     bool DrawTo(gfxASurface *targetSurface, const nsIntRect &aRect);
     bool IsTopLevel();
-    void OnIMEAddRange(mozilla::AndroidGeckoEvent *ae);
+    void RemoveIMEComposition();
 
     // Call this function when the users activity is the direct cause of an
     // event (like a keypress or mouse click).
@@ -183,8 +183,9 @@ protected:
     nsCOMPtr<nsIIdleServiceInternal> mIdleService;
 
     bool mIMEComposing;
+    bool mIMEMaskSelectionUpdate, mIMEMaskTextUpdate;
+    int32_t mIMEMaskEventsCount; // Mask events when > 0
     nsString mIMEComposingText;
-    nsString mIMELastDispatchedComposingText;
     nsAutoTArray<nsTextRange, 4> mIMERanges;
 
     InputContext mInputContext;

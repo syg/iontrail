@@ -113,25 +113,6 @@ enum RegExpExecType
     RegExpTest
 };
 
-
-enum CompileMode {
-    // Normal compilation: code will always execute sequentially
-    COMPILE_MODE_SEQ,
-
-    // Parallel compilation: code will execute in parallel
-    // e.g., Rivertrail
-    COMPILE_MODE_PAR,
-
-    // Number of compilation modes
-    COMPILE_MODE_MAX
-};
-
-// Use like |for (EACH_COMPILE_MODE(mode)) { ... }|
-# define EACH_COMPILE_MODE(m)                   \
-    js::CompileMode m = js::COMPILE_MODE_SEQ;   \
-    m != js::COMPILE_MODE_MAX;                  \
-    m = (js::CompileMode)(((int)m)+1)
-
 class ExecuteArgsGuard;
 class InvokeFrameGuard;
 class InvokeArgsGuard;

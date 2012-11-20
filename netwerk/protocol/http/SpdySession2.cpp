@@ -365,6 +365,11 @@ SpdySession2::NetworkRead(nsAHttpSegmentWriter *writer, char *buf,
 {
   NS_ABORT_IF_FALSE(PR_GetCurrentThread() == gSocketThread, "wrong thread");
 
+  if (!count) {
+    *countWritten = 0;
+    return NS_OK;
+  }
+
   nsresult rv = writer->OnWriteSegment(buf, count, countWritten);
   if (NS_SUCCEEDED(rv) && *countWritten > 0)
     mLastReadEpoch = PR_IntervalNow();
@@ -2114,8 +2119,7 @@ SpdySession2::SetConnection(nsAHttpConnection *)
 }
 
 void
-SpdySession2::GetSecurityCallbacks(nsIInterfaceRequestor **,
-                                  nsIEventTarget **)
+SpdySession2::GetSecurityCallbacks(nsIInterfaceRequestor **)
 {
   // This is unexpected
   NS_ABORT_IF_FALSE(false, "SpdySession2::GetSecurityCallbacks()");

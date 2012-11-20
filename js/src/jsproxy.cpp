@@ -282,21 +282,26 @@ BaseProxyHandler::construct(JSContext *cx, JSObject *proxy, unsigned argc,
 JSString *
 BaseProxyHandler::obj_toString(JSContext *cx, JSObject *proxy)
 {
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
-                         JSMSG_INCOMPATIBLE_PROTO,
-                         js_Object_str, js_toString_str,
-                         "object");
-    return NULL;
+    return JS_NewStringCopyZ(cx, IsFunctionProxy(proxy)
+                                 ? "[object Function]"
+                                 : "[object Object]");
 }
 
 JSString *
 BaseProxyHandler::fun_toString(JSContext *cx, JSObject *proxy, unsigned indent)
 {
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
-                         JSMSG_INCOMPATIBLE_PROTO,
-                         js_Function_str, js_toString_str,
-                         "object");
-    return NULL;
+    Value fval = GetCall(proxy);
+    if (IsFunctionProxy(proxy) &&
+        (fval.isPrimitive() || !fval.toObject().isFunction())) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
+                             JSMSG_INCOMPATIBLE_PROTO,
+                             js_Function_str, js_toString_str,
+                             "object");
+        return NULL;
+    }
+    RootedObject obj(cx, &fval.toObject());
+    return fun_toStringHelper(cx, obj, indent);
+
 }
 
 bool
@@ -3138,6 +3143,23 @@ js::NewProxyObject(JSContext *cx, BaseProxyHandler *handler, const Value &priv_,
     return NewProxyObject(cx, handler, priv_, TaggedProto(proto_), parent_, call_, construct_);
 }
 
+JSObject *
+js::RenewProxyObject(JSContext *cx, JSObject *obj,
+                     BaseProxyHandler *handler, Value priv)
+{
+    JS_ASSERT(obj->getParent() == cx->global());
+    JS_ASSERT(obj->getClass() == &ObjectProxyClass);
+    JS_ASSERT(obj->getTaggedProto().isLazy());
+    JS_ASSERT(!handler->isOuterWindow());
+
+    obj->setSlot(JSSLOT_PROXY_HANDLER, PrivateValue(handler));
+    obj->setCrossCompartmentSlot(JSSLOT_PROXY_PRIVATE, priv);
+    obj->setSlot(JSSLOT_PROXY_EXTRA + 0, UndefinedValue());
+    obj->setSlot(JSSLOT_PROXY_EXTRA + 1, UndefinedValue());
+
+    return obj;
+}
+
 static JSBool
 proxy(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -3158,7 +3180,7 @@ proxy(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     RootedObject fun(cx, target->isCallable() ? target : (JSObject *) NULL);
     JSObject *proxy = NewProxyObject(cx, &ScriptedDirectProxyHandler::singleton,
-                                     ObjectValue(*target), proto, proto->getParent(),
+                                     ObjectValue(*target), proto, cx->global(),
                                      fun, fun);
     if (!proxy)
         return false;

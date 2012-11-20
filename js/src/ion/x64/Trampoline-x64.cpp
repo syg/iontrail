@@ -25,7 +25,7 @@ using namespace js::ion;
  *   ...using standard x64 fastcall calling convention
  */
 IonCode *
-IonCompartment::generateEnterJIT(JSContext *cx)
+IonRuntime::generateEnterJIT(JSContext *cx)
 {
     MacroAssembler masm(cx);
 
@@ -180,26 +180,12 @@ IonCompartment::generateEnterJIT(JSContext *cx)
 }
 
 IonCode *
-IonCompartment::generateReturnError(JSContext *cx)
-{
-    MacroAssembler masm(cx);
-
-    masm.pop(r14);              // sizeDescriptor.
-    masm.xorl(Imm32(0x1), r14); // Unmark EntryFrame.
-    masm.addq(r14, rsp);        // Remove arguments.
-    masm.pop(r11);              // Discard |vp|: returning from error.
-
-    Linker linker(masm);
-    return linker.newCode(cx);
-}
-
-IonCode *
-IonCompartment::generateInvalidator(JSContext *cx)
+IonRuntime::generateInvalidator(JSContext *cx)
 {
     AutoIonContextAlloc aica(cx);
     MacroAssembler masm(cx);
 
-    // See explanatory comment in x86's IonCompartment::generateInvalidator.
+    // See explanatory comment in x86's IonRuntime::generateInvalidator.
 
     masm.addq(Imm32(sizeof(uintptr_t)), rsp);
 
@@ -236,12 +222,8 @@ IonCompartment::generateInvalidator(JSContext *cx)
 }
 
 IonCode *
-IonCompartment::generateArgumentsRectifier(JSContext *cx)
+IonRuntime::generateArgumentsRectifier(JSContext *cx)
 {
-    // Note: for now, we do not support function calls in parallel code,
-    // so this implies sequential mode
-    const CompileMode compileMode = COMPILE_MODE_SEQ;
-
     // Do not erase the frame pointer in this function.
 
     MacroAssembler masm(cx);
@@ -307,7 +289,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     // Call the target function.
     // Note that this code assumes the function is JITted.
     masm.movq(Operand(rax, offsetof(JSFunction, u.i.script_)), rax);
-    masm.movq(Operand(rax, offsetof(JSScript, ions[compileMode])), rax);
+    masm.movq(Operand(rax, offsetof(JSScript, ion)), rax);
     masm.movq(Operand(rax, IonScript::offsetOfMethod()), rax);
     masm.movq(Operand(rax, IonCode::offsetOfCode()), rax);
     masm.call(rax);
@@ -363,14 +345,14 @@ GenerateBailoutThunk(JSContext *cx, MacroAssembler &masm, uint32 frameClass)
 }
 
 IonCode *
-IonCompartment::generateBailoutTable(JSContext *cx, uint32 frameClass)
+IonRuntime::generateBailoutTable(JSContext *cx, uint32 frameClass)
 {
     JS_NOT_REACHED("x64 does not use bailout tables");
     return NULL;
 }
 
 IonCode *
-IonCompartment::generateBailoutHandler(JSContext *cx)
+IonRuntime::generateBailoutHandler(JSContext *cx)
 {
     MacroAssembler masm;
 
@@ -381,7 +363,7 @@ IonCompartment::generateBailoutHandler(JSContext *cx)
 }
 
 IonCode *
-IonCompartment::generateVMWrapper(JSContext *cx, const VMFunction &f)
+IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 {
     typedef MoveResolver::MoveOperand MoveOperand;
 
@@ -535,7 +517,7 @@ IonCompartment::generateVMWrapper(JSContext *cx, const VMFunction &f)
 }
 
 IonCode *
-IonCompartment::generatePreBarrier(JSContext *cx)
+IonRuntime::generatePreBarrier(JSContext *cx)
 {
     MacroAssembler masm;
 
@@ -544,7 +526,7 @@ IonCompartment::generatePreBarrier(JSContext *cx)
     masm.PushRegsInMask(regs);
 
     JS_ASSERT(PreBarrierReg == rdx);
-    masm.movq(ImmWord(cx->compartment), rcx);
+    masm.movq(ImmWord(cx->runtime), rcx);
 
     masm.setupUnalignedABICall(2, rax);
     masm.passABIArg(rcx);

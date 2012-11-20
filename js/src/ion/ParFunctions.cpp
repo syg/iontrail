@@ -8,14 +8,14 @@
 #include "ParFunctions.h"
 #include "jsinterp.h"
 #include "jsinterpinlines.h"
-#include "jsthreadpoolinlines.h"
+#include "vm/forkjoininlines.h"
 
 namespace js {
 namespace ion {
 
 // Load the current thread context.
-ThreadContext *ParThreadContext() {
-    ThreadContext *context = js::ThreadContext::current();
+ForkJoinSlice *ParForkJoinSlice() {
+    ForkJoinSlice *context = js::ForkJoinSlice::current();
     return context;
 }
 
@@ -28,8 +28,8 @@ ThreadContext *ParThreadContext() {
 // possible!  It's just that it's hard to avoid in the way that
 // IonMonkey is setup, near as I can tell right now.
 JSObject *
-ParNewGCThing(ThreadContext *threadContext, JSCompartment *compartment,
-              gc::AllocKind allocKind, size_t thingSize) {
+ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
+              gc::AllocKind allocKind, uint32_t thingSize) {
     gc::ArenaLists *arenaLists = threadContext->arenaLists;
     void *t = arenaLists->parallelAllocate(compartment, allocKind, thingSize);
     return static_cast<JSObject *>(t);
@@ -37,7 +37,7 @@ ParNewGCThing(ThreadContext *threadContext, JSCompartment *compartment,
 
 // Check that the object was created by the current thread
 // (and hence is writable).
-bool ParWriteGuard(ThreadContext *context, JSObject *object) {
+bool ParWriteGuard(ForkJoinSlice *context, JSObject *object) {
     gc::ArenaLists *arenaLists = context->arenaLists;
     return arenaLists->containsArena(context->runtime(),
                                      object->arenaHeader());
@@ -49,7 +49,7 @@ void ParBailout(uint32_t id) {
     fprintf(stderr, "TRACE: id=%-10u\n", id);
 }
 
-bool ParCheckInterrupt(ThreadContext *context) {
+bool ParCheckInterrupt(ForkJoinSlice *context) {
     bool result = context->check();
     if (!result) {
         fprintf(stderr, "Check Interrupt failed!\n");

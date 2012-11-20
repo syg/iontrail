@@ -33,8 +33,9 @@ jfieldID AndroidGeckoEvent::jDomKeyLocationField = 0;
 jfieldID AndroidGeckoEvent::jFlagsField = 0;
 jfieldID AndroidGeckoEvent::jUnicodeCharField = 0;
 jfieldID AndroidGeckoEvent::jRepeatCountField = 0;
-jfieldID AndroidGeckoEvent::jOffsetField = 0;
 jfieldID AndroidGeckoEvent::jCountField = 0;
+jfieldID AndroidGeckoEvent::jStartField = 0;
+jfieldID AndroidGeckoEvent::jEndField = 0;
 jfieldID AndroidGeckoEvent::jPointerIndexField = 0;
 jfieldID AndroidGeckoEvent::jRangeTypeField = 0;
 jfieldID AndroidGeckoEvent::jRangeStylesField = 0;
@@ -227,8 +228,9 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jFlagsField = getField("mFlags", "I");
     jUnicodeCharField = getField("mUnicodeChar", "I");
     jRepeatCountField = getField("mRepeatCount", "I");
-    jOffsetField = getField("mOffset", "I");
     jCountField = getField("mCount", "I");
+    jStartField = getField("mStart", "I");
+    jEndField = getField("mEnd", "I");
     jPointerIndexField = getField("mPointerIndex", "I");
     jRangeTypeField = getField("mRangeType", "I");
     jRangeStylesField = getField("mRangeStyles", "I");
@@ -353,9 +355,9 @@ AndroidGeckoLayerClient::InitGeckoLayerClientClass(JNIEnv *jEnv)
     jCreateFrameMethod = getMethod("createFrame", "()Lorg/mozilla/gecko/gfx/LayerRenderer$Frame;");
     jActivateProgramMethod = getMethod("activateProgram", "()V");
     jDeactivateProgramMethod = getMethod("deactivateProgram", "()V");
-    jGetDisplayPort = getMethod("getDisplayPort", "(ZZILorg/mozilla/gecko/gfx/ViewportMetrics;)Lorg/mozilla/gecko/gfx/DisplayPortMetrics;");
+    jGetDisplayPort = getMethod("getDisplayPort", "(ZZILorg/mozilla/gecko/gfx/ImmutableViewportMetrics;)Lorg/mozilla/gecko/gfx/DisplayPortMetrics;");
 
-    jViewportClass = GetClassGlobalRef(jEnv, "org/mozilla/gecko/gfx/ViewportMetrics");
+    jViewportClass = GetClassGlobalRef(jEnv, "org/mozilla/gecko/gfx/ImmutableViewportMetrics");
     jViewportCtor = GetMethodID(jEnv, jViewportClass, "<init>", "(FFFFFFFFFFFFF)V");
 
     jDisplayportClass = GetClassGlobalRef(jEnv, "org/mozilla/gecko/gfx/DisplayPortMetrics");
@@ -564,14 +566,13 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             break;
 
         case IME_EVENT:
-            if (mAction == IME_GET_TEXT || mAction == IME_SET_SELECTION) {
-                mOffset = jenv->GetIntField(jobj, jOffsetField);
-                mCount = jenv->GetIntField(jobj, jCountField);
-            } else if (mAction == IME_SET_TEXT || mAction == IME_ADD_RANGE) {
-                if (mAction == IME_SET_TEXT)
-                    ReadCharactersField(jenv);
-                mOffset = jenv->GetIntField(jobj, jOffsetField);
-                mCount = jenv->GetIntField(jobj, jCountField);
+            mStart = jenv->GetIntField(jobj, jStartField);
+            mEnd = jenv->GetIntField(jobj, jEndField);
+
+            if (mAction == IME_REPLACE_TEXT) {
+                ReadCharactersField(jenv);
+            } else if (mAction == IME_UPDATE_COMPOSITION ||
+                    mAction == IME_ADD_COMPOSITION_RANGE) {
                 mRangeType = jenv->GetIntField(jobj, jRangeTypeField);
                 mRangeStyles = jenv->GetIntField(jobj, jRangeStylesField);
                 mRangeForeColor =
@@ -860,18 +861,19 @@ AndroidGeckoLayerClient::ProgressiveUpdateCallback(bool aHasPendingNewThebesCont
     if (!env)
         return false;
 
-    AutoLocalJNIFrame jniFrame(env);
-
-    jobject progressiveUpdateDataJObj = env->CallObjectMethod(wrapped_obj,
-                                                              jProgressiveUpdateCallbackMethod,
-                                                              aHasPendingNewThebesContent,
-                                                              (float)aDisplayPort.x,
-                                                              (float)aDisplayPort.y,
-                                                              (float)aDisplayPort.width,
-                                                              (float)aDisplayPort.height,
-                                                              aDisplayResolution);
-    if (jniFrame.CheckForException())
+    AutoJObject progressiveUpdateDataJObj(env, env->CallObjectMethod(wrapped_obj,
+                                                                     jProgressiveUpdateCallbackMethod,
+                                                                     aHasPendingNewThebesContent,
+                                                                     (float)aDisplayPort.x,
+                                                                     (float)aDisplayPort.y,
+                                                                     (float)aDisplayPort.width,
+                                                                     (float)aDisplayPort.height,
+                                                                     aDisplayResolution));
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
         return false;
+    }
 
     NS_ABORT_IF_FALSE(progressiveUpdateDataJObj, "No progressive update data!");
 
@@ -906,9 +908,10 @@ jobject ConvertToJavaViewportMetrics(JNIEnv* env, nsIAndroidViewport* metrics) {
     metrics->GetZoom(&zoom);
 
     jobject jobj = env->NewObject(AndroidGeckoLayerClient::jViewportClass, AndroidGeckoLayerClient::jViewportCtor,
-                                  x, y, width, height,
                                   pageLeft, pageTop, pageRight, pageBottom,
-                                  cssPageLeft, cssPageTop, cssPageRight, cssPageBottom, zoom);
+                                  cssPageLeft, cssPageTop, cssPageRight, cssPageBottom,
+                                  x, y, x + width, y + height,
+                                  zoom);
     return jobj;
 }
 

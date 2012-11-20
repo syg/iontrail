@@ -57,18 +57,18 @@ nsAccessiblePivot::nsAccessiblePivot(Accessible* aRoot) :
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsAccessiblePivot)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsAccessiblePivot)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mRoot, nsIAccessible)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mPosition, nsIAccessible)
-  uint32_t i, length = tmp->mObservers.Length();                               \
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPosition)
+  uint32_t i, length = tmp->mObservers.Length();
   for (i = 0; i < length; ++i) {
-    cb.NoteXPCOMChild(tmp->mObservers.ElementAt(i).get());
+    cb.NoteXPCOMChild(tmp->mObservers[i]);
   }
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsAccessiblePivot)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRoot)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mPosition)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mObservers)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPosition)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mObservers)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsAccessiblePivot)

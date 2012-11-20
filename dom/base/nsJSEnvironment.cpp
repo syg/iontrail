@@ -174,7 +174,26 @@ static uint32_t sCleanupsSinceLastGC = UINT32_MAX;
 static bool sNeedsFullCC = false;
 static nsJSContext *sContextList = nullptr;
 
-nsScriptNameSpaceManager *gNameSpaceManager;
+static nsScriptNameSpaceManager *gNameSpaceManager;
+static nsIMemoryReporter *gReporter;
+
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(ScriptNameSpaceManagerMallocSizeOf,
+                                     "script-namespace-manager")
+
+static int64_t
+GetScriptNameSpaceManagerSize()
+{
+  MOZ_ASSERT(gNameSpaceManager);
+  return gNameSpaceManager->SizeOfIncludingThis(
+             ScriptNameSpaceManagerMallocSizeOf);
+}
+
+NS_MEMORY_REPORTER_IMPLEMENT(ScriptNameSpaceManager,
+    "explicit/script-namespace-manager",
+    KIND_HEAP,
+    nsIMemoryReporter::UNITS_BYTES,
+    GetScriptNameSpaceManagerSize,
+    "Memory used for the script namespace manager.")
 
 static nsIJSRuntimeService *sRuntimeService;
 JSRuntime *nsJSRuntime::sRuntime;
@@ -1071,10 +1090,12 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
   return 0;
 }
 
-nsJSContext::nsJSContext(JSRuntime *aRuntime)
-  : mActive(false),
-    mGCOnDestruction(true),
-    mExecuteDepth(0)
+nsJSContext::nsJSContext(JSRuntime *aRuntime, bool aGCOnDestruction,
+                         nsIScriptGlobalObject* aGlobalObject)
+  : mActive(false)
+  , mGCOnDestruction(aGCOnDestruction)
+  , mExecuteDepth(0)
+  , mGlobalObjectRef(aGlobalObject)
 {
   mNext = sContextList;
   mPrev = &sContextList;
@@ -1183,11 +1204,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsJSContext)
   tmp->mIsInitialized = false;
   tmp->mGCOnDestruction = false;
   tmp->DestroyJSContext();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mGlobalObjectRef)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobalObjectRef)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsJSContext)
   NS_IMPL_CYCLE_COLLECTION_DESCRIBE(nsJSContext, tmp->GetCCRefcnt())
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mGlobalObjectRef)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGlobalObjectRef)
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mContext");
   nsContentUtils::XPConnect()->NoteJSContext(tmp->mContext, cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -1545,6 +1566,7 @@ nsJSContext::CompileScript(const PRUnichar* aText,
                            nsScriptObjectHolder<JSScript>& aScriptObject,
                            bool aSaveSource /* = false */)
 {
+  SAMPLE_LABEL_PRINTF("JS", "Compile Script", "%s", aURL ? aURL : "");
   NS_ENSURE_TRUE(mIsInitialized, NS_ERROR_NOT_INITIALIZED);
 
   NS_ENSURE_ARG_POINTER(aPrincipal);
@@ -2840,12 +2862,6 @@ nsJSContext::GetExecutingScript()
   return JS_IsRunning(mContext) || mExecuteDepth > 0;
 }
 
-void
-nsJSContext::SetGCOnDestruction(bool aGCOnDestruction)
-{
-  mGCOnDestruction = aGCOnDestruction;
-}
-
 NS_IMETHODIMP
 nsJSContext::ScriptExecuted()
 {
@@ -3599,13 +3615,8 @@ nsJSContext::DropScriptObject(void* aScriptObject)
 void
 nsJSContext::ReportPendingException()
 {
-  // set aside the frame chain, since it has nothing to do with the
-  // exception we're reporting.
-  if (mIsInitialized && ::JS_IsExceptionPending(mContext)) {
-    bool saved = ::JS_SaveFrameChain(mContext);
-    ::JS_ReportPendingException(mContext);
-    if (saved)
-        ::JS_RestoreFrameChain(mContext);
+  if (mIsInitialized) {
+    nsJSUtils::ReportPendingException(mContext);
   }
 }
 
@@ -3623,9 +3634,11 @@ NS_IMPL_ADDREF(nsJSRuntime)
 NS_IMPL_RELEASE(nsJSRuntime)
 
 already_AddRefed<nsIScriptContext>
-nsJSRuntime::CreateContext()
+nsJSRuntime::CreateContext(bool aGCOnDestruction,
+                           nsIScriptGlobalObject* aGlobalObject)
 {
-  nsCOMPtr<nsIScriptContext> scriptContext = new nsJSContext(sRuntime);
+  nsCOMPtr<nsIScriptContext> scriptContext =
+    new nsJSContext(sRuntime, aGCOnDestruction, aGlobalObject);
   return scriptContext.forget();
 }
 
@@ -3645,6 +3658,7 @@ nsJSRuntime::Startup()
   sDisableExplicitCompartmentGC = false;
   sNeedsFullCC = false;
   gNameSpaceManager = nullptr;
+  gReporter = nullptr;
   sRuntimeService = nullptr;
   sRuntime = nullptr;
   sIsInitialized = false;
@@ -3665,7 +3679,7 @@ MaxScriptRunTimePrefChangedCallback(const char *aPrefName, void *aClosure)
   PRTime t;
   if (time <= 0) {
     // Let scripts run for a really, really long time.
-    t = LL_INIT(0x40000000, 0);
+    t = 0x40000000LL << 32;
   } else {
     t = time * PR_USEC_PER_SEC;
   }
@@ -3987,6 +4001,9 @@ nsJSRuntime::GetNameSpaceManager()
 
     nsresult rv = gNameSpaceManager->Init();
     NS_ENSURE_SUCCESS(rv, nullptr);
+
+    gReporter = new NS_MEMORY_REPORTER_NAME(ScriptNameSpaceManager);
+    NS_RegisterMemoryReporter(gReporter);
   }
 
   return gNameSpaceManager;
@@ -4003,6 +4020,10 @@ nsJSRuntime::Shutdown()
   nsJSContext::KillInterSliceGCTimer();
 
   NS_IF_RELEASE(gNameSpaceManager);
+  if (gReporter) {
+    (void)::NS_UnregisterMemoryReporter(gReporter);
+    gReporter = nullptr;
+  }
 
   if (!sContextCount) {
     // We're being shutdown, and there are no more contexts

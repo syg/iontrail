@@ -44,6 +44,7 @@ extern const PRUnichar* kFlashFullscreenClass;
 #endif // defined(XP_MACOSX)
 
 using namespace mozilla::plugins;
+using namespace mozilla::layers;
 
 bool
 StreamNotifyParent::RecvRedirectNotifyResponse(const bool& allow)
@@ -603,16 +604,18 @@ PluginInstanceParent::RecvShow(const NPRect& updatedRect,
         // This is the "old front buffer" we're about to hand back to
         // the plugin.  We might still have drawing operations
         // referencing it.
-        mFrontSurface->Finish();
-
 #ifdef MOZ_X11
         if (mFrontSurface->GetType() == gfxASurface::SurfaceTypeXlib) {
-            // XSync here to ensure the server has finished operations on the
-            // surface before the plugin starts scribbling on it again, or
-            // worse, destroys it.
+            // Finish with the surface and XSync here to ensure the server has
+            // finished operations on the surface before the plugin starts
+            // scribbling on it again, or worse, destroys it.
+            mFrontSurface->Finish();
             FinishX(DefaultXDisplay());
-        }
+        } else 
 #endif
+        {
+            mFrontSurface->Flush();
+        }
     }
 
     if (mFrontSurface && gfxSharedImageSurface::IsSharedImage(mFrontSurface))

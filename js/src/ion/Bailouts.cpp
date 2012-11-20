@@ -61,7 +61,7 @@ InlineFrameIterator::InlineFrameIterator(const IonBailoutIterator *iter)
 void
 IonBailoutIterator::dump() const
 {
-    if (type_ == IonFrame_JS) {
+    if (type_ == IonFrame_OptimizedJS) {
         InlineFrameIterator frames(this);
         for (;;) {
             frames.dump();
@@ -81,11 +81,11 @@ GetBailedJSScript(JSContext *cx)
 
     // Just after the frame conversion, we can safely interpret the ionTop as JS
     // frame because it targets the bailed JS frame converted to an exit frame.
-    IonJSFrameLayout *frame = reinterpret_cast<IonJSFrameLayout*>(cx->runtime->ionTop);
+    IonJSFrameLayout *frame = reinterpret_cast<IonJSFrameLayout*>(cx->runtime->mainThread.ionTop);
     switch (GetCalleeTokenTag(frame->calleeToken())) {
       case CalleeToken_Function: {
         JSFunction *fun = CalleeTokenToFunction(frame->calleeToken());
-        return fun->script();
+        return fun->script().get(nogc);
       }
       case CalleeToken_Script:
         return CalleeTokenToScript(frame->calleeToken());
@@ -178,8 +178,8 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
         regs.pc = GetNextPc(regs.pc);
 
     IonSpew(IonSpew_Bailouts, " new PC is offset %u within script %p (line %d)",
-            pcOff, (void *)script(), PCToLineNumber(script(), regs.pc));
-    JS_ASSERT(exprStackSlots == js_ReconstructStackDepth(cx, script(), regs.pc));
+            pcOff, (void *)script().get(nogc), PCToLineNumber(script().get(nogc), regs.pc));
+    JS_ASSERT(exprStackSlots == js_ReconstructStackDepth(cx, script().get(nogc), regs.pc));
 }
 
 static StackFrame *
@@ -233,7 +233,7 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     // determine if we have a critical sequence of bailout.
     //
     // Note: frame conversion only occurs in sequential mode
-    if (it.script()->ions[COMPILE_MODE_SEQ] == it.ionScript()) {
+    if (it.script()->ion == it.ionScript()) {
         IonSpew(IonSpew_Bailouts, " Current script use count is %u",
                 it.script()->getUseCount());
     }
@@ -315,8 +315,8 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
         return BAILOUT_RETURN_RECOMPILE_CHECK;
       case Bailout_BoundsCheck:
         return BAILOUT_RETURN_BOUNDS_CHECK;
-      case Bailout_Invalidate:
-        return BAILOUT_RETURN_INVALIDATE;
+      case Bailout_ShapeGuard:
+        return BAILOUT_RETURN_SHAPE_GUARD;
       case Bailout_CachedShapeGuard:
         return BAILOUT_RETURN_CACHED_SHAPE_GUARD;
 
@@ -352,7 +352,7 @@ EnsureExitFrame(IonCommonFrameLayout *frame)
         return;
     }
 
-    JS_ASSERT(frame->prevType() == IonFrame_JS);
+    JS_ASSERT(frame->prevType() == IonFrame_OptimizedJS);
     frame->changePrevType(IonFrame_Bailed_JS);
 }
 
@@ -362,7 +362,7 @@ ion::Bailout(BailoutStack *sp)
     AssertCanGC();
     JSContext *cx = GetIonContext()->cx;
     // We don't have an exit frame.
-    cx->runtime->ionTop = NULL;
+    cx->runtime->mainThread.ionTop = NULL;
     IonActivationIterator ionActivations(cx);
     IonBailoutIterator iter(ionActivations, sp);
     IonActivation *activation = ionActivations.activation();
@@ -388,7 +388,7 @@ ion::InvalidationBailout(InvalidationBailoutStack *sp, size_t *frameSizeOut)
     JSContext *cx = GetIonContext()->cx;
 
     // We don't have an exit frame.
-    cx->runtime->ionTop = NULL;
+    cx->runtime->mainThread.ionTop = NULL;
     IonActivationIterator ionActivations(cx);
     IonBailoutIterator iter(ionActivations, sp);
     IonActivation *activation = ionActivations.activation();
@@ -470,7 +470,7 @@ uint32
 ion::ReflowTypeInfo(uint32 bailoutResult)
 {
     JSContext *cx = GetIonContext()->cx;
-    IonActivation *activation = cx->runtime->ionActivation;
+    IonActivation *activation = cx->runtime->mainThread.ionActivation;
 
     IonSpew(IonSpew_Bailouts, "reflowing type info");
 
@@ -554,16 +554,18 @@ ion::BoundsCheckFailure()
 }
 
 uint32
-ion::ForceInvalidation()
+ion::ShapeGuardFailure()
 {
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = GetBailedJSScript(cx);
 
     // invalidation after bailout only occurs in seq mode
-    JS_ASSERT(script->hasIonScript(COMPILE_MODE_SEQ));
-    JS_ASSERT(!script->ionScript(COMPILE_MODE_SEQ)->invalidated());
+    JS_ASSERT(script->hasIonScript());
+    JS_ASSERT(!script->ionScript()->invalidated());
 
-    IonSpew(IonSpew_Invalidate, "Forced invalidation bailout");
+    script->failedShapeGuard = true;
+
+    IonSpew(IonSpew_Invalidate, "Invalidating due to shape guard failure");
 
     return Invalidate(cx, script);
 }
@@ -574,12 +576,14 @@ ion::CachedShapeGuardFailure()
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = GetBailedJSScript(cx);
 
-    JS_ASSERT(script->hasIonScript(COMPILE_MODE_SEQ));
-    JS_ASSERT(!script->ionScript(COMPILE_MODE_SEQ)->invalidated());
+    JS_ASSERT(script->hasIonScript());
+    JS_ASSERT(!script->ionScript()->invalidated());
+
+    script->failedShapeGuard = true;
 
     // Purge JM caches in the script and all inlined script, to avoid baking in
     // the same shape guard next time.
-    IonScript *scriptIon = script->ionScript(COMPILE_MODE_SEQ);
+    IonScript *scriptIon = script->ionScript();
     for (size_t i = 0; i < scriptIon->scriptEntries(); i++)
         mjit::PurgeCaches(scriptIon->getScript(i));
 
@@ -592,7 +596,7 @@ uint32
 ion::ThunkToInterpreter(Value *vp)
 {
     JSContext *cx = GetIonContext()->cx;
-    IonActivation *activation = cx->runtime->ionActivation;
+    IonActivation *activation = cx->runtime->mainThread.ionActivation;
     BailoutClosure *br = activation->takeBailout();
 
     if (!EnsureHasCallObject(cx, cx->fp()))
@@ -663,7 +667,7 @@ ion::ThunkToInterpreter(Value *vp)
 
         IonSpew(IonSpew_Bailouts, "Performing inline OSR %s:%d",
                 cx->fp()->script()->filename,
-                PCToLineNumber(cx->fp()->script(), cx->regs().pc));
+                PCToLineNumber(cx->fp()->script().unsafeGet(), cx->regs().pc));
 
         // We want to OSR again. We need to avoid the problem where frequent
         // bailouts cause recursive nestings of Interpret and EnterIon. The

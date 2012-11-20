@@ -42,6 +42,8 @@ using namespace js;
 using namespace js::mjit;
 using namespace JSC;
 
+using mozilla::DebugOnly;
+
 using ic::Repatcher;
 
 static jsbytecode *
@@ -55,7 +57,7 @@ FindExceptionHandler(JSContext *cx)
 
   error:
     if (cx->isExceptionPending()) {
-        for (TryNoteIter tni(cx->regs()); !tni.done(); ++tni) {
+        for (TryNoteIter tni(cx, cx->regs()); !tni.done(); ++tni) {
             JSTryNote *tn = *tni;
 
             UnwindScope(cx, tn->stackDepth);
@@ -258,7 +260,7 @@ ShouldJaegerCompileCallee(JSContext *cx, JSScript *caller, JSScript *callee, JIT
         return true;
 
     // If we know Ion cannot compile either the caller or callee, use JM.
-    if (!callee->canIonCompile(js::COMPILE_MODE_SEQ))
+    if (!callee->canIonCompile())
         return true;
 
     // Use JM if the callee has no loops. In this case calling into Ion
@@ -685,14 +687,14 @@ void JS_FASTCALL
 stubs::ScriptProbeOnlyPrologue(VMFrame &f)
 {
     AutoAssertNoGC nogc;
-    Probes::enterScript(f.cx, f.script(), f.script()->function(), f.fp());
+    Probes::enterScript(f.cx, f.script().get(nogc), f.script()->function(), f.fp());
 }
 
 void JS_FASTCALL
 stubs::ScriptProbeOnlyEpilogue(VMFrame &f)
 {
     AutoAssertNoGC nogc;
-    Probes::exitScript(f.cx, f.script(), f.script()->function(), f.fp());
+    Probes::exitScript(f.cx, f.script().get(nogc), f.script()->function(), f.fp());
 }
 
 void JS_FASTCALL

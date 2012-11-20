@@ -16,6 +16,8 @@
 
 using namespace js;
 
+using mozilla::DebugOnly;
+
 SPSProfiler::SPSProfiler(JSRuntime *rt)
   : rt(rt),
     stack_(NULL),
@@ -46,7 +48,7 @@ SPSProfiler::setProfilingStack(ProfileEntry *stack, uint32_t *size, uint32_t max
 {
     JS_ASSERT_IF(size_ && *size_ != 0, !enabled());
     if (!strings.initialized())
-        strings.init(max);
+        strings.init();
     stack_ = stack;
     size_  = size;
     max_   = max;
@@ -359,12 +361,13 @@ void
 SPSProfiler::discardMJITCode(mjit::JITScript *jscr,
                              mjit::JITChunk *chunk, void* address)
 {
+    AutoAssertNoGC nogc;
     if (!jminfo.initialized())
         return;
 
     unregisterScript(jscr->script, chunk);
     for (unsigned i = 0; i < chunk->nInlineFrames; i++)
-        unregisterScript(chunk->inlineFrames()[i].fun->script(), chunk);
+        unregisterScript(chunk->inlineFrames()[i].fun->script().get(nogc), chunk);
 }
 
 void

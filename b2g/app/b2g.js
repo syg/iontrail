@@ -190,9 +190,6 @@ pref("app.privacyURL", "http://www.mozilla.com/%LOCALE%/m/privacy.html");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.featuresURL", "http://www.mozilla.com/%LOCALE%/b2g/features/");
 pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/b2g/faq/");
-// Whether we want to report crashes (headless)
-//XXX Remove this pref when bug 801932 is fixed
-pref("app.reportCrashes", true);
 
 // Name of alternate about: page for certificate errors (when undefined, defaults to about:neterror)
 pref("security.alternate_certificate_error_page", "certerror");
@@ -239,7 +236,10 @@ pref("ui.dragThresholdY", 25);
 
 // Layers Acceleration
 pref("layers.acceleration.disabled", false);
+#ifndef XP_WIN
+//TODO: turn this on for Windows in bug 808016
 pref("layers.offmainthreadcomposition.enabled", true);
+#endif
 pref("layers.offmainthreadcomposition.animate-opacity", true);
 pref("layers.offmainthreadcomposition.animate-transform", true);
 pref("layers.async-video.enabled", true);
@@ -258,7 +258,7 @@ pref("media.preload.auto", 2);    // preload metadata if preload=auto
 pref("media.cache_size", 4096);    // 4MB media cache
 
 // The default number of decoded video frames that are enqueued in
-// nsBuiltinDecoderReader's mVideoQueue.
+// MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 3);
 
 //  0: don't show fullscreen keyboard
@@ -269,7 +269,7 @@ pref("widget.ime.android.fullscreen_threshold", 250); // in hundreths of inches
 
 // optimize images' memory usage
 pref("image.mem.decodeondraw", true);
-pref("content.image.allow_locking", false);
+pref("content.image.allow_locking", true);
 pref("image.mem.min_discard_timeout_ms", 10000);
 pref("image.mem.max_decoded_image_kb", 5120); /* 5MB */
 
@@ -315,7 +315,7 @@ pref("urlclassifier.alternate_error_page", "blocked");
 pref("urlclassifier.gethashnoise", 4);
 
 // Randomize all UrlClassifier data with a per-client key.
-pref("urlclassifier.randomizeclient", true);
+pref("urlclassifier.randomizeclient", false);
 
 // The list of tables that use the gethash request to confirm partial results.
 pref("urlclassifier.gethashtables", "goog-phish-shavar,goog-malware-shavar");
@@ -582,8 +582,8 @@ pref("browser.prompt.allowNative", false);
 // a restart is required to enable a new value.
 pref("network.activity.blipIntervalMilliseconds", 250);
 
-// Send some sites a custom user-agent.
-pref("general.useragent.override.facebook.com", "\(Mobile#(Android; Mobile");
-pref("general.useragent.override.youtube.com", "\(Mobile#(Android; Mobile");
+pref("jsloader.reuseGlobal", true);
 
-pref("jsloader.reuseGlobal", false);
+// Enable freeing dirty pages when minimizing memory; this reduces memory
+// consumption when applications are sent to the background.
+pref("memory.free_dirty_pages", true);

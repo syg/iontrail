@@ -366,9 +366,6 @@ DOMCI_CLASS(File)
 DOMCI_CLASS(FileReader)
 DOMCI_CLASS(ArchiveReader)
 DOMCI_CLASS(ArchiveRequest)
-DOMCI_CLASS(MozURLProperty)
-
-DOMCI_CLASS(DOMStringMap)
 
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
@@ -481,6 +478,8 @@ DOMCI_CLASS(TouchEvent)
 DOMCI_CLASS(MozCSSKeyframeRule)
 DOMCI_CLASS(MozCSSKeyframesRule)
 
+DOMCI_CLASS(CSSPageRule)
+
 DOMCI_CLASS(MediaQueryList)
 
 DOMCI_CLASS(MutationObserver)
@@ -519,9 +518,13 @@ DOMCI_CLASS(DOMFileHandle)
 DOMCI_CLASS(FileRequest)
 DOMCI_CLASS(LockedFile)
 
+#ifdef MOZ_SYS_MSG
 DOMCI_CLASS(MozActivity)
+#endif
 
+#ifdef MOZ_TIME_MANAGER
 DOMCI_CLASS(MozTimeManager)
+#endif
 
 #ifdef MOZ_WEBRTC
 DOMCI_CLASS(DataChannel)

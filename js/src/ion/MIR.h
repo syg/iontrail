@@ -2532,11 +2532,24 @@ class MSub : public MBinaryArithInstruction
 
 class MMul : public MBinaryArithInstruction
 {
+    // Annotation the result could be a negative zero
+    // and we need to guard this during execution.
     bool canBeNegativeZero_;
+
+    // Annotation the result of this Mul is only used in int32 domain
+    // and we could possible truncate the result.
+    bool possibleTruncate_;
+
+    // Annotation the Mul can truncate. This is only set after range analysis,
+    // because the result could be in the imprecise double range.
+    // In that case the truncated result isn't correct.
+    bool implicitTruncate_;
 
     MMul(MDefinition *left, MDefinition *right, MIRType type)
       : MBinaryArithInstruction(left, right),
-        canBeNegativeZero_(true)
+        canBeNegativeZero_(true),
+        possibleTruncate_(false),
+        implicitTruncate_(false)
     {
         if (type != MIRType_Value)
             specialization_ = type;
@@ -2555,13 +2568,14 @@ class MMul : public MBinaryArithInstruction
     MDefinition *foldsTo(bool useValueNumbers);
     void analyzeEdgeCasesForward();
     void analyzeEdgeCasesBackward();
+    void analyzeTruncateBackward();
 
     double getIdentity() {
         return 1;
     }
 
     bool canOverflow() {
-        return !range()->isFinite();
+        return !implicitTruncate_ && !range()->isFinite();
     }
 
     bool canBeNegativeZero() {
@@ -2580,7 +2594,17 @@ class MMul : public MBinaryArithInstruction
             return false;
         Range *left = getOperand(0)->range();
         Range *right = getOperand(1)->range();
+        if (isPossibleTruncated())
+            implicitTruncate_ = !Range::precisionLossMul(left, right);
         return range()->update(Range::mul(left, right));
+    }
+
+    bool isPossibleTruncated() const {
+        return possibleTruncate_;
+    }
+
+    void setPossibleTruncated(bool truncate) {
+        possibleTruncate_ = truncate;
     }
 };
 
@@ -4557,6 +4581,7 @@ class MGuardShape
     {
         setGuard();
         setMovable();
+        setResultType(MIRType_Object);
     }
 
   public:
@@ -5338,6 +5363,49 @@ class MIn
     }
 };
 
+
+// Test whether the index is in the array bounds or a hole.
+class MInArray
+  : public MTernaryInstruction
+{
+    bool needsHoleCheck_;
+
+    MInArray(MDefinition *elements, MDefinition *index, MDefinition *initLength, bool needsHoleCheck)
+      : MTernaryInstruction(elements, index, initLength),
+        needsHoleCheck_(needsHoleCheck)
+    {
+        setResultType(MIRType_Boolean);
+        setMovable();
+        JS_ASSERT(elements->type() == MIRType_Elements);
+        JS_ASSERT(index->type() == MIRType_Int32);
+        JS_ASSERT(initLength->type() == MIRType_Int32);
+    }
+
+  public:
+    INSTRUCTION_HEADER(InArray);
+
+    static MInArray *New(MDefinition *elements, MDefinition *index,
+                         MDefinition *initLength, bool needsHoleCheck) {
+        return new MInArray(elements, index, initLength, needsHoleCheck);
+    }
+
+    MDefinition *elements() const {
+        return getOperand(0);
+    }
+    MDefinition *index() const {
+        return getOperand(1);
+    }
+    MDefinition *initLength() const {
+        return getOperand(2);
+    }
+    bool needsHoleCheck() const {
+        return needsHoleCheck_;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::Load(AliasSet::Element);
+    }
+};
+
 // Implementation for instanceof operator.
 class MInstanceOf
   : public MBinaryInstruction,
@@ -5441,7 +5509,7 @@ class MParWriteGuard
         return getOperand(1);
     }
     BailoutKind bailoutKind() const {
-        return Bailout_Invalidate;
+        return Bailout_Normal;
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();

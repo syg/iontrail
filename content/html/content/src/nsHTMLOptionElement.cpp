@@ -74,8 +74,8 @@ nsHTMLOptionElement::~nsHTMLOptionElement()
 // ISupports
 
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLOptionElement, nsGenericElement)
-NS_IMPL_RELEASE_INHERITED(nsHTMLOptionElement, nsGenericElement)
+NS_IMPL_ADDREF_INHERITED(nsHTMLOptionElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLOptionElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLOptionElement, nsHTMLOptionElement)
@@ -350,8 +350,9 @@ nsHTMLOptionElement::GetSelect()
   nsIContent* parent = this;
   while ((parent = parent->GetParent()) &&
          parent->IsHTML()) {
-    if (parent->Tag() == nsGkAtoms::select) {
-      return nsHTMLSelectElement::FromContent(parent);
+    nsHTMLSelectElement* select = nsHTMLSelectElement::FromContent(parent);
+    if (select) {
+      return select;
     }
     if (parent->Tag() != nsGkAtoms::optgroup) {
       break;
@@ -445,7 +446,7 @@ nsHTMLOptionElement::Initialize(nsISupports* aOwner,
 }
 
 nsresult
-nsHTMLOptionElement::CopyInnerTo(nsGenericElement* aDest)
+nsHTMLOptionElement::CopyInnerTo(Element* aDest)
 {
   nsresult rv = nsGenericHTMLElement::CopyInnerTo(aDest);
   NS_ENSURE_SUCCESS(rv, rv);

@@ -841,7 +841,7 @@ nsFtpState::R_pwd() {
             respStr.Truncate(pos);
             if (mServerType == FTP_VMS_TYPE)
                 ConvertDirspecFromVMS(respStr);
-            if (respStr.Last() != '/')
+            if (respStr.IsEmpty() || respStr.Last() != '/')
                 respStr.Append('/');
             mPwd = respStr;
         }
@@ -1149,7 +1149,7 @@ FTP_STATE
 nsFtpState::R_list() {
     if (mResponseCode/100 == 1) {
         // OK, time to start reading from the data connection.
-        if (HasPendingCallback())
+        if (mDataStream && HasPendingCallback())
             mDataStream->AsyncWait(this, 0, 0, CallbackTarget());
         return FTP_READ_BUF;
     }
@@ -1191,7 +1191,7 @@ nsFtpState::R_retr() {
             (void)mCacheEntry->AsyncDoom(nullptr);
             mCacheEntry = nullptr;
         }
-        if (HasPendingCallback())
+        if (mDataStream && HasPendingCallback())
             mDataStream->AsyncWait(this, 0, 0, CallbackTarget());
         return FTP_READ_BUF;
     }
@@ -1681,15 +1681,19 @@ nsFtpState::Init(nsFtpChannel *channel)
         mAction = PUT;
 
     nsresult rv;
-    nsAutoCString path;
     nsCOMPtr<nsIURL> url = do_QueryInterface(mChannel->URI());
-	
-    nsCString host;
-    url->GetAsciiHost(host);
-    if (host.IsEmpty()) {
+
+    nsAutoCString host;
+    if (url) {
+        rv = url->GetAsciiHost(host);
+    } else {
+        rv = mChannel->URI()->GetAsciiHost(host);
+    }
+    if (NS_FAILED(rv) || host.IsEmpty()) {
         return NS_ERROR_MALFORMED_URI;
     }
-  
+
+    nsAutoCString path;
     if (url) {
         rv = url->GetFilePath(path);
     } else {
@@ -2282,7 +2286,7 @@ nsFtpState::ReadCacheEntry()
     if (NS_FAILED(OpenCacheDataStream()))
         return false;
 
-    if (HasPendingCallback())
+    if (mDataStream && HasPendingCallback())
         mDataStream->AsyncWait(this, 0, 0, CallbackTarget());
 
     mDoomCache = false;

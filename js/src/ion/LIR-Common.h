@@ -266,6 +266,10 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
+// TODO---this class should not be a CallInstructionHelper, and it
+// should not require so many temporaries!  These are intended for the
+// OOL slow path; but we should just use the masm instructions to
+// locally push/pop the state in that case.
 class LParNew : public LCallInstructionHelper<1, 1, 4>
 {
   public:
@@ -2113,6 +2117,31 @@ class LLoadElementV : public LInstructionHelper<BOX_PIECES, 2, 0>
         return getOperand(1);
     }
 };
+
+class LInArray : public LInstructionHelper<1, 3, 0>
+{
+  public:
+    LIR_HEADER(InArray);
+
+    LInArray(const LAllocation &elements, const LAllocation &index, const LAllocation &initLength) {
+        setOperand(0, elements);
+        setOperand(1, index);
+        setOperand(2, initLength);
+    }
+    const MInArray *mir() const {
+        return mir_->toInArray();
+    }
+    const LAllocation *elements() {
+        return getOperand(0);
+    }
+    const LAllocation *index() {
+        return getOperand(1);
+    }
+    const LAllocation *initLength() {
+        return getOperand(2);
+    }
+};
+
 
 // Load a value from a dense array's elements vector. Bail out if it's the hole value.
 class LLoadElementHole : public LInstructionHelper<BOX_PIECES, 3, 0>

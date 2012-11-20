@@ -13,13 +13,12 @@
 
 #include "vm/GlobalObject.h"
 
-#include "jstaskset.h"
-#include "jsthreadpool.h"
+#include "vm/threadpool.h"
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 #include "jsarrayinlines.h"
-#include "jsthreadpoolinlines.h"
+#include "vm/forkjoininlines.h"
 
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
@@ -222,10 +221,10 @@ class FastestIonInvoke
         argv_[1] = UndefinedValue();
 
         // Find JIT code pointer.
-        IonScript *ion = callee->script()->ionScript(COMPILE_MODE_PAR);
+        IonScript *ion = callee->script()->parallelIonScript();
         IonCode *code = ion->method();
         jitcode_ = code->raw();
-        enter_ = cx->compartment->ionCompartment()->enterJITInfallible();
+        enter_ = cx->compartment->ionCompartment()->enterJIT();
         calleeToken_ = CalleeToToken(callee);
     }
 
@@ -236,39 +235,7 @@ class FastestIonInvoke
     }
 };
 
-class AutoEnterParallelSection
-{
-  private:
-    JSContext *cx_;
-    uint8 *prevIonTop_;
-    uintptr_t ionStackLimit_;
-    types::AutoEnterTypeInference enter_;
-
-  public:
-    AutoEnterParallelSection(JSContext *cx)
-      : cx_(cx)
-      , prevIonTop_(cx->runtime->ionTop)
-      , ionStackLimit_(cx->runtime->ionStackLimit)
-      , enter_(cx)
-    {
-        // Temporarily suspend native stack limit while par code
-        // is executing, since it doesn't apply to the par threads:
-#       if JS_STACK_GROWTH_DIRECTION > 0
-        cx->runtime->ionStackLimit = UINTPTR_MAX;
-#       else
-        cx->runtime->ionStackLimit = 0;
-#       endif
-
-        cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
-    }
-
-    ~AutoEnterParallelSection() {
-        cx_->runtime->ionStackLimit = ionStackLimit_;
-        cx_->runtime->ionTop = prevIonTop_;
-    }
-};
-
-class ArrayTaskSet : public TaskSet {
+class ArrayOp : public ForkJoinOp {
   protected:
     JSContext *cx_;
     const char *name_;
@@ -276,39 +243,41 @@ class ArrayTaskSet : public TaskSet {
     HandleObject fun_;
 
   public:
-    ArrayTaskSet(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun)
+    ArrayOp(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun)
       : cx_(cx), name_(name), buffer_(buffer), fun_(fun)
     {}
 
     ExecutionStatus apply() {
         Spew(cx_, SpewOps, "%s: attempting parallel compilation", name_);
-        if (!compileForParallelExecution())
+        if (!ion::IsEnabled(cx_))
+            return ExecutionDisqualified;
+
+        MethodStatus status = compileForParallelExecution();
+        if (status == Method_Error)
+            return ExecutionFatal;
+        if (status != Method_Compiled)
             return ExecutionDisqualified;
 
         Spew(cx_, SpewOps, "%s: entering parallel section", name_);
-        AutoEnterParallelSection enter(cx_);
-        ParallelResult pr = js::ExecuteTaskSet(cx_, *this);
+        ParallelResult pr = js::ExecuteForkJoinOp(cx_, *this);
         return ToExecutionStatus(cx_, name_, pr);
     }
 
-    bool compileForParallelExecution() {
-        if (!ion::IsEnabled(cx_))
-            return false;
-
+    MethodStatus compileForParallelExecution() {
         // The kernel should be a self-hosted function.
         if (!fun_->isFunction())
-            return false;
+            return Method_Skipped;
 
         RootedFunction callee(cx_, fun_->toFunction());
 
         if (!callee->isInterpreted() || !callee->isSelfHostedBuiltin())
-            return false;
+            return Method_Skipped;
 
         // Ensure that the function is analyzed by TI.
         bool hasIonScript;
         {
             AutoAssertNoGC nogc;
-            hasIonScript = callee->script()->hasIonScript(COMPILE_MODE_PAR);
+            hasIonScript = callee->script()->hasParallelIonScript();
         }
 
         if (!hasIonScript) {
@@ -319,23 +288,22 @@ class ArrayTaskSet : public TaskSet {
             ParallelCompileContext compileContext(cx_);
             ion::js_IonOptions.startParallelWarmup(&compileContext);
             if (!warmup(3))
-                return false;
+                return Method_Error;
 
             // If warmup returned false, assume that we finished warming up.
             ion::js_IonOptions.finishParallelWarmup();
 
             // After warming up, compile the outer kernel as a special
             // self-hosted kernel that can unsafely write to the buffer.
-            if (!compileContext.compileKernelAndInvokedFunctions(callee))
-                return false;
+            return compileContext.compileKernelAndInvokedFunctions(callee);
         }
 
-        return true;
+        return Method_Compiled;
     }
 
     virtual bool warmup(uint32_t limit) { return true; }
     virtual bool pre(size_t numThreads) { return true; }
-    virtual bool parallel(ThreadContext &taskSetCx) = 0;
+    virtual bool parallel(ForkJoinSlice &slice) = 0;
     virtual bool post(size_t numThreads) { return true; }
 };
 
@@ -344,15 +312,15 @@ InWarmup() {
     return ion::js_IonOptions.parallelWarmupContext != NULL;
 }
 
-class BuildArrayTaskSet : public ArrayTaskSet
+class BuildArrayOp : public ArrayOp
 {
     Value *funArgs_;
     uint32_t funArgc_;
 
   public:
-    BuildArrayTaskSet(JSContext *cx, HandleObject buffer, HandleObject fun,
-                      Value *funArgs, uint32_t funArgc)
-      : ArrayTaskSet(cx, "fill", buffer, fun),
+    BuildArrayOp(JSContext *cx, HandleObject buffer, HandleObject fun,
+                 Value *funArgs, uint32_t funArgc)
+      : ArrayOp(cx, "fill", buffer, fun),
         funArgs_(funArgs),
         funArgc_(funArgc)
     {
@@ -383,14 +351,15 @@ class BuildArrayTaskSet : public ArrayTaskSet
         if (!Invoke(cx_, args))
             return false;
 
-        return InWarmup();
+        JS_ASSERT(InWarmup());
+        return true;
     }
 
     bool pre(size_t numThreads) {
         return buffer_->getDenseArrayInitializedLength() >= numThreads;
     }
 
-    bool parallel(ThreadContext &threadCx) {
+    bool parallel(ForkJoinSlice &slice) {
         // Setting maximum argc at 7: the constructor uses 1 extra (the
         // kernel); map, reduce, scan use 2 extra (the kernel and the source
         // array); scatter uses 4 extra (the kernel, the default value, the
@@ -399,8 +368,8 @@ class BuildArrayTaskSet : public ArrayTaskSet
 
         // The first 3 arguments: buffer, thread id, and number of threads.
         fii.args[0] = ObjectValue(*buffer_);
-        fii.args[1] = Int32Value(threadCx.threadId);
-        fii.args[2] = Int32Value(threadCx.numThreads);
+        fii.args[1] = Int32Value(slice.sliceId);
+        fii.args[2] = Int32Value(slice.numSlices);
         for (uint32_t i = 0; i < funArgc_; i++)
             fii.args[3 + i] = funArgs_[i];
         return fii.invoke();
@@ -438,8 +407,8 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
     if (!types::SetInitializerObjectType(cx, script, iter.pc(), buffer))
         return ExecutionFatal;
 
-    BuildArrayTaskSet taskSet(cx, buffer, fun, args.array() + 2, args.length() - 2);
-    ExecutionStatus status = taskSet.apply();
+    BuildArrayOp op(cx, buffer, fun, args.array() + 2, args.length() - 2);
+    ExecutionStatus status = op.apply();
 
     // If we bailed out, invalidate the kernel to be reanalyzed (all the way
     // down) and recompiled.
@@ -450,7 +419,7 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
     } else {
         if (status == ExecutionBailout) {
             RootedScript script(cx, fun->toFunction()->script());
-            Invalidate(cx, script, COMPILE_MODE_PAR);
+            Invalidate(cx, script, ParallelExecution);
         }
 
         args.rval().setUndefined();
@@ -467,13 +436,13 @@ FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[3];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
-    { "map",      JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayMap"      },
-    { "reduce",   JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayReduce"   },
-    { "scan",     JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayScan"     },
-    { "scatter",  JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayScatter"  },
-    { "filter",   JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayFilter"   },
-    { "get",      JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED | JSFUN_CLONE_AT_CALLSITE, "ParallelArrayGet" },
-    { "toString", JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayToString" },
+    { "map",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayMap"      },
+    { "reduce",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayReduce"   },
+    { "scan",     JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScan"     },
+    { "scatter",  JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScatter"  },
+    { "filter",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayFilter"   },
+    { "get",      JSOP_NULLWRAPPER, 1, JSFunction::CLONE_CALLSITE, "ParallelArrayGet" },
+    { "toString", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayToString" },
     JS_FS_END
 };
 
@@ -567,7 +536,12 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
     }
 
     // Define the length getter.
-    RootedObject lengthGetter(cx, cx->runtime->getSelfHostedFunction(cx, "ParallelArrayLength"));
+    const char lengthStr[] = "ParallelArrayLength";
+    JSAtom *atom = Atomize(cx, lengthStr, strlen(lengthStr));
+    if (!atom)
+        return NULL;
+    Rooted<PropertyName *> lengthProp(cx, atom->asPropertyName());
+    RootedObject lengthGetter(cx, cx->runtime->getSelfHostedFunction(cx, lengthProp));
     if (!lengthGetter)
         return NULL;
 

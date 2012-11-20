@@ -6,15 +6,20 @@
 #include "nsDOMClassInfo.h"
 #include "nsContentUtils.h"
 #include "nsIDOMActivityOptions.h"
+#include "nsEventStateManager.h"
 
 using namespace mozilla::dom;
 
+#ifdef MOZ_SYS_MSG
 DOMCI_DATA(MozActivity, Activity)
+#endif
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(Activity)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozActivity)
   NS_INTERFACE_MAP_ENTRY(nsIJSNativeInitializer)
+#ifdef MOZ_SYS_MSG
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(MozActivity)
+#endif
 NS_INTERFACE_MAP_END_INHERITING(DOMRequest)
 
 NS_IMPL_ADDREF_INHERITED(Activity, DOMRequest)
@@ -24,12 +29,12 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(Activity)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(Activity,
                                                   DOMRequest)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mProxy)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mProxy)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(Activity,
                                                 DOMRequest)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mProxy)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mProxy)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(Activity, DOMRequest)
@@ -46,6 +51,14 @@ Activity::Initialize(nsISupports* aOwner,
   NS_ENSURE_TRUE(window, NS_ERROR_UNEXPECTED);
 
   Init(window);
+
+  if (!nsEventStateManager::IsHandlingUserInput()) {
+    nsCOMPtr<nsIDOMRequestService> rs =
+      do_GetService("@mozilla.org/dom/dom-request-service;1");
+    rs->FireErrorAsync(static_cast<DOMRequest*>(this),
+                       NS_LITERAL_STRING("NotUserInput"));
+    return NS_OK;
+  }
 
   // We expect a single argument, which is a nsIDOMMozActivityOptions.
   if (aArgc != 1 || !aArgv[0].isObject()) {

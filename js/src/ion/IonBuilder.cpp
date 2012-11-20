@@ -15,6 +15,7 @@
 
 #include "jsscriptinlines.h"
 #include "jstypedarrayinlines.h"
+#include "ExecutionModeInlines.h"
 
 #ifdef JS_THREADSAFE
 # include "prthread.h"
@@ -23,11 +24,13 @@
 using namespace js;
 using namespace js::ion;
 
+using mozilla::DebugOnly;
+
 IonBuilder::IonBuilder(JSContext *cx, TempAllocator *temp, MIRGraph *graph,
                        TypeOracle *oracle, CompileInfo *info, size_t inliningDepth, uint32 loopDepth)
   : MIRGenerator(cx->compartment, temp, graph, info),
     recompileInfo(cx->compartment->types.compiledInfo),
-    backgroundCompiledLir(NULL),
+    backgroundCodegen_(NULL),
     cx(cx),
     loopDepth_(loopDepth),
     callerResumePoint_(NULL),
@@ -35,6 +38,7 @@ IonBuilder::IonBuilder(JSContext *cx, TempAllocator *temp, MIRGraph *graph,
     oracle(oracle),
     inliningDepth(inliningDepth),
     failedBoundsCheck_(info->script()->failedBoundsCheck),
+    failedShapeGuard_(info->script()->failedShapeGuard),
     lazyArguments_(NULL)
 {
     script_.init(info->script());
@@ -148,7 +152,7 @@ IonBuilder::getSingleCallTarget(uint32 argc, jsbytecode *pc)
 {
     AutoAssertNoGC nogc;
 
-    types::StackTypeSet *calleeTypes = oracle->getCallTarget(script(), argc, pc);
+    types::StackTypeSet *calleeTypes = oracle->getCallTarget(script().get(nogc), argc, pc);
     if (!calleeTypes)
         return NULL;
 
@@ -201,8 +205,8 @@ IonBuilder::canInlineTarget(JSFunction *target)
     }
 
     RootedScript inlineScript(cx, target->script());
-    CompileMode compileMode = info().compileMode();
-    if (!inlineScript->canIonCompile(compileMode)) {
+    ExecutionMode executionMode = info().executionMode();
+    if (!CanIonCompile(inlineScript, executionMode)) {
         IonSpew(IonSpew_Inlining, "Cannot inline due to disable Ion compilation");
         return false;
     }
@@ -405,6 +409,9 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
 
     if (callerBuilder->failedBoundsCheck_)
         failedBoundsCheck_ = true;
+
+    if (callerBuilder->failedShapeGuard_)
+        failedShapeGuard_ = true;
 
     // Generate single entrance block.
     current = newBlock(pc);
@@ -2831,7 +2838,7 @@ IonBuilder::jsop_call_inline(HandleFunction callee, uint32 argc, bool constructi
     RootedScript calleeScript(cx, callee->script());
     CompileInfo *info = cx->tempLifoAlloc().new_<CompileInfo>(calleeScript.get(), callee,
                                                               (jsbytecode *)NULL, constructing,
-                                                              COMPILE_MODE_SEQ);
+                                                              SequentialExecution);
     if (!info)
         return false;
 
@@ -4017,6 +4024,13 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
         needsBarrier = false;
     }
 
+    // In parallel execution, we never require write barriers.  See
+    // forkjoin.cpp for more information.
+    switch (info().executionMode()) {
+      case SequentialExecution: break;
+      case ParallelExecution: needsBarrier = false; break;
+    }
+
     if (templateObject->isFixedSlot(shape->slot())) {
         MStoreFixedSlot *store = MStoreFixedSlot::New(obj, shape->slot(), value);
         if (needsBarrier)
@@ -4625,10 +4639,8 @@ IonBuilder::jsop_getgname(HandlePropertyName name)
 
     // If we have a property typeset, the isOwnProperty call will trigger recompilation if
     // the property is deleted or reconfigured.
-    if (!propertyTypes && shape->configurable()) {
-        MGuardShape *guard = MGuardShape::New(global, globalObj->lastProperty(), Bailout_Invalidate);
-        current->add(guard);
-    }
+    if (!propertyTypes && shape->configurable())
+        global = addShapeGuard(global, globalObj->lastProperty(), Bailout_ShapeGuard);
 
     JS_ASSERT(shape->slot() >= globalObj->numFixedSlots());
 
@@ -4678,10 +4690,8 @@ IonBuilder::jsop_setgname(HandlePropertyName name)
     // If we have a property type set, the isOwnProperty call will trigger recompilation
     // if the property is deleted or reconfigured. Without TI, we always need a shape guard
     // to guard against the property being reconfigured as non-writable.
-    if (!propertyTypes) {
-        MGuardShape *guard = MGuardShape::New(global, globalObj->lastProperty(), Bailout_Invalidate);
-        current->add(guard);
-    }
+    if (!propertyTypes)
+        global = addShapeGuard(global, globalObj->lastProperty(), Bailout_ShapeGuard);
 
     JS_ASSERT(shape->slot() >= globalObj->numFixedSlots());
 
@@ -5480,8 +5490,7 @@ IonBuilder::TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types, Handle
     // are no lookup hooks for this property.
     MInstruction *wrapper = MConstant::New(ObjectValue(*foundProto));
     current->add(wrapper);
-    MGuardShape *guard = MGuardShape::New(wrapper, foundProto->lastProperty(), Bailout_Invalidate);
-    current->add(guard);
+    wrapper = addShapeGuard(wrapper, foundProto->lastProperty(), Bailout_ShapeGuard);
 
     // Now we have to freeze all the property typesets to ensure there isn't a
     // lower shadowing getter or setter installed in the future.
@@ -6005,8 +6014,7 @@ IonBuilder::getPropTryMonomorphic(bool *emitted, HandleId id, types::StackTypeSe
     // the shape is not in dictionary made. We cannot be sure that the shape is
     // still a lastProperty, and calling Shape::search() on dictionary mode
     // shapes that aren't lastProperty is invalid.
-    MGuardShape *guard = MGuardShape::New(obj, objShape, Bailout_CachedShapeGuard);
-    current->add(guard);
+    obj = addShapeGuard(obj, objShape, Bailout_CachedShapeGuard);
 
     spew("Inlining monomorphic GETPROP");
     Shape *shape = objShape->search(cx, id);
@@ -6156,8 +6164,7 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
             // long as the shape is not in dictionary mode. We cannot be sure
             // that the shape is still a lastProperty, and calling Shape::search
             // on dictionary mode shapes that aren't lastProperty is invalid.
-            MGuardShape *guard = MGuardShape::New(obj, objShape, Bailout_CachedShapeGuard);
-            current->add(guard);
+            obj = addShapeGuard(obj, objShape, Bailout_CachedShapeGuard);
 
             Shape *shape = objShape->search(cx, NameToId(name));
             JS_ASSERT(shape);
@@ -6450,6 +6457,9 @@ IonBuilder::jsop_setaliasedvar(ScopeCoordinate sc)
 bool
 IonBuilder::jsop_in()
 {
+    if (oracle->inObjectIsDenseArray(script_, pc))
+        return jsop_in_dense();
+
     MDefinition *obj = current->pop();
     MDefinition *id = current->pop();
     MIn *ins = new MIn(id, obj);
@@ -6458,6 +6468,38 @@ IonBuilder::jsop_in()
     current->push(ins);
 
     return resumeAfter(ins);
+}
+
+bool
+IonBuilder::jsop_in_dense()
+{
+    if (oracle->arrayPrototypeHasIndexedProperty())
+        return abort("JSOP_IN Array proto has indexed properties");
+
+    bool needsHoleCheck = !oracle->inArrayIsPacked(script_, pc);
+
+    MDefinition *obj = current->pop();
+    MDefinition *id = current->pop();
+
+    // Ensure id is an integer.
+    MInstruction *idInt32 = MToInt32::New(id);
+    current->add(idInt32);
+    id = idInt32;
+
+    // Get the elements vector.
+    MElements *elements = MElements::New(obj);
+    current->add(elements);
+
+    MInitializedLength *initLength = MInitializedLength::New(elements);
+    current->add(initLength);
+
+    // Check if id < initLength and elem[id] not a hole.
+    MInArray *ins = MInArray::New(elements, id, initLength, needsHoleCheck);
+
+    current->add(ins);
+    current->push(ins);
+
+    return true;
 }
 
 bool
@@ -6484,4 +6526,17 @@ IonBuilder::addBoundsCheck(MDefinition *index, MDefinition *length)
         check->setNotMovable();
 
     return check;
+}
+
+MInstruction *
+IonBuilder::addShapeGuard(MDefinition *obj, const Shape *shape, BailoutKind bailoutKind)
+{
+    MGuardShape *guard = MGuardShape::New(obj, shape, bailoutKind);
+    current->add(guard);
+
+    // If a shape guard failed in the past, don't optimize shape guard.
+    if (failedShapeGuard_)
+        guard->setNotMovable();
+
+    return guard;
 }

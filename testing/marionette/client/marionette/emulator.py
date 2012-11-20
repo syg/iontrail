@@ -4,7 +4,7 @@
 
 import datetime
 from errors import *
-from mozdevice import devicemanagerADB
+from mozdevice import devicemanagerADB, DMError
 from mozprocess import ProcessHandlerMixin
 import multiprocessing
 import os
@@ -19,6 +19,7 @@ import time
 
 from emulator_battery import EmulatorBattery
 from emulator_geo import EmulatorGeo
+from emulator_screen import EmulatorScreen
 
 
 class LogcatProc(ProcessHandlerMixin):
@@ -59,6 +60,7 @@ class Emulator(object):
         self.res = res
         self.battery = EmulatorBattery(self)
         self.geo = EmulatorGeo(self)
+        self.screen = EmulatorScreen(self)
         self.homedir = homedir
         self.sdcard = sdcard
         self.noWindow = noWindow
@@ -331,8 +333,7 @@ waitFor(
 
         qemu_args = self.args[:]
         if self.copy_userdata:
-            # Make a copy of the userdata.img for this instance of the emulator
-            # to use.
+            # Make a copy of the userdata.img for this instance of the emulator to use.
             self._tmp_userdata = tempfile.mktemp(prefix='marionette')
             shutil.copyfile(self.dataImg, self._tmp_userdata)
             qemu_args[qemu_args.index('-data') + 1] = self._tmp_userdata
@@ -359,6 +360,7 @@ waitFor(
         # bug 802877
         time.sleep(10)
         self.geo.set_default_location()
+        self.screen.initialize()
 
         if self.logcat_dir:
             self.save_logcat()
@@ -378,31 +380,40 @@ waitFor(
         Install gecko into the emulator using adb push.  Restart b2g after the
         installation.
         """
-        print 'installing gecko binaries...'
-        # need to remount so we can write to /system/b2g
-        self._run_adb(['remount'])
         # See bug 800102.  We use this particular method of installing
         # gecko in order to avoid an adb bug in which adb will sometimes
         # hang indefinitely while copying large files to the system
         # partition.
+        push_attempts = 10
+
+        print 'installing gecko binaries...'
+        # need to remount so we can write to /system/b2g
+        self._run_adb(['remount'])
         for root, dirs, files in os.walk(gecko_path):
             for filename in files:
-                data_local_file = os.path.join('/data/local', filename)
-                print 'pushing', data_local_file
-                self.dm.pushFile(os.path.join(root, filename), data_local_file)
-        self.dm.shellCheckOutput(['stop', 'b2g'])
-        for root, dirs, files in os.walk(gecko_path):
-            for filename in files:
-                data_local_file = os.path.join('/data/local', filename)
-                rel_file = os.path.relpath(os.path.join(root, filename), gecko_path)
-                system_file = os.path.join('/system/b2g', rel_file)
-                print 'copying', data_local_file, 'to', system_file
-                self.dm.shellCheckOutput(['dd', 'if=%s' % data_local_file,
-                                          'of=%s' % system_file])
+                rel_path = os.path.relpath(os.path.join(root, filename), gecko_path)
+                system_b2g_file = os.path.join('/system/b2g', rel_path)
+                for retry in range(1, push_attempts+1):
+                    print 'pushing', system_b2g_file, '(attempt %s of %s)' % (retry, push_attempts)
+                    try:
+                        self.dm.pushFile(os.path.join(root, filename), system_b2g_file)
+                        break
+                    except DMError:
+                        if retry == push_attempts:
+                            raise
+
         print 'restarting B2G'
+        # see bug 809437 for the path that lead to this madness
+        time.sleep(5)
+        self.dm.shellCheckOutput(['stop', 'b2g'])
+        time.sleep(10)
         self.dm.shellCheckOutput(['start', 'b2g'])
-        self.wait_for_port()
+        time.sleep(5)
+
+        if not self.wait_for_port():
+            raise TimeoutException("Timeout waiting for marionette on port '%s'" % self.marionette_port)
         self.wait_for_system_message(marionette)
+
 
     def rotate_log(self, srclog, index=1):
         """ Rotate a logfile, by recursively rotating logs further in the sequence,

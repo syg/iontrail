@@ -129,7 +129,9 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
 #endif
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorCamera)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorSystemMessages)
+#ifdef MOZ_TIME_MANAGER
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorTime)
+#endif
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Navigator)
 NS_INTERFACE_MAP_END
 
@@ -603,7 +605,7 @@ public:
     mDocument = do_GetWeakReference(aDocument);
 
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aDocument);
-    NS_NAMED_LITERAL_STRING(visibilitychange, "mozvisibilitychange");
+    NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
     target->AddSystemEventListener(visibilitychange,
                                    this, /* listener */
                                    true, /* use capture */
@@ -637,7 +639,7 @@ VibrateWindowListener::HandleEvent(nsIDOMEvent* aEvent)
 
   bool hidden = true;
   if (doc) {
-    doc->GetMozHidden(&hidden);
+    doc->GetHidden(&hidden);
   }
 
   if (hidden) {
@@ -662,7 +664,7 @@ VibrateWindowListener::RemoveListener()
   if (!target) {
     return;
   }
-  NS_NAMED_LITERAL_STRING(visibilitychange, "mozvisibilitychange");
+  NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
   target->RemoveSystemEventListener(visibilitychange, this,
                                     true /* use capture */);
 }
@@ -735,7 +737,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
   NS_ENSURE_TRUE(domDoc, NS_ERROR_FAILURE);
 
   bool hidden = true;
-  domDoc->GetMozHidden(&hidden);
+  domDoc->GetHidden(&hidden);
   if (hidden) {
     // Hidden documents cannot start or stop a vibration.
     return NS_OK;
@@ -785,7 +787,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
   }
 
   // Add a listener to cancel the vibration if the document becomes hidden,
-  // and remove the old mozvisibility listener, if there was one.
+  // and remove the old visibility listener, if there was one.
 
   if (!gVibrateWindowListener) {
     // If gVibrateWindowListener is null, this is the first time we've vibrated,
@@ -1334,6 +1336,7 @@ Navigator::MozSetMessageHandler(const nsAString& aType,
 //*****************************************************************************
 //    Navigator::nsIDOMNavigatorTime
 //*****************************************************************************
+#ifdef MOZ_TIME_MANAGER
 NS_IMETHODIMP
 Navigator::GetMozTime(nsIDOMMozTimeManager** aTime)
 {
@@ -1350,6 +1353,7 @@ Navigator::GetMozTime(nsIDOMMozTimeManager** aTime)
   NS_ADDREF(*aTime = mTimeManager);
   return NS_OK;
 }
+#endif
 
 //*****************************************************************************
 //    nsNavigator::nsIDOMNavigatorCamera

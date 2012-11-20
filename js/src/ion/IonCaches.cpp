@@ -22,6 +22,8 @@
 using namespace js;
 using namespace js::ion;
 
+using mozilla::DebugOnly;
+
 void
 CodeLocationJump::repoint(IonCode *code, MacroAssembler *masm)
 {
@@ -182,17 +184,22 @@ IsCacheableNoProperty(JSObject *obj, JSObject *holder, const Shape *shape, jsbyt
         obj2 = obj2->getProto();
     }
 
+    // The pc is NULL if the cache is idempotent. We cannot share missing
+    // properties between caches because TI can only try to prove that a type is
+    // contained, but does not attempts to check if something does not exists.
+    // So the infered type of getprop would be missing and would not contain
+    // undefined, as expected for missing properties.
+    if (!pc)
+        return false;
+
 #if JS_HAS_NO_SUCH_METHOD
-    // This case cannot appear with an idempotent cache.
-    if (pc) {
-        // The __noSuchMethod__ hook may substitute in a valid method.  Since,
-        // if o.m is missing, o.m() will probably be an error, just mark all
-        // missing callprops as uncacheable.
-        if (JSOp(*pc) == JSOP_CALLPROP ||
-            JSOp(*pc) == JSOP_CALLELEM)
-        {
-            return false;
-        }
+    // The __noSuchMethod__ hook may substitute in a valid method.  Since,
+    // if o.m is missing, o.m() will probably be an error, just mark all
+    // missing callprops as uncacheable.
+    if (JSOp(*pc) == JSOP_CALLPROP ||
+        JSOp(*pc) == JSOP_CALLELEM)
+    {
+        return false;
     }
 #endif
 
@@ -464,7 +471,6 @@ struct GetNativePropertyStub
 
         // TODO: ensure stack is aligned?
         DebugOnly<uint32> initialStack = masm.framePushed();
-        masm.checkStackAlignment();
 
         Label success, exception;
 
@@ -659,7 +665,7 @@ IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *o
 
     // Need to set correct framePushed on the masm so that exit frame descriptors are
     // properly constructed.
-    masm.setFramePushed(script->ionScript(COMPILE_MODE_SEQ)->frameSize());
+    masm.setFramePushed(script->ionScript()->frameSize());
 
     GetNativePropertyStub getprop;
     if (!getprop.generateCallGetter(cx, masm, obj, name(), holder, shape, liveRegs,
@@ -785,14 +791,11 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
 bool
 js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
-
     AutoFlushCache afc ("GetPropertyCache");
     const SafepointIndex *safepointIndex;
     void *returnAddr;
     JSScript *topScript = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
-    IonScript *ion = topScript->ionScript(compileMode);
+    IonScript *ion = topScript->ionScript();
 
     IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
     RootedPropertyName name(cx, cache.name());
@@ -832,7 +835,7 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
         topScript->invalidatedIdempotentCache = true;
 
         // Do not re-invalidate if the lookup already caused invalidation.
-        if (!topScript->hasIonScript(compileMode))
+        if (!topScript->hasIonScript())
             return true;
 
         return Invalidate(cx, topScript);
@@ -1299,7 +1302,7 @@ IsPropertyAddInlineable(JSContext *cx, HandleObject obj, jsid id, uint32_t oldSl
     if (obj->getClass()->resolve != JS_ResolveStub)
         return false;
 
-    if (!obj->isExtensible())
+    if (!obj->isExtensible() || !shape->writable())
         return false;
 
     // walk up the object prototype chain and ensure that all prototypes
@@ -1335,14 +1338,12 @@ bool
 js::ion::SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value,
                           bool isSetName)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("SetPropertyCache");
 
     void *returnAddr;
     const SafepointIndex *safepointIndex;
     JSScript *script = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
-    IonScript *ion = script->ions[compileMode];
+    IonScript *ion = script->ion;
     IonCacheSetProperty &cache = ion->getCache(cacheIndex).toSetProperty();
     RootedPropertyName name(cx, cache.name());
     RootedId id(cx, AtomToId(name));
@@ -1443,18 +1444,6 @@ IonCacheGetElement::attachGetProp(JSContext *cx, IonScript *ion, HandleObject ob
     return true;
 }
 
-// Get the common shape used by all dense arrays with a prototype at globalObj.
-static inline Shape *
-GetDenseArrayShape(JSContext *cx, JSObject *globalObj)
-{
-    JSObject *proto = globalObj->global().getOrCreateArrayPrototype(cx);
-    if (!proto)
-        return NULL;
-
-    return EmptyShape::getInitialShape(cx, &ArrayClass, proto,
-                                       proto->getParent(), gc::FINALIZE_OBJECT0);
-}
-
 bool
 IonCacheGetElement::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval)
 {
@@ -1465,7 +1454,8 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *ob
     MacroAssembler masm;
 
     // Guard object is a dense array.
-    RootedShape shape(cx, GetDenseArrayShape(cx, &script->global()));
+    RootedObject globalObj(cx, &script->global());
+    RootedShape shape(cx, GetDenseArrayShape(cx, globalObj));
     if (!shape)
         return false;
     masm.branchTestObjShape(Assembler::NotEqual, object(), shape, &failures);
@@ -1538,11 +1528,9 @@ bool
 js::ion::GetElementCache(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
                          MutableHandleValue res)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("GetElementCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript(compileMode);
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
 
     IonCacheGetElement &cache = ion->getCache(cacheIndex).toGetElement();
 
@@ -1636,7 +1624,7 @@ GenerateScopeChainGuard(MacroAssembler &masm, JSObject *scopeObj,
         CallObject *callObj = &scopeObj->asCall();
         if (!callObj->isForEval()) {
             RawFunction fun = &callObj->callee();
-            RawScript script = fun->script();
+            RawScript script = fun->script().get(nogc);
             if (!script->funHasExtensibleScope)
                 return;
         }
@@ -1762,11 +1750,9 @@ IsCacheableScopeChain(JSObject *scopeChain, JSObject *holder)
 JSObject *
 js::ion::BindNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("BindNameCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript(compileMode);
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
     IonCacheBindName &cache = ion->getCache(cacheIndex).toBindName();
     HandlePropertyName name = cache.name();
 
@@ -1861,7 +1847,7 @@ IonCacheName::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, Han
 
 static bool
 IsCacheableName(JSContext *cx, HandleObject scopeChain, HandleObject obj, HandleObject holder,
-                HandleShape shape, const TypedOrValueRegister &output)
+                HandleShape shape, jsbytecode *pc, const TypedOrValueRegister &output)
 {
     if (!shape)
         return false;
@@ -1873,7 +1859,7 @@ IsCacheableName(JSContext *cx, HandleObject scopeChain, HandleObject obj, Handle
     if (obj->isGlobal()) {
         // Support only simple property lookups.
         if (!IsCacheableGetPropReadSlot(obj, holder, shape) &&
-            !IsCacheableNoProperty(obj, holder, shape, NULL, output))
+            !IsCacheableNoProperty(obj, holder, shape, pc, output))
             return false;
     } else if (obj->isCall()) {
         if (!shape->hasDefaultGetter())
@@ -1901,11 +1887,9 @@ IsCacheableName(JSContext *cx, HandleObject scopeChain, HandleObject obj, Handle
 bool
 js::ion::GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
     AutoFlushCache afc ("GetNameCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript(compileMode);
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
 
     IonCacheName &cache = ion->getCache(cacheIndex).toName();
     RootedPropertyName name(cx, cache.name());
@@ -1921,7 +1905,7 @@ js::ion::GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
         return false;
 
     if (cache.stubCount() < MAX_STUBS &&
-        IsCacheableName(cx, scopeChain, obj, holder, shape, cache.outputReg()))
+        IsCacheableName(cx, scopeChain, obj, holder, shape, pc, cache.outputReg()))
     {
         if (!cache.attach(cx, ion, scopeChain, obj, shape))
             return false;

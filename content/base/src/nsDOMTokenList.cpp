@@ -11,14 +11,14 @@
 #include "nsAttrValue.h"
 #include "nsContentUtils.h"
 #include "nsError.h"
-#include "nsGenericElement.h"
+#include "mozilla/dom/Element.h"
 #include "mozilla/dom/DOMTokenListBinding.h"
 #include "mozilla/ErrorResult.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 
-nsDOMTokenList::nsDOMTokenList(nsGenericElement* aElement, nsIAtom* aAttrAtom)
+nsDOMTokenList::nsDOMTokenList(Element* aElement, nsIAtom* aAttrAtom)
   : mElement(aElement),
     mAttrAtom(aAttrAtom)
 {
@@ -48,6 +48,15 @@ void
 nsDOMTokenList::DropReference()
 {
   mElement = nullptr;
+}
+
+const nsAttrValue*
+nsDOMTokenList::GetParsedAttr()
+{
+  if (!mElement) {
+    return nullptr;
+  }
+  return mElement->GetAttrInfo(kNameSpaceID_None, mAttrAtom).mValue;
 }
 
 uint32_t

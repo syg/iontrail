@@ -158,6 +158,7 @@ public:
   NS_IMETHOD OnIMETextChange(uint32_t aOffset, uint32_t aEnd,
                              uint32_t aNewEnd);
   NS_IMETHOD OnIMESelectionChange(void);
+  virtual nsIMEUpdatePreference GetIMEUpdatePreference();
 
   NS_IMETHOD SetCursor(nsCursor aCursor);
   NS_IMETHOD SetCursor(imgIContainer* aCursor,
@@ -171,6 +172,8 @@ public:
   // proper widget there. TODO: Handle DPI changes that happen
   // later on.
   virtual float GetDPI();
+
+  virtual bool NeedsPaint() MOZ_OVERRIDE;
 
   virtual TabChild* GetOwningTabChild() MOZ_OVERRIDE { return mTabChild; }
 

@@ -482,7 +482,7 @@ static nsExtraMimeTypeEntry extraMimeEntries [] =
 #ifdef MOZ_DASH
   { APPLICATION_DASH, "mpd", "DASH Media Presentation Description" },
 #endif
-#ifdef MOZ_MEDIA_PLUGINS
+#if defined(MOZ_MEDIA_PLUGINS) || defined(MOZ_WIDGET_GONK)
   { AUDIO_MP3, "mp3", "MPEG Audio" },
 #endif
   { VIDEO_MP4, "mp4", "MPEG-4 Video" },
@@ -1942,12 +1942,14 @@ nsresult nsExternalAppHandler::InitializeDownload(nsITransfer* aTransfer)
   nsCOMPtr<nsIDownloadHistory> dh(do_GetService(NS_DOWNLOADHISTORY_CONTRACTID));
   if (dh) {
     nsCOMPtr<nsIURI> referrer;
-    if (mRequest) {
-      nsCOMPtr<nsIChannel> channel = do_QueryInterface(mRequest);
+    nsCOMPtr<nsIChannel> channel = do_QueryInterface(mRequest);
+    if (channel) {
       NS_GetReferrerFromChannel(channel, getter_AddRefs(referrer));
     }
 
-    dh->AddDownload(mSourceUrl, referrer, mTimeDownloadStarted, target);
+    if (channel && !NS_UsePrivateBrowsing(channel)) {
+      dh->AddDownload(mSourceUrl, referrer, mTimeDownloadStarted, target);
+    }
   }
 
   return rv;

@@ -6,6 +6,7 @@ import sys
 import os
 import time
 import tempfile
+import traceback
 
 # We need to know our current directory so that we can serve our test files from it.
 SCRIPT_DIRECTORY = os.path.abspath(os.path.realpath(os.path.dirname(sys.argv[0])))
@@ -14,7 +15,7 @@ from runreftest import RefTest
 from runreftest import ReftestOptions
 from automation import Automation
 import devicemanager, devicemanagerADB, devicemanagerSUT
-from remoteautomation import RemoteAutomation
+from remoteautomation import RemoteAutomation, fennecLogcatFilters
 
 class RemoteOptions(ReftestOptions):
     def __init__(self, automation):
@@ -443,13 +444,14 @@ def main(args):
         dm.recordLogcat()
         reftest.runTests(manifest, options, cmdlineArgs)
     except:
-        print "TEST-UNEXPECTED-FAIL | | exception while running reftests"
+        print "Automation Error: Exception caught while running tests"
+        traceback.print_exc()
         retVal = 1
 
     reftest.stopWebServer(options)
     try:
-        logcat = dm.getLogcat()
-        print ''.join(logcat[-500:-1])
+        logcat = dm.getLogcat(filterOutRegexps=fennecLogcatFilters)
+        print ''.join(logcat)
         print dm.getInfo()
     except devicemanager.DMError:
         print "WARNING: Error getting device information at end of test"

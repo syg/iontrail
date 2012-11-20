@@ -129,20 +129,9 @@ nsStyleSet::Init(nsPresContext *aPresContext)
 {
   mFirstLineRule = new nsEmptyStyleRule;
   mFirstLetterRule = new nsEmptyStyleRule;
-  if (!mFirstLineRule || !mFirstLetterRule) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  if (!BuildDefaultStyleData(aPresContext)) {
-    mDefaultStyleData.Destroy(0, aPresContext);
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
+  mPlaceholderRule = new nsEmptyStyleRule;
 
   mRuleTree = nsRuleNode::CreateRootNode(aPresContext);
-  if (!mRuleTree) {
-    mDefaultStyleData.Destroy(0, aPresContext);
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
 
   GatherRuleProcessors(eAnimationSheet);
   GatherRuleProcessors(eTransitionSheet);
@@ -749,7 +738,7 @@ nsStyleSet::AssertNoCSSRules(nsRuleNode* aCurrLevelNode,
 // Enumerate the rules in a way that cares about the order of the rules.
 void
 nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc, 
-                      void* aData, nsIContent* aContent,
+                      RuleProcessorData* aData, nsIContent* aContent,
                       nsRuleWalker* aRuleWalker)
 {
   SAMPLE_LABEL("nsStyleSet", "FileRules");
@@ -797,7 +786,7 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
   if (mBindingManager && aContent) {
     // We can supply additional document-level sheets that should be walked.
     mBindingManager->WalkRules(aCollectorFunc,
-                               static_cast<RuleProcessorData*>(aData),
+                               static_cast<ElementDependentRuleProcessorData*>(aData),
                                &cutOffInheritance);
   }
   if (!skipUserStyles && !cutOffInheritance &&
@@ -883,7 +872,7 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
 // of the rules and doesn't walk !important-rules.
 void
 nsStyleSet::WalkRuleProcessors(nsIStyleRuleProcessor::EnumFunc aFunc,
-                               RuleProcessorData* aData,
+                               ElementDependentRuleProcessorData* aData,
                                bool aWalkAllXBLStylesheets)
 {
   if (mRuleProcessors[eAgentSheet])
@@ -914,39 +903,6 @@ nsStyleSet::WalkRuleProcessors(nsIStyleRuleProcessor::EnumFunc aFunc,
     (*aFunc)(mRuleProcessors[eOverrideSheet], aData);
   (*aFunc)(mRuleProcessors[eAnimationSheet], aData);
   (*aFunc)(mRuleProcessors[eTransitionSheet], aData);
-}
-
-bool nsStyleSet::BuildDefaultStyleData(nsPresContext* aPresContext)
-{
-  NS_ASSERTION(!mDefaultStyleData.mResetData &&
-               !mDefaultStyleData.mInheritedData,
-               "leaking default style data");
-  mDefaultStyleData.mResetData = new (aPresContext) nsResetStyleData;
-  if (!mDefaultStyleData.mResetData)
-    return false;
-  mDefaultStyleData.mInheritedData = new (aPresContext) nsInheritedStyleData;
-  if (!mDefaultStyleData.mInheritedData)
-    return false;
-
-#define SSARG_PRESCONTEXT aPresContext
-
-#define CREATE_DATA(name, type, args) \
-  if (!(mDefaultStyleData.m##type##Data->mStyleStructs[eStyleStruct_##name] = \
-          new (aPresContext) nsStyle##name args)) \
-    return false;
-
-#define STYLE_STRUCT_INHERITED(name, checkdata_cb, ctor_args) \
-  CREATE_DATA(name, Inherited, ctor_args)
-#define STYLE_STRUCT_RESET(name, checkdata_cb, ctor_args) \
-  CREATE_DATA(name, Reset, ctor_args)
-
-#include "nsStyleStructList.h"
-
-#undef STYLE_STRUCT_INHERITED
-#undef STYLE_STRUCT_RESET
-#undef SSARG_PRESCONTEXT
-
-  return true;
 }
 
 already_AddRefed<nsStyleContext>
@@ -1065,6 +1021,8 @@ nsStyleSet::WalkRestrictionRule(nsCSSPseudoElements::Type aPseudoType,
     aRuleWalker->Forward(mFirstLetterRule);
   else if (aPseudoType == nsCSSPseudoElements::ePseudo_firstLine)
     aRuleWalker->Forward(mFirstLineRule);
+  else if (aPseudoType == nsCSSPseudoElements::ePseudo_mozPlaceholder)
+    aRuleWalker->Forward(mPlaceholderRule);
 }
 
 already_AddRefed<nsStyleContext>
@@ -1207,6 +1165,24 @@ nsStyleSet::ResolveAnonymousBoxStyle(nsIAtom* aPseudoTag,
   FileRules(EnumRulesMatching<AnonBoxRuleProcessorData>, &data, nullptr,
             &ruleWalker);
 
+  if (aPseudoTag == nsCSSAnonBoxes::pageContent) {
+    // Add any @page rules that are specified.
+    nsTArray<nsCSSPageRule*> rules;
+    nsTArray<css::ImportantRule*> importantRules;
+    nsPresContext* presContext = PresContext();
+    presContext->StyleSet()->AppendPageRules(presContext, rules);
+    for (uint32_t i = 0, i_end = rules.Length(); i != i_end; ++i) {
+      ruleWalker.Forward(rules[i]);
+      css::ImportantRule* importantRule = rules[i]->GetImportantRule();
+      if (importantRule) {
+        importantRules.AppendElement(importantRule);
+      }
+    }
+    for (uint32_t i = 0, i_end = importantRules.Length(); i != i_end; ++i) {
+      ruleWalker.Forward(importantRules[i]);
+    }
+  }
+
   return GetContext(aParentContext, ruleWalker.CurrentNode(), nullptr,
                     false, false,
                     aPseudoTag, nsCSSPseudoElements::ePseudo_AnonBox,
@@ -1284,6 +1260,21 @@ nsStyleSet::AppendKeyframesRules(nsPresContext* aPresContext,
   return true;
 }
 
+bool
+nsStyleSet::AppendPageRules(nsPresContext* aPresContext,
+                            nsTArray<nsCSSPageRule*>& aArray)
+{
+  NS_ENSURE_FALSE(mInShutdown, false);
+
+  for (uint32_t i = 0; i < NS_ARRAY_LENGTH(gCSSSheetTypes); ++i) {
+    nsCSSRuleProcessor* ruleProc = static_cast<nsCSSRuleProcessor*>
+                                    (mRuleProcessors[gCSSSheetTypes[i]].get());
+    if (ruleProc && !ruleProc->AppendPageRules(aPresContext, aArray))
+      return false;
+  }
+  return true;
+}
+
 void
 nsStyleSet::BeginShutdown(nsPresContext* aPresContext)
 {
@@ -1305,8 +1296,6 @@ nsStyleSet::Shutdown(nsPresContext* aPresContext)
     mOldRuleTrees[i]->Destroy();
   }
   mOldRuleTrees.Clear();
-
-  mDefaultStyleData.Destroy(0, aPresContext);
 }
 
 static const uint32_t kGCInterval = 300;

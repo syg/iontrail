@@ -95,26 +95,26 @@ function testConstructorEncodingOption(aData, aExpectedString)
     msg: "testing encoding with valid utf-8 encoding."});
 
   // passing spaces for encoding
-  testSingleString({encoding: "   ", input: aData, error: "EncodingError",
+  testSingleString({encoding: "   ", input: aData, error: "TypeError",
     msg: "constructor encoding, spaces encoding test."});
 
   // invalid encoding passed
-  testSingleString({encoding: "asdfasdf", input: aData, error: "EncodingError",
+  testSingleString({encoding: "asdfasdf", input: aData, error: "TypeError",
     msg: "constructor encoding, invalid encoding test."});
 
   // null encoding passed
-  testSingleString({encoding: null, input: aData, error: "EncodingError",
+  testSingleString({encoding: null, input: aData, error: "TypeError",
     msg: "constructor encoding, \"null\" encoding test."});
 
   // null encoding passed
-  testSingleString({encoding: "", input: aData, error: "EncodingError",
+  testSingleString({encoding: "", input: aData, error: "TypeError",
     msg: "constructor encoding, empty encoding test."});
 }
 
 function testEncodingValues(aData, aExpectedString)
 {
   var encoding = "ISO-8859-11";
-  testSingleString({encoding: aData, input: encoding, error: "EncodingError",
+  testSingleString({encoding: aData, input: encoding, error: "TypeError",
     msg: "encoder encoding values test."});
 }
 
@@ -264,7 +264,7 @@ function testEncoderGetEncoding()
 {
   var labelEncodings = [
     {encoding: "utf-8", labels: ["unicode-1-1-utf-8", "utf-8", "utf8"]},
-    {encoding: "utf-16", labels: ["utf-16", "utf-16le"]},
+    {encoding: "utf-16le", labels: ["utf-16", "utf-16"]},
     {encoding: "utf-16be", labels: ["utf-16be"]},
   ];
 

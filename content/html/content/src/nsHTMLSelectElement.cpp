@@ -53,7 +53,7 @@ nsSafeOptionListMutation::nsSafeOptionListMutation(nsIContent* aSelect,
                                                    nsIContent* aKid,
                                                    uint32_t aIndex,
                                                    bool aNotify)
-  : mSelect(nsHTMLSelectElement::FromContent(aSelect))
+  : mSelect(nsHTMLSelectElement::FromContentOrNull(aSelect))
   , mTopLevelMutation(false)
   , mNeedsRebuild(false)
 {
@@ -138,12 +138,11 @@ nsHTMLSelectElement::~nsHTMLSelectElement()
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLSelectElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLSelectElement,
                                                   nsGenericHTMLFormElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mOptions,
-                                                       nsIDOMHTMLCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOptions)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLSelectElement, nsGenericElement)
-NS_IMPL_RELEASE_INHERITED(nsHTMLSelectElement, nsGenericElement)
+NS_IMPL_ADDREF_INHERITED(nsHTMLSelectElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLSelectElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLSelectElement, nsHTMLSelectElement)
@@ -597,40 +596,29 @@ nsHTMLSelectElement::GetSelectFrame()
   return select_frame;
 }
 
-nsresult
-nsHTMLSelectElement::Add(nsIDOMHTMLElement* aElement,
-                         nsIDOMHTMLElement* aBefore)
+void
+nsHTMLSelectElement::Add(nsGenericHTMLElement& aElement,
+                         nsGenericHTMLElement* aBefore,
+                         ErrorResult& aError)
 {
-  nsCOMPtr<nsIDOMNode> added;
   if (!aBefore) {
-    return AppendChild(aElement, getter_AddRefs(added));
+    nsGenericHTMLElement::AppendChild(aElement, aError);
+    return;
   }
 
   // Just in case we're not the parent, get the parent of the reference
   // element
-  nsCOMPtr<nsIDOMNode> parent;
-  aBefore->GetParentNode(getter_AddRefs(parent));
-  if (!parent) {
+  nsINode* parent = aBefore->GetParentNode();
+  if (!nsContentUtils::ContentIsDescendantOf(parent, this)) {
     // NOT_FOUND_ERR: Raised if before is not a descendant of the SELECT
     // element.
-    return NS_ERROR_DOM_NOT_FOUND_ERR;
-  }
-
-  nsCOMPtr<nsIDOMNode> ancestor(parent);
-  nsCOMPtr<nsIDOMNode> temp;
-  while (ancestor != static_cast<nsIDOMNode*>(this)) {
-    ancestor->GetParentNode(getter_AddRefs(temp));
-    if (!temp) {
-      // NOT_FOUND_ERR: Raised if before is not a descendant of the SELECT
-      // element.
-      return NS_ERROR_DOM_NOT_FOUND_ERR;
-    }
-    temp.swap(ancestor);
+    aError.Throw(NS_ERROR_DOM_NOT_FOUND_ERR);
+    return;
   }
 
   // If the before parameter is not null, we are equivalent to the
   // insertBefore method on the parent of before.
-  return parent->InsertBefore(aElement, aBefore, getter_AddRefs(added));
+  parent->InsertBefore(aElement, aBefore, aError);
 }
 
 NS_IMETHODIMP
@@ -641,10 +629,19 @@ nsHTMLSelectElement::Add(nsIDOMHTMLElement* aElement,
   nsresult rv = aBefore->GetDataType(&dataType);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsCOMPtr<nsIContent> element = do_QueryInterface(aElement);
+  nsGenericHTMLElement* htmlElement =
+    nsGenericHTMLElement::FromContentOrNull(element);
+  if (!htmlElement) {
+    return NS_ERROR_NULL_POINTER;
+  }
+
   // aBefore is omitted, undefined or null
   if (dataType == nsIDataType::VTYPE_EMPTY ||
       dataType == nsIDataType::VTYPE_VOID) {
-    return Add(aElement);
+    ErrorResult error;
+    Add(*htmlElement, (nsGenericHTMLElement*)nullptr, error);
+    return error.ErrorCode();
   }
 
   nsCOMPtr<nsISupports> supports;
@@ -652,17 +649,24 @@ nsHTMLSelectElement::Add(nsIDOMHTMLElement* aElement,
 
   // whether aBefore is nsIDOMHTMLElement...
   if (NS_SUCCEEDED(aBefore->GetAsISupports(getter_AddRefs(supports)))) {
-    beforeElement = do_QueryInterface(supports);
+    nsCOMPtr<nsIContent> beforeElement = do_QueryInterface(supports);
+    nsGenericHTMLElement* beforeHTMLElement =
+      nsGenericHTMLElement::FromContentOrNull(beforeElement);
 
-    NS_ENSURE_TRUE(beforeElement, NS_ERROR_DOM_SYNTAX_ERR);
-    return Add(aElement, beforeElement);
+    NS_ENSURE_TRUE(beforeHTMLElement, NS_ERROR_DOM_SYNTAX_ERR);
+
+    ErrorResult error;
+    Add(*htmlElement, beforeHTMLElement, error);
+    return error.ErrorCode();
   }
 
   // otherwise, whether aBefore is long
   int32_t index;
   NS_ENSURE_SUCCESS(aBefore->GetAsInt32(&index), NS_ERROR_DOM_SYNTAX_ERR);
 
-  return Add(aElement, index);
+  ErrorResult error;
+  Add(*htmlElement, index, error);
+  return error.ErrorCode();
 }
 
 NS_IMETHODIMP
@@ -1972,7 +1976,7 @@ nsHTMLOptionCollection::GetOptionIndex(mozilla::dom::Element* aOption,
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLOptionCollection)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsHTMLOptionCollection)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mElements)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mElements)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsHTMLOptionCollection)
@@ -2138,7 +2142,7 @@ nsHTMLOptionCollection::Item(uint32_t aIndex, nsIDOMNode** aReturn)
   return CallQueryInterface(item, aReturn);
 }
 
-nsGenericElement*
+Element*
 nsHTMLOptionCollection::GetElementAt(uint32_t aIndex)
 {
   return ItemAsOption(aIndex);
@@ -2186,7 +2190,7 @@ nsHTMLOptionCollection::NamedItem(JSContext* cx, const nsAString& name,
   if (!item) {
     return nullptr;
   }
-  JSObject* wrapper = GetWrapper();
+  JSObject* wrapper = nsWrapperCache::GetWrapper();
   JSAutoCompartment ac(cx, wrapper);
   JS::Value v;
   if (!mozilla::dom::WrapObject(cx, wrapper, item, item, nullptr, &v)) {
@@ -2194,6 +2198,37 @@ nsHTMLOptionCollection::NamedItem(JSContext* cx, const nsAString& name,
     return nullptr;
   }
   return &v.toObject();
+}
+
+void
+nsHTMLOptionCollection::GetSupportedNames(nsTArray<nsString>& aNames)
+{
+  nsAutoTArray<nsIAtom*, 8> atoms;
+  for (uint32_t i = 0; i < mElements.Length(); ++i) {
+    nsHTMLOptionElement *content = mElements.ElementAt(i);
+    if (content) {
+      // Note: HasName means the names is exposed on the document,
+      // which is false for options, so we don't check it here.
+      const nsAttrValue* val = content->GetParsedAttr(nsGkAtoms::name);
+      if (val && val->Type() == nsAttrValue::eAtom) {
+        nsIAtom* name = val->GetAtomValue();
+        if (!atoms.Contains(name)) {
+          atoms.AppendElement(name);
+        }
+      }
+      if (content->HasID()) {
+        nsIAtom* id = content->GetID();
+        if (!atoms.Contains(id)) {
+          atoms.AppendElement(id);
+        }
+      }
+    }
+  }
+
+  aNames.SetCapacity(atoms.Length());
+  for (uint32_t i = 0; i < atoms.Length(); ++i) {
+    aNames.AppendElement(nsDependentAtomString(atoms[i]));
+  }
 }
 
 NS_IMETHODIMP

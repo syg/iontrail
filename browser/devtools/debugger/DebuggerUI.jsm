@@ -20,10 +20,10 @@ XPCOMUtils.defineLazyModuleGetter(this,
   "DebuggerServer", "resource://gre/modules/devtools/dbg-server.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this,
-  "Services", "resource:///modules/Services.jsm");
+  "Services", "resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this,
-  "FileUtils", "resource:///modules/FileUtils.jsm");
+  "FileUtils", "resource://gre/modules/FileUtils.jsm");
 
 this.EXPORTED_SYMBOLS = ["DebuggerUI"];
 
@@ -261,8 +261,7 @@ DebuggerPane.prototype = {
    */
   _initServer: function DP__initServer() {
     if (!DebuggerServer.initialized) {
-      // Always allow connections from nsIPipe transports.
-      DebuggerServer.init(function() true);
+      DebuggerServer.init();
       DebuggerServer.addBrowserActors();
     }
   },
@@ -329,7 +328,6 @@ DebuggerPane.prototype = {
 
     Prefs.height = this._frame.height;
     this._frame.removeEventListener("Debugger:Unloaded", this.close, true);
-
     this._nbox.removeChild(this._splitter);
     this._nbox.removeChild(this._frame);
 
@@ -396,10 +394,7 @@ RemoteDebuggerWindow.prototype = {
     this.globalUI._remoteDebugger = this;
 
     this._dbgwin = this.globalUI.chromeWindow.open(DBG_XUL,
-      L10N.getStr("remoteDebuggerWindowTitle"),
-      "width=" + Prefs.remoteWinWidth + "," +
-      "height=" + Prefs.remoteWinHeight + "," +
-      "chrome,dependent,resizable,centerscreen");
+      L10N.getStr("remoteDebuggerWindowTitle"), "chrome,dependent,resizable");
 
     let self = this;
 
@@ -427,6 +422,7 @@ RemoteDebuggerWindow.prototype = {
     }
     delete this.globalUI._remoteDebugger;
 
+    this._dbgwin.removeEventListener("Debugger:Unloaded", this.close, true);
     this._dbgwin.close();
     this._dbgwin = null;
     this._win = null;
@@ -497,15 +493,40 @@ ChromeDebuggerProcess.prototype = {
     let profileService = Cc["@mozilla.org/toolkit/profile-service;1"]
       .createInstance(Ci.nsIToolkitProfileService);
 
-    let dbgProfileName;
+    let profileName;
     try {
-      dbgProfileName = profileService.selectedProfile.name + CHROME_DEBUGGER_PROFILE_NAME;
-    } catch(e) {
-      dbgProfileName = CHROME_DEBUGGER_PROFILE_NAME;
+      // Attempt to get the required chrome debugging profile name string.
+      profileName = profileService.selectedProfile.name + CHROME_DEBUGGER_PROFILE_NAME;
+    } catch (e) {
+      // Requested profile string could not be retrieved.
+      profileName = CHROME_DEBUGGER_PROFILE_NAME;
       Cu.reportError(e);
     }
 
-    this._dbgProfile = profileService.createProfile(null, null, dbgProfileName);
+    let profileObject;
+    try {
+      // Attempt to get the required chrome debugging profile toolkit object.
+      profileObject = profileService.getProfileByName(profileName);
+
+      // The profile exists but the corresponding folder may have been deleted.
+      var enumerator = Services.dirsvc.get("ProfD", Ci.nsIFile).parent.directoryEntries;
+      while (enumerator.hasMoreElements()) {
+        let profileDir = enumerator.getNext().QueryInterface(Ci.nsIFile);
+        if (profileDir.leafName.contains(profileName)) {
+          // Requested profile was found and the folder exists.
+          this._dbgProfile = profileObject;
+          return;
+        }
+      }
+      // Requested profile was found but the folder was deleted. Cleanup needed.
+      profileObject.remove(true);
+    } catch (e) {
+      // Requested profile object was not found.
+      Cu.reportError(e);
+    }
+
+    // Create a new chrome debugging profile.
+    this._dbgProfile = profileService.createProfile(null, null, profileName);
     profileService.flush();
   },
 
@@ -524,9 +545,7 @@ ChromeDebuggerProcess.prototype = {
 
     let args = [
       "-no-remote", "-P", this._dbgProfile.name,
-      "-chrome", DBG_XUL,
-      "-width", Prefs.remoteWinWidth,
-      "-height", Prefs.remoteWinHeight];
+      "-chrome", DBG_XUL];
 
     process.runwAsync(args, args.length, { observe: this.close.bind(this) });
     this._dbgProcess = process;
@@ -547,9 +566,6 @@ ChromeDebuggerProcess.prototype = {
 
     if (this._dbgProcess.isRunning) {
       this._dbgProcess.kill();
-    }
-    if (this._dbgProfile) {
-      this._dbgProfile.remove(false);
     }
     if (typeof this._closeCallback == "function") {
       this._closeCallback.call({}, this);
@@ -590,38 +606,16 @@ let Prefs = {
    * Gets the preferred height of the debugger pane.
    * @return number
    */
-  get height() {
-    if (this._height === undefined) {
-      this._height = Services.prefs.getIntPref("devtools.debugger.ui.height");
-    }
-    return this._height;
-  },
+  get height()
+    Services.prefs.getIntPref("devtools.debugger.ui.height"),
 
   /**
    * Sets the preferred height of the debugger pane.
-   * @param number value
+   * @param number aValue
    */
-  set height(value) {
-    Services.prefs.setIntPref("devtools.debugger.ui.height", value);
-    this._height = value;
-  }
+  set height(aValue)
+    Services.prefs.setIntPref("devtools.debugger.ui.height", aValue)
 };
-
-/**
- * Gets the preferred width of the remote debugger window.
- * @return number
- */
-XPCOMUtils.defineLazyGetter(Prefs, "remoteWinWidth", function() {
-  return Services.prefs.getIntPref("devtools.debugger.ui.remote-win.width");
-});
-
-/**
- * Gets the preferred height of the remote debugger window.
- * @return number
- */
-XPCOMUtils.defineLazyGetter(Prefs, "remoteWinHeight", function() {
-  return Services.prefs.getIntPref("devtools.debugger.ui.remote-win.height");
-});
 
 /**
  * Gets the preferred default remote debugging host.

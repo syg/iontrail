@@ -16,6 +16,7 @@
 #include "jsweakmap.h"
 
 #include "builtin/Eval.h"
+#include "builtin/Intl.h"
 #include "builtin/MapObject.h"
 #include "builtin/RegExp.h"
 #include "frontend/BytecodeEmitter.h"
@@ -214,12 +215,12 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
          * give it the guts to be one.
          */
         {
-            RawObject proto = js_NewFunction(cx, functionProto,
-                                             NULL, 0, JSFUN_INTERPRETED, self, NullPtr());
+            RawObject proto = js_NewFunction(cx, functionProto, NULL, 0, JSFunction::INTERPRETED,
+                                             self, NullPtr());
             if (!proto)
                 return NULL;
             JS_ASSERT(proto == functionProto);
-            functionProto->flags |= JSFUN_PROTOTYPE;
+            functionProto->setIsFunctionPrototype();
         }
 
         const char *rawSource = "() {\n}";
@@ -272,7 +273,8 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         if (!ctor)
             return NULL;
         RootedAtom objectAtom(cx, cx->names().Object);
-        objectCtor = js_NewFunction(cx, ctor, js_Object, 1, JSFUN_CONSTRUCTOR, self, objectAtom);
+        objectCtor = js_NewFunction(cx, ctor, js_Object, 1, JSFunction::NATIVE_CTOR, self,
+                                    objectAtom);
         if (!objectCtor)
             return NULL;
     }
@@ -291,7 +293,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         if (!ctor)
             return NULL;
         RootedAtom functionAtom(cx, cx->names().Function);
-        functionCtor = js_NewFunction(cx, ctor, Function, 1, JSFUN_CONSTRUCTOR, self,
+        functionCtor = js_NewFunction(cx, ctor, Function, 1, JSFunction::NATIVE_CTOR, self,
                                       functionAtom);
         if (!functionCtor)
             return NULL;
@@ -320,11 +322,13 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
      * function so that cross-compartment [[Prototype]]-getting is implemented
      * in one place.
      */
-    RootedFunction getter(cx, js_NewFunction(cx, NullPtr(), ProtoGetter, 0, 0, self, NullPtr()));
+    RootedFunction getter(cx, js_NewFunction(cx, NullPtr(), ProtoGetter, 0, JSFunction::NATIVE_FUN,
+                                             self, NullPtr()));
     if (!getter)
         return NULL;
 #if JS_HAS_OBJ_PROTO_PROP
-    RootedFunction setter(cx, js_NewFunction(cx, NullPtr(), ProtoSetter, 0, 0, self, NullPtr()));
+    RootedFunction setter(cx, js_NewFunction(cx, NullPtr(), ProtoSetter, 0, JSFunction::NATIVE_FUN,
+                                             self, NullPtr()));
     if (!setter)
         return NULL;
     RootedValue undefinedValue(cx, UndefinedValue());
@@ -364,8 +368,8 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
     self->setOriginalEval(evalobj);
 
     /* ES5 13.2.3: Construct the unique [[ThrowTypeError]] function object. */
-    RootedFunction throwTypeError(cx, js_NewFunction(cx, NullPtr(), ThrowTypeError, 0, 0, self,
-                                                     NullPtr()));
+    RootedFunction throwTypeError(cx, js_NewFunction(cx, NullPtr(), ThrowTypeError, 0,
+                                                     JSFunction::NATIVE_FUN, self, NullPtr()));
     if (!throwTypeError)
         return NULL;
     if (!throwTypeError->preventExtensions(cx))
@@ -467,7 +471,11 @@ GlobalObject::initStandardClasses(JSContext *cx, Handle<GlobalObject*> global)
            js_InitMapClass(cx, global) &&
            GlobalObject::initMapIteratorProto(cx, global) &&
            js_InitSetClass(cx, global) &&
-           GlobalObject::initSetIteratorProto(cx, global);
+           GlobalObject::initSetIteratorProto(cx, global) &&
+#if ENABLE_INTL_API
+           js_InitIntlClass(cx, global) &&
+#endif
+           true;
 }
 
 bool
@@ -491,7 +499,7 @@ GlobalObject::createConstructor(JSContext *cx, Native ctor, JSAtom *nameArg, uns
 {
     RootedAtom name(cx, nameArg);
     RootedObject self(cx, this);
-    return js_NewFunction(cx, NullPtr(), ctor, length, JSFUN_CONSTRUCTOR, self, name, kind);
+    return js_NewFunction(cx, NullPtr(), ctor, length, JSFunction::NATIVE_CTOR, self, name, kind);
 }
 
 static JSObject *

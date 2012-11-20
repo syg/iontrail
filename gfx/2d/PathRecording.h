@@ -8,7 +8,7 @@
 
 #include "2D.h"
 #include <vector>
-#include <iostream>
+#include <ostream>
 
 namespace mozilla {
 namespace gfx {
@@ -96,6 +96,10 @@ public:
                                                              FillRule aFillRule = FILL_WINDING) const;
   virtual bool ContainsPoint(const Point &aPoint, const Matrix &aTransform) const
   { return mPath->ContainsPoint(aPoint, aTransform); }
+  virtual bool StrokeContainsPoint(const StrokeOptions &aStrokeOptions,
+                                   const Point &aPoint,
+                                   const Matrix &aTransform) const
+  { return mPath->StrokeContainsPoint(aStrokeOptions, aPoint, aTransform); }
   
   virtual Rect GetBounds(const Matrix &aTransform = Matrix()) const
   { return mPath->GetBounds(aTransform); }

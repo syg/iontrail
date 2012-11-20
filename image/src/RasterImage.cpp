@@ -403,7 +403,6 @@ RasterImage::~RasterImage()
              num_discardable_containers,
              total_source_bytes,
              discardable_source_bytes));
-    DiscardTracker::Remove(&mDiscardTrackerNode);
   }
 
   if (mDecoder) {
@@ -421,6 +420,10 @@ RasterImage::~RasterImage()
   // Total statistics
   num_containers--;
   total_source_bytes -= mSourceData.Length();
+
+  if (NS_IsMainThread()) {
+    DiscardTracker::Remove(&mDiscardTrackerNode);
+  }
 }
 
 void
@@ -1075,9 +1078,20 @@ RasterImage::GetFrame(uint32_t aWhichFrame,
 already_AddRefed<layers::Image>
 RasterImage::GetCurrentImage()
 {
+  if (!mDecoded) {
+    // We can't call StartDecoding because that can synchronously notify
+    // which can cause DOM modification
+    RequestDecode();
+    return nullptr;
+  }
+
   nsRefPtr<gfxASurface> imageSurface;
-  nsresult rv = GetFrame(FRAME_CURRENT, FLAG_SYNC_DECODE, getter_AddRefs(imageSurface));
+  nsresult rv = GetFrame(FRAME_CURRENT, FLAG_NONE, getter_AddRefs(imageSurface));
   NS_ENSURE_SUCCESS(rv, nullptr);
+
+  if (!imageSurface) {
+    return nullptr;
+  }
 
   if (!mImageContainer) {
     mImageContainer = LayerManager::CreateImageContainer();
@@ -1107,10 +1121,10 @@ RasterImage::GetImageContainer(ImageContainer **_retval)
     NS_ADDREF(*_retval);
     return NS_OK;
   }
-  
+
   nsRefPtr<layers::Image> image = GetCurrentImage();
   if (!image) {
-    return NS_ERROR_FAILURE;
+    return NS_ERROR_NOT_AVAILABLE;
   }
   mImageContainer->SetCurrentImageInTransaction(image);
 
@@ -2508,7 +2522,11 @@ RasterImage::InitDecoder(bool aDoSizeDecode)
       mDecoder = new nsGIFDecoder2(*this, observer);
       break;
     case eDecoderType_jpeg:
-      mDecoder = new nsJPEGDecoder(*this, observer);
+      // If we have all the data we don't want to waste cpu time doing
+      // a progressive decode
+      mDecoder = new nsJPEGDecoder(*this, observer,
+                                   mHasBeenDecoded ? Decoder::DecodeStyle::SEQUENTIAL :
+                                                     Decoder::DecodeStyle::PROGRESSIVE);
       break;
     case eDecoderType_bmp:
       mDecoder = new nsBMPDecoder(*this, observer);
@@ -3276,7 +3294,7 @@ RasterImage::DecodeWorker::MarkAsASAP(RasterImage* aImg)
     // If the decode request is in a list, it must be in the normal decode
     // requests list -- if it had been in the ASAP list, then mIsASAP would
     // have been true above.  Move the request to the ASAP list.
-    request->remove();
+    request->removeFrom(mNormalDecodeRequests);
     mASAPDecodeRequests.insertBack(request);
 
     // Since request is in a list, one of the decode worker's lists is
@@ -3390,8 +3408,8 @@ RasterImage::DecodeWorker::Run()
     EnsurePendingInEventLoop();
   }
 
-  Telemetry::Accumulate(Telemetry::IMAGE_DECODE_LATENCY,
-                        uint32_t((TimeStamp::Now() - eventStart).ToMilliseconds()));
+  Telemetry::Accumulate(Telemetry::IMAGE_DECODE_LATENCY_US,
+                        uint32_t((TimeStamp::Now() - eventStart).ToMicroseconds()));
 
   return NS_OK;
 }

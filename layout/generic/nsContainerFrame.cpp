@@ -206,12 +206,23 @@ nsContainerFrame::RemoveFrame(ChildListID aListID,
 }
 
 void
+nsContainerFrame::DestroyAbsoluteFrames(nsIFrame* aDestructRoot)
+{
+  if (IsAbsoluteContainer()) {
+    GetAbsoluteContainingBlock()->DestroyFrames(this, aDestructRoot);
+    MarkAsNotAbsoluteContainingBlock();
+  }
+}
+
+void
 nsContainerFrame::DestroyFrom(nsIFrame* aDestructRoot)
 {
   // Prevent event dispatch during destruction
   if (HasView()) {
     GetView()->SetFrame(nullptr);
   }
+
+  DestroyAbsoluteFrames(aDestructRoot);
 
   // Delete the primary child list
   mFrames.DestroyFramesFrom(aDestructRoot);
@@ -1040,7 +1051,7 @@ nsContainerFrame::FinishReflowChild(nsIFrame*                  aKidFrame,
     }
   }
 
-  return aKidFrame->DidReflow(aPresContext, aReflowState, NS_FRAME_REFLOW_FINISHED);
+  return aKidFrame->DidReflow(aPresContext, aReflowState, nsDidReflowStatus::FINISHED);
 }
 
 nsresult

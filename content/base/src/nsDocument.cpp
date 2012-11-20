@@ -42,7 +42,7 @@
 #include "nsIDOMDOMStringList.h"
 #include "nsIDOMDOMImplementation.h"
 #include "nsIDOMDocumentXBL.h"
-#include "nsGenericElement.h"
+#include "mozilla/dom/Element.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIDOMCDATASection.h"
 #include "nsIDOMProcessingInstruction.h"
@@ -90,8 +90,6 @@
 #include "nsIRadioVisitor.h"
 #include "nsIFormControl.h"
 
-#include "nsXMLEventsManager.h"
-
 #include "nsBidiUtils.h"
 #include "mozilla/dom/DirectionalityUtils.h"
 
@@ -107,7 +105,7 @@
 #include "nsIDOMHTMLFormElement.h"
 #include "nsIRequest.h"
 #include "nsILink.h"
-#include "nsBlobProtocolHandler.h"
+#include "nsHostObjectProtocolHandler.h"
 
 #include "nsCharsetAlias.h"
 #include "nsCharsetSource.h"
@@ -143,9 +141,13 @@
 #ifdef MOZ_MEDIA
 #include "nsHTMLMediaElement.h"
 #endif // MOZ_MEDIA
+#ifdef MOZ_WEBRTC
+#include "IPeerConnection.h"
+#endif // MOZ_WEBRTC
 
 #include "mozAutoDocUpdate.h"
 #include "nsGlobalWindow.h"
+#include "mozilla/dom/EncodingUtils.h"
 #include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsEventStateManager.h"
@@ -1444,8 +1446,8 @@ nsDocument::~nsDocument()
 
   mPendingTitleChangeEvent.Revoke();
 
-  for (uint32_t i = 0; i < mFileDataUris.Length(); ++i) {
-    nsBlobProtocolHandler::RemoveFileDataEntry(mFileDataUris[i]);
+  for (uint32_t i = 0; i < mHostObjectURIs.Length(); ++i) {
+    nsHostObjectProtocolHandler::RemoveDataEntry(mHostObjectURIs[i]);
   }
 
   // We don't want to leave residual locks on images. Make sure we're in an
@@ -1501,7 +1503,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(nsDocument,
                                               nsNodeUtils::LastRelease(this))
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsDocument)
-  if (nsGenericElement::CanSkip(tmp, aRemovingAllowed)) {
+  if (Element::CanSkip(tmp, aRemovingAllowed)) {
     nsEventListenerManager* elm = tmp->GetListenerManager(false);
     if (elm) {
       elm->MarkForCC();
@@ -1511,11 +1513,11 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsDocument)
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsDocument)
-  return nsGenericElement::CanSkipInCC(tmp);
+  return Element::CanSkipInCC(tmp);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsDocument)
-  return nsGenericElement::CanSkipThis(tmp);
+  return Element::CanSkipThis(tmp);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 static PLDHashOperator
@@ -1635,16 +1637,15 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   }
 
   // Traverse all nsIDocument pointer members.
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mSecurityInfo)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDisplayDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSecurityInfo)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDisplayDocument)
 
   // Traverse all nsDocument nsCOMPtrs.
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mParser)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mScriptGlobalObject)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mListenerManager,
-                                                  nsEventListenerManager)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDOMStyleSheets)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mScriptLoader)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParser)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScriptGlobalObject)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mListenerManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMStyleSheets)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScriptLoader)
 
   tmp->mRadioGroups.EnumerateRead(RadioGroupsTraverser, &cb);
 
@@ -1654,23 +1655,22 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
     tmp->mBoxObjectTable->EnumerateRead(BoxObjectTraverser, &cb);
   }
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChannel)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mStyleAttrStyleSheet, nsIStyleSheet)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mXPathEvaluatorTearoff)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLayoutHistoryState)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOnloadBlocker)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFirstBaseNodeWithHref)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDOMImplementation)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mImageMaps,
-                                                       nsIDOMNodeList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOriginalDocument)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCachedEncoder)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mStateObjectCached)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChannel)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleAttrStyleSheet)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mXPathEvaluatorTearoff)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLayoutHistoryState)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOnloadBlocker)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFirstBaseNodeWithHref)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMImplementation)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImageMaps)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOriginalDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCachedEncoder)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStateObjectCached)
 
   // Traverse all our nsCOMArrays.
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mStyleSheets)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mCatalogSheets)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mPreloadingImages)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheets)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCatalogSheets)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPreloadingImages)
 
   for (uint32_t i = 0; i < tmp->mFrameRequestCallbacks.Length(); ++i) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mFrameRequestCallbacks[i]");
@@ -1715,18 +1715,18 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   }
   tmp->mFirstChild = nullptr;
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mXPathEvaluatorTearoff)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mXPathEvaluatorTearoff)
   tmp->mCachedRootElement = nullptr; // Avoid a dangling pointer
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDisplayDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFirstBaseNodeWithHref)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDOMImplementation)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mImageMaps)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mOriginalDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCachedEncoder)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDisplayDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFirstBaseNodeWithHref)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMImplementation)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mImageMaps)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mOriginalDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedEncoder)
 
   tmp->mParentDocument = nullptr;
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mPreloadingImages)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPreloadingImages)
 
 
   if (tmp->mBoxObjectTable) {
@@ -1843,16 +1843,6 @@ nsIDocument::GetExtraPropertyTable(uint16_t aCategory)
     mExtraPropertyTables.AppendElement(new nsPropertyTable());
   }
   return mExtraPropertyTables[aCategory - 1];
-}
-
-void
-nsDocument::AddXMLEventsContent(nsIContent *aXMLEventsElement)
-{
-  if (!mXMLEventsManager) {
-    mXMLEventsManager = new nsXMLEventsManager();
-    AddObserver(mXMLEventsManager);
-  }
-  mXMLEventsManager->AddXMLEventsContent(aXMLEventsElement);
 }
 
 void
@@ -3044,8 +3034,7 @@ nsDocument::TryChannelCharset(nsIChannel *aChannel,
     nsresult rv = aChannel->GetContentCharset(charsetVal);
     if (NS_SUCCEEDED(rv)) {
       nsAutoCString preferred;
-      rv = nsCharsetAlias::GetPreferred(charsetVal, preferred);
-      if(NS_SUCCEEDED(rv)) {
+      if(EncodingUtils::FindEncodingForLabel(charsetVal, preferred)) {
         aCharset = preferred;
         aCharsetSource = kCharsetFromChannel;
         return true;
@@ -5705,7 +5694,7 @@ static void
 BlastSubtreeToPieces(nsINode *aNode)
 {
   if (aNode->IsElement()) {
-    nsGenericElement *element = static_cast<nsGenericElement*>(aNode);
+    Element *element = aNode->AsElement();
     const nsDOMAttributeMap *map = element->GetAttributeMap();
     if (map) {
       nsCOMPtr<nsIAttribute> attr;
@@ -6742,6 +6731,20 @@ nsDocument::CanSavePresentation(nsIRequest *aNewRequest)
     return false;
   }
 
+#ifdef MOZ_WEBRTC
+  // Check if we have active PeerConnections
+  nsCOMPtr<IPeerConnectionManager> pcManager =
+    do_GetService(IPEERCONNECTION_MANAGER_CONTRACTID);
+
+  if (pcManager && win) {
+    bool active;
+    pcManager->HasActivePeerConnection(win->WindowID(), &active);
+    if (active) {
+      return false;
+    }
+  }
+#endif // MOZ_WEBRTC
+
   bool canCache = true;
   if (mSubDocuments)
     PL_DHashTableEnumerate(mSubDocuments, CanCacheSubDocument, &canCache);
@@ -7448,7 +7451,7 @@ nsDocument::MaybePreLoadImage(nsIURI* uri, const nsAString &aCrossOriginAttr)
   }
 
   nsLoadFlags loadFlags = nsIRequest::LOAD_NORMAL;
-  switch (nsGenericElement::StringToCORSMode(aCrossOriginAttr)) {
+  switch (Element::StringToCORSMode(aCrossOriginAttr)) {
   case CORS_NONE:
     // Nothing to do
     break;
@@ -7532,7 +7535,7 @@ nsDocument::PreloadStyle(nsIURI* uri, const nsAString& charset,
   CSSLoader()->LoadSheet(uri, NodePrincipal(),
                          NS_LossyConvertUTF16toASCII(charset),
                          obs,
-                         nsGenericElement::StringToCORSMode(aCrossOriginAttr));
+                         Element::StringToCORSMode(aCrossOriginAttr));
 }
 
 nsresult
@@ -7595,15 +7598,15 @@ nsDocument::GetCurrentContentSink()
 }
 
 void
-nsDocument::RegisterFileDataUri(const nsACString& aUri)
+nsDocument::RegisterHostObjectUri(const nsACString& aUri)
 {
-  mFileDataUris.AppendElement(aUri);
+  mHostObjectURIs.AppendElement(aUri);
 }
 
 void
-nsDocument::UnregisterFileDataUri(const nsACString& aUri)
+nsDocument::UnregisterHostObjectUri(const nsACString& aUri)
 {
-  mFileDataUris.RemoveElement(aUri);
+  mHostObjectURIs.RemoveElement(aUri);
 }
 
 void
@@ -8294,7 +8297,7 @@ nsDocument::MozCancelFullScreen()
 // to ensure we only call nsGlobalWindow::SetFullScreen() when it's safe to
 // run script. nsGlobalWindow::SetFullScreen() dispatches a synchronous event
 // (handled in chome code) which is unsafe to run if this is called in
-// nsGenericElement::UnbindFromTree().
+// Element::UnbindFromTree().
 class nsSetWindowFullScreen : public nsRunnable {
 public:
   nsSetWindowFullScreen(nsIDocument* aDoc, bool aValue)
@@ -8359,7 +8362,7 @@ HasCrossProcessParent(nsIDocument* aDocument)
   if (!docShell) {
     return false;
   }
-  return docShell->GetIsContentBoundary();
+  return docShell->GetIsBrowserOrApp();
 }
 
 static bool
@@ -9485,6 +9488,10 @@ nsDocument::UpdateVisibilityState()
   mVisibilityState = GetVisibilityState();
   if (oldState != mVisibilityState) {
     nsContentUtils::DispatchTrustedEvent(this, static_cast<nsIDocument*>(this),
+                                         NS_LITERAL_STRING("visibilitychange"),
+                                         /* bubbles = */ true,
+                                         /* cancelable = */ false);
+    nsContentUtils::DispatchTrustedEvent(this, static_cast<nsIDocument*>(this),
                                          NS_LITERAL_STRING("mozvisibilitychange"),
                                          /* bubbles = */ true,
                                          /* cancelable = */ false);
@@ -9520,12 +9527,26 @@ nsDocument::PostVisibilityUpdateEvent()
 NS_IMETHODIMP
 nsDocument::GetMozHidden(bool* aHidden)
 {
+  WarnOnceAbout(ePrefixedVisibilityAPI);
+  return GetHidden(aHidden);
+}
+
+NS_IMETHODIMP
+nsDocument::GetHidden(bool* aHidden)
+{
   *aHidden = mVisibilityState != eVisible;
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDocument::GetMozVisibilityState(nsAString& aState)
+{
+  WarnOnceAbout(ePrefixedVisibilityAPI);
+  return GetVisibilityState(aState);
+}
+
+NS_IMETHODIMP
+nsDocument::GetVisibilityState(nsAString& aState)
 {
   // This needs to stay in sync with the VisibilityState enum.
   static const char states[][8] = {

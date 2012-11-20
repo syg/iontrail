@@ -43,7 +43,8 @@
 #ifndef jsion_parallel_array_analysis_h__
 #define jsion_parallel_array_analysis_h__
 
-#include "ion/MIR.h"
+#include "MIR.h"
+#include "CompileInfo.h"
 
 namespace js {
 
@@ -71,18 +72,17 @@ private:
 public:
     ParallelCompileContext(JSContext *cx);
 
-    CompileMode compileMode() {
-        return COMPILE_MODE_PAR;
+    ExecutionMode executionMode() {
+        return ParallelExecution;
     }
 
     bool canUnsafelyWrite(MInstruction *write, MDefinition *obj);
     bool addInvocation(StackFrame *fp);
-    bool compileKernelAndInvokedFunctions(HandleFunction kernel);
+    MethodStatus compileKernelAndInvokedFunctions(HandleFunction kernel);
 
     // defined in Ion.cpp, so that they can make use of static fns defined there
-    bool compileFunction(HandleFunction fun);
-    bool compile(IonBuilder *builder, MIRGraph *graph,
-                 AutoDestroyAllocator &autoDestroy);
+    MethodStatus compileFunction(HandleFunction fun);
+    bool compile(IonBuilder *builder, MIRGraph *graph, AutoDestroyAllocator &autoDestroy);
 };
 
 

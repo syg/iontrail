@@ -155,8 +155,8 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     void handleClearHistory() {
-        updateAboutHomeTopSites();
         super.handleClearHistory();
+        updateAboutHomeTopSites();
     }
 
     @Override
@@ -223,6 +223,7 @@ abstract public class BrowserApp extends GeckoApp
         registerEventListener("Feedback:OpenPlayStore");
         registerEventListener("Feedback:MaybeLater");
         registerEventListener("Dex:Load");
+        registerEventListener("Telemetry:Gather");
     }
 
     @Override
@@ -237,6 +238,7 @@ abstract public class BrowserApp extends GeckoApp
         unregisterEventListener("Feedback:OpenPlayStore");
         unregisterEventListener("Feedback:MaybeLater");
         unregisterEventListener("Dex:Load");
+        unregisterEventListener("Telemetry:Gather");
     }
 
     @Override
@@ -428,6 +430,11 @@ abstract public class BrowserApp extends GeckoApp
                             menu.findItem(R.id.settings).setEnabled(true);
                     }
                 });
+            } else if (event.equals("Telemetry:Gather")) {
+                Telemetry.HistogramAdd("PLACES_PAGES_COUNT", BrowserDB.getCount(getContentResolver(), "history"));
+                Telemetry.HistogramAdd("PLACES_BOOKMARKS_COUNT", BrowserDB.getCount(getContentResolver(), "bookmarks"));
+                Telemetry.HistogramAdd("FENNEC_FAVICONS_COUNT", BrowserDB.getCount(getContentResolver(), "favicons"));
+                Telemetry.HistogramAdd("FENNEC_THUMBNAILS_COUNT", BrowserDB.getCount(getContentResolver(), "thumbnails"));
             } else if (event.equals("Dex:Load")) {
                 String zipFile = message.getString("zipfile");
                 String implClass = message.getString("impl");
@@ -575,7 +582,7 @@ abstract public class BrowserApp extends GeckoApp
         long id = getFavicons().loadFavicon(tab.getURL(), tab.getFaviconURL(), !tab.isPrivate(),
                         new Favicons.OnFaviconLoadedListener() {
 
-            public void onFaviconLoaded(String pageUrl, Drawable favicon) {
+            public void onFaviconLoaded(String pageUrl, Bitmap favicon) {
                 // Leave favicon UI untouched if we failed to load the image
                 // for some reason.
                 if (favicon == null)
@@ -881,8 +888,11 @@ abstract public class BrowserApp extends GeckoApp
         desktopMode.setIcon(tab.getDesktopMode() ? R.drawable.ic_menu_desktop_mode_on : R.drawable.ic_menu_desktop_mode_off);
 
         String url = tab.getURL();
-        if (ReaderModeUtils.isAboutReader(url))
-            url = ReaderModeUtils.getUrlFromAboutReader(url);
+        if (ReaderModeUtils.isAboutReader(url)) {
+            String urlFromReader = ReaderModeUtils.getUrlFromAboutReader(url);
+            if (urlFromReader != null)
+                url = urlFromReader;
+        }
 
         // Disable share menuitem for about:, chrome:, file:, and resource: URIs
         String scheme = Uri.parse(url).getScheme();

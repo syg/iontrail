@@ -109,9 +109,9 @@ CPPSRCS		= \
 		jswatchpoint.cpp \
 		jsweakmap.cpp \
 		jsworkers.cpp \
-		jsthreadpool.cpp \
-		jsmonitor.cpp \
-		jstaskset.cpp \
+		threadpool.cpp \
+		monitor.cpp \
+		forkjoin.cpp \
 		jswrapper.cpp \
 		jsxml.cpp \
 		prmjtime.cpp \
@@ -126,6 +126,7 @@ CPPSRCS		= \
 		BytecodeCompiler.cpp \
 		BytecodeEmitter.cpp \
 		FoldConstants.cpp \
+		Intl.cpp \
 		NameFunctions.cpp \
 		ParallelArray.cpp \
 		ParseMaps.cpp \
@@ -225,6 +226,12 @@ MFBT_ROOT = $(srcdir)/../../mfbt
 VPATH += $(MFBT_ROOT)
 include $(MFBT_ROOT)/exported_headers.mk
 
+###############################################
+# BEGIN enable non-releasable features
+#
+ifeq (,$(filter beta release esr,$(MOZ_UPDATE_CHANNEL)))
+DEFINES += -DENABLE_TYPEDARRAY_MOVE
+endif
 
 ifdef ENABLE_TRACE_LOGGING
 
@@ -389,6 +396,7 @@ CPPSRCS += 	ExecutableAllocator.cpp \
 		YarrInterpreter.cpp \
 		YarrPattern.cpp \
 		YarrSyntaxChecker.cpp \
+		YarrCanonicalizeUCS2.cpp \
 		$(NONE)
 
 ifdef ENABLE_METHODJIT_SPEW
@@ -718,6 +726,10 @@ MonoIC.$(OBJ_SUFFIX): CXXFLAGS += -GL-
 Compiler.$(OBJ_SUFFIX): CXXFLAGS += -GL-
 # Ditto (Bug 772303)
 RegExp.$(OBJ_SUFFIX): CXXFLAGS += -GL-
+endif
+# Ditto (Bug 810661)
+ifeq ($(CPU_ARCH),x86_64)
+CTypes.$(OBJ_SUFFIX): CXXFLAGS += -GL-
 endif
 endif # _MSC_VER
 

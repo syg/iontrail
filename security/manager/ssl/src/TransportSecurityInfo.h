@@ -17,6 +17,7 @@
 #include "nsIAssociatedContentSecurity.h"
 #include "nsNSSShutDown.h"
 #include "nsDataHashtable.h"
+#include "nsISocketTransport.h"
 
 namespace mozilla { namespace psm {
 
@@ -88,8 +89,6 @@ protected:
 
 private:
   uint32_t mSecurityState;
-  int32_t mSubRequestsHighSecurity;
-  int32_t mSubRequestsLowSecurity;
   int32_t mSubRequestsBrokenSecurity;
   int32_t mSubRequestsNoSecurity;
   nsString mShortDesc;

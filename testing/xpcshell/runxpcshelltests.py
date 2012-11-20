@@ -121,12 +121,10 @@ class XPCShellTests(object):
     if self.mozInfo is None:
       self.mozInfo = os.path.join(self.testharnessdir, "mozinfo.json")
 
-  def buildEnvironment(self):
+  def buildCoreEnvironment(self):
     """
-      Create and returns a dictionary of self.env to include all the appropriate env variables and values.
-      On a remote system, we overload this to set different values and are missing things like os.environ and PATH.
+      Add environment variables likely to be used across all platforms, including remote systems.
     """
-    self.env = dict(os.environ)
     # Make assertions fatal
     self.env["XPCOM_DEBUG_BREAK"] = "stack-and-abort"
     # Don't launch the crash reporter client
@@ -135,6 +133,13 @@ class XPCShellTests(object):
     # disabled by automation.py too
     self.env["NS_TRACE_MALLOC_DISABLE_STACKS"] = "1"
 
+  def buildEnvironment(self):
+    """
+      Create and returns a dictionary of self.env to include all the appropriate env variables and values.
+      On a remote system, we overload this to set different values and are missing things like os.environ and PATH.
+    """
+    self.env = dict(os.environ)
+    self.buildCoreEnvironment()
     if sys.platform == 'win32':
       self.env["PATH"] = self.env["PATH"] + ";" + self.xrePath
     elif sys.platform in ('os2emx', 'os2knix'):
@@ -588,6 +593,15 @@ class XPCShellTests(object):
     out = AutologOutput()
     out.post(out.make_testgroups(collection))
 
+  def logCommand(self, name, completeCmd, testdir):
+    self.log.info("TEST-INFO | %s | full command: %r" % (name, completeCmd))
+    self.log.info("TEST-INFO | %s | current directory: %r" % (name, testdir))
+    # Show only those environment variables that are changed from
+    # the ambient environment.
+    changedEnv = (set("%s=%s" % i for i in self.env.iteritems())
+                  - set("%s=%s" % i for i in os.environ.iteritems()))
+    self.log.info("TEST-INFO | %s | environment: %s" % (name, list(changedEnv)))
+
   def runTests(self, xpcshell, xrePath=None, appPath=None, symbolsPath=None,
                manifest=None, testdirs=None, testPath=None,
                interactive=False, verbose=False, keepGoing=False, logfiles=True,
@@ -785,13 +799,7 @@ class XPCShellTests(object):
       try:
         self.log.info("TEST-INFO | %s | running test ..." % name)
         if verbose:
-            self.log.info("TEST-INFO | %s | full command: %r" % (name, completeCmd))
-            self.log.info("TEST-INFO | %s | current directory: %r" % (name, testdir))
-            # Show only those environment variables that are changed from
-            # the ambient environment.
-            changedEnv = (set("%s=%s" % i for i in self.env.iteritems())
-                          - set("%s=%s" % i for i in os.environ.iteritems()))
-            self.log.info("TEST-INFO | %s | environment: %s" % (name, list(changedEnv)))
+            self.logCommand(name, completeCmd, testdir)
         startTime = time.time()
 
         proc = self.launchProcess(completeCmd,
@@ -895,75 +903,27 @@ class XPCShellTests(object):
           try:
             self.removeDir(self.profileDir)
           except Exception:
-            message = "TEST-UNEXPECTED-FAIL | %s | Failed to clean up the test profile directory: %s" % (name, sys.exc_info()[0])
-            self.log.error(message)
-            print_stdout(stdout)
-            print_stdout(traceback.format_exc())
+            self.log.info("TEST-INFO | Failed to remove profile directory. Waiting.")
 
-            # What follows is code to dump the directory listing similar to ls.
-            # This should only be needed until we track down the source of
-            # failures on the buildbot machines.
+            # We suspect the filesystem may still be making changes. Wait a
+            # little bit and try again.
+            time.sleep(5)
+
             try:
-                import pwd
-                import grp
-            except ImportError:
-                pwd = None
-                grp = None
+                self.removeDir(self.profileDir)
+            except Exception:
+                message = "TEST-UNEXPECTED-FAIL | %s | Failed to clean up the test profile directory: %s" % (name, sys.exc_info()[1])
+                self.log.error(message)
+                print_stdout(stdout)
+                print_stdout(traceback.format_exc())
 
-            def get_username(uid):
-                if pwd is None:
-                    return None
-
-                try:
-                    return pwd.getpwuid(uid).pw_name
-                except KeyError:
-                    return '%d missing' % uid
-
-            def get_groupname(gid):
-                if grp is None:
-                    return None
-
-                try:
-                    return grp.getgrgid(gid).gr_name
-                except KeyError:
-                    return '%d missing' % gid
-
-            self.log.info('Files in profile directory:')
-            def on_error(error):
-                self.log.info('OS Error while performing os.walk!')
-                self.log.info(traceback.format_exc())
-
-            for d, dirs, files in os.walk(self.profileDir, onerror=on_error):
-                try:
-                    d_stat = os.stat(d)
-                except Exception:
-                    self.log.info('Could not stat directory %s' % d)
-                    self.log.info(traceback.format_exc())
-                else:
-                    self.log.info('%o %s %s %s/' % (d_stat.st_mode,
-                        get_username(d_stat.st_uid),
-                        get_groupname(d_stat.st_gid), d))
-
-                for f in files:
-                    path = os.path.join(d, f)
-
-                    try:
-                        f_stat = os.stat(path)
-                    except Exception:
-                        self.log.info('Could not stat file %s' % path)
-                        self.log.info(traceback.format_exc())
-                    else:
-                        self.log.info('%o %s %s %s' % (f_stat.st_mode,
-                            get_username(f_stat.st_uid),
-                            get_groupname(f_stat.st_gid), path))
-
-            self.failCount += 1
-            xunitResult["passed"] = False
-            xunitResult["failure"] = {
-              "type": "TEST-UNEXPECTED-FAIL",
-              "message": message,
-              "text": "%s\n%s" % (stdout, traceback.format_exc())
-            }
+                self.failCount += 1
+                xunitResult["passed"] = False
+                xunitResult["failure"] = {
+                    "type": "TEST-UNEXPECTED-FAIL",
+                    "message": message,
+                    "text": "%s\n%s" % (stdout, traceback.format_exc())
+                }
 
       if gotSIGINT:
         xunitResult["passed"] = False

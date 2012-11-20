@@ -55,6 +55,7 @@
 #include "nsIServiceManager.h"
 #include "nsContentUtils.h"
 #include "LayerTreeInvalidation.h"
+#include "nsIPermissionManager.h"
 
 using namespace mozilla;
 using mozilla::layout::RenderFrameParent;
@@ -235,6 +236,36 @@ nsSubDocumentFrame::GetSubdocumentRootFrame()
   return subdocView ? subdocView->GetFrame() : nullptr;
 }
 
+bool
+nsSubDocumentFrame::PassPointerEventsToChildren()
+{
+  if (GetStyleVisibility()->mPointerEvents != NS_STYLE_POINTER_EVENTS_NONE) {
+    return true;
+  }
+  // Limit use of mozpasspointerevents to documents with embedded:apps/chrome
+  // permission, because this could be used by the parent document to discover
+  // which parts of the subdocument are transparent to events (if subdocument
+  // uses pointer-events:none on its root element, which is admittedly
+  // unlikely)
+  if (mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::mozpasspointerevents)) {
+      if (PresContext()->IsChrome()) {
+        return true;
+      }
+
+      nsCOMPtr<nsIPermissionManager> permMgr =
+        do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+      if (permMgr) {
+        uint32_t permission = nsIPermissionManager::DENY_ACTION;
+        permMgr->TestPermissionFromPrincipal(GetContent()->NodePrincipal(),
+                                             "embed-apps", &permission);
+
+        return permission == nsIPermissionManager::ALLOW_ACTION;
+      }
+  }
+
+  return false;
+}
+
 NS_IMETHODIMP
 nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                      const nsRect&           aDirtyRect,
@@ -243,8 +274,9 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (!IsVisibleForPainting(aBuilder))
     return NS_OK;
 
-  if (aBuilder->IsForEventDelivery() &&
-      GetStyleVisibility()->mPointerEvents == NS_STYLE_POINTER_EVENTS_NONE)
+  // If mozpasspointerevents is set, then we should allow subdocument content
+  // to handle events even if we're pointer-events:none.
+  if (aBuilder->IsForEventDelivery() && !PassPointerEventsToChildren())
     return NS_OK;
 
   nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);

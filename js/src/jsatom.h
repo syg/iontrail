@@ -35,11 +35,10 @@ JS_STATIC_ASSERT(sizeof(HashNumber) == 4);
 static JS_ALWAYS_INLINE js::HashNumber
 HashId(jsid id)
 {
-    return HashGeneric(JSID_BITS(id));
+    return mozilla::HashGeneric(JSID_BITS(id));
 }
 
-template<>
-struct DefaultHasher<jsid>
+struct JsidHasher
 {
     typedef jsid Lookup;
     static HashNumber hash(const Lookup &l) {

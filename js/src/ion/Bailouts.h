@@ -106,7 +106,7 @@ static const uint32 BAILOUT_RETURN_TYPE_BARRIER = 3;
 static const uint32 BAILOUT_RETURN_MONITOR = 4;
 static const uint32 BAILOUT_RETURN_RECOMPILE_CHECK = 5;
 static const uint32 BAILOUT_RETURN_BOUNDS_CHECK = 6;
-static const uint32 BAILOUT_RETURN_INVALIDATE = 7;
+static const uint32 BAILOUT_RETURN_SHAPE_GUARD = 7;
 static const uint32 BAILOUT_RETURN_OVERRECURSED = 8;
 static const uint32 BAILOUT_RETURN_CACHED_SHAPE_GUARD = 9;
 static const uint32 BAILOUT_RETURN_PARALLEL = 10;
@@ -124,7 +124,7 @@ class BailoutClosure
         BailoutFrameGuard bfg;
     };
 
-    Maybe<Guards> guards_;
+    mozilla::Maybe<Guards> guards_;
 
     StackFrame *entryfp_;
     jsbytecode *bailoutPc_;
@@ -223,7 +223,7 @@ uint32 RecompileForInlining();
 
 uint32 BoundsCheckFailure();
 
-uint32 ForceInvalidation();
+uint32 ShapeGuardFailure();
 
 uint32 CachedShapeGuardFailure();
 

@@ -45,7 +45,7 @@ class DeferredJumpTable : public DeferredData
     }
 };
 
-CodeGeneratorX86Shared::CodeGeneratorX86Shared(MIRGenerator *gen, LIRGraph &graph)
+CodeGeneratorX86Shared::CodeGeneratorX86Shared(MIRGenerator *gen, LIRGraph *graph)
   : CodeGeneratorShared(gen, graph),
     deoptLabel_(NULL)
 {
@@ -294,11 +294,8 @@ CodeGeneratorX86Shared::generateOutOfLineCode()
         // Push the frame size, so the handler can recover the IonScript.
         masm.push(Imm32(frameSize()));
 
-        JSContext *cx = GetIonContext()->cx;
-        IonCompartment *ion = cx->compartment->ionCompartment();
-        IonCode *handler = ion->getGenericBailoutHandler(cx);
-        if (!handler)
-            return false;
+        IonCompartment *ion = GetIonContext()->compartment->ionCompartment();
+        IonCode *handler = ion->getGenericBailoutHandler();
 
         masm.jmp(handler->raw(), Relocation::IONCODE);
     }
@@ -343,8 +340,8 @@ CodeGeneratorX86Shared::bailout(const T &binder, LSnapshot *snapshot)
 {
     // There has got to be an easier way!
     CompileInfo &info = snapshot->mir()->block()->info();
-    switch (info.compileMode()) {
-      case COMPILE_MODE_PAR: {
+    switch (info.executionMode()) {
+      case ParallelExecution: {
         // in parallel mode, make no attempt to recover, just signal an error.
         Label *ool;
         if (!ensureOutOfLineParallelAbort(&ool))
@@ -353,12 +350,7 @@ CodeGeneratorX86Shared::bailout(const T &binder, LSnapshot *snapshot)
         return true;
       }
 
-      case COMPILE_MODE_SEQ:
-        break;
-
-      case COMPILE_MODE_MAX:
-        JS_ASSERT(false);
-        break;
+      case SequentialExecution: break;
     }
 
     if (!encode(snapshot))
@@ -1365,13 +1357,9 @@ CodeGeneratorX86Shared::generateInvalidateEpilogue()
 
     masm.bind(&invalidate_);
 
-    JSContext *cx = GetIonContext()->cx;
-
     // Push the Ion script onto the stack (when we determine what that pointer is).
     invalidateEpilogueData_ = masm.pushWithPatch(ImmWord(uintptr_t(-1)));
-    IonCode *thunk = cx->compartment->ionCompartment()->getOrCreateInvalidationThunk(cx);
-    if (!thunk)
-        return false;
+    IonCode *thunk = GetIonContext()->compartment->ionCompartment()->getInvalidationThunk();
 
     masm.call(thunk);
 

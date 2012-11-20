@@ -162,8 +162,17 @@ PuppetWidget::Show(bool aState)
   bool wasVisible = mVisible;
   mVisible = aState;
 
+  if (mChild) {
+    mChild->mVisible = aState;
+  }
+
+  if (!mVisible && mLayerManager) {
+    mLayerManager->ClearCachedResources();
+  }
+
   if (!wasVisible && mVisible) {
     Resize(mBounds.width, mBounds.height, false);
+    Invalidate(mBounds);
   }
 
   return NS_OK;
@@ -420,14 +429,19 @@ PuppetWidget::OnIMEFocusChange(bool aFocus)
     return NS_ERROR_FAILURE;
 
   if (aFocus) {
-    if (!mIMEPreference.mWantUpdates && !mIMEPreference.mWantHints)
-      // call OnIMEFocusChange on blur but no other updates
-      return NS_ERROR_NOT_IMPLEMENTED;
-    OnIMESelectionChange(); // Update selection
+    if (mIMEPreference.mWantUpdates && mIMEPreference.mWantHints) {
+      OnIMESelectionChange(); // Update selection
+    }
   } else {
     mIMELastBlurSeqno = chromeSeqno;
   }
   return NS_OK;
+}
+
+nsIMEUpdatePreference
+PuppetWidget::GetIMEUpdatePreference()
+{
+  return mIMEPreference;
 }
 
 NS_IMETHODIMP
@@ -546,6 +560,12 @@ PuppetWidget::PaintTask::Run()
     mWidget->Paint();
   }
   return NS_OK;
+}
+
+bool
+PuppetWidget::NeedsPaint()
+{
+  return mVisible;
 }
 
 float

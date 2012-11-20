@@ -40,10 +40,11 @@
 #include "vm/Stack-inl.h"
 #include "vm/String-inl.h"
 
-using namespace mozilla;
 using namespace js;
 using namespace js::gc;
 using namespace js::types;
+
+using mozilla::ArrayLength;
 
 /* Forward declarations for ErrorClass's initializer. */
 static JSBool
@@ -570,9 +571,6 @@ Exception(JSContext *cx, unsigned argc, Value *vp)
     /* Find the scripted caller. */
     NonBuiltinScriptFrameIter iter(cx);
 
-    /* XXX StackIter should not point directly to scripts. */
-    SkipRoot skip(cx, &iter);
-
     /* Set the 'fileName' property. */
     RootedScript script(cx, iter.script());
     RootedString filename(cx);
@@ -970,7 +968,8 @@ js_ErrorToException(JSContext *cx, const char *message, JSErrorReport *reportp,
         return false;
     tv[1] = OBJECT_TO_JSVAL(errObject);
 
-    RootedString messageStr(cx, JS_NewStringCopyZ(cx, message));
+    RootedString messageStr(cx, reportp->ucmessage ? JS_NewUCStringCopyZ(cx, reportp->ucmessage)
+                                                   : JS_NewStringCopyZ(cx, message));
     if (!messageStr)
         return false;
     tv[2] = STRING_TO_JSVAL(messageStr);

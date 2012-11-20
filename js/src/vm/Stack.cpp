@@ -8,11 +8,13 @@
 #include "jscntxt.h"
 #include "gc/Marking.h"
 #include "methodjit/MethodJIT.h"
+#ifdef JS_ION
 #include "ion/IonFrames.h"
 #include "ion/IonCompartment.h"
 #include "ion/Bailouts.h"
+#endif
 #include "Stack.h"
-#include "jstaskset.h"
+#include "forkjoin.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
@@ -41,6 +43,8 @@
 #endif
 
 using namespace js;
+
+using mozilla::DebugOnly;
 
 /*****************************************************************************/
 
@@ -218,7 +222,7 @@ StackFrame::pcQuadratic(const ContextStack &stack, size_t maxDepth)
 }
 
 bool
-StackFrame::copyRawFrameSlots(CopyVector *vec)
+StackFrame::copyRawFrameSlots(AutoValueVector *vec)
 {
     if (!vec->resize(numFormalArgs() + script()->nfixed))
         return false;
@@ -657,7 +661,6 @@ StackSpace::mark(JSTracer *trc)
          * which gets marked in reverse order.
          */
         Value *slotsEnd = nextSegEnd;
-        jsbytecode *pc = seg->maybepc();
         for (StackFrame *fp = seg->maybefp(); (Value *)fp > (Value *)seg; fp = fp->prev()) {
             /* Mark from fp->slots() to slotsEnd. */
             markFrame(trc, fp, slotsEnd);
@@ -666,7 +669,7 @@ StackSpace::mark(JSTracer *trc)
             slotsEnd = (Value *)fp;
 
             InlinedSite *site;
-            pc = fp->prevpc(&site);
+            fp->prevpc(&site);
             JS_ASSERT_IF(fp->prev(), !site);
         }
         gc::MarkValueRootRange(trc, seg->slotsBegin(), slotsEnd, "vm_stack");
@@ -1401,7 +1404,8 @@ StackIter::settleOnNewState()
 }
 
 StackIter::StackIter(JSContext *cx, SavedOption savedOption)
-  : maybecx_(cx),
+  : perThread_(&cx->runtime->mainThread),
+    maybecx_(cx),
     savedOption_(savedOption),
     script_(cx, NULL)
 #ifdef JS_ION
@@ -1425,7 +1429,9 @@ StackIter::StackIter(JSContext *cx, SavedOption savedOption)
 }
 
 StackIter::StackIter(JSRuntime *rt, StackSegment &seg)
-  : maybecx_(NULL), savedOption_(STOP_AT_SAVED),
+  : perThread_(&rt->mainThread),
+    maybecx_(NULL),
+    savedOption_(STOP_AT_SAVED),
     script_(rt, NULL)
 #ifdef JS_ION
     , ionActivations_(rt),
@@ -1442,27 +1448,16 @@ StackIter::StackIter(JSRuntime *rt, StackSegment &seg)
     settleOnNewState();
 }
 
-/*static*/ JSRuntime *
-StackIter::GetRuntime(const StackIter &other)
-{
-    // Note: this code is not safe to execute in parallel worker
-    // threads at the moment, I don't think.
-    JS_ASSERT(!InParallelSection());
-    if (other.maybecx_) {
-        return other.maybecx_->runtime;
-    }
-    return TlsPerThreadData.get()->runtime;
-}
-
 StackIter::StackIter(const StackIter &other)
-  : maybecx_(other.maybecx_),
+  : perThread_(other.perThread_),
+    maybecx_(other.maybecx_),
     savedOption_(other.savedOption_),
     state_(other.state_),
     fp_(other.fp_),
     calls_(other.calls_),
     seg_(other.seg_),
     pc_(other.pc_),
-    script_(GetRuntime(other), other.script_),
+    script_(perThread_, other.script_),
     args_(other.args_)
 #ifdef JS_ION
     , ionActivations_(other.ionActivations_),

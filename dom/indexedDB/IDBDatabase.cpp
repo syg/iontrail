@@ -10,7 +10,6 @@
 
 #include "mozilla/Mutex.h"
 #include "mozilla/storage.h"
-#include "mozilla/unused.h"
 #include "mozilla/dom/ContentParent.h"
 #include "nsDOMClassInfo.h"
 #include "nsDOMLists.h"
@@ -219,7 +218,6 @@ IDBDatabase::IDBDatabase()
   mActorParent(nullptr),
   mContentParent(nullptr),
   mInvalidated(false),
-  mDisconnected(false),
   mRegistered(false),
   mClosed(false),
   mRunningVersionChange(false)
@@ -277,20 +275,15 @@ IDBDatabase::Invalidate()
   // And let the child process know as well.
   if (mActorParent) {
     NS_ASSERTION(IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
-    mozilla::unused << mActorParent->SendInvalidate();
+    mActorParent->Invalidate();
   }
 }
 
 void
-IDBDatabase::DisconnectFromActor()
+IDBDatabase::DisconnectFromActorParent()
 {
+  NS_ASSERTION(IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-
-  if (IsDisconnectedFromActor()) {
-    return;
-  }
-
-  mDisconnected = true;
 
   // Make sure we're closed too.
   Close();
@@ -300,13 +293,6 @@ IDBDatabase::DisconnectFromActor()
   if (owner) {
     IndexedDatabaseManager::CancelPromptsForWindow(owner);
   }
-}
-
-bool
-IDBDatabase::IsDisconnectedFromActor() const
-{
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-  return mDisconnected;
 }
 
 void
@@ -440,7 +426,7 @@ IDBDatabase::CreateObjectStoreInternal(IDBTransaction* aTransaction,
 NS_IMPL_CYCLE_COLLECTION_CLASS(IDBDatabase)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IDBDatabase, IDBWrapperCache)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFactory)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFactory)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(IDBDatabase, IDBWrapperCache)
@@ -758,6 +744,11 @@ IDBDatabase::MozCreateFileHandle(const nsAString& aName,
                                  nsIIDBRequest** _retval)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+
+  if (!IndexedDatabaseManager::IsMainProcess()) {
+    NS_WARNING("Not supported yet!");
+    return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
+  }
 
   if (IndexedDatabaseManager::IsShuttingDown()) {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;

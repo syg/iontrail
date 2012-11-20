@@ -7,16 +7,26 @@
 from __future__ import unicode_literals
 
 import os
+import sys
 
 from StringIO import StringIO
 
-from mozbuild.base import MozbuildObject
+from mozbuild.base import (
+    MachCommandBase,
+    MozbuildObject,
+)
 
-from mach.base import (
+from mach.decorators import (
     CommandArgument,
     CommandProvider,
     Command,
 )
+
+
+if sys.version_info[0] < 3:
+    unicode_type = unicode
+else:
+    unicode_type = str
 
 
 class XPCShellRunner(MozbuildObject):
@@ -104,14 +114,26 @@ class XPCShellRunner(MozbuildObject):
         if test_path is not None:
             args['testPath'] = test_path
 
+        # Python through 2.7.2 has issues with unicode in some of the
+        # arguments. Work around that.
+        filtered_args = {}
+        for k, v in args.items():
+            if isinstance(v, unicode_type):
+                v = v.encode('utf-8')
+
+            if isinstance(k, unicode_type):
+                k = k.encode('utf-8')
+
+            filtered_args[k] = v
+
         # TODO do something with result.
-        xpcshell.runTests(**args)
+        xpcshell.runTests(**filtered_args)
 
         self.log_manager.disable_unstructured()
 
 
 @CommandProvider
-class MachCommands(MozbuildObject):
+class MachCommands(MachCommandBase):
     @Command('xpcshell-test', help='Run an xpcshell test.')
     @CommandArgument('test_file', default='all', nargs='?', metavar='TEST',
         help='Test to run. Can be specified as a single JS file, a directory, '
@@ -125,6 +147,11 @@ class MachCommands(MozbuildObject):
     @CommandArgument('--shuffle', '-s', action='store_true',
         help='Randomize the execution order of tests.')
     def run_xpcshell_test(self, **params):
+        # We should probably have a utility function to ensure the tree is
+        # ready to run tests. Until then, we just create the state dir (in
+        # case the tree wasn't built with mach).
+        self._ensure_state_subdir_exists('.')
+
         xpcshell = self._spawn(XPCShellRunner)
         xpcshell.run_test(**params)
 

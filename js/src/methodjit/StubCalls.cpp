@@ -55,6 +55,8 @@ using namespace js::mjit;
 using namespace js::types;
 using namespace JSC;
 
+using mozilla::DebugOnly;
+
 void JS_FASTCALL
 stubs::BindName(VMFrame &f, PropertyName *name_)
 {
@@ -799,7 +801,25 @@ stubs::TriggerIonCompile(VMFrame &f)
     RootedScript script(f.cx, f.script());
 
     if (ion::js_IonOptions.parallelCompilation) {
-        JS_ASSERT(!script->ions[COMPILE_MODE_SEQ]);
+        if (script->hasIonScript()) {
+            /*
+             * Normally TriggerIonCompile is not called if !script->ion, but the
+             * latter jump can be bypassed if DisableScriptCodeForIon wants this
+             * code to be destroyed so that the Ion code can start running.
+             */
+            ExpandInlineFrames(f.cx->compartment);
+            Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), script);
+            f.jit()->destroyChunk(f.cx->runtime->defaultFreeOp(), f.chunkIndex(),
+                                  /* resetUses = */ false);
+            return;
+        }
+
+        /*
+         * Also check for other possible values of script->ion, which could show up
+         * if Ion code was invalidated after calling DisableScriptCodeForIon.
+         */
+        if (!script->canIonCompile() || script->isIonCompilingOffThread())
+            return;
 
         jsbytecode *osrPC = f.regs.pc;
         if (*osrPC != JSOP_LOOPENTRY)
@@ -818,8 +838,8 @@ stubs::TriggerIonCompile(VMFrame &f)
 
     if (ion::IsEnabled(f.cx) &&
         f.jit()->nchunks == 1 &&
-        script->canIonCompile(js::COMPILE_MODE_SEQ) &&
-        !script->hasIonScript(js::COMPILE_MODE_SEQ))
+        script->canIonCompile() &&
+        !script->hasIonScript())
     {
         // After returning to the interpreter, IonMonkey will try to compile
         // this script. Don't destroy the JITChunk immediately so that Ion
@@ -839,7 +859,7 @@ stubs::RecompileForInline(VMFrame &f)
 {
     AutoAssertNoGC nogc;
     ExpandInlineFrames(f.cx->compartment);
-    Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), f.script());
+    Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), f.script().get(nogc));
     f.jit()->destroyChunk(f.cx->runtime->defaultFreeOp(), f.chunkIndex(), /* resetUses = */ false);
 }
 
@@ -1307,7 +1327,7 @@ stubs::LookupSwitch(VMFrame &f, jsbytecode *pc)
 {
     AutoAssertNoGC nogc;
     jsbytecode *jpc = pc;
-    JSScript *script = f.fp()->script();
+    JSScript *script = f.fp()->script().get(nogc);
 
     /* This is correct because the compiler adjusts the stack beforehand. */
     Value lval = f.regs.sp[-1];
@@ -1633,7 +1653,7 @@ stubs::AssertArgumentTypes(VMFrame &f)
     AutoAssertNoGC nogc;
     StackFrame *fp = f.fp();
     JSFunction *fun = fp->fun();
-    RawScript script = fun->script();
+    RawScript script = fun->script().get(nogc);
 
     /*
      * Don't check the type of 'this' for constructor frames, the 'this' value
@@ -1678,7 +1698,7 @@ stubs::InvariantFailure(VMFrame &f, void *rval)
     *frameAddr = repatchCode;
 
     /* Recompile the outermost script, and don't hoist any bounds checks. */
-    RawScript script = f.fp()->script();
+    RawScript script = f.fp()->script().get(nogc);
     JS_ASSERT(!script->failedBoundsCheck);
     script->failedBoundsCheck = true;
 

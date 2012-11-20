@@ -23,6 +23,7 @@ namespace js {
 
 namespace ion {
     struct IonScript;
+    struct IonScriptCounts;
 }
 
 # define ION_DISABLED_SCRIPT ((js::ion::IonScript *)0x1)
@@ -216,6 +217,7 @@ class ScriptCounts
 {
     friend struct ::JSScript;
     friend struct ScriptAndCounts;
+
     /*
      * This points to a single block that holds an array of PCCounts followed
      * by an array of doubles.  Each element in the PCCounts array has a
@@ -223,13 +225,17 @@ class ScriptCounts
      */
     PCCounts *pcCountsVector;
 
+    /* Information about any Ion compilations for the script. */
+    ion::IonScriptCounts *ionCounts;
+
  public:
-    ScriptCounts() : pcCountsVector(NULL) { }
+    ScriptCounts() : pcCountsVector(NULL), ionCounts(NULL) { }
 
     inline void destroy(FreeOp *fop);
 
     void set(js::ScriptCounts counts) {
         pcCountsVector = counts.pcCountsVector;
+        ionCounts = counts.ionCounts;
     }
 };
 
@@ -473,6 +479,9 @@ struct JSScript : public js::gc::Cell
     bool            debugMode:1;      /* script was compiled in debug mode */
     bool            failedBoundsCheck:1; /* script has had hoisted bounds checks fail */
 #endif
+#ifdef JS_ION
+    bool            failedShapeGuard:1; /* script has had hoisted shape guard fail */
+#endif
     bool            invalidatedIdempotentCache:1; /* idempotent cache has triggered invalidation */
     bool            isGenerator:1;    /* is a generator */
     bool            isGeneratorExp:1; /* is a generator expression */
@@ -546,37 +555,48 @@ struct JSScript : public js::gc::Cell
         return needsArgsObj() && !strictModeCode;
     }
 
-    /* Information attached by Ion: there is (potentially) one script per mode */
-    js::ion::IonScript *ions[js::COMPILE_MODE_MAX];
-
-#if defined(JS_METHODJIT) && JS_BITS_PER_WORD == 32
-    void *padding_;
-#endif
-
-
     bool hasAnyIonScript() const {
-        for (EACH_COMPILE_MODE(cmode)) {
-            if (ions[cmode] &&
-                ions[cmode] != ION_DISABLED_SCRIPT &&
-                ions[cmode] != ION_COMPILING_SCRIPT)
-            {
-                return true;
-            }
-        }
-        return false;
+        return hasIonScript() || hasParallelIonScript();
     }
-    bool hasIonScript(js::CompileMode compileMode) const {
-        return ions[compileMode] && ions[compileMode] != ION_DISABLED_SCRIPT;
+
+    /* Information attached by Ion: script for sequential mode execution */
+    js::ion::IonScript *ion;
+
+    bool hasIonScript() const {
+        return ion && ion != ION_DISABLED_SCRIPT;
     }
-    bool canIonCompile(js::CompileMode compileMode) const {
-        return ions[compileMode] != ION_DISABLED_SCRIPT;
+
+    bool canIonCompile() const {
+        return ion != ION_DISABLED_SCRIPT;
     }
-    bool isIonCompilingOffThread(js::CompileMode compileMode) const {
-        return ions[compileMode] == ION_COMPILING_SCRIPT;
+
+    bool isIonCompilingOffThread() const {
+        return ion == ION_COMPILING_SCRIPT;
     }
-    js::ion::IonScript *ionScript(js::CompileMode compileMode) const {
-        JS_ASSERT(hasIonScript(compileMode));
-        return ions[compileMode];
+
+    js::ion::IonScript *ionScript() const {
+        JS_ASSERT(hasIonScript());
+        return ion;
+    }
+
+    /* Information attached by Ion: script for parallel mode execution */
+    js::ion::IonScript *parallelIon;
+
+    bool hasParallelIonScript() const {
+        return parallelIon && parallelIon != ION_DISABLED_SCRIPT && parallelIon != ION_COMPILING_SCRIPT;
+    }
+
+    bool canParallelIonCompile() const {
+        return parallelIon != ION_DISABLED_SCRIPT;
+    }
+
+    bool isParallelIonCompilingOffThread() const {
+        return parallelIon == ION_COMPILING_SCRIPT;
+    }
+
+    js::ion::IonScript *parallelIonScript() const {
+        JS_ASSERT(hasParallelIonScript());
+        return parallelIon;
     }
 
     /*
@@ -720,6 +740,8 @@ struct JSScript : public js::gc::Cell
   public:
     bool initScriptCounts(JSContext *cx);
     js::PCCounts getPCCounts(jsbytecode *pc);
+    void addIonCounts(js::ion::IonScriptCounts *ionCounts);
+    js::ion::IonScriptCounts *getIonCounts();
     js::ScriptCounts releaseScriptCounts();
     void destroyScriptCounts(js::FreeOp *fop);
 
@@ -1000,9 +1022,14 @@ struct ScriptSource
     friend class SourceCompressorThread;
   private:
     union {
-        // When the script source is ready, compressedLength_ != 0 implies
-        // compressed holds the compressed data; otherwise, source holds the
-        // uncompressed source.
+        // Before setSourceCopy or setSource are successfully called, this union
+        // has a NULL pointer. When the script source is ready,
+        // compressedLength_ != 0 implies compressed holds the compressed data;
+        // otherwise, source holds the uncompressed source. There is a special
+        // pointer |emptySource| for source code for length 0.
+        //
+        // The only function allowed to malloc, realloc, or free the pointers in
+        // this union is adjustDataSize(). Don't do it elsewhere.
         jschar *source;
         unsigned char *compressed;
     } data;
@@ -1078,6 +1105,7 @@ struct ScriptSource
     size_t computedSizeOfData() const {
         return compressed() ? compressedLength_ : sizeof(jschar) * length_;
     }
+    bool adjustDataSize(size_t nbytes);
 };
 
 class ScriptSourceHolder
@@ -1222,6 +1250,10 @@ struct ScriptAndCounts
     PCCounts &getPCCounts(jsbytecode *pc) const {
         JS_ASSERT(unsigned(pc - script->code) < script->length);
         return scriptCounts.pcCountsVector[pc - script->code];
+    }
+
+    ion::IonScriptCounts *getIonCounts() const {
+        return scriptCounts.ionCounts;
     }
 };
 

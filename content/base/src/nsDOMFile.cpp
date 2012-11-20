@@ -27,7 +27,7 @@
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsIUUIDGenerator.h"
-#include "nsBlobProtocolHandler.h"
+#include "nsHostObjectProtocolHandler.h"
 #include "nsStringStream.h"
 #include "nsJSUtils.h"
 #include "nsPrintfCString.h"
@@ -284,26 +284,15 @@ nsDOMFileBase::GetInternalUrl(nsIPrincipal* aPrincipal, nsAString& aURL)
 {
   NS_ENSURE_STATE(aPrincipal);
 
-  nsresult rv;
-  nsCOMPtr<nsIUUIDGenerator> uuidgen =
-    do_GetService("@mozilla.org/uuid-generator;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  nsID id;
-  rv = uuidgen->GenerateUUIDInPlace(&id);
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  char chars[NSID_LENGTH];
-  id.ToProvidedString(chars);
-    
-  nsCString url = NS_LITERAL_CSTRING(BLOBURI_SCHEME ":") +
-    Substring(chars + 1, chars + NSID_LENGTH - 2);
-
-  nsBlobProtocolHandler::AddFileDataEntry(url, this,
-                                              aPrincipal);
+  nsCString url;
+  nsresult rv = nsBlobProtocolHandler::AddDataEntry(
+    NS_LITERAL_CSTRING(BLOBURI_SCHEME),
+    static_cast<nsIDOMBlob*>(this), aPrincipal, url);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   CopyASCIItoUTF16(url, aURL);
-  
   return NS_OK;
 }
 
@@ -699,7 +688,7 @@ nsDOMMemoryFile::DataOwner::sMemoryReporterRegistered;
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(DOMMemoryFileDataOwnerSizeOf,
                                      "memory-file-data");
 
-class nsDOMMemoryFileDataOwnerMemoryReporter
+class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
   : public nsIMemoryMultiReporter
 {
   NS_DECL_ISUPPORTS
@@ -744,21 +733,21 @@ class nsDOMMemoryFileDataOwnerMemoryReporter
         sha1.finish(digest);
 
         nsAutoCString digestString;
-        for (uint8_t i = 0; i < sizeof(digest); i++) {
+        for (size_t i = 0; i < sizeof(digest); i++) {
           digestString.AppendPrintf("%02x", digest[i]);
         }
 
         nsresult rv = aCallback->Callback(
           /* process */ NS_LITERAL_CSTRING(""),
           nsPrintfCString(
-            "explicit/dom/memory-file-data/large/file(length=%d, sha1=%s)",
+            "explicit/dom/memory-file-data/large/file(length=%llu, sha1=%s)",
             owner->mLength, digestString.get()),
           nsIMemoryReporter::KIND_HEAP,
           nsIMemoryReporter::UNITS_BYTES,
           size,
           nsPrintfCString(
-            "Memory used to back a memory file of length %d.  The file has a "
-            "sha1 of %s.\n\n"
+            "Memory used to back a memory file of length %llu bytes.  The file "
+            "has a sha1 of %s.\n\n"
             "Note that the allocator may round up a memory file's length -- "
             "that is, an N-byte memory file may take up more than N bytes of "
             "memory.",
@@ -859,6 +848,6 @@ nsDOMFileInternalUrlHolder::~nsDOMFileInternalUrlHolder() {
   if (!mUrl.IsEmpty()) {
     nsAutoCString narrowUrl;
     CopyUTF16toUTF8(mUrl, narrowUrl);
-    nsBlobProtocolHandler::RemoveFileDataEntry(narrowUrl);
+    nsBlobProtocolHandler::RemoveDataEntry(narrowUrl);
   }
 }

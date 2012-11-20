@@ -129,6 +129,24 @@
 #define DEFINED_NON_IDL_EVENT
 #endif /* NON_IDL_EVENT */
 
+#ifdef DEFINED_ERROR_EVENT
+#error "Don't define DEFINED_ERROR_EVENT"
+#endif /* DEFINED_ERROR_EVENT */
+
+#ifndef ERROR_EVENT
+#define ERROR_EVENT FORWARDED_EVENT
+#define DEFINED_ERROR_EVENT
+#endif /* ERROR_EVENT */
+
+#ifdef DEFINED_BEFOREUNLOAD_EVENT
+#error "Don't define DEFINED_BEFOREUNLOAD_EVENT"
+#endif /* DEFINED_BEFOREUNLOAD_EVENT */
+
+#ifndef BEFOREUNLOAD_EVENT
+#define BEFOREUNLOAD_EVENT WINDOW_EVENT
+#define DEFINED_BEFOREUNLOAD_EVENT
+#endif /* BEFOREUNLOAD_EVENT */
+
 EVENT(abort,
       NS_IMAGE_ABORT,
       (EventNameType_HTMLXUL | EventNameType_SVGSVG),
@@ -371,10 +389,10 @@ FORWARDED_EVENT(blur,
                 NS_BLUR_CONTENT,
                 EventNameType_HTMLXUL,
                 NS_FOCUS_EVENT)
-FORWARDED_EVENT(error,
-                NS_LOAD_ERROR,
-                (EventNameType_HTMLXUL | EventNameType_SVGSVG),
-                NS_EVENT)
+ERROR_EVENT(error,
+            NS_LOAD_ERROR,
+            (EventNameType_HTMLXUL | EventNameType_SVGSVG),
+            NS_EVENT)
 FORWARDED_EVENT(focus,
                 NS_FOCUS_CONTENT,
                 EventNameType_HTMLXUL,
@@ -390,49 +408,53 @@ FORWARDED_EVENT(scroll,
 
 WINDOW_EVENT(afterprint,
              NS_AFTERPRINT,
-             EventNameType_HTMLXUL,
+             EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
 WINDOW_EVENT(beforeprint,
              NS_BEFOREPRINT,
-             EventNameType_HTMLXUL,
+             EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
-WINDOW_EVENT(beforeunload,
-             NS_BEFORE_PAGE_UNLOAD,
-             EventNameType_HTMLXUL,
-             NS_EVENT)
+BEFOREUNLOAD_EVENT(beforeunload,
+                   NS_BEFORE_PAGE_UNLOAD,
+                   EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
+                   NS_EVENT)
 WINDOW_EVENT(hashchange,
              NS_HASHCHANGE,
-             EventNameType_HTMLXUL,
+             EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
+// XXXbz Should the onmessage attribute on <body> really not work?  If so, do we
+// need a different macro to flag things like that (IDL, but not content
+// attributes on body/frameset), or is just using EventNameType_None enough?
 WINDOW_EVENT(message,
              NS_MESSAGE,
              EventNameType_None,
              NS_EVENT)
 WINDOW_EVENT(offline,
              NS_OFFLINE,
-             EventNameType_HTMLXUL,
+             EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
 WINDOW_EVENT(online,
              NS_ONLINE,
-             EventNameType_HTMLXUL,
+             EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
 WINDOW_EVENT(pagehide,
              NS_PAGE_HIDE,
-             EventNameType_HTML,
+             EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
 WINDOW_EVENT(pageshow,
              NS_PAGE_SHOW,
-             EventNameType_HTML,
+             EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT)
 WINDOW_EVENT(popstate,
              NS_POPSTATE,
-             EventNameType_HTMLXUL,
+             EventNameType_XUL | EventNameType_HTMLBodyOrFramesetOnly,
              NS_EVENT_NULL)
 // Not supported yet
 // WINDOW_EVENT(redo)
 WINDOW_EVENT(resize,
              NS_RESIZE_EVENT,
-             (EventNameType_HTMLXUL | EventNameType_SVGSVG),
+             (EventNameType_XUL | EventNameType_SVGSVG |
+              EventNameType_HTMLBodyOrFramesetOnly),
              NS_EVENT)
 // Not supported yet
 // WINDOW_EVENT(storage)
@@ -440,7 +462,8 @@ WINDOW_EVENT(resize,
 // WINDOW_EVENT(undo)
 WINDOW_EVENT(unload,
              NS_PAGE_UNLOAD,
-             (EventNameType_HTMLXUL | EventNameType_SVGSVG),
+             (EventNameType_XUL | EventNameType_SVGSVG |
+              EventNameType_HTMLBodyOrFramesetOnly),
              NS_EVENT)
 
 WINDOW_ONLY_EVENT(devicemotion,
@@ -463,6 +486,8 @@ WINDOW_ONLY_EVENT(devicelight,
                   NS_DEVICE_LIGHT,
                   EventNameType_None,
                   NS_EVENT)
+
+#ifdef MOZ_B2G
 WINDOW_ONLY_EVENT(moztimechange,
                   NS_MOZ_TIME_CHANGE_EVENT,
                   EventNameType_None,
@@ -475,6 +500,7 @@ WINDOW_ONLY_EVENT(moznetworkdownload,
                   NS_NETWORK_DOWNLOAD_EVENT,
                   EventNameType_None,
                   NS_EVENT)
+#endif // MOZ_B2G
 
 TOUCH_EVENT(touchstart,
             NS_TOUCH_START,
@@ -816,6 +842,16 @@ NON_IDL_EVENT(animationiteration,
 #undef DEFINED_NON_IDL_EVENT
 #undef NON_IDL_EVENT
 #endif /* DEFINED_NON_IDL_EVENT */
+
+#ifdef DEFINED_ERROR_EVENT
+#undef DEFINED_ERROR_EVENT
+#undef ERROR_EVENT
+#endif /* DEFINED_ERROR_EVENT */
+
+#ifdef DEFINED_BEFOREUNLOAD_EVENT
+#undef DEFINED_BEFOREUNLOAD_EVENT
+#undef BEFOREUNLOAD_EVENT
+#endif /* BEFOREUNLOAD_EVENT */
 
 #ifdef ID_TO_EVENT
 #undef EVENT

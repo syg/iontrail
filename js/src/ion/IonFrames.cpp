@@ -26,20 +26,6 @@
 using namespace js;
 using namespace js::ion;
 
-JSScript *
-ion::MaybeScriptFromCalleeToken(CalleeToken token)
-{
-    AutoAssertNoGC nogc;
-    switch (GetCalleeTokenTag(token)) {
-      case CalleeToken_Script:
-        return CalleeTokenToScript(token);
-      case CalleeToken_Function:
-        return CalleeTokenToFunction(token)->script();
-    }
-    JS_NOT_REACHED("invalid callee token tag");
-    return NULL;
-}
-
 IonFrameIterator::IonFrameIterator(const IonActivationIterator &activations)
     : current_(activations.top()),
       type_(IonFrame_Exit),
@@ -52,7 +38,7 @@ IonFrameIterator::IonFrameIterator(const IonActivationIterator &activations)
 
 IonFrameIterator::IonFrameIterator(IonJSFrameLayout *fp)
   : current_((uint8 *)fp),
-    type_(IonFrame_JS),
+    type_(IonFrame_OptimizedJS),
     returnAddressToFp_(fp->returnAddress()),
     frameSize_(fp->prevFrameLocalSize())
 {
@@ -70,15 +56,12 @@ IonFrameIterator::checkInvalidation(IonScript **ionScriptOut) const
 {
     AutoAssertNoGC nogc;
 
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
-
     uint8 *returnAddr = returnAddressToFp();
     RawScript script = this->script();
     // N.B. the current IonScript is not the same as the frame's
     // IonScript if the frame has since been invalidated.
-    IonScript *currentIonScript = script->ions[compileMode];
-    bool invalidated = !script->hasIonScript(compileMode) ||
+    IonScript *currentIonScript = script->ion;
+    bool invalidated = !script->hasIonScript() ||
         !currentIonScript->containsReturnAddress(returnAddr);
     if (!invalidated)
         return false;
@@ -158,7 +141,7 @@ IonFrameIterator::isFunctionFrame() const
 bool
 IonFrameIterator::isEntryJSFrame() const
 {
-    if (prevType() == IonFrame_JS || prevType() == IonFrame_Bailed_JS)
+    if (prevType() == IonFrame_OptimizedJS || prevType() == IonFrame_Bailed_JS)
         return false;
 
     if (prevType() == IonFrame_Entry)
@@ -178,7 +161,7 @@ IonFrameIterator::script() const
 {
     AutoAssertNoGC nogc;
     JS_ASSERT(isScripted());
-    RawScript script = MaybeScriptFromCalleeToken(calleeToken());
+    RawScript script = ScriptFromCalleeToken(calleeToken());
     JS_ASSERT(script);
     return script;
 }
@@ -205,7 +188,7 @@ IonFrameIterator::prevFp() const
     // a Rectifier frame should not change. (cf EnsureExitFrame function)
     if (prevType() == IonFrame_Bailed_Rectifier || prevType() == IonFrame_Bailed_JS) {
         JS_ASSERT(type_ == IonFrame_Exit);
-        currentSize = SizeOfFramePrefix(IonFrame_JS);
+        currentSize = SizeOfFramePrefix(IonFrame_OptimizedJS);
     }
     currentSize += current()->prevFrameLocalSize();
     return current_ + currentSize;
@@ -231,7 +214,7 @@ IonFrameIterator::operator++()
     uint8 *prev = prevFp();
     type_ = current()->prevType();
     if (type_ == IonFrame_Bailed_JS)
-        type_ = IonFrame_JS;
+        type_ = IonFrame_OptimizedJS;
     returnAddressToFp_ = current()->returnAddress();
     current_ = prev;
     return *this;
@@ -327,9 +310,9 @@ ion::HandleException(ResumeFromException *rfe)
 
     // Immediately remove any bailout frame guard that might be left over from
     // an error in between ConvertFrames and ThunkToInterpreter.
-    js_delete(cx->runtime->ionActivation->maybeTakeBailout());
+    js_delete(cx->runtime->mainThread.ionActivation->maybeTakeBailout());
 
-    IonFrameIterator iter(cx->runtime->ionTop);
+    IonFrameIterator iter(cx->runtime->mainThread.ionTop);
     while (!iter.isEntry()) {
         if (iter.isScripted()) {
             // Search each inlined frame for live iterator objects, and close
@@ -377,15 +360,15 @@ IonActivationIterator::settle()
 }
 
 IonActivationIterator::IonActivationIterator(JSContext *cx)
-  : top_(cx->runtime->ionTop),
-    activation_(cx->runtime->ionActivation)
+  : top_(cx->runtime->mainThread.ionTop),
+    activation_(cx->runtime->mainThread.ionActivation)
 {
     settle();
 }
 
 IonActivationIterator::IonActivationIterator(JSRuntime *rt)
-  : top_(rt->ionTop),
-    activation_(rt->ionActivation)
+  : top_(rt->mainThread.ionTop),
+    activation_(rt->mainThread.ionActivation)
 {
     settle();
 }
@@ -448,9 +431,6 @@ ReadAllocation(const IonFrameIterator &frame, const LAllocation *a)
 static void
 MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
-
     IonJSFrameLayout *layout = (IonJSFrameLayout *)frame.fp();
 
     MarkCalleeToken(trc, layout->calleeToken());
@@ -462,9 +442,9 @@ MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
         // is now NULL or recompiled). Manually trace it here.
         IonScript::Trace(trc, ionScript);
     } else if (CalleeTokenIsFunction(layout->calleeToken())) {
-        ionScript = CalleeTokenToFunction(layout->calleeToken())->script()->ions[compileMode];
+        ionScript = CalleeTokenToFunction(layout->calleeToken())->script()->ion;
     } else {
-        ionScript = CalleeTokenToScript(layout->calleeToken())->ions[compileMode];
+        ionScript = CalleeTokenToScript(layout->calleeToken())->ion;
     }
 
     if (CalleeTokenIsFunction(layout->calleeToken())) {
@@ -652,18 +632,15 @@ MarkIonActivation(JSTracer *trc, const IonActivationIterator &activations)
           case IonFrame_Exit:
             MarkIonExitFrame(trc, frames);
             break;
-          case IonFrame_JS:
+          case IonFrame_OptimizedJS:
             MarkIonJSFrame(trc, frames);
             break;
           case IonFrame_Bailed_JS:
             JS_NOT_REACHED("invalid");
             break;
           case IonFrame_Rectifier:
-          case IonFrame_Bailed_Rectifier: {
-            IonCompartment *ionCompartment = activations.activation()->compartment()->ionCompartment();
-            MarkIonCodeRoot(trc, ionCompartment->getArgumentsRectifierAddr(), "Arguments Rectifier");
+          case IonFrame_Bailed_Rectifier:
             break;
-          }
           case IonFrame_Osr:
             // The callee token will be marked by the callee JS frame;
             // otherwise, it does not need to be marked, since the frame is
@@ -699,7 +676,7 @@ ion::GetPcScript(JSContext *cx, MutableHandleScript scriptRes, jsbytecode **pcRe
     JSRuntime *rt = cx->runtime;
 
     // Recover the return address.
-    IonFrameIterator it(rt->ionTop);
+    IonFrameIterator it(rt->mainThread.ionTop);
     uint8_t *retAddr = it.returnAddress();
     uint32_t hash = PcScriptCache::Hash(retAddr);
     JS_ASSERT(retAddr != NULL);
@@ -876,15 +853,12 @@ SnapshotIterator::slotValue(const Slot &slot)
 IonScript *
 IonFrameIterator::ionScript() const
 {
-    // Currently, this code only executes in sequential execution.
-    CompileMode compileMode = COMPILE_MODE_SEQ;
-
-    JS_ASSERT(type() == IonFrame_JS);
+    JS_ASSERT(type() == IonFrame_OptimizedJS);
 
     IonScript *ionScript;
     if (checkInvalidation(&ionScript))
         return ionScript;
-    return script()->ionScript(compileMode);
+    return script()->ionScript();
 }
 
 const SafepointIndex *
@@ -953,7 +927,7 @@ InlineFrameIterator::findNextFrame()
         si_.nextFrame();
 
         callee_ = funval.toObject().toFunction();
-        script_ = callee_->script();
+        script_ = callee_->script().get(nogc);
         pc_ = script_->code + si_.pcOffset();
     }
 
@@ -1113,7 +1087,7 @@ IonFrameIterator::dump() const
         fprintf(stderr, " Entry frame\n");
         fprintf(stderr, "  Frame size: %u\n", unsigned(current()->prevFrameLocalSize()));
         break;
-      case IonFrame_JS:
+      case IonFrame_OptimizedJS:
       {
         InlineFrameIterator frames(this);
         for (;;) {

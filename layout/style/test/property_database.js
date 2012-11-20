@@ -2315,7 +2315,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1" ],
+		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1", "-\\7f \\9e 1" ],
 		invalid_values: []
 	},
 	"counter-reset": {
@@ -2323,7 +2323,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1" ],
+		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1", "-\\7f \\9e 1" ],
 		invalid_values: []
 	},
 	"cursor": {
@@ -2989,12 +2989,11 @@ var gCSSProperties = {
 	},
 	"page-break-inside": {
 		domProp: "pageBreakInside",
-		inherited: true,
-		backend_only: true,
+		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "auto" ],
 		other_values: [ "avoid" ],
-		invalid_values: []
+		invalid_values: [ "left", "right" ]
 	},
 	"pointer-events": {
 		domProp: "pointerEvents",
@@ -3173,7 +3172,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "capitalize", "uppercase", "lowercase" ],
+		other_values: [ "capitalize", "uppercase", "lowercase", "full-width" ],
 		invalid_values: []
 	},
 	"top": {
@@ -4107,6 +4106,7 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 			"0 1",
 			"0.5",
 			"1.2 3.4",
+			"0 0 0",
 			"0 0 0px",
 			"0px 0 0",
 			"5px 0 0",
@@ -4121,7 +4121,6 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 			"-0"
 		],
 		invalid_values: [
-			"0 0 0",
 			"1 2px 3",
 			"1 auto 3",
 			"1px 2 3px",

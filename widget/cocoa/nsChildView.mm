@@ -1312,14 +1312,14 @@ NS_IMETHODIMP nsChildView::Invalidate(const nsIntRect &aRect)
 }
 
 bool
-nsChildView::GetShouldAccelerate()
+nsChildView::ComputeShouldAccelerate(bool aDefault)
 {
   // Don't use OpenGL for transparent windows or for popup windows.
   if (!mView || ![[mView window] isOpaque] ||
       [[mView window] isKindOfClass:[PopupWindow class]])
     return false;
 
-  return nsBaseWidget::GetShouldAccelerate();
+  return nsBaseWidget::ComputeShouldAccelerate(aDefault);
 }
 
 bool
@@ -1327,7 +1327,8 @@ nsChildView::UseOffMainThreadCompositing()
 {
   // OMTC doesn't work with Basic Layers on OS X right now. Once it works, we'll
   // still want to disable it for certain kinds of windows (e.g. popups).
-  return nsBaseWidget::UseOffMainThreadCompositing() && GetShouldAccelerate();
+  return nsBaseWidget::UseOffMainThreadCompositing() &&
+         ComputeShouldAccelerate(mUseLayersAcceleration);
 }
 
 inline uint16_t COLOR8TOCOLOR16(uint8_t color8)
@@ -1660,8 +1661,7 @@ NS_IMETHODIMP nsChildView::OnIMEFocusChange(bool aFocus)
 {
   NS_ENSURE_TRUE(mTextInputHandler, NS_ERROR_NOT_AVAILABLE);
   mTextInputHandler->OnFocusChangeInGecko(aFocus);
-  // XXX Return NS_ERROR_NOT_IMPLEMENTED, see bug 496360.
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return NS_OK;
 }
 
 NSView<mozView>* nsChildView::GetEditorView()
@@ -1854,13 +1854,13 @@ nsChildView::EndSecureKeyboardInput()
 }
 
 #ifdef ACCESSIBILITY
-already_AddRefed<Accessible>
+already_AddRefed<a11y::Accessible>
 nsChildView::GetDocumentAccessible()
 {
   if (!mozilla::a11y::ShouldA11yBeEnabled())
     return nullptr;
 
-  Accessible *docAccessible = nullptr;
+  a11y::Accessible* docAccessible = nullptr;
   if (mAccessible) {
     CallQueryReferent(mAccessible.get(), &docAccessible);
     return docAccessible;
@@ -1868,7 +1868,7 @@ nsChildView::GetDocumentAccessible()
 
   // need to fetch the accessible anew, because it has gone away.
   // cache the accessible in our weak ptr
-  Accessible* acc = GetAccessible();
+  a11y::Accessible* acc = GetAccessible();
   mAccessible = do_GetWeakReference(static_cast<nsIAccessible *>(acc));
 
   NS_IF_ADDREF(acc);
@@ -1910,20 +1910,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
     initialized = YES;
   }
-}
-
-+ (void)registerViewForDraggedTypes:(NSView*)aView
-{
-  [aView registerForDraggedTypes:[NSArray arrayWithObjects:NSFilenamesPboardType,
-                                                           NSStringPboardType,
-                                                           NSHTMLPboardType,
-                                                           NSURLPboardType,
-                                                           NSFilesPromisePboardType,
-                                                           kWildcardPboardType,
-                                                           kCorePboardType_url,
-                                                           kCorePboardType_urld,
-                                                           kCorePboardType_urln,
-                                                           nil]];
 }
 
 // initWithFrame:geckoChild:
@@ -1973,8 +1959,17 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
   
   // register for things we'll take from other applications
-  [ChildView registerViewForDraggedTypes:self];
-
+  PR_LOG(sCocoaLog, PR_LOG_ALWAYS, ("ChildView initWithFrame: registering drag types\n"));
+  [self registerForDraggedTypes:[NSArray arrayWithObjects:NSFilenamesPboardType,
+                                                          NSStringPboardType,
+                                                          NSHTMLPboardType,
+                                                          NSURLPboardType,
+                                                          NSFilesPromisePboardType,
+                                                          kWildcardPboardType,
+                                                          kCorePboardType_url,
+                                                          kCorePboardType_urld,
+                                                          kCorePboardType_urln,
+                                                          nil]];
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(windowBecameMain:)
                                                name:NSWindowDidBecomeMainNotification
@@ -2344,7 +2339,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (BOOL)mouseDownCanMoveWindow
 {
-  return [[self window] isMovableByWindowBackground];
+  return NO;
 }
 
 - (void)lockFocus
@@ -2484,20 +2479,24 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
 
   // Create Cairo objects.
-  NSSize bufferSize = [self bounds].size;
-  nsRefPtr<gfxQuartzSurface> targetSurface =
-    new gfxQuartzSurface(aContext, gfxSize(bufferSize.width, bufferSize.height));
-  targetSurface->SetAllowUseAsSource(false);
-
-  nsRefPtr<gfxContext> targetContext = new gfxContext(targetSurface);
 
   // The CGContext that drawRect supplies us with comes with a transform that
   // scales one user space unit to one Cocoa point, which can consist of
   // multiple dev pixels. But Gecko expects its supplied context to be scaled
   // to device pixels, so we need to reverse the scaling.
+  double scale = mGeckoChild->BackingScaleFactor();
+  CGContextScaleCTM(aContext, 1.0 / scale, 1.0 / scale);
+
+  NSSize viewSize = [self bounds].size;
+  nsIntSize backingSize(viewSize.width * scale, viewSize.height * scale);
+
+  nsRefPtr<gfxQuartzSurface> targetSurface =
+    new gfxQuartzSurface(aContext, backingSize);
+  targetSurface->SetAllowUseAsSource(false);
+
+  nsRefPtr<gfxContext> targetContext = new gfxContext(targetSurface);
+
   gfxContextMatrixAutoSaveRestore save(targetContext);
-  double scale = 1.0 / mGeckoChild->GetDefaultScale();
-  targetContext->Scale(scale, scale);
 
   // Set up the clip region.
   nsIntRegionRectIterator iter(region);
@@ -3007,6 +3006,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
 
   __block BOOL animationCancelled = NO;
+  __block BOOL geckoSwipeEventSent = NO;
   // At this point, anEvent is the first scroll wheel event in a two-finger
   // horizontal gesture that we've decided to treat as a swipe.  When we call
   // [NSEvent trackSwipeEventWithOptions:...], the OS interprets all
@@ -3042,7 +3042,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
       // Not waiting until isComplete is TRUE substantially reduces the
       // time it takes to change pages after a swipe, and helps resolve
       // bug 678891.
-      if (phase == NSEventPhaseEnded) {
+      if (phase == NSEventPhaseEnded && !geckoSwipeEventSent) {
         if (gestureAmount) {
           nsSimpleGestureEvent geckoEvent(true, NS_SIMPLE_GESTURE_SWIPE, mGeckoChild, 0, 0.0);
           [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
@@ -3051,6 +3051,17 @@ NSEvent* gLastDragMouseDownEvent = nil;
           } else {
             geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_RIGHT;
           }
+          // If DispatchWindowEvent() does something to trigger a modal dialog
+          // (which spins the event loop), the OS gets confused and makes
+          // several re-entrant calls to this handler, all of which have
+          // 'phase' set to NSEventPhaseEnded.  Unless we do something about
+          // it, this results in an equal number of re-entrant calls to
+          // DispatchWindowEvent(), and to our modal-event handling code.
+          // Probably because of bug 478703, this really messes things up,
+          // and requires a force quit to get out of.  We avoid this by
+          // avoiding re-entrant calls to DispatchWindowEvent().  See bug
+          // 770626.
+          geckoSwipeEventSent = YES;
           mGeckoChild->DispatchWindowEvent(geckoEvent);
         }
         mSwipeAnimationCancelled = nil;
@@ -3288,25 +3299,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   nsEventStatus status; // ignored
   mGeckoChild->DispatchEvent(&event, status);
-}
-
-- (void)updateWindowDraggableStateOnMouseMove:(NSEvent*)theEvent
-{
-  if (!theEvent || !mGeckoChild) {
-    return;
-  }
-
-  nsCocoaWindow* windowWidget = mGeckoChild->GetXULWindowWidget();
-  if (!windowWidget) {
-    return;
-  }
-
-  // We assume later on that sending a hit test event won't cause widget destruction.
-  nsMouseEvent hitTestEvent(true, NS_MOUSE_MOZHITTEST, mGeckoChild, nsMouseEvent::eReal);
-  [self convertCocoaMouseEvent:theEvent toGeckoEvent:&hitTestEvent];
-  bool result = mGeckoChild->DispatchWindowEvent(hitTestEvent);
-
-  [windowWidget->GetCocoaWindow() setMovableByWindowBackground:result];
 }
 
 - (void)handleMouseMoved:(NSEvent*)theEvent
@@ -3708,8 +3700,7 @@ static int32_t RoundUp(double aDouble)
   nsMouseEvent_base* mouseEvent =
     static_cast<nsMouseEvent_base*>(outGeckoEvent);
   mouseEvent->buttons = 0;
-  NSUInteger mouseButtons =
-    nsCocoaFeatures::OnSnowLeopardOrLater() ? [NSEvent pressedMouseButtons] : 0;
+  NSUInteger mouseButtons = [NSEvent pressedMouseButtons];
 
   if (mouseButtons & 0x01) {
     mouseEvent->buttons |= nsMouseEvent::eLeftButtonFlag;
@@ -4606,7 +4597,7 @@ static int32_t RoundUp(double aDouble)
 
   nsAutoRetainCocoaObject kungFuDeathGrip(self);
   nsCOMPtr<nsIWidget> kungFuDeathGrip2(mGeckoChild);
-  nsRefPtr<Accessible> accessible = mGeckoChild->GetDocumentAccessible();
+  nsRefPtr<a11y::Accessible> accessible = mGeckoChild->GetDocumentAccessible();
   if (!accessible)
     return nil;
 
@@ -4833,11 +4824,6 @@ ChildViewMouseTracker::ViewForEvent(NSEvent* aEvent)
 
   NSPoint windowEventLocation = nsCocoaUtils::EventLocationForWindow(aEvent, window);
   NSView* view = [[[window contentView] superview] hitTest:windowEventLocation];
-
-  while([view conformsToProtocol:@protocol(EventRedirection)]) {
-    view = [(id<EventRedirection>)view targetView];
-  }
-
   if (![view isKindOfClass:[ChildView class]])
     return nil;
 
@@ -4936,7 +4922,7 @@ ChildViewMouseTracker::WindowAcceptsEvent(NSWindow* aWindow, NSEvent* aEvent,
   NSWindow *ourWindow = [self window];
   NSView *contentView = [ourWindow contentView];
   if ([ourWindow isKindOfClass:[ToolbarWindow class]] && (self == contentView))
-    return [ourWindow isMovableByWindowBackground];
+    return NO;
   return [self nsChildView_NSView_mouseDownCanMoveWindow];
 }
 

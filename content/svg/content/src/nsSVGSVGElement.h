@@ -131,7 +131,7 @@ public:
   
   // xxx I wish we could use virtual inheritance
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT(nsSVGSVGElementBase::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGSVGElementBase::)
 
   /**
@@ -303,7 +303,7 @@ private:
    * While binding to the tree we need to determine if we will be the outermost
    * <svg> element _before_ the children are bound (as they want to know what
    * timed document root to register with) and therefore _before_ our parent is
-   * set (both actions are performed by nsGenericElement::BindToTree) so we
+   * set (both actions are performed by Element::BindToTree) so we
    * can't use GetOwnerSVGElement() as it relies on GetParent(). This code is
    * basically a simplified version of GetOwnerSVGElement that uses the parent
    * parameters passed in instead.

@@ -6,7 +6,7 @@
 
 //
 // This file implements a garbage-cycle collector based on the paper
-// 
+//
 //   Concurrent Cycle Collection in Reference Counted Systems
 //   Bacon & Rajan (2001), ECOOP 2001 / Springer LNCS vol 2072
 //
@@ -320,14 +320,13 @@ public:
     {
         mSentinelAndBlocks[0].block = nullptr;
         mSentinelAndBlocks[1].block = nullptr;
-        mNumBlocks = 0;
     }
 
     ~EdgePool()
     {
-        NS_ASSERTION(!mSentinelAndBlocks[0].block &&
-                     !mSentinelAndBlocks[1].block,
-                     "Didn't call Clear()?");
+        MOZ_ASSERT(!mSentinelAndBlocks[0].block &&
+                   !mSentinelAndBlocks[1].block,
+                   "Didn't call Clear()?");
     }
 
     void Clear()
@@ -336,9 +335,6 @@ public:
         while (b) {
             Block *next = b->Next();
             delete b;
-            NS_ASSERTION(mNumBlocks > 0,
-                         "Expected EdgePool mNumBlocks to be positive.");
-            mNumBlocks--;
             b = next;
         }
 
@@ -362,20 +358,17 @@ private:
             mPointers[BlockSize - 2].block = nullptr; // sentinel
             mPointers[BlockSize - 1].block = nullptr; // next block pointer
         }
-        Block*& Next()
-            { return mPointers[BlockSize - 1].block; }
-        PtrInfoOrBlock* Start()
-            { return &mPointers[0]; }
-        PtrInfoOrBlock* End()
-            { return &mPointers[BlockSize - 2]; }
+        Block*& Next()          { return mPointers[BlockSize - 1].block; }
+        PtrInfoOrBlock* Start() { return &mPointers[0]; }
+        PtrInfoOrBlock* End()   { return &mPointers[BlockSize - 2]; }
     };
 
     // Store the null sentinel so that we can have valid iterators
     // before adding any edges and without adding any blocks.
     PtrInfoOrBlock mSentinelAndBlocks[2];
-    uint32_t mNumBlocks;
 
-    Block*& Blocks() { return mSentinelAndBlocks[1].block; }
+    Block*& Blocks()       { return mSentinelAndBlocks[1].block; }
+    Block*  Blocks() const { return mSentinelAndBlocks[1].block; }
 
 public:
     class Iterator
@@ -419,8 +412,7 @@ public:
         Builder(EdgePool &aPool)
             : mCurrent(&aPool.mSentinelAndBlocks[0]),
               mBlockEnd(&aPool.mSentinelAndBlocks[0]),
-              mNextBlockPtr(&aPool.Blocks()),
-              mNumBlocks(aPool.mNumBlocks)
+              mNextBlockPtr(&aPool.Blocks())
         {
         }
 
@@ -438,7 +430,6 @@ public:
                 mCurrent = b->Start();
                 mBlockEnd = b->End();
                 mNextBlockPtr = &b->Next();
-                mNumBlocks++;
             }
             (mCurrent++)->ptrInfo = aEdge;
         }
@@ -446,13 +437,17 @@ public:
         // mBlockEnd points to space for null sentinel
         PtrInfoOrBlock *mCurrent, *mBlockEnd;
         Block **mNextBlockPtr;
-        uint32_t &mNumBlocks;
     };
 
-    size_t BlocksSize() const {
-        return sizeof(Block) * mNumBlocks;
+    size_t SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const {
+        size_t n = 0;
+        Block *b = Blocks();
+        while (b) {
+            n += aMallocSizeOf(b);
+            b = b->Next();
+        }
+        return n;
     }
-
 };
 
 enum NodeColor { black, white, grey };
@@ -537,7 +532,7 @@ private:
         // We create and destroy Block using NS_Alloc/NS_Free rather
         // than new and delete to avoid calling its constructor and
         // destructor.
-        Block() { NS_NOTREACHED("should never be called"); }
+        Block()  { NS_NOTREACHED("should never be called"); }
         ~Block() { NS_NOTREACHED("should never be called"); }
 
         Block* mNext;
@@ -547,14 +542,13 @@ private:
 public:
     NodePool()
         : mBlocks(nullptr),
-          mLast(nullptr),
-          mNumBlocks(0)
+          mLast(nullptr)
     {
     }
 
     ~NodePool()
     {
-        NS_ASSERTION(!mBlocks, "Didn't call Clear()?");
+        MOZ_ASSERT(!mBlocks, "Didn't call Clear()?");
     }
 
     void Clear()
@@ -571,9 +565,6 @@ public:
         while (b) {
             Block *n = b->mNext;
             NS_Free(b);
-            NS_ASSERTION(mNumBlocks > 0,
-                         "Expected NodePool mNumBlocks to be positive.");
-            mNumBlocks--;
             b = n;
         }
 
@@ -588,11 +579,10 @@ public:
         Builder(NodePool& aPool)
             : mNextBlock(&aPool.mBlocks),
               mNext(aPool.mLast),
-              mBlockEnd(nullptr),
-              mNumBlocks(aPool.mNumBlocks)
+              mBlockEnd(nullptr)
         {
-            NS_ASSERTION(aPool.mBlocks == nullptr && aPool.mLast == nullptr,
-                         "pool not empty");
+            MOZ_ASSERT(aPool.mBlocks == nullptr && aPool.mLast == nullptr,
+                       "pool not empty");
         }
         PtrInfo *Add(void *aPointer, nsCycleCollectionParticipant *aParticipant)
         {
@@ -605,7 +595,6 @@ public:
                 mBlockEnd = block->mEntries + BlockSize;
                 block->mNext = nullptr;
                 mNextBlock = &block->mNext;
-                mNumBlocks++;
             }
             return new (mNext++) PtrInfo(aPointer, aParticipant);
         }
@@ -613,7 +602,6 @@ public:
         Block **mNextBlock;
         PtrInfo *&mNext;
         PtrInfo *mBlockEnd;
-        uint32_t &mNumBlocks;
     };
 
     class Enumerator;
@@ -641,7 +629,7 @@ public:
 
         PtrInfo* GetNext()
         {
-            NS_ASSERTION(!IsDone(), "calling GetNext when done");
+            MOZ_ASSERT(!IsDone(), "calling GetNext when done");
             if (mNext == mBlockEnd) {
                 Block *nextBlock = mCurBlock ? mCurBlock->mNext : mFirstBlock;
                 mNext = nextBlock->mEntries;
@@ -657,14 +645,21 @@ public:
         PtrInfo *mNext, *mBlockEnd, *&mLast;
     };
 
-    size_t BlocksSize() const {
-        return sizeof(Block) * mNumBlocks;
+    size_t SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const {
+        // We don't measure the things pointed to by mEntries[] because those
+        // pointers are non-owning.
+        size_t n = 0;
+        Block *b = mBlocks;
+        while (b) {
+            n += aMallocSizeOf(b);
+            b = b->mNext;
+        }
+        return n;
     }
 
 private:
     Block *mBlocks;
     PtrInfo *mLast;
-    uint32_t mNumBlocks;
 };
 
 
@@ -688,13 +683,17 @@ struct GCGraph
 
     GCGraph() : mRootCount(0) {
     }
-    ~GCGraph() { 
+    ~GCGraph() {
     }
 
-    size_t BlocksSize() const {
-        return mNodes.BlocksSize() + mEdges.BlocksSize();
-    }
+    void SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                             size_t *aNodesSize, size_t *aEdgesSize) const {
+        *aNodesSize = mNodes.SizeOfExcludingThis(aMallocSizeOf);
+        *aEdgesSize = mEdges.SizeOfExcludingThis(aMallocSizeOf);
 
+        // These fields are deliberately not measured:
+        // - mWeakMaps entries, because the pointers are non-owning
+    }
 };
 
 // XXX Would be nice to have an nsHashSet<KeyType> API that has
@@ -736,17 +735,30 @@ struct nsPurpleBuffer
 private:
     struct Block {
         Block *mNext;
-         // Try to match the size of a jemalloc bucket.
-        nsPurpleBufferEntry mEntries[1360];
+        // Try to match the size of a jemalloc bucket, to minimize slop bytes.
+        // - On 32-bit platforms sizeof(nsPurpleBufferEntry) is 12, so mEntries
+        //   is 16,380 bytes, which leaves 4 bytes for mNext.
+        // - On 64-bit platforms sizeof(nsPurpleBufferEntry) is 24, so mEntries
+        //   is 32,544 bytes, which leaves 8 bytes for mNext.
+        nsPurpleBufferEntry mEntries[1365];
 
-        Block() : mNext(nullptr) {}
+        Block() : mNext(nullptr) {
+#ifndef DEBUG_CC
+            // Ensure Block is the right size (see above).
+            MOZ_STATIC_ASSERT(
+                sizeof(Block) == 16384 ||       // 32-bit
+                sizeof(Block) == 32768,         // 64-bit
+                "ill-sized nsPurpleBuffer::Block"
+            );
+#endif
+        }
+        void StaticAsserts();
     };
 public:
     // This class wraps a linked list of the elements in the purple
     // buffer.
 
     nsCycleCollectorParams &mParams;
-    uint32_t mNumBlocksAlloced;
     uint32_t mCount;
     Block mFirstBlock;
     nsPurpleBufferEntry *mFreeList;
@@ -755,10 +767,10 @@ public:
     PointerSet mNormalObjects; // duplicates our blocks
     nsCycleCollectorStats &mStats;
 #endif
-    
+
 #ifdef DEBUG_CC
     nsPurpleBuffer(nsCycleCollectorParams &params,
-                   nsCycleCollectorStats &stats) 
+                   nsCycleCollectorStats &stats)
         : mParams(params),
           mStats(stats)
     {
@@ -766,7 +778,7 @@ public:
         mNormalObjects.Init();
     }
 #else
-    nsPurpleBuffer(nsCycleCollectorParams &params) 
+    nsPurpleBuffer(nsCycleCollectorParams &params)
         : mParams(params)
     {
         InitBlocks();
@@ -780,7 +792,6 @@ public:
 
     void InitBlocks()
     {
-        mNumBlocksAlloced = 0;
         mCount = 0;
         mFreeList = nullptr;
         StartBlock(&mFirstBlock);
@@ -805,16 +816,13 @@ public:
     {
         if (mCount > 0)
             UnmarkRemainingPurple(&mFirstBlock);
-        Block *b = mFirstBlock.mNext; 
+        Block *b = mFirstBlock.mNext;
         while (b) {
             if (mCount > 0)
                 UnmarkRemainingPurple(b);
             Block *next = b->mNext;
             delete b;
             b = next;
-            NS_ASSERTION(mNumBlocksAlloced > 0,
-                         "Expected positive mNumBlocksAlloced.");
-            mNumBlocksAlloced--;
         }
         mFirstBlock.mNext = nullptr;
     }
@@ -865,7 +873,6 @@ public:
             if (!b) {
                 return nullptr;
             }
-            mNumBlocksAlloced++;
             StartBlock(b);
 
             // Add the new block as the second block in the list.
@@ -898,7 +905,7 @@ public:
 
     void Remove(nsPurpleBufferEntry *e)
     {
-        NS_ASSERTION(mCount != 0, "must have entries");
+        MOZ_ASSERT(mCount != 0, "must have entries");
 
 #ifdef DEBUG_CC
         mNormalObjects.RemoveEntry(e->mObject);
@@ -916,11 +923,28 @@ public:
         return mCount;
     }
 
-    size_t BlocksSize() const
+    size_t SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
     {
-        return sizeof(Block) * mNumBlocksAlloced;
-    }
+        size_t n = 0;
 
+        // Don't measure mFirstBlock because it's within |this|.
+        const Block *block = mFirstBlock.mNext;
+        while (block) {
+            n += aMallocSizeOf(block);
+            block = block->mNext;
+        }
+
+        // These fields are deliberately not measured:
+        // - mParams: because it only contains scalars.
+        // - mFreeList: because it points into the purple buffer, which is
+        //   within mFirstBlock and thus within |this|.
+        // - mNormalObjects, mStats: because they're DEBUG_CC-only.
+        //
+        // We also don't measure the things pointed to by mEntries[] because
+        // those pointers are non-owning.
+
+        return n;
+    }
 };
 
 static bool
@@ -976,8 +1000,6 @@ nsPurpleBuffer::SelectPointers(GCGraphBuilder &aBuilder)
         InitBlocks();
     }
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////
 // Top level structure for the cycle collector.
@@ -1054,6 +1076,13 @@ struct nsCycleCollector
         mGraph.mRootCount = 0;
     }
 
+    void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                             size_t *aObjectSize,
+                             size_t *aGraphNodesSize,
+                             size_t *aGraphEdgesSize,
+                             size_t *aWhiteNodeSize,
+                             size_t *aPurpleBufferSize) const;
+
 #ifdef DEBUG_CC
     nsCycleCollectorStats mStats;
     FILE *mPtrLog;
@@ -1098,6 +1127,7 @@ public:
 
 
 static nsCycleCollector *sCollector = nullptr;
+static nsIMemoryMultiReporter *sCollectorReporter = nullptr;
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -1803,8 +1833,8 @@ GCGraphBuilder::AddNode(void *s, nsCycleCollectionParticipant *aParticipant)
         e->mNode = result;
     } else {
         result = e->mNode;
-        NS_ASSERTION(result->mParticipant == aParticipant,
-                     "nsCycleCollectionParticipant shouldn't change!");
+        MOZ_ASSERT(result->mParticipant == aParticipant,
+                   "nsCycleCollectionParticipant shouldn't change!");
     }
     return result;
 }
@@ -1935,7 +1965,7 @@ GCGraphBuilder::NoteNativeChild(void *child,
     if (!child)
         return;
 
-    NS_ASSERTION(participant, "Need a nsCycleCollectionParticipant!");
+    MOZ_ASSERT(participant, "Need a nsCycleCollectionParticipant!");
     NoteChild(child, participant, edgeName);
 }
 
@@ -1972,7 +2002,7 @@ GCGraphBuilder::NoteNextEdgeName(const char* name)
 PtrInfo*
 GCGraphBuilder::AddWeakMapNode(void *node)
 {
-    NS_ASSERTION(node, "Weak map node should be non-null.");
+    MOZ_ASSERT(node, "Weak map node should be non-null.");
 
     if (!xpc_GCThingIsGrayCCThing(node) && !WantAllTraces())
         return nullptr;
@@ -2202,8 +2232,8 @@ struct scanVisitor
 #endif
         } else {
             GraphWalker<ScanBlackVisitor>(ScanBlackVisitor(mWhiteNodeCount)).Walk(pi);
-            NS_ASSERTION(pi->mColor == black,
-                         "Why didn't ScanBlackVisitor make pi black?");
+            MOZ_ASSERT(pi->mColor == black,
+                       "Why didn't ScanBlackVisitor make pi black?");
         }
     }
 
@@ -2300,8 +2330,8 @@ nsCycleCollector::CollectWhite(nsICycleCollectorListener *aListener)
     nsresult rv;
     TimeLog timeLog;
 
-    NS_ASSERTION(mWhiteNodes->IsEmpty(),
-                 "FinishCollection wasn't called?");
+    MOZ_ASSERT(mWhiteNodes->IsEmpty(),
+               "FinishCollection wasn't called?");
 
     mWhiteNodes->SetCapacity(mWhiteNodeCount);
     uint32_t numWhiteGCed = 0;
@@ -2323,8 +2353,8 @@ nsCycleCollector::CollectWhite(nsICycleCollectorListener *aListener)
     }
 
     uint32_t count = mWhiteNodes->Length();
-    NS_ASSERTION(numWhiteGCed <= count,
-                 "More freed GCed nodes than total freed nodes.");
+    MOZ_ASSERT(numWhiteGCed <= count,
+               "More freed GCed nodes than total freed nodes.");
     if (mResults) {
         mResults->mFreedRefCounted += count - numWhiteGCed;
         mResults->mFreedGCed += numWhiteGCed;
@@ -2539,8 +2569,8 @@ nsCycleCollector::Suspect2(void *n, nsCycleCollectionParticipant *cp)
     if (mScanInProgress)
         return nullptr;
 
-    NS_ASSERTION(nsCycleCollector_isScanSafe(n, cp),
-                 "suspected a non-scansafe pointer");
+    MOZ_ASSERT(nsCycleCollector_isScanSafe(n, cp),
+               "suspected a non-scansafe pointer");
 
     if (mParams.mDoNothing)
         return nullptr;
@@ -2645,8 +2675,8 @@ nsCycleCollector::LogPurpleRemoval(void* aObject)
 void
 nsCycleCollector::GCIfNeeded(bool aForceGC)
 {
-    NS_ASSERTION(NS_IsMainThread(),
-                 "nsCycleCollector::GCIfNeeded() must be called on the main thread.");
+    MOZ_ASSERT(NS_IsMainThread(),
+               "nsCycleCollector::GCIfNeeded() must be called on the main thread.");
 
     if (mParams.mDoNothing)
         return;
@@ -2963,30 +2993,103 @@ nsCycleCollector::WasFreed(nsISupports *n)
 // Memory reporter
 ////////////////////////
 
-static int64_t
-GetCycleCollectorSize()
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(CycleCollectorMallocSizeOf,
+                                     "cycle-collector")
+
+void
+nsCycleCollector::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                      size_t *aObjectSize,
+                                      size_t *aGraphNodesSize,
+                                      size_t *aGraphEdgesSize,
+                                      size_t *aWhiteNodeSize,
+                                      size_t *aPurpleBufferSize) const
 {
-    if (!sCollector)
-        return 0;
-    int64_t size = sizeof(nsCycleCollector) + 
-        sCollector->mPurpleBuf.BlocksSize() +
-        sCollector->mGraph.BlocksSize();
-    if (sCollector->mWhiteNodes)
-        size += sCollector->mWhiteNodes->Capacity() * sizeof(PtrInfo*);
-    return size;
+    *aObjectSize = aMallocSizeOf(this);
+
+    mGraph.SizeOfExcludingThis(aMallocSizeOf, aGraphNodesSize, aGraphEdgesSize);
+
+    // No need to measure what the entries point to; the pointers are
+    // non-owning.
+    *aWhiteNodeSize = mWhiteNodes
+                    ? mWhiteNodes->SizeOfIncludingThis(aMallocSizeOf)
+                    : 0;
+
+    *aPurpleBufferSize = mPurpleBuf.SizeOfExcludingThis(aMallocSizeOf);
+
+    // These fields are deliberately not measured:
+    // - mResults: because it's tiny and only contains scalars.
+    // - mJSRuntime: because it's non-owning and measured by JS reporters.
+    // - mParams: because it only contains scalars.
+    // - mStats, mPtrLog, mExpectedGarbage: because they're DEBUG_CC-only.
 }
 
-NS_MEMORY_REPORTER_IMPLEMENT(CycleCollector,
-                             "explicit/cycle-collector",
-                             KIND_HEAP,
-                             UNITS_BYTES,
-                             GetCycleCollectorSize,
-                             "Memory used by the cycle collector.  This "
-                             "includes the cycle collector structure, the "
-                             "purple buffer, the graph, and the white nodes.  "
-                             "The latter two are expected to be empty when the "
-                             "cycle collector is idle.")
+class CycleCollectorMultiReporter MOZ_FINAL : public nsIMemoryMultiReporter
+{
+  public:
+    NS_DECL_ISUPPORTS
 
+    NS_IMETHOD GetName(nsACString &name)
+    {
+        name.AssignLiteral("cycle-collector");
+        return NS_OK;
+    }
+
+    NS_IMETHOD CollectReports(nsIMemoryMultiReporterCallback *aCb,
+                              nsISupports *aClosure)
+    {
+        if (!sCollector)
+            return NS_OK;
+
+        size_t objectSize, graphNodesSize, graphEdgesSize, whiteNodesSize,
+               purpleBufferSize;
+        sCollector->SizeOfIncludingThis(CycleCollectorMallocSizeOf,
+                                        &objectSize, &graphNodesSize,
+                                        &graphEdgesSize, &whiteNodesSize,
+                                        &purpleBufferSize);
+
+    #define REPORT(_path, _amount, _desc)                                     \
+        do {                                                                  \
+            size_t amount = _amount;  /* evaluate |_amount| just once */      \
+            if (amount > 0) {                                                 \
+                nsresult rv;                                                  \
+                rv = aCb->Callback(EmptyCString(), NS_LITERAL_CSTRING(_path), \
+                                   nsIMemoryReporter::KIND_HEAP,              \
+                                   nsIMemoryReporter::UNITS_BYTES, _amount,   \
+                                   NS_LITERAL_CSTRING(_desc), aClosure);      \
+                NS_ENSURE_SUCCESS(rv, rv);                                    \
+            }                                                                 \
+        } while (0)
+
+        REPORT("explicit/cycle-collector/collector-object", objectSize,
+               "Memory used for the cycle collector object itself.");
+
+        REPORT("explicit/cycle-collector/graph-nodes", graphNodesSize,
+               "Memory used for the nodes of the cycle collector's graph. "
+               "This should be zero when the collector is idle.");
+
+        REPORT("explicit/cycle-collector/graph-edges", graphEdgesSize,
+               "Memory used for the edges of the cycle collector's graph. "
+               "This should be zero when the collector is idle.");
+
+        REPORT("explicit/cycle-collector/white-nodes", whiteNodesSize,
+               "Memory used for the cycle collector's white nodes array. "
+               "This should be zero when the collector is idle.");
+
+        REPORT("explicit/cycle-collector/purple-buffer", purpleBufferSize,
+               "Memory used for the cycle collector's purple buffer.");
+
+        return NS_OK;
+    }
+
+    NS_IMETHOD GetExplicitNonHeap(int64_t *n)
+    {
+        // This reporter does neither "explicit" nor NONHEAP measurements.
+        *n = 0;
+        return NS_OK;
+    }
+};
+
+NS_IMPL_ISUPPORTS1(CycleCollectorMultiReporter, nsIMemoryMultiReporter)
 
 ////////////////////////////////////////////////////////////////////////
 // Module public API (exported in nsCycleCollector.h)
@@ -3001,15 +3104,20 @@ nsCycleCollector_registerJSRuntime(nsCycleCollectionJSRuntime *rt)
         sCollector->RegisterJSRuntime(rt);
     if (regMemReport) {
         regMemReport = false;
-        NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(CycleCollector));
+        sCollectorReporter = new CycleCollectorMultiReporter;
+        NS_RegisterMemoryMultiReporter(sCollectorReporter);
     }
 }
 
-void 
+void
 nsCycleCollector_forgetJSRuntime()
 {
     if (sCollector)
         sCollector->ForgetJSRuntime();
+    if (sCollectorReporter) {
+        NS_UnregisterMemoryMultiReporter(sCollectorReporter);
+        sCollectorReporter = nullptr;
+    }
 }
 
 nsPurpleBufferEntry*
@@ -3078,8 +3186,8 @@ public:
         gCycleCollectorThread = PR_GetCurrentThread();
 #endif
 
-        NS_ASSERTION(NS_IsCycleCollectorThread() && !NS_IsMainThread(),
-                     "Wrong thread!");
+        MOZ_ASSERT(NS_IsCycleCollectorThread() && !NS_IsMainThread(),
+                   "Wrong thread!");
 
         MutexAutoLock autoLock(mLock);
 
@@ -3117,14 +3225,14 @@ public:
           mCollected(false),
           mMergeCompartments(false)
     {
-        NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+        MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
     }
 
     void Collect(bool aMergeCompartments,
                  nsCycleCollectorResults *aResults,
                  nsICycleCollectorListener *aListener)
     {
-        NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+        MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
 
         // On a WantAllTraces CC, force a synchronous global GC to prevent
         // hijinks from ForgetSkippable and compartmental GCs.
@@ -3143,7 +3251,7 @@ public:
         if (!mCollector->PrepareForCollection(aResults, &whiteNodes))
             return;
 
-        NS_ASSERTION(!mListener, "Should have cleared this already!");
+        MOZ_ASSERT(!mListener, "Should have cleared this already!");
         if (aListener && NS_FAILED(aListener->Begin()))
             aListener = nullptr;
         mListener = aListener;
@@ -3167,7 +3275,7 @@ public:
 
     void Shutdown()
     {
-        NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+        MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
 
         MutexAutoLock autoLock(mLock);
 
@@ -3191,8 +3299,8 @@ static nsIThread* sCollectorThread;
 nsresult
 nsCycleCollector_startup()
 {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-    NS_ASSERTION(!sCollector, "Forgot to call nsCycleCollector_shutdown?");
+    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!sCollector, "Forgot to call nsCycleCollector_shutdown?");
 
     sCollector = new nsCycleCollector();
 
@@ -3241,7 +3349,7 @@ nsCycleCollector_collect(bool aMergeCompartments,
                          nsCycleCollectorResults *aResults,
                          nsICycleCollectorListener *aListener)
 {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
     SAMPLE_LABEL("CC", "nsCycleCollector_collect");
     nsCOMPtr<nsICycleCollectorListener> listener(aListener);
     if (!aListener && sCollector && sCollector->mParams.mLogGraphs) {
@@ -3258,7 +3366,7 @@ nsCycleCollector_collect(bool aMergeCompartments,
 void
 nsCycleCollector_shutdownThreads()
 {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
     if (sCollectorRunner) {
         nsRefPtr<nsCycleCollectorRunner> runner;
         runner.swap(sCollectorRunner);
@@ -3275,9 +3383,9 @@ nsCycleCollector_shutdownThreads()
 void
 nsCycleCollector_shutdown()
 {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-    NS_ASSERTION(!sCollectorRunner, "Should have finished before!");
-    NS_ASSERTION(!sCollectorThread, "Should have finished before!");
+    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!sCollectorRunner, "Should have finished before!");
+    MOZ_ASSERT(!sCollectorThread, "Should have finished before!");
 
     if (sCollector) {
         SAMPLE_LABEL("CC", "nsCycleCollector_shutdown");

@@ -192,7 +192,7 @@ function ParallelArrayFilter(filters) {
 //
 
 function ParallelArrayGet(i) {
-  return [i];
+  return this.buffer[i];
 }
 
 function ParallelArrayLength() {

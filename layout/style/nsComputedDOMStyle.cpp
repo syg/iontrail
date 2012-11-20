@@ -43,7 +43,6 @@
 #include "nsDisplayList.h"
 #include "nsDOMCSSDeclaration.h"
 #include "mozilla/dom/Element.h"
-#include "nsGenericElement.h"
 #include "CSSCalc.h"
 #include "nsWrapperCacheInlines.h"
 
@@ -3299,6 +3298,15 @@ nsComputedDOMStyle::DoGetPageBreakBefore()
 }
 
 nsIDOMCSSValue*
+nsComputedDOMStyle::DoGetPageBreakInside()
+{
+  nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
+  val->SetIdent(nsCSSProps::ValueToKeywordEnum(GetStyleDisplay()->mBreakInside,
+                                               nsCSSProps::kPageBreakInsideKTable));
+  return val;
+}
+
+nsIDOMCSSValue*
 nsComputedDOMStyle::DoGetHeight()
 {
   nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
@@ -4802,7 +4810,7 @@ nsComputedDOMStyle::GetQueryablePropertyMap(uint32_t* aLength)
     // COMPUTED_STYLE_MAP_ENTRY(page,                       Page),
     COMPUTED_STYLE_MAP_ENTRY(page_break_after,              PageBreakAfter),
     COMPUTED_STYLE_MAP_ENTRY(page_break_before,             PageBreakBefore),
-    // COMPUTED_STYLE_MAP_ENTRY(page_break_inside,          PageBreakInside),
+    COMPUTED_STYLE_MAP_ENTRY(page_break_inside,             PageBreakInside),
     COMPUTED_STYLE_MAP_ENTRY(perspective,                   Perspective),
     COMPUTED_STYLE_MAP_ENTRY_LAYOUT(perspective_origin,     PerspectiveOrigin),
     COMPUTED_STYLE_MAP_ENTRY(pointer_events,                PointerEvents),

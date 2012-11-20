@@ -31,6 +31,7 @@
 #include "nsAlgorithm.h"
 #include "mozilla/layout/FrameChildList.h"
 #include "FramePropertyTable.h"
+#include "mozilla/Attributes.h"
 
 #ifdef ACCESSIBILITY
 #include "mozilla/a11y/AccTypes.h"
@@ -164,8 +165,10 @@ typedef uint64_t nsFrameState;
 // e.g., it is absolutely positioned or floated
 #define NS_FRAME_OUT_OF_FLOW                        NS_FRAME_STATE_BIT(8)
 
-// This bit is available for re-use.
-//#define NS_FRAME_SELECTED_CONTENT                   NS_FRAME_STATE_BIT(9)
+// Frame can be an abs/fixed pos. container, if its style says so.
+// MarkAs[Not]AbsoluteContainingBlock will assert that this bit is set.
+// NS_FRAME_HAS_ABSPOS_CHILDREN must not be set when this bit is unset.
+#define NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN           NS_FRAME_STATE_BIT(9)
 
 // If this bit is set, then the frame and _all_ of its descendant frames need
 // to be reflowed.
@@ -249,6 +252,10 @@ typedef uint64_t nsFrameState;
 
 // This bit acts as a loop flag for recursive paint server drawing.
 #define NS_FRAME_DRAWING_AS_PAINTSERVER             NS_FRAME_STATE_BIT(33)
+
+// Marks the frame as having a changed transform between processing
+// nsChangeHint_UpdateTransformLayer and calling FinishAndStoreOverflow.
+#define NS_FRAME_TRANSFORM_CHANGED                  NS_FRAME_STATE_BIT(34)
 
 // Frame is a display root and the retained layer tree needs to be updated
 // at the next paint via display list construction.
@@ -505,10 +512,10 @@ void NS_MergeReflowStatusInto(nsReflowStatus* aPrimary,
 /**
  * DidReflow status values.
  */
-typedef bool nsDidReflowStatus;
-
-#define NS_FRAME_REFLOW_NOT_FINISHED false
-#define NS_FRAME_REFLOW_FINISHED     true
+MOZ_BEGIN_ENUM_CLASS(nsDidReflowStatus, uint32_t)
+  NOT_FINISHED,
+  FINISHED
+MOZ_END_ENUM_CLASS(nsDidReflowStatus)
 
 /**
  * When there is no scrollable overflow rect, the visual overflow rect
@@ -2229,7 +2236,6 @@ public:
   /**
    * Called when a frame is about to be removed and needs to be invalidated.
    * Normally does nothing since DLBI handles removed frames.
-   * 
    */
   virtual void InvalidateFrameForRemoval() {}
 

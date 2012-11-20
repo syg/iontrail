@@ -46,7 +46,7 @@ namespace mozilla {
 namespace safebrowsing {
 
 const uint32_t LOOKUPCACHE_MAGIC = 0x1231af3e;
-const uint32_t CURRENT_VERSION = 1;
+const uint32_t CURRENT_VERSION = 2;
 
 LookupCache::LookupCache(const nsACString& aTableName, nsIFile* aStoreDir,
                          bool aPerClientRandomize)
@@ -95,8 +95,7 @@ LookupCache::Open()
     // Simply lacking a .cache file is a recoverable error,
     // as unlike the .pset/.sbstore files it is a pure cache.
     // Just create a new empty one.
-    Clear();
-    UpdateHeader();
+    ClearCompleteCache();
   } else {
     // Read in the .cache file
     rv = ReadHeader(inputStream);
@@ -144,7 +143,7 @@ LookupCache::Reset()
   rv = prefixsetFile->Remove(false);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  Clear();
+  ClearAll();
 
   return NS_OK;
 }
@@ -199,14 +198,6 @@ LookupCache::Has(const Completion& aCompletion,
 {
   *aHas = *aComplete = false;
 
-  // check completion store first
-  if (mCompletions.BinaryIndexOf(aCompletion) != nsTArray<Completion>::NoIndex) {
-    LOG(("Complete in %s", mTableName.get()));
-    *aComplete = true;
-    *aHas = true;
-    return NS_OK;
-  }
-
   uint32_t prefix = aCompletion.ToUint32();
   uint32_t hostkey = aHostkey.ToUint32();
   uint32_t codedkey;
@@ -224,6 +215,12 @@ LookupCache::Has(const Completion& aCompletion,
   LOG(("Probe in %s: %X, found %d", mTableName.get(), prefix, found));
 
   if (found) {
+    *aHas = true;
+  }
+
+  if (mCompletions.BinaryIndexOf(aCompletion) != nsTArray<Completion>::NoIndex) {
+    LOG(("Complete in %s", mTableName.get()));
+    *aComplete = true;
     *aHas = true;
   }
 
@@ -275,11 +272,18 @@ LookupCache::WriteFile()
 }
 
 void
-LookupCache::Clear()
+LookupCache::ClearAll()
 {
-  mCompletions.Clear();
+  ClearCompleteCache();
   mPrefixSet->SetPrefixes(nullptr, 0);
   mPrimed = false;
+}
+
+void
+LookupCache::ClearCompleteCache()
+{
+  mCompletions.Clear();
+  UpdateHeader();
 }
 
 void
@@ -322,8 +326,7 @@ nsresult
 LookupCache::ReadHeader(nsIInputStream* aInputStream)
 {
   if (!aInputStream) {
-    Clear();
-    UpdateHeader();
+    ClearCompleteCache();
     return NS_OK;
   }
 

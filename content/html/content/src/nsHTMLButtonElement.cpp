@@ -66,10 +66,11 @@ public:
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
+
   virtual int32_t TabIndexDefault() MOZ_OVERRIDE;
 
   // nsIDOMHTMLButtonElement
@@ -150,8 +151,8 @@ nsHTMLButtonElement::~nsHTMLButtonElement()
 
 // nsISupports
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLButtonElement, nsGenericElement)
-NS_IMPL_RELEASE_INHERITED(nsHTMLButtonElement, nsGenericElement)
+NS_IMPL_ADDREF_INHERITED(nsHTMLButtonElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLButtonElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLButtonElement, nsHTMLButtonElement)

@@ -57,6 +57,8 @@ using namespace js;
 using namespace js::gc;
 using namespace js::frontend;
 
+using mozilla::DebugOnly;
+
 static bool
 SetSrcNoteOffset(JSContext *cx, BytecodeEmitter *bce, unsigned index, unsigned which, ptrdiff_t offset);
 
@@ -1374,7 +1376,7 @@ BindNameToSlot(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
             return true;
 
         RootedFunction fun(cx, bce->sc->asFunbox()->function());
-        JS_ASSERT(fun->flags & JSFUN_LAMBDA);
+        JS_ASSERT(fun->isLambda());
         JS_ASSERT(pn->pn_atom == fun->atom());
 
         /*
@@ -5380,10 +5382,14 @@ EmitCallOrNew(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn, ptrdiff_t top)
             ParseNode *receiver = pn2->pn_next;
             if (!EmitTree(cx, bce, receiver))
                 return false;
+            if (Emit1(cx, bce, JSOP_NOTEARG) < 0)
+                return false;
             bool oldEmittingForInit = bce->emittingForInit;
             bce->emittingForInit = false;
             for (ParseNode *argpn = receiver->pn_next; argpn != funNode; argpn = argpn->pn_next) {
                 if (!EmitTree(cx, bce, argpn))
+                    return false;
+                if (Emit1(cx, bce, JSOP_NOTEARG) < 0)
                     return false;
             }
             bce->emittingForInit = oldEmittingForInit;

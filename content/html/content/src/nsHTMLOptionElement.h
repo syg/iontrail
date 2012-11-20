@@ -21,13 +21,7 @@ public:
   nsHTMLOptionElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~nsHTMLOptionElement();
 
-  /** Typesafe, non-refcounting cast from nsIContent.  Cheaper than QI. **/
-  static nsHTMLOptionElement* FromContent(nsIContent *aContent)
-  {
-    if (aContent && aContent->IsHTML(nsGkAtoms::option))
-      return static_cast<nsHTMLOptionElement*>(aContent);
-    return nullptr;
-  }
+  NS_IMPL_FROMCONTENT_HTML_WITH_TAG(nsHTMLOptionElement, option)
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -36,14 +30,14 @@ public:
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
 
   // nsIDOMHTMLOptionElement
-  using nsGenericElement::SetText;
-  using nsGenericElement::GetText;
+  using mozilla::dom::Element::SetText;
+  using mozilla::dom::Element::GetText;
   NS_DECL_NSIDOMHTMLOPTIONELEMENT
 
   bool Selected() const;
@@ -73,7 +67,7 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  nsresult CopyInnerTo(nsGenericElement* aDest);
+  nsresult CopyInnerTo(mozilla::dom::Element* aDest);
 
   virtual nsXPCClassInfo* GetClassInfo();
 

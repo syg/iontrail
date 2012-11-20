@@ -4,6 +4,24 @@
 
 load(libdir + "eqArrayHelper.js");
 
+function assertStructuralEq(e1, e2) {
+    if (e1 instanceof ParallelArray && e2 instanceof ParallelArray) {
+        assertEqParallelArray(e1, e2);
+    } else if (e1 instanceof Array && e2 instanceof Array) {
+        assertEqArray(e1, e2);
+    } else if (e1 instanceof Object && e2 instanceof Object) {
+        assertEq(e1.__proto__, e2.__proto__);
+        for (prop in e1) {
+            if (e1.hasOwnProperty(prop)) {
+                assertEq(e2.hasOwnProperty(prop), true);
+                assertStructuralEq(e1[prop], e2[prop]);
+            }
+        }
+    } else {
+      assertEq(e1, e2);
+    }
+}
+
 function assertEqParallelArray(a, b) {
   assertEq(a instanceof ParallelArray, true);
   assertEq(b instanceof ParallelArray, true);
@@ -26,16 +44,12 @@ function assertEqParallelArray(a, b) {
   do {
     var e1 = a.get(iv);
     var e2 = b.get(iv);
-    if (e1 instanceof ParallelArray && e2 instanceof ParallelArray)
-      assertEqParallelArray(e1, e2);
-    else if (e1 instanceof Array && e2 instanceof Array)
-      assertEqArray(e1, e2);
-    else
-      assertEq(e1, e2);
+    assertStructuralEq(e1, e2);
   } while (bump(iv));
 }
 
-function assertParallelArrayModesEq(modes, acc, opFunction) {
+function assertParallelArrayModesEq(modes, acc, opFunction, cmpFunction) {
+    if (!cmpFunction) { cmpFunction = assertEq; }
     modes.forEach(function (mode) {
         var result = opFunction({ mode: mode, expect: "success" });
         if (acc instanceof ParallelArray)

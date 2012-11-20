@@ -21,6 +21,8 @@
 namespace js {
 namespace ion {
 
+class OutOfLineNewArray;
+class OutOfLineNewObject;
 class CheckOverRecursedFailure;
 class OutOfLineUnboxDouble;
 class OutOfLineCache;
@@ -35,10 +37,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool generateBody();
 
   public:
-    CodeGenerator(MIRGenerator *gen, LIRGraph &graph);
+    CodeGenerator(MIRGenerator *gen, LIRGraph *graph);
 
   public:
     bool generate();
+    bool link();
 
     bool visitLabel(LLabel *lir);
     bool visitNop(LNop *lir);
@@ -86,8 +89,10 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitNewSlots(LNewSlots *lir);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);
+    bool visitOutOfLineNewArray(OutOfLineNewArray *ool);
     bool visitNewObjectVMCall(LNewObject *lir);
     bool visitNewObject(LNewObject *lir);
+    bool visitOutOfLineNewObject(OutOfLineNewObject *ool);
     bool visitNewCallObject(LNewCallObject *lir);
     bool visitNewStringObject(LNewStringObject *lir);
     bool visitParNew(LParNew *lir);
@@ -169,6 +174,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitBitOpV(LBitOpV *lir);
     bool emitInstanceOf(LInstruction *ins, Register rhs);
     bool visitIn(LIn *ins);
+    bool visitInArray(LInArray *ins);
     bool visitInstanceOfO(LInstanceOfO *ins);
     bool visitInstanceOfV(LInstanceOfV *ins);
     bool visitFunctionBoundary(LFunctionBoundary *lir);
@@ -195,9 +201,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineBindNameCache(OutOfLineCache *ool);
     bool visitOutOfLineGetNameCache(OutOfLineCache *ool);
 
-    OutOfLineCode *addOutOfLineParNew(LParNew *lir,
-                                      gc::AllocKind allocKind,
-                                      int thingSize);
     bool visitOutOfLineParNew(OutOfLineParNew *ool);
 
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
@@ -226,13 +229,10 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCache(LInstruction *load);
     bool visitCallSetProperty(LInstruction *ins);
 
-    template <typename T>
-    bool initNewGCThing(T allocMode,
-                        JSObject *templateObject,
-                        Register objReg);
-
     ConstantOrRegister getSetPropertyValue(LInstruction *ins);
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);
+
+    IonScriptCounts *maybeCreateScriptCounts();
 };
 
 } // namespace ion

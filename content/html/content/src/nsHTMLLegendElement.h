@@ -15,13 +15,7 @@ public:
   nsHTMLLegendElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~nsHTMLLegendElement();
 
-  static nsHTMLLegendElement* FromContent(nsIContent *aContent)
-  {
-    if (aContent->IsHTML(nsGkAtoms::legend)) {
-      return static_cast<nsHTMLLegendElement*>(aContent);
-    }
-    return nullptr;
-  }
+  NS_IMPL_FROMCONTENT_HTML_WITH_TAG(nsHTMLLegendElement, legend)
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -30,13 +24,14 @@ public:
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLLegendElement
   NS_DECL_NSIDOMHTMLLEGENDELEMENT
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
+
   virtual void Focus(mozilla::ErrorResult& aError) MOZ_OVERRIDE;
 
   virtual void PerformAccesskey(bool aKeyCausesActivation,

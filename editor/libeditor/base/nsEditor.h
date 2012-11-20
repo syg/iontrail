@@ -53,6 +53,7 @@ class nsIDOMRange;
 class nsIDocument;
 class nsIDocumentStateListener;
 class nsIEditActionListener;
+class nsIEditorObserver;
 class nsIInlineSpellChecker;
 class nsINode;
 class nsIPresShell;
@@ -742,6 +743,10 @@ public:
   // Get the focused content, if we're focused.  Returns null otherwise.
   virtual already_AddRefed<nsIContent> GetFocusedContent();
 
+  // Get the focused content for the argument of some nsIMEStateManager's
+  // methods.
+  virtual already_AddRefed<nsIContent> GetFocusedContentForIME();
+
   // Whether the editor is active on the DOM window.  Note that when this
   // returns true but GetFocusedContent() returns null, it means that this editor was
   // focused when the DOM window was active.
@@ -849,7 +854,7 @@ protected:
 
   // various listeners
   nsCOMArray<nsIEditActionListener> mActionListeners;  // listens to all low level actions on the doc
-  EditActionListener* mEditActionListener;  // just notify once per high level change
+  nsCOMArray<nsIEditorObserver> mEditorObservers;  // just notify once per high level change
   nsCOMArray<nsIDocumentStateListener> mDocStateListeners;// listen to overall doc state (dirty or not, just created, etc)
 
   nsSelectionState  mSavedSel;           // cached selection for nsAutoSelectionReset

@@ -17,9 +17,14 @@ Cu.import('resource://gre/modules/accessibility/AccessFu.jsm');
 Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
+Cu.import('resource://gre/modules/Keyboard.jsm');
 #ifdef MOZ_B2G_RIL
 Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 #endif
+
+// identity
+Cu.import('resource://gre/modules/SignInToWebsite.jsm');
+SignInToWebsiteController.init();
 
 XPCOMUtils.defineLazyServiceGetter(Services, 'env',
                                    '@mozilla.org/process/environment;1',
@@ -28,6 +33,10 @@ XPCOMUtils.defineLazyServiceGetter(Services, 'env',
 XPCOMUtils.defineLazyServiceGetter(Services, 'ss',
                                    '@mozilla.org/content/style-sheet-service;1',
                                    'nsIStyleSheetService');
+
+XPCOMUtils.defineLazyServiceGetter(this, 'gSystemMessenger',
+                                   '@mozilla.org/system-message-internal;1',
+                                   'nsISystemMessagesInternal');
 
 #ifdef MOZ_WIDGET_GONK
 XPCOMUtils.defineLazyServiceGetter(Services, 'audioManager',
@@ -132,6 +141,11 @@ var shell = {
    },
 
   start: function shell_start() {
+    // This forces the initialization of the cookie service before we hit the
+    // network.
+    // See bug 810209
+    let cookies = Cc["@mozilla.org/cookieService;1"];
+
     try {
       let cr = Cc["@mozilla.org/xre/app-info;1"]
                  .getService(Ci.nsICrashReporter);
@@ -286,6 +300,9 @@ var shell = {
       case evt.DOM_VK_CONTEXT_MENU: // Menu button
         type = 'menu-button';
         break;
+      case evt.DOM_VK_F1: // headset button
+        type = 'headset-button';
+        break;
       default:                      // Anything else is a real key
         return;  // Don't filter it at all; let it propagate to Gaia
     }
@@ -306,6 +323,13 @@ var shell = {
         break;
       case 'keypress':
         return;
+    }
+
+    // Let applications receive the headset button key press/release event.
+    if (evt.keyCode == evt.DOM_VK_F1 && type !== this.lastHardwareButtonEventType) {
+      this.lastHardwareButtonEventType = type;
+      gSystemMessenger.broadcastMessage('headset-button', type);
+      return;
     }
 
     // On my device, the physical hardware buttons (sleep and volume)
@@ -518,7 +542,7 @@ Services.obs.addObserver(function onWebappsReady(subject, topic, data) {
 
 Services.obs.addObserver(function onBluetoothVolumeChange(subject, topic, data) {
   shell.sendChromeEvent({
-    type: "volumeset",
+    type: "bluetooth-volumeset",
     value: data
   });
 }, 'bluetooth-volume-change', false);

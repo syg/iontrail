@@ -78,8 +78,11 @@ static const char * observerList[] = {
     "profile-before-change",
     "profile-do-change",
     NS_XPCOM_SHUTDOWN_OBSERVER_ID,
-    "last-pb-context-exited"
+    "last-pb-context-exited",
+    "suspend_process_notification",
+    "resume_process_notification"
 };
+
 static const char * prefList[] = { 
     DISK_CACHE_ENABLE_PREF,
     DISK_CACHE_SMART_SIZE_ENABLED_PREF,
@@ -227,7 +230,7 @@ public:
                      "Setting smart size data off the main thread");
 
         // Main thread may have already called nsCacheService::Shutdown
-        if (!nsCacheService::gService || !nsCacheService::gService->mObserver)
+        if (!nsCacheService::IsInitialized())
             return NS_ERROR_NOT_AVAILABLE;
 
         // Ensure smart sizing wasn't switched off while event was pending.
@@ -380,11 +383,17 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
     NS_ConvertUTF16toUTF8 data(data_unicode);
     CACHE_LOG_ALWAYS(("Observe [topic=%s data=%s]\n", topic, data.get()));
 
+    if (!nsCacheService::IsInitialized()) {
+        if (!strcmp("resume_process_notification", topic)) {
+            // A suspended process has a closed cache, so re-open it here.
+            nsCacheService::GlobalInstance()->Init();
+        }
+        return NS_OK;
+    }
+
     if (!strcmp(NS_XPCOM_SHUTDOWN_OBSERVER_ID, topic)) {
         // xpcom going away, shutdown cache service
-        if (nsCacheService::GlobalInstance())
-            nsCacheService::GlobalInstance()->Shutdown();
-    
+        nsCacheService::GlobalInstance()->Shutdown();
     } else if (!strcmp("profile-before-change", topic)) {
         // profile before change
         mHaveProfile = false;
@@ -393,6 +402,10 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
         nsCacheService::OnProfileShutdown(!strcmp("shutdown-cleanse",
                                                   data.get()));
         
+    } else if (!strcmp("suspend_process_notification", topic)) {
+        // A suspended process may never return, so shutdown the cache to reduce
+        // cache corruption.
+        nsCacheService::GlobalInstance()->Shutdown();
     } else if (!strcmp("profile-do-change", topic)) {
         // profile after change
         mHaveProfile = true;
@@ -1060,16 +1073,28 @@ nsCacheService *   nsCacheService::gService = nullptr;
 static nsCOMPtr<nsIMemoryReporter> MemoryCacheReporter = nullptr;
 
 NS_THREADSAFE_MEMORY_REPORTER_IMPLEMENT(NetworkMemoryCache,
-    "explicit/network-memory-cache",
+    "explicit/network/memory-cache",
     KIND_HEAP,
     UNITS_BYTES,
     nsCacheService::MemoryDeviceSize,
     "Memory used by the network memory cache.")
 
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(NetworkDiskCacheSizeOfFun, "network-disk-cache")
+
+static nsCOMPtr<nsIMemoryReporter> DiskCacheReporter = nullptr;
+
+NS_THREADSAFE_MEMORY_REPORTER_IMPLEMENT(NetworkDiskCache,
+    "explicit/network/disk-cache",
+    KIND_HEAP,
+    UNITS_BYTES,
+    nsCacheService::DiskDeviceHeapSize,
+    "Memory used by the network disk cache.")
+
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsCacheService, nsICacheService)
 
 nsCacheService::nsCacheService()
-    : mLock("nsCacheService.mLock"),
+    : mObserver(nullptr),
+      mLock("nsCacheService.mLock"),
       mCondVar(mLock, "nsCacheService.mCondVar"),
       mInitialized(false),
       mClearingEntries(false),
@@ -1099,6 +1124,11 @@ nsCacheService::~nsCacheService()
 {
     if (mInitialized) // Shutdown hasn't been called yet.
         (void) Shutdown();
+
+    if (mObserver) {
+        mObserver->Remove();
+        NS_RELEASE(mObserver);
+    }
 
     gService = nullptr;
 }
@@ -1140,11 +1170,12 @@ nsCacheService::Init()
     if (NS_FAILED(rv)) return rv;
     
     // create profile/preference observer
-    mObserver = new nsCacheProfilePrefObserver();
-    if (!mObserver)  return NS_ERROR_OUT_OF_MEMORY;
-    NS_ADDREF(mObserver);
-    
-    mObserver->Install();
+    if (!mObserver) {
+      mObserver = new nsCacheProfilePrefObserver();
+      NS_ADDREF(mObserver);
+      mObserver->Install();
+    }
+
     mEnableDiskDevice    = mObserver->DiskCacheEnabled();
     mEnableOfflineDevice = mObserver->OfflineCacheEnabled();
     mEnableMemoryDevice  = mObserver->MemoryCacheEnabled();
@@ -1203,13 +1234,14 @@ nsCacheService::Shutdown()
         // obtain the disk cache directory in case we need to sanitize it
         parentDir = mObserver->DiskCacheParentDirectory();
         shouldSanitize = mObserver->SanitizeAtShutdown();
-        mObserver->Remove();
-        NS_RELEASE(mObserver);
         
-        // unregister memory reporter, before deleting the memory device, just
+        // unregister memory reporters, before deleting the devices, just
         // to be safe
         NS_UnregisterMemoryReporter(MemoryCacheReporter);
         MemoryCacheReporter = nullptr;
+
+        NS_UnregisterMemoryReporter(DiskCacheReporter);
+        DiskCacheReporter = nullptr;
 
         // deallocate memory and disk caches
         delete mMemoryDevice;
@@ -1564,6 +1596,9 @@ nsCacheService::CreateDiskDevice()
     // Ignore state of the timer and return success since the purpose of the
     // method (create the disk-device) has been fulfilled
 
+    DiskCacheReporter = new NS_MEMORY_REPORTER_NAME(NetworkDiskCache);
+    NS_RegisterMemoryReporter(DiskCacheReporter);
+
     return NS_OK;
 }
 
@@ -1576,7 +1611,7 @@ public:
     NS_IMETHOD Run()
     {
         // Main thread may have already called nsCacheService::Shutdown
-        if (!nsCacheService::gService || !nsCacheService::gService->mObserver)
+        if (!nsCacheService::IsInitialized())
             return NS_ERROR_NOT_AVAILABLE;
 
         nsCOMPtr<nsIPrefBranch> branch = do_GetService(NS_PREFSERVICE_CONTRACTID);
@@ -1658,7 +1693,9 @@ nsCacheService::CreateOfflineDevice()
     CACHE_LOG_ALWAYS(("Creating default offline device"));
 
     if (mOfflineDevice)        return NS_OK;
-    if (!mObserver)            return NS_ERROR_NOT_AVAILABLE;
+    if (!nsCacheService::IsInitialized()) {
+        return NS_ERROR_NOT_AVAILABLE;
+    }
 
     nsresult rv = CreateCustomOfflineDevice(
         mObserver->OfflineCacheParentDirectory(),
@@ -2236,6 +2273,14 @@ nsCacheService::MemoryDeviceSize()
     return memoryDevice ? memoryDevice->TotalSize() : 0;
 }
 
+int64_t
+nsCacheService::DiskDeviceHeapSize()
+{
+    nsCacheServiceAutoLock lock(LOCK_TELEM(NSCACHESERVICE_DISKDEVICEHEAPSIZE));
+    nsDiskCacheDevice *diskDevice = GlobalInstance()->mDiskDevice;
+    return (int64_t)(diskDevice ? diskDevice->SizeOfIncludingThis(NetworkDiskCacheSizeOfFun) : 0);
+}
+
 nsresult
 nsCacheService::DoomEntry(nsCacheEntry * entry)
 {
@@ -2405,8 +2450,7 @@ nsCacheService::SetDiskCacheCapacity(int32_t  capacity)
         gService->mDiskDevice->SetCapacity(capacity);
     }
 
-    if (gService->mObserver)
-        gService->mEnableDiskDevice = gService->mObserver->DiskCacheEnabled();
+    gService->mEnableDiskDevice = gService->mObserver->DiskCacheEnabled();
 }
 
 void

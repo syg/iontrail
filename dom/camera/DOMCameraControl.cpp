@@ -23,11 +23,11 @@ DOMCI_DATA(CameraControl, nsICameraControl)
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMCameraControl)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMCameraControl)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDOMCapabilities)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMCapabilities)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMCameraControl)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDOMCapabilities)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMCapabilities)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMCameraControl)
@@ -229,6 +229,18 @@ nsDOMCameraControl::SetOnClosed(nsICameraClosedCallback* aOnClosed)
   return mCameraControl->Set(aOnClosed);
 }
 
+/* attribute nsICameraRecorderStateChange onRecorderStateChange; */
+NS_IMETHODIMP
+nsDOMCameraControl::GetOnRecorderStateChange(nsICameraRecorderStateChange** aOnRecorderStateChange)
+{
+  return mCameraControl->Get(aOnRecorderStateChange);
+}
+NS_IMETHODIMP
+nsDOMCameraControl::SetOnRecorderStateChange(nsICameraRecorderStateChange* aOnRecorderStateChange)
+{
+  return mCameraControl->Set(aOnRecorderStateChange);
+}
+
 /* [implicit_jscontext] void startRecording (in jsval aOptions, in nsIDOMDeviceStorage storageArea, in DOMString filename, in nsICameraStartRecordingCallback onSuccess, [optional] in nsICameraErrorCallback onError); */
 NS_IMETHODIMP
 nsDOMCameraControl::StartRecording(const JS::Value& aOptions, nsIDOMDeviceStorage* storageArea, const nsAString& filename, nsICameraStartRecordingCallback* onSuccess, nsICameraErrorCallback* onError, JSContext* cx)
@@ -237,6 +249,11 @@ nsDOMCameraControl::StartRecording(const JS::Value& aOptions, nsIDOMDeviceStorag
   NS_ENSURE_TRUE(storageArea, NS_ERROR_INVALID_ARG);
 
   CameraStartRecordingOptions options;
+
+  // Default values, until the dictionary parser can handle them.
+  options.rotation = 0;
+  options.maxFileSizeBytes = 0;
+  options.maxVideoLengthMs = 0;
   nsresult rv = options.Init(cx, &aOptions);
   NS_ENSURE_SUCCESS(rv, rv);
 

@@ -29,6 +29,53 @@ enum TestEnum {
 callback TestCallback = void();
 [TreatNonCallableAsNull] callback TestTreatAsNullCallback = void();
 
+// Callback return value tests
+callback TestIntegerReturn = long();
+callback TestNullableIntegerReturn = long?();
+callback TestBooleanReturn = boolean();
+callback TestFloatReturn = float();
+callback TestStringReturn = DOMString(long arg);
+callback TestEnumReturn = TestEnum();
+callback TestInterfaceReturn = TestInterface();
+callback TestNullableInterfaceReturn = TestInterface?();
+callback TestExternalInterfaceReturn = TestExternalInterface();
+callback TestNullableExternalInterfaceReturn = TestExternalInterface?();
+callback TestCallbackInterfaceReturn = TestCallbackInterface();
+callback TestNullableCallbackInterfaceReturn = TestCallbackInterface?();
+callback TestCallbackReturn = TestCallback();
+callback TestNullableCallbackReturn = TestCallback?();
+callback TestObjectReturn = object();
+callback TestNullableObjectReturn = object?();
+callback TestTypedArrayReturn = ArrayBuffer();
+callback TestNullableTypedArrayReturn = ArrayBuffer?();
+callback TestSequenceReturn = sequence<boolean>();
+callback TestNullableSequenceReturn = sequence<boolean>?();
+// Callback argument tests
+callback TestIntegerArguments = sequence<long>(long arg1, long? arg2,
+                                               sequence<long> arg3,
+                                               sequence<long?>? arg4);
+callback TestInterfaceArguments = void(TestInterface arg1, TestInterface? arg2,
+                                       TestExternalInterface arg3,
+                                       TestExternalInterface? arg4,
+                                       TestCallbackInterface arg5,
+                                       TestCallbackInterface? arg6,
+                                       sequence<TestInterface> arg7,
+                                       sequence<TestInterface?>? arg8,
+                                       sequence<TestExternalInterface> arg9,
+                                       sequence<TestExternalInterface?>? arg10,
+                                       sequence<TestCallbackInterface> arg11,
+                                       sequence<TestCallbackInterface?>? arg12);
+callback TestStringEnumArguments = void(DOMString myString, DOMString? nullString,
+                                        TestEnum myEnum);
+callback TestObjectArguments = void(object anObj, object? anotherObj,
+                                    ArrayBuffer buf, ArrayBuffer? buf2);
+callback TestOptionalArguments = void(optional DOMString aString,
+                                      optional object something,
+                                      optional sequence<TestInterface> aSeq,
+                                      optional TestInterface? anInterface,
+                                      optional TestInterface anotherInterface,
+                                      optional long aLong);
+
 TestInterface implements ImplementedInterface;
 
 // This interface is only for use in the constructor below
@@ -303,7 +350,9 @@ interface TestInterface {
   void passUnionWithArrayBuffer((ArrayBuffer or long) arg);
   void passUnionWithString((DOMString or object) arg);
   //void passUnionWithEnum((TestEnum or object) arg);
-  void passUnionWithCallback((TestCallback or long) arg);
+  // Trying to use a callback in a union won't include the test
+  // headers, unfortunately, so won't compile.
+  //void passUnionWithCallback((TestCallback or long) arg);
   void passUnionWithObject((object or long) arg);
   //void passUnionWithDict((Dict or long) arg);
 
@@ -322,6 +371,7 @@ interface TestInterface {
 
   void passDictContainingDict(optional DictContainingDict arg);
   void passDictContainingSequence(optional DictContainingSequence arg);
+  DictContainingSequence receiveDictContainingSequence();
 
   // EnforceRange/Clamp tests
   void dontEnforceRangeOrClamp(byte arg);
@@ -342,10 +392,15 @@ interface TestInterface {
   [LenientThis] attribute long attrWithLenientThis;
   [Unforgeable] readonly attribute long unforgeableAttr;
   [Unforgeable, ChromeOnly] readonly attribute long unforgeableAttr2;
+  stringifier;
   void passRenamedInterface(TestRenamedInterface arg);
   [PutForwards=writableByte] readonly attribute TestInterface putForwardsAttr;
   [PutForwards=writableByte, LenientThis] readonly attribute TestInterface putForwardsAttr2;
   [PutForwards=writableByte, ChromeOnly] readonly attribute TestInterface putForwardsAttr3;
+  [Throws] void throwingMethod();
+  [Throws] attribute boolean throwingAttr;
+  [GetterThrows] attribute boolean throwingGetterAttr;
+  [SetterThrows] attribute boolean throwingSetterAttr;
 
   // If you add things here, add them to TestExampleGen as well
 };
@@ -420,11 +475,11 @@ dictionary DictContainingDict {
 
 dictionary DictContainingSequence {
   sequence<long> ourSequence;
+  sequence<TestInterface> ourSequence2;
 };
 
 interface TestIndexedGetterInterface {
-  getter long item(unsigned long index);
-  [Infallible]
+  getter long item(unsigned long idx);
   readonly attribute unsigned long length;
 };
 
@@ -432,24 +487,33 @@ interface TestNamedGetterInterface {
   getter DOMString (DOMString name);
 };
 
+interface TestIndexedGetterAndSetterAndNamedGetterInterface {
+  getter DOMString (DOMString myName);
+  getter long (unsigned long index);
+  setter creator void (unsigned long index, long arg);
+};
+
 interface TestIndexedAndNamedGetterInterface {
   getter long (unsigned long index);
   getter DOMString namedItem(DOMString name);
-  [Infallible]
   readonly attribute unsigned long length;
 };
 
 interface TestIndexedSetterInterface {
-  setter creator void setItem(unsigned long index, DOMString item);
+  setter creator void setItem(unsigned long idx, DOMString item);
+  getter DOMString (unsigned long idx);
 };
 
 interface TestNamedSetterInterface {
-  setter creator void (DOMString name, TestIndexedSetterInterface item);
+  setter creator void (DOMString myName, TestIndexedSetterInterface item);
+  getter TestIndexedSetterInterface (DOMString name);
 };
 
 interface TestIndexedAndNamedSetterInterface {
   setter creator void (unsigned long index, TestIndexedSetterInterface item);
+  getter TestIndexedSetterInterface (unsigned long index);
   setter creator void setNamedItem(DOMString name, TestIndexedSetterInterface item);
+  getter TestIndexedSetterInterface (DOMString name);
 };
 
 interface TestIndexedAndNamedGetterAndSetterInterface : TestIndexedSetterInterface {
@@ -457,10 +521,35 @@ interface TestIndexedAndNamedGetterAndSetterInterface : TestIndexedSetterInterfa
   getter DOMString namedItem(DOMString name);
   setter creator void (unsigned long index, long item);
   setter creator void (DOMString name, DOMString item);
-  [Infallible]
   stringifier DOMString ();
-  [Infallible]
   readonly attribute unsigned long length;
+};
+
+interface TestIndexedDeleterInterface {
+  deleter void delItem(unsigned long idx);
+  getter long (unsigned long index);
+};
+
+interface TestIndexedDeleterWithRetvalInterface {
+  deleter boolean delItem(unsigned long index);
+  getter long (unsigned long index);
+};
+
+interface TestNamedDeleterInterface {
+  deleter void (DOMString name);
+  getter long (DOMString name);
+};
+
+interface TestNamedDeleterWithRetvalInterface {
+  deleter boolean delNamedItem(DOMString name);
+  getter long (DOMString name);
+};
+
+interface TestIndexedAndNamedDeleterInterface {
+  deleter void (unsigned long index);
+  getter long (unsigned long index);
+  deleter void delNamedItem(DOMString name);
+  getter long (DOMString name);
 };
 
 interface TestCppKeywordNamedMethodsInterface {
