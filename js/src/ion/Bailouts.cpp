@@ -559,9 +559,8 @@ ion::ShapeGuardFailure()
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = GetBailedJSScript(cx);
 
-    // invalidation after bailout only occurs in seq mode
     JS_ASSERT(script->hasIonScript());
-    JS_ASSERT(!script->ionScript()->invalidated());
+    JS_ASSERT(!script->ion->invalidated());
 
     script->failedShapeGuard = true;
 
@@ -577,15 +576,14 @@ ion::CachedShapeGuardFailure()
     JSScript *script = GetBailedJSScript(cx);
 
     JS_ASSERT(script->hasIonScript());
-    JS_ASSERT(!script->ionScript()->invalidated());
+    JS_ASSERT(!script->ion->invalidated());
 
     script->failedShapeGuard = true;
 
     // Purge JM caches in the script and all inlined script, to avoid baking in
     // the same shape guard next time.
-    IonScript *scriptIon = script->ionScript();
-    for (size_t i = 0; i < scriptIon->scriptEntries(); i++)
-        mjit::PurgeCaches(scriptIon->getScript(i));
+    for (size_t i = 0; i < script->ion->scriptEntries(); i++)
+        mjit::PurgeCaches(script->ion->getScript(i));
 
     IonSpew(IonSpew_Invalidate, "Invalidating due to shape guard failure");
 
