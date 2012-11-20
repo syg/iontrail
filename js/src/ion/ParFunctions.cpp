@@ -19,14 +19,9 @@ ForkJoinSlice *ParForkJoinSlice() {
     return context;
 }
 
-// ParallelNewGCThing() is called in place of NewGCThing() when
-// executing parallel code.  It uses TLS to acquire the ArenaLists for
-// the current thread and allocates from there.
-//
-// NB--Right now, this takes a JSContext *, but this is not
-// thread-local and we basically avoid touching it as much as
-// possible!  It's just that it's hard to avoid in the way that
-// IonMonkey is setup, near as I can tell right now.
+// ParNewGCThing() is called in place of NewGCThing() when executing
+// parallel code.  It uses the ArenaLists for the current thread and
+// allocates from there.
 JSObject *
 ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
               gc::AllocKind allocKind, uint32_t thingSize) {
