@@ -35,17 +35,16 @@ function ParallelArrayConstruct1(buffer) {
   self.buffer = buffer;
 }
 
-function Construct2Fill(result, id, n, f) {
-  var [start, end] = ComputeTileBounds(result.length, id, n);
-  for (var i = start; i < end; i++)
-    result[i] = f(i);
-}
-
 function ParallelArrayConstruct2(length, f) {
+  function fill(result, id, n, f) {
+    var [start, end] = ComputeTileBounds(result.length, id, n);
+    for (var i = start; i < end; i++)
+      result[i] = f(i);
+  }
+
   if (length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var fill = %KeyedCloneFunction(f, Construct2Fill);
   var buffer = %ParallelBuildArray(length, fill, f);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
@@ -57,17 +56,16 @@ function ParallelArrayConstruct2(length, f) {
   self.buffer = buffer;
 }
 
-function MapFill(result, id, n, f, source) {
-  var [start, end] = ComputeTileBounds(source.length, id, n);
-  for (var i = start; i < end; i++)
-    result[i] = f(source[i]);
-}
-
 function ParallelArrayMap(f) {
+  function fill(result, id, n, f, source) {
+    var [start, end] = ComputeTileBounds(source.length, id, n);
+    for (var i = start; i < end; i++)
+      result[i] = f(source[i]);
+  }
+
   var source = this.buffer;
   var length = source.length;
 
-  var fill = %KeyedCloneFunction(f, MapFill);
   var buffer = %ParallelBuildArray(length, fill, f, source);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
@@ -98,66 +96,65 @@ function ParallelArrayReduce(f) {
   return a;
 }
 
-// TODO: Scan needs a new parallel intrinsic.
-function ScanFill(result, f, source) {
-  var a = source[0];
-
-  for (var i = 1; i < source.length; i++) {
-    a = f(a, source[i]);
-    result[i] = a;
-  }
-}
-
 function ParallelArrayScan(f) {
+  // TODO: Scan needs a new parallel intrinsic.
+  function fill(result, f, source) {
+    var a = source[0];
+
+    for (var i = 1; i < source.length; i++) {
+      a = f(a, source[i]);
+      result[i] = a;
+    }
+  }
+
   var source = this.buffer;
   var length = source.length;
 
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  var fill = %KeyedCloneFunction(f, ScanFill);
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
   fill(buffer, f, source);
 
   return new global.ParallelArray(buffer);
 }
 
-// TODO: Parallelize. %ThrowError or any calling of intrinsics isn't safe.
-function ScatterFill(result, id, n, targets, zero, f, source) {
-  var length = result.length;
+function ParallelArrayScatter(targets, zero, f, length) {
+  // TODO: Parallelize. %ThrowError or any calling of intrinsics isn't safe.
+  function fill(result, id, n, targets, zero, f, source) {
+    var length = result.length;
 
-  // Initialize a conflict array and initialize the result to the zero value.
-  var conflict = [];
-  var [start, end] = ComputeTileBounds(length, id, n);
-  for (var i = start; i < end; i++) {
-    result[i] = zero;
-    conflict[i] = false;
-  }
+    // Initialize a conflict array and initialize the result to the zero value.
+    var conflict = [];
+    var [start, end] = ComputeTileBounds(length, id, n);
+    for (var i = start; i < end; i++) {
+      result[i] = zero;
+      conflict[i] = false;
+    }
 
-  var limit = length < targets.length ? length : targets.length;
-  var [start, end] = ComputeTileBounds(limit, id, n);
+    var limit = length < targets.length ? length : targets.length;
+    var [start, end] = ComputeTileBounds(limit, id, n);
 
-  for (var i = start; i < end; i++) {
-    var t = targets[i];
+    for (var i = start; i < end; i++) {
+      var t = targets[i];
 
-    if (t >>> 0 !== t)
-      %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ".prototype.scatter");
+      if (t >>> 0 !== t)
+        %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ".prototype.scatter");
 
-    if (t >= length)
-      %ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
+      if (t >= length)
+        %ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
 
-    if (conflict[t]) {
-      if (!f)
-        %ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
-      result[t] = f(source[i], result[t]);
-    } else {
-      result[t] = source[i];
-      conflict[t] = true;
+      if (conflict[t]) {
+        if (!f)
+          %ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
+        result[t] = f(source[i], result[t]);
+      } else {
+        result[t] = source[i];
+        conflict[t] = true;
+      }
     }
   }
-}
 
-function ParallelArrayScatter(targets, zero, f, length) {
   var source = this.buffer;
 
   if (targets.length >>> 0 !== targets.length)
@@ -165,7 +162,6 @@ function ParallelArrayScatter(targets, zero, f, length) {
   if (length && length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var fill = %KeyedCloneFunction(f, ScatterFill);
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
   buffer.length = length || source.length;
   fill(buffer, 0, 1, targets, zero, f, source);
@@ -196,7 +192,7 @@ function ParallelArrayFilter(filters) {
 //
 
 function ParallelArrayGet(i) {
-  return this.buffer[i];
+  return [i];
 }
 
 function ParallelArrayLength() {

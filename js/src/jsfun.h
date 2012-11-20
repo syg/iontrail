@@ -48,6 +48,8 @@
 #define JSFUN_HAS_GUESSED_ATOM  0x8000  /* function had no explicit name, but a
                                            name was guessed for it anyway */
 
+#define JSFUN_CLONE_AT_CALLSITE 0x10000
+
 namespace js { class FunctionExtended; }
 
 struct JSFunction : public JSObject
@@ -84,6 +86,7 @@ struct JSFunction : public JSObject
     bool isBuiltin()         const { return isNative() || isSelfHostedBuiltin(); }
     bool isSelfHostedConstructor() const { return flags & JSFUN_SELF_HOSTED_CTOR; }
     bool isSelfHosted()      const { return isSelfHostedBuiltin() || isSelfHostedConstructor(); }
+    bool shouldCloneAtCallSite() const { return isInterpreted() && (flags & JSFUN_CLONE_AT_CALLSITE); }
     bool isNativeConstructor() const { return flags & JSFUN_CONSTRUCTOR; }
     bool isHeavyweight()     const { return JSFUN_HEAVYWEIGHT_TEST(flags); }
     bool isFunctionPrototype() const { return flags & JSFUN_PROTOTYPE; }
@@ -97,6 +100,7 @@ struct JSFunction : public JSObject
 
     /* Returns the strictness of this function, which must be interpreted. */
     inline bool inStrictMode() const;
+
 
     void setArgCount(uint16_t nargs) {
         JS_ASSERT(this->nargs == 0);

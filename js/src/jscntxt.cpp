@@ -239,6 +239,59 @@ JSRuntime::createJaegerRuntime(JSContext *cx)
 }
 #endif
 
+void
+JSCompartment::sweepCallSiteClones()
+{
+    if (callSiteClones.initialized()) {
+        for (selfhosted::CallSiteCloneTable::Enum e(callSiteClones); !e.empty(); e.popFront()) {
+            JSFunction *fun = e.front().value;
+            if (!fun->isMarked())
+                e.removeFront();
+        }
+    }
+}
+
+JSFunction *
+selfhosted::CloneFunctionAtCallSite(JSContext *cx, HandleScript script, uint32_t offset,
+                                    HandleFunction fun)
+{
+    typedef selfhosted::CallSiteCloneKey Key;
+    typedef selfhosted::CallSiteCloneTable Table;
+
+    JS_ASSERT(!fun->script()->enclosingStaticScope());
+
+    Table &table = cx->compartment->callSiteClones;
+    JS_ASSERT(table.initialized());
+
+    Key key;
+    key.script = script;
+    key.offset = offset;
+    key.original = fun;
+
+    Table::AddPtr p = table.lookupForAdd(key);
+    if (p) {
+        printf("already cloned\n");
+        return p->value;
+    }
+
+    RootedObject parent(cx, fun->environment());
+    RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
+    if (!clone)
+        return NULL;
+
+    // Ensure the script is also cloned, since that's how we get the extra
+    // sensitivity.
+    if (fun->script() == clone->script() && !CloneFunctionScript(cx, fun, clone))
+        return NULL;
+
+    if (!table.add(p, key, clone.get()))
+        return NULL;
+
+    printf("new clone\n");
+
+    return clone;
+}
+
 static void
 selfHosting_ErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
 {
@@ -393,46 +446,6 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_KeyedCloneFunction(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args.length() == 2);
-    JS_ASSERT(args[0].isObject());
-    JS_ASSERT(args[1].isObject());
-    JS_ASSERT(args[1].toObject().isFunction() &&
-              args[1].toObject().toFunction()->isInterpreted());
-
-    RootedObject key(cx, &args[0].toObject());
-    RootedFunction fun(cx, args[1].toObject().toFunction());
-
-    ClonedFunctionTable &table = cx->compartment->clonedFunctionTable;
-    if (!table.initialized() && !table.init())
-        return false;
-
-    ClonedFunctionTable::AddPtr p = table.lookupForAdd(key);
-
-    if (p) {
-        args.rval().setObject(*p->value);
-        return true;
-    }
-
-    RootedObject clone(cx, JS_CloneFunctionObject(cx, fun, cx->global()));
-    if (!clone)
-        return false;
-
-    // Ensure the script is also cloned, since that's how we get the extra
-    // sensitivity.
-    RootedFunction cloneFun(cx, clone->toFunction());
-    if (!CloneFunctionScript(cx, fun, cloneFun))
-        return false;
-
-    if (!table.add(p, key, clone->toFunction()))
-        return false;
-    args.rval().setObject(*clone);
-    return true;
-}
-
-static JSBool
 intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -444,7 +457,6 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
-    JS_FN("KeyedCloneFunction", intrinsic_KeyedCloneFunction,   2,0),
     JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
 
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
@@ -494,6 +506,13 @@ JSRuntime::initSelfHosting(JSContext *cx)
     }
     JS_SetErrorReporter(cx, oldReporter);
     JS_SetGlobalObject(cx, savedGlobal);
+
+    if (ok) {
+        selfhosted::CallSiteCloneTable &table = cx->compartment->callSiteClones;
+        if (!table.init())
+            return false;
+    }
+
     return ok;
 }
 

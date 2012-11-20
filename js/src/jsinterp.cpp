@@ -2323,8 +2323,20 @@ BEGIN_CASE(JSOP_FUNCALL)
     bool construct = (*regs.pc == JSOP_NEW);
 
     RootedFunction &fun = rootFunction0;
+    bool isFunction = IsFunctionObject(args.calleev(), fun.address());
+
+    /*
+     * Some builtins are marked as clone-at-call-site to increase precision of
+     * TI and JITs.
+     */
+    if (isFunction && fun->shouldCloneAtCallSite()) {
+        fun = selfhosted::CloneFunctionAtCallSite(cx, script, regs.pc - script->code, fun);
+        if (!fun)
+            goto error;
+    }
+
     /* Don't bother trying to fast-path calls to scripted non-constructors. */
-    if (!IsFunctionObject(args.calleev(), fun.address()) || !fun->isInterpretedConstructor()) {
+    if (!isFunction || !fun->isInterpretedConstructor()) {
         if (construct) {
             if (!InvokeConstructorKernel(cx, args))
                 goto error;

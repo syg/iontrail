@@ -472,7 +472,7 @@ JSFunctionSpec ParallelArrayObject::methods[] = {
     { "scan",     JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayScan"     },
     { "scatter",  JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayScatter"  },
     { "filter",   JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayFilter"   },
-    { "get",      JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayGet"      },
+    { "get",      JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED | JSFUN_CLONE_AT_CALLSITE, "ParallelArrayGet" },
     { "toString", JSOP_NULLWRAPPER, 1, JSFUN_INTERPRETED, "ParallelArrayToString" },
     JS_FS_END
 };
@@ -594,17 +594,4 @@ JSObject *
 js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj)
 {
     return ParallelArrayObject::initClass(cx, obj);
-}
-
-void
-JSCompartment::sweepClonedFunctionTable()
-{
-    if (clonedFunctionTable.initialized()) {
-        for (ClonedFunctionTable::Enum e(clonedFunctionTable); !e.empty(); e.popFront()) {
-            JSObject *key = e.front().key;
-            JSFunction *fun = e.front().value;
-            if (!key->isMarked() || !fun->isMarked())
-                e.removeFront();
-        }
-    }
 }

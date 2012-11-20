@@ -311,11 +311,12 @@ struct JSCompartment
     js::types::TypeObject *getLazyType(JSContext *cx, js::Handle<js::TaggedProto> proto);
 
     /*
-     * Hash table of all manually cloned functions from within self-hosted
-     * code. Bandaid for lack of enough sensitivity in the JIT.
+     * Hash table of all manually call site-cloned functions from within
+     * self-hosted code. Cloning according to call site provides extra
+     * sensitivity for type specialization and inlining.
      */
-    js::ClonedFunctionTable      clonedFunctionTable;
-    void sweepClonedFunctionTable();
+    js::selfhosted::CallSiteCloneTable callSiteClones;
+    void sweepCallSiteClones();
 
     /*
      * Keeps track of the total number of malloc bytes connected to a
