@@ -1065,8 +1065,8 @@ struct JSRuntime : js::RuntimeFriendFields
      * Call the system malloc while checking for GC memory pressure and
      * reporting OOM error when cx is not null. We will not GC from here.
      */
-    void* malloc_(size_t bytes, JSContext *cx = NULL) {
-        updateMallocCounter(cx, bytes);
+    void* malloc_(size_t bytes, JSCompartment *comp = NULL, JSContext *cx = NULL) {
+        updateMallocCounter(comp, bytes);
         void *p = js_malloc(bytes);
         return JS_LIKELY(!!p) ? p : onOutOfMemory(NULL, bytes, cx);
     }
@@ -1075,56 +1075,56 @@ struct JSRuntime : js::RuntimeFriendFields
      * Call the system calloc while checking for GC memory pressure and
      * reporting OOM error when cx is not null. We will not GC from here.
      */
-    void* calloc_(size_t bytes, JSContext *cx = NULL) {
-        updateMallocCounter(cx, bytes);
+    void* calloc_(size_t bytes, JSCompartment *comp = NULL, JSContext *cx = NULL) {
+        updateMallocCounter(comp, bytes);
         void *p = js_calloc(bytes);
         return JS_LIKELY(!!p) ? p : onOutOfMemory(reinterpret_cast<void *>(1), bytes, cx);
     }
 
-    void* realloc_(void* p, size_t oldBytes, size_t newBytes, JSContext *cx = NULL) {
+    void* realloc_(void* p, size_t oldBytes, size_t newBytes, JSCompartment *comp = NULL, JSContext *cx = NULL) {
         JS_ASSERT(oldBytes < newBytes);
-        updateMallocCounter(cx, newBytes - oldBytes);
+        updateMallocCounter(comp, newBytes - oldBytes);
         void *p2 = js_realloc(p, newBytes);
         return JS_LIKELY(!!p2) ? p2 : onOutOfMemory(p, newBytes, cx);
     }
 
-    void* realloc_(void* p, size_t bytes, JSContext *cx = NULL) {
+    void* realloc_(void* p, size_t bytes, JSCompartment *comp = NULL, JSContext *cx = NULL) {
         /*
          * For compatibility we do not account for realloc that increases
          * previously allocated memory.
          */
         if (!p)
-            updateMallocCounter(cx, bytes);
+            updateMallocCounter(comp, bytes);
         void *p2 = js_realloc(p, bytes);
         return JS_LIKELY(!!p2) ? p2 : onOutOfMemory(p, bytes, cx);
     }
 
     template <class T>
-    T *pod_malloc(JSContext *cx = NULL) {
-        return (T *)malloc_(sizeof(T), cx);
+    T *pod_malloc(JSCompartment *comp = NULL, JSContext *cx = NULL) {
+        return (T *)malloc_(sizeof(T), comp, cx);
     }
 
     template <class T>
-    T *pod_calloc(JSContext *cx = NULL) {
-        return (T *)calloc_(sizeof(T), cx);
+    T *pod_calloc(JSCompartment *comp = NULL, JSContext *cx = NULL) {
+        return (T *)calloc_(sizeof(T), comp, cx);
     }
 
     template <class T>
-    T *pod_malloc(size_t numElems, JSContext *cx = NULL) {
+    T *pod_malloc(size_t numElems, JSCompartment *comp = NULL, JSContext *cx = NULL) {
         if (numElems & js::tl::MulOverflowMask<sizeof(T)>::result) {
             js_ReportAllocationOverflow(cx);
             return NULL;
         }
-        return (T *)malloc_(numElems * sizeof(T), cx);
+        return (T *)malloc_(numElems * sizeof(T), comp, cx);
     }
 
     template <class T>
-    T *pod_calloc(size_t numElems, JSContext *cx = NULL) {
+    T *pod_calloc(size_t numElems, JSCompartment *comp = NULL, JSContext *cx = NULL) {
         if (numElems & js::tl::MulOverflowMask<sizeof(T)>::result) {
             js_ReportAllocationOverflow(cx);
             return NULL;
         }
-        return (T *)calloc_(numElems * sizeof(T), cx);
+        return (T *)calloc_(numElems * sizeof(T), comp, cx);
     }
 
     JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)
@@ -1141,7 +1141,7 @@ struct JSRuntime : js::RuntimeFriendFields
      * The function must be called outside the GC lock and in case of OOM error
      * the caller must ensure that no deadlock possible during OOM reporting.
      */
-    void updateMallocCounter(JSContext *cx, size_t nbytes);
+    void updateMallocCounter(JSCompartment *comp, size_t nbytes);
 
     bool isTooMuchMalloc() const {
         return gcMallocBytes <= 0;
@@ -1596,36 +1596,36 @@ struct JSContext : js::ContextFriendFields,
     void leaveGenerator(JSGenerator *gen);
 
     inline void* malloc_(size_t bytes) {
-        return runtime->malloc_(bytes, this);
+        return runtime->malloc_(bytes, compartment, this);
     }
 
     inline void* calloc_(size_t bytes) {
-        return runtime->calloc_(bytes, this);
+        return runtime->calloc_(bytes, compartment, this);
     }
 
     inline void* realloc_(void* p, size_t bytes) {
-        return runtime->realloc_(p, bytes, this);
+        return runtime->realloc_(p, bytes, compartment, this);
     }
 
     inline void* realloc_(void* p, size_t oldBytes, size_t newBytes) {
-        return runtime->realloc_(p, oldBytes, newBytes, this);
+        return runtime->realloc_(p, oldBytes, newBytes, compartment, this);
     }
 
     template <class T> T *pod_malloc() {
-        return runtime->pod_malloc<T>(this);
+        return runtime->pod_malloc<T>(compartment, this);
     }
 
     template <class T> T *pod_calloc() {
-        return runtime->pod_calloc<T>(this);
+        return runtime->pod_calloc<T>(compartment, this);
     }
 
     template <class T> T *pod_malloc(size_t numElems) {
-        return runtime->pod_malloc<T>(numElems, this);
+        return runtime->pod_malloc<T>(numElems, compartment, this);
     }
 
     template <class T>
     T *pod_calloc(size_t numElems) {
-        return runtime->pod_calloc<T>(numElems, this);
+        return runtime->pod_calloc<T>(numElems, compartment, this);
     }
 
     JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)

@@ -156,6 +156,16 @@ public:
         JS_ASSERT(gcMallocAndFreeBytes >= nbytes);
         gcMallocAndFreeBytes -= nbytes;
     }
+
+    inline void* malloc_(size_t bytes);
+    inline void* calloc_(size_t bytes);
+    inline void* realloc_(void* p, size_t bytes);
+    inline void* realloc_(void* p, size_t oldBytes, size_t newBytes);
+    template <class T> T *pod_malloc();
+    template <class T> T *pod_calloc();
+    template <class T> T *pod_malloc(size_t numElems);
+    template <class T> T *pod_calloc(size_t numElems);
+    JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)
 };
 
 }
