@@ -42,11 +42,7 @@ void ParBailout(uint32_t id) {
 }
 
 bool ParCheckInterrupt(ForkJoinSlice *slice) {
-    bool result = slice->check();
-    if (!result) {
-        fprintf(stderr, "Check Interrupt failed!\n");
-    }
-    return result;
+    return slice->check();
 }
 
 }
