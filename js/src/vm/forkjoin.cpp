@@ -314,7 +314,7 @@ ForkJoinShared::transferArenasToCompartment()
     JSRuntime *rt = cx_->runtime;
     JSCompartment *comp = cx_->compartment;
     for (unsigned i = 0; i < numThreads_; i++) {
-        comp->arenas.adoptArenas(rt, arenaListss_[i]);
+        comp->allocator.arenas.adoptArenas(rt, arenaListss_[i]);
     }
 }
 

@@ -116,6 +116,64 @@ namespace js {
 class AutoDebugModeGC;
 }
 
+namespace js {
+
+/*
+ * Encapsulates the data needed to perform allocation.  Typically
+ * there is precisely one of these per compartment
+ * (|compartment.allocator|).  However, in parallel execution mode,
+ * there will be one per worker thread.  In general, if a piece of
+ * code must perform execution and should work safely either in
+ * parallel or sequential mode, you should make it take an
+ * |Allocator*| rather than a |JSContext*|.
+ */
+class Allocator
+{
+    JSCompartment *const compartment;
+
+    /*
+     * Keeps track of the total number of malloc bytes connected to a
+     * compartment's GC things. This counter should be used in preference to
+     * gcMallocBytes. These counters affect collection in the same way as
+     * gcBytes and gcTriggerBytes.
+     */
+    size_t                       gcMallocAndFreeBytes;
+
+    /*
+     * Malloc counter to measure memory pressure for GC scheduling. It runs from
+     * gcMaxMallocBytes down to zero. This counter should be used only when it's
+     * not possible to know the size of a free.
+     */
+    ptrdiff_t                    gcMallocBytes;
+
+public:
+    explicit Allocator(JSCompartment *compartment);
+
+    js::gc::ArenaLists           arenas;
+
+    void resetGCMallocBytes();
+    inline void updateMallocCounter(size_t nbytes);
+
+    bool isTooMuchMalloc() const {
+        return gcMallocBytes <= 0;
+    }
+
+    size_t getMallocAndFreeBytes() {
+        return gcMallocAndFreeBytes;
+    }
+
+    void mallocInAllocator(size_t nbytes) {
+        gcMallocAndFreeBytes += nbytes;
+    }
+
+    void freeInAllocator(size_t nbytes) {
+        JS_ASSERT(gcMallocAndFreeBytes >= nbytes);
+        gcMallocAndFreeBytes -= nbytes;
+    }
+};
+
+}
+
 struct JSCompartment : private JS::shadow::Compartment
 {
     JSRuntime                    *rt;
@@ -148,7 +206,7 @@ struct JSCompartment : private JS::shadow::Compartment
     }
 
   public:
-    js::gc::ArenaLists           arenas;
+    js::Allocator                    allocator;
 
 #ifdef JSGC_GENERATIONAL
     js::gc::Nursery              gcNursery;
@@ -256,6 +314,7 @@ struct JSCompartment : private JS::shadow::Compartment
 
     size_t                       gcBytes;
     size_t                       gcTriggerBytes;
+    size_t                       gcTriggerMallocAndFreeBytes;
     size_t                       gcMaxMallocBytes;
     double                       gcHeapGrowthFactor;
     JSCompartment                *gcNextCompartment;
@@ -324,26 +383,10 @@ struct JSCompartment : private JS::shadow::Compartment
 
     js::types::TypeObject *getLazyType(JSContext *cx, js::Handle<js::TaggedProto> proto);
 
-    /*
-     * Keeps track of the total number of malloc bytes connected to a
-     * compartment's GC things. This counter should be used in preference to
-     * gcMallocBytes. These counters affect collection in the same way as
-     * gcBytes and gcTriggerBytes.
-     */
-    size_t                       gcMallocAndFreeBytes;
-    size_t                       gcTriggerMallocAndFreeBytes;
-
     /* During GC, stores the index of this compartment in rt->compartments. */
     unsigned                     index;
 
   private:
-    /*
-     * Malloc counter to measure memory pressure for GC scheduling. It runs from
-     * gcMaxMallocBytes down to zero. This counter should be used only when it's
-     * not possible to know the size of a free.
-     */
-    ptrdiff_t                    gcMallocBytes;
-
     enum { DebugFromC = 1, DebugFromJS = 2 };
 
     unsigned                     debugModeBits;  // see debugMode() below
@@ -378,30 +421,13 @@ struct JSCompartment : private JS::shadow::Compartment
     void setGCLastBytes(size_t lastBytes, size_t lastMallocBytes, js::JSGCInvocationKind gckind);
     void reduceGCTriggerBytes(size_t amount);
 
-    void resetGCMallocBytes();
     void setGCMaxMallocBytes(size_t value);
-    void updateMallocCounter(size_t nbytes) {
-        ptrdiff_t oldCount = gcMallocBytes;
-        ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
-        gcMallocBytes = newCount;
-        if (JS_UNLIKELY(newCount <= 0 && oldCount > 0))
-            onTooMuchMalloc();
-    }
 
     bool isTooMuchMalloc() const {
-        return gcMallocBytes <= 0;
+        return allocator.isTooMuchMalloc();
      }
 
     void onTooMuchMalloc();
-
-    void mallocInCompartment(size_t nbytes) {
-        gcMallocAndFreeBytes += nbytes;
-    }
-
-    void freeInCompartment(size_t nbytes) {
-        JS_ASSERT(gcMallocAndFreeBytes >= nbytes);
-        gcMallocAndFreeBytes -= nbytes;
-    }
 
     js::DtoaCache dtoaCache;
 
@@ -691,6 +717,17 @@ class AutoWrapperRooter : private AutoGCRooter {
     WrapperValue value;
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
+
+void
+Allocator::updateMallocCounter(size_t nbytes)
+{
+    ptrdiff_t oldCount = gcMallocBytes;
+    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
+    gcMallocBytes = newCount;
+    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0)) {
+        compartment->onTooMuchMalloc();
+    }
+}
 
 } /* namespace js */
 

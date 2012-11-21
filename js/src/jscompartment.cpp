@@ -24,6 +24,7 @@
 #include "methodjit/MonoIC.h"
 #include "methodjit/Retcon.h"
 #include "vm/Debugger.h"
+#include "vm/forkjoin.h"
 #include "yarr/BumpPointerAllocator.h"
 
 #include "jsgcinlines.h"
@@ -47,6 +48,7 @@ JSCompartment::JSCompartment(JSRuntime *rt)
   : rt(rt),
     principals(NULL),
     global_(NULL),
+    allocator(this),
 #ifdef JSGC_GENERATIONAL
     gcStoreBuffer(&gcNursery),
 #endif
@@ -56,6 +58,7 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     gcPreserveCode(false),
     gcBytes(0),
     gcTriggerBytes(0),
+    gcTriggerMallocAndFreeBytes(0),
     gcHeapGrowthFactor(3.0),
     gcNextCompartment(NULL),
     hold(false),
@@ -70,9 +73,6 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     lastAnimationTime(0),
     regExps(rt),
     propertyTree(thisForCtor()),
-    gcMallocAndFreeBytes(0),
-    gcTriggerMallocAndFreeBytes(0),
-    gcMallocBytes(0),
     debugModeBits(rt->debugMode ? DebugFromC : 0),
     watchpointMap(NULL),
     scriptCountsMap(NULL),
@@ -513,7 +513,7 @@ JSCompartment::markTypes(JSTracer *trc)
     }
 
     for (size_t thingKind = FINALIZE_OBJECT0; thingKind < FINALIZE_OBJECT_LIMIT; thingKind++) {
-        ArenaHeader *aheader = arenas.getFirstArena(static_cast<AllocKind>(thingKind));
+        ArenaHeader *aheader = allocator.arenas.getFirstArena(static_cast<AllocKind>(thingKind));
         if (aheader)
             rt->gcMarker.pushArenaList(aheader);
     }
@@ -710,12 +710,6 @@ JSCompartment::purge()
 }
 
 void
-JSCompartment::resetGCMallocBytes()
-{
-    gcMallocBytes = ptrdiff_t(gcMaxMallocBytes);
-}
-
-void
 JSCompartment::setGCMaxMallocBytes(size_t value)
 {
     /*
@@ -723,13 +717,15 @@ JSCompartment::setGCMaxMallocBytes(size_t value)
      * mean that value.
      */
     gcMaxMallocBytes = (ptrdiff_t(value) >= 0) ? value : size_t(-1) >> 1;
-    resetGCMallocBytes();
+    allocator.resetGCMallocBytes();
 }
 
 void
 JSCompartment::onTooMuchMalloc()
 {
-    TriggerCompartmentGC(this, gcreason::TOO_MUCH_MALLOC);
+    if (!InParallelSection()) {
+        TriggerCompartmentGC(this, gcreason::TOO_MUCH_MALLOC);
+    }
 }
 
 
