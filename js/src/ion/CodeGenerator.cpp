@@ -808,14 +808,28 @@ CodeGenerator::visitCallDOMNative(LCallDOMNative *call)
     return true;
 }
 
+typedef bool (*pf)(JSContext *cx, HandlePropertyName, MutableHandleValue);
+static const VMFunction Info = FunctionInfo<pf>(GetIntrinsicValue);
+
 bool
 CodeGenerator::visitCallGetIntrinsicValue(LCallGetIntrinsicValue *lir)
 {
-    typedef bool (*pf)(JSContext *cx, HandlePropertyName, MutableHandleValue);
-    static const VMFunction Info = FunctionInfo<pf>(GetIntrinsicValue);
+    // When compiling parallel kernels, always bail.
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        pushArg(ImmGCPtr(lir->mir()->name()));
+        return callVM(Info, lir);
+      }
 
-    pushArg(ImmGCPtr(lir->mir()->name()));
-    return callVM(Info, lir);
+      case ParallelExecution: {
+        Label *bail;
+        if (!ensureOutOfLineParallelAbort(&bail))
+            return false;
+
+        masm.jump(bail);
+        return true;
+      }
+    }
 }
 
 typedef bool (*InvokeFunctionFn)(JSContext *, JSFunction *, uint32, Value *, Value *);
@@ -860,7 +874,20 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     Register objreg    = ToRegister(call->getTempObject());
     Register nargsreg  = ToRegister(call->getNargsReg());
     uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
-    Label invoke, thunk, makeCall, end;
+    ExecutionMode executionMode = gen->info().executionMode();
+    Label invoke, thunk, makeCall, end, *slowPath;
+
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    switch (executionMode) {
+      case SequentialExecution:
+        slowPath = &invoke;
+        break;
+      case ParallelExecution:
+        if (!ensureOutOfLineParallelAbort(&slowPath))
+            return false;
+        break;
+    }
 
     // Known-target case is handled by LCallKnown.
     JS_ASSERT(!call->hasSingleTarget());
@@ -880,15 +907,14 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         return false;
 
     // Guard that calleereg is a non-native function:
-    masm.branchIfFunctionIsNative(calleereg, &invoke);
+    masm.branchIfFunctionIsNative(calleereg, slowPath);
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.loadPtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    ExecutionMode executionMode = gen->info().executionMode();
     masm.loadPtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
 
     // Nestle the StackPointer up to the argument vector.
     masm.freeStack(unusedStack);
@@ -931,9 +957,11 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     masm.jump(&end);
 
     // Handle uncompiled or native functions.
-    masm.bind(&invoke);
-    if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-        return false;
+    if (slowPath == &invoke) {
+        masm.bind(&invoke);
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
+    }
 
     masm.bind(&end);
     dropArguments(call->numStackArgs() + 1);
@@ -941,26 +969,42 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 }
 
 bool
-CodeGenerator::emitCallToKnownScript(
-    LCallKnown *call, Register calleereg, uint32 unusedStack,
-    Label *slowPath, Label *end)
+CodeGenerator::visitCallKnown(LCallKnown *call)
 {
-    JSContext *cx = GetIonContext()->cx;
+    JSContext *cx      = GetIonContext()->cx;
+    Register calleereg = ToRegister(call->getFunction());
     Register objreg    = ToRegister(call->getTempObject());
+    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     JSFunction *target = call->getSingleTarget();
+    ExecutionMode executionMode = gen->info().executionMode();
+    Label end, invoke, *slowPath;
 
-    // Native single targets are handled by LCallNative.
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    switch (executionMode) {
+      case SequentialExecution:
+        slowPath = &invoke;
+        break;
+      case ParallelExecution:
+        if (!ensureOutOfLineParallelAbort(&slowPath))
+            return false;
+        break;
+    }
+
+     // Native single targets are handled by LCallNative.
     JS_ASSERT(!target->isNative());
-
     // Missing arguments must have been explicitly appended by the IonBuilder.
     JS_ASSERT(target->nargs <= call->numStackArgs());
 
     masm.checkStackAlignment();
 
-    // If the function is known to be uncompilable, only emit the call to InvokeFunction.
-    ExecutionMode executionMode = gen->info().executionMode();
+    // If the function is known to be uncompilable, just emit the call to
+    // Invoke in sequential mode, else mark as cannot compile.
     RootedScript targetScript(cx, target->script());
     if (GetIonScript(targetScript, executionMode) == ION_DISABLED_SCRIPT) {
+        if (executionMode == ParallelExecution)
+            return false;
+
         if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
             return false;
 
@@ -1004,44 +1048,13 @@ CodeGenerator::emitCallToKnownScript(
     // The return address has already been removed from the Ion frame.
     int prefixGarbage = sizeof(IonJSFrameLayout) - sizeof(void *);
     masm.adjustStack(prefixGarbage - unusedStack);
-    masm.jump(end);
-    return true;
-}
+    masm.jump(&end);
 
-bool
-CodeGenerator::visitCallKnown(LCallKnown *call)
-{
-    Register calleereg = ToRegister(call->getFunction());
-    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
-    Label end;
-
-    switch (gen->info().executionMode()) {
-      case ParallelExecution: {
-          Label *bail;
-          if (!ensureOutOfLineParallelAbort(&bail))
-              return false;
-
-          if (!emitCallToKnownScript(call, calleereg, unusedStack,
-                                     bail, &end))
-              return false;
-
-          break;
-      }
-
-      case SequentialExecution: {
-          Label invoke;
-
-          if (!emitCallToKnownScript(call, calleereg, unusedStack,
-                                     &invoke, &end))
-              return false;
-
-          // Handle uncompiled functions.
-          masm.bind(&invoke);
-          if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-              return false;
-
-          break;
-      }
+    // Handle uncompiled functions.
+    if (slowPath == &invoke) {
+        masm.bind(&invoke);
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
     }
 
     masm.bind(&end);
@@ -1926,6 +1939,10 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register tempReg2 = ToRegister(lir->getTemp1());
     Register tempReg3 = ToRegister(lir->getTemp2());
     Register tempReg4 = ToRegister(lir->getTemp3());
+
+    masm.mov(ImmWord(gen->compartment), tempReg1);
+    masm.move32(Imm32(ool->allocKind), tempReg2);
+    masm.move32(Imm32(ool->thingSize), tempReg3);
 
     masm.mov(ImmWord(gen->compartment), tempReg1);
     masm.move32(Imm32(ool->allocKind), tempReg2);

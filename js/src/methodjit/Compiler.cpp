@@ -7392,7 +7392,7 @@ mjit::Compiler::constructThis()
          * newScript on its type, so make sure recompilation is triggered
          * should this information change later.
          */
-        if (templateObject->type()->construct && templateObject->type()->construct->isNewScript())
+        if (templateObject->type()->newScript)
             types::HeapTypeSet::WatchObjectStateChange(cx, templateObject->type());
 
         RegisterID result = frame.allocReg();

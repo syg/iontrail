@@ -1421,10 +1421,44 @@ ion::CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType)
     return Method_Compiled;
 }
 
+MethodStatus
+ParallelCompileContext::compileFunction(HandleFunction fun)
+{
+    JS_ASSERT(ion::IsEnabled(cx_));
+    JS_ASSERT(fun->isInterpreted());
+
+    RootedScript script(cx_, fun->script());
+
+    // Skip if the script has been disabled.
+    if (script->parallelIon == ION_DISABLED_SCRIPT)
+        return Method_Skipped;
+
+    // Skip if the code is expected to result in a bailout.
+    if (script->parallelIon && script->parallelIon->bailoutExpected())
+        return Method_Skipped;
+
+    // Attempt compilation. Returns Method_Compiled if already compiled.
+    MethodStatus status = Compile(cx_, script, fun, NULL, false, *this);
+    if (status != Method_Compiled) {
+        if (status == Method_CantCompile)
+            ForbidCompilation(cx_, script);
+        return status;
+    }
+
+    // This can GC, so afterward, script->parallelIon is not guaranteed to be valid.
+    if (!cx_->compartment->ionCompartment()->enterJIT())
+        return Method_Error;
+
+    if (!script->parallelIon)
+        return Method_Skipped;
+
+    return Method_Compiled;
+}
+
 bool
-ParallelCompilationContext::compile(IonBuilder *builder,
-                                    MIRGraph *graph,
-                                    AutoDestroyAllocator &autoDestroy)
+ParallelCompileContext::compile(IonBuilder *builder,
+                                MIRGraph *graph,
+                                AutoDestroyAllocator &autoDestroy)
 {
     JS_ASSERT(!builder->script()->parallelIon);
 
@@ -1439,7 +1473,7 @@ ParallelCompilationContext::compile(IonBuilder *builder,
     if (!OptimizeMIR(builder))
         return false;
 
-    if (!canCompileParallelArrayKernel(graph))
+    if (!canCompile(graph))
         return false;
 
     CodeGenerator *codegen = GenerateLIR(builder);
@@ -1450,43 +1484,6 @@ ParallelCompilationContext::compile(IonBuilder *builder,
     js_delete(codegen);
 
     return success;
-}
-
-// Decide if we can compile a parallel array kernel.
-MethodStatus
-ion::CanEnterParallelArrayKernel(JSContext *cx,
-                                 HandleFunction fun,
-                                 ion::ParallelCompilationContext &compileContext)
-{
-    JS_ASSERT(ion::IsEnabled(cx));
-
-    RootedScript script(cx, fun->script());
-
-    // Skip if the script has been disabled.
-    if (script->parallelIon == ION_DISABLED_SCRIPT)
-        return Method_Skipped;
-
-    // Skip if the code is expected to result in a bailout.
-    if (script->parallelIon && script->parallelIon->bailoutExpected())
-        return Method_Skipped;
-
-    // Attempt compilation. Returns Method_Compiled if already compiled.
-    MethodStatus status = Compile(cx, script, fun, NULL, false,
-                                  compileContext);
-    if (status != Method_Compiled) {
-        if (status == Method_CantCompile)
-            ForbidCompilation(cx, script);
-        return status;
-    }
-
-    // This can GC, so afterward, script->parallelIon is not guaranteed to be valid.
-    if (!cx->compartment->ionCompartment()->enterJIT())
-        return Method_Error;
-
-    if (!script->parallelIon)
-        return Method_Skipped;
-
-    return Method_Compiled;
 }
 
 MethodStatus
@@ -1950,25 +1947,38 @@ ion::Invalidate(JSContext *cx, const Vector<types::RecompileInfo> &invalid, bool
 }
 
 bool
-ion::Invalidate(JSContext *cx, JSScript *script, bool resetUses)
+ion::Invalidate(JSContext *cx, JSScript *script, ExecutionMode mode, bool resetUses)
 {
-    JS_ASSERT(script->hasIonScript());
-
     Vector<types::RecompileInfo> scripts(cx);
-    if (!scripts.append(script->ionScript()->recompileInfo()))
-        return false;
+
+    switch (mode) {
+      case SequentialExecution:
+        JS_ASSERT(script->hasIonScript());
+        if (!scripts.append(script->ionScript()->recompileInfo()))
+            return false;
+        break;
+      case ParallelExecution:
+        JS_ASSERT(script->hasParallelIonScript());
+        if (!scripts.append(script->parallelIonScript()->recompileInfo()))
+            return false;
+        break;
+    }
 
     Invalidate(cx, scripts, resetUses);
     return true;
 }
 
+bool
+ion::Invalidate(JSContext *cx, JSScript *script, bool resetUses)
+{
+    return Invalidate(cx, script, SequentialExecution, resetUses);
+}
+
 static void
 FinishInvalidationOf(FreeOp *fop, JSScript *script, IonScript **ionField)
 {
-    /*
-     * If this script has Ion code on the stack, invalidation() will return
-     * true. In this case we have to wait until destroying it.
-     */
+    // If this script has Ion code on the stack, invalidation() will return
+    // true. In this case we have to wait until destroying it.
     if (!(*ionField)->invalidated()) {
         types::TypeCompartment &types = script->compartment()->types;
         (*ionField)->recompileInfo().compilerOutput(types)->invalidate();
@@ -1976,7 +1986,7 @@ FinishInvalidationOf(FreeOp *fop, JSScript *script, IonScript **ionField)
         ion::IonScript::Destroy(fop, *ionField);
     }
 
-    /* In all cases, NULL out script->ion to avoid re-entry. */
+    // In all cases, NULL out script->ion to avoid re-entry.
     *ionField = NULL;
 }
 

@@ -6,6 +6,8 @@
 #include "ParallelArrayAnalysis.h"
 #include "IonSpewer.h"
 
+#include "vm/Stack.h"
+
 namespace js {
 namespace ion {
 
@@ -42,7 +44,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 
 class ParallelArrayVisitor : public MInstructionVisitor
 {
-    ParallelCompilationContext &compileContext_;
+    ParallelCompileContext &compileContext_;
     MBasicBlock *entryBlock_;
     MInstruction *threadContext_;
 
@@ -58,7 +60,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
                  MInstruction *replacementInstruction);
 
   public:
-    ParallelArrayVisitor(ParallelCompilationContext &compileContext,
+    ParallelArrayVisitor(ParallelCompileContext &compileContext,
                          MBasicBlock *entryBlock)
         : compileContext_(compileContext),
           entryBlock_(entryBlock),
@@ -163,6 +165,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     WRITE_GUARDED_OP(StoreFixedSlot, object)
     UNSAFE_OP(CallGetProperty)
     UNSAFE_OP(GetNameCache)
+    SAFE_OP(CallGetIntrinsicValue) // Bails in parallel mode
     UNSAFE_OP(CallGetElement)
     UNSAFE_OP(CallSetElement)
     UNSAFE_OP(CallSetProperty)
@@ -181,43 +184,47 @@ class ParallelArrayVisitor : public MInstructionVisitor
     COND_SAFE_OP(InterruptCheck) // FIXME---replace this with a version that bails
 };
 
-ParallelCompilationContext::ParallelCompilationContext(JSContext *cx)
+ParallelCompileContext::ParallelCompileContext(JSContext *cx)
     : cx_(cx),
-      invokedFunctions_(cx)
+      invokedFunctions_(cx),
+      compilingKernel_(false)
 {
 }
 
 bool
-ParallelCompilationContext::compileFunctionAndInvokedFunctions(HandleFunction fun0)
+ParallelCompileContext::canUnsafelyWrite(MInstruction *write, MDefinition *obj)
 {
-    JS_ASSERT(fun0->isInterpreted());
-
-    if (!invokedFunctions_.append(fun0.get()))
+    // By convention, allow the elements of the first argument of the
+    // self-hosted kernel parallel code to be stored to, unsafely, without a
+    // guard.
+    if (!write->isStoreElement() && !write->isStoreElementHole())
         return false;
 
-    for (size_t i = 0; i < invokedFunctions_.length(); i++) {
-        RootedFunction rootedFun(cx_, invokedFunctions_[i]->toFunction());
-        HandleFunction fun(rootedFun);
-
-        if (fun->script()->hasParallelIonScript())
-            continue; // Already compiled.
-
-        if (CanEnterParallelArrayKernel(cx_, fun, *this) != Method_Compiled)
-            return false;
-    }
-
-    return true;
+    return compilingKernel_ && obj->isParameter() && obj->toParameter()->index() == 0;
 }
 
 bool
-ParallelCompilationContext::addInvokedFunction(JSFunction *fun)
+ParallelCompileContext::addInvocation(StackFrame *fp)
 {
-    JS_ASSERT(fun->isInterpreted());
+    AutoAssertNoGC nogc;
 
-    // Already compiled for parallel execution? Our work is done.
-    if (fun->script()->hasParallelIonScript()) {
+    // Stop warmup mode if we invoked a frame that we can't enter from
+    // parallel code.
+    if (!fp->isFunctionFrame() || !fp->fun()->isInterpreted()) {
+        IonSpew(IonSpew_ParallelArray, "invoked unsafe fn during warmup");
+        js_IonOptions.finishParallelWarmup();
         return true;
     }
+
+    JSFunction *fun = fp->fun();
+
+    // We don't go through normal Ion or JM paths that bump the use count, so
+    // do it here so we can get inlining of hot functions.
+    fun->script()->incUseCount();
+
+    // Already compiled for parallel execution? Our work is done.
+    if (fun->script()->hasParallelIonScript())
+        return true;
 
     if (!invokedFunctions_.append(fun)) {
         IonSpew(IonSpew_ParallelArray, "failed to append!");
@@ -227,8 +234,40 @@ ParallelCompilationContext::addInvokedFunction(JSFunction *fun)
     return true;
 }
 
+MethodStatus
+ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
+{
+    JS_ASSERT(!compilingKernel_);
+
+    MethodStatus status;
+
+    // Compile the kernel first as it can unsafely write to a buffer argument.
+    if (!kernel->script()->hasParallelIonScript()) {
+        compilingKernel_ = true;
+        status = compileFunction(kernel);
+        if (status != Method_Compiled) {
+            compilingKernel_ = false;
+            return status;
+        }
+        compilingKernel_ = false;
+    }
+
+    for (size_t i = 0; i < invokedFunctions_.length(); i++) {
+        RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
+
+        if (fun->script()->hasParallelIonScript())
+            continue; // Already compiled.
+
+        status = compileFunction(fun);
+        if (status != Method_Compiled)
+            return status;
+    }
+
+    return status;
+}
+
 bool
-ParallelCompilationContext::canCompileParallelArrayKernel(MIRGraph *graph)
+ParallelCompileContext::canCompile(MIRGraph *graph)
 {
     // Scan the IR and validate the instructions used in a peephole fashion
     ParallelArrayVisitor visitor(*this, graph->entryBlock());
@@ -418,11 +457,38 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
         return false;
     }
 
+    if (object->isUnbox())
+        object = object->toUnbox()->input();
+
     switch (object->op()) {
       case MDefinition::Op_ParNew:
           // MParNew will always be creating something thread-local, omit the guard
           IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
           return true;
+      case MDefinition::Op_Parameter:
+        if (compileContext_.canUnsafelyWrite(writeInstruction, object)) {
+            // XXX: Super gross hack. We know the buffer in self-hosted code
+            // is initialized up to length, so we won't ever write to a hole.
+            IonSpew(IonSpew_ParallelArray, "Write to buffer in self-hosted code does not require guard");
+
+            MStoreElement *store;
+            if (writeInstruction->isStoreElementHole()) {
+                IonSpew(IonSpew_ParallelArray, "Unholing already-unsafe buffer write");
+                MStoreElementHole *storeHole = writeInstruction->toStoreElementHole();
+                store = MStoreElement::New(storeHole->elements(), storeHole->index(),
+                                           storeHole->value());
+                replace(writeInstruction, store);
+            } else {
+                store = writeInstruction->toStoreElement();
+            }
+
+            // Since we initialize with the JS_ARRAY_HOLE, we have to always
+            // write the tag.
+            store->setElementType(MIRType_Value);
+
+            return true;
+        }
+      break;
       default: break;
     }
 
@@ -430,27 +496,16 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
     MBasicBlock *block = writeInstruction->block();
     MParWriteGuard *writeGuard = MParWriteGuard::New(threadContext, object);
     block->insertBefore(writeInstruction, writeGuard);
+    writeGuard->adjustInputs(writeGuard);
     return true;
 }
 
 // ___________________________________________________________________________
 // Calls
 //
-// For now, we only support calls to known targets.  Furthermore,
-// those targets must be non-native (that is, JS) or else they must
-// appear on a whitelist of safe functions.
-//
-// The main reason for these restrictions is that we do not
-// (currently) support compilation during the parallel phase.
-// Therefore, we accumulate and compile the full set of known targets
-// ahead of time.  During execution, if we find that a target is not
-// compiled, we'll just bailout of parallel mode.
-//
-// The visitCall() visit method checks to see that the call has a
-// known target.  If the target is not already compiled in parallel
-// mode, the target is also added to the ParallelCompilationContext's
-// list of targets. An outer loop will then ensure that the target is
-// itself compiled.
+// We only support calls to interpreted functions that that have already been
+// Ion compiled. If a function has no IonScript, we bail out. The compilation
+// is done during warmup of the parallel kernel, see js::RunScript.
 
 bool
 ParallelArrayVisitor::visitCall(MCall *ins)
@@ -458,34 +513,6 @@ ParallelArrayVisitor::visitCall(MCall *ins)
     // DOM? Scary.
     if (ins->isDOMFunction()) {
         IonSpew(IonSpew_ParallelArray, "call to dom function");
-        return false;
-    }
-
-    JSFunction *target = ins->getSingleTarget();
-
-    // Unknown target? Worrisome.
-    if (target == NULL) {
-        IonSpew(IonSpew_ParallelArray, "call with unknown target");
-        return false;
-    }
-
-    // C++? Frightening.
-    if (target->isNative()) {
-        IonSpew(IonSpew_ParallelArray, "call with native target");
-        return false;
-    }
-
-    // JavaScript? Not too many args, I hope.
-    if (ins->numActualArgs() > js_IonOptions.maxStackArgs) {
-        IonSpew(IonSpew_ParallelArray, "call with too many args: %d",
-                ins->numActualArgs());
-        return false;
-    }
-
-    // OK, everything checks out. Add to the list of functions that
-    // will need to be compiled for this function to actually execute
-    // successfully.
-    if (!compileContext_.addInvokedFunction(target)) {
         return false;
     }
 

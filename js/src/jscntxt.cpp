@@ -45,6 +45,7 @@
 #ifdef JS_ION
 #include "ion/Ion.h"
 #include "ion/IonFrames.h"
+#include "builtin/ParallelArray.h"
 #endif
 
 #ifdef JS_METHODJIT
@@ -61,6 +62,7 @@
 #include "jscntxtinlines.h"
 #include "jscompartment.h"
 #include "jsobjinlines.h"
+#include "jsinferinlines.h"
 
 #include "selfhosted.out.h"
 
@@ -241,6 +243,56 @@ JSRuntime::createJaegerRuntime(JSContext *cx)
 }
 #endif
 
+void
+JSCompartment::sweepCallsiteClones()
+{
+    if (callsiteClones.initialized()) {
+        for (selfhosted::CallsiteCloneTable::Enum e(callsiteClones); !e.empty(); e.popFront()) {
+            JSFunction *fun = e.front().value;
+            if (!fun->isMarked())
+                e.removeFront();
+        }
+    }
+}
+
+JSFunction *
+selfhosted::CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t offset,
+                                    HandleFunction fun)
+{
+    typedef selfhosted::CallsiteCloneKey Key;
+    typedef selfhosted::CallsiteCloneTable Table;
+
+    JS_ASSERT(!fun->script()->enclosingStaticScope());
+
+    Table &table = cx->compartment->callsiteClones;
+    if (!table.initialized() && !table.init())
+        return NULL;
+
+    Key key;
+    key.script = script;
+    key.offset = offset;
+    key.original = fun;
+
+    Table::AddPtr p = table.lookupForAdd(key);
+    if (p)
+        return p->value;
+
+    RootedObject parent(cx, fun->environment());
+    RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
+    if (!clone)
+        return NULL;
+
+    // Ensure the script is also cloned, since that's how we get the extra
+    // sensitivity.
+    if (fun->script() == clone->script() && !CloneFunctionScript(cx, fun, clone))
+        return NULL;
+
+    if (!table.add(p, key, clone.get()))
+        return NULL;
+
+    return clone;
+}
+
 static void
 selfHosting_ErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
 {
@@ -325,18 +377,100 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static JSBool
+intrinsic_SetNonBuiltinCallerInitObjectType(JSContext *cx, unsigned argc, Value *vp)
+{
+    // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+    //
+    // The argument **cannot be used** after this function returns. Doing so
+    // will cause infer crashes.
+    //
+    // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+    //
+    // This is a _slow_ function to key the type of an object to the pc of the
+    // nearest non-builtin script. This is needed when we would like an
+    // allocated object in builtin code to really have the context of the user
+    // code in terms of type information.
+    //
+    // For example, for a function like Array.prototype.map, which allocates a
+    // new Array, it would be too imprecise if all newly allocated arrays from
+    // the function, ever, had the same TypeObject.
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() >= 1);
+    JS_ASSERT(args[0].isObject());
+    RootedObject obj(cx, &args[0].toObject());
+
+    if (!cx->typeInferenceEnabled()) {
+        args.rval().setObject(*obj);
+        return true;
+    }
+
+    NonBuiltinScriptFrameIter iter(cx);
+    if (iter.done()) {
+        args.rval().setObject(*obj);
+        return true;
+    }
+
+    RootedScript script(cx, iter.script());
+    if (!types::SetInitializerObjectType(cx, script, iter.pc(), obj))
+        return false;
+
+    args.rval().setObject(*obj);
+    return true;
+}
+
+static JSBool
+intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+#ifndef JS_THREADSAFE_ION
+    args.rval().setUndefined();
+#else
+    ThreadPool *threadPool = &cx->runtime->threadPool;
+    RootedObject info(cx, NewBuiltinClassInstance(cx, &ObjectClass));
+    if (!info)
+        return false;
+
+    RootedAtom atom(cx);
+    RootedValue val(cx);
+
+    atom = Atomize(cx, "numWorkers", strlen("numWorkers"));
+    if (!atom)
+        return false;
+    val = Int32Value(threadPool->numWorkers());
+    if (!JSObject::defineProperty(cx, info, atom->asPropertyName(), val))
+        return false;
+
+    args.rval().setObject(*info);
+#endif
+    return true;
+}
+
+static JSBool
+intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return parallel::BuildArray(cx, args) != parallel::ExecutionFatal;
+}
+
 JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",           intrinsic_ToObject,             1,0),
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
+    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
+
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
+    JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
+    JS_FN("_SetNonBuiltinCallerInitObjectType", intrinsic_SetNonBuiltinCallerInitObjectType, 1,0),
     JS_FS_END
 };
+
 bool
 JSRuntime::initSelfHosting(JSContext *cx)
 {
     JS_ASSERT(!selfHostedGlobal_);
+
     RootedObject savedGlobal(cx, JS_GetGlobalObject(cx));
     if (!(selfHostedGlobal_ = JS_NewGlobalObject(cx, &self_hosting_global_class, NULL)))
         return false;
@@ -350,6 +484,7 @@ JSRuntime::initSelfHosting(JSContext *cx)
     CompileOptions options(cx);
     options.setFileAndLine("self-hosted", 1);
     options.setSelfHostingMode(true);
+    options.setVersion(JSVERSION_LATEST);
 
     /*
      * Set a temporary error reporter printing to stderr because it is too
@@ -372,6 +507,7 @@ JSRuntime::initSelfHosting(JSContext *cx)
     }
     JS_SetErrorReporter(cx, oldReporter);
     JS_SetGlobalObject(cx, savedGlobal);
+
     return ok;
 }
 

@@ -48,6 +48,7 @@
 #include "methodjit/Logging.h"
 #endif
 #include "ion/Ion.h"
+#include "ion/ParallelArrayAnalysis.h"
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
@@ -296,6 +297,16 @@ js::RunScript(JSContext *cx, HandleScript script, StackFrame *fp)
 
 #ifdef JS_ION
     if (ion::IsEnabled(cx)) {
+#ifdef JS_THREADSAFE_ION
+        if (ion::js_IonOptions.parallelWarmupContext) {
+            // During parallel warmup we want to stay in the interpreter and
+            // never go to compiled sequential code, or we might not record
+            // all the calls.
+            if (!ion::js_IonOptions.parallelWarmupContext->addInvocation(fp))
+                return false;
+            return Interpret(cx, fp) != Interpret_Error;
+        }
+#endif
         ion::MethodStatus status = ion::CanEnter(cx, script, fp, false);
         if (status == ion::Method_Error)
             return false;
@@ -2322,8 +2333,20 @@ BEGIN_CASE(JSOP_FUNCALL)
     bool construct = (*regs.pc == JSOP_NEW);
 
     RootedFunction &fun = rootFunction0;
+    bool isFunction = IsFunctionObject(args.calleev(), fun.address());
+
+    /*
+     * Some builtins are marked as clone-at-call-site to increase precision of
+     * TI and JITs.
+     */
+    if (isFunction && fun->shouldCloneAtCallsite()) {
+        fun = selfhosted::CloneFunctionAtCallsite(cx, script, regs.pc - script->code, fun);
+        if (!fun)
+            goto error;
+    }
+
     /* Don't bother trying to fast-path calls to scripted non-constructors. */
-    if (!IsFunctionObject(args.calleev(), fun.address()) || !fun->isInterpretedConstructor()) {
+    if (!isFunction || !fun->isInterpretedConstructor()) {
         if (construct) {
             if (!InvokeConstructorKernel(cx, args))
                 goto error;
@@ -2353,20 +2376,33 @@ BEGIN_CASE(JSOP_FUNCALL)
 #endif
 
 #ifdef JS_ION
-    if (!newType && ion::IsEnabled(cx)) {
-        ion::MethodStatus status = ion::CanEnter(cx, script, regs.fp(), newType);
-        if (status == ion::Method_Error)
-            goto error;
-        if (status == ion::Method_Compiled) {
-            ion::IonExecStatus exec = ion::Cannon(cx, regs.fp());
-            CHECK_BRANCH();
-            if (exec == ion::IonExec_Bailout) {
-                SET_SCRIPT(regs.fp()->script());
-                op = JSOp(*regs.pc);
-                DO_OP();
+    if (ion::IsEnabled(cx)) {
+#ifdef JS_THREADSAFE_ION
+        if (ion::js_IonOptions.parallelWarmupContext) {
+            // During parallel warmup we want to stay in the interpreter and
+            // never go to compiled sequential code, or we might not record
+            // all the calls.
+            if (!ion::js_IonOptions.parallelWarmupContext->addInvocation(regs.fp()))
+                goto error;
+            goto interpret_call;
+        }
+#endif
+
+        if (!newType) {
+            ion::MethodStatus status = ion::CanEnter(cx, script, regs.fp(), newType);
+            if (status == ion::Method_Error)
+                goto error;
+            if (status == ion::Method_Compiled) {
+                ion::IonExecStatus exec = ion::Cannon(cx, regs.fp());
+                CHECK_BRANCH();
+                if (exec == ion::IonExec_Bailout) {
+                    SET_SCRIPT(regs.fp()->script());
+                    op = JSOp(*regs.pc);
+                    DO_OP();
+                }
+                interpReturnOK = !IsErrorStatus(exec);
+                goto jit_return;
             }
-            interpReturnOK = !IsErrorStatus(exec);
-            goto jit_return;
         }
     }
 #endif
@@ -2387,6 +2423,10 @@ BEGIN_CASE(JSOP_FUNCALL)
             goto jit_return;
         }
     }
+#endif
+
+#ifdef JS_THREADSAFE_ION
+    interpret_call:
 #endif
 
     if (!regs.fp()->prologue(cx, newType))

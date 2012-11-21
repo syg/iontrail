@@ -80,8 +80,6 @@ class CodeGenerator : public CodeGeneratorSpecific
                                 uint32 argc, uint32 unusedStack);
     bool visitCallGeneric(LCallGeneric *call);
     bool visitCallKnown(LCallKnown *call);
-    bool emitCallToKnownScript(LCallKnown *call, Register calleereg, uint32 unusedStack,
-                               Label *slowPath, Label *end);
     bool visitCallConstructor(LCallConstructor *call);
     bool emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraStackSize);
     void emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSpace);

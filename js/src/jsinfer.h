@@ -352,11 +352,8 @@ enum {
     /* Objects with this type are functions. */
     OBJECT_FLAG_FUNCTION              = 0x1,
 
-    /*
-     * If set, construction information should not be installed on this
-     * object.
-     */
-    OBJECT_FLAG_CONSTRUCT_CLEARED     = 0x2,
+    /* If set, newScript information should not be installed on this object. */
+    OBJECT_FLAG_NEW_SCRIPT_CLEARED    = 0x2,
 
     /*
      * If set, type constraints covering the correctness of the newScript
@@ -389,26 +386,23 @@ enum {
     /* Whether any objects this represents are not typed arrays. */
     OBJECT_FLAG_NON_TYPED_ARRAY       = 0x00040000,
 
-    /* Whether any objects this represents are not parallel arrays. */
-    OBJECT_FLAG_NON_PARALLEL_ARRAY    = 0x00080000,
-
     /* Whether any objects this represents are not DOM objects. */
-    OBJECT_FLAG_NON_DOM               = 0x00100000,
+    OBJECT_FLAG_NON_DOM               = 0x00080000,
 
     /* Whether any represented script is considered uninlineable in JM. */
-    OBJECT_FLAG_UNINLINEABLE          = 0x00200000,
+    OBJECT_FLAG_UNINLINEABLE          = 0x00100000,
 
     /* Whether any objects have an equality hook. */
-    OBJECT_FLAG_SPECIAL_EQUALITY      = 0x00400000,
+    OBJECT_FLAG_SPECIAL_EQUALITY      = 0x00200000,
 
     /* Whether any objects have been iterated over. */
-    OBJECT_FLAG_ITERATED              = 0x00800000,
+    OBJECT_FLAG_ITERATED              = 0x00400000,
 
     /* For a global object, whether flags were set on the RegExpStatics. */
-    OBJECT_FLAG_REGEXP_FLAGS_SET      = 0x01000000,
+    OBJECT_FLAG_REGEXP_FLAGS_SET      = 0x00800000,
 
     /* Flags which indicate dynamic properties of represented objects. */
-    OBJECT_FLAG_DYNAMIC_MASK          = 0x01ff0000,
+    OBJECT_FLAG_DYNAMIC_MASK          = 0x00ff0000,
 
     /*
      * Whether all properties of this object are considered unknown.
@@ -809,52 +803,17 @@ struct Property
 };
 
 /*
- * TypeConstruction overview
- *
- * Information attached to a TypeObject if it is either 1) always constructed
- * using 'new' on a particular script, in which case it has a TypeConstruction
- * of type NEW_SCRIPT, or 2) always constructed as a ParallelArray, in which
- * it has a TypeConstruction of type PARALLEL_ARRAY. TypeObject itself is
- * constrained for space, thus unioning the two kinds of information here.
- *
- * If this is a 'new' script, it is used to manage state related to the definite
+ * Information attached to a TypeObject if it is always constructed using 'new'
+ * on a particular script. This is used to manage state related to the definite
  * properties on the type object: these definite properties depend on type
  * information which could change as the script executes (e.g. a scripted
  * setter is added to a prototype object), and we need to ensure both that the
  * appropriate type constraints are in place when necessary, and that we can
  * remove the definite property information and repair the JS stack if the
  * constraints are violated.
- *
- * If this is parallel array information, it used to track the packed
- * dimensions of the parallel array and, if there is more than one dimension,
- * the type of the interior view, or row. At every allocation that gets the
- * same parent TypeObject, we need to verify that we are making a
- * ParallelArray with the same dimensions, or else clear the information. The
- * lattice of how exact our information on a ParallelArray is:
- *
- *   Known Exact Dimensions           ^
- *            |                       |
- * Known Number of Dimensions         | more information
- *            |                       |
- *    Unknown Dimensions              |
- *
- * As long as we know at least the known number of dimensions, we keep around
- * the specialized row types and track element (JSID_VOID) types. Once we no
- * longer know anything about the dimensions, we clear the TypeConstruction
- * and all future rows will get a generic row type that do not track element
- * types.
  */
-struct TypeConstruction
+struct TypeNewScript
 {
-    enum {
-        NEW_SCRIPT,
-        PARALLEL_ARRAY
-    } kind;
-
-    /*
-     * If kind is NEW_SCRIPT, fun must not be NULL. The owning TypeObject is
-     * always constructed using 'new' on this function.
-     */
     HeapPtrFunction fun;
 
     /* Allocation kind to use for newly constructed objects. */
@@ -865,19 +824,6 @@ struct TypeConstruction
      * properties the object will have.
      */
     HeapPtrShape  shape;
-
-    /*
-     * If kind is PARALLEL_ARRAY, rowType is not NULL iff there is more than
-     * one packed dimension.
-     */
-    HeapPtrTypeObject rowType;
-
-    /*
-     * If kind is PARALEL_ARRAY, numDimensions is at least 1. A value of 0
-     * indicates that the dimensions have not yet been initialized, and we
-     * should do so
-     */
-    uint32_t numDimensions;
 
     /*
      * Order in which properties become initialized. We need this in case a
@@ -899,32 +845,10 @@ struct TypeConstruction
           : kind(kind), offset(offset)
         {}
     };
+    Initializer *initializerList;
 
-    union {
-        /* When kind is NEW_SCRIPT, these are the definite properties. */
-        Initializer *initializerList;
-
-        /*
-         * When kind is PARALLEL_ARRAY, these are the packed dimensions. If
-         * this is NULL but numDimensions is > 0, then we do not know the
-         * exact packed dimensions of this ParallelArray, only how many
-         * dimensions it has packed.
-         */
-        uint32_t *dimensions;
-    };
-
-    bool isNewScript() {
-        JS_ASSERT_IF(kind == NEW_SCRIPT, fun);
-        JS_ASSERT_IF(kind == NEW_SCRIPT, shape);
-        return kind == NEW_SCRIPT;
-    }
-
-    bool isParallelArray() {
-        return kind == PARALLEL_ARRAY;
-    }
-
-    static inline void writeBarrierPre(TypeConstruction *construct);
-    static inline void writeBarrierPost(TypeConstruction *construct, void *addr);
+    static inline void writeBarrierPre(TypeNewScript *newScript);
+    static inline void writeBarrierPost(TypeNewScript *newScript, void *addr);
 };
 
 /*
@@ -991,18 +915,11 @@ struct TypeObject : gc::Cell
     static const uint32_t CONTRIBUTION_LIMIT = 2000;
 
     /*
-     * If non-NULL, a disjoint union of either 'new' script or parallel array
-     * information.
-     *
-     * A 'new' script construct means that objects of this type have always been
-     * constructed using 'new' on the specified script, which adds some number
-     * of properties to the object in a definite order before the object
-     * escapes.
-     *
-     * A parallel array construct means that objects of this type are always
-     * parallel arrays of a certain dimension.
+     * If non-NULL, objects of this type have always been constructed using
+     * 'new' on the specified script, which adds some number of properties to
+     * the object in a definite order before the object escapes.
      */
-    HeapPtr<TypeConstruction> construct;
+    HeapPtr<TypeNewScript> newScript;
 
     /*
      * Properties of this object. This may contain JSID_VOID, representing the
@@ -1099,12 +1016,8 @@ struct TypeObject : gc::Cell
     void markStateChange(JSContext *cx);
     void setFlags(JSContext *cx, TypeObjectFlags flags);
     void markUnknown(JSContext *cx);
-    void clearConstruct(JSContext *cx);
-    void freeConstruct(JSContext *cx);
+    void clearNewScript(JSContext *cx);
     void getFromPrototypes(JSContext *cx, jsid id, TypeSet *types, bool force = false);
-
-    /* ParallelArray helpers. */
-    TypeObject *maybeGetRowType();
 
     void print();
 
@@ -1442,9 +1355,9 @@ struct TypeCompartment
 
     /*
      * Make a function or non-function object associated with an optional
-     * script. The 'kind' parameter here may be an array, typed array,
-     * parallel array, function or JSProto_Object to indicate a type whose
-     * class is unknown (not just js_ObjectClass).
+     * script. The 'key' parameter here may be an array, typed array, function
+     * or JSProto_Object to indicate a type whose class is unknown (not just
+     * js_ObjectClass).
      */
     TypeObject *newTypeObject(JSContext *cx, JSProtoKey kind, Handle<TaggedProto> proto,
                               bool unknown = false, bool isDOM = false);

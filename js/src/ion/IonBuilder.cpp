@@ -3557,7 +3557,7 @@ IonBuilder::createThisScriptedSingleton(HandleFunction target, HandleObject prot
         return NULL;
 
     // Trigger recompilation if the templateObject changes.
-    if (templateObject->type()->construct && templateObject->type()->construct->isNewScript())
+    if (templateObject->type()->newScript)
         types::HeapTypeSet::WatchObjectStateChange(cx, templateObject->type());
 
     MConstant *protoDef = MConstant::New(ObjectValue(*proto));

@@ -2480,7 +2480,10 @@ class AutoIdRooter : private AutoGCRooter
  */
 #define JSFUN_GENERIC_NATIVE   0x800
 
-#define JSFUN_FLAGS_MASK       0xe00    /* | of all the JSFUN_* flags */
+#define JSFUN_CLONE_CALLSITE   0x1000   /* function is cloned anew at each call
+                                           site */
+
+#define JSFUN_FLAGS_MASK       0x1e00   /* | of all the JSFUN_* flags */
 
 /*
  * The first call to JS_CallOnce by any thread in a process will call 'func'.
