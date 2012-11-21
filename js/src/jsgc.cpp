@@ -1462,15 +1462,8 @@ namespace js {
 
 Allocator::Allocator(JSCompartment *compartment)
   : compartment(compartment),
-    gcMallocAndFreeBytes(0),
-    gcMallocBytes(0)
+    gcMallocAndFreeBytes(0)
 {}
-
-void
-Allocator::resetGCMallocBytes()
-{
-    gcMallocBytes = ptrdiff_t(compartment->gcMaxMallocBytes);
-}
 
 namespace gc {
 
@@ -4206,7 +4199,7 @@ AutoGCSession::~AutoGCSession()
 
     /* Clear gcMallocBytes for all compartments */
     for (CompartmentsIter c(runtime); !c.done(); c.next()) {
-        c->allocator.resetGCMallocBytes();
+        c->resetGCMallocBytes();
         c->unscheduleGC();
     }
 

@@ -139,24 +139,10 @@ class Allocator
      */
     size_t                       gcMallocAndFreeBytes;
 
-    /*
-     * Malloc counter to measure memory pressure for GC scheduling. It runs from
-     * gcMaxMallocBytes down to zero. This counter should be used only when it's
-     * not possible to know the size of a free.
-     */
-    ptrdiff_t                    gcMallocBytes;
-
 public:
     explicit Allocator(JSCompartment *compartment);
 
     js::gc::ArenaLists           arenas;
-
-    void resetGCMallocBytes();
-    inline void updateMallocCounter(size_t nbytes);
-
-    bool isTooMuchMalloc() const {
-        return gcMallocBytes <= 0;
-    }
 
     size_t getMallocAndFreeBytes() {
         return gcMallocAndFreeBytes;
@@ -395,6 +381,13 @@ struct JSCompartment : private JS::shadow::Compartment
     unsigned                     index;
 
   private:
+    /*
+     * Malloc counter to measure memory pressure for GC scheduling. It runs from
+     * gcMaxMallocBytes down to zero. This counter should be used only when it's
+     * not possible to know the size of a free.
+     */
+    ptrdiff_t                    gcMallocBytes;
+
     enum { DebugFromC = 1, DebugFromJS = 2 };
 
     unsigned                     debugModeBits;  // see debugMode() below
@@ -429,10 +422,21 @@ struct JSCompartment : private JS::shadow::Compartment
     void setGCLastBytes(size_t lastBytes, size_t lastMallocBytes, js::JSGCInvocationKind gckind);
     void reduceGCTriggerBytes(size_t amount);
 
+    void resetGCMallocBytes();
     void setGCMaxMallocBytes(size_t value);
+    void updateMallocCounter(size_t nbytes) {
+        /* Note: this code may be run from worker threads.
+
+           We tolerate any thread races when updating gcMallocBytes. */
+        ptrdiff_t oldCount = gcMallocBytes;
+        ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
+        gcMallocBytes = newCount;
+        if (JS_UNLIKELY(newCount <= 0 && oldCount > 0))
+            onTooMuchMalloc();
+    }
 
     bool isTooMuchMalloc() const {
-        return allocator.isTooMuchMalloc();
+        return gcMallocBytes <= 0;
      }
 
     void onTooMuchMalloc();
@@ -725,17 +729,6 @@ class AutoWrapperRooter : private AutoGCRooter {
     WrapperValue value;
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
-
-void
-Allocator::updateMallocCounter(size_t nbytes)
-{
-    ptrdiff_t oldCount = gcMallocBytes;
-    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
-    gcMallocBytes = newCount;
-    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0)) {
-        compartment->onTooMuchMalloc();
-    }
-}
 
 } /* namespace js */
 
