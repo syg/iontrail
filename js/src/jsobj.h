@@ -568,6 +568,7 @@ struct JSObject : public js::ObjectImpl
 
     inline bool ensureElements(JSContext *cx, unsigned cap);
     bool growElements(JSContext *cx, unsigned cap);
+    bool growElements(js::Allocator *alloc, unsigned cap);
     void shrinkElements(JSContext *cx, unsigned cap);
     inline void setDynamicElements(js::ObjectElements *header);
 
