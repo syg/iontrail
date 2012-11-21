@@ -5,11 +5,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "ParFunctions.h"
 #include "jsinterp.h"
+#include "ParFunctions.h"
+
 #include "jsinterpinlines.h"
 #include "vm/forkjoininlines.h"
 #include "jscompartmentinlines.h"
+#include "jsarrayinlines.h"
 
 namespace js {
 namespace ion {
@@ -45,5 +47,13 @@ bool ParCheckInterrupt(ForkJoinSlice *slice) {
     return slice->check();
 }
 
+bool ParExtendArray(HandleObject obj) {
+    // It is awkward to have the MIR pass the current slice in, so
+    // just fetch it from TLS.  Extending the array is kind of the
+    // slow path anyhow as it reallocates the elements vector.
+    ForkJoinSlice *slice = js::ForkJoinSlice::current();
+    return (obj->extendDenseArray(slice->allocator, 1) == JSObject::ED_OK);
 }
-}
+
+} /* namespace ion */
+} /* namespace js */

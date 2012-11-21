@@ -2778,17 +2778,25 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
             value = TypedOrValueRegister(valueType, ToAnyRegister(store->value()));
     }
 
+    // We can bump the initialized length inline if index ==
+    // initializedLength and index < capacity.  Otherwise, we have to
+    // consider fallback options.  In fallback cases, we branch to one
+    // of two labels because (at least in parallel mode) we can
+    // recover from index < capacity but not index !=
+    // initializedLength.
+    Label indexNotInitLen;
+    Label indexWouldExceedCapacity;
+
     // If index == initializedLength, try to bump the initialized length inline.
     // If index > initializedLength, call a stub. Note that this relies on the
     // condition flags sticking from the incoming branch.
-    Label callStub;
-    masm.j(Assembler::NotEqual, &callStub);
+    masm.j(Assembler::NotEqual, &indexNotInitLen);
 
     Int32Key key = ToInt32Key(index);
 
     // Check array capacity.
     masm.branchKey(Assembler::BelowOrEqual, Address(elements, ObjectElements::offsetOfCapacity()),
-                   key, &callStub);
+                   key, &indexWouldExceedCapacity);
 
     // Update initialized length. The capacity guard above ensures this won't overflow,
     // due to NELEMENTS_LIMIT.
@@ -2821,7 +2829,8 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
 
     switch (gen->info().executionMode()) {
       case SequentialExecution:
-        masm.bind(&callStub);
+        masm.bind(&indexNotInitLen);
+        masm.bind(&indexWouldExceedCapacity);
         saveLive(ins);
 
         pushArg(Imm32(current->mir()->strictModeCode()));
@@ -2839,13 +2848,27 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         return true;
 
       case ParallelExecution:
-        masm.bind(&callStub);
-
-        // TODO---No reason we can't support reallocating the array in
-        // parallel mode too
         Label *bail;
         if (!ensureOutOfLineParallelAbort(&bail))
             return false;
+
+        // If the problem is that we do not have sufficient capacity,
+        // try to reallocate the elements array and then branch back
+        // to perform the actual write.
+        masm.bind(&indexWouldExceedCapacity);
+        saveLive(ins);
+        masm.setupUnalignedABICall(1, CallTempReg1);
+        masm.passABIArg(object);
+        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParExtendArray));
+        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+        restoreLive(ins);
+        masm.jump(ool->rejoinStore());
+
+        // If the problem is that we are trying to write an index that
+        // is not the initialized length, that would result in a
+        // sparse array, and since we don't want to think about that
+        // case right now, we just bail out.
+        masm.bind(&indexNotInitLen);
         masm.jump(bail);
         return true;
     }

@@ -34,6 +34,7 @@
 #include "ion/IonCompartment.h"
 #include "ion/Ion.h"
 #endif
+#include "vm/forkjoininlines.h"
 
 #if ENABLE_YARR_JIT
 #include "assembler/jit/ExecutableAllocator.h"

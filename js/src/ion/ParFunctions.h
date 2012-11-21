@@ -20,6 +20,7 @@ JSObject *ParNewGCThing(ForkJoinSlice *threadContext, gc::AllocKind allocKind, u
 bool ParWriteGuard(ForkJoinSlice *context, JSObject *object);
 void ParBailout(uint32_t id);
 bool ParCheckInterrupt(ForkJoinSlice *context);
+bool ParExtendArray(HandleObject obj);
 
 }
 }
