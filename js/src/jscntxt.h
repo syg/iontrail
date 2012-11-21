@@ -58,7 +58,7 @@ typedef HashSet<JSObject *> ObjectSet;
 
 namespace selfhosted {
 
-struct CallSiteCloneKey {
+struct CallsiteCloneKey {
     /* The original function that we are cloning. */
     JSFunction *original;
 
@@ -68,26 +68,26 @@ struct CallSiteCloneKey {
     /* The offset of the call. */
     uint32_t offset;
 
-    CallSiteCloneKey() { PodZero(this); }
+    CallsiteCloneKey() { PodZero(this); }
 
-    typedef CallSiteCloneKey Lookup;
+    typedef CallsiteCloneKey Lookup;
 
-    static inline uint32_t hash(CallSiteCloneKey key) {
+    static inline uint32_t hash(CallsiteCloneKey key) {
         return uint32_t(size_t(key.script->code + key.offset) ^ size_t(key.original));
     }
 
-    static inline bool match(const CallSiteCloneKey &a, const CallSiteCloneKey &b) {
+    static inline bool match(const CallsiteCloneKey &a, const CallsiteCloneKey &b) {
         return a.script == b.script && a.offset == b.offset && a.original == b.original;
     }
 };
 
-typedef HashMap<CallSiteCloneKey,
+typedef HashMap<CallsiteCloneKey,
                 ReadBarriered<JSFunction>,
-                CallSiteCloneKey,
-                SystemAllocPolicy> CallSiteCloneTable;
+                CallsiteCloneKey,
+                SystemAllocPolicy> CallsiteCloneTable;
 
 JSFunction *
-CloneFunctionAtCallSite(JSContext *cx, HandleScript script, uint32_t offset,
+CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t offset,
                         HandleFunction fun);
 
 }

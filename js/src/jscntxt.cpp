@@ -244,10 +244,10 @@ JSRuntime::createJaegerRuntime(JSContext *cx)
 #endif
 
 void
-JSCompartment::sweepCallSiteClones()
+JSCompartment::sweepCallsiteClones()
 {
-    if (callSiteClones.initialized()) {
-        for (selfhosted::CallSiteCloneTable::Enum e(callSiteClones); !e.empty(); e.popFront()) {
+    if (callsiteClones.initialized()) {
+        for (selfhosted::CallsiteCloneTable::Enum e(callsiteClones); !e.empty(); e.popFront()) {
             JSFunction *fun = e.front().value;
             if (!fun->isMarked())
                 e.removeFront();
@@ -256,15 +256,15 @@ JSCompartment::sweepCallSiteClones()
 }
 
 JSFunction *
-selfhosted::CloneFunctionAtCallSite(JSContext *cx, HandleScript script, uint32_t offset,
+selfhosted::CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t offset,
                                     HandleFunction fun)
 {
-    typedef selfhosted::CallSiteCloneKey Key;
-    typedef selfhosted::CallSiteCloneTable Table;
+    typedef selfhosted::CallsiteCloneKey Key;
+    typedef selfhosted::CallsiteCloneTable Table;
 
     JS_ASSERT(!fun->script()->enclosingStaticScope());
 
-    Table &table = cx->compartment->callSiteClones;
+    Table &table = cx->compartment->callsiteClones;
     if (!table.initialized() && !table.init())
         return NULL;
 

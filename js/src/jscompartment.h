@@ -330,8 +330,8 @@ struct JSCompartment
      * self-hosted code. Cloning according to call site provides extra
      * sensitivity for type specialization and inlining.
      */
-    js::selfhosted::CallSiteCloneTable callSiteClones;
-    void sweepCallSiteClones();
+    js::selfhosted::CallsiteCloneTable callsiteClones;
+    void sweepCallsiteClones();
 
     /*
      * Keeps track of the total number of malloc bytes connected to a

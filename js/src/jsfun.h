@@ -90,7 +90,7 @@ struct JSFunction : public JSObject
     bool isLambda()                 const { return flags & LAMBDA; }
     bool isSelfHostedBuiltin()      const { return flags & SELF_HOSTED; }
     bool isSelfHostedConstructor()  const { return flags & SELF_HOSTED_CTOR; }
-    bool shouldCloneAtCallSite()    const { return flags & CLONE_CALLSITE; }
+    bool shouldCloneAtCallsite()    const { return flags & CLONE_CALLSITE; }
     bool hasRest()                  const { return flags & HAS_REST; }
     bool hasDefaults()              const { return flags & HAS_DEFAULTS; }
 
