@@ -1293,8 +1293,7 @@ LIRGenerator::visitParNew(MParNew *ins)
     LParNew *lir = new LParNew(useFixed(ins->threadContext(), CallTempReg0),
                                tempFixed(CallTempReg1),
                                tempFixed(CallTempReg2),
-                               tempFixed(CallTempReg3),
-                               tempFixed(CallTempReg4));
+                               tempFixed(CallTempReg3));
     return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
 }
 

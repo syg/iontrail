@@ -157,6 +157,8 @@ public:
         gcMallocAndFreeBytes -= nbytes;
     }
 
+    inline void *parallelNewGCThing(gc::AllocKind thingKind, size_t thingSize);
+
     inline void* malloc_(size_t bytes);
     inline void* calloc_(size_t bytes);
     inline void* realloc_(void* p, size_t bytes);
@@ -203,6 +205,12 @@ struct JSCompartment : private JS::shadow::Compartment
 
   public:
     js::Allocator                    allocator;
+
+    /*
+     * Moves all data from the allocator |workerAllocator|, which was
+     * in use by a parallel worker, into the compartment's main
+     * allocator.  This is used at the end of a parallel section. */
+    void adoptWorkerAllocator(js::Allocator *workerAllocator);
 
 #ifdef JSGC_GENERATIONAL
     js::gc::Nursery              gcNursery;

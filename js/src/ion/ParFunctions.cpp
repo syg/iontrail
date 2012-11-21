@@ -9,33 +9,30 @@
 #include "jsinterp.h"
 #include "jsinterpinlines.h"
 #include "vm/forkjoininlines.h"
+#include "jscompartmentinlines.h"
 
 namespace js {
 namespace ion {
 
 // Load the current thread context.
 ForkJoinSlice *ParForkJoinSlice() {
-    ForkJoinSlice *context = js::ForkJoinSlice::current();
-    return context;
+    return js::ForkJoinSlice::current();
 }
 
 // ParNewGCThing() is called in place of NewGCThing() when executing
 // parallel code.  It uses the ArenaLists for the current thread and
 // allocates from there.
 JSObject *
-ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
-              gc::AllocKind allocKind, uint32_t thingSize) {
-    gc::ArenaLists *arenaLists = threadContext->arenaLists;
-    void *t = arenaLists->parallelAllocate(compartment, allocKind, thingSize);
+ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize) {
+    void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
     return static_cast<JSObject *>(t);
 }
 
 // Check that the object was created by the current thread
 // (and hence is writable).
-bool ParWriteGuard(ForkJoinSlice *context, JSObject *object) {
-    gc::ArenaLists *arenaLists = context->arenaLists;
-    return arenaLists->containsArena(context->runtime(),
-                                     object->arenaHeader());
+bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
+    return slice->allocator->arenas.containsArena(slice->runtime(),
+                                                  object->arenaHeader());
 }
 
 // This isn't really the right place for this, it's could be a more
@@ -44,8 +41,8 @@ void ParBailout(uint32_t id) {
     fprintf(stderr, "TRACE: id=%-10u\n", id);
 }
 
-bool ParCheckInterrupt(ForkJoinSlice *context) {
-    bool result = context->check();
+bool ParCheckInterrupt(ForkJoinSlice *slice) {
+    bool result = slice->check();
     if (!result) {
         fprintf(stderr, "Check Interrupt failed!\n");
     }

@@ -1888,7 +1888,7 @@ CodeGenerator::visitParNew(LParNew *lir)
     Register tempReg3 = ToRegister(lir->getTemp2());
 
     // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, arenaLists)), tempReg1);
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)), tempReg1);
 
     // tempReg1 = (FreeSpan*) &objReg.freeLists[thingKind]
     uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
@@ -1925,17 +1925,14 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
     Register tempReg3 = ToRegister(lir->getTemp2());
-    Register tempReg4 = ToRegister(lir->getTemp3());
 
-    masm.mov(ImmWord(gen->compartment), tempReg1);
-    masm.move32(Imm32(ool->allocKind), tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg3);
+    masm.move32(Imm32(ool->allocKind), tempReg1);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
 
-    masm.setupUnalignedABICall(4, tempReg4);
+    masm.setupUnalignedABICall(3, tempReg3);
     masm.passABIArg(threadContextReg);
     masm.passABIArg(tempReg1);
     masm.passABIArg(tempReg2);
-    masm.passABIArg(tempReg3);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
     JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
     masm.jump(ool->rejoin());

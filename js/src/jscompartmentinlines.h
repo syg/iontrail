@@ -32,4 +32,8 @@ template <class T> T *Allocator::pod_calloc(size_t numElems) {
     return compartment->rt->pod_calloc<T>(numElems, compartment);
 }
 
+void *Allocator::parallelNewGCThing(gc::AllocKind thingKind, size_t thingSize) {
+    return arenas.parallelAllocate(compartment, thingKind, thingSize);
+}
+
 }
