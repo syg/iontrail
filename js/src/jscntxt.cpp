@@ -1459,7 +1459,7 @@ JSRuntime::updateMallocCounter(JSContext *cx, size_t nbytes)
     if (JS_UNLIKELY(newCount <= 0 && oldCount > 0))
         onTooMuchMalloc();
     else if (cx && cx->compartment)
-        cx->compartment->allocator.updateMallocCounter(nbytes);
+        cx->compartment->updateMallocCounter(nbytes);
 }
 
 JS_FRIEND_API(void)

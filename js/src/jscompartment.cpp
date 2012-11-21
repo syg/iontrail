@@ -73,6 +73,7 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     lastAnimationTime(0),
     regExps(rt),
     propertyTree(thisForCtor()),
+    gcMallocBytes(0),
     debugModeBits(rt->debugMode ? DebugFromC : 0),
     watchpointMap(NULL),
     scriptCountsMap(NULL),
@@ -710,6 +711,12 @@ JSCompartment::purge()
 }
 
 void
+JSCompartment::resetGCMallocBytes()
+{
+    gcMallocBytes = ptrdiff_t(gcMaxMallocBytes);
+}
+
+void
 JSCompartment::setGCMaxMallocBytes(size_t value)
 {
     /*
@@ -717,7 +724,7 @@ JSCompartment::setGCMaxMallocBytes(size_t value)
      * mean that value.
      */
     gcMaxMallocBytes = (ptrdiff_t(value) >= 0) ? value : size_t(-1) >> 1;
-    allocator.resetGCMallocBytes();
+    resetGCMallocBytes();
 }
 
 void
