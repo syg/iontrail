@@ -265,7 +265,8 @@ selfhosted::CloneFunctionAtCallSite(JSContext *cx, HandleScript script, uint32_t
     JS_ASSERT(!fun->script()->enclosingStaticScope());
 
     Table &table = cx->compartment->callSiteClones;
-    JS_ASSERT(table.initialized());
+    if (!table.initialized() && !table.init())
+        return NULL;
 
     Key key;
     key.script = script;
@@ -273,10 +274,8 @@ selfhosted::CloneFunctionAtCallSite(JSContext *cx, HandleScript script, uint32_t
     key.original = fun;
 
     Table::AddPtr p = table.lookupForAdd(key);
-    if (p) {
-        printf("already cloned\n");
+    if (p)
         return p->value;
-    }
 
     RootedObject parent(cx, fun->environment());
     RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
@@ -290,8 +289,6 @@ selfhosted::CloneFunctionAtCallSite(JSContext *cx, HandleScript script, uint32_t
 
     if (!table.add(p, key, clone.get()))
         return NULL;
-
-    printf("new clone\n");
 
     return clone;
 }
@@ -510,12 +507,6 @@ JSRuntime::initSelfHosting(JSContext *cx)
     }
     JS_SetErrorReporter(cx, oldReporter);
     JS_SetGlobalObject(cx, savedGlobal);
-
-    if (ok) {
-        selfhosted::CallSiteCloneTable &table = cx->compartment->callSiteClones;
-        if (!table.init())
-            return false;
-    }
 
     return ok;
 }

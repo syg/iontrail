@@ -443,7 +443,7 @@ JSFunctionSpec ParallelArrayObject::methods[] = {
     { "scan",     JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScan"     },
     { "scatter",  JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScatter"  },
     { "filter",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayFilter"   },
-    { "get",      JSOP_NULLWRAPPER, 1, JSFunction::CLONE_CALLSITE, "ParallelArrayGet" },
+    { "get",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayGet" },
     { "toString", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayToString" },
     JS_FS_END
 };
