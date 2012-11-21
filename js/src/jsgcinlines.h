@@ -242,8 +242,8 @@ class ArenaIter
     }
 
     void init(JSCompartment *comp, AllocKind kind) {
-        aheader = comp->arenas.getFirstArena(kind);
-        remainingHeader = comp->arenas.getFirstArenaToSweep(kind);
+        aheader = comp->allocator.arenas.getFirstArena(kind);
+        remainingHeader = comp->allocator.arenas.getFirstArenaToSweep(kind);
         if (!aheader) {
             aheader = remainingHeader;
             remainingHeader = NULL;
@@ -282,7 +282,7 @@ class CellIterImpl
     }
 
     void initSpan(JSCompartment *comp, AllocKind kind) {
-        JS_ASSERT(comp->arenas.isSynchronizedFreeList(kind));
+        JS_ASSERT(comp->allocator.arenas.isSynchronizedFreeList(kind));
         firstThingOffset = Arena::firstThingOffset(kind);
         thingSize = Arena::thingSize(kind);
         firstSpan.initAsEmpty();
@@ -365,7 +365,7 @@ class CellIter : public CellIterImpl
 #endif
   public:
     CellIter(JSCompartment *comp, AllocKind kind)
-      : lists(&comp->arenas),
+      : lists(&comp->allocator.arenas),
         kind(kind)
     {
         /*
@@ -482,7 +482,7 @@ NewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
     MaybeCheckStackRoots(cx, /* relax = */ false);
 
     JSCompartment *comp = cx->compartment;
-    void *t = comp->arenas.allocateFromFreeList(kind, thingSize);
+    void *t = comp->allocator.arenas.allocateFromFreeList(kind, thingSize);
     if (!t)
         t = js::gc::ArenaLists::refillFreeList(cx, kind);
 
@@ -513,7 +513,7 @@ TryNewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
         return NULL;
 #endif
 
-    void *t = cx->compartment->arenas.allocateFromFreeList(kind, thingSize);
+    void *t = cx->compartment->allocator.arenas.allocateFromFreeList(kind, thingSize);
     JS_ASSERT_IF(t && cx->compartment->wasGCStarted() && cx->compartment->needsBarrier(),
                  static_cast<T *>(t)->arenaHeader()->allocatedDuringIncremental);
 

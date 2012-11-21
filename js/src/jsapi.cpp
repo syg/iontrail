@@ -2270,13 +2270,13 @@ JS_ComputeThis(JSContext *cx, jsval *vp)
 JS_PUBLIC_API(void)
 JS_MallocInCompartment(JSCompartment *comp, size_t nbytes)
 {
-    comp->mallocInCompartment(nbytes);
+    comp->allocator.mallocInAllocator(nbytes);
 }
 
 JS_PUBLIC_API(void)
 JS_FreeInCompartment(JSCompartment *comp, size_t nbytes)
 {
-    comp->freeInCompartment(nbytes);
+    comp->allocator.freeInAllocator(nbytes);
 }
 
 JS_PUBLIC_API(void *)

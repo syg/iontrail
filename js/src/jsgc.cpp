@@ -296,7 +296,7 @@ ArenaHeader::checkSynchronizedWithFreeList() const
     FreeSpan firstSpan = FreeSpan::decodeOffsets(arenaAddress(), firstFreeSpanOffsets);
     if (firstSpan.isEmpty())
         return;
-    const FreeSpan *list = compartment->arenas.getFreeList(getAllocKind());
+    const FreeSpan *list = compartment->allocator.arenas.getFreeList(getAllocKind());
     if (list->isEmpty() || firstSpan.arenaAddress() != list->arenaAddress())
         return;
 
@@ -1459,6 +1459,19 @@ JSCompartment::reduceGCTriggerBytes(size_t amount)
 }
 
 namespace js {
+
+Allocator::Allocator(JSCompartment *compartment)
+  : compartment(compartment),
+    gcMallocAndFreeBytes(0),
+    gcMallocBytes(0)
+{}
+
+void
+Allocator::resetGCMallocBytes()
+{
+    gcMallocBytes = ptrdiff_t(compartment->gcMaxMallocBytes);
+}
+
 namespace gc {
 
 inline void
@@ -1682,7 +1695,7 @@ ArenaLists::backgroundFinalize(FreeOp *fop, ArenaHeader *listHead, bool onBackgr
      * the head list as we emptied the list before the background finalization
      * and the allocation adds new arenas before the cursor.
      */
-    ArenaLists *lists = &comp->arenas;
+    ArenaLists *lists = &comp->allocator.arenas;
     ArenaList *al = &lists->arenaLists[thingKind];
 
     AutoLockGC lock(fop->runtime());
@@ -1783,7 +1796,7 @@ RunLastDitchGC(JSContext *cx, gcreason::Reason reason)
 /* static */ void *
 ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
 {
-    JS_ASSERT(cx->compartment->arenas.freeLists[thingKind].isEmpty());
+    JS_ASSERT(cx->compartment->allocator.arenas.freeLists[thingKind].isEmpty());
 
     JSCompartment *comp = cx->compartment;
     JSRuntime *rt = comp->rt;
@@ -1801,7 +1814,7 @@ ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
              * return that list head.
              */
             size_t thingSize = Arena::thingSize(thingKind);
-            if (void *thing = comp->arenas.allocateFromFreeList(thingKind, thingSize))
+            if (void *thing = comp->allocator.arenas.allocateFromFreeList(thingKind, thingSize))
                 return thing;
         }
 
@@ -1814,7 +1827,7 @@ ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
          * always try to allocate twice.
          */
         for (bool secondAttempt = false; ; secondAttempt = true) {
-            void *thing = comp->arenas.allocateFromArena(comp, thingKind, false);
+            void *thing = comp->allocator.arenas.allocateFromArena(comp, thingKind, false);
             if (JS_LIKELY(!!thing))
                 return thing;
             if (secondAttempt)
@@ -2706,7 +2719,7 @@ MaybeGC(JSContext *cx)
         return;
     }
 
-    if (comp->gcMallocAndFreeBytes > comp->gcTriggerMallocAndFreeBytes) {
+    if (comp->allocator.getMallocAndFreeBytes() > comp->gcTriggerMallocAndFreeBytes) {
         PrepareCompartmentForGC(comp);
         GCSlice(rt, GC_NORMAL, gcreason::MAYBEGC);
         return;
@@ -2873,7 +2886,7 @@ SweepBackgroundThings(JSRuntime* rt, bool onBackgroundThread)
         for (JSCompartment *c = rt->gcSweepingCompartments; c; c = c->gcNextCompartment) {
             for (int index = 0 ; index < BackgroundPhaseLength[phase] ; ++index) {
                 AllocKind kind = BackgroundPhases[phase][index];
-                ArenaHeader *arenas = c->arenas.arenaListsToSweep[kind];
+                ArenaHeader *arenas = c->allocator.arenas.arenaListsToSweep[kind];
                 if (arenas) {
                     ArenaLists::backgroundFinalize(&fop, arenas, onBackgroundThread);
                 }
@@ -2894,8 +2907,8 @@ AssertBackgroundSweepingFinished(JSRuntime *rt)
     for (CompartmentsIter c(rt); !c.done(); c.next()) {
         JS_ASSERT(!c->gcNextCompartment);
         for (unsigned i = 0 ; i < FINALIZE_LIMIT ; ++i) {
-            JS_ASSERT(!c->arenas.arenaListsToSweep[i]);
-            JS_ASSERT(c->arenas.doneBackgroundFinalize(AllocKind(i)));
+            JS_ASSERT(!c->allocator.arenas.arenaListsToSweep[i]);
+            JS_ASSERT(c->allocator.arenas.doneBackgroundFinalize(AllocKind(i)));
         }
     }
 }
@@ -3231,9 +3244,9 @@ SweepCompartments(FreeOp *fop, bool lastGC)
         JSCompartment *compartment = *read++;
 
         if (!compartment->hold && compartment->wasGCStarted() &&
-            (compartment->arenas.arenaListsAreEmpty() || lastGC))
+            (compartment->allocator.arenas.arenaListsAreEmpty() || lastGC))
         {
-            compartment->arenas.checkEmptyFreeLists();
+            compartment->allocator.arenas.checkEmptyFreeLists();
             if (callback)
                 callback(fop, compartment);
             if (compartment->principals)
@@ -3363,7 +3376,7 @@ BeginMarkPhase(JSRuntime *rt)
         /* Assert that compartment state is as we expect */
         JS_ASSERT(!c->isCollecting());
         for (unsigned i = 0; i < FINALIZE_LIMIT; ++i)
-            JS_ASSERT(!c->arenas.arenaListsToSweep[i]);
+            JS_ASSERT(!c->allocator.arenas.arenaListsToSweep[i]);
 
         /* Set up which compartments will be collected. */
         if (c->isGCScheduled()) {
@@ -3401,7 +3414,7 @@ BeginMarkPhase(JSRuntime *rt)
      */
     if (rt->gcIsIncremental) {
         for (GCCompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.purge();
+            c->allocator.arenas.purge();
     }
 
     rt->gcMarker.start(rt);
@@ -3445,7 +3458,7 @@ BeginMarkPhase(JSRuntime *rt)
 
     /* Unmark everything in the compartments being collected. */
     for (GCCompartmentsIter c(rt); !c.done(); c.next())
-        c->arenas.unmarkAll();
+        c->allocator.arenas.unmarkAll();
 
     MarkRuntime(gcmarker);
 
@@ -3596,7 +3609,7 @@ EndMarkPhase(JSRuntime *rt)
     if (foundBlackGray) {
         for (CompartmentsIter c(rt); !c.done(); c.next()) {
             if (!c->isCollecting())
-                c->arenas.unmarkAll();
+                c->allocator.arenas.unmarkAll();
         }
     }
 
@@ -3877,7 +3890,7 @@ BeginSweepPhase(JSRuntime *rt)
     /* Purge the ArenaLists before sweeping. */
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->isGCSweeping())
-            c->arenas.purge();
+            c->allocator.arenas.purge();
     }
 
     FreeOp fop(rt, rt->gcSweepOnBackgroundThread);
@@ -3928,32 +3941,32 @@ BeginSweepPhase(JSRuntime *rt)
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->isGCSweeping()) {
             gcstats::AutoSCC scc(rt->gcStats, partition.getSCC(c));
-            c->arenas.queueObjectsForSweep(&fop);
+            c->allocator.arenas.queueObjectsForSweep(&fop);
         }
     }
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->isGCSweeping()) {
             gcstats::AutoSCC scc(rt->gcStats, partition.getSCC(c));
-            c->arenas.queueStringsForSweep(&fop);
+            c->allocator.arenas.queueStringsForSweep(&fop);
         }
     }
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->isGCSweeping()) {
             gcstats::AutoSCC scc(rt->gcStats, partition.getSCC(c));
-            c->arenas.queueScriptsForSweep(&fop);
+            c->allocator.arenas.queueScriptsForSweep(&fop);
         }
     }
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->isGCSweeping()) {
             gcstats::AutoSCC scc(rt->gcStats, partition.getSCC(c));
-            c->arenas.queueShapesForSweep(&fop);
+            c->allocator.arenas.queueShapesForSweep(&fop);
         }
     }
 #ifdef JS_ION
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->isGCSweeping()) {
             gcstats::AutoSCC scc(rt->gcStats, partition.getSCC(c));
-            c->arenas.queueIonCodeForSweep(&fop);
+            c->allocator.arenas.queueIonCodeForSweep(&fop);
         }
     }
 #endif
@@ -3996,7 +4009,7 @@ SweepPhase(JSRuntime *rt, SliceBudget &sliceBudget)
                 while (rt->gcSweepKindIndex < FinalizePhaseLength[rt->gcSweepPhase]) {
                     AllocKind kind = FinalizePhases[rt->gcSweepPhase][rt->gcSweepKindIndex];
 
-                    if (!c->arenas.foregroundFinalize(&fop, kind, sliceBudget))
+                    if (!c->allocator.arenas.foregroundFinalize(&fop, kind, sliceBudget))
                         return false;
                     ++rt->gcSweepKindIndex;
                 }
@@ -4019,7 +4032,7 @@ SweepAtomsCompartment(JSRuntime *rt)
     JS_ASSERT(c->isGCMarking());
     c->setGCState(JSCompartment::Sweep);
 
-    c->arenas.purge();
+    c->allocator.arenas.purge();
 
     {
         gcstats::AutoPhase ap2(rt->gcStats, gcstats::PHASE_SWEEP_ATOMS);
@@ -4028,7 +4041,7 @@ SweepAtomsCompartment(JSRuntime *rt)
 
     FreeOp fop(rt, rt->gcSweepOnBackgroundThread);
 
-    c->arenas.queueStringsForSweep(&fop);
+    c->allocator.arenas.queueStringsForSweep(&fop);
 }
 
 static void
@@ -4110,7 +4123,7 @@ EndSweepPhase(JSRuntime *rt, JSGCInvocationKind gckind, bool lastGC)
     }
 
     for (CompartmentsIter c(rt); !c.done(); c.next()) {
-        c->setGCLastBytes(c->gcBytes, c->gcMallocAndFreeBytes, gckind);
+        c->setGCLastBytes(c->gcBytes, c->allocator.getMallocAndFreeBytes(), gckind);
         if (c->wasGCStarted())
             c->setGCState(JSCompartment::NoGC);
 
@@ -4119,7 +4132,7 @@ EndSweepPhase(JSRuntime *rt, JSGCInvocationKind gckind, bool lastGC)
         for (unsigned i = 0 ; i < FINALIZE_LIMIT ; ++i) {
             JS_ASSERT_IF(!IsBackgroundFinalized(AllocKind(i)) ||
                          !rt->gcSweepOnBackgroundThread,
-                         !c->arenas.arenaListsToSweep[i]);
+                         !c->allocator.arenas.arenaListsToSweep[i]);
         }
     }
 
@@ -4193,7 +4206,7 @@ AutoGCSession::~AutoGCSession()
 
     /* Clear gcMallocBytes for all compartments */
     for (CompartmentsIter c(runtime); !c.done(); c.next()) {
-        c->resetGCMallocBytes();
+        c->allocator.resetGCMallocBytes();
         c->unscheduleGC();
     }
 
@@ -4207,12 +4220,12 @@ class AutoCopyFreeListToArenas {
     AutoCopyFreeListToArenas(JSRuntime *rt)
       : rt(rt) {
         for (CompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.copyFreeListsToArenas();
+            c->allocator.arenas.copyFreeListsToArenas();
     }
 
     ~AutoCopyFreeListToArenas() {
         for (CompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.clearFreeListsInArenas();
+            c->allocator.arenas.clearFreeListsInArenas();
     }
 };
 
@@ -4266,7 +4279,7 @@ ResetIncrementalGC(JSRuntime *rt, const char *reason)
         JS_ASSERT(!c->needsBarrier());
         JS_ASSERT(!c->gcNextCompartment);
         for (unsigned i = 0 ; i < FINALIZE_LIMIT ; ++i)
-            JS_ASSERT(!c->arenas.arenaListsToSweep[i]);
+            JS_ASSERT(!c->allocator.arenas.arenaListsToSweep[i]);
     }
 #endif
 }
@@ -4313,7 +4326,7 @@ AutoGCSlice::~AutoGCSlice()
     for (CompartmentsIter c(runtime); !c.done(); c.next()) {
         if (c->isGCMarking()) {
             c->setNeedsBarrier(true, JSCompartment::UpdateIon);
-            c->arenas.prepareForIncrementalGC(runtime);
+            c->allocator.arenas.prepareForIncrementalGC(runtime);
         } else {
             c->setNeedsBarrier(false, JSCompartment::UpdateIon);
         }
@@ -5433,7 +5446,7 @@ StartVerifyPreBarriers(JSRuntime *rt)
     for (CompartmentsIter c(rt); !c.done(); c.next()) {
         PurgeJITCaches(c);
         c->setNeedsBarrier(true, JSCompartment::UpdateIon);
-        c->arenas.purge();
+        c->allocator.arenas.purge();
     }
 
     return;
