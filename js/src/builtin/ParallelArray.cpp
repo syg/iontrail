@@ -191,7 +191,10 @@ ToExecutionStatus(JSContext *cx, const char *opName, ParallelResult pr)
         break;
     }
 
+#ifdef DEBUG
     SpewExecution(cx, opName, status);
+#endif
+
     return status;
 }
 

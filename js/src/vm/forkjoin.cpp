@@ -9,11 +9,16 @@
 #include "monitor.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "prthread.h"
 #include "gc/Marking.h"
 #include "jsinferinlines.h"
 
+#ifdef JS_THREADSAFE
+#  include "prthread.h"
+#endif
+
 namespace js {
+
+#ifdef JS_THREADSAFE
 
 class ForkJoinShared
     : public TaskExecutor,
@@ -151,13 +156,6 @@ public:
     }
 };
 
-bool
-ForkJoinSlice::Initialize()
-{
-    PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
-    return status == PR_SUCCESS;
-}
-
 class AutoEnterParallelSection
 {
 private:
@@ -186,25 +184,6 @@ public:
         cx_->runtime->mainThread.ionTop = prevIonTop_;
     }
 };
-
-ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
-{
-#   ifndef JS_THREADSAFE_ION
-    return TP_RETRY_SEQUENTIALLY;
-#   else
-    AutoEnterParallelSection enter(cx);
-    JS_ASSERT(!InParallelSection()); // Recursive use of the ThreadPool is not supported.
-
-    ThreadPool *threadPool = &cx->runtime->threadPool;
-    size_t numThreads = threadPool->numWorkers() + 1; // parallel workers plus this main thread
-
-    ForkJoinShared shared(cx, threadPool, op, numThreads, numThreads - 1);
-    if (!shared.init())
-        return TP_RETRY_SEQUENTIALLY;
-
-    return shared.execute();
-#   endif
-}
 
 /****************************************************************************
  * ForkJoinShared
@@ -478,6 +457,8 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &slice) {
     PR_NotifyAllCondVar(rendezvousEnd_);
 }
 
+#endif
+
 /****************************************************************************
  * ForkJoinSlice
  */
@@ -495,25 +476,74 @@ ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
 bool
 ForkJoinSlice::isMainThread()
 {
+#ifdef JS_THREADSAFE
     return perThreadData == &shared->runtime()->mainThread;
+#else
+    return true;
+#endif
 }
 
 JSRuntime *
 ForkJoinSlice::runtime()
 {
+#ifdef JS_THREADSAFE
     return shared->runtime();
+#else
+    return NULL;
+#endif
 }
 
 bool
 ForkJoinSlice::check()
 {
+#ifdef JS_THREADSAFE
     return shared->check(*this);
+#else
+    return false;
+#endif
 }
 
 bool
 ForkJoinSlice::setFatal()
 {
+#ifdef JS_THREADSAFE
     return shared->setFatal();
+#else
+    return false;
+#endif
 }
+
+bool
+ForkJoinSlice::Initialize()
+{
+#ifdef JS_THREADSAFE
+    PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
+    return status == PR_SUCCESS;
+#else
+    return true;
+#endif
+}
+
+/****************************************************************************/
+
+ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
+{
+#   ifndef JS_THREADSAFE
+    return TP_RETRY_SEQUENTIALLY;
+#   else
+    AutoEnterParallelSection enter(cx);
+    JS_ASSERT(!InParallelSection()); // Recursive use of the ThreadPool is not supported.
+
+    ThreadPool *threadPool = &cx->runtime->threadPool;
+    size_t numThreads = threadPool->numWorkers() + 1; // parallel workers plus this main thread
+
+    ForkJoinShared shared(cx, threadPool, op, numThreads, numThreads - 1);
+    if (!shared.init())
+        return TP_RETRY_SEQUENTIALLY;
+
+    return shared.execute();
+#   endif
+}
+
 
 }

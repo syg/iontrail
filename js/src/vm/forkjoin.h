@@ -187,7 +187,9 @@ private:
     friend class AutoRendezvous;
     friend class AutoSetForkJoinSlice;
 
+#ifdef JS_THREADSAFE
     static PRUintn ThreadPrivateIndex; // initialized by Initialize()
+#endif
 
     ForkJoinShared *const shared;
 };
@@ -221,7 +223,7 @@ public:
 /* True if this thread is currently executing a ParallelArray
    operation across multiple threads. */
 static inline bool InParallelSection() {
-#   ifdef JS_THREADSAFE_ION
+#   ifdef JS_THREADSAFE
     return ForkJoinSlice::current() != NULL;
 #   else
     return false;
