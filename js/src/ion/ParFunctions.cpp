@@ -37,22 +37,32 @@ bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
                                                   object->arenaHeader());
 }
 
-// This isn't really the right place for this, it's could be a more
-// general facility.
-void ParBailout(uint32_t id) {
-    fprintf(stderr, "TRACE: id=%-10u\n", id);
+void Trace(uint32_t bblock, uint32_t lir) {
+    /*
+       If you set IONFLAGS=trace, this function will be invoked before every LIR.
+
+       You can either modify it to do whatever you like, or use gdb scription.
+       For example:
+
+       break ParTrace
+       commands 1
+       continue
+       exit
+     */
 }
+
 
 bool ParCheckInterrupt(ForkJoinSlice *slice) {
     return slice->check();
 }
 
-bool ParExtendArray(HandleObject obj) {
+bool ParExtendArray(ParExtendArrayArgs *args) {
     // It is awkward to have the MIR pass the current slice in, so
     // just fetch it from TLS.  Extending the array is kind of the
     // slow path anyhow as it reallocates the elements vector.
     ForkJoinSlice *slice = js::ForkJoinSlice::current();
-    return (obj->extendDenseArray(slice->allocator, 1) == JSObject::ED_OK);
+    return (args->object->parExtendDenseArray(slice->allocator,
+                                              &args->value, 1) == JSObject::ED_OK);
 }
 
 } /* namespace ion */

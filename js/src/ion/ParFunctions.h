@@ -20,7 +20,18 @@ JSObject *ParNewGCThing(ForkJoinSlice *threadContext, gc::AllocKind allocKind, u
 bool ParWriteGuard(ForkJoinSlice *context, JSObject *object);
 void ParBailout(uint32_t id);
 bool ParCheckInterrupt(ForkJoinSlice *context);
-bool ParExtendArray(HandleObject obj);
+
+// We pass the arguments in a structure because, in code gen, it is
+// convenient to store them on the stack to avoid constraining the reg
+// alloc for the slow path.
+struct ParExtendArrayArgs {
+    JSObject *object;
+    Value value;
+};
+bool ParExtendArray(ParExtendArrayArgs *args);
+
+// XXX wrong file, not specific to par
+void Trace(uint32_t bblock, uint32_t lir);
 
 }
 }

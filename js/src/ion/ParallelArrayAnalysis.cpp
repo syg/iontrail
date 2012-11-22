@@ -246,21 +246,6 @@ ParallelCompilationContext::canCompileParallelArrayKernel(MIRGraph *graph)
         }
     }
 
-    // Insert tracing, if enabled
-    char *paflags = getenv("PAFLAGS");
-    if (paflags && strstr(paflags, "trace")) {
-        uint32_t id = 0;
-        for (MBasicBlockIterator block(graph->begin()); block != graph->end(); block++) {
-            for (MInstructionIterator ins(block->begin()); ins != block->end(); ins++) {
-                if (ins->isEffectful() || ins->isGuard()) {
-                    IonSpew(IonSpew_ParallelArray, "Insering trace #%u", id);
-                    MTrace *trace = new MTrace(id++);
-                    block->insertBefore(*ins, trace);
-                }
-            }
-        }
-    }
-
     IonSpew(IonSpew_ParallelArray, "ParallelArray invoked with safe fn\n");
 
     IonSpewPass("Parallel Array Analysis");

@@ -52,6 +52,8 @@ namespace ion {
     _(Pools)                                \
     /* Debug info about ParallelArray*/     \
     _(ParallelArray)                        \
+    /* Calls to js::ion::Trace() */         \
+    _(Trace)                                \
     /* Debug info about the I$ */           \
     _(CacheFlush)
 

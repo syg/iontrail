@@ -18,8 +18,6 @@ function buildSimple() {
         }, m);
     });
 
-    // Eventually, this should work, but right now it
-    // bails out because we overflow the size of the array
     assertParallelArrayModesCommute(["seq", "par"], function(m) {
         return new ParallelArray([256], function(i) {
             var x = [];

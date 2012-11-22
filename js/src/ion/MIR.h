@@ -5674,24 +5674,6 @@ class MNewStringObject :
     }
 };
 
-// Debug node: dumps an id to stderr.
-class MTrace : public MNullaryInstruction
-{
-private:
-    unsigned id_;
-
-public:
-    INSTRUCTION_HEADER(Trace);
-
-    MTrace(unsigned id)
-        : id_(id)
-    {}
-
-    uint32_t id() {
-        return id_;
-    }
-};
-
 // Node that represents that a script has begun executing. This comes at the
 // start of the function and is called once per function (including inline
 // ones)

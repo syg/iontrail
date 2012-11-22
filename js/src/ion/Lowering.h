@@ -87,7 +87,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitInitProp(MInitProp *ins);
     bool visitCheckOverRecursed(MCheckOverRecursed *ins);
     bool visitParCheckOverRecursed(MParCheckOverRecursed *ins);
-    bool visitTrace(MTrace *ins);
     bool visitDefVar(MDefVar *ins);
     bool visitPrepareCall(MPrepareCall *ins);
     bool visitPassArg(MPassArg *arg);

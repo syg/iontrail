@@ -17,38 +17,30 @@ JSObject::markDenseArrayNotPacked(JSContext *cx)
     MarkTypeObjectFlags(cx, this, js::types::OBJECT_FLAG_NON_PACKED_ARRAY);
 }
 
-inline void
-JSObject::initializeDenseArrayElements(uint32_t &objInitLen,
-                                       uint32_t newInitLength)
-{
-    JSCompartment *comp = compartment();
-    size_t offset = objInitLen;
-    for (js::HeapSlot *sp = elements + objInitLen;
-         sp != elements + newInitLength;
-         sp++, offset++)
-        sp->init(comp, this, offset, js::MagicValue(JS_ARRAY_HOLE));
-    objInitLen = newInitLength;
-}
-
 inline JSObject::EnsureDenseResult
-JSObject::extendDenseArray(js::Allocator *alloc, uint32_t extra)
+JSObject::parExtendDenseArray(js::Allocator *alloc, js::Value *v, uint32_t extra)
 {
-    // NB: This function can execute either in sequential or parallel mode.
-
     JS_ASSERT(isDenseArray());
     JS_ASSERT(!js_PrototypeHasIndexedProperties(this));
-    JS_ASSERT(getDenseArrayCapacity() == getElementsHeader()->initializedLength);
 
-    uint32_t &initlen = getElementsHeader()->initializedLength;
-    uint32_t requiredCapacity = initlen + extra;
-    if (requiredCapacity < initlen)
+    js::ObjectElements *elem = getElementsHeader();
+    JS_ASSERT(elem->capacity == elem->initializedLength);
+
+    uint32_t requiredCapacity = elem->initializedLength + extra;
+    if (requiredCapacity < elem->initializedLength)
         return ED_SPARSE;
-    if (requiredCapacity > MIN_SPARSE_INDEX
-        && willBeSparseDenseArray(requiredCapacity, extra))
+    if (requiredCapacity > MIN_SPARSE_INDEX && willBeSparseDenseArray(requiredCapacity, extra))
         return ED_SPARSE;
     if (!growElements(alloc, requiredCapacity))
         return ED_FAILED;
-    initializeDenseArrayElements(initlen, initlen + extra);
+
+    elem = getElementsHeader(); // growElements() can move the elements header about
+    js::HeapSlot *sp = elements + elem->initializedLength;
+    for (uint32_t i = 0; i < extra; i++)
+        sp[i].init(compartment(), this, elem->initializedLength+i, v[i]);
+    elem->initializedLength = requiredCapacity;
+    if (elem->length < requiredCapacity)
+        elem->length = requiredCapacity;
     return ED_OK;
 }
 
@@ -64,8 +56,16 @@ JSObject::ensureDenseArrayInitializedLength(JSContext *cx, uint32_t index, uint3
     uint32_t &initlen = getElementsHeader()->initializedLength;
     if (initlen < index)
         markDenseArrayNotPacked(cx);
-    if (initlen < index + extra)
-        initializeDenseArrayElements(initlen, index + extra);
+
+    if (initlen < index + extra) {
+        JSCompartment *comp = compartment();
+        size_t offset = initlen;
+        for (js::HeapSlot *sp = elements + initlen;
+             sp != elements + (index + extra);
+             sp++, offset++)
+            sp->init(comp, this, offset, js::MagicValue(JS_ARRAY_HOLE));
+        initlen = index + extra;
+    }
 }
 
 inline JSObject::EnsureDenseResult

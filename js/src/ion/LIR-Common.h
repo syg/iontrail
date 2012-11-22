@@ -3337,24 +3337,6 @@ class LFunctionBoundary : public LInstructionHelper<0, 0, 1>
     }
 };
 
-class LTrace : public LInstructionHelper<0, 0, 2>
-{
-public:
-    LIR_HEADER(Trace);
-
-    LTrace(const LDefinition &temp1) {
-        setTemp(0, temp1);
-    }
-
-    const LDefinition *temp1() {
-        return getTemp(0);
-    }
-
-    uint32_t id() {
-        return mir_->toTrace()->id();
-    }
-};
-
 } // namespace ion
 } // namespace js
 

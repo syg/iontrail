@@ -1,13 +1,21 @@
+load(libdir + "parallelarray-helpers.js");
+
 function testMap() {
-    var p = new ParallelArray([0,1,2,3,4]);
-    var func = function (v) {
-        var x;
-        for (var i = 0; i < 1000000; i++) {
-            x = {f: v};
-        }
-        return x;
-    };
-    var q = p.map(func, { mode: "par", expect: "success" });
+    var nums = [];
+    for (var i = 0; i < 1000; i++) {
+        nums[i] = i;
+    }
+    nums = new ParallelArray([nums]);
+
+    assertParallelArrayModesCommute(["seq", "par"], function(m) {
+        nums.map(function (v) {
+            var x = [];
+            for (var i = 0; i < 500000; i++) {
+                x[i] = {from: v};
+            }
+            return x;
+        }, m)
+    });
 }
 
 testMap();

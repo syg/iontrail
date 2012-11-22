@@ -1551,12 +1551,13 @@ CodeGenerator::generateBody()
         current = graph.getBlock(i);
 
         LInstructionIterator iter = current->begin();
+        size_t instrIdx = 0;
 
         // Separately visit the label at the start of every block, so that
         // count instrumentation is inserted after the block label is bound.
         if (!iter->accept(this))
             return false;
-        iter++;
+        iter++, instrIdx++;
 
         mozilla::Maybe<Sprinter> printer;
         if (counts) {
@@ -1566,7 +1567,7 @@ CodeGenerator::generateBody()
                 return false;
         }
 
-        for (; iter != current->end(); iter++) {
+        for (; iter != current->end(); iter++, instrIdx++) {
             IonSpew(IonSpew_Codegen, "instruction %s", iter->opName());
             if (counts)
                 printer.ref().printf("[%s]\n", iter->opName());
@@ -1575,6 +1576,10 @@ CodeGenerator::generateBody()
                 if (!markArgumentSlots(iter->safepoint()))
                     return false;
             }
+
+            if (IonSpewEnabled(IonSpew_Trace))
+                if (!maybeTrace(*iter, i, instrIdx))
+                    return false;
 
             if (!iter->accept(this))
                 return false;
@@ -2854,15 +2859,27 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
 
         // If the problem is that we do not have sufficient capacity,
         // try to reallocate the elements array and then branch back
-        // to perform the actual write.
+        // to perform the actual write.  Note that we do not want to
+        // force the reg alloc to assign any particular register, so
+        // we make space on the stack and pass the arguments that way.
+        // (Also, outside of the VM call mechanism, it's very hard to
+        // pass in a Value to a C function!)
         masm.bind(&indexWouldExceedCapacity);
+        //masm.breakpoint();
+
         saveLive(ins);
+        masm.reserveStack(sizeof(ParExtendArrayArgs));
+        masm.storePtr(object, Address(StackPointer, offsetof(ParExtendArrayArgs, object)));
+        masm.storeConstantOrRegister(value, Address(StackPointer,
+                                                    offsetof(ParExtendArrayArgs, value)));
+        masm.movePtr(StackPointer, CallTempReg0);
         masm.setupUnalignedABICall(1, CallTempReg1);
-        masm.passABIArg(object);
+        masm.passABIArg(CallTempReg0);
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParExtendArray));
         masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+        masm.freeStack(sizeof(ParExtendArrayArgs));
         restoreLive(ins);
-        masm.jump(ool->rejoinStore());
+        masm.jump(ool->rejoin());
 
         // If the problem is that we are trying to write an index that
         // is not the initialized length, that would result in a
@@ -4774,11 +4791,19 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
 }
 
 bool
-CodeGenerator::visitTrace(LTrace *lir)
+CodeGenerator::maybeTrace(LInstruction *ins, uint32_t blockIndex, uint32_t lirIndex)
 {
-    const Register tempReg1 = ToRegister(lir->temp1());
-    masm.move32(Imm32(0xDEADBEEF), tempReg1);
-    masm.move32(Imm32(lir->id()), tempReg1);
+    MDefinition *mir = ins->mirRaw();
+    if (!mir || mir->isEffectful() || mir->isGuard()) {
+        masm.PushRegsInMask(RegisterSet::All());
+        masm.move32(Imm32(blockIndex), CallTempReg0);
+        masm.move32(Imm32(lirIndex), CallTempReg1);
+        masm.setupUnalignedABICall(2, CallTempReg2);
+        masm.passABIArg(CallTempReg0);
+        masm.passABIArg(CallTempReg1);
+        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
+        masm.PopRegsInMask(RegisterSet::All());
+    }
     return true;
 }
 

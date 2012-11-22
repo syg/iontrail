@@ -130,16 +130,6 @@ LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
 }
 
 bool
-LIRGenerator::visitTrace(MTrace *ins)
-{
-    LTrace *lir = new LTrace(temp());
-    lir->setMir(ins);
-    if (!add(lir))
-        return false;
-    return true;
-}
-
-bool
 LIRGenerator::visitDefVar(MDefVar *ins)
 {
     LDefVar *lir = new LDefVar(useFixed(ins->scopeChain(), CallTempReg0),
