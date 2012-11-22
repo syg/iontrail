@@ -324,12 +324,13 @@ struct JSCompartment : private JS::shadow::Compartment
 
     js::types::TypeObject *getLazyType(JSContext *cx, js::Handle<js::TaggedProto> proto);
 
+
     /*
      * Hash table of all manually call site-cloned functions from within
      * self-hosted code. Cloning according to call site provides extra
      * sensitivity for type specialization and inlining.
      */
-    js::selfhosted::CallsiteCloneTable callsiteClones;
+    js::CallsiteCloneTable callsiteClones;
     void sweepCallsiteClones();
 
     /*

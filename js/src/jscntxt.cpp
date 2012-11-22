@@ -247,22 +247,23 @@ void
 JSCompartment::sweepCallsiteClones()
 {
     if (callsiteClones.initialized()) {
-        for (selfhosted::CallsiteCloneTable::Enum e(callsiteClones); !e.empty(); e.popFront()) {
+        for (CallsiteCloneTable::Enum e(callsiteClones); !e.empty(); e.popFront()) {
+            CallsiteCloneKey key = e.front().key;
             JSFunction *fun = e.front().value;
-            if (!fun->isMarked())
+            if (!key.script->isMarked() || !fun->isMarked())
                 e.removeFront();
         }
     }
 }
 
 JSFunction *
-selfhosted::CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t offset,
-                                    HandleFunction fun)
+js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
-    typedef selfhosted::CallsiteCloneKey Key;
-    typedef selfhosted::CallsiteCloneTable Table;
-
+    JS_ASSERT(types::UseNewTypeForClone(fun));
     JS_ASSERT(!fun->script()->enclosingStaticScope());
+
+    typedef CallsiteCloneKey Key;
+    typedef CallsiteCloneTable Table;
 
     Table &table = cx->compartment->callsiteClones;
     if (!table.initialized() && !table.init())
@@ -270,7 +271,7 @@ selfhosted::CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t
 
     Key key;
     key.script = script;
-    key.offset = offset;
+    key.offset = pc - script->code;
     key.original = fun;
 
     Table::AddPtr p = table.lookupForAdd(key);
@@ -280,11 +281,6 @@ selfhosted::CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t
     RootedObject parent(cx, fun->environment());
     RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
     if (!clone)
-        return NULL;
-
-    // Ensure the script is also cloned, since that's how we get the extra
-    // sensitivity.
-    if (fun->script() == clone->script() && !CloneFunctionScript(cx, fun, clone))
         return NULL;
 
     if (!table.add(p, key, clone.get()))

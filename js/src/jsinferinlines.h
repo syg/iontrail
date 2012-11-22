@@ -676,6 +676,9 @@ UseNewTypeForClone(JSFunction *fun)
 {
     AutoAssertNoGC nogc;
 
+    if (fun->shouldCloneAtCallsite())
+        return true;
+
     if (fun->hasSingletonType() || !fun->isInterpreted())
         return false;
 

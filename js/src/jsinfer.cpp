@@ -1228,6 +1228,25 @@ TypeConstraintSetElement::newType(JSContext *cx, TypeSet *source, Type type)
     }
 }
 
+static inline JSFunction *
+CloneCallee(JSContext *cx, HandleObject object, HandleScript script, jsbytecode *pc)
+{
+    /*
+     * To avoid computing the callee PC at the callsite when we clone to
+     * propagate the cloned function type to this point, we do not monitor in
+     * the interpreter and simply clone again when doing analysis.
+     */
+    RootedFunction fun(cx, object->toFunction());
+    JSFunction *callee = CloneFunctionAtCallsite(cx, fun, script, pc);
+    if (!callee)
+        return NULL;
+
+    InferSpew(ISpewOps, "callsiteCloneType: #%u:%05u: %s",
+              script->id(), pc - script->code, TypeString(Type::ObjectType(callee)));
+
+    return callee;
+}
+
 void
 TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
 {
@@ -1310,7 +1329,13 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             return;
         }
 
-        callee = obj->toFunction();
+        if (obj->toFunction()->shouldCloneAtCallsite()) {
+            callee = CloneCallee(cx, obj, script, pc);
+            if (!callee)
+                return;
+        } else {
+            callee = obj->toFunction();
+        }
     } else if (type.isTypeObject()) {
         callee = type.typeObject()->interpretedFunction;
         if (!callee)
@@ -1386,7 +1411,15 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         RootedObject object(cx, type.singleObject());
         if (!object->isFunction() || !object->toFunction()->isInterpreted())
             return;
-        callee = object->toFunction();
+
+        if (object->toFunction()->shouldCloneAtCallsite()) {
+            RootedScript script(cx, script_);
+            callee = CloneCallee(cx, object, script, callpc);
+            if (!callee)
+                return;
+        } else {
+            callee = object->toFunction();
+        }
     } else if (type.isTypeObject()) {
         TypeObject *object = type.typeObject();
         if (!object->interpretedFunction)

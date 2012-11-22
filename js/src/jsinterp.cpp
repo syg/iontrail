@@ -2339,8 +2339,8 @@ BEGIN_CASE(JSOP_FUNCALL)
      * Some builtins are marked as clone-at-call-site to increase precision of
      * TI and JITs.
      */
-    if (isFunction && fun->shouldCloneAtCallsite()) {
-        fun = selfhosted::CloneFunctionAtCallsite(cx, script, regs.pc - script->code, fun);
+    if (isFunction && cx->typeInferenceEnabled() && fun->shouldCloneAtCallsite()) {
+        fun = CloneFunctionAtCallsite(cx, fun, script, regs.pc);
         if (!fun)
             goto error;
     }

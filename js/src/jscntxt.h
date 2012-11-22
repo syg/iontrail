@@ -56,8 +56,6 @@ namespace js {
 
 typedef HashSet<JSObject *> ObjectSet;
 
-namespace selfhosted {
-
 struct CallsiteCloneKey {
     /* The original function that we are cloning. */
     JSFunction *original;
@@ -87,10 +85,7 @@ typedef HashMap<CallsiteCloneKey,
                 SystemAllocPolicy> CallsiteCloneTable;
 
 JSFunction *
-CloneFunctionAtCallsite(JSContext *cx, HandleScript script, uint32_t offset,
-                        HandleFunction fun);
-
-}
+CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc);
 
 /* Detects cycles when traversing an object graph. */
 class AutoCycleDetector
