@@ -1894,21 +1894,21 @@ CodeGenerator::visitParNew(LParNew *lir)
     // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
     masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)), tempReg1);
 
-    // tempReg1 = (FreeSpan*) &objReg.freeLists[thingKind]
+    // tempReg1 = (FreeSpan*) &tempReg1.freeLists[thingKind]
     uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
     masm.addPtr(Imm32(freeSpanOffset), tempReg1);
 
-    // tempReg2 = (uintptr_t) objReg->first
-    // tempReg3 = (uintptr_t) objReg->last
-    masm.loadPtr(Address(objReg, offsetof(gc::FreeSpan, first)), tempReg2);
-    masm.loadPtr(Address(objReg, offsetof(gc::FreeSpan, last)), tempReg3);
+    // tempReg2 = (uintptr_t) tempReg1->first
+    // tempReg3 = (uintptr_t) tempReg1->last
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
 
     // If last <= first, bail to OOL code
     masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
 
-    // objReg->first = tempReg2 + thingSize
+    // tempReg1->first = tempReg2 + thingSize
     masm.addPtr(Imm32(thingSize), tempReg2);
-    masm.storePtr(tempReg2, Address(objReg, offsetof(gc::FreeSpan, first)));
+    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
 
     // objReg = tempReg2 - thingSize
     masm.movePtr(tempReg2, objReg);
