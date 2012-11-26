@@ -5,52 +5,65 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "ParFunctions.h"
 #include "jsinterp.h"
+#include "ParFunctions.h"
+
 #include "jsinterpinlines.h"
 #include "vm/forkjoininlines.h"
+#include "jscompartmentinlines.h"
+#include "jsarrayinlines.h"
 
 namespace js {
 namespace ion {
 
 // Load the current thread context.
 ForkJoinSlice *ParForkJoinSlice() {
-    ForkJoinSlice *context = js::ForkJoinSlice::current();
-    return context;
+    return js::ForkJoinSlice::current();
 }
 
 // ParNewGCThing() is called in place of NewGCThing() when executing
 // parallel code.  It uses the ArenaLists for the current thread and
 // allocates from there.
 JSObject *
-ParNewGCThing(ForkJoinSlice *threadContext, JSCompartment *compartment,
-              gc::AllocKind allocKind, uint32_t thingSize) {
-    gc::ArenaLists *arenaLists = threadContext->arenaLists;
-    void *t = arenaLists->parallelAllocate(compartment, allocKind, thingSize);
+ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize) {
+    void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
     return static_cast<JSObject *>(t);
 }
 
 // Check that the object was created by the current thread
 // (and hence is writable).
-bool ParWriteGuard(ForkJoinSlice *context, JSObject *object) {
-    gc::ArenaLists *arenaLists = context->arenaLists;
-    return arenaLists->containsArena(context->runtime(),
-                                     object->arenaHeader());
+bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
+    return slice->allocator->arenas.containsArena(slice->runtime(),
+                                                  object->arenaHeader());
 }
 
-// This isn't really the right place for this, it's could be a more
-// general facility.
-void ParBailout(uint32_t id) {
-    fprintf(stderr, "TRACE: id=%-10u\n", id);
+void Trace(uint32_t bblock, uint32_t lir) {
+    /*
+       If you set IONFLAGS=trace, this function will be invoked before every LIR.
+
+       You can either modify it to do whatever you like, or use gdb scription.
+       For example:
+
+       break ParTrace
+       commands 1
+       continue
+       exit
+     */
 }
 
-bool ParCheckInterrupt(ForkJoinSlice *context) {
-    bool result = context->check();
-    if (!result) {
-        fprintf(stderr, "Check Interrupt failed!\n");
-    }
-    return result;
+
+bool ParCheckInterrupt(ForkJoinSlice *slice) {
+    return slice->check();
 }
 
+bool ParExtendArray(ParExtendArrayArgs *args) {
+    // It is awkward to have the MIR pass the current slice in, so
+    // just fetch it from TLS.  Extending the array is kind of the
+    // slow path anyhow as it reallocates the elements vector.
+    ForkJoinSlice *slice = js::ForkJoinSlice::current();
+    return (args->object->parExtendDenseArray(slice->allocator,
+                                              &args->value, 1) == JSObject::ED_OK);
 }
-}
+
+} /* namespace ion */
+} /* namespace js */

@@ -140,7 +140,6 @@ namespace ion {
     _(InstanceOf)                                                           \
     _(InterruptCheck)                                                       \
     _(ParCheckInterrupt)                                                    \
-    _(Trace)                                                                \
     _(FunctionBoundary)                                                     \
     _(GetDOMProperty)                                                       \
     _(SetDOMProperty)

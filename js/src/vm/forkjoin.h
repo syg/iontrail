@@ -82,17 +82,17 @@
  * with respect to garbage collection and allocation.  Currently, we
  * do not permit GC to occur when executing in parallel.  Furthermore,
  * the typical allocation paths are UNSAFE in parallel code because
- * they access shared state (the compartment's ArenaLists object)
- * without any synchronization.
+ * they access shared state (the compartment's arena lists and so
+ * forth) without any synchronization.
  *
- * To deal with this, the forkjoin code creates a distinct ArenaLists
+ * To deal with this, the forkjoin code creates a distinct |Allocator|
  * object for each slice.  You can access the appropriate object via
  * the |ForkJoinSlice| object that is provided to the callbacks.  Once
  * the execution is complete, all the objects found in these distinct
- * ArenaLists is merged back into the main compartment lists and
+ * |Allocator| is merged back into the main compartment lists and
  * things proceed normally.
  *
- * In Ion-generated code, we will do allocation through the ArenaLists
+ * In Ion-generated code, we will do allocation through the |Allocator|
  * found in |ForkJoinSlice| (which is obtained via TLS).  Also, no
  * write barriers are emitted.  Conceptually, we should never need a
  * write barrier because we only permit writes to objects that are
@@ -136,7 +136,6 @@ ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op);
 class ForkJoinShared;
 class AutoRendezvous;
 class AutoSetForkJoinSlice;
-namespace gc { struct ArenaLists; }
 
 struct ForkJoinSlice
 {
@@ -150,13 +149,13 @@ public:
     // How many slices are there in total?
     const size_t numSlices;
 
-    // Arenas to use when allocating on this thread.  See
+    // Allocator to use when allocating on this thread.  See
     // |ion::ParFunctions::ParNewGCThing()|.  This should move
     // into |perThreadData|.
-    gc::ArenaLists *const arenaLists;
+    Allocator *const allocator;
 
     ForkJoinSlice(PerThreadData *perThreadData, size_t sliceId, size_t numSlices,
-                  gc::ArenaLists *arenaLists, ForkJoinShared *shared);
+                  Allocator *allocator, ForkJoinShared *shared);
 
     // True if this is the main thread, false if it is one of the parallel workers
     bool isMainThread();

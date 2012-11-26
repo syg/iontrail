@@ -24,6 +24,7 @@
 #include "methodjit/MonoIC.h"
 #include "methodjit/Retcon.h"
 #include "vm/Debugger.h"
+#include "vm/forkjoin.h"
 #include "yarr/BumpPointerAllocator.h"
 
 #include "jsgcinlines.h"
@@ -33,6 +34,7 @@
 #include "ion/IonCompartment.h"
 #include "ion/Ion.h"
 #endif
+#include "vm/forkjoininlines.h"
 
 #if ENABLE_YARR_JIT
 #include "assembler/jit/ExecutableAllocator.h"
@@ -47,6 +49,7 @@ JSCompartment::JSCompartment(JSRuntime *rt)
   : rt(rt),
     principals(NULL),
     global_(NULL),
+    allocator(this),
 #ifdef JSGC_GENERATIONAL
     gcStoreBuffer(&gcNursery),
 #endif
@@ -56,6 +59,7 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     gcPreserveCode(false),
     gcBytes(0),
     gcTriggerBytes(0),
+    gcTriggerMallocAndFreeBytes(0),
     gcHeapGrowthFactor(3.0),
     gcNextCompartment(NULL),
     hold(false),
@@ -70,8 +74,6 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     lastAnimationTime(0),
     regExps(rt),
     propertyTree(thisForCtor()),
-    gcMallocAndFreeBytes(0),
-    gcTriggerMallocAndFreeBytes(0),
     gcMallocBytes(0),
     debugModeBits(rt->debugMode ? DebugFromC : 0),
     watchpointMap(NULL),
@@ -513,7 +515,7 @@ JSCompartment::markTypes(JSTracer *trc)
     }
 
     for (size_t thingKind = FINALIZE_OBJECT0; thingKind < FINALIZE_OBJECT_LIMIT; thingKind++) {
-        ArenaHeader *aheader = arenas.getFirstArena(static_cast<AllocKind>(thingKind));
+        ArenaHeader *aheader = allocator.arenas.getFirstArena(static_cast<AllocKind>(thingKind));
         if (aheader)
             rt->gcMarker.pushArenaList(aheader);
     }
@@ -729,7 +731,9 @@ JSCompartment::setGCMaxMallocBytes(size_t value)
 void
 JSCompartment::onTooMuchMalloc()
 {
-    TriggerCompartmentGC(this, gcreason::TOO_MUCH_MALLOC);
+    if (!InParallelSection()) {
+        TriggerCompartmentGC(this, gcreason::TOO_MUCH_MALLOC);
+    }
 }
 
 
@@ -927,4 +931,11 @@ JSCompartment::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *compa
     *crossCompartmentWrappersArg = crossCompartmentWrappers.sizeOfExcludingThis(mallocSizeOf);
     *regexpCompartment = regExps.sizeOfExcludingThis(mallocSizeOf);
     *debuggeesSet = debuggees.sizeOfExcludingThis(mallocSizeOf);
+}
+
+void
+JSCompartment::adoptWorkerAllocator(Allocator *workerAllocator)
+{
+    allocator.mallocInAllocator(workerAllocator->getMallocAndFreeBytes());
+    allocator.arenas.adoptArenas(rt, &workerAllocator->arenas);
 }

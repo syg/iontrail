@@ -130,16 +130,6 @@ LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
 }
 
 bool
-LIRGenerator::visitTrace(MTrace *ins)
-{
-    LTrace *lir = new LTrace(temp());
-    lir->setMir(ins);
-    if (!add(lir))
-        return false;
-    return true;
-}
-
-bool
 LIRGenerator::visitDefVar(MDefVar *ins)
 {
     LDefVar *lir = new LDefVar(useFixed(ins->scopeChain(), CallTempReg0),
@@ -1293,8 +1283,7 @@ LIRGenerator::visitParNew(MParNew *ins)
     LParNew *lir = new LParNew(useFixed(ins->threadContext(), CallTempReg0),
                                tempFixed(CallTempReg1),
                                tempFixed(CallTempReg2),
-                               tempFixed(CallTempReg3),
-                               tempFixed(CallTempReg4));
+                               tempFixed(CallTempReg3));
     return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
 }
 

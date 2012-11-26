@@ -366,7 +366,7 @@ MacroAssembler::newGCThing(const Register &result,
     // If a FreeSpan is replaced, its members are updated in the freeLists table,
     // which the code below always re-reads.
     gc::FreeSpan *list = const_cast<gc::FreeSpan *>
-                         (compartment->arenas.getFreeList(allocKind));
+                         (compartment->allocator.arenas.getFreeList(allocKind));
     loadPtr(AbsoluteAddress(&list->first), result);
 
     branchPtr(Assembler::BelowOrEqual, AbsoluteAddress(&list->last), result, fail);

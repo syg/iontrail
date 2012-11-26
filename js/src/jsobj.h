@@ -568,6 +568,7 @@ struct JSObject : public js::ObjectImpl
 
     inline bool ensureElements(JSContext *cx, unsigned cap);
     bool growElements(JSContext *cx, unsigned cap);
+    bool growElements(js::Allocator *alloc, unsigned cap);
     void shrinkElements(JSContext *cx, unsigned cap);
     inline void setDynamicElements(js::ObjectElements *header);
 
@@ -605,9 +606,30 @@ struct JSObject : public js::ObjectImpl
      * failure to grow the array, ED_SPARSE when the array is too sparse to
      * grow (this includes the case of index + extra overflow). In the last
      * two cases the array is kept intact.
+     *
+     * |parExtendDenseArray()| handles only the common case of
+     * appending values to |this|, so long as the following conditions
+     * hold:
+     *
+     * - the new values are to be written at index |i| where |i| is
+     *   the initialized length;
+     * - the initialized length is equal to the capacity, and hence
+     *   the array must be reallocated;
+     * - we are in parallel execution mode, and hence no GC is possible.
+     *
+     * The number of values to be appended is |extra| and the values
+     * can be found in the array |v|.  Unlike
+     * |ensureDenseArrayElements()|, there is no |index| argument
+     * because its value is implied to be the initialized length of
+     * |this|.  If the result of |parExtendDenseArray()| is |ED_OK|,
+     * then the capacity of |this| will have been grown and the new
+     * entries will be filled in with |extra| new values from |v|.
+     * Any other result indicates no changes have been made.
      */
     enum EnsureDenseResult { ED_OK, ED_FAILED, ED_SPARSE };
     inline EnsureDenseResult ensureDenseArrayElements(JSContext *cx, unsigned index, unsigned extra);
+    inline EnsureDenseResult parExtendDenseArray(js::Allocator *alloc, js::Value *v,
+                                                 uint32_t extra);
 
     /*
      * Check if after growing the dense array will be too sparse.

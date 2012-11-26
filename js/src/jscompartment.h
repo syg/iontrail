@@ -116,6 +116,62 @@ namespace js {
 class AutoDebugModeGC;
 }
 
+namespace js {
+
+/*
+ * Encapsulates the data needed to perform allocation.  Typically
+ * there is precisely one of these per compartment
+ * (|compartment.allocator|).  However, in parallel execution mode,
+ * there will be one per worker thread.  In general, if a piece of
+ * code must perform execution and should work safely either in
+ * parallel or sequential mode, you should make it take an
+ * |Allocator*| rather than a |JSContext*|.
+ */
+class Allocator
+{
+    JSCompartment *const compartment;
+
+    /*
+     * Keeps track of the total number of malloc bytes connected to a
+     * compartment's GC things. This counter should be used in preference to
+     * gcMallocBytes. These counters affect collection in the same way as
+     * gcBytes and gcTriggerBytes.
+     */
+    size_t                       gcMallocAndFreeBytes;
+
+public:
+    explicit Allocator(JSCompartment *compartment);
+
+    js::gc::ArenaLists           arenas;
+
+    size_t getMallocAndFreeBytes() {
+        return gcMallocAndFreeBytes;
+    }
+
+    void mallocInAllocator(size_t nbytes) {
+        gcMallocAndFreeBytes += nbytes;
+    }
+
+    void freeInAllocator(size_t nbytes) {
+        JS_ASSERT(gcMallocAndFreeBytes >= nbytes);
+        gcMallocAndFreeBytes -= nbytes;
+    }
+
+    inline void *parallelNewGCThing(gc::AllocKind thingKind, size_t thingSize);
+
+    inline void* malloc_(size_t bytes);
+    inline void* calloc_(size_t bytes);
+    inline void* realloc_(void* p, size_t bytes);
+    inline void* realloc_(void* p, size_t oldBytes, size_t newBytes);
+    template <class T> T *pod_malloc();
+    template <class T> T *pod_calloc();
+    template <class T> T *pod_malloc(size_t numElems);
+    template <class T> T *pod_calloc(size_t numElems);
+    JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)
+};
+
+}
+
 struct JSCompartment : private JS::shadow::Compartment
 {
     JSRuntime                    *rt;
@@ -148,7 +204,13 @@ struct JSCompartment : private JS::shadow::Compartment
     }
 
   public:
-    js::gc::ArenaLists           arenas;
+    js::Allocator                    allocator;
+
+    /*
+     * Moves all data from the allocator |workerAllocator|, which was
+     * in use by a parallel worker, into the compartment's main
+     * allocator.  This is used at the end of a parallel section. */
+    void adoptWorkerAllocator(js::Allocator *workerAllocator);
 
 #ifdef JSGC_GENERATIONAL
     js::gc::Nursery              gcNursery;
@@ -256,6 +318,7 @@ struct JSCompartment : private JS::shadow::Compartment
 
     size_t                       gcBytes;
     size_t                       gcTriggerBytes;
+    size_t                       gcTriggerMallocAndFreeBytes;
     size_t                       gcMaxMallocBytes;
     double                       gcHeapGrowthFactor;
     JSCompartment                *gcNextCompartment;
@@ -333,15 +396,6 @@ struct JSCompartment : private JS::shadow::Compartment
     js::CallsiteCloneTable callsiteClones;
     void sweepCallsiteClones();
 
-    /*
-     * Keeps track of the total number of malloc bytes connected to a
-     * compartment's GC things. This counter should be used in preference to
-     * gcMallocBytes. These counters affect collection in the same way as
-     * gcBytes and gcTriggerBytes.
-     */
-    size_t                       gcMallocAndFreeBytes;
-    size_t                       gcTriggerMallocAndFreeBytes;
-
     /* During GC, stores the index of this compartment in rt->compartments. */
     unsigned                     index;
 
@@ -390,6 +444,9 @@ struct JSCompartment : private JS::shadow::Compartment
     void resetGCMallocBytes();
     void setGCMaxMallocBytes(size_t value);
     void updateMallocCounter(size_t nbytes) {
+        /* Note: this code may be run from worker threads.
+
+           We tolerate any thread races when updating gcMallocBytes. */
         ptrdiff_t oldCount = gcMallocBytes;
         ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
         gcMallocBytes = newCount;
@@ -402,15 +459,6 @@ struct JSCompartment : private JS::shadow::Compartment
      }
 
     void onTooMuchMalloc();
-
-    void mallocInCompartment(size_t nbytes) {
-        gcMallocAndFreeBytes += nbytes;
-    }
-
-    void freeInCompartment(size_t nbytes) {
-        JS_ASSERT(gcMallocAndFreeBytes >= nbytes);
-        gcMallocAndFreeBytes -= nbytes;
-    }
 
     js::DtoaCache dtoaCache;
 

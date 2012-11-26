@@ -1564,12 +1564,13 @@ CodeGenerator::generateBody()
         current = graph.getBlock(i);
 
         LInstructionIterator iter = current->begin();
+        size_t instrIdx = 0;
 
         // Separately visit the label at the start of every block, so that
         // count instrumentation is inserted after the block label is bound.
         if (!iter->accept(this))
             return false;
-        iter++;
+        iter++, instrIdx++;
 
         mozilla::Maybe<Sprinter> printer;
         if (counts) {
@@ -1579,7 +1580,7 @@ CodeGenerator::generateBody()
                 return false;
         }
 
-        for (; iter != current->end(); iter++) {
+        for (; iter != current->end(); iter++, instrIdx++) {
             IonSpew(IonSpew_Codegen, "instruction %s", iter->opName());
             if (counts)
                 printer.ref().printf("[%s]\n", iter->opName());
@@ -1588,6 +1589,10 @@ CodeGenerator::generateBody()
                 if (!markArgumentSlots(iter->safepoint()))
                     return false;
             }
+
+            if (IonSpewEnabled(IonSpew_Trace))
+                if (!maybeTrace(*iter, i, instrIdx))
+                    return false;
 
             if (!iter->accept(this))
                 return false;
@@ -1901,7 +1906,7 @@ CodeGenerator::visitParNew(LParNew *lir)
     Register tempReg3 = ToRegister(lir->getTemp2());
 
     // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, arenaLists)), tempReg1);
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)), tempReg1);
 
     // tempReg1 = (FreeSpan*) &objReg.freeLists[thingKind]
     uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
@@ -1938,21 +1943,14 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
     Register tempReg3 = ToRegister(lir->getTemp2());
-    Register tempReg4 = ToRegister(lir->getTemp3());
 
-    masm.mov(ImmWord(gen->compartment), tempReg1);
-    masm.move32(Imm32(ool->allocKind), tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg3);
+    masm.move32(Imm32(ool->allocKind), tempReg1);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
 
-    masm.mov(ImmWord(gen->compartment), tempReg1);
-    masm.move32(Imm32(ool->allocKind), tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg3);
-
-    masm.setupUnalignedABICall(4, tempReg4);
+    masm.setupUnalignedABICall(3, tempReg3);
     masm.passABIArg(threadContextReg);
     masm.passABIArg(tempReg1);
     masm.passABIArg(tempReg2);
-    masm.passABIArg(tempReg3);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
     JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
     masm.jump(ool->rejoin());
@@ -2798,17 +2796,25 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
             value = TypedOrValueRegister(valueType, ToAnyRegister(store->value()));
     }
 
+    // We can bump the initialized length inline if index ==
+    // initializedLength and index < capacity.  Otherwise, we have to
+    // consider fallback options.  In fallback cases, we branch to one
+    // of two labels because (at least in parallel mode) we can
+    // recover from index < capacity but not index !=
+    // initializedLength.
+    Label indexNotInitLen;
+    Label indexWouldExceedCapacity;
+
     // If index == initializedLength, try to bump the initialized length inline.
     // If index > initializedLength, call a stub. Note that this relies on the
     // condition flags sticking from the incoming branch.
-    Label callStub;
-    masm.j(Assembler::NotEqual, &callStub);
+    masm.j(Assembler::NotEqual, &indexNotInitLen);
 
     Int32Key key = ToInt32Key(index);
 
     // Check array capacity.
     masm.branchKey(Assembler::BelowOrEqual, Address(elements, ObjectElements::offsetOfCapacity()),
-                   key, &callStub);
+                   key, &indexWouldExceedCapacity);
 
     // Update initialized length. The capacity guard above ensures this won't overflow,
     // due to NELEMENTS_LIMIT.
@@ -2841,7 +2847,8 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
 
     switch (gen->info().executionMode()) {
       case SequentialExecution:
-        masm.bind(&callStub);
+        masm.bind(&indexNotInitLen);
+        masm.bind(&indexWouldExceedCapacity);
         saveLive(ins);
 
         pushArg(Imm32(current->mir()->strictModeCode()));
@@ -2859,13 +2866,39 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         return true;
 
       case ParallelExecution:
-        masm.bind(&callStub);
-
-        // TODO---No reason we can't support reallocating the array in
-        // parallel mode too
         Label *bail;
         if (!ensureOutOfLineParallelAbort(&bail))
             return false;
+
+        // If the problem is that we do not have sufficient capacity,
+        // try to reallocate the elements array and then branch back
+        // to perform the actual write.  Note that we do not want to
+        // force the reg alloc to assign any particular register, so
+        // we make space on the stack and pass the arguments that way.
+        // (Also, outside of the VM call mechanism, it's very hard to
+        // pass in a Value to a C function!)
+        masm.bind(&indexWouldExceedCapacity);
+        //masm.breakpoint();
+
+        saveLive(ins);
+        masm.reserveStack(sizeof(ParExtendArrayArgs));
+        masm.storePtr(object, Address(StackPointer, offsetof(ParExtendArrayArgs, object)));
+        masm.storeConstantOrRegister(value, Address(StackPointer,
+                                                    offsetof(ParExtendArrayArgs, value)));
+        masm.movePtr(StackPointer, CallTempReg0);
+        masm.setupUnalignedABICall(1, CallTempReg1);
+        masm.passABIArg(CallTempReg0);
+        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParExtendArray));
+        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+        masm.freeStack(sizeof(ParExtendArrayArgs));
+        restoreLive(ins);
+        masm.jump(ool->rejoin());
+
+        // If the problem is that we are trying to write an index that
+        // is not the initialized length, that would result in a
+        // sparse array, and since we don't want to think about that
+        // case right now, we just bail out.
+        masm.bind(&indexNotInitLen);
         masm.jump(bail);
         return true;
     }
@@ -4771,11 +4804,19 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
 }
 
 bool
-CodeGenerator::visitTrace(LTrace *lir)
+CodeGenerator::maybeTrace(LInstruction *ins, uint32_t blockIndex, uint32_t lirIndex)
 {
-    const Register tempReg1 = ToRegister(lir->temp1());
-    masm.move32(Imm32(0xDEADBEEF), tempReg1);
-    masm.move32(Imm32(lir->id()), tempReg1);
+    MDefinition *mir = ins->mirRaw();
+    if (!mir || mir->isEffectful() || mir->isGuard()) {
+        masm.PushRegsInMask(RegisterSet::All());
+        masm.move32(Imm32(blockIndex), CallTempReg0);
+        masm.move32(Imm32(lirIndex), CallTempReg1);
+        masm.setupUnalignedABICall(2, CallTempReg2);
+        masm.passABIArg(CallTempReg0);
+        masm.passABIArg(CallTempReg1);
+        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
+        masm.PopRegsInMask(RegisterSet::All());
+    }
     return true;
 }
 

@@ -180,8 +180,7 @@
     _(FunctionBoundary)             \
     _(GetDOMProperty)               \
     _(SetDOMProperty)               \
-    _(CallDOMNative)                \
-    _(Trace)
+    _(CallDOMNative)
 
 #if defined(JS_CPU_X86)
 # include "x86/LOpcodes-x86.h"

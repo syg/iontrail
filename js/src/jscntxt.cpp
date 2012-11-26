@@ -1582,7 +1582,7 @@ JSRuntime::setGCMaxMallocBytes(size_t value)
 }
 
 void
-JSRuntime::updateMallocCounter(JSContext *cx, size_t nbytes)
+JSRuntime::updateMallocCounter(JSCompartment *comp, size_t nbytes)
 {
     /* We tolerate any thread races when updating gcMallocBytes. */
     ptrdiff_t oldCount = gcMallocBytes;
@@ -1590,8 +1590,8 @@ JSRuntime::updateMallocCounter(JSContext *cx, size_t nbytes)
     gcMallocBytes = newCount;
     if (JS_UNLIKELY(newCount <= 0 && oldCount > 0))
         onTooMuchMalloc();
-    else if (cx && cx->compartment)
-        cx->compartment->updateMallocCounter(nbytes);
+    else if (comp)
+        comp->updateMallocCounter(nbytes);
 }
 
 JS_FRIEND_API(void)

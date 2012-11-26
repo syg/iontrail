@@ -38,7 +38,7 @@ class ForkJoinShared
     //
     // Each worker thread gets an arena to use when allocating.
 
-    Vector<gc::ArenaLists *, 16> arenaListss_;
+    Vector<Allocator *, 16> allocators_;
 
     ////////////////////////////////////////////////////////////////////////
     // Locked Fields
@@ -194,17 +194,17 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
                                ForkJoinOp &op,
                                size_t numThreads,
                                size_t uncompleted)
-    : cx_(cx),
-      threadPool_(threadPool),
-      op_(op),
-      numThreads_(numThreads),
-      arenaListss_(cx),
-      uncompleted_(uncompleted),
-      blocked_(0),
-      rendezvousIndex_(0),
-      abort_(false),
-      fatal_(false),
-      rendezvous_(false)
+  : cx_(cx),
+    threadPool_(threadPool),
+    op_(op),
+    numThreads_(numThreads),
+    allocators_(cx),
+    uncompleted_(uncompleted),
+    blocked_(0),
+    rendezvousIndex_(0),
+    abort_(false),
+    fatal_(false),
+    rendezvous_(false)
 {}
 
 bool
@@ -214,10 +214,10 @@ ForkJoinShared::init()
     // parallel code.
     //
     // Note: you might think (as I did, initially) that we could use
-    // compartment ArenaLists for the main thread.  This is not true,
+    // compartment |Allocator| for the main thread.  This is not true,
     // because when executing parallel code we sometimes check what
     // arena list an object is in to decide if it is writable.  If we
-    // used the compartment ArenaLists for the main thread, then the
+    // used the compartment |Allocator| for the main thread, then the
     // main thread would be permitted to write to any object it wants.
 
     if (!Monitor::init())
@@ -228,12 +228,12 @@ ForkJoinShared::init()
         return false;
 
     for (unsigned i = 0; i < numThreads_; i++) {
-        gc::ArenaLists *arenaLists = cx_->new_<gc::ArenaLists>();
-        if (!arenaLists)
+        Allocator *allocator = cx_->runtime->new_<Allocator>(cx_->compartment);
+        if (!allocator)
             return false;
 
-        if (!arenaListss_.append(arenaLists)) {
-            delete arenaLists;
+        if (!allocators_.append(allocator)) {
+            js_delete(allocator);
             return false;
         }
     }
@@ -245,8 +245,8 @@ ForkJoinShared::~ForkJoinShared()
 {
     PR_DestroyCondVar(rendezvousEnd_);
 
-    while (arenaListss_.length() > 0) {
-        delete arenaListss_.popCopy();
+    while (allocators_.length() > 0) {
+        js_delete(allocators_.popCopy());
     }
 }
 
@@ -290,10 +290,9 @@ ForkJoinShared::execute()
 void
 ForkJoinShared::transferArenasToCompartment()
 {
-    JSRuntime *rt = cx_->runtime;
     JSCompartment *comp = cx_->compartment;
     for (unsigned i = 0; i < numThreads_; i++) {
-        comp->arenas.adoptArenas(rt, arenaListss_[i]);
+        comp->adoptWorkerAllocator(allocators_[i]);
     }
 }
 
@@ -328,8 +327,8 @@ void
 ForkJoinShared::executePortion(PerThreadData *perThread,
                                size_t threadId)
 {
-    gc::ArenaLists *arenaLists = arenaListss_[threadId];
-    ForkJoinSlice slice(perThread, threadId, numThreads_, arenaLists, this);
+    Allocator *allocator = allocators_[threadId];
+    ForkJoinSlice slice(perThread, threadId, numThreads_, allocator, this);
     AutoSetForkJoinSlice autoContext(&slice);
 
     if (!op_.parallel(slice))
@@ -465,11 +464,11 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &slice) {
 
 ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
                              size_t sliceId, size_t numSlices,
-                             gc::ArenaLists *arenaLists, ForkJoinShared *shared)
+                             Allocator *allocator, ForkJoinShared *shared)
     : perThreadData(perThreadData),
       sliceId(sliceId),
       numSlices(numSlices),
-      arenaLists(arenaLists),
+      allocator(allocator),
       shared(shared)
 {}
 

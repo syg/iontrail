@@ -17,6 +17,33 @@ JSObject::markDenseArrayNotPacked(JSContext *cx)
     MarkTypeObjectFlags(cx, this, js::types::OBJECT_FLAG_NON_PACKED_ARRAY);
 }
 
+inline JSObject::EnsureDenseResult
+JSObject::parExtendDenseArray(js::Allocator *alloc, js::Value *v, uint32_t extra)
+{
+    JS_ASSERT(isDenseArray());
+    JS_ASSERT(!js_PrototypeHasIndexedProperties(this));
+
+    js::ObjectElements *elem = getElementsHeader();
+    JS_ASSERT(elem->capacity == elem->initializedLength);
+
+    uint32_t requiredCapacity = elem->initializedLength + extra;
+    if (requiredCapacity < elem->initializedLength)
+        return ED_SPARSE;
+    if (requiredCapacity > MIN_SPARSE_INDEX && willBeSparseDenseArray(requiredCapacity, extra))
+        return ED_SPARSE;
+    if (!growElements(alloc, requiredCapacity))
+        return ED_FAILED;
+
+    elem = getElementsHeader(); // growElements() can move the elements header about
+    js::HeapSlot *sp = elements + elem->initializedLength;
+    for (uint32_t i = 0; i < extra; i++)
+        sp[i].init(compartment(), this, elem->initializedLength+i, v[i]);
+    elem->initializedLength = requiredCapacity;
+    if (elem->length < requiredCapacity)
+        elem->length = requiredCapacity;
+    return ED_OK;
+}
+
 inline void
 JSObject::ensureDenseArrayInitializedLength(JSContext *cx, uint32_t index, uint32_t extra)
 {

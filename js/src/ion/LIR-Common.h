@@ -270,7 +270,7 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
 // should not require so many temporaries!  These are intended for the
 // OOL slow path; but we should just use the masm instructions to
 // locally push/pop the state in that case.
-class LParNew : public LCallInstructionHelper<1, 1, 4>
+class LParNew : public LCallInstructionHelper<1, 1, 3>
 {
   public:
     LIR_HEADER(ParNew);
@@ -278,13 +278,11 @@ class LParNew : public LCallInstructionHelper<1, 1, 4>
     LParNew(const LAllocation &parThreadContext,
             const LDefinition &temp1,
             const LDefinition &temp2,
-            const LDefinition &temp3,
-            const LDefinition &temp4) {
+            const LDefinition &temp3) {
         setOperand(0, parThreadContext);
         setTemp(0, temp1);
         setTemp(1, temp2);
         setTemp(2, temp3);
-        setTemp(3, temp4);
     }
 
     MParNew *mir() const {
@@ -305,10 +303,6 @@ class LParNew : public LCallInstructionHelper<1, 1, 4>
 
     const LAllocation *getTemp2() {
         return getTemp(2)->output();
-    }
-
-    const LAllocation *getTemp3() {
-        return getTemp(3)->output();
     }
 };
 
@@ -3340,24 +3334,6 @@ class LFunctionBoundary : public LInstructionHelper<0, 0, 1>
 
     unsigned inlineLevel() {
         return mir_->toFunctionBoundary()->inlineLevel();
-    }
-};
-
-class LTrace : public LInstructionHelper<0, 0, 2>
-{
-public:
-    LIR_HEADER(Trace);
-
-    LTrace(const LDefinition &temp1) {
-        setTemp(0, temp1);
-    }
-
-    const LDefinition *temp1() {
-        return getTemp(0);
-    }
-
-    uint32_t id() {
-        return mir_->toTrace()->id();
     }
 };
 

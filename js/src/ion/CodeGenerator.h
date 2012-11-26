@@ -183,8 +183,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCallDOMNative(LCallDOMNative *lir);
     bool visitCallGetIntrinsicValue(LCallGetIntrinsicValue *lir);
 
-    bool visitTrace(LTrace *lir);
-
     bool visitCheckOverRecursed(LCheckOverRecursed *lir);
     bool visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool);
 
@@ -229,6 +227,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCache(LInstruction *load);
     bool visitCallSetProperty(LInstruction *ins);
 
+    bool maybeTrace(LInstruction *ins, uint32_t blockIndex, uint32_t lirIndex);
     ConstantOrRegister getSetPropertyValue(LInstruction *ins);
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);
 
