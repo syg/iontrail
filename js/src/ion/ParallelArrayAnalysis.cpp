@@ -31,6 +31,13 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 #define COND_SAFE_OP(op)                        \
     virtual bool visit##op(M##op *prop);
 
+#define DROP_OP(op)                             \
+    virtual bool visit##op(M##op *ins) {        \
+        MBasicBlock *block = ins->block();      \
+        block->discard(ins);                    \
+        return true;                            \
+    }
+
 #define UNSAFE_OP(op)                                               \
     virtual bool visit##op(M##op *prop) {                           \
         IonSpew(IonSpew_ParallelArray, "Unsafe op %s found", #op);  \
@@ -84,7 +91,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(OsrScopeChain)
     UNSAFE_OP(ReturnFromCtor)
     COND_SAFE_OP(CheckOverRecursed)
-    SAFE_OP(RecompileCheck) // XXX NDM XXX NDM
+    DROP_OP(RecompileCheck)
     UNSAFE_OP(DefVar)
     UNSAFE_OP(CreateThis)
     SAFE_OP(PrepareCall)
