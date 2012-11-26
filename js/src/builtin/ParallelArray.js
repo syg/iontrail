@@ -6,13 +6,48 @@
 // TODO: Use let over var when Ion compiles let.
 // TODO: Private names.
 // XXX: Experiment with cloning the whole op.
-// XXX: Hide buffer?
+// XXX: Hide buffer and other fields?
 
 function ComputeTileBounds(len, id, n) {
   var slice = (len / n) | 0;
   var start = slice * id;
   var end = id === n - 1 ? len : slice * (id + 1);
   return [start, end];
+}
+
+function ComputeIndices(shape, index1d) {
+  var products, product, i, l, result, stride, index;
+
+  l = shape.length;
+  products = [];
+  product = 1;
+  for (i = 0; i < l; i++) {
+    products[i] = product;
+    product = product * shape[i];
+  }
+
+  result = [];
+  for (i = 0; i < l; i++) {
+    stride = products[l - i - 1];
+    index = (index1d / stride) | 0;
+    index1d -= (index * stride);
+    result[i] = index;
+  }
+
+  return result;
+}
+
+function StepIndices(shape, indices) {
+  var i = shape.length - 1;
+  while (i >= 0) {
+    var indexi = indices[i] + 1;
+    if (indexi < shape[i]) {
+      indices[i] = indexi;
+      return;
+    }
+    indices[i] = 0;
+    i--;
+  }
 }
 
 // Constructor
@@ -23,6 +58,7 @@ function ComputeTileBounds(len, id, n) {
 function ParallelArrayConstruct0() {
   var self = %_SetNonBuiltinCallerInitObjectType(this);
   self.buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  self.shape = [0];
 }
 
 function ParallelArrayConstruct1(buffer) {
@@ -33,32 +69,50 @@ function ParallelArrayConstruct1(buffer) {
 
   var self = %_SetNonBuiltinCallerInitObjectType(this);
   self.buffer = buffer;
+  self.shape = [buffer.length];
 }
 
 function ParallelArrayConstruct2(length, f) {
-  function fill(result, id, n, f) {
+  return ParallelArrayBuild(this, [length], f);
+}
+
+function ParallelArrayConstruct3(shape, f) {
+  return ParallelArrayBuild(this, [length], f);
+}
+
+function ParallelArrayBuild(self0, shape, f) {
+  function fill(result, id, n, shape, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
-    for (var i = start; i < end; i++)
-      result[i] = f(i);
+    var indices = ComputeIndices(shape, start);
+    for (var i = start; i < end; i++) {
+      result[i] = f.apply(indices);
+      StepIndices(shape, indices);
+    }
   }
 
   if (length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var buffer = %ParallelBuildArray(length, fill, f);
+  var buffer = %ParallelBuildArray(length, fill, shape, f);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
     buffer.length = length;
     fill(buffer, 0, 1, f);
   }
 
-  var self = %_SetNonBuiltinCallerInitObjectType(this);
+  var self = %_SetNonBuiltinCallerInitObjectType(self0);
+  self.shape = shape;
   self.buffer = buffer;
 }
 
 function ParallelArrayMap(f) {
-  function fill(result, id, n, f, source) {
+  function fill(result, id, n, f, shape, source) {
     var [start, end] = ComputeTileBounds(source.length, id, n);
+
+    var stride = 1;
+    for (var i = 0; i < shape.length - 1; i++)
+      stride *= shape[i];
+
     for (var i = start; i < end; i++)
       result[i] = f(source[i]);
   }
@@ -214,16 +268,12 @@ function ParallelArrayFilter(filters) {
 //
 
 function ParallelArrayGet(i) {
+  var length = this.shape;
   return this.buffer[i];
 }
 
 function ParallelArrayLength() {
   return this.buffer.length;
-}
-
-function ParallelArrayShape() {
-    // Not perfect, should be immutable
-  return [this.buffer.length];
 }
 
 function ParallelArrayToString() {

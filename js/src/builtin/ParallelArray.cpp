@@ -563,28 +563,6 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
             }
     }
 
-    // Define the shape getter.
-    {
-        const char shapeStr[] = "ParallelArrayShape";
-        JSAtom *atom = Atomize(cx, shapeStr, strlen(shapeStr));
-        if (!atom)
-            return NULL;
-        Rooted<PropertyName *> shapeProp(cx, atom->asPropertyName());
-        RootedObject shapeGetter(cx, cx->runtime->getSelfHostedFunction(cx, shapeProp));
-        if (!shapeGetter)
-            return NULL;
-
-        RootedId shapeId(cx, AtomToId(cx->names().shape));
-        unsigned flags = JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_GETTER;
-        RootedValue value(cx, UndefinedValue());
-        if (!DefineNativeProperty(cx, proto, shapeId, value,
-                                  JS_DATA_TO_FUNC_PTR(PropertyOp, shapeGetter.get()), NULL,
-                                  flags, 0, 0))
-            {
-                return NULL;
-            }
-    }
-
     return proto;
 }
 
