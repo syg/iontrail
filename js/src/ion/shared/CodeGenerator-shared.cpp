@@ -24,9 +24,7 @@ namespace ion {
 
 CodeGeneratorShared::CodeGeneratorShared(MIRGenerator *gen, LIRGraph *graph)
   : oolIns(NULL),
-#   ifndef TRACE_PAR_BAILOUTS
     oolParallelAbort(NULL),
-#   endif
     parallelBailoutIndex(0),
     masm(&sps_),
     gen(gen),
@@ -505,10 +503,6 @@ CodeGeneratorShared::markArgumentSlots(LSafepoint *safepoint)
 bool
 CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 {
-#   ifdef TRACE_PAR_BAILOUTS
-    OutOfLineParallelAbort *oolParallelAbort = NULL;
-#   endif
-
     if (!oolParallelAbort) {
         oolParallelAbort = new OutOfLineParallelAbort(
             parallelBailoutIndex++);
