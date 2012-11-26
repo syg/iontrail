@@ -37,7 +37,7 @@ bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
                                                   object->arenaHeader());
 }
 
-void Trace(uint32_t bblock, uint32_t lir) {
+void Trace(uint32_t bblock, uint32_t lir, const char *opcode) {
     /*
        If you set IONFLAGS=trace, this function will be invoked before every LIR.
 
@@ -49,6 +49,7 @@ void Trace(uint32_t bblock, uint32_t lir) {
        continue
        exit
      */
+    fprintf(stderr, "Block %3u / LIR %3u / Opcode %s\n", bblock, lir, opcode);
 }
 
 

@@ -4806,17 +4806,16 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
 bool
 CodeGenerator::maybeTrace(LInstruction *ins, uint32_t blockIndex, uint32_t lirIndex)
 {
-    MDefinition *mir = ins->mirRaw();
-    if (!mir || mir->isEffectful() || mir->isGuard()) {
-        masm.PushRegsInMask(RegisterSet::All());
-        masm.move32(Imm32(blockIndex), CallTempReg0);
-        masm.move32(Imm32(lirIndex), CallTempReg1);
-        masm.setupUnalignedABICall(2, CallTempReg2);
-        masm.passABIArg(CallTempReg0);
-        masm.passABIArg(CallTempReg1);
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
-        masm.PopRegsInMask(RegisterSet::All());
-    }
+    masm.PushRegsInMask(RegisterSet::All());
+    masm.move32(Imm32(blockIndex), CallTempReg0);
+    masm.move32(Imm32(lirIndex), CallTempReg1);
+    masm.movePtr(ImmWord((const void*)ins->opName()), CallTempReg2);
+    masm.setupUnalignedABICall(3, CallTempReg3);
+    masm.passABIArg(CallTempReg0);
+    masm.passABIArg(CallTempReg1);
+    masm.passABIArg(CallTempReg2);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
+    masm.PopRegsInMask(RegisterSet::All());
     return true;
 }
 
