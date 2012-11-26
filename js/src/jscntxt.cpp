@@ -430,10 +430,10 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
     RootedAtom atom(cx);
     RootedValue val(cx);
 
-    atom = Atomize(cx, "numWorkers", strlen("numWorkers"));
+    atom = Atomize(cx, "numThreads", strlen("numThreads"));
     if (!atom)
         return false;
-    val = Int32Value(threadPool->numWorkers());
+    val = Int32Value(threadPool->numWorkers() + 1);
     if (!JSObject::defineProperty(cx, info, atom->asPropertyName(), val))
         return false;
 

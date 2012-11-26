@@ -75,7 +75,6 @@ function ParallelArrayMap(f) {
   return new global.ParallelArray(buffer);
 }
 
-// TODO: Reduce needs a new parallel intrinsic, maybe?
 function ParallelArrayReduce(f) {
   var source = this.buffer;
   var length = source.length;
@@ -83,17 +82,40 @@ function ParallelArrayReduce(f) {
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  // The accumulator: the objet petit a.
-  //
-  // "A VM's accumulator register is Objet petit a: the unattainable object
-  // of desire that sets in motion the symbolic movement of interpretation."
-  //     -- PLT Zizek
-  var a = source[0];
+  function reduce(source, start, end, f) {
+    // The accumulator: the objet petit a.
+    //
+    // "A VM's accumulator register is Objet petit a: the unattainable object
+    // of desire that sets in motion the symbolic movement of interpretation."
+    //     -- PLT Zizek
+    var a = source[start];
+    for (var i = start+1; i < end; i++)
+      a = f(a, source[i]);
+    return a;
+  }
 
-  for (var i = 1; i < length; i++)
-    a = f(a, source[i]);
+  function fill(result, id, n, source, f) {
+    // Mildly awkward: in the real parallel phase, there will be
+    // precisely one entry in result per worker.  But in the warmup
+    // phase, that is not so!  Therefore, we store the reduced version
+    // into |id % result.length| so as to ensure that in the warmup
+    // phase |id| never exceeds the length of result.
+    var [start, end] = ComputeTileBounds(source.length, id, n);
+    //result[id % result.length] = reduce(source, start, end, f);
 
-  return a;
+    var a = source[start];
+    for (var i = start+1; i < end; i++)
+      a = f(a, source[i]);
+    result[id % result.length] = a;
+  }
+
+  var threads = %_GetThreadPoolInfo().numThreads;
+  var subreductions = %ParallelBuildArray(threads, fill, source, f);
+  if (subreductions) {
+    return reduce(subreductions, 0, subreductions.length, f);
+  } else {
+    return reduce(source, 0, length, f);
+  }
 }
 
 function ParallelArrayScan(f) {
