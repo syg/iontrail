@@ -42,11 +42,11 @@ void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
     /*
        If you set IONFLAGS=trace, this function will be invoked before every LIR.
 
-       You can either modify it to do whatever you like, or use gdb scription.
+       You can either modify it to do whatever you like, or use gdb scripting.
        For example:
 
        break ParTrace
-       commands 1
+       commands
        continue
        exit
      */
