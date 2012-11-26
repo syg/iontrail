@@ -297,7 +297,7 @@ js::RunScript(JSContext *cx, HandleScript script, StackFrame *fp)
 
 #ifdef JS_ION
     if (ion::IsEnabled(cx)) {
-#ifdef JS_THREADSAFE_ION
+#ifdef JS_THREADSAFE
         if (ion::js_IonOptions.parallelWarmupContext) {
             // During parallel warmup we want to stay in the interpreter and
             // never go to compiled sequential code, or we might not record
@@ -2377,7 +2377,7 @@ BEGIN_CASE(JSOP_FUNCALL)
 
 #ifdef JS_ION
     if (ion::IsEnabled(cx)) {
-#ifdef JS_THREADSAFE_ION
+#ifdef JS_THREADSAFE
         if (ion::js_IonOptions.parallelWarmupContext) {
             // During parallel warmup we want to stay in the interpreter and
             // never go to compiled sequential code, or we might not record
@@ -2425,7 +2425,7 @@ BEGIN_CASE(JSOP_FUNCALL)
     }
 #endif
 
-#ifdef JS_THREADSAFE_ION
+#ifdef JS_THREADSAFE
     interpret_call:
 #endif
 

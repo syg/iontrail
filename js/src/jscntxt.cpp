@@ -419,7 +419,7 @@ static JSBool
 intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-#ifndef JS_THREADSAFE_ION
+#ifndef JS_THREADSAFE
     args.rval().setUndefined();
 #else
     ThreadPool *threadPool = &cx->runtime->threadPool;

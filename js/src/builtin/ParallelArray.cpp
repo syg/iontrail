@@ -238,7 +238,8 @@ class FastestIonInvoke
     }
 };
 
-class ArrayOp : public ForkJoinOp {
+class ArrayOp : public ForkJoinOp
+{
   protected:
     JSContext *cx_;
     const char *name_;
