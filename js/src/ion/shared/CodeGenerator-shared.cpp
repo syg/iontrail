@@ -12,6 +12,7 @@
 #include "CodeGenerator-shared-inl.h"
 #include "ion/IonSpewer.h"
 #include "ion/IonMacroAssembler.h"
+#include "ion/ParFunctions.h"
 
 using namespace js;
 using namespace js::ion;
@@ -522,7 +523,31 @@ CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 bool
 OutOfLineParallelAbort::generate(CodeGeneratorShared *codegen)
 {
+    codegen->maybeCallTrace(0xDEADBEEF, 0xDEADBEEF, "ParallelBailout");
     return codegen->visitOutOfLineParallelAbort(this);
+}
+
+bool
+CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, uint32_t lirIndex,
+                                    const char *opName)
+{
+    uint32_t emi = (uint32_t) gen->info().executionMode();
+
+    if (!IonSpewEnabled(IonSpew_Trace))
+        return true;
+    masm.PushRegsInMask(RegisterSet::All());
+    masm.move32(Imm32(blockIndex), CallTempReg0);
+    masm.move32(Imm32(lirIndex), CallTempReg1);
+    masm.move32(Imm32(emi), CallTempReg2);
+    masm.movePtr(ImmWord((const void*)opName), CallTempReg3);
+    masm.setupUnalignedABICall(4, CallTempReg4);
+    masm.passABIArg(CallTempReg0);
+    masm.passABIArg(CallTempReg1);
+    masm.passABIArg(CallTempReg2);
+    masm.passABIArg(CallTempReg3);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
+    masm.PopRegsInMask(RegisterSet::All());
+    return true;
 }
 
 } // namespace ion

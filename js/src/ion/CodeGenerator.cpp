@@ -1590,9 +1590,8 @@ CodeGenerator::generateBody()
                     return false;
             }
 
-            if (IonSpewEnabled(IonSpew_Trace))
-                if (!maybeTrace(*iter, i, instrIdx))
-                    return false;
+            if (!maybeCallTrace(i, instrIdx, iter->opName()))
+                return false;
 
             if (!iter->accept(this))
                 return false;
@@ -1908,21 +1907,21 @@ CodeGenerator::visitParNew(LParNew *lir)
     // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
     masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)), tempReg1);
 
-    // tempReg1 = (FreeSpan*) &objReg.freeLists[thingKind]
+    // tempReg1 = (FreeSpan*) &tempReg1.freeLists[thingKind]
     uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
     masm.addPtr(Imm32(freeSpanOffset), tempReg1);
 
-    // tempReg2 = (uintptr_t) objReg->first
-    // tempReg3 = (uintptr_t) objReg->last
-    masm.loadPtr(Address(objReg, offsetof(gc::FreeSpan, first)), tempReg2);
-    masm.loadPtr(Address(objReg, offsetof(gc::FreeSpan, last)), tempReg3);
+    // tempReg2 = (uintptr_t) tempReg1->first
+    // tempReg3 = (uintptr_t) tempReg1->last
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
 
     // If last <= first, bail to OOL code
     masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
 
-    // objReg->first = tempReg2 + thingSize
+    // tempReg1->first = tempReg2 + thingSize
     masm.addPtr(Imm32(thingSize), tempReg2);
-    masm.storePtr(tempReg2, Address(objReg, offsetof(gc::FreeSpan, first)));
+    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
 
     // objReg = tempReg2 - thingSize
     masm.movePtr(tempReg2, objReg);
@@ -4801,22 +4800,6 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
         default:
             JS_NOT_REACHED("invalid LFunctionBoundary type");
     }
-}
-
-bool
-CodeGenerator::maybeTrace(LInstruction *ins, uint32_t blockIndex, uint32_t lirIndex)
-{
-    masm.PushRegsInMask(RegisterSet::All());
-    masm.move32(Imm32(blockIndex), CallTempReg0);
-    masm.move32(Imm32(lirIndex), CallTempReg1);
-    masm.movePtr(ImmWord((const void*)ins->opName()), CallTempReg2);
-    masm.setupUnalignedABICall(3, CallTempReg3);
-    masm.passABIArg(CallTempReg0);
-    masm.passABIArg(CallTempReg1);
-    masm.passABIArg(CallTempReg2);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
-    masm.PopRegsInMask(RegisterSet::All());
-    return true;
 }
 
 } // namespace ion

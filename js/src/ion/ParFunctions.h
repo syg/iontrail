@@ -31,7 +31,8 @@ struct ParExtendArrayArgs {
 bool ParExtendArray(ParExtendArrayArgs *args);
 
 // XXX wrong file, not specific to par
-void Trace(uint32_t bblock, uint32_t lir, const char *opcode);
+void Trace(uint32_t bblock, uint32_t lir,
+           uint32_t execMode, const char *opcode);
 
 }
 }
