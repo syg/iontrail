@@ -137,6 +137,15 @@ class ForkJoinShared;
 class AutoRendezvous;
 class AutoSetForkJoinSlice;
 
+#ifdef DEBUG
+struct IonTraceData {
+    uint32_t bblock;
+    uint32_t lir;
+    uint32_t execModeInt;
+    const char *opcode;
+};
+#endif
+
 struct ForkJoinSlice
 {
 public:
@@ -153,6 +162,10 @@ public:
     // |ion::ParFunctions::ParNewGCThing()|.  This should move
     // into |perThreadData|.
     Allocator *const allocator;
+
+#ifdef DEBUG
+    IonTraceData traceData;
+#endif
 
     ForkJoinSlice(PerThreadData *perThreadData, size_t sliceId, size_t numSlices,
                   Allocator *allocator, ForkJoinShared *shared);

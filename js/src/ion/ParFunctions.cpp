@@ -37,8 +37,21 @@ bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
                                                   object->arenaHeader());
 }
 
+#ifdef DEBUG
+static void printTrace(const char *prefix, struct IonTraceData *cached) {
+        fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / Opcode %s\n",
+                prefix,
+                cached->bblock, cached->lir,
+                cached->execModeInt, cached->opcode);
+}
+#endif
+
 void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
            const char *opcode) {
+#ifdef DEBUG
+    static struct IonTraceData seqTraceData;
+    static enum { NotSet, All, Bailouts } traceMode;
+
     /*
        If you set IONFLAGS=trace, this function will be invoked before every LIR.
 
@@ -50,8 +63,36 @@ void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
        continue
        exit
      */
-    fprintf(stderr, "Block %3u / LIR %3u / Mode %u / Opcode %s\n",
-            bblock, lir, execModeInt, opcode);
+
+    if (traceMode == NotSet) {
+        // Racy, but that's ok.
+        const char *env = getenv("IONFLAGS");
+        if (strstr(env, "trace-all")) {
+            traceMode = All;
+        } else {
+            traceMode = Bailouts;
+        }
+    }
+
+    IonTraceData *cached;
+    if (execModeInt == 0) {
+        cached = &seqTraceData;
+    } else {
+        cached = &ParForkJoinSlice()->traceData;
+    }
+
+    if (bblock == 0xDEADBEEF) {
+        printTrace("BAILOUT", cached);
+    }
+
+    cached->bblock = bblock;
+    cached->lir = lir;
+    cached->execModeInt = execModeInt;
+    cached->opcode = opcode;
+
+    if (traceMode == All)
+        printTrace("Exec", cached);
+#endif
 }
 
 
