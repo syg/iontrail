@@ -1577,9 +1577,8 @@ CodeGenerator::generateBody()
                     return false;
             }
 
-            if (IonSpewEnabled(IonSpew_Trace))
-                if (!maybeTrace(*iter, i, instrIdx))
-                    return false;
+            if (!maybeCallTrace(i, instrIdx, iter->opName()))
+                return false;
 
             if (!iter->accept(this))
                 return false;
@@ -4788,23 +4787,6 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
         default:
             JS_NOT_REACHED("invalid LFunctionBoundary type");
     }
-}
-
-bool
-CodeGenerator::maybeTrace(LInstruction *ins, uint32_t blockIndex, uint32_t lirIndex)
-{
-    MDefinition *mir = ins->mirRaw();
-    if (!mir || mir->isEffectful() || mir->isGuard()) {
-        masm.PushRegsInMask(RegisterSet::All());
-        masm.move32(Imm32(blockIndex), CallTempReg0);
-        masm.move32(Imm32(lirIndex), CallTempReg1);
-        masm.setupUnalignedABICall(2, CallTempReg2);
-        masm.passABIArg(CallTempReg0);
-        masm.passABIArg(CallTempReg1);
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
-        masm.PopRegsInMask(RegisterSet::All());
-    }
-    return true;
 }
 
 } // namespace ion
