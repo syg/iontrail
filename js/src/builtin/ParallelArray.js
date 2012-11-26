@@ -199,6 +199,11 @@ function ParallelArrayLength() {
   return this.buffer.length;
 }
 
+function ParallelArrayShape() {
+    // Not perfect, should be immutable
+  return [this.buffer.length];
+}
+
 function ParallelArrayToString() {
   return this.buffer.toString();
 }

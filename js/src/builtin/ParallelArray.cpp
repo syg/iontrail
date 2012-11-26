@@ -542,23 +542,47 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
     }
 
     // Define the length getter.
-    const char lengthStr[] = "ParallelArrayLength";
-    JSAtom *atom = Atomize(cx, lengthStr, strlen(lengthStr));
-    if (!atom)
-        return NULL;
-    Rooted<PropertyName *> lengthProp(cx, atom->asPropertyName());
-    RootedObject lengthGetter(cx, cx->runtime->getSelfHostedFunction(cx, lengthProp));
-    if (!lengthGetter)
-        return NULL;
-
-    RootedId lengthId(cx, AtomToId(cx->names().length));
-    unsigned flags = JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_GETTER;
-    RootedValue value(cx, UndefinedValue());
-    if (!DefineNativeProperty(cx, proto, lengthId, value,
-                              JS_DATA_TO_FUNC_PTR(PropertyOp, lengthGetter.get()), NULL,
-                              flags, 0, 0))
     {
-        return NULL;
+        const char lengthStr[] = "ParallelArrayLength";
+        JSAtom *atom = Atomize(cx, lengthStr, strlen(lengthStr));
+        if (!atom)
+            return NULL;
+        Rooted<PropertyName *> lengthProp(cx, atom->asPropertyName());
+        RootedObject lengthGetter(cx, cx->runtime->getSelfHostedFunction(cx, lengthProp));
+        if (!lengthGetter)
+            return NULL;
+
+        RootedId lengthId(cx, AtomToId(cx->names().length));
+        unsigned flags = JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_GETTER;
+        RootedValue value(cx, UndefinedValue());
+        if (!DefineNativeProperty(cx, proto, lengthId, value,
+                                  JS_DATA_TO_FUNC_PTR(PropertyOp, lengthGetter.get()), NULL,
+                                  flags, 0, 0))
+            {
+                return NULL;
+            }
+    }
+
+    // Define the shape getter.
+    {
+        const char shapeStr[] = "ParallelArrayShape";
+        JSAtom *atom = Atomize(cx, shapeStr, strlen(shapeStr));
+        if (!atom)
+            return NULL;
+        Rooted<PropertyName *> shapeProp(cx, atom->asPropertyName());
+        RootedObject shapeGetter(cx, cx->runtime->getSelfHostedFunction(cx, shapeProp));
+        if (!shapeGetter)
+            return NULL;
+
+        RootedId shapeId(cx, AtomToId(cx->names().shape));
+        unsigned flags = JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_GETTER;
+        RootedValue value(cx, UndefinedValue());
+        if (!DefineNativeProperty(cx, proto, shapeId, value,
+                                  JS_DATA_TO_FUNC_PTR(PropertyOp, shapeGetter.get()), NULL,
+                                  flags, 0, 0))
+            {
+                return NULL;
+            }
     }
 
     return proto;
