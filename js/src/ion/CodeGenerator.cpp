@@ -1597,7 +1597,6 @@ CodeGenerator::generateBody()
 {
     IonScriptCounts *counts = maybeCreateScriptCounts();
 
-    size_t instrIdx = 0;
     for (size_t i = 0; i < graph.numBlocks(); i++) {
         current = graph.getBlock(i);
 
@@ -1607,7 +1606,7 @@ CodeGenerator::generateBody()
         // count instrumentation is inserted after the block label is bound.
         if (!iter->accept(this))
             return false;
-        iter++, instrIdx++;
+        iter++;
 
         mozilla::Maybe<Sprinter> printer;
         if (counts) {
@@ -1617,7 +1616,7 @@ CodeGenerator::generateBody()
                 return false;
         }
 
-        for (; iter != current->end(); iter++, instrIdx++) {
+        for (; iter != current->end(); iter++) {
             IonSpew(IonSpew_Codegen, "instruction %s", iter->opName());
             if (counts)
                 printer.ref().printf("[%s]\n", iter->opName());
@@ -1627,7 +1626,7 @@ CodeGenerator::generateBody()
                     return false;
             }
 
-            if (!maybeCallTrace(i, instrIdx, iter->opName()))
+            if (!maybeCallTrace(i, iter->id(), iter->opName()))
                 return false;
 
             if (!iter->accept(this))
