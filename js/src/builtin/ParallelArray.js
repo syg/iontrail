@@ -80,43 +80,112 @@ function ParallelArrayConstruct1(buffer) {
 }
 
 function ParallelArrayConstruct2(shape, f) {
-  return ParallelArrayBuild(this, shape, f);
+  if (typeof shape === 'number') {
+    return ParallelArrayBuild(this, [shape], f);
+  } else {
+    return ParallelArrayBuild(this, shape, f);
+  }
 }
 
 function ParallelArrayBuild(self0, shape, f) {
-  function fill(result, id, n, shape, f) {
+  var self = %_SetNonBuiltinCallerInitObjectType(self0);
+  self.shape = shape;
+  self.bufferOffset = 0;
+
+  if (shape.length === 1) {
+    var buffer = %ParallelBuildArray(length, fill2, shape[1], f);
+    if (!buffer) {
+      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer.length = length;
+      fill2(buffer, 0, 1, shape[1], f);
+    }
+
+    self.get = ParallelArrayGet1;
+    self.buffer = buffer;
+  } else if (shape.length === 2) {
+    var length = shape[0] * shape[1];
+    var buffer = %ParallelBuildArray(length, fill2, shape[1], f);
+    if (!buffer) {
+      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer.length = length;
+      fill2(buffer, 0, 1, shape[1], f);
+    }
+
+    self.get = ParallelArrayGet2;
+    self.buffer = buffer;
+  } else if (shape.length == 3) {
+    var length = shape[0] * shape[1];
+    var buffer = %ParallelBuildArray(length, fill3, shape[1], shape[2], f);
+    if (!buffer) {
+      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer.length = length;
+      fill3(buffer, 0, 1, shape[1], shape[2], f);
+    }
+
+    self.get = ParallelArrayGet3;
+    self.buffer = buffer;
+  } else {
+    var length = 1;
+    for (var i = 0; i < shape.length; i++) {
+      length *= shape[i];
+    }
+
+    var buffer = %ParallelBuildArray(length, fillN, shape, f);
+    if (!buffer) {
+      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer.length = length;
+      fillN(buffer, 0, 1, shape, f);
+    }
+
+    self.get = ParallelArrayGet3;
+    self.buffer = buffer;
+  }
+
+  function fill1(result, id, n, yw, f) {
+    var [start, end] = ComputeTileBounds(result.length, id, n);
+    for (var i = start; i < end; i++) {
+      result[i] = f(i);
+    }
+  }
+
+  function fill2(result, id, n, yw, f) {
+    var [start, end] = ComputeTileBounds(result.length, id, n);
+    var x = (start / yw) | 0;
+    var y = start - x * yw;
+    for (var i = start; i < end; i++) {
+      result[i] = f(x, y);
+      if (++y == yw) {
+        y = 0;
+        x += 1;
+      }
+    }
+  }
+
+  function fill3(result, id, n, yw, zw, f) {
+    var [start, end] = ComputeTileBounds(result.length, id, n);
+    var x = (start / (yw * zw)) | 0;
+    var r = start - x * yw * zw;
+    var y = (r / yw) | 0;
+    var z = r - y * yw;
+    for (var i = start; i < end; i++) {
+      result[i] = f(x, y, z);
+      if (++z == zw) {
+        z = 0;
+        if (++y == yw) {
+          y = 0;
+          x++;
+        }
+      }
+    }
+  }
+
+  function fillN(result, id, n, shape, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     var indices = ComputeIndices(shape, start);
     for (var i = start; i < end; i++) {
       result[i] = f.apply(null, indices);
       StepIndices(shape, indices);
     }
-  }
-
-  var length = 1;
-  for (var i = 0; i < shape.length; i++) {
-    length *= shape[i];
-  }
-
-  var buffer = %ParallelBuildArray(length, fill, shape, f);
-  if (!buffer) {
-    buffer = %_SetNonBuiltinCallerInitObjectType([]);
-    buffer.length = length;
-    fill(buffer, 0, 1, shape, f);
-  }
-
-  var self = %_SetNonBuiltinCallerInitObjectType(self0);
-  self.shape = shape;
-  self.bufferOffset = 0;
-  self.get = ParallelArrayGetN;
-  self.buffer = buffer;
-
-  if (self.shape.length == 1) {
-    self.get = ParallelArrayGet1;
-  } else if (self.shape.length == 2) {
-    self.get = ParallelArrayGet2;
-  } else if (self.shape.length == 3) {
-    self.get = ParallelArrayGet3;
   }
 }
 
@@ -300,12 +369,12 @@ function ParallelArrayGet3(x, y, z) {
   return this.buffer[this.bufferOffset + offset];
 }
 
-function ParallelArrayGetN() {
+function ParallelArrayGetN(...coords) {
   var products = ComputeProducts(self.shape);
   var offset = 0;
   var dimensionality = self.shape.length;
   for (var i = 0; i < dimensionality; i++) {
-    offset += arguments[i] * products[dimensionality - i - 1];
+    offset += coords[i] * products[dimensionality - i - 1];
   }
   return this.buffer[this.bufferOffset + offset];
 }
