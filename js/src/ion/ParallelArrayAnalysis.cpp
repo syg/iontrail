@@ -508,6 +508,21 @@ ParallelArrayVisitor::visitCall(MCall *ins)
         return false;
     }
 
+    JSFunction *target = ins->getSingleTarget();
+    if (target) {
+        // Native? Scary.
+        if (target->isNative()) {
+            IonSpew(IonSpew_ParallelArray, "call to native function");
+            return false;
+        }
+        return true;
+    }
+
+    if (ins->isConstructing()) {
+        IonSpew(IonSpew_ParallelArray, "call to unknown constructor");
+        return false;
+    }
+
     return true;
 }
 
