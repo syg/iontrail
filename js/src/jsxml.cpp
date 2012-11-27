@@ -1312,7 +1312,7 @@ ParseNodeToXML(Parser *parser, ParseNode *pn,
     JSXMLClass xml_class;
     int stackDummy;
 
-    if (!JS_CHECK_STACK_SIZE(cx->runtime->nativeStackLimit, &stackDummy)) {
+    if (!JS_CHECK_STACK_SIZE(cx->runtime->mainThread.nativeStackLimit, &stackDummy)) {
         parser->reportError(pn, JSMSG_OVER_RECURSED);
         return NULL;
     }

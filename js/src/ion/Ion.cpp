@@ -305,7 +305,7 @@ IonActivation::IonActivation(JSContext *cx, StackFrame *fp)
         fp->setRunningInIon();
     cx->runtime->mainThread.ionJSContext = cx;
     cx->runtime->mainThread.ionActivation = this;
-    cx->runtime->mainThread.ionStackLimit = cx->runtime->nativeStackLimit;
+    cx->runtime->mainThread.ionStackLimit = cx->runtime->mainThread.nativeStackLimit;
 }
 
 IonActivation::~IonActivation()

@@ -1048,7 +1048,7 @@ struct JSRuntime : js::RuntimeFriendFields
     bool                jitHardening;
 
     void resetIonStackLimit() {
-        mainThread.ionStackLimit = nativeStackLimit;
+        mainThread.ionStackLimit = mainThread.nativeStackLimit;
     }
 
     // Cache for ion::GetPcScript().

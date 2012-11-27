@@ -723,7 +723,8 @@ JS_FRIEND_API(bool) NeedRelaxedRootChecks() { return false; }
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
 js::PerThreadData::PerThreadData(JSRuntime *runtime)
-  : runtime_(runtime)
+  : PerThreadDataFriendFields()
+  , runtime_(runtime)
 #ifdef DEBUG
   , gcRelaxRootChecks(false)
   , gcAssertNoGCDepth(0)
@@ -1054,9 +1055,9 @@ JSRuntime::clearOwnerThread()
     js::TlsPerThreadData.set(NULL);
     nativeStackBase = 0;
 #if JS_STACK_GROWTH_DIRECTION > 0
-    nativeStackLimit = UINTPTR_MAX;
+    mainThread.nativeStackLimit = UINTPTR_MAX;
 #else
-    nativeStackLimit = 0;
+    mainThread.nativeStackLimit = 0;
 #endif
 }
 
@@ -3101,17 +3102,17 @@ JS_SetNativeStackQuota(JSRuntime *rt, size_t stackSize)
 
 #if JS_STACK_GROWTH_DIRECTION > 0
     if (stackSize == 0) {
-        rt->nativeStackLimit = UINTPTR_MAX;
+        rt->mainThread.nativeStackLimit = UINTPTR_MAX;
     } else {
         JS_ASSERT(rt->nativeStackBase <= size_t(-1) - stackSize);
-        rt->nativeStackLimit = rt->nativeStackBase + stackSize - 1;
+        rt->mainThread.nativeStackLimit = rt->nativeStackBase + stackSize - 1;
     }
 #else
     if (stackSize == 0) {
-        rt->nativeStackLimit = 0;
+        rt->mainThread.nativeStackLimit = 0;
     } else {
         JS_ASSERT(rt->nativeStackBase >= stackSize);
-        rt->nativeStackLimit = rt->nativeStackBase - (stackSize - 1);
+        rt->mainThread.nativeStackLimit = rt->nativeStackBase - (stackSize - 1);
     }
 #endif
 }

@@ -306,12 +306,8 @@ struct RuntimeFriendFields {
      */
     volatile int32_t    interrupt;
 
-    /* Limit pointer for checking native stack consumption. */
-    uintptr_t           nativeStackLimit;
-
     RuntimeFriendFields()
-      : interrupt(0),
-        nativeStackLimit(0) { }
+      : interrupt(0) { }
 
     static const RuntimeFriendFields *get(const JSRuntime *rt) {
         return reinterpret_cast<const RuntimeFriendFields *>(rt);
@@ -319,6 +315,9 @@ struct RuntimeFriendFields {
 };
 
 class PerThreadData;
+
+#define JS_PERTHREADDATAOFFSET \
+    ((sizeof(RuntimeFriendFields) + (sizeof(uintptr_t) - 1)) & sizeof(uintptr_t))
 
 struct PerThreadDataFriendFields
 {
@@ -332,6 +331,9 @@ struct PerThreadDataFriendFields
     Rooted<void*> *thingGCRooters[THING_ROOT_LIMIT];
 #endif
 
+    /* Limit pointer for checking native stack consumption. */
+    uintptr_t           nativeStackLimit;
+
     static PerThreadDataFriendFields *get(js::PerThreadData *pt) {
         return reinterpret_cast<PerThreadDataFriendFields *>(pt);
     }
@@ -340,7 +342,14 @@ struct PerThreadDataFriendFields
         // mainThread must always appear directly after |RuntimeFriendFields|.
         // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
         return reinterpret_cast<PerThreadDataFriendFields *>(
-            reinterpret_cast<char*>(rt) + sizeof(RuntimeFriendFields));
+            reinterpret_cast<char*>(rt) + JS_PERTHREADDATAOFFSET);
+    }
+
+    static const PerThreadDataFriendFields *getMainThread(const JSRuntime *rt) {
+        // mainThread must always appear directly after |RuntimeFriendFields|.
+        // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
+        return reinterpret_cast<const PerThreadDataFriendFields *>(
+            reinterpret_cast<const char*>(rt) + JS_PERTHREADDATAOFFSET);
     }
 };
 
