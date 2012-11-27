@@ -7,22 +7,28 @@ function measure(f) {
 }
 
 function testMap() {
+  function seq() {
+    var r = [];
+    for (var i = 0; i < array.length; i++)
+      r[i] = inc(array[i]);
+    return r;
+  }
+
   function inc(v) {
     return v+1;
   }
 
   var array = [];
-  for (var i = 1; i <= 1024*1024; i++) array.push(i % 256);
+  for (var i = 1; i <= 10*1024*1024; i++) array.push(i % 256);
 
   print("## testMap");
-  print("# sequential");
+  print("# warmup");
   print("array length", array.length);
-  var expected = measure(function() {
-    var r = [];
-    for (var i = 0; i < array.length; i++)
-      r[i] = inc(array[i]);
-    return r;
-  });
+  //seq();
+  //seq();
+  //seq();
+  print("# sequential");
+  var expected = measure(seq);
 
   for (var j = 0; j < 4; j++) {
     print("# run", j);
