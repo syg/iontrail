@@ -1376,7 +1376,7 @@ js_InvokeOperationCallback(JSContext *cx)
     /* IonMonkey sets its stack limit to NULL to trigger operaton callbacks. */
     rt->resetIonStackLimit();
 
-    if (rt->gcIsNeeded)
+    if (rt->gcIsNeeded && !InParallelSection())
         GCSlice(rt, GC_NORMAL, rt->gcTriggerReason);
 
 #ifdef JS_ION

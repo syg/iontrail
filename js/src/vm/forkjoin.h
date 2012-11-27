@@ -244,4 +244,4 @@ static inline bool InParallelSection() {
 
 #endif
 
-}
+} /* end namespace js */

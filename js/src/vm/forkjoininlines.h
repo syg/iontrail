@@ -9,4 +9,4 @@ ForkJoinSlice::current() {
 #endif
 }
 
-}
+} /* end namespace js */
