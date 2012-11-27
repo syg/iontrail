@@ -58,6 +58,7 @@ function StepIndices(shape, indices) {
 function ParallelArrayConstruct0() {
   var self = %_SetNonBuiltinCallerInitObjectType(this);
   self.buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  self.bufferOffset = 0;
   self.shape = [0];
 }
 
@@ -69,6 +70,7 @@ function ParallelArrayConstruct1(buffer) {
 
   var self = %_SetNonBuiltinCallerInitObjectType(this);
   self.buffer = buffer;
+  self.bufferOffset = 0;
   self.shape = [buffer.length];
 }
 
@@ -102,6 +104,7 @@ function ParallelArrayBuild(self0, shape, f) {
 
   var self = %_SetNonBuiltinCallerInitObjectType(self0);
   self.shape = shape;
+  self.bufferOffset = 0;
   self.buffer = buffer;
 }
 
@@ -269,7 +272,7 @@ function ParallelArrayFilter(filters) {
 
 function ParallelArrayGet(i) {
   var length = this.shape;
-  return this.buffer[i];
+  return this.buffer[this.bufferOffset + i];
 }
 
 function ParallelArrayLength() {
