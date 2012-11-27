@@ -1520,7 +1520,7 @@ bool
 CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
 {
     JS_ASSERT(gen->info().executionMode() == ParallelExecution);
-    const Register threadContextReg = ToRegister(lir->getTempReg());
+    const Register threadContextReg = ToRegister(lir->threadContext());
     const Register tempReg = ToRegister(lir->getTempReg());
     return callParCheckInterrupt(threadContextReg, tempReg);
 }

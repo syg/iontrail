@@ -26,6 +26,7 @@ ForkJoinSlice *ParForkJoinSlice() {
 // allocates from there.
 JSObject *
 ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize) {
+    JS_ASSERT(ParForkJoinSlice() == slice);
     void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
     return static_cast<JSObject *>(t);
 }
@@ -33,6 +34,7 @@ ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize)
 // Check that the object was created by the current thread
 // (and hence is writable).
 bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
+    JS_ASSERT(ParForkJoinSlice() == slice);
     return slice->allocator->arenas.containsArena(slice->runtime(),
                                                   object->arenaHeader());
 }
@@ -78,7 +80,7 @@ void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
     if (execModeInt == 0) {
         cached = &seqTraceData;
     } else {
-        cached = &ParForkJoinSlice()->traceData;
+        cached = &js::ForkJoinSlice::current()->traceData;
     }
 
     if (bblock == 0xDEADBEEF) {
@@ -96,6 +98,8 @@ void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 }
 
 bool ParCheckOverRecursed(ForkJoinSlice *slice) {
+    JS_ASSERT(ParForkJoinSlice() == slice);
+
     // When an interrupt is triggered, we currently overwrite the
     // stack limit with a sentinel value that brings us here.
     // Therefore, we must check whether this is really a stack overrun
@@ -116,6 +120,7 @@ bool ParCheckOverRecursed(ForkJoinSlice *slice) {
 }
 
 bool ParCheckInterrupt(ForkJoinSlice *slice) {
+    JS_ASSERT(ParForkJoinSlice() == slice);
     bool result = slice->check();
     if (!result) {
         return false;
