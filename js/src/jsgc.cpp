@@ -79,6 +79,7 @@
 #include "methodjit/MethodJIT.h"
 #include "vm/Debugger.h"
 #include "vm/String.h"
+#include "vm/forkjoin.h"
 #include "ion/IonCode.h"
 #ifdef JS_ION
 # include "ion/IonMacroAssembler.h"
@@ -90,6 +91,7 @@
 
 #include "vm/ScopeObject-inl.h"
 #include "vm/String-inl.h"
+#include "vm/forkjoininlines.h"
 
 #ifdef MOZ_VALGRIND
 # define JS_VALGRIND
@@ -4651,6 +4653,9 @@ static void
 Collect(JSRuntime *rt, bool incremental, int64_t budget,
         JSGCInvocationKind gckind, gcreason::Reason reason)
 {
+    // GC shouldn't be running in par. exec. mode
+    JS_ASSERT(!InParallelSection());
+
     JS_AbortIfWrongThread(rt);
 
 #if JS_TRACE_LOGGING
