@@ -374,6 +374,31 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
+intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    RootedValue val(cx, args[0]);
+    RootedObject obj(cx, ToObject(cx, val));
+    if (!obj)
+        return false;
+    js_DumpObject(obj);
+    args.rval().setUndefined();
+    return true;
+}
+
+static JSBool
+intrinsic_DumpInteger(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    double result;
+    if (!ToInteger(cx, args[0], &result))
+        return false;
+    fprintf(stderr, "Dump: %lf\n", result);
+    args.rval().setUndefined();
+    return true;
+}
+
+static JSBool
 intrinsic_SetNonBuiltinCallerInitObjectType(JSContext *cx, unsigned argc, Value *vp)
 {
     // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
@@ -455,6 +480,9 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
     JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
+
+    JS_FN("Dump",               intrinsic_Dump,                 1,0),
+    JS_FN("DumpInteger",        intrinsic_DumpInteger,          1,0),
 
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
     JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),

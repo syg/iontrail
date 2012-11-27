@@ -15,25 +15,28 @@ function ComputeTileBounds(len, id, n) {
   return [start, end];
 }
 
-function ComputeIndices(shape, index1d) {
-  var products, product, i, l, result, stride, index;
-
-  l = shape.length;
-  products = [];
-  product = 1;
-  for (i = 0; i < l; i++) {
+function ComputeProducts(shape) {
+  var l = shape.length;
+  var products = [];
+  var product = 1;
+  for (var i = 0; i < l; i++) {
     products[i] = product;
     product = product * shape[i];
   }
+  return products;
+}
 
-  result = [];
-  for (i = 0; i < l; i++) {
-    stride = products[l - i - 1];
-    index = (index1d / stride) | 0;
+function ComputeIndices(shape, index1d) {
+  var products = ComputeProducts(shape);
+  var l = shape.length;
+
+  var result = [];
+  for (var i = 0; i < l; i++) {
+    var stride = products[l - i - 1];
+    var index = (index1d / stride) | 0;
     index1d -= (index * stride);
     result[i] = index;
   }
-
   return result;
 }
 
@@ -60,6 +63,7 @@ function ParallelArrayConstruct0() {
   self.buffer = %_SetNonBuiltinCallerInitObjectType([]);
   self.bufferOffset = 0;
   self.shape = [0];
+  self.get = ParallelArrayGet1;
 }
 
 function ParallelArrayConstruct1(buffer) {
@@ -72,14 +76,11 @@ function ParallelArrayConstruct1(buffer) {
   self.buffer = buffer;
   self.bufferOffset = 0;
   self.shape = [buffer.length];
+  self.get = ParallelArrayGet1;
 }
 
-function ParallelArrayConstruct2(length, f) {
-  return ParallelArrayBuild(this, [length], f);
-}
-
-function ParallelArrayConstruct3(shape, f) {
-  return ParallelArrayBuild(this, [length], f);
+function ParallelArrayConstruct2(shape, f) {
+  return ParallelArrayBuild(this, shape, f);
 }
 
 function ParallelArrayBuild(self0, shape, f) {
@@ -87,25 +88,36 @@ function ParallelArrayBuild(self0, shape, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     var indices = ComputeIndices(shape, start);
     for (var i = start; i < end; i++) {
-      result[i] = f.apply(indices);
+      result[i] = f.apply(null, indices);
       StepIndices(shape, indices);
     }
   }
 
-  if (length >>> 0 !== length)
-    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
+  var length = 1;
+  for (var i = 0; i < shape.length; i++) {
+    length *= shape[i];
+  }
 
   var buffer = %ParallelBuildArray(length, fill, shape, f);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
     buffer.length = length;
-    fill(buffer, 0, 1, f);
+    fill(buffer, 0, 1, shape, f);
   }
 
   var self = %_SetNonBuiltinCallerInitObjectType(self0);
   self.shape = shape;
   self.bufferOffset = 0;
+  self.get = ParallelArrayGetN;
   self.buffer = buffer;
+
+  if (self.shape.length == 1) {
+    self.get = ParallelArrayGet1;
+  } else if (self.shape.length == 2) {
+    self.get = ParallelArrayGet2;
+  } else if (self.shape.length == 3) {
+    self.get = ParallelArrayGet3;
+  }
 }
 
 function ParallelArrayMap(f) {
@@ -116,8 +128,9 @@ function ParallelArrayMap(f) {
     for (var i = 0; i < shape.length - 1; i++)
       stride *= shape[i];
 
-    for (var i = start; i < end; i++)
+    for (var i = start; i < end; i++) {
       result[i] = f(source[i]);
+    }
   }
 
   var source = this.buffer;
@@ -270,9 +283,31 @@ function ParallelArrayFilter(filters) {
 // Accessors and utilities.
 //
 
-function ParallelArrayGet(i) {
-  var length = this.shape;
+function ParallelArrayGet1(i) {
   return this.buffer[this.bufferOffset + i];
+}
+
+function ParallelArrayGet2(x, y) {
+  var yw = this.shape[1];
+  var offset = y + yw * x;
+  return this.buffer[this.bufferOffset + offset];
+}
+
+function ParallelArrayGet3(x, y, z) {
+  var yw = this.shape[1];
+  var zw = this.shape[2];
+  var offset = z + zw * y + zw * yw * x;
+  return this.buffer[this.bufferOffset + offset];
+}
+
+function ParallelArrayGetN() {
+  var products = ComputeProducts(self.shape);
+  var offset = 0;
+  var dimensionality = self.shape.length;
+  for (var i = 0; i < dimensionality; i++) {
+    offset += arguments[i] * products[dimensionality - i - 1];
+  }
+  return this.buffer[this.bufferOffset + offset];
 }
 
 function ParallelArrayLength() {
