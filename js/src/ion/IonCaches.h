@@ -136,6 +136,12 @@ class IonCache
             PropertyName *name;
             TypedOrValueRegisterSpace output;
         } name;
+        struct {
+            Register function;
+            TypedOrValueRegisterSpace output;
+            JSScript *callScript;
+            JSScript *callPc;
+        } callsiteclone;
     } u;
 
     // Registers live after the cache, excluding output registers. The initial

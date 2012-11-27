@@ -48,6 +48,16 @@ ShouldMonitorReturnType(JSFunction *fun)
 bool
 InvokeFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *argv, Value *rval)
 {
+    if (fun->shouldCloneAtCallsite()) {
+        RootedFunction original(cx, fun);
+        RootedScript script(cx);
+        jsbytecode *pc;
+        types::TypeScript::GetPcScript(cx, &script, &pc);
+        fun = CloneFunctionAtCallsite(cx, original, script, pc);
+        if (!fun)
+            return false;
+    }
+
     Value fval = ObjectValue(*fun);
 
     // In order to prevent massive bouncing between Ion and JM, see if we keep

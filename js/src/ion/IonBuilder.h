@@ -275,7 +275,7 @@ class IonBuilder : public MIRGenerator
     MDefinition *createThis(HandleFunction target, MDefinition *callee);
     MInstruction *createCallObject(MDefinition *callee, MDefinition *scopeObj);
 
-    bool makeCall(HandleFunction target, uint32 argc, bool constructing);
+    bool makeCall(HandleFunction target, uint32 argc, bool constructing, bool callsiteClone);
 
     MDefinition *walkScopeChain(unsigned hops);
 
@@ -417,8 +417,10 @@ class IonBuilder : public MIRGenerator
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
     bool makeInliningDecision(AutoObjectVector &targets, uint32 argc);
 
-    MCall *makeCallHelper(HandleFunction target, uint32 argc, bool constructing);
-    bool makeCallBarrier(HandleFunction target, uint32 argc, bool constructing,
+    MCall *makeCallHelper(HandleFunction target, uint32 argc,
+                          bool constructing, bool callsiteClone);
+    bool makeCallBarrier(HandleFunction target, uint32 argc,
+                         bool constructing, bool callsiteClone,
                          types::StackTypeSet *types, types::StackTypeSet *barrier);
 
     inline bool TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types,

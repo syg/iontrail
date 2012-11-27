@@ -3592,6 +3592,35 @@ IonBuilder::createThis(HandleFunction target, MDefinition *callee)
     return createThis;
 }
 
+static bool
+ShouldInsertCallsiteCloneCache(const AutoObjectVector &targets)
+{
+    if (targets.length() < 1)
+        return false;
+
+    bool callsiteClone = true;
+    for (uint32_t i = 0; i < targets.length(); i++)
+        callsiteClone = callsiteClone && targets[i]->toFunction()->shouldCloneAtCallsite();
+    return callsiteClone;
+}
+
+static bool
+ShouldInsertCallsiteCloneCache(types::TypeSet *funTypes)
+{
+    uint32_t count = funTypes->getObjectCount();
+    if (count < 1)
+        return false;
+
+    bool callsiteClone = true;
+    for (uint32_t i = 0; i < count; i++) {
+        JSObject *obj = funTypes->getSingleObject(i);
+        if (!obj || !obj->isFunction())
+            return false;
+        callsiteClone = callsiteClone && obj->toFunction()->shouldCloneAtCallsite();
+    }
+    return callsiteClone;
+}
+
 bool
 IonBuilder::jsop_funcall(uint32 argc)
 {
@@ -3605,7 +3634,7 @@ IonBuilder::jsop_funcall(uint32 argc)
     // If |Function.prototype.call| may be overridden, don't optimize callsite.
     RootedFunction native(cx, getSingleCallTarget(argc, pc));
     if (!native || !native->isNative() || native->native() != &js_fun_call)
-        return makeCall(native, argc, false);
+        return makeCall(native, argc, false, false);
 
     // Extract call target.
     types::StackTypeSet *funTypes = oracle->getCallArg(script_, argc, 0, pc);
@@ -3638,7 +3667,7 @@ IonBuilder::jsop_funcall(uint32 argc)
     }
 
     // Call without inlining.
-    return makeCall(target, argc, false);
+    return makeCall(target, argc, false, ShouldInsertCallsiteCloneCache(funTypes));
 }
 
 bool
@@ -3646,7 +3675,7 @@ IonBuilder::jsop_funapply(uint32 argc)
 {
     RootedFunction native(cx, getSingleCallTarget(argc, pc));
     if (argc != 2)
-        return makeCall(native, argc, false);
+        return makeCall(native, argc, false, false);
 
     // Disable compilation if the second argument to |apply| cannot be guaranteed
     // to be either definitely |arguments| or definitely not |arguments|.
@@ -3657,7 +3686,7 @@ IonBuilder::jsop_funapply(uint32 argc)
 
     // Fallback to regular call if arg 2 is not definitely |arguments|.
     if (isArgObj != DefinitelyArguments)
-        return makeCall(native, argc, false);
+        return makeCall(native, argc, false, false);
 
     if (!native ||
         !native->isNative() ||
@@ -3693,6 +3722,11 @@ IonBuilder::jsop_funapply(uint32 argc)
     MDefinition *argFunc = passFunc->getArgument();
     passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
+    if (ShouldInsertCallsiteCloneCache(funTypes)) {
+        MCallsiteCloneCache *clone = MCallsiteCloneCache::New(argFunc, script_, pc);
+        current->add(clone);
+        argFunc = clone;
+    }
 
     // Pop apply function.
     current->pop();
@@ -3745,11 +3779,14 @@ IonBuilder::jsop_call(uint32 argc, bool constructing)
     if (numTargets == 1)
         target = targets[0]->toFunction();
 
-    return makeCallBarrier(target, argc, constructing, types, barrier);
+    return makeCallBarrier(target, argc, constructing,
+                           ShouldInsertCallsiteCloneCache(targets),
+                           types, barrier);
 }
 
 MCall *
-IonBuilder::makeCallHelper(HandleFunction target, uint32 argc, bool constructing)
+IonBuilder::makeCallHelper(HandleFunction target, uint32 argc, bool constructing,
+                           bool callsiteClone)
 {
     // This function may be called with mutated stack.
     // Querying TI for popped types is invalid.
@@ -3809,7 +3846,16 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32 argc, bool constructing
     // Pass |this| and function.
     call->addArg(0, thisArg);
 
-    MDefinition *fun = current->pop();
+    MDefinition *fun;
+    if (callsiteClone) {
+        MDefinition *callee = current->peek(-1);
+        MCallsiteCloneCache *clone = MCallsiteCloneCache::New(callee, script_, pc);
+        current->add(clone);
+        fun = clone;
+    } else {
+        fun = current->pop();
+    }
+
     if (fun->isDOMFunction())
         call->setDOMFunction();
     call->initFunction(fun);
@@ -3820,11 +3866,11 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32 argc, bool constructing
 
 bool
 IonBuilder::makeCallBarrier(HandleFunction target, uint32 argc,
-                            bool constructing,
+                            bool constructing, bool callsiteClone,
                             types::StackTypeSet *types,
                             types::StackTypeSet *barrier)
 {
-    MCall *call = makeCallHelper(target, argc, constructing);
+    MCall *call = makeCallHelper(target, argc, constructing, callsiteClone);
     if (!call)
         return false;
 
@@ -3836,11 +3882,11 @@ IonBuilder::makeCallBarrier(HandleFunction target, uint32 argc,
 }
 
 bool
-IonBuilder::makeCall(HandleFunction target, uint32 argc, bool constructing)
+IonBuilder::makeCall(HandleFunction target, uint32 argc, bool constructing, bool callsiteClone)
 {
     types::StackTypeSet *barrier;
     types::StackTypeSet *types = oracle->returnTypeSet(script_, pc, &barrier);
-    return makeCallBarrier(target, argc, constructing, types, barrier);
+    return makeCallBarrier(target, argc, constructing, callsiteClone, types, barrier);
 }
 
 bool
@@ -5985,7 +6031,8 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, HandleId id, types::StackTypeS
     current->add(wrapper);
     current->push(wrapper);
 
-    if (!makeCallBarrier(getter, 0, false, types, barrier))
+    // TODO: Callsite-cloned accessors.
+    if (!makeCallBarrier(getter, 0, false, false, types, barrier))
         return false;
 
     *emitted = true;
@@ -6142,7 +6189,8 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
 
         // Call the setter. Note that we have to push the original value, not
         // the setter's return value.
-        MCall *call = makeCallHelper(setter, 1, false);
+        // TODO: Callsite-cloned accessors.
+        MCall *call = makeCallHelper(setter, 1, false, false);
         if (!call)
             return false;
 
