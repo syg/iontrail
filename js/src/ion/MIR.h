@@ -3177,6 +3177,35 @@ class MLambda
     }
 };
 
+class MParLambda
+  : public MUnaryInstruction,
+    public SingleObjectPolicy
+{
+    CompilerRootFunction fun_;
+
+    MParLambda(MDefinition *threadContext,
+               MDefinition *scopeChain, JSFunction *fun)
+      : MUnaryInstruction(scopeChain), fun_(fun)
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(ParLambda);
+
+    static MParLambda *New(MDefinition *threadContext,
+                           MDefinition *scopeChain, JSFunction *fun) {
+        return new MParLambda(threadContext, scopeChain, fun);
+    }
+
+    static MParLambda *New(MDefinition *threadContext,
+                           MLambda *originalInstruction) {
+        return New(threadContext,
+                   originalInstruction->scopeChain(),
+                   originalInstruction->fun());
+    }
+};
+
 // Determines the implicit |this| value for function calls.
 class MImplicitThis
   : public MUnaryInstruction,

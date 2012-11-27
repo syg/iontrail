@@ -81,6 +81,7 @@ namespace ion {
     _(RegExp)                                                               \
     _(RegExpTest)                                                           \
     _(Lambda)                                                               \
+    _(ParLambda)                                                            \
     _(ImplicitThis)                                                         \
     _(Slots)                                                                \
     _(Elements)                                                             \
