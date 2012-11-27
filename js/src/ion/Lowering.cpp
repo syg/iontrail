@@ -126,6 +126,8 @@ LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
         temp());
     if (!add(lir))
         return false;
+    if (!assignSafepoint(lir, ins))
+        return false;
     return true;
 }
 

@@ -95,9 +95,32 @@ void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 #endif
 }
 
+bool ParCheckOverRecursed(ForkJoinSlice *slice) {
+    // When an interrupt is triggered, we currently overwrite the
+    // stack limit with a sentinel value that brings us here.
+    // Therefore, we must check whether this is really a stack overrun
+    // and, if not, check whether an interrupt is needed.
+    if (slice->isMainThread()) {
+        int stackDummy_;
+        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(slice->runtime()), &stackDummy_)) {
+            return false;
+        } else {
+            return ParCheckInterrupt(slice);
+        }
+    } else {
+        // FIXME---we don't do this for worker threads, which means
+        // that technically they can recurse forever---or at least a
+        // long time---without ever checking the interrupt.
+        return false;
+    }
+}
 
 bool ParCheckInterrupt(ForkJoinSlice *slice) {
-    return slice->check();
+    bool result = slice->check();
+    if (!result) {
+        return false;
+    }
+    return true;
 }
 
 bool ParExtendArray(ParExtendArrayArgs *args) {

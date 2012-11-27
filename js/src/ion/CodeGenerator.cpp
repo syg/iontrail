@@ -1388,47 +1388,6 @@ class CheckOverRecursedFailure : public OutOfLineCodeBase<CodeGenerator>
 };
 
 bool
-CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
-{
-    // See above: the only different between this code and
-    // visitCheckOverRecursed() is that this code runs in parallel mode
-    // and hence uses the ionStackLimit from the current thread state
-    Register threadContextReg = ToRegister(lir->threadContext());
-    Register limitReg = ToRegister(lir->getTempReg());
-
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, perThreadData)), limitReg);
-    masm.loadPtr(Address(limitReg, offsetof(PerThreadData, ionStackLimit)), limitReg);
-
-    // Conditional forward (unlikely) branch to failure.
-    Label *bail;
-    if (!ensureOutOfLineParallelAbort(&bail))
-        return false;
-    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, limitReg, bail);
-
-    return true;
-}
-
-bool
-CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
-{
-    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
-
-    const Register tempReg = ToRegister(lir->getTempReg());
-    masm.setupUnalignedABICall(1, tempReg);
-    masm.passABIArg(ToRegister(lir->threadContext()));
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
-
-    Label *bail;
-    if (!ensureOutOfLineParallelAbort(&bail))
-        return false;
-
-    // branch to the OOL failure code if false is returned
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
-
-    return true;
-}
-
-bool
 CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed *lir)
 {
     // Ensure that this frame will not cross the stack limit.
@@ -1504,6 +1463,84 @@ CodeGenerator::visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool)
     return true;
 }
 
+// Out-of-line path to report over-recursed error and fail.
+class ParCheckOverRecursedFailure : public OutOfLineCodeBase<CodeGenerator>
+{
+    LParCheckOverRecursed *lir_;
+
+  public:
+    ParCheckOverRecursedFailure(LParCheckOverRecursed *lir)
+      : lir_(lir)
+    { }
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitParCheckOverRecursedFailure(this);
+    }
+
+    LParCheckOverRecursed *lir() const {
+        return lir_;
+    }
+};
+
+bool
+CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
+{
+    // See above: the only difference between this code and
+    // visitCheckOverRecursed() is that this code runs in parallel mode
+    // and hence uses the ionStackLimit from the current thread state
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register limitReg = ToRegister(lir->getTempReg());
+
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, perThreadData)), limitReg);
+    masm.loadPtr(Address(limitReg, offsetof(PerThreadData, ionStackLimit)), limitReg);
+
+    // Conditional forward (unlikely) branch to failure.
+    ParCheckOverRecursedFailure *ool = new ParCheckOverRecursedFailure(lir);
+    if (!addOutOfLineCode(ool))
+        return false;
+    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, limitReg, ool->entry());
+    masm.bind(ool->rejoin());
+
+    return true;
+}
+
+bool
+CodeGenerator::visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool)
+{
+    saveLive(ool->lir());
+    masm.movePtr(ToRegister(ool->lir()->threadContext()), CallTempReg0);
+    if (!callParCheckInterrupt(CallTempReg0, CallTempReg1))
+        return false;
+    restoreLive(ool->lir());
+    masm.jump(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
+{
+    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
+    const Register threadContextReg = ToRegister(lir->getTempReg());
+    const Register tempReg = ToRegister(lir->getTempReg());
+    return callParCheckInterrupt(threadContextReg, tempReg);
+}
+
+bool
+CodeGenerator::callParCheckInterrupt(Register threadCtxReg, Register tempReg)
+{
+    masm.setupUnalignedABICall(1, tempReg);
+    masm.passABIArg(threadCtxReg);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
+
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+
+    // branch to the OOL failure code if false is returned
+    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+    return true;
+}
+
 IonScriptCounts *
 CodeGenerator::maybeCreateScriptCounts()
 {
@@ -1560,11 +1597,11 @@ CodeGenerator::generateBody()
 {
     IonScriptCounts *counts = maybeCreateScriptCounts();
 
+    size_t instrIdx = 0;
     for (size_t i = 0; i < graph.numBlocks(); i++) {
         current = graph.getBlock(i);
 
         LInstructionIterator iter = current->begin();
-        size_t instrIdx = 0;
 
         // Separately visit the label at the start of every block, so that
         // count instrumentation is inserted after the block label is bound.

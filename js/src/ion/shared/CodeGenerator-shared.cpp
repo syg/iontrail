@@ -530,10 +530,16 @@ CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, uint32_t lirIndex,
     if (!IonSpewEnabled(IonSpew_Trace))
         return true;
     masm.PushRegsInMask(RegisterSet::All());
+
+    // This first move is here so that when you scan the disassembly,
+    // you can easily pick out where each instruction begins.  The
+    // next few items indicate to you the Basic Block / LIR.
+    masm.move32(Imm32(0xDEADBEEF), CallTempReg0);
     masm.move32(Imm32(blockIndex), CallTempReg0);
     masm.move32(Imm32(lirIndex), CallTempReg1);
     masm.move32(Imm32(emi), CallTempReg2);
     masm.movePtr(ImmWord((const void*)opName), CallTempReg3);
+
     masm.setupUnalignedABICall(4, CallTempReg4);
     masm.passABIArg(CallTempReg0);
     masm.passABIArg(CallTempReg1);

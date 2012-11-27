@@ -24,6 +24,7 @@ namespace ion {
 class OutOfLineNewArray;
 class OutOfLineNewObject;
 class CheckOverRecursedFailure;
+class ParCheckOverRecursedFailure;
 class OutOfLineUnboxDouble;
 class OutOfLineCache;
 class OutOfLineStoreElementHole;
@@ -187,7 +188,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool);
 
     bool visitParCheckOverRecursed(LParCheckOverRecursed *lir);
+    bool visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool);
+
     bool visitParCheckInterrupt(LParCheckInterrupt *lir);
+
+    bool callParCheckInterrupt(Register threadCtxReg, Register tempReg);
 
     bool visitUnboxDouble(LUnboxDouble *lir);
     bool visitOutOfLineUnboxDouble(OutOfLineUnboxDouble *ool);
