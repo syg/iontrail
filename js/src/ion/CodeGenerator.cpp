@@ -382,7 +382,13 @@ CodeGenerator::visitParLambda(LParLambda *lir)
 
     // Slow path joins us here to complete the initialization
     masm.bind(ool->rejoin());
+
+    masm.breakpoint();
+    masm.nop();
     masm.initGCThing(resultReg, fun);
+    masm.breakpoint();
+    masm.nop();
+    masm.nop();
 
     // TODO: Factor common code with visitLambda
 

@@ -1216,7 +1216,7 @@ LIRGenerator::visitParLambda(MParLambda *ins)
                                      tempFixed(CallTempReg2),
                                      tempFixed(CallTempReg3),
                                      tempFixed(CallTempReg4));
-    return defineVMReturn(lir, ins);
+    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
 }
 
 bool
