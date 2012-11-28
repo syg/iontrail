@@ -2930,6 +2930,10 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32 argc)
         if (!target->isInterpreted())
             return false;
 
+        // TODO: Inline callsite clone.
+        if (target->shouldCloneAtCallsite())
+            return false;
+
         script = target->script();
         uint32_t calleeUses = script->getUseCount();
 
@@ -3723,9 +3727,9 @@ IonBuilder::jsop_funapply(uint32 argc)
     passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
     if (ShouldInsertCallsiteCloneCache(funTypes)) {
-        MCallsiteCloneCache *clone = MCallsiteCloneCache::New(argFunc, script_, pc);
-        current->add(clone);
-        argFunc = clone;
+        argFunc = makeCallsiteClone(target, argFunc);
+        if (!argFunc)
+            return false;
     }
 
     // Pop apply function.
@@ -3782,6 +3786,30 @@ IonBuilder::jsop_call(uint32 argc, bool constructing)
     return makeCallBarrier(target, argc, constructing,
                            ShouldInsertCallsiteCloneCache(targets),
                            types, barrier);
+}
+
+MDefinition *
+IonBuilder::makeCallsiteClone(HandleFunction target, MDefinition *fun)
+{
+    // Bake in a clone eagerly if we have a known target. We have arrived here
+    // because TI told us that the known target is a should-clone-at-callsite
+    // function, which means we have already made the clone.
+    if (target) {
+        RootedScript script(cx, script_);
+        RootedFunction clone(cx, CloneFunctionAtCallsite(cx, target, script, pc));
+        if (!clone)
+            return NULL;
+        MConstant *constant = MConstant::New(ObjectValue(*clone));
+        current->add(constant);
+        return constant;
+    }
+
+    // Add a callsite clone IC if we have multiple targets. Note that we
+    // should have checked already if all targets are marked as
+    // should-clone-at-callsite.
+    MCallsiteCloneCache *clone = MCallsiteCloneCache::New(fun, script_, pc);
+    current->add(clone);
+    return clone;
 }
 
 MCall *
@@ -3846,14 +3874,13 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32 argc, bool constructing
     // Pass |this| and function.
     call->addArg(0, thisArg);
 
-    MDefinition *fun;
+    // Add a callsite clone IC for multiple targets which all should be
+    // callsite cloned, or bake in the clone for a single target.
+    MDefinition *fun = current->pop();
     if (callsiteClone) {
-        MDefinition *callee = current->peek(-1);
-        MCallsiteCloneCache *clone = MCallsiteCloneCache::New(callee, script_, pc);
-        current->add(clone);
-        fun = clone;
-    } else {
-        fun = current->pop();
+        fun = makeCallsiteClone(target, fun);
+        if (!fun)
+            return NULL;
     }
 
     if (fun->isDOMFunction())

@@ -4904,6 +4904,11 @@ class MCallsiteCloneCache
     jsbytecode *callPc() const {
         return callPc_;
     }
+
+    // Callsite cloning is idempotent.
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
 };
 
 class MSetPropertyInstruction : public MBinaryInstruction

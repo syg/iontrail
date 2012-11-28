@@ -417,6 +417,7 @@ class IonBuilder : public MIRGenerator
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
     bool makeInliningDecision(AutoObjectVector &targets, uint32 argc);
 
+    MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);
     MCall *makeCallHelper(HandleFunction target, uint32 argc,
                           bool constructing, bool callsiteClone);
     bool makeCallBarrier(HandleFunction target, uint32 argc,
