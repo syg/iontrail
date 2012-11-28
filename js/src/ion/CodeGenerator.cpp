@@ -1912,6 +1912,24 @@ CodeGenerator::visitOutOfLineNewObject(OutOfLineNewObject *ool)
     return true;
 }
 
+class OutOfLineParNewCallObject : public OutOfLineCodeBase<CodeGenerator>
+{
+public:
+    LParNewCallObject *lir;
+    gc::AllocKind allocKind;
+    uint32_t thingSize;
+
+    OutOfLineParNewCallObject(LParNewCallObject *lir, gc::AllocKind allocKind, int thingSize)
+        : lir(lir),
+          allocKind(allocKind),
+          thingSize(thingSize)
+    {}
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineParNewCallObject(this);
+    }
+};
+
 typedef JSObject *(*NewCallObjectFn)(JSContext *, HandleShape,
                                      HandleTypeObject, HeapSlot *);
 static const VMFunction NewCallObjectInfo =
@@ -1922,7 +1940,7 @@ CodeGenerator::visitNewCallObject(LNewCallObject *lir)
 {
     Register obj = ToRegister(lir->output());
 
-    JSObject *templateObj = lir->mir()->templateObj();
+    JSObject *templateObj = lir->mir()->templateObject();
 
     // If we have a template object, we can inline call object creation.
     OutOfLineCode *ool;
@@ -1948,6 +1966,83 @@ CodeGenerator::visitNewCallObject(LNewCallObject *lir)
     if (lir->slots()->isRegister())
         masm.storePtr(ToRegister(lir->slots()), Address(obj, JSObject::offsetOfSlots()));
     masm.bind(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
+{
+    Register resultReg = ToRegister(lir->output());
+    JSObject *templateObj = lir->mir()->templateObj();
+
+    gc::AllocKind allocKind = templateObj->getAllocKind();
+    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
+
+    if (lir->slots() && !lir->slots()->isRegister())
+        return false;
+
+    OutOfLineCode *ool =
+        new OutOfLineParNewCallObject(lir, allocKind, thingSize);
+    if (!ool || !addOutOfLineCode(ool))
+        return false;
+
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
+    Register tempReg3 = ToRegister(lir->getTemp2());
+
+    // This is an inlined version of newGCThing.
+
+    // TODO (post call-mark/temp-removal optimization): attempt to
+    // factor all of these inlined newGCThings into a common method,
+    // possibly in MacroAssembler.
+
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)),
+                 tempReg1);
+
+    uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
+    masm.addPtr(Imm32(freeSpanOffset), tempReg1);
+
+    // If LIMIT <= FIRST, bail to OOL code
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
+
+    masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
+
+    masm.addPtr(Imm32(thingSize), tempReg2);
+    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
+    masm.movePtr(tempReg2, resultReg);
+    masm.subPtr(Imm32(thingSize), resultReg);
+
+    if (lir->slots())
+        masm.storePtr(ToRegister(lir->slots()), Address(resultReg, JSObject::offsetOfSlots()));
+
+    masm.bind(ool->rejoin());
+    masm.initGCThing(resultReg, templateObj);
+
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineParNewCallObject(OutOfLineParNewCallObject *ool)
+{
+    LParNewCallObject *lir = ool->lir;
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
+    Register tempReg3 = ToRegister(lir->getTemp2());
+
+    masm.move32(Imm32(ool->allocKind), tempReg1);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
+
+    masm.setupUnalignedABICall(3, tempReg3);
+    masm.passABIArg(threadContextReg);
+    masm.passABIArg(tempReg1);
+    masm.passABIArg(tempReg2);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
+    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
+    masm.jump(ool->rejoin());
+
     return true;
 }
 

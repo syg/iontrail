@@ -332,6 +332,50 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
     }
 };
 
+class LParNewCallObject : public LCallInstructionHelper<1, 2, 3>
+{
+public:
+    LIR_HEADER(ParNewCallObject);
+
+    bool hasSlots;
+
+    LParNewCallObject(const LAllocation &parThreadContext,
+                      const LAllocation &slots,
+                      const LDefinition &temp1,
+                      const LDefinition &temp2,
+                      const LDefinition &temp3) {
+        setOperand(0, parThreadContext);
+        setOperand(1, slots);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+        setTemp(2, temp3);
+    }
+
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+
+    const LAllocation *slots() {
+        return hasSlots ? getOperand(1) : NULL;
+    }
+
+    const MParNewCallObject *mir() const {
+        return mir_->toParNewCallObject();
+    }
+
+    const LAllocation *getTemp0() {
+        return getTemp(0)->output();
+    }
+
+    const LAllocation *getTemp1() {
+        return getTemp(1)->output();
+    }
+
+    const LAllocation *getTemp2() {
+        return getTemp(2)->output();
+    }
+};
+
 class LNewStringObject : public LInstructionHelper<1, 1, 1>
 {
   public:

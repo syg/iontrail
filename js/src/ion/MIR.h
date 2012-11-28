@@ -5676,9 +5676,54 @@ class MNewCallObject : public MUnaryInstruction
     MDefinition *slots() {
         return getOperand(0);
     }
-    JSObject *templateObj() {
+    JSObject *templateObject() {
         return templateObj_;
     }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+class MParNewCallObject : public MBinaryInstruction
+{
+    CompilerRootObject templateObj_;
+
+    MParNewCallObject(MDefinition *threadContext,
+                      JSObject *templateObj, MDefinition *slots)
+        : MBinaryInstruction(threadContext, slots),
+          templateObj_(templateObj)
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(ParNewCallObject);
+
+    static MParNewCallObject *New(MDefinition *threadContext,
+                                  JSObject *templateObj,
+                                  MDefinition *slots) {
+        return new MParNewCallObject(threadContext, templateObj, slots);
+    }
+
+    static MParNewCallObject *New(MDefinition *threadContext,
+                                  MNewCallObject *originalInstruction) {
+        return New(threadContext,
+                   originalInstruction->templateObject(),
+                   originalInstruction->slots());
+    }
+
+    MDefinition *threadContext() const {
+        return getOperand(0);
+    }
+
+    MDefinition *slots() const {
+        return getOperand(1);
+    }
+
+    JSObject *templateObj() const {
+        return templateObj_;
+    }
+
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }

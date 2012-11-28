@@ -73,6 +73,7 @@ namespace ion {
     _(NewArray)                                                             \
     _(NewObject)                                                            \
     _(NewCallObject)                                                        \
+    _(ParNewCallObject)                                                     \
     _(NewStringObject)                                                      \
     _(ParNew)                                                               \
     _(InitProp)                                                             \

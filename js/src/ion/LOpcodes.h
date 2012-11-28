@@ -28,6 +28,7 @@
     _(NewCallObject)                \
     _(NewStringObject)              \
     _(ParNew)                       \
+    _(ParNewCallObject)             \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
     _(ParCheckOverRecursed)         \

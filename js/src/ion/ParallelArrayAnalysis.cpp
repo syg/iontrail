@@ -121,7 +121,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(NewSlots)
     COND_SAFE_OP(NewArray)
     COND_SAFE_OP(NewObject)
-    UNSAFE_OP(NewCallObject)
+    COND_SAFE_OP(NewCallObject)
     UNSAFE_OP(InitProp)
     COND_SAFE_OP(Start)
     UNSAFE_OP(OsrEntry)
@@ -292,6 +292,17 @@ ParallelArrayVisitor::visitStart(MStart *ins) {
 // down to a (possibly inlined) invocation of NewGCThing()---are
 // replaced with MParNew, which is supplied with the thread context.
 // These allocations will take place using per-helper-thread arenas.
+
+bool
+ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins) {
+    // fast path: replace with ParNewCallObject op
+    MDefinition *threadContext = this->threadContext();
+
+    MParNewCallObject *parNewCallObjectInstruction =
+        MParNewCallObject::New(threadContext, ins);
+    replace(ins, parNewCallObjectInstruction);
+    return true;
+}
 
 bool
 ParallelArrayVisitor::visitLambda(MLambda *ins) {

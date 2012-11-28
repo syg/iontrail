@@ -188,6 +188,25 @@ LIRGenerator::visitNewCallObject(MNewCallObject *ins)
 }
 
 bool
+LIRGenerator::visitParNewCallObject(MParNewCallObject *ins)
+{
+    LAllocation slots;
+    if (ins->slots()->type() == MIRType_Slots)
+        slots = useFixed(ins->slots(), CallTempReg4);
+    else
+        slots = LConstantIndex::Bogus();
+
+    LParNewCallObject *lir =
+        new LParNewCallObject(useFixed(ins->threadContext(), CallTempReg0),
+                              slots,
+                              tempFixed(CallTempReg1),
+                              tempFixed(CallTempReg2),
+                              tempFixed(CallTempReg3));
+
+    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
+}
+
+bool
 LIRGenerator::visitNewStringObject(MNewStringObject *ins)
 {
     JS_ASSERT(ins->input()->type() == MIRType_String);
