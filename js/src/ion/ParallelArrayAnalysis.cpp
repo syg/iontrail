@@ -246,12 +246,10 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 {
     JS_ASSERT(!compilingKernel_);
 
-    MethodStatus status;
-
     // Compile the kernel first as it can unsafely write to a buffer argument.
     if (!kernel->script()->hasParallelIonScript()) {
         compilingKernel_ = true;
-        status = compileFunction(kernel);
+        MethodStatus status = compileFunction(kernel);
         if (status != Method_Compiled) {
             compilingKernel_ = false;
             return status;
@@ -265,12 +263,28 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
         if (fun->script()->hasParallelIonScript())
             continue; // Already compiled.
 
-        status = compileFunction(fun);
+        MethodStatus status = compileFunction(fun);
         if (status != Method_Compiled)
             return status;
     }
 
-    return status;
+    // Subtle: it is possible for GC to occur during compilation of
+    // one of the invoked functions, which would cause the earlier
+    // functions (such as the kernel itself) to be collected.  In this
+    // event, we give up and fallback to sequential for now.
+    if (!kernel->script()->hasParallelIonScript()) {
+        IonSpew(IonSpew_ParallelArray, "Kernel script was garbage-collected");
+        return Method_Skipped;
+    }
+    for (size_t i = 0; i < invokedFunctions_.length(); i++) {
+        if (!invokedFunctions_[i]->toFunction()->script()->hasParallelIonScript()) {
+            IonSpew(IonSpew_ParallelArray, "Invoked script was garbage-collected");
+            return Method_Skipped;
+        }
+    }
+
+
+    return Method_Compiled;
 }
 
 bool
