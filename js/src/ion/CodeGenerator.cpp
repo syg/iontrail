@@ -169,7 +169,7 @@ CodeGenerator::visitTestVAndBranch(LTestVAndBranch *lir)
     masm.jump(lir->ifFalse());
     return true;
 }
- 
+
 bool
 CodeGenerator::visitPolyInlineDispatch(LPolyInlineDispatch *lir)
 {

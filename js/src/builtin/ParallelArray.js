@@ -115,11 +115,11 @@ function ParallelArrayBuild(self0, shape, f) {
 
   if (shape.length === 1) {
     var length = shape[0];
-    var buffer = %ParallelBuildArray(length, fill, f);
+    var buffer = %ParallelBuildArray(length, fill1, f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
-      fill(buffer, 0, 1, f);
+      fill1(buffer, 0, 1, f);
     }
 
     self.get = ParallelArrayGet1;
@@ -163,7 +163,7 @@ function ParallelArrayBuild(self0, shape, f) {
     self.buffer = buffer;
   }
 
-  function fill1(result, id, n, yw, f) {
+  function fill1(result, id, n, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     for (var i = start; i < end; i++) {
       result[i] = f(i);
@@ -178,7 +178,7 @@ function ParallelArrayBuild(self0, shape, f) {
       result[i] = f(x, y);
       if (++y == yw) {
         y = 0;
-        x += 1;
+        ++x;
       }
     }
   }
@@ -187,15 +187,15 @@ function ParallelArrayBuild(self0, shape, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     var x = (start / (yw*zw)) | 0;
     var r = start - x*yw*zw;
-    var y = (r / yw) | 0;
-    var z = r - y*yw;
+    var y = (r / zw) | 0;
+    var z = r - y*zw;
     for (var i = start; i < end; i++) {
       result[i] = f(x, y, z);
       if (++z == zw) {
         z = 0;
         if (++y == yw) {
           y = 0;
-          x++;
+          ++x;
         }
       }
     }
