@@ -358,7 +358,7 @@ function ParallelArrayFilter(filters) {
 //
 
 function ParallelArrayGet1(i) {
-  var udef; // For some reason `undefined`, doesn't work
+  var udef; // For some reason `undefined` doesn't work
   if (i === udef) {
     return this;
   } else {
@@ -367,7 +367,7 @@ function ParallelArrayGet1(i) {
 }
 
 function ParallelArrayGet2(x, y) {
-  var udef; // For some reason `undefined`, doesn't work
+  var udef; // For some reason `undefined` doesn't work
   var yw = this.shape[1];
   if (x === udef) {
     return this;
@@ -380,7 +380,7 @@ function ParallelArrayGet2(x, y) {
 }
 
 function ParallelArrayGet3(x, y, z) {
-  var udef; // For some reason `undefined`, doesn't work
+  var udef; // For some reason `undefined` doesn't work
   var yw = this.shape[1];
   var zw = this.shape[2];
   if (x === udef) {
