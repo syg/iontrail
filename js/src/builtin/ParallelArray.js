@@ -61,20 +61,25 @@ function StepIndices(shape, indices) {
 function ParallelArrayConstruct0() {
   var self = %_SetNonBuiltinCallerInitObjectType(this);
   self.buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  self.bufferOffset = 0;
+  self.offset = 0;
   self.shape = [0];
   self.get = ParallelArrayGet1;
 }
 
 function ParallelArrayConstruct1(buffer) {
   var buffer = %ToObject(buffer);
-  // TODO: How do we check for Array-like?
-  if (buffer.length >>> 0 !== buffer.length)
+  var length = buffer.length >>> 0;
+  if (length !== buffer.length)
     %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
 
+  var buffer1 = %_SetNonBuiltinCallerInitObjectType([]);
+  for (var i = 0; i < length; i++) {
+    buffer1[i] = buffer[i];
+  }
+
   var self = %_SetNonBuiltinCallerInitObjectType(this);
-  self.buffer = buffer;
-  self.bufferOffset = 0;
+  self.buffer = buffer1;
+  self.offset = 0;
   self.shape = [buffer.length];
   self.get = ParallelArrayGet1;
 }
@@ -87,17 +92,34 @@ function ParallelArrayConstruct2(shape, f) {
   }
 }
 
+function ParallelArrayConstruct3(shape, buffer, offset) {
+  var self = %_SetNonBuiltinCallerInitObjectType(this);
+  self.shape = shape;
+  self.buffer = buffer;
+  self.offset = offset;
+  self.get = ParallelArrayGetN;
+
+  if (shape.length == 1) {
+    self.get = ParallelArrayGet1;
+  } else if (shape.length == 2) {
+    self.get = ParallelArrayGet2;
+  } else if (shape.length == 3) {
+    self.get = ParallelArrayGet3;
+  }
+}
+
 function ParallelArrayBuild(self0, shape, f) {
   var self = %_SetNonBuiltinCallerInitObjectType(self0);
   self.shape = shape;
-  self.bufferOffset = 0;
+  self.offset = 0;
 
   if (shape.length === 1) {
-    var buffer = %ParallelBuildArray(length, fill2, shape[1], f);
+    var length = shape[0];
+    var buffer = %ParallelBuildArray(length, fill, f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
-      fill2(buffer, 0, 1, shape[1], f);
+      fill(buffer, 0, 1, f);
     }
 
     self.get = ParallelArrayGet1;
@@ -114,7 +136,7 @@ function ParallelArrayBuild(self0, shape, f) {
     self.get = ParallelArrayGet2;
     self.buffer = buffer;
   } else if (shape.length == 3) {
-    var length = shape[0] * shape[1];
+    var length = shape[0] * shape[1] * shape[2];
     var buffer = %ParallelBuildArray(length, fill3, shape[1], shape[2], f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
@@ -190,27 +212,19 @@ function ParallelArrayBuild(self0, shape, f) {
 }
 
 function ParallelArrayMap(f) {
-  function fill(result, id, n, f, shape, source) {
-    var [start, end] = ComputeTileBounds(source.length, id, n);
-
-    var stride = 1;
-    for (var i = 0; i < shape.length - 1; i++)
-      stride *= shape[i];
-
+  function fill(result, id, n, f, self) {
+    var [start, end] = ComputeTileBounds(result.length, id, n);
     for (var i = start; i < end; i++) {
-      result[i] = f(source[i]);
+      result[i] = f(self.get(i));
     }
   }
 
-  var source = this.buffer;
-  var length = source.length;
-
-  var buffer = %ParallelBuildArray(length, fill, f, source);
+  var length = this.shape[0];
+  var buffer = %ParallelBuildArray(length, fill, f, this);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
-    fill(buffer, 0, 1, f, source);
+    fill(buffer, 0, 1, f, this);
   }
-
   return new global.ParallelArray(buffer);
 }
 
@@ -258,29 +272,23 @@ function ParallelArrayReduce(f) {
 }
 
 function ParallelArrayScan(f) {
-  // TODO: Scan needs a new parallel intrinsic.
-  function fill(result, f, source) {
-    var a = source[0];
-
-    for (var i = 1; i < source.length; i++) {
-      a = f(a, source[i]);
-      result[i] = a;
-    }
-  }
-
-  var source = this.buffer;
-  var length = source.length;
+  var length = this.shape[0];
 
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  fill(buffer, f, source);
+  var a = this.get(0);
+  for (var i = 1; i < length; i++) {
+    a = f(a, this.get(i));
+    result[i] = a;
+  }
 
   return new global.ParallelArray(buffer);
 }
 
 function ParallelArrayScatter(targets, zero, f, length) {
+  // TODO: N-dimensional
   // TODO: Parallelize. %ThrowError or any calling of intrinsics isn't safe.
   function fill(result, id, n, targets, zero, f, source) {
     var length = result.length;
@@ -330,21 +338,18 @@ function ParallelArrayScatter(targets, zero, f, length) {
   return new global.ParallelArray(buffer);
 }
 
-// TODO: Parallelize.
 function ParallelArrayFilter(filters) {
-  var source = this.buffer;
-  var length = filters.length;
+  // TODO: Parallelize.
+  var length = this.shape[0];
 
-  if (length >>> 0 !== length)
+  if (filters.length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
-
   for (var i = 0, pos = 0; i < length; i++) {
     if (filters[i])
-      buffer[pos++] = source[i];
+      buffer[pos++] = this.get(i);
   }
-
   return new global.ParallelArray(buffer);
 }
 
@@ -353,30 +358,60 @@ function ParallelArrayFilter(filters) {
 //
 
 function ParallelArrayGet1(i) {
-  return this.buffer[this.bufferOffset + i];
+  var udef; // For some reason `undefined`, doesn't work
+  if (i === udef) {
+    return this;
+  } else {
+    return this.buffer[this.offset + i];
+  }
 }
 
 function ParallelArrayGet2(x, y) {
+  var udef; // For some reason `undefined`, doesn't work
   var yw = this.shape[1];
-  var offset = y + yw * x;
-  return this.buffer[this.bufferOffset + offset];
+  if (x === udef) {
+    return this;
+  } else if (y === udef) {
+    return new global.ParallelArray([yw], buffer, this.offset + yw * x);
+  } else {
+    var offset = y + yw * x;
+    return this.buffer[this.offset + offset];
+  }
 }
 
 function ParallelArrayGet3(x, y, z) {
+  var udef; // For some reason `undefined`, doesn't work
   var yw = this.shape[1];
   var zw = this.shape[2];
-  var offset = z + zw * y + zw * yw * x;
-  return this.buffer[this.bufferOffset + offset];
+  if (x === udef) {
+    return this;
+  } else if (y === udef) {
+    return new global.ParallelArray([yw, zw], buffer, this.offset + yw * zw * z);
+  } else if (z == udef) {
+    return new global.ParallelArray([zw], buffer, this.offset + zw * y + yw * zw * z);
+  } else {
+    var offset = z + zw * y + zw * yw * x;
+    return this.buffer[this.offset + offset];
+  }
 }
 
 function ParallelArrayGetN(...coords) {
-  var products = ComputeProducts(self.shape);
-  var offset = 0;
-  var dimensionality = self.shape.length;
+  if (coords.length == 0)
+    return this;
+
+  var products = ComputeProducts(this.shape);
+  var offset = this.offset;
+  var cdimensionality = coords.length;
+  var sdimensionality = this.shape.length;
   for (var i = 0; i < dimensionality; i++) {
-    offset += coords[i] * products[dimensionality - i - 1];
+    offset += coords[i] * products[sdimensionality - i - 1];
   }
-  return this.buffer[this.bufferOffset + offset];
+  if (cdimensionality < sdimensionality) {
+    var shape = this.shape.slice(cdimensionality);
+    return new global.ParallelArray(shape, buffer, offset);
+  } else {
+    return this.buffer[offset];
+  }
 }
 
 function ParallelArrayLength() {

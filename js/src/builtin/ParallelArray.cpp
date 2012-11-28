@@ -328,7 +328,6 @@ class BuildArrayOp : public ArrayOp
         funArgs_(funArgs),
         funArgc_(funArgc)
     {
-        JS_ASSERT(funArgc <= 2);
         JS_ASSERT(buffer->isDenseArray());
     }
 
@@ -438,7 +437,8 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
 // ParallelArrayObject
 //
 
-FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[3];
+const uint32_t ParallelArrayObject::numCtors;
+FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[numCtors];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
@@ -482,7 +482,7 @@ ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args0 = CallArgsFromVp(argc, vp);
 
     // See comment in ParallelArray.js about splitting constructors.
-    uint32_t whichCtor = args0.length() > 1 ? 2 : args0.length();
+    uint32_t whichCtor = js::Min(args0.length(), numCtors - 1);
     RootedValue ctor(cx, UndefinedValue());
     if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctor))
         return false;
@@ -514,10 +514,11 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
     JS_ASSERT(obj->isNative());
 
     // Cache constructor names.
-    const char *ctorStrs[3] = { "ParallelArrayConstruct0",
-                                "ParallelArrayConstruct1",
-                                "ParallelArrayConstruct2" };
-    for (uint32_t i = 0; i < 3; i++) {
+    const char *ctorStrs[numCtors] = { "ParallelArrayConstruct0",
+                                       "ParallelArrayConstruct1",
+                                       "ParallelArrayConstruct2",
+                                       "ParallelArrayConstruct3" };
+    for (uint32_t i = 0; i < numCtors; i++) {
         JSAtom *atom = Atomize(cx, ctorStrs[i], strlen(ctorStrs[i]), InternAtom);
         if (!atom)
             return NULL;
