@@ -102,6 +102,7 @@
     _(RegExpTest)                   \
     _(Lambda)                       \
     _(LambdaForSingleton)           \
+    _(ParLambda)                    \
     _(ImplicitThis)                 \
     _(Slots)                        \
     _(Elements)                     \

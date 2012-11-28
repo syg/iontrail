@@ -268,6 +268,24 @@ CodeGenerator::visitRegExpTest(LRegExpTest *lir)
     return true;
 }
 
+class OutOfLineParLambda : public OutOfLineCodeBase<CodeGenerator>
+{
+public:
+    LParLambda *lir;
+    gc::AllocKind allocKind;
+    uint32_t thingSize;
+
+    OutOfLineParLambda(LParLambda *lir, gc::AllocKind allocKind, int thingSize)
+        : lir(lir),
+          allocKind(allocKind),
+          thingSize(thingSize)
+    {}
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineParLambda(this);
+    }
+};
+
 typedef JSObject *(*LambdaFn)(JSContext *, HandleFunction, HandleObject);
 static const VMFunction LambdaInfo =
     FunctionInfo<LambdaFn>(js::Lambda);
@@ -318,6 +336,98 @@ CodeGenerator::visitLambda(LLambda *lir)
     masm.storePtr(ImmGCPtr(fun->displayAtom()), Address(output, JSFunction::offsetOfAtom()));
 
     masm.bind(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitParLambda(LParLambda *lir)
+{
+    Register resultReg = ToRegister(lir->output());
+    JSFunction *fun = lir->mir()->fun();
+
+    gc::AllocKind allocKind = fun->getAllocKind();
+    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
+
+    OutOfLineCode *ool = new OutOfLineParLambda(lir, allocKind, thingSize);
+    if (!ool || !addOutOfLineCode(ool))
+        return false;
+
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register scopeChainReg    = ToRegister(lir->scopeChain());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
+    Register tempReg3 = ToRegister(lir->getTemp2());
+
+    // Let FREESPAN denote forkJoinSlice->arenaLists->freeLists[thingKind]
+    // Let FIRST    denote FREESPAN->first
+    // Let LIMIT    denote FREESPAN->last
+
+    // tempReg1 = (FreeSpan*) FREESPAN
+    // tempReg2 = (uintptr_t) FIRST
+    // tempReg3 = (uintptr_t) LIMIT
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)),
+                 tempReg1);
+    uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
+    masm.addPtr(Imm32(freeSpanOffset), tempReg1);
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
+    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
+
+    // if LIMIT <= FIRST, bail to OOL code
+    masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
+    // resultReg = FIRST
+    // FIRST += thingSize
+    masm.movePtr(tempReg2, resultReg);
+    masm.addPtr(Imm32(thingSize), tempReg2);
+    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
+
+    // Slow path joins us here to complete the initialization
+    masm.bind(ool->rejoin());
+    masm.initGCThing(resultReg, fun);
+
+    // TODO: Factor common code with visitLambda
+
+    // Initialize nargs and flags. We do this with a single uint32 to avoid
+    // 16-bit writes.
+    union {
+        struct S {
+            uint16_t nargs;
+            uint16_t flags;
+        } s;
+        uint32_t word;
+    } u;
+    u.s.nargs = fun->nargs;
+    u.s.flags = fun->flags & ~JSFunction::EXTENDED;
+
+    JS_STATIC_ASSERT(offsetof(JSFunction, flags) == offsetof(JSFunction, nargs) + 2);
+    masm.store32(Imm32(u.word), Address(resultReg, offsetof(JSFunction, nargs)));
+    masm.storePtr(ImmGCPtr(fun->script().unsafeGet()),
+                  Address(resultReg, JSFunction::offsetOfNativeOrScript()));
+    masm.storePtr(scopeChainReg, Address(resultReg, JSFunction::offsetOfEnvironment()));
+    masm.storePtr(ImmGCPtr(fun->displayAtom()), Address(resultReg, JSFunction::offsetOfAtom()));
+
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineParLambda(OutOfLineParLambda *ool)
+{
+    LParLambda *lir = ool->lir;
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
+    Register tempReg3 = ToRegister(lir->getTemp2());
+
+    masm.move32(Imm32(ool->allocKind), tempReg1);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
+
+    masm.setupUnalignedABICall(3, tempReg3);
+    masm.passABIArg(threadContextReg);
+    masm.passABIArg(tempReg1);
+    masm.passABIArg(tempReg2);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
+    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
+    masm.jump(ool->rejoin());
+
     return true;
 }
 
@@ -1898,19 +2008,16 @@ CodeGenerator::visitParNew(LParNew *lir)
     uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
     masm.addPtr(Imm32(freeSpanOffset), tempReg1);
 
-    // tempReg2 = (uintptr_t) tempReg1->first
-    // tempReg3 = (uintptr_t) tempReg1->last
+    // If LIMIT <= FIRST, bail to OOL code
     masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
     masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
 
-    // If last <= first, bail to OOL code
     masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
 
-    // tempReg1->first = tempReg2 + thingSize
+    // objReg = FIRST
+    // FIRST += thingSize
     masm.addPtr(Imm32(thingSize), tempReg2);
     masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
-
-    // objReg = tempReg2 - thingSize
     masm.movePtr(tempReg2, objReg);
     masm.subPtr(Imm32(thingSize), objReg);
 

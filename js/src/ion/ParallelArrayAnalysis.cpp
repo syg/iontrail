@@ -294,12 +294,17 @@ ParallelArrayVisitor::visitStart(MStart *ins) {
 // These allocations will take place using per-helper-thread arenas.
 
 bool
-ParallelArrayVisitor::visitLambda(MLambda *lambdaInstruction) {
-    // replace with ParLambda op
+ParallelArrayVisitor::visitLambda(MLambda *ins) {
+    if (ins->fun()->hasSingletonType() ||
+        types::UseNewTypeForClone(ins->fun())) {
+        // slow path: bail on parallel execution.
+        return false;
+    }
+
+    // fast path: replace with ParLambda op
     MDefinition *threadContext = this->threadContext();
-    MParLambda *parLambdaInstruction = MParLambda::New(threadContext,
-                                                       lambdaInstruction);
-    replace(lambdaInstruction, parLambdaInstruction);
+    MParLambda *parLambdaInstruction = MParLambda::New(threadContext, ins);
+    replace(ins, parLambdaInstruction);
     return true;
 }
 

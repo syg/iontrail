@@ -29,6 +29,7 @@ class OutOfLineCache;
 class OutOfLineStoreElementHole;
 class OutOfLineTypeOfV;
 class OutOfLineLoadTypedArray;
+class OutOfLineParLambda;
 class OutOfLineParNew;
 
 class CodeGenerator : public CodeGeneratorSpecific
@@ -69,6 +70,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitRegExpTest(LRegExpTest *lir);
     bool visitLambda(LLambda *lir);
     bool visitLambdaForSingleton(LLambdaForSingleton *lir);
+    bool visitParLambda(LParLambda *lir);
     bool visitPointer(LPointer *lir);
     bool visitSlots(LSlots *lir);
     bool visitStoreSlotV(LStoreSlotV *store);
@@ -201,6 +203,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineBindNameCache(OutOfLineCache *ool);
     bool visitOutOfLineGetNameCache(OutOfLineCache *ool);
 
+    bool visitOutOfLineParLambda(OutOfLineParLambda *ool);
     bool visitOutOfLineParNew(OutOfLineParNew *ool);
 
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins) {

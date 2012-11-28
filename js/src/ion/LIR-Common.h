@@ -1896,6 +1896,45 @@ class LLambda : public LInstructionHelper<1, 1, 0>
     }
 };
 
+// TODO: same notes as LParNew apply here --- this class should not be
+// a CallInstructionHelper, and it should not require so many
+// temporaries.  Both can probably be fixed in tandem.
+class LParLambda : public LCallInstructionHelper<1, 2, 3>
+{
+  public:
+    LIR_HEADER(ParLambda);
+
+    LParLambda(const LAllocation &parThreadContext,
+               const LAllocation &scopeChain,
+               const LDefinition &temp1,
+               const LDefinition &temp2,
+               const LDefinition &temp3) {
+        setOperand(0, parThreadContext);
+        setOperand(1, scopeChain);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+        setTemp(2, temp3);
+    }
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+    const LAllocation *scopeChain() {
+        return getOperand(1);
+    }
+    const MLambda *mir() const {
+        return mir_->toLambda();
+    }
+    const LAllocation *getTemp0() {
+        return getTemp(0)->output();
+    }
+    const LAllocation *getTemp1() {
+        return getTemp(1)->output();
+    }
+    const LAllocation *getTemp2() {
+        return getTemp(2)->output();
+    }
+};
+
 // Determines the implicit |this| value for function calls.
 class LImplicitThis : public LInstructionHelper<BOX_PIECES, 1, 0>
 {

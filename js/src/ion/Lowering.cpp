@@ -1206,6 +1206,20 @@ LIRGenerator::visitLambda(MLambda *ins)
 }
 
 bool
+LIRGenerator::visitParLambda(MParLambda *ins)
+{
+    JS_ASSERT(!ins->fun()->hasSingletonType());
+    JS_ASSERT(!types::UseNewTypeForClone(ins->fun()));
+
+    LParLambda *lir = new LParLambda(useFixed(ins->threadContext(), CallTempReg0),
+                                     useFixed(ins->scopeChain(), CallTempReg1),
+                                     tempFixed(CallTempReg2),
+                                     tempFixed(CallTempReg3),
+                                     tempFixed(CallTempReg4));
+    return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitImplicitThis(MImplicitThis *ins)
 {
     JS_ASSERT(ins->callee()->type() == MIRType_Object);

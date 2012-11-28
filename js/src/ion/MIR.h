@@ -3178,14 +3178,14 @@ class MLambda
 };
 
 class MParLambda
-  : public MUnaryInstruction,
+  : public MBinaryInstruction,
     public SingleObjectPolicy
 {
     CompilerRootFunction fun_;
 
     MParLambda(MDefinition *threadContext,
                MDefinition *scopeChain, JSFunction *fun)
-      : MUnaryInstruction(scopeChain), fun_(fun)
+      : MBinaryInstruction(threadContext, scopeChain), fun_(fun)
     {
         setResultType(MIRType_Object);
     }
@@ -3203,6 +3203,18 @@ class MParLambda
         return New(threadContext,
                    originalInstruction->scopeChain(),
                    originalInstruction->fun());
+    }
+
+    MDefinition *threadContext() const {
+        return getOperand(0);
+    }
+
+    MDefinition *scopeChain() const {
+        return getOperand(1);
+    }
+
+    JSFunction *fun() const {
+        return fun_;
     }
 };
 
