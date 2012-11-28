@@ -187,7 +187,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(GetArgument)
     SAFE_OP(Floor)
     SAFE_OP(Round)
-    SAFE_OP(InstanceOf)
+    UNSAFE_OP(InstanceOf)
     COND_SAFE_OP(InterruptCheck) // FIXME---replace this with a version that bails
 };
 
