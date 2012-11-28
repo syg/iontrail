@@ -1216,7 +1216,7 @@ LIRGenerator::visitParLambda(MParLambda *ins)
                                      tempFixed(CallTempReg2),
                                      tempFixed(CallTempReg3),
                                      tempFixed(CallTempReg4));
-    return define(lir, ins) && assignSafepoint(lir, ins);
+    return defineVMReturn(lir, ins);
 }
 
 bool

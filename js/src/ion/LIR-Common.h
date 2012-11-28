@@ -1921,8 +1921,8 @@ class LParLambda : public LCallInstructionHelper<1, 2, 3>
     const LAllocation *scopeChain() {
         return getOperand(1);
     }
-    const MLambda *mir() const {
-        return mir_->toLambda();
+    const MParLambda *mir() const {
+        return mir_->toParLambda();
     }
     const LAllocation *getTemp0() {
         return getTemp(0)->output();
