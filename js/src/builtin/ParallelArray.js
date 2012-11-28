@@ -173,7 +173,7 @@ function ParallelArrayBuild(self0, shape, f) {
   function fill2(result, id, n, yw, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     var x = (start / yw) | 0;
-    var y = start - x * yw;
+    var y = start - x*yw;
     for (var i = start; i < end; i++) {
       result[i] = f(x, y);
       if (++y == yw) {
@@ -185,10 +185,10 @@ function ParallelArrayBuild(self0, shape, f) {
 
   function fill3(result, id, n, yw, zw, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
-    var x = (start / (yw * zw)) | 0;
-    var r = start - x * yw * zw;
+    var x = (start / (yw*zw)) | 0;
+    var r = start - x*yw*zw;
     var y = (r / yw) | 0;
-    var z = r - y * yw;
+    var z = r - y*yw;
     for (var i = start; i < end; i++) {
       result[i] = f(x, y, z);
       if (++z == zw) {
@@ -372,9 +372,9 @@ function ParallelArrayGet2(x, y) {
   if (x === udef) {
     return this;
   } else if (y === udef) {
-    return new global.ParallelArray([yw], buffer, this.offset + yw * x);
+    return new global.ParallelArray([yw], this.buffer, this.offset + x*yw);
   } else {
-    var offset = y + yw * x;
+    var offset = y + x*yw;
     return this.buffer[this.offset + offset];
   }
 }
@@ -386,11 +386,11 @@ function ParallelArrayGet3(x, y, z) {
   if (x === udef) {
     return this;
   } else if (y === udef) {
-    return new global.ParallelArray([yw, zw], buffer, this.offset + yw * zw * z);
-  } else if (z == udef) {
-    return new global.ParallelArray([zw], buffer, this.offset + zw * y + yw * zw * z);
+    return new global.ParallelArray([yw, zw], this.buffer, this.offset + x*yw*zw);
+  } else if (z === udef) {
+    return new global.ParallelArray([zw], this.buffer, this.offset + y*zw + x*yw*zw);
   } else {
-    var offset = z + zw * y + zw * yw * x;
+    var offset = z + y*zw + x*yw*zw;
     return this.buffer[this.offset + offset];
   }
 }
@@ -408,7 +408,7 @@ function ParallelArrayGetN(...coords) {
   }
   if (cdimensionality < sdimensionality) {
     var shape = this.shape.slice(cdimensionality);
-    return new global.ParallelArray(shape, buffer, offset);
+    return new global.ParallelArray(shape, this.buffer, offset);
   } else {
     return this.buffer[offset];
   }
