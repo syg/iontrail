@@ -78,7 +78,7 @@ function ParallelArrayConstruct1(buffer) {
 
   this.buffer = buffer1;
   this.offset = 0;
-  this.shape = [buffer.length];
+  this.shape = [length];
   this.get = ParallelArrayGet1;
 }
 
@@ -209,7 +209,7 @@ function ParallelArrayBuild(self, shape, f) {
 
 function ParallelArrayMap(f) {
   function fill(result, id, n, f, self) {
-    var [start, end] = ComputeTileBounds(result.length, id, n);
+    var [start, end] = ComputeTileBounds(self.shape[0], id, n);
     for (var i = start; i < end; i++) {
       result[i] = f(self.get(i));
     }
@@ -221,7 +221,7 @@ function ParallelArrayMap(f) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
     fill(buffer, 0, 1, f, this);
   }
-  return new global.ParallelArray(buffer);
+  return new global.ParallelArray([buffer.length], buffer, 0);
 }
 
 function ParallelArrayReduce(f) {
