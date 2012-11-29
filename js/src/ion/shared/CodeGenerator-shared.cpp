@@ -362,6 +362,10 @@ bool
 CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Register *dynStack)
 {
     AssertCanGC();
+
+    // Calls into the VM are not considered safe for parallel execution.
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
+
 #ifdef DEBUG
     if (ins->mirRaw()) {
         JS_ASSERT(ins->mirRaw()->isInstruction());

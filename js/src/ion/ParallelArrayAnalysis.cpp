@@ -38,6 +38,11 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
         return true;                            \
     }
 
+#define SPECIALIZED_OP(op)                                                    \
+    virtual bool visit##op(M##op *ins) {                                      \
+        return visitSpecializedInstruction(ins->specialization());            \
+    }
+
 #define UNSAFE_OP(op)                                               \
     virtual bool visit##op(M##op *prop) {                           \
         IonSpew(IonSpew_ParallelArray, "Unsafe op %s found", #op);  \
@@ -66,6 +71,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
     bool replace(MInstruction *oldInstruction,
                  MInstruction *replacementInstruction);
 
+    bool visitSpecializedInstruction(MIRType spec);
+
   public:
     ParallelArrayVisitor(ParallelCompileContext &compileContext,
                          MBasicBlock *entryBlock)
@@ -84,7 +91,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(TableSwitch)
     SAFE_OP(Goto)
     COND_SAFE_OP(Test)
-    COND_SAFE_OP(Compare)
+    SPECIALIZED_OP(Compare)
     SAFE_OP(Phi)
     SAFE_OP(Beta)
     UNSAFE_OP(OsrValue)
@@ -106,18 +113,18 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(BitXor)
     SAFE_OP(Lsh)
     SAFE_OP(Rsh)
-    SAFE_OP(Ursh)
+    SPECIALIZED_OP(Ursh)
     SAFE_OP(Abs)
     SAFE_OP(Sqrt)
     SAFE_OP(MathFunction)
-    SAFE_OP(Add)
-    SAFE_OP(Sub)
-    SAFE_OP(Mul)
-    SAFE_OP(Div)
-    SAFE_OP(Mod)
-    SAFE_OP(Concat)
-    SAFE_OP(CharCodeAt)
-    SAFE_OP(FromCharCode)
+    SPECIALIZED_OP(Add)
+    SPECIALIZED_OP(Sub)
+    SPECIALIZED_OP(Mul)
+    SPECIALIZED_OP(Div)
+    SPECIALIZED_OP(Mod)
+    UNSAFE_OP(Concat)
+    UNSAFE_OP(CharCodeAt)
+    UNSAFE_OP(FromCharCode)
     SAFE_OP(Return)
     UNSAFE_OP(Throw)
     SAFE_OP(Box)     // Boxing just creates a JSVal, doesn't alloc.
@@ -318,12 +325,7 @@ ParallelArrayVisitor::visitTest(MTest *) {
     return true;
 }
 
-bool
-ParallelArrayVisitor::visitCompare(MCompare *) {
-    return true;
-}
-
-// ___________________________________________________________________________
+/////////////////////////////////////////////////////////////////////////////
 // Thread Context
 //
 // The Thread Context carries "per-helper-thread" information.
@@ -345,7 +347,7 @@ ParallelArrayVisitor::visitStart(MStart *ins) {
     return true;
 }
 
-// ___________________________________________________________________________
+/////////////////////////////////////////////////////////////////////////////
 // Memory allocation
 //
 // Simple memory allocation opcodes---those which ultimately compile
@@ -395,7 +397,7 @@ ParallelArrayVisitor::replace(MInstruction *oldInstruction,
     return true;
 }
 
-// ___________________________________________________________________________
+/////////////////////////////////////////////////////////////////////////////
 // Write Guards
 //
 // We only want to permit writes to locally guarded objects.
@@ -506,7 +508,7 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
     return true;
 }
 
-// ___________________________________________________________________________
+/////////////////////////////////////////////////////////////////////////////
 // Calls
 //
 // We only support calls to interpreted functions that that have already been
@@ -540,7 +542,7 @@ ParallelArrayVisitor::visitCall(MCall *ins)
     return true;
 }
 
-// ___________________________________________________________________________
+/////////////////////////////////////////////////////////////////////////////
 // Stack limit, interrupts
 //
 // In sequential Ion code, the stack limit is stored in the JSRuntime.
@@ -564,5 +566,29 @@ ParallelArrayVisitor::visitInterruptCheck(MInterruptCheck *ins)
     return replace(ins, replacement);
 }
 
+/////////////////////////////////////////////////////////////////////////////
+// Specialized ops
+//
+// Some ops, like +, can be specialized to ints/doubles.  Anything
+// else is terrifying.
+//
+// TODO---Eventually, we should probably permit arbitrary + but bail
+// if the operands are not both integers/floats.
+
+bool
+ParallelArrayVisitor::visitSpecializedInstruction(MIRType spec)
+{
+    switch (spec) {
+      case MIRType_Int32:
+      case MIRType_Double:
+        return true;
+
+      default:
+        IonSpew(IonSpew_ParallelArray, "Instr. not specialized to int or double");
+        return false;
+    }
+}
+
 }
 }
+

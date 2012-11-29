@@ -67,7 +67,8 @@ computeColorMap();
 
 // check that we get correct result
 assertParallelArrayModesCommute(["seq", "par"], function(m) {
-    return new ParallelArray([rows, cols], computeSetByRow, m);
+  r = new ParallelArray([rows, cols], computeSetByRow);
+  return r;
 });
 
 // compare performance

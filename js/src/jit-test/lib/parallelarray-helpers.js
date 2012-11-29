@@ -42,8 +42,8 @@ function assertEqParallelArray(a, b) {
 
   var iv = shape.map(function () { return 0; });
   do {
-    var e1 = a.get(iv);
-    var e2 = b.get(iv);
+    var e1 = a.get.apply(a, iv);
+    var e2 = b.get.apply(b, iv);
     assertStructuralEq(e1, e2);
   } while (bump(iv));
 }

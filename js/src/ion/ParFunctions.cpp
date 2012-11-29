@@ -48,10 +48,13 @@ static void printTrace(const char *prefix, struct IonTraceData *cached) {
 }
 #endif
 
+#ifdef DEBUG
+struct IonTraceData seqTraceData;
+#endif
+
 void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
            const char *opcode) {
 #ifdef DEBUG
-    static struct IonTraceData seqTraceData;
     static enum { NotSet, All, Bailouts } traceMode;
 
     /*
