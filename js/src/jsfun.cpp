@@ -1478,7 +1478,7 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
     RootedFunction clone(cx, cloneobj->toFunction());
 
     clone->nargs = fun->nargs;
-    clone->flags = fun->flags & ~JSFunction::EXTENDED;
+    clone->flags = fun->flags & ~(JSFunction::EXTENDED | JSFunction::CALLSITE_CLONE);
     if (fun->isInterpreted()) {
         clone->initScript(fun->script().unsafeGet());
         clone->initEnvironment(parent);
