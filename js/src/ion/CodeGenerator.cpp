@@ -1978,9 +1978,6 @@ CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
     gc::AllocKind allocKind = templateObj->getAllocKind();
     uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
 
-    if (lir->slots() && !lir->slots()->isRegister())
-        return false;
-
     OutOfLineCode *ool =
         new OutOfLineParNewCallObject(lir, allocKind, thingSize);
     if (!ool || !addOutOfLineCode(ool))
@@ -2014,9 +2011,13 @@ CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
     masm.movePtr(tempReg2, resultReg);
     masm.subPtr(Imm32(thingSize), resultReg);
 
-    if (lir->slots())
-        masm.storePtr(ToRegister(lir->slots()), Address(resultReg, JSObject::offsetOfSlots()));
+    // TO INVESTIGATE: does ! lir->slots()->isRegister() imply that
+    // there is no slots array at all?  And also, do we need to
+    // store a NULL explicitly, or is this memory already zeroed?
 
+    if (lir->slots() && lir->slots()->isRegister()) {
+        masm.storePtr(ToRegister(lir->slots()), Address(resultReg, JSObject::offsetOfSlots()));
+    }
     masm.bind(ool->rejoin());
     masm.initGCThing(resultReg, templateObj);
 
