@@ -10,6 +10,7 @@
 #include "jsapi.h"
 #include "jsobj.h"
 #include "jsarray.h"
+#include "String.h"
 
 #include "vm/GlobalObject.h"
 
@@ -437,8 +438,9 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
 // ParallelArrayObject
 //
 
-const uint32_t ParallelArrayObject::numCtors;
-FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[numCtors];
+const uint32_t ParallelArrayObject::NumCtors;
+FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[NumCtors];
+FixedHeapPtr<PropertyName> ParallelArrayObject::propNames[NumFixedSlots];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
@@ -476,20 +478,53 @@ Class ParallelArrayObject::class_ = {
     JS_ConvertStub
 };
 
-JSBool
+/*static*/ bool
+ParallelArrayObject::initProps(JSContext *cx, HandleObject obj)
+{
+    for (uint32_t slot = 0; slot < NumFixedSlots; slot++) {
+        RootedValue val(cx, (slot == Offset ? JSVAL_ZERO : JSVAL_NULL));
+        if (!JSObject::setProperty(cx, obj, obj, propNames[slot], &val, true))
+            return false;
+    }
+    return true;
+}
+
+/*static*/ JSBool
 ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args0 = CallArgsFromVp(argc, vp);
 
     // See comment in ParallelArray.js about splitting constructors.
-    uint32_t whichCtor = js::Min(args0.length(), numCtors - 1);
+    uint32_t whichCtor = js::Min(args0.length(), NumCtors - 1);
     RootedValue ctor(cx, UndefinedValue());
     if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctor))
         return false;
 
-    RootedObject result(cx, NewBuiltinClassInstance(cx, &class_));
+    gc::AllocKind kind = gc::GetGCObjectKind(NumFixedSlots);
+    RootedObject result(cx, NewBuiltinClassInstance(cx, &class_, kind));
     if (!result)
         return false;
+
+    // Add in the basic PA properties now with default values:
+    if (!initProps(cx, result))
+        return false;
+
+    // Create the type object for the PA.  Add in the current
+    // properties as definite properties if this type object is newly
+    // created.  To tell if it is newly created, we check whether it
+    // has any properties yet or not, since any returned type object
+    // must have been created by this same C++ code and hence would
+    // already have properties if it had been returned before.
+    types::TypeObject *paTypeObject =
+        types::GetTypeCallerInitObject(cx, JSProto_ParallelArray);
+    if (!paTypeObject)
+        return false;
+    if (paTypeObject->getPropertyCount() == 0) {
+        if (!paTypeObject->addDefiniteProperties(cx, result))
+            return false;
+        JS_ASSERT(paTypeObject->getPropertyCount() == NumFixedSlots);
+    }
+    result->setType(paTypeObject);
 
     InvokeArgsGuard args;
     if (!cx->stack.pushInvokeArgs(cx, args0.length(), &args))
@@ -514,15 +549,31 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
     JS_ASSERT(obj->isNative());
 
     // Cache constructor names.
-    const char *ctorStrs[numCtors] = { "ParallelArrayConstruct0",
-                                       "ParallelArrayConstruct1",
-                                       "ParallelArrayConstruct2",
-                                       "ParallelArrayConstruct3" };
-    for (uint32_t i = 0; i < numCtors; i++) {
-        JSAtom *atom = Atomize(cx, ctorStrs[i], strlen(ctorStrs[i]), InternAtom);
-        if (!atom)
-            return NULL;
-        ctorNames[i].init(atom->asPropertyName());
+    {
+        const char *ctorStrs[NumCtors] = { "ParallelArrayConstruct0",
+                                           "ParallelArrayConstruct1",
+                                           "ParallelArrayConstruct2",
+                                           "ParallelArrayConstruct3" };
+        for (uint32_t i = 0; i < NumCtors; i++) {
+            JSAtom *atom = Atomize(cx, ctorStrs[i], strlen(ctorStrs[i]), InternAtom);
+            if (!atom)
+                return NULL;
+            ctorNames[i].init(atom->asPropertyName());
+        }
+    }
+
+    // Cache property names.
+    {
+        const char *propStrs[NumFixedSlots] = { "buffer",
+                                                "offset",
+                                                "shape",
+                                                "get" };
+        for (uint32_t i = 0; i < NumFixedSlots; i++) {
+            JSAtom *atom = Atomize(cx, propStrs[i], strlen(propStrs[i]), InternAtom);
+            if (!atom)
+                return NULL;
+            propNames[i].init(atom->asPropertyName());
+        }
     }
 
     Rooted<GlobalObject *> global(cx, &obj->asGlobal());

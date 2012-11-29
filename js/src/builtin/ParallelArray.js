@@ -59,11 +59,10 @@ function StepIndices(shape, indices) {
 // deoptimizes.
 
 function ParallelArrayConstruct0() {
-  var self = %_SetNonBuiltinCallerInitObjectType(this);
-  self.buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  self.offset = 0;
-  self.shape = [0];
-  self.get = ParallelArrayGet1;
+  this.buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  this.offset = 0;
+  this.shape = [0];
+  this.get = ParallelArrayGet1;
 }
 
 function ParallelArrayConstruct1(buffer) {
@@ -77,11 +76,10 @@ function ParallelArrayConstruct1(buffer) {
     buffer1[i] = buffer[i];
   }
 
-  var self = %_SetNonBuiltinCallerInitObjectType(this);
-  self.buffer = buffer1;
-  self.offset = 0;
-  self.shape = [buffer.length];
-  self.get = ParallelArrayGet1;
+  this.buffer = buffer1;
+  this.offset = 0;
+  this.shape = [buffer.length];
+  this.get = ParallelArrayGet1;
 }
 
 function ParallelArrayConstruct2(shape, f) {
@@ -93,23 +91,21 @@ function ParallelArrayConstruct2(shape, f) {
 }
 
 function ParallelArrayConstruct3(shape, buffer, offset) {
-  var self = %_SetNonBuiltinCallerInitObjectType(this);
-  self.shape = shape;
-  self.buffer = buffer;
-  self.offset = offset;
-  self.get = ParallelArrayGetN;
+  this.shape = shape;
+  this.buffer = buffer;
+  this.offset = offset;
+  this.get = ParallelArrayGetN;
 
   if (shape.length == 1) {
-    self.get = ParallelArrayGet1;
+    this.get = ParallelArrayGet1;
   } else if (shape.length == 2) {
-    self.get = ParallelArrayGet2;
+    this.get = ParallelArrayGet2;
   } else if (shape.length == 3) {
-    self.get = ParallelArrayGet3;
+    this.get = ParallelArrayGet3;
   }
 }
 
-function ParallelArrayBuild(self0, shape, f) {
-  var self = %_SetNonBuiltinCallerInitObjectType(self0);
+function ParallelArrayBuild(self, shape, f) {
   self.shape = shape;
   self.offset = 0;
 
