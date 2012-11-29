@@ -45,6 +45,24 @@ ReportAtomNotDefined(JSContext *cx, JSAtom *atom)
         }                                                                     \
     JS_END_MACRO
 
+inline bool
+stubs::UncachedCallResult::setFunction(JSContext *cx, CallArgs &args,
+                                       HandleScript callScript, jsbytecode *callPc)
+{
+    if (!IsFunctionObject(args.calleev(), fun.address()))
+        return true;
+
+    if (fun->shouldCloneAtCallsite()) {
+        original = fun;
+        fun = CloneFunctionAtCallsite(cx, original, callScript, callPc);
+        if (!fun)
+            return false;
+        args.setCallee(ObjectValue(*fun));
+    }
+
+    return true;
+}
+
 }}
 
 #endif /* jslogic_h__ */

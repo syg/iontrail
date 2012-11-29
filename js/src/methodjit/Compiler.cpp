@@ -1652,6 +1652,7 @@ mjit::Compiler::finishThisUp()
     chunk->nCallICs = callICs.length();
     cursor += sizeof(ic::CallICInfo) * chunk->nCallICs;
     for (size_t i = 0; i < chunk->nCallICs; i++) {
+        jitCallICs[i].funGuardLabel = fullCode.locationOf(callICs[i].funGuardLabel);
         jitCallICs[i].funGuard = fullCode.locationOf(callICs[i].funGuard);
         jitCallICs[i].funJump = fullCode.locationOf(callICs[i].funJump);
         jitCallICs[i].slowPathStart = stubCode.locationOf(callICs[i].slowPathStart);
@@ -4440,6 +4441,7 @@ mjit::Compiler::inlineCallHelper(uint32_t argc, bool callingNew, FrameSize &call
      * callee is scripted, compiled/compilable, and argc == nargs, then this
      * guard is patched, and the compiled code address is baked in.
      */
+    callIC.funGuardLabel = masm.label();
     Jump j = masm.branchPtrWithPatch(Assembler::NotEqual, icCalleeData, callIC.funGuard);
     callIC.funJump = j;
 
