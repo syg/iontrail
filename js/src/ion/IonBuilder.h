@@ -183,9 +183,12 @@ class IonBuilder : public MIRGenerator
         return js_IonOptions.inlining;
     }
 
-    JSFunction *getSingleCallTarget(uint32 argc, jsbytecode *pc);
-    unsigned getPolyCallTargets(uint32 argc, jsbytecode *pc,
-                                AutoObjectVector &targets, uint32_t maxTargets);
+    bool getSingleCallTarget(uint32 argc, jsbytecode *pc, MutableHandleFunction target,
+                             bool *isClone = NULL);
+    bool getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
+                             bool *isClone = NULL);
+    bool getPolyCallTargets(uint32 argc, jsbytecode *pc, AutoObjectVector &targets,
+                            bool *hasClones, uint32_t maxTargets);
     bool canInlineTarget(JSFunction *target);
 
     void popCfgStack();
