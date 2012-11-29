@@ -22,6 +22,13 @@ function assertStructuralEq(e1, e2) {
     }
 }
 
+function assertEqParallelArrayArray(a, b) {
+  assertEq(a.shape.length, 1);
+  for (var i = 0, l = a.shape[0]; i < l; i++) {
+    assertEq(a.get(i), b[i]);
+  }
+}
+
 function assertEqParallelArray(a, b) {
   assertEq(a instanceof ParallelArray, true);
   assertEq(b instanceof ParallelArray, true);
