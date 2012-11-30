@@ -2,6 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+function assertAlmostEq(v1, v2) {
+  // + and other fp ops can vary somewhat when run in parallel!
+  assertEq(typeof v1, "number");
+  assertEq(typeof v2, "number");
+  var diff = Math.abs(v1 - v2);
+  var percent = diff / v1 * 100.0;
+  print("v1 = " + v1);
+  print("v2 = " + v2);
+  print("% diff = " + percent);
+  assertEq(percent < 1e-10, true); // off by an less than 1e-10%...good enough.
+}
+
 function assertStructuralEq(e1, e2) {
     if (e1 instanceof ParallelArray && e2 instanceof ParallelArray) {
       assertEqParallelArray(e1, e2);
