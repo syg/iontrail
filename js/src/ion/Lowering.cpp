@@ -190,18 +190,21 @@ LIRGenerator::visitNewCallObject(MNewCallObject *ins)
 bool
 LIRGenerator::visitParNewCallObject(MParNewCallObject *ins)
 {
-    LAllocation slots;
-    if (ins->slots()->type() == MIRType_Slots)
-        slots = useFixed(ins->slots(), CallTempReg4);
-    else
-        slots = LConstantIndex::Bogus();
+    const LAllocation &parThreadContext =
+        useFixed(ins->threadContext(), CallTempReg0);
+    const LDefinition &temp1 = tempFixed(CallTempReg1);
+    const LDefinition &temp2 = tempFixed(CallTempReg2);
+    const LDefinition &temp3 = tempFixed(CallTempReg3);
 
-    LParNewCallObject *lir =
-        new LParNewCallObject(useFixed(ins->threadContext(), CallTempReg0),
-                              slots,
-                              tempFixed(CallTempReg1),
-                              tempFixed(CallTempReg2),
-                              tempFixed(CallTempReg3));
+    LParNewCallObject *lir;
+    if (ins->slots()->type() == MIRType_Slots) {
+        const LAllocation &slots = useFixed(ins->slots(), CallTempReg4);
+        lir = LParNewCallObject::NewWithSlots(parThreadContext, slots,
+                                              temp1, temp2, temp3);
+    } else {
+        lir = LParNewCallObject::NewSansSlots(parThreadContext,
+                                              temp1, temp2, temp3);
+    }
 
     return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
 }

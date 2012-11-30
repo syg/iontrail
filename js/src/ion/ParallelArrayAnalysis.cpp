@@ -118,7 +118,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ToInt32)
     SAFE_OP(TruncateToInt32)
     UNSAFE_OP(ToString)
-    UNSAFE_OP(NewSlots)
+    SAFE_OP(NewSlots)
     COND_SAFE_OP(NewArray)
     COND_SAFE_OP(NewObject)
     COND_SAFE_OP(NewCallObject)

@@ -334,11 +334,6 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
 
 class LParNewCallObject : public LCallInstructionHelper<1, 2, 3>
 {
-public:
-    LIR_HEADER(ParNewCallObject);
-
-    bool hasSlots;
-
     LParNewCallObject(const LAllocation &parThreadContext,
                       const LAllocation &slots,
                       const LDefinition &temp1,
@@ -351,12 +346,39 @@ public:
         setTemp(2, temp3);
     }
 
+public:
+    LIR_HEADER(ParNewCallObject);
+
+    static LParNewCallObject *NewWithSlots(const LAllocation &parThreadContext,
+                                           const LAllocation &slots,
+                                           const LDefinition &temp1,
+                                           const LDefinition &temp2,
+                                           const LDefinition &temp3) {
+        return new LParNewCallObject(parThreadContext, slots, temp1, temp2, temp3);
+    }
+
+    static LParNewCallObject *NewSansSlots(const LAllocation &parThreadContext,
+                                           const LDefinition &temp1,
+                                           const LDefinition &temp2,
+                                           const LDefinition &temp3) {
+        LAllocation slots = LConstantIndex::Bogus();
+        return new LParNewCallObject(parThreadContext, slots, temp1, temp2, temp3);
+    }
+
     const LAllocation *threadContext() {
         return getOperand(0);
     }
 
     const LAllocation *slots() {
-        return hasSlots ? getOperand(1) : NULL;
+        return getOperand(1);
+    }
+
+    const bool hasDynamicSlots() {
+        // TO INVESTIGATE: Felix tried using isRegister() method here,
+        // but for useFixed(_, CallTempN), isRegister() is false (and
+        // isUse() is true).  So for now ignore that and try to match
+        // the LConstantIndex::Bogus() generated above instead.
+        return slots() && ! slots()->isConstant();
     }
 
     const MParNewCallObject *mir() const {
