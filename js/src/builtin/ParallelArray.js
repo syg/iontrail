@@ -375,7 +375,7 @@ function ParallelArrayPartition(amount) {
   if (partitions * amount !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
 
-  var shape = [amount, partitions];
+  var shape = [partitions, amount];
   for (var i = 1; i < this.shape.length; i++)
     shape.push(this.shape[i]);
   return new global.ParallelArray(shape, this.buffer, this.offset);
