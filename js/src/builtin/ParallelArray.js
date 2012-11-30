@@ -463,7 +463,18 @@ function ParallelArrayLength() {
 }
 
 function ParallelArrayToString() {
-  return this.buffer.toString();
+  var l = this.length;
+  if (l == 0)
+    return "<>";
+
+  var result = "<";
+  for (var i = 0; i < l - 1; i++) {
+    result += this.get(i).toString();
+    result += ",";
+  }
+  result += this.get(l-1).toString();
+  result += ">";
+  return result;
 }
 
 // Unit Test Functions
