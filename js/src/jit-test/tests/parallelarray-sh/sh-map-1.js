@@ -19,7 +19,7 @@ function testMap() {
   }
 
   var array = [];
-  for (var i = 1; i <= 10*1024*1024; i++) array.push(i % 256);
+  for (var i = 1; i <= 1024*1024; i++) array.push(i % 256);
 
   print("## testMap");
   print("# warmup");

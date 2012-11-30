@@ -8,6 +8,14 @@
 
 var nc = 30, maxCol = nc*3, cr,cg,cb;
 
+function measure(f) {
+  var start = new Date();
+  result = f();
+  var end = new Date();
+  print("Time required: ", end.getTime() - start.getTime());
+  return result;
+}
+
 // this is the actual mandelbrot computation, ported to JavaScript
 // from the WebCL / OpenCL example at
 // http://www.ibiblio.org/e-notes/webcl/mandelbrot.html
@@ -54,10 +62,14 @@ var scale = 10000*300;
 var rows = 1024;
 var cols = 1024;
 
+var seq, par;
+
 print("Sequential");
-var seq = computeSequentially();
+for (var i = 0; i < 10; i++)
+  seq = measure(function () { return computeSequentially(); });
 print("Parallel");
-var par = computeParallel();
+for (var i = 0; i < 10; i++)
+  par = measure(function() { return computeParallel(); });
 print("Compare");
 for (var i = 0; i < 10; i++) {
   compare(seq, par);
