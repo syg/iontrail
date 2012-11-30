@@ -365,6 +365,22 @@ function ParallelArrayFilter(filters) {
   return new global.ParallelArray(buffer);
 }
 
+function ParallelArrayPartition(amount) {
+  if (amount >>> 0 !== amount)
+    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
+  
+  var length = this.shape[0];
+  var partitions = (length / amount) | 0;
+  
+  if (partitions * amount !== length)
+    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
+
+  var shape = [amount, partitions];
+  for (var i = 1; i < this.shape.length; i++)
+    shape.push(this.shape[i]);
+  return new global.ParallelArray(shape, this.buffer, this.offset);
+}
+
 //
 // Accessors and utilities.
 //

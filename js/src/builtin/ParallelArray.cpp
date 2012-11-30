@@ -443,11 +443,12 @@ FixedHeapPtr<PropertyName> ParallelArrayObject::propNames[NumFixedSlots];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
-    { "map",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayMap"      },
-    { "reduce",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayReduce"   },
-    { "scan",     JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScan"     },
-    { "scatter",  JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScatter"  },
-    { "filter",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayFilter"   },
+    { "map",       JSOP_NULLWRAPPER, 1, 0, "ParallelArrayMap"       },
+    { "reduce",    JSOP_NULLWRAPPER, 1, 0, "ParallelArrayReduce"    },
+    { "scan",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScan"      },
+    { "scatter",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScatter"   },
+    { "filter",    JSOP_NULLWRAPPER, 1, 0, "ParallelArrayFilter"    },
+    { "partition", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayPartition" },
     /*{ "get",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayGet" },*/
     { "toString", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayToString" },
     JS_FS_END
