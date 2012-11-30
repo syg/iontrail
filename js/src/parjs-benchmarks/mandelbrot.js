@@ -8,13 +8,7 @@
 
 var nc = 30, maxCol = nc*3, cr,cg,cb;
 
-function measure(f) {
-  var start = new Date();
-  result = f();
-  var end = new Date();
-  print("Time required: ", end.getTime() - start.getTime());
-  return result;
-}
+load(libdir + "util.js");
 
 // this is the actual mandelbrot computation, ported to JavaScript
 // from the WebCL / OpenCL example at
@@ -47,7 +41,7 @@ function computeSequentially() {
 function computeParallel() {
   return new ParallelArray([rows, cols], function(r, c) {
     return computeSetByRow(c, r);
-  }); 
+  }).flatten();
 }
 
 function compare(arrs, pas) {
@@ -62,15 +56,6 @@ var scale = 10000*300;
 var rows = 1024;
 var cols = 1024;
 
-var seq, par;
-
-print("Sequential");
-for (var i = 0; i < 10; i++)
-  seq = measure(function () { return computeSequentially(); });
-print("Parallel");
-for (var i = 0; i < 10; i++)
-  par = measure(function() { return computeParallel(); });
-print("Compare");
-for (var i = 0; i < 10; i++) {
-  compare(seq, par);
-}
+// Experimentally, warmup doesn't seem to be necessary:
+benchmark("MANDELBROT", 1, DEFAULT_MEASURE,
+          computeSequentially, computeParallel);
