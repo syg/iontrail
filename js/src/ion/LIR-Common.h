@@ -2637,11 +2637,10 @@ class LCallGetIntrinsicValue : public LCallInstructionHelper<BOX_PIECES, 0, 0>
     }
 };
 
-class LCallsiteCloneCache : public LInstructionHelper<BOX_PIECES, 1, 0>
+class LCallsiteCloneCache : public LInstructionHelper<1, 1, 0>
 {
   public:
     LIR_HEADER(CallsiteCloneCache);
-    BOX_OUTPUT_ACCESSORS();
 
     LCallsiteCloneCache(const LAllocation &callee) {
         setOperand(0, callee);
