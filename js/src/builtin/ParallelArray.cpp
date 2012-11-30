@@ -449,6 +449,7 @@ JSFunctionSpec ParallelArrayObject::methods[] = {
     { "scatter",   JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScatter"   },
     { "filter",    JSOP_NULLWRAPPER, 1, 0, "ParallelArrayFilter"    },
     { "partition", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayPartition" },
+    { "flatten",   JSOP_NULLWRAPPER, 0, 0, "ParallelArrayFlatten" },
     /*{ "get",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayGet" },*/
     { "toString", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayToString" },
     JS_FS_END

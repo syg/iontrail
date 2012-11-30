@@ -381,6 +381,16 @@ function ParallelArrayPartition(amount) {
   return new global.ParallelArray(shape, this.buffer, this.offset);
 }
 
+function ParallelArrayFlatten() {
+  if (this.shape.length < 2)
+    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
+
+  var shape = [this.shape[0] * this.shape[1]];
+  for (var i = 2; i < this.shape.length; i++)
+    shape.push(this.shape[i]);
+  return new global.ParallelArray(shape, this.buffer, this.offset);
+}
+
 //
 // Accessors and utilities.
 //
@@ -449,7 +459,7 @@ function ParallelArrayGetN(...coords) {
 }
 
 function ParallelArrayLength() {
-  return this.buffer.length;
+  return this.shape[0];
 }
 
 function ParallelArrayToString() {
