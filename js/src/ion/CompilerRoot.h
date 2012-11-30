@@ -50,6 +50,7 @@ class CompilerRoot : public CompilerRootNode
 
 typedef CompilerRoot<JSObject*>   CompilerRootObject;
 typedef CompilerRoot<JSFunction*> CompilerRootFunction;
+typedef CompilerRoot<JSScript*> CompilerRootScript;
 typedef CompilerRoot<PropertyName*> CompilerRootPropertyName;
 typedef CompilerRoot<Value> CompilerRootValue;
 

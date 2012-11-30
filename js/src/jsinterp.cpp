@@ -2343,6 +2343,7 @@ BEGIN_CASE(JSOP_FUNCALL)
         fun = CloneFunctionAtCallsite(cx, fun, script, regs.pc);
         if (!fun)
             goto error;
+        args.setCallee(ObjectValue(*fun));
     }
 
     /* Don't bother trying to fast-path calls to scripted non-constructors. */

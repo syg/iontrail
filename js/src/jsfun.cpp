@@ -1478,7 +1478,7 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
     RootedFunction clone(cx, cloneobj->toFunction());
 
     clone->nargs = fun->nargs;
-    clone->flags = fun->flags & ~JSFunction::EXTENDED;
+    clone->flags = fun->flags & ~(JSFunction::EXTENDED | JSFunction::CALLSITE_CLONE);
     if (fun->isInterpreted()) {
         clone->initScript(fun->script().unsafeGet());
         clone->initEnvironment(parent);
@@ -1558,8 +1558,8 @@ js_DefineFunction(JSContext *cx, HandleObject obj, HandleId id, Native native,
         JS_ASSERT(!cx->runtime->isSelfHostedGlobal(cx->global()));
         fun = cx->runtime->getSelfHostedFunction(cx, selfHostedName);
         fun->initAtom(JSID_TO_ATOM(id));
-        if (flags & JSFUN_CLONE_CALLSITE) {
-            fun->flags |= JSFunction::CLONE_CALLSITE;
+        if (flags & JSFUN_CALLSITE_CLONE) {
+            fun->flags |= JSFunction::CALLSITE_CLONE;
         }
     }
     if (!fun)
