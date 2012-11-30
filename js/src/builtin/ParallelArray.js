@@ -272,10 +272,7 @@ function ParallelArrayReduce(f) {
   function fill(result, id, n, warmup, self, f) {
     var [start, end] = ComputeTileBounds(self.length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
-    var a = self.get(start);
-    for (var i = start+1; i < end; i++)
-      a = f(a, self.get(i));
-    result[id] = a;
+    result[id] = reduce(self, start, end, f);
   }
 
   var threads = %_GetThreadPoolInfo().numThreads;
@@ -285,6 +282,8 @@ function ParallelArrayReduce(f) {
     // reduce empty spans of the source array.
     var subreductions = %ParallelBuildArray(threads, fill, this, f);
     if (subreductions) {
+      // can't use reduce because subreductions is an array, not a
+      // parallel array:
       var a = subreductions[0];
       for (var i = 1; i < subreductions.length; i++)
         a = f(a, subreductions[i]);

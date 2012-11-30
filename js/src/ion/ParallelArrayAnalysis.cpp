@@ -281,12 +281,12 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
     // functions (such as the kernel itself) to be collected.  In this
     // event, we give up and fallback to sequential for now.
     if (!kernel->script()->hasParallelIonScript()) {
-        IonSpew(IonSpew_ParallelArray, "Kernel script was garbage-collected");
+        IonSpew(IonSpew_ParallelArray, "Kernel script was garbage-collected or invalidated");
         return Method_Skipped;
     }
     for (size_t i = 0; i < invokedFunctions_.length(); i++) {
         if (!invokedFunctions_[i]->toFunction()->script()->hasParallelIonScript()) {
-            IonSpew(IonSpew_ParallelArray, "Invoked script was garbage-collected");
+            IonSpew(IonSpew_ParallelArray, "Invoked script was garbage-collected or invalidated");
             return Method_Skipped;
         }
     }
