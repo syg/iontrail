@@ -241,46 +241,54 @@ function ParallelArrayMap(f) {
 }
 
 function ParallelArrayReduce(f) {
-  var source = this.buffer;
-  var length = source.length;
+  var length = this.length;
 
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  function reduce(source, start, end, f) {
+  function reduce(self, start, end, f) {
     // The accumulator: the objet petit a.
     //
     // "A VM's accumulator register is Objet petit a: the unattainable object
     // of desire that sets in motion the symbolic movement of interpretation."
     //     -- PLT Zizek
-    var a = source[start];
+    var a = self.get(start);
     for (var i = start+1; i < end; i++)
-      a = f(a, source[i]);
+      a = f(a, self.get(i));
     return a;
   }
 
-  function fill(result, id, n, source, f) {
-    // Mildly awkward: in the real parallel phase, there will be
-    // precisely one entry in result per worker.  But in the warmup
-    // phase, that is not so!  Therefore, we store the reduced version
-    // into |id % result.length| so as to ensure that in the warmup
-    // phase |id| never exceeds the length of result.
-    var [start, end] = ComputeTileBounds(source.length, id, n);
-    //result[id % result.length] = reduce(source, start, end, f);
-
-    var a = source[start];
+  function fill(result, id, n, self, f) {
+    // Awkward: in the real parallel phase, there will be precisely
+    // one entry in result per worker.  But in the warmup phase, that
+    // is not so!  Therefore, we store the reduced version into |id %
+    // result.length| so as to ensure that in the warmup phase |id|
+    // never exceeds the length of result.
+    //
+    // We really want a different primitive here (or a different approach
+    // to warmup).
+    var [start, end] = ComputeTileBounds(self.length, id, n);
+    var a = self.get(start);
     for (var i = start+1; i < end; i++)
-      a = f(a, source[i]);
+      a = f(a, self.get(i));
     result[id % result.length] = a;
   }
 
   var threads = %_GetThreadPoolInfo().numThreads;
-  var subreductions = %ParallelBuildArray(threads, fill, source, f);
-  if (subreductions) {
-    return reduce(subreductions, 0, subreductions.length, f);
-  } else {
-    return reduce(source, 0, length, f);
+  if (length > threads) {
+    // Attempt parallel reduction, but only if there is at least one
+    // element per thread.  Otherwise the various threads having to
+    // reduce empty spans of the source array.
+    var subreductions = %ParallelBuildArray(threads, fill, this, f);
+    if (subreductions) {
+      var a = subreductions[0];
+      for (var i = 1; i < subreductions.length; i++)
+        a = f(a, subreductions[i]);
+      return a;
+    }
   }
+
+  return reduce(this, 0, length, f);
 }
 
 function ParallelArrayScan(f) {
