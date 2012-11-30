@@ -15,6 +15,12 @@ function ComputeTileBounds(len, id, n) {
   return [start, end];
 }
 
+function TruncateEnd(start, end) {
+  var end1 = start + 3;
+  if (end1 < end) return end1;
+  return end;
+}
+
 function ComputeProducts(shape) {
   // Compute the partial products in reverse order.
   // e.g., if the shape is [A,B,C,D], then the
@@ -128,7 +134,7 @@ function ParallelArrayBuild(self, shape, f) {
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
-      fill1(buffer, 0, 1, f);
+      fill1(buffer, 0, 1, false, f);
     }
 
     self.get = ParallelArrayGet1;
@@ -139,7 +145,7 @@ function ParallelArrayBuild(self, shape, f) {
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
-      fill2(buffer, 0, 1, shape[1], f);
+      fill2(buffer, 0, 1, false, shape[1], f);
     }
 
     self.get = ParallelArrayGet2;
@@ -150,7 +156,7 @@ function ParallelArrayBuild(self, shape, f) {
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
-      fill3(buffer, 0, 1, shape[1], shape[2], f);
+      fill3(buffer, 0, 1, false, shape[1], shape[2], f);
     }
 
     self.get = ParallelArrayGet3;
@@ -165,22 +171,24 @@ function ParallelArrayBuild(self, shape, f) {
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
-      fillN(buffer, 0, 1, shape, f);
+      fillN(buffer, 0, 1, false, shape, f);
     }
 
     self.get = ParallelArrayGetN;
     self.buffer = buffer;
   }
 
-  function fill1(result, id, n, f) {
+  function fill1(result, id, n, warmup, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
-    for (var i = start; i < end; i++) {
+    if (warmup) { end = TruncateEnd(start, end); }
+    for (var i = start; i < end; i += step) {
       result[i] = f(i);
     }
   }
 
-  function fill2(result, id, n, yw, f) {
+  function fill2(result, id, n, warmup, yw, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
     var x = (start / yw) | 0;
     var y = start - x*yw;
     for (var i = start; i < end; i++) {
@@ -192,8 +200,9 @@ function ParallelArrayBuild(self, shape, f) {
     }
   }
 
-  function fill3(result, id, n, yw, zw, f) {
+  function fill3(result, id, n, warmup, yw, zw, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
     var x = (start / (yw*zw)) | 0;
     var r = start - x*yw*zw;
     var y = (r / zw) | 0;
@@ -210,11 +219,12 @@ function ParallelArrayBuild(self, shape, f) {
     }
   }
 
-  function fillN(result, id, n, shape, f) {
+  function fillN(result, id, n, warmup, shape, f) {
     // NB: In fact this will not currently be parallelized due to the
     // use of `f.apply()`.  But it's written as if it could be.  A guy
     // can dream, can't he?
     var [start, end] = ComputeTileBounds(result.length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
     var indices = ComputeIndices(shape, start);
     for (var i = start; i < end; i++) {
       result[i] = f.apply(null, indices);
@@ -224,18 +234,19 @@ function ParallelArrayBuild(self, shape, f) {
 }
 
 function ParallelArrayMap(f) {
-  function fill(result, id, n, f, self) {
-    var [start, end] = ComputeTileBounds(self.shape[0], id, n);
+  function fill(result, id, n, warmup, self, f, length) {
+    var [start, end] = ComputeTileBounds(length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++) {
       result[i] = f(self.get(i));
     }
   }
 
   var length = this.shape[0];
-  var buffer = %ParallelBuildArray(length, fill, f, this);
+  var buffer = %ParallelBuildArray(length, fill, this, f, length);
   if (!buffer) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
-    fill(buffer, 0, 1, f, this);
+    fill(buffer, 0, 1, false, this, f, length);
   }
   return new global.ParallelArray([buffer.length], buffer, 0);
 }
@@ -258,20 +269,13 @@ function ParallelArrayReduce(f) {
     return a;
   }
 
-  function fill(result, id, n, self, f) {
-    // Awkward: in the real parallel phase, there will be precisely
-    // one entry in result per worker.  But in the warmup phase, that
-    // is not so!  Therefore, we store the reduced version into |id %
-    // result.length| so as to ensure that in the warmup phase |id|
-    // never exceeds the length of result.
-    //
-    // We really want a different primitive here (or a different approach
-    // to warmup).
+  function fill(result, id, n, warmup, self, f) {
     var [start, end] = ComputeTileBounds(self.length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
     var a = self.get(start);
     for (var i = start+1; i < end; i++)
       a = f(a, self.get(i));
-    result[id % result.length] = a;
+    result[id] = a;
   }
 
   var threads = %_GetThreadPoolInfo().numThreads;

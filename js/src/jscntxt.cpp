@@ -63,6 +63,7 @@
 #include "jscompartment.h"
 #include "jsobjinlines.h"
 #include "jsinferinlines.h"
+#include "vm/forkjoininlines.h"
 
 #include "selfhosted.out.h"
 
@@ -376,12 +377,15 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
 static JSBool
 intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 {
-    void dumpValue(const Value &v); // in jsobj.cpp
-
     CallArgs args = CallArgsFromVp(argc, vp);
+
+#ifdef DEBUG
+    void dumpValue(const Value &v); // in jsobj.cpp
     RootedValue val(cx, args[0]);
     dumpValue(val);
     fprintf(stderr, "\n");
+#endif
+
     args.rval().setUndefined();
     return true;
 }

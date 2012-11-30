@@ -114,6 +114,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(Lsh)
     SAFE_OP(Rsh)
     SPECIALIZED_OP(Ursh)
+    SPECIALIZED_OP(MinMax)
     SAFE_OP(Abs)
     SAFE_OP(Sqrt)
     SAFE_OP(MathFunction)

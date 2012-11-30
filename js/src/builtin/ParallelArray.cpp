@@ -291,7 +291,7 @@ class ArrayOp : public ForkJoinOp
             // some data to work with and to record all functions called.
             ParallelCompileContext compileContext(cx_);
             ion::js_IonOptions.startParallelWarmup(&compileContext);
-            if (!warmup(3))
+            if (!warmup())
                 return Method_Error;
 
             // If warmup returned false, assume that we finished warming up.
@@ -299,16 +299,15 @@ class ArrayOp : public ForkJoinOp
 
             // After warming up, compile the outer kernel as a special
             // self-hosted kernel that can unsafely write to the buffer.
+            Spew(cx_, SpewOps, "%s: compilation", name_);
             return compileContext.compileKernelAndInvokedFunctions(callee);
         }
 
         return Method_Compiled;
     }
 
-    virtual bool warmup(uint32_t limit) { return true; }
-    virtual bool pre(size_t numThreads) { return true; }
+    virtual bool warmup() { return true; }
     virtual bool parallel(ForkJoinSlice &slice) = 0;
-    virtual bool post(size_t numThreads) { return true; }
 };
 
 static inline bool
@@ -318,6 +317,8 @@ InWarmup() {
 
 class BuildArrayOp : public ArrayOp
 {
+    static const uint32_t baseArgc = 4;
+
     Value *funArgs_;
     uint32_t funArgc_;
 
@@ -331,15 +332,13 @@ class BuildArrayOp : public ArrayOp
         JS_ASSERT(buffer->isDenseArray());
     }
 
-    bool warmup(uint32_t limit) {
+    bool warmup() {
         JS_ASSERT(InWarmup());
 
-        // Warm up with a high enough (and fake) number of threads so that
-        // we don't run for too long.
-        uint32_t numThreads = buffer_->getArrayLength() / limit;
+        Spew(cx_, SpewOps, "%s: warmup phase", name_);
 
         InvokeArgsGuard args;
-        if (!cx_->stack.pushInvokeArgs(cx_, 3 + funArgc_, &args))
+        if (!cx_->stack.pushInvokeArgs(cx_, baseArgc + funArgc_, &args))
             return false;
 
         args.setCallee(ObjectValue(*fun_));
@@ -347,9 +346,10 @@ class BuildArrayOp : public ArrayOp
 
         args[0].setObject(*buffer_);
         args[1].setInt32(0);
-        args[2].setInt32(numThreads);
+        args[2].setInt32(ForkJoinSlices(cx_));
+        args[3].setBoolean(true); // warmup
         for (uint32_t i = 0; i < funArgc_; i++)
-            args[3 + i] = funArgs_[i];
+            args[baseArgc + i] = funArgs_[i];
 
         if (!Invoke(cx_, args))
             return false;
@@ -358,25 +358,21 @@ class BuildArrayOp : public ArrayOp
         return true;
     }
 
-    bool pre(size_t numThreads) {
-        return buffer_->getDenseArrayInitializedLength() >= numThreads;
-    }
-
     bool parallel(ForkJoinSlice &slice) {
-        // Setting maximum argc at 7: the constructor uses 1 extra (the
-        // kernel); map, reduce, scan use 2 extra (the kernel and the source
-        // array); scatter uses 4 extra (the kernel, the default value, the
-        // conflict resolution function, and the source array).
+        // Setting maximum argc at 10, since it is more than we
+        // actually use in practice.  If you add parameters, you may
+        // have to adjust this.
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);
-        FastestIonInvoke<7> fii(cx_, fun, funArgc_ + 3);
+        FastestIonInvoke<10> fii(cx_, fun, funArgc_ + baseArgc);
 
         // The first 3 arguments: buffer, thread id, and number of threads.
         fii.args[0] = ObjectValue(*buffer_);
         fii.args[1] = Int32Value(slice.sliceId);
         fii.args[2] = Int32Value(slice.numSlices);
+        fii.args[3] = BooleanValue(false); // warmup
         for (uint32_t i = 0; i < funArgc_; i++)
-            fii.args[3 + i] = funArgs_[i];
+            fii.args[baseArgc + i] = funArgs_[i];
         return fii.invoke();
     }
 };
@@ -396,20 +392,24 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
     uint32_t length;
     if (!ToUint32(cx, args[0], &length))
         return ExecutionFatal;
+
+    if (length < ForkJoinSlices(cx))
+        return ExecutionDisqualified;
+
     RootedObject fun(cx, &args[1].toObject());
 
     // Make a new buffer and initialize it up to length.
     RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
     if (!buffer)
         return ExecutionFatal;
+
+    types::TypeObject *newtype = types::GetTypeCallerInitObject(cx, JSProto_Array);
+    if (!newtype)
+        return ExecutionFatal;
+    buffer->setType(newtype);
+
     JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
     if (edr != JSObject::ED_OK)
-        return ExecutionFatal;
-
-    NonBuiltinScriptFrameIter iter(cx);
-    JS_ASSERT(!iter.done());
-    RootedScript script(cx, iter.script());
-    if (!types::SetInitializerObjectType(cx, script, iter.pc(), buffer))
         return ExecutionFatal;
 
     BuildArrayOp op(cx, buffer, fun, args.array() + 2, args.length() - 2);
