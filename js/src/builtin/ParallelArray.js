@@ -16,27 +16,40 @@ function ComputeTileBounds(len, id, n) {
 }
 
 function ComputeProducts(shape) {
-  var l = shape.length;
-  var products = [];
+  // Compute the partial products in reverse order.
+  // e.g., if the shape is [A,B,C,D], then the
+  // array |products| will be [1,D,CD,BCD].
   var product = 1;
-  for (var i = 0; i < l; i++) {
-    products[i] = product;
-    product = product * shape[i];
+  var products = [];
+  var sdimensionality = shape.length;
+  for (var i = sdimensionality - 1; i >= 0; i--) {
+    products.push(product);
+    product *= shape[i];
   }
   return products;
 }
 
 function ComputeIndices(shape, index1d) {
+  // Given a shape and some index |index1d|, computes and returns an
+  // array containing the N-dimensional index that maps to |index1d|.
+
   var products = ComputeProducts(shape);
   var l = shape.length;
 
   var result = [];
   for (var i = 0; i < l; i++) {
+    // Obtain product of all higher dimensions.
+    // So if i == 0 and shape is [A,B,C,D], yields BCD.
     var stride = products[l - i - 1];
+
+    // Compute how many steps of width stride we could take.
     var index = (index1d / stride) | 0;
-    index1d -= (index * stride);
     result[i] = index;
+
+    // Adjust remaining indices for smaller dimensions.
+    index1d -= (index * stride);
   }
+
   return result;
 }
 
@@ -155,7 +168,7 @@ function ParallelArrayBuild(self, shape, f) {
       fillN(buffer, 0, 1, shape, f);
     }
 
-    self.get = ParallelArrayGet3;
+    self.get = ParallelArrayGetN;
     self.buffer = buffer;
   }
 
@@ -198,6 +211,9 @@ function ParallelArrayBuild(self, shape, f) {
   }
 
   function fillN(result, id, n, shape, f) {
+    // NB: In fact this will not currently be parallelized due to the
+    // use of `f.apply()`.  But it's written as if it could be.  A guy
+    // can dream, can't he?
     var [start, end] = ComputeTileBounds(result.length, id, n);
     var indices = ComputeIndices(shape, start);
     for (var i = start; i < end; i++) {
@@ -396,12 +412,18 @@ function ParallelArrayGetN(...coords) {
     return this;
 
   var products = ComputeProducts(this.shape);
+
+  // Compute the offset of the given coordinates.  Each index is
+  // multipled by its corresponding entry in the |products|
+  // array, counting in reverse.  So if |coords| is [a,b,c,d],
+  // then you get |a*BCD + b*CD + c*D + d|.
   var offset = this.offset;
-  var cdimensionality = coords.length;
   var sdimensionality = this.shape.length;
-  for (var i = 0; i < dimensionality; i++) {
+  var cdimensionality = coords.length;
+  for (var i = 0; i < cdimensionality; i++) {
     offset += coords[i] * products[sdimensionality - i - 1];
   }
+
   if (cdimensionality < sdimensionality) {
     var shape = this.shape.slice(cdimensionality);
     return new global.ParallelArray(shape, this.buffer, offset);
@@ -417,3 +439,24 @@ function ParallelArrayLength() {
 function ParallelArrayToString() {
   return this.buffer.toString();
 }
+
+// Unit Test Functions
+//
+// function CheckIndices(shape, index1d) {
+//   let idx = ComputeIndices(shape, index1d);
+// 
+//   let c = 0;
+//   for (var i = 0; i < shape.length; i++) {
+//     var stride = 1;
+//     for (var j = i + 1; j < shape.length; j++) {
+//       stride *= shape[j];
+//     }
+//     c += idx[i] * stride;
+//   }
+//   
+//   assertEq(index1d, c);
+// }
+// 
+// for (var q = 0; q < 2*4*6*8; q++) {
+//   CheckIndices([2,4,6,8], q);
+// }
