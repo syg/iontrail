@@ -829,6 +829,10 @@ CodeGenerator::visitCallGetIntrinsicValue(LCallGetIntrinsicValue *lir)
         masm.jump(bail);
         return true;
       }
+
+      default:
+        JS_NOT_REACHED("Bad execution mode");
+        return false;
     }
 }
 
