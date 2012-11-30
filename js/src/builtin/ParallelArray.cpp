@@ -10,10 +10,9 @@
 #include "jsapi.h"
 #include "jsobj.h"
 #include "jsarray.h"
-#include "String.h"
 
+#include "vm/String.h"
 #include "vm/GlobalObject.h"
-
 #include "vm/threadpool.h"
 
 #include "jsinterpinlines.h"
