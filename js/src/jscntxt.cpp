@@ -374,21 +374,21 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+#ifdef DEBUG
 static JSBool
 intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-#ifdef DEBUG
     void dumpValue(const Value &v); // in jsobj.cpp
     RootedValue val(cx, args[0]);
     dumpValue(val);
     fprintf(stderr, "\n");
-#endif
 
     args.rval().setUndefined();
     return true;
 }
+#endif
 
 static JSBool
 intrinsic_SetNonBuiltinCallerInitObjectType(JSContext *cx, unsigned argc, Value *vp)
@@ -473,7 +473,9 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
     JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
 
+#ifdef DEBUG
     JS_FN("Dump",               intrinsic_Dump,                 1,0),
+#endif
 
     JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
     JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),

@@ -362,18 +362,60 @@ function ParallelArrayScatter(targets, zero, f, length) {
 }
 
 function ParallelArrayFilter(filters) {
-  // TODO: Parallelize.
   var length = this.shape[0];
 
   if (filters.length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
+  ///////////////////////////////////////////////////////////////////////////
+  // Parallel version
+  var threads = %_GetThreadPoolInfo().numThreads;
+  if (length > threads) {
+    var keepers = %ParallelBuildArray(threads, count_keepers, filters);
+    if (keepers) {
+      var total = 0;
+      for (var i = 0; i < keepers.length; i++)
+        total += keepers[i];
+      var buffer = %ParallelBuildArray(total, copy_keepers, this, filters, keepers);
+      if (buffer) {
+        return new global.ParallelArray([total], buffer, 0);
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Sequential version
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
   for (var i = 0, pos = 0; i < length; i++) {
     if (filters[i])
       buffer[pos++] = this.get(i);
   }
   return new global.ParallelArray(buffer);
+
+  function count_keepers(result, id, n, warmup, filters) {
+    var [start, end] = ComputeTileBounds(filters.length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
+    var count = 0;
+    for (var i = start; i < end; i++) {
+      if (filters[i])
+        count++;
+    }
+    result[id] = count;
+  }
+
+  function copy_keepers(result, id, n, warmup, self, filters, keepers) {
+    var [start, end] = ComputeTileBounds(filters.length, id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
+
+    var pos = 0;
+    for (var i = 0; i < id; i++)
+      pos += keepers[i];
+
+    for (var i = start; i < end; i++) {
+      if (filters[i])
+        result[pos++] = self.get(i);
+    }
+  }
 }
 
 function ParallelArrayPartition(amount) {
