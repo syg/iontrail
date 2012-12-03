@@ -135,6 +135,10 @@ struct JSFunction : public JSObject
         flags |= SELF_HOSTED_CTOR;
     }
 
+    void setShouldCloneAtCallsite() {
+        flags |= CALLSITE_CLONE;
+    }
+
     void setIsFunctionPrototype() {
         JS_ASSERT(!isFunctionPrototype());
         flags |= IS_FUN_PROTO;

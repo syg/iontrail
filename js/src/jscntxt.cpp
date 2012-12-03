@@ -284,6 +284,9 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     if (!clone)
         return NULL;
 
+    // Clear the callsite clone bit on the clone.
+    clone->flags &= ~JSFunction::CALLSITE_CLONE;
+
     if (!table.add(p, key, clone.get()))
         return NULL;
 
@@ -363,14 +366,31 @@ intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args.length() >= 1);
-    JS_ASSERT(args[0].isObject());
-    RootedObject obj(cx, &args[0].toObject());
-    JS_ASSERT(obj->isFunction());
-    obj->toFunction()->setIsSelfHostedConstructor();
+    JS_ASSERT(args.length() >= 2);
+    JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());
+    JS_ASSERT(args[1].isObject());
+
+    RootedFunction fun(cx, args[0].toObject().toFunction());
+    RootedObject flags(cx, &args[1].toObject());
+
+    RootedId id(cx);
+    RootedValue propv(cx);
+
+    id = AtomToId(Atomize(cx, "cloneAtCallsite", strlen("cloneAtCallsite")));
+    if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
+        return false;
+    if (ToBoolean(propv))
+        fun->setShouldCloneAtCallsite();
+
+    id = AtomToId(Atomize(cx, "constructible", strlen("constructible")));
+    if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
+        return false;
+    if (ToBoolean(propv))
+        fun->setIsSelfHostedConstructor();
+
     return true;
 }
 
@@ -527,7 +547,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("Dump",               intrinsic_Dump,                 1,0),
 #endif
 
-    JS_FN("_MakeConstructible", intrinsic_MakeConstructible,    1,0),
+    JS_FN("_SetFunctionFlags",  intrinsic_SetFunctionFlags,     2,0),
     JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
     JS_FN("_SetNonBuiltinCallerInitObjectType", intrinsic_SetNonBuiltinCallerInitObjectType, 1,0),
     JS_FS_END
