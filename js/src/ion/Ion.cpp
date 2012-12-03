@@ -1422,7 +1422,7 @@ ion::CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType)
 }
 
 MethodStatus
-ParallelCompileContext::compileFunction(HandleFunction fun)
+ParallelCompileContext::compileFunction1(HandleFunction fun)
 {
     JS_ASSERT(ion::IsEnabled(cx_));
     JS_ASSERT(fun->isInterpreted());

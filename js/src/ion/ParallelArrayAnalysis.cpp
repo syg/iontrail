@@ -256,10 +256,9 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 
     // Compile the kernel first as it can unsafely write to a buffer argument.
     if (!kernel->script()->hasParallelIonScript()) {
-        compilingKernel_ = true;
         IonSpew(IonSpew_ParallelArray, "Compiling kernel %s:%u",
                 kernel->script()->filename, kernel->script()->lineno);
-        MethodStatus status = compileFunction(kernel);
+        MethodStatus status = compileFunction(kernel, true);
         if (status != Method_Compiled) {
             compilingKernel_ = false;
             return status;
@@ -278,7 +277,7 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
             continue;
         }
 
-        MethodStatus status = compileFunction(fun);
+        MethodStatus status = compileFunction(fun, (fun == kernel));
         if (status != Method_Compiled)
             return status;
     }
@@ -303,6 +302,16 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 
 
     return Method_Compiled;
+}
+
+MethodStatus
+ParallelCompileContext::compileFunction(HandleFunction kernel, bool isKernel)
+{
+    JS_ASSERT(compilingKernel_ == false);
+    compilingKernel_ = isKernel;
+    MethodStatus ms = compileFunction1(kernel);
+    compilingKernel_ = false;
+    return ms;
 }
 
 bool
