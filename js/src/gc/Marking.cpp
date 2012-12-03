@@ -899,9 +899,9 @@ ScanTypeObject(GCMarker *gcmarker, types::TypeObject *type)
     if (type->singleton && !type->lazy())
         PushMarkStack(gcmarker, type->singleton);
 
-    if (type->construct && type->construct->isNewScript()) {
-        PushMarkStack(gcmarker, type->construct->fun);
-        PushMarkStack(gcmarker, type->construct->shape);
+    if (type->newScript) {
+        PushMarkStack(gcmarker, type->newScript->fun);
+        PushMarkStack(gcmarker, type->newScript->shape);
     }
 
     if (type->interpretedFunction)
@@ -924,9 +924,9 @@ MarkChildren(JSTracer *trc, types::TypeObject *type)
     if (type->singleton && !type->lazy())
         MarkObject(trc, &type->singleton, "type_singleton");
 
-    if (type->construct && type->construct->isNewScript()) {
-        MarkObject(trc, &type->construct->fun, "type_new_function");
-        MarkShape(trc, &type->construct->shape, "type_new_shape");
+    if (type->newScript) {
+        MarkObject(trc, &type->newScript->fun, "type_new_function");
+        MarkShape(trc, &type->newScript->shape, "type_new_shape");
     }
 
     if (type->interpretedFunction)

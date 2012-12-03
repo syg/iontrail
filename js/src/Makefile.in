@@ -897,6 +897,7 @@ selfhosting:: selfhosted.out.h
 
 selfhosting_srcs := \
   $(srcdir)/builtin/array.js \
+  $(srcdir)/builtin/ParallelArray.js \
   $(NULL)
 
 selfhosted_out_h_deps := \

@@ -1228,6 +1228,25 @@ TypeConstraintSetElement::newType(JSContext *cx, TypeSet *source, Type type)
     }
 }
 
+static inline JSFunction *
+CloneCallee(JSContext *cx, HandleObject object, HandleScript script, jsbytecode *pc)
+{
+    /*
+     * To avoid computing the callee PC at the callsite when we clone to
+     * propagate the cloned function type to this point, we do not monitor in
+     * the interpreter and simply clone again when doing analysis.
+     */
+    RootedFunction fun(cx, object->toFunction());
+    JSFunction *callee = CloneFunctionAtCallsite(cx, fun, script, pc);
+    if (!callee)
+        return NULL;
+
+    InferSpew(ISpewOps, "callsiteCloneType: #%u:%05u: %s",
+              script->id(), pc - script->code, TypeString(Type::ObjectType(callee)));
+
+    return callee;
+}
+
 void
 TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
 {
@@ -1310,7 +1329,13 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             return;
         }
 
-        callee = obj->toFunction();
+        if (obj->toFunction()->shouldCloneAtCallsite()) {
+            callee = CloneCallee(cx, obj, script, pc);
+            if (!callee)
+                return;
+        } else {
+            callee = obj->toFunction();
+        }
     } else if (type.isTypeObject()) {
         callee = type.typeObject()->interpretedFunction;
         if (!callee)
@@ -1386,7 +1411,15 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         RootedObject object(cx, type.singleObject());
         if (!object->isFunction() || !object->toFunction()->isInterpreted())
             return;
-        callee = object->toFunction();
+
+        if (object->toFunction()->shouldCloneAtCallsite()) {
+            RootedScript script(cx, script_);
+            callee = CloneCallee(cx, object, script, callpc);
+            if (!callee)
+                return;
+        } else {
+            callee = object->toFunction();
+        }
     } else if (type.isTypeObject()) {
         TypeObject *object = type.typeObject();
         if (!object->interpretedFunction)
@@ -1775,17 +1808,16 @@ HeapTypeSet::isOwnProperty(JSContext *cx, TypeObject *object, bool configurable)
 {
     /*
      * Everywhere compiled code depends on definite properties associated with
-     * a type object's NEW_SCRIPT construct, we need to make sure there are constraints
+     * a type object's newScript, we need to make sure there are constraints
      * in place which will mark those properties as configured should the
      * definite properties be invalidated.
      */
     if (object->flags & OBJECT_FLAG_NEW_SCRIPT_REGENERATE) {
-        JS_ASSERT_IF(object->construct, object->construct->isNewScript());
-        if (object->construct) {
+        if (object->newScript) {
             Rooted<TypeObject*> typeObj(cx, object);
-            CheckNewScriptProperties(cx, typeObj, object->construct->fun);
+            CheckNewScriptProperties(cx, typeObj, object->newScript->fun);
         } else {
-            JS_ASSERT(object->flags & OBJECT_FLAG_CONSTRUCT_CLEARED);
+            JS_ASSERT(object->flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED);
             object->flags &= ~OBJECT_FLAG_NEW_SCRIPT_REGENERATE;
         }
     }
@@ -2133,8 +2165,7 @@ TypeCompartment::newTypeObject(JSContext *cx, JSProtoKey key, Handle<TaggedProto
         if (isDOM) {
             object->setFlags(cx, OBJECT_FLAG_NON_DENSE_ARRAY
                                | OBJECT_FLAG_NON_TYPED_ARRAY
-                               | OBJECT_FLAG_NON_PACKED_ARRAY
-                               | OBJECT_FLAG_NON_PARALLEL_ARRAY);
+                               | OBJECT_FLAG_NON_PACKED_ARRAY);
         } else {
             object->setFlagsFromKey(cx, key);
         }
@@ -3397,8 +3428,8 @@ TypeObject::markUnknown(JSContext *cx)
     JS_ASSERT(cx->compartment->activeInference);
     JS_ASSERT(!unknownProperties());
 
-    if (!(flags & OBJECT_FLAG_CONSTRUCT_CLEARED))
-        clearConstruct(cx);
+    if (!(flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED))
+        clearNewScript(cx);
 
     InferSpew(ISpewOps, "UnknownProperties: %s", TypeObjectString(this));
 
@@ -3424,38 +3455,21 @@ TypeObject::markUnknown(JSContext *cx)
 }
 
 void
-TypeObject::clearConstruct(JSContext *cx)
+TypeObject::clearNewScript(JSContext *cx)
 {
-    JS_ASSERT_IF(construct, construct->isParallelArray() || construct->isNewScript());
-    JS_ASSERT(!(flags & OBJECT_FLAG_CONSTRUCT_CLEARED));
-    flags |= OBJECT_FLAG_CONSTRUCT_CLEARED;
+    JS_ASSERT(!(flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED));
+    flags |= OBJECT_FLAG_NEW_SCRIPT_CLEARED;
 
     /*
-     * It is possible for the object to not have a construct yet but to have
+     * It is possible for the object to not have a new script yet but to have
      * one added in the future. When analyzing properties of new scripts we mix
-     * in adding constraints to trigger clearConstruct with changes to the
+     * in adding constraints to trigger clearNewScript with changes to the
      * type sets themselves (from breakTypeBarriers). It is possible that we
      * could trigger one of these constraints before AnalyzeNewScriptProperties
      * has finished, in which case we want to make sure that call fails.
      */
-    if (!construct)
+    if (!newScript)
         return;
-
-    if (construct->isParallelArray()) {
-        Vector<TypeObject *, 4> rowTypes(cx);
-        TypeObject *rowType = this;
-        while ((rowType = rowType->maybeGetRowType()))
-            rowTypes.append(rowType);
-
-        // Clear all constructs on row types in reverse order to avoid recursion.
-        for (uint32_t i = 0; i < rowTypes.length(); i++) {
-            rowTypes.back()->clearConstruct(cx);
-            rowTypes.popBack();
-        }
-
-        freeConstruct(cx);
-        return;
-    }
 
     AutoEnterTypeInference enter(cx);
 
@@ -3488,7 +3502,7 @@ TypeObject::clearConstruct(JSContext *cx)
     for (ScriptFrameIter iter(cx); !iter.done(); ++iter) {
         pcOffsets.append(uint32_t(iter.pc() - iter.script()->code));
         if (iter.isConstructing() &&
-            iter.callee() == construct->fun &&
+            iter.callee() == newScript->fun &&
             iter.thisv().isObject() &&
             !iter.thisv().toObject().hasLazyType() &&
             iter.thisv().toObject().type() == this)
@@ -3509,14 +3523,14 @@ TypeObject::clearConstruct(JSContext *cx)
             size_t callDepth = pcOffsets.length() - 1;
             uint32_t offset = pcOffsets[callDepth];
 
-            for (TypeConstruction::Initializer *init = construct->initializerList;; init++) {
-                if (init->kind == TypeConstruction::Initializer::SETPROP) {
+            for (TypeNewScript::Initializer *init = newScript->initializerList;; init++) {
+                if (init->kind == TypeNewScript::Initializer::SETPROP) {
                     if (!depth && init->offset > offset) {
                         /* Advanced past all properties which have been initialized. */
                         break;
                     }
                     numProperties++;
-                } else if (init->kind == TypeConstruction::Initializer::FRAME_PUSH) {
+                } else if (init->kind == TypeNewScript::Initializer::FRAME_PUSH) {
                     if (depth) {
                         depth++;
                     } else if (init->offset > offset) {
@@ -3530,7 +3544,7 @@ TypeObject::clearConstruct(JSContext *cx)
                         /* This call has already finished. */
                         depth = 1;
                     }
-                } else if (init->kind == TypeConstruction::Initializer::FRAME_POP) {
+                } else if (init->kind == TypeNewScript::Initializer::FRAME_POP) {
                     if (depth) {
                         depth--;
                     } else {
@@ -3538,7 +3552,7 @@ TypeObject::clearConstruct(JSContext *cx)
                         break;
                     }
                 } else {
-                    JS_ASSERT(init->kind == TypeConstruction::Initializer::DONE);
+                    JS_ASSERT(init->kind == TypeNewScript::Initializer::DONE);
                     finished = true;
                     break;
                 }
@@ -3549,27 +3563,12 @@ TypeObject::clearConstruct(JSContext *cx)
         }
     }
 
-    freeConstruct(cx);
-}
-
-void
-TypeObject::freeConstruct(JSContext *cx)
-{
-    /* We NULL out construct *before* freeing it so the write barrier works. */
-    TypeConstruction *savedConstruct = construct;
-    construct = NULL;
-    js_free(savedConstruct);
+    /* We NULL out newScript *before* freeing it so the write barrier works. */
+    TypeNewScript *savedNewScript = newScript;
+    newScript = NULL;
+    js_free(savedNewScript);
 
     markStateChange(cx);
-}
-
-TypeObject *
-TypeObject::maybeGetRowType()
-{
-    if (!construct || !construct->isParallelArray())
-        return NULL;
-
-    return construct->rowType;
 }
 
 void
@@ -3594,18 +3593,6 @@ TypeObject::print()
             printf(" specialEquality");
         if (hasAnyFlags(OBJECT_FLAG_ITERATED))
             printf(" iterated");
-        if (!hasAnyFlags(OBJECT_FLAG_NON_PARALLEL_ARRAY)) {
-            printf(" parallel ");
-            if (construct && construct->isParallelArray()) {
-                printf("%dd", construct->numDimensions);
-                if (construct->dimensions) {
-                    printf(" [");
-                    for (uint32_t i = 0; i < construct->numDimensions; i++)
-                        printf("%s%d", i == 0 ? "" : ",", construct->dimensions[i]);
-                    printf("]");
-                }
-            }
-        }
     }
 
     unsigned count = getPropertyCount();
@@ -3616,12 +3603,6 @@ TypeObject::print()
     }
 
     printf(" {");
-
-    if (construct && construct->isParallelArray()) {
-        TypeObject *rowType = this->construct->rowType;
-        for (uint32_t i = 1; rowType; i++, rowType = rowType->maybeGetRowType())
-            printf("\n    row[%d]: %s", i, TypeObjectString(rowType));
-    }
 
     for (unsigned i = 0; i < count; i++) {
         Property *prop = getProperty(i);
@@ -3961,7 +3942,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
         /*
          * For assignments to non-escaping locals/args, we don't need to update
          * the possible types of the var, as for each read of the var SSA gives
-         * us the writse that could have produced that read.
+         * us the writes that could have produced that read.
          */
         poppedTypes(pc, 0)->addSubset(cx, &pushed[0]);
         break;
@@ -4584,7 +4565,7 @@ ScriptAnalysis::integerOperation(jsbytecode *pc)
 }
 
 /*
- * Persistent constraint clearing out construct and definite properties from
+ * Persistent constraint clearing out newScript and definite properties from
  * an object should a property on another object get a setter.
  */
 class TypeConstraintClearDefiniteSetter : public TypeConstraint
@@ -4600,17 +4581,16 @@ class TypeConstraintClearDefiniteSetter : public TypeConstraint
 
     void newPropertyState(JSContext *cx, TypeSet *source)
     {
-        JS_ASSERT_IF(object->construct, object->construct->isNewScript());
-        if (!object->construct)
+        if (!object->newScript)
             return;
         /*
-         * Clear out the shape and definite property construction information
-         * from an object if the source type set could be a setter or could be
+         * Clear out the newScript shape and definite property information from
+         * an object if the source type set could be a setter or could be
          * non-writable, both of which are indicated by the source type set
          * being marked as configured.
          */
-        if (!(object->flags & OBJECT_FLAG_CONSTRUCT_CLEARED) && source->ownProperty(true))
-            object->clearConstruct(cx);
+        if (!(object->flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED) && source->ownProperty(true))
+            object->clearNewScript(cx);
     }
 
     void newType(JSContext *cx, TypeSet *source, Type type) {}
@@ -4632,23 +4612,23 @@ class TypeConstraintClearDefiniteSingle : public TypeConstraint
     const char *kind() { return "clearDefiniteSingle"; }
 
     void newType(JSContext *cx, TypeSet *source, Type type) {
-        if (object->flags & OBJECT_FLAG_CONSTRUCT_CLEARED)
+        if (object->flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED)
             return;
 
         if (source->baseFlags() || source->getObjectCount() > 1)
-            object->clearConstruct(cx);
+            object->clearNewScript(cx);
     }
 };
 
 static bool
 AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
                   TypeObject *type, JSFunction *fun, MutableHandleObject pbaseobj,
-                  Vector<TypeConstruction::Initializer> *initializerList);
+                  Vector<TypeNewScript::Initializer> *initializerList);
 
 static bool
 AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun,
                            MutableHandleObject pbaseobj,
-                           Vector<TypeConstruction::Initializer> *initializerList)
+                           Vector<TypeNewScript::Initializer> *initializerList)
 {
     /*
      * When invoking 'new' on the specified script, try to find some properties
@@ -4804,7 +4784,7 @@ AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun,
 static bool
 AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
                   TypeObject *type, JSFunction *fun, MutableHandleObject pbaseobj,
-                  Vector<TypeConstruction::Initializer> *initializerList)
+                  Vector<TypeNewScript::Initializer> *initializerList)
 {
     RootedScript script(cx, fun->script());
     ScriptAnalysis *analysis = script->analysis();
@@ -4864,7 +4844,7 @@ AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
                 return false;
             }
 
-            TypeConstruction::Initializer setprop(TypeConstruction::Initializer::SETPROP, uses->offset);
+            TypeNewScript::Initializer setprop(TypeNewScript::Initializer::SETPROP, uses->offset);
             if (!initializerList->append(setprop)) {
                 cx->compartment->types.setPendingNukeTypes(cx);
                 pbaseobj.set(NULL);
@@ -4927,7 +4907,7 @@ AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
             scriptTypes->add(cx,
                 cx->analysisLifoAlloc().new_<TypeConstraintClearDefiniteSingle>(type));
 
-            TypeConstruction::Initializer pushframe(TypeConstruction::Initializer::FRAME_PUSH, uses->offset);
+            TypeNewScript::Initializer pushframe(TypeNewScript::Initializer::FRAME_PUSH, uses->offset);
             if (!initializerList->append(pushframe)) {
                 cx->compartment->types.setPendingNukeTypes(cx);
                 pbaseobj.set(NULL);
@@ -4939,7 +4919,7 @@ AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
                 return false;
             }
 
-            TypeConstruction::Initializer popframe(TypeConstruction::Initializer::FRAME_POP, 0);
+            TypeNewScript::Initializer popframe(TypeNewScript::Initializer::FRAME_POP, 0);
             if (!initializerList->append(popframe)) {
                 cx->compartment->types.setPendingNukeTypes(cx);
                 pbaseobj.set(NULL);
@@ -4959,73 +4939,41 @@ AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
     return true;
 }
 
-static inline TypeConstruction *
-NewTypeConstructionNewScript(JSContext *cx, Vector<TypeConstruction::Initializer> *initializerList,
-                             JSFunction *fun, gc::AllocKind kind, Shape *shape)
-{
-    size_t numBytes = sizeof(TypeConstruction)
-                    + (initializerList->length() * sizeof(TypeConstruction::Initializer));
-    TypeConstruction *construct;
-#ifdef JSGC_ROOT_ANALYSIS
-    // calloc can legitimately return a pointer that appears to be poisoned.
-    void *p;
-    do {
-        p = cx->calloc_(numBytes);
-    } while (IsPoisonedPtr(p));
-    construct = (TypeConstruction *) p;
-#else
-    construct = (TypeConstruction *) cx->calloc_(numBytes);
-#endif
-    if (!construct)
-        return NULL;
-
-    construct->kind = TypeConstruction::NEW_SCRIPT;
-    construct->fun = fun;
-    construct->allocKind = kind;
-    construct->shape = shape;
-    construct->initializerList = (TypeConstruction::Initializer *)
-        ((char *) construct + sizeof(TypeConstruction));
-    PodCopy(construct->initializerList, initializerList->begin(), initializerList->length());
-    return construct;
-}
-
 /*
- * Either make the NEW_SCRIPT construct information for type when it is
- * constructed by the specified script, or regenerate the constraints for an
- * existing NEW_SCRIPT construct on the type after they were cleared by a GC.
+ * Either make the newScript information for type when it is constructed
+ * by the specified script, or regenerate the constraints for an existing
+ * newScript on the type after they were cleared by a GC.
  */
 static void
 CheckNewScriptProperties(JSContext *cx, HandleTypeObject type, JSFunction *fun)
 {
-    JS_ASSERT_IF(type->construct, type->construct->isNewScript());
-
     if (type->unknownProperties())
         return;
 
     /* Strawman object to add properties to and watch for duplicates. */
     RootedObject baseobj(cx, NewBuiltinClassInstance(cx, &ObjectClass, gc::FINALIZE_OBJECT16));
     if (!baseobj) {
-        if (type->construct)
-            type->clearConstruct(cx);
+        if (type->newScript)
+            type->clearNewScript(cx);
         return;
     }
 
-    Vector<TypeConstruction::Initializer> initializerList(cx);
+    Vector<TypeNewScript::Initializer> initializerList(cx);
     AnalyzeNewScriptProperties(cx, type, fun, &baseobj, &initializerList);
-    if (!baseobj || baseobj->slotSpan() == 0 || !!(type->flags & OBJECT_FLAG_CONSTRUCT_CLEARED)) {
-        if (type->construct)
-            type->clearConstruct(cx);
+    if (!baseobj || baseobj->slotSpan() == 0 || !!(type->flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED)) {
+        if (type->newScript)
+            type->clearNewScript(cx);
         return;
     }
 
     /*
      * If the type already has a new script, we are just regenerating the type
-     * constraints and don't need to make another TypeConstruction. Make sure that
+     * constraints and don't need to make another TypeNewScript. Make sure that
      * the properties added to baseobj match the type's definite properties.
      */
-    if (type->construct) {
+    if (type->newScript) {
         if (!type->matchDefiniteProperties(baseobj))
-            type->clearConstruct(cx);
+            type->clearNewScript(cx);
         return;
     }
 
@@ -5034,7 +4982,7 @@ CheckNewScriptProperties(JSContext *cx, HandleTypeObject type, JSFunction *fun)
     /* We should not have overflowed the maximum number of fixed slots for an object. */
     JS_ASSERT(gc::GetGCKindSlots(kind) >= baseobj->slotSpan());
 
-    TypeConstruction::Initializer done(TypeConstruction::Initializer::DONE, 0);
+    TypeNewScript::Initializer done(TypeNewScript::Initializer::DONE, 0);
 
     /*
      * The base object may have been created with a different finalize kind
@@ -5050,10 +4998,31 @@ CheckNewScriptProperties(JSContext *cx, HandleTypeObject type, JSFunction *fun)
         return;
     }
 
-    type->construct = NewTypeConstructionNewScript(cx, &initializerList, fun, kind,
-                                                   baseobj->lastProperty());
-    if (!type->construct)
+    size_t numBytes = sizeof(TypeNewScript)
+                    + (initializerList.length() * sizeof(TypeNewScript::Initializer));
+#ifdef JSGC_ROOT_ANALYSIS
+    // calloc can legitimately return a pointer that appears to be poisoned.
+    void *p;
+    do {
+        p = cx->calloc_(numBytes);
+    } while (IsPoisonedPtr(p));
+    type->newScript = (TypeNewScript *) p;
+#else
+    type->newScript = (TypeNewScript *) cx->calloc_(numBytes);
+#endif
+
+    if (!type->newScript) {
         cx->compartment->types.setPendingNukeTypes(cx);
+        return;
+    }
+
+    type->newScript->fun = fun;
+    type->newScript->allocKind = kind;
+    type->newScript->shape = baseobj->lastProperty();
+
+    type->newScript->initializerList = (TypeNewScript::Initializer *)
+        ((char *) type->newScript.get() + sizeof(TypeNewScript));
+    PodCopy(type->newScript->initializerList, initializerList.begin(), initializerList.length());
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -5860,25 +5829,18 @@ JSCompartment::getNewType(JSContext *cx, TaggedProto proto_, JSFunction *fun_, b
         TypeObject *type = *p;
 
         /*
-         * If set, the type's construct indicates either 1) the script used to
-         * create all objects in existence which have this type or 2) the
-         * dimensions of the parallel arrays, if all objects that share the
-         * same dimensions. Parallel array constructs are especially added,
-         * and we should never have an extant construct that is a parallel
-         * array.
-         *
-         * If there are objects in existence which are not created by calling
-         * 'new' on the NEW_SCRIPT construct, we must clear the construction
-         * information from the type and will not be able to assume any
-         * definite properties for instances of the type.  This case is rare,
-         * but can happen if, for example, two scripted functions have the
-         * same value for their 'prototype' property, or if Object.create is
-         * called with a prototype object that is also the 'prototype'
-         * property of some scripted function.
+         * If set, the type's newScript indicates the script used to create
+         * all objects in existence which have this type. If there are objects
+         * in existence which are not created by calling 'new' on newScript,
+         * we must clear the new script information from the type and will not
+         * be able to assume any definite properties for instances of the type.
+         * This case is rare, but can happen if, for example, two scripted
+         * functions have the same value for their 'prototype' property, or if
+         * Object.create is called with a prototype object that is also the
+         * 'prototype' property of some scripted function.
          */
-        JS_ASSERT_IF(type->construct, type->construct->isNewScript());
-        if (type->construct && type->construct->fun != fun_)
-            type->clearConstruct(cx);
+        if (type->newScript && type->newScript->fun != fun_)
+            type->clearNewScript(cx);
 
         if (!isDOM && !type->hasAnyFlags(OBJECT_FLAG_NON_DOM))
             type->setFlags(cx, OBJECT_FLAG_NON_DOM);
@@ -6059,7 +6021,7 @@ TypeObject::sweep(FreeOp *fop)
     contribution = 0;
 
     if (singleton) {
-        JS_ASSERT(!construct);
+        JS_ASSERT(!newScript);
 
         /*
          * All properties can be discarded. We will regenerate them as needed
@@ -6071,8 +6033,8 @@ TypeObject::sweep(FreeOp *fop)
     }
 
     if (!isMarked()) {
-        if (construct)
-            fop->free_(construct);
+        if (newScript)
+            fop->free_(newScript);
         return;
     }
 
@@ -6134,10 +6096,10 @@ TypeObject::sweep(FreeOp *fop)
 
     /*
      * The GC will clear out the constraints ensuring the correctness of the
-     * NEW_SCRIPT construction information, these constraints will need to be
-     * regenerated the next time we compile code which depends on this info.
+     * newScript information, these constraints will need to be regenerated
+     * the next time we compile code which depends on this info.
      */
-    if (construct && construct->isNewScript())
+    if (newScript)
         flags |= OBJECT_FLAG_NEW_SCRIPT_REGENERATE;
 }
 
@@ -6548,9 +6510,9 @@ TypeObject::sizeOfExcludingThis(TypeInferenceSizes *sizes, JSMallocSizeOfFun mal
          * every GC. The type object is normally destroyed too, but we don't
          * charge this to 'temporary' as this is not for GC heap values.
          */
-        JS_ASSERT(!construct);
+        JS_ASSERT(!newScript);
         return;
     }
 
-    sizes->typeObjects += mallocSizeOf(construct);
+    sizes->typeObjects += mallocSizeOf(newScript);
 }

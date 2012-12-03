@@ -126,6 +126,8 @@ LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
         temp());
     if (!add(lir))
         return false;
+    if (!assignSafepoint(lir, ins))
+        return false;
     return true;
 }
 
@@ -1770,6 +1772,17 @@ LIRGenerator::visitCallGetIntrinsicValue(MCallGetIntrinsicValue *ins)
 {
     LCallGetIntrinsicValue *lir = new LCallGetIntrinsicValue();
     if (!defineVMReturn(lir, ins))
+        return false;
+    return assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitCallsiteCloneCache(MCallsiteCloneCache *ins)
+{
+    JS_ASSERT(ins->callee()->type() == MIRType_Object);
+
+    LCallsiteCloneCache *lir = new LCallsiteCloneCache(useRegister(ins->callee()));
+    if (!define(lir, ins))
         return false;
     return assignSafepoint(lir, ins);
 }

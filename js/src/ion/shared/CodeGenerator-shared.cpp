@@ -24,9 +24,7 @@ namespace ion {
 
 CodeGeneratorShared::CodeGeneratorShared(MIRGenerator *gen, LIRGraph *graph)
   : oolIns(NULL),
-#   ifndef TRACE_PAR_BAILOUTS
     oolParallelAbort(NULL),
-#   endif
     parallelBailoutIndex(0),
     masm(&sps_),
     gen(gen),
@@ -364,6 +362,10 @@ bool
 CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Register *dynStack)
 {
     AssertCanGC();
+
+    // Calls into the VM are not considered safe for parallel execution.
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
+
 #ifdef DEBUG
     if (ins->mirRaw()) {
         JS_ASSERT(ins->mirRaw()->isInstruction());
@@ -505,10 +507,6 @@ CodeGeneratorShared::markArgumentSlots(LSafepoint *safepoint)
 bool
 CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 {
-#   ifdef TRACE_PAR_BAILOUTS
-    OutOfLineParallelAbort *oolParallelAbort = NULL;
-#   endif
-
     if (!oolParallelAbort) {
         oolParallelAbort = new OutOfLineParallelAbort(
             parallelBailoutIndex++);
@@ -536,10 +534,16 @@ CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, uint32_t lirIndex,
     if (!IonSpewEnabled(IonSpew_Trace))
         return true;
     masm.PushRegsInMask(RegisterSet::All());
+
+    // This first move is here so that when you scan the disassembly,
+    // you can easily pick out where each instruction begins.  The
+    // next few items indicate to you the Basic Block / LIR.
+    masm.move32(Imm32(0xDEADBEEF), CallTempReg0);
     masm.move32(Imm32(blockIndex), CallTempReg0);
     masm.move32(Imm32(lirIndex), CallTempReg1);
     masm.move32(Imm32(emi), CallTempReg2);
     masm.movePtr(ImmWord((const void*)opName), CallTempReg3);
+
     masm.setupUnalignedABICall(4, CallTempReg4);
     masm.passABIArg(CallTempReg0);
     masm.passABIArg(CallTempReg1);

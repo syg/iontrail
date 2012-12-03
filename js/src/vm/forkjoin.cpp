@@ -9,11 +9,16 @@
 #include "monitor.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "prthread.h"
 #include "gc/Marking.h"
 #include "jsinferinlines.h"
 
+#ifdef JS_THREADSAFE
+#  include "prthread.h"
+#endif
+
 namespace js {
+
+#ifdef JS_THREADSAFE
 
 class ForkJoinShared
     : public TaskExecutor,
@@ -25,7 +30,7 @@ class ForkJoinShared
     JSContext *const cx_;          // Current context
     ThreadPool *const threadPool_; // The thread pool.
     ForkJoinOp &op_;               // User-defined operations to be perf. in par.
-    const size_t numThreads_;      // Total number of threads.
+    const uint32_t numThreads_;      // Total number of threads.
     PRCondVar *rendezvousEnd_;     // Cond. var used to signal end of rendezvous.
 
     ////////////////////////////////////////////////////////////////////////
@@ -40,9 +45,9 @@ class ForkJoinShared
     //
     // Only to be accessed while holding the lock.
 
-    size_t uncompleted_;     // Number of uncompleted worker threads.
-    size_t blocked_;         // Number of threads that have joined the rendezvous.
-    size_t rendezvousIndex_; // Number of rendezvous attempts
+    uint32_t uncompleted_;     // Number of uncompleted worker threads.
+    uint32_t blocked_;         // Number of threads that have joined the rendezvous.
+    uint32_t rendezvousIndex_; // Number of rendezvous attempts
 
     ////////////////////////////////////////////////////////////////////////
     // Asynchronous Flags
@@ -68,7 +73,7 @@ class ForkJoinShared
 
     // Executes slice #threadId of the work, either from a worker or
     // the main thread.
-    void executePortion(PerThreadData *perThread, size_t threadId);
+    void executePortion(PerThreadData *perThread, uint32_t threadId);
 
     // Rendezvous protocol:
     //
@@ -93,8 +98,8 @@ public:
     ForkJoinShared(JSContext *cx,
                    ThreadPool *threadPool,
                    ForkJoinOp &op,
-                   size_t numThreads,
-                   size_t uncompleted);
+                   uint32_t numThreads,
+                   uint32_t uncompleted);
     ~ForkJoinShared();
 
     bool init();
@@ -102,7 +107,7 @@ public:
     ParallelResult execute();
 
     // Invoked from parallel worker threads:
-    virtual void executeFromWorker(size_t threadId, uintptr_t stackLimit);
+    virtual void executeFromWorker(uint32_t threadId, uintptr_t stackLimit);
 
     // Moves all the per-thread arenas into the main compartment.
     // This can only safely be invoked on the main thread, either
@@ -151,13 +156,6 @@ public:
     }
 };
 
-bool
-ForkJoinSlice::Initialize()
-{
-    PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
-    return status == PR_SUCCESS;
-}
-
 class AutoEnterParallelSection
 {
 private:
@@ -187,25 +185,6 @@ public:
     }
 };
 
-ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
-{
-#   ifndef JS_THREADSAFE_ION
-    return TP_RETRY_SEQUENTIALLY;
-#   else
-    AutoEnterParallelSection enter(cx);
-    JS_ASSERT(!InParallelSection()); // Recursive use of the ThreadPool is not supported.
-
-    ThreadPool *threadPool = &cx->runtime->threadPool;
-    size_t numThreads = threadPool->numWorkers() + 1; // parallel workers plus this main thread
-
-    ForkJoinShared shared(cx, threadPool, op, numThreads, numThreads - 1);
-    if (!shared.init())
-        return TP_RETRY_SEQUENTIALLY;
-
-    return shared.execute();
-#   endif
-}
-
 /****************************************************************************
  * ForkJoinShared
  */
@@ -213,8 +192,8 @@ ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
 ForkJoinShared::ForkJoinShared(JSContext *cx,
                                ThreadPool *threadPool,
                                ForkJoinOp &op,
-                               size_t numThreads,
-                               size_t uncompleted)
+                               uint32_t numThreads,
+                               uint32_t uncompleted)
   : cx_(cx),
     threadPool_(threadPool),
     op_(op),
@@ -276,10 +255,6 @@ ForkJoinShared::execute()
 {
     AutoLockMonitor lock(*this);
 
-    // give the task set a chance to prepare for parallel workload
-    if (!op_.pre(numThreads_))
-        return TP_RETRY_SEQUENTIALLY;
-
     // notify workers to start and execute one portion on this thread
     {
         AutoUnlockMonitor unlock(*this);
@@ -291,6 +266,8 @@ ForkJoinShared::execute()
     while (uncompleted_ > 0)
         lock.wait();
 
+    transferArenasToCompartment();
+
     // check if any of the workers failed
     if (abort_) {
         if (fatal_)
@@ -298,12 +275,6 @@ ForkJoinShared::execute()
         else
             return TP_RETRY_SEQUENTIALLY;
     }
-
-    transferArenasToCompartment();
-
-    // give task set a chance to cleanup after parallel execution
-    if (!op_.post(numThreads_))
-        return TP_RETRY_SEQUENTIALLY;
 
     return TP_SUCCESS; // everything went swimmingly. give yourself a pat on the back.
 }
@@ -318,7 +289,7 @@ ForkJoinShared::transferArenasToCompartment()
 }
 
 void
-ForkJoinShared::executeFromWorker(size_t workerId, uintptr_t stackLimit)
+ForkJoinShared::executeFromWorker(uint32_t workerId, uintptr_t stackLimit)
 {
     JS_ASSERT(workerId < numThreads_ - 1);
 
@@ -346,7 +317,7 @@ ForkJoinShared::executeFromMainThread()
 
 void
 ForkJoinShared::executePortion(PerThreadData *perThread,
-                               size_t threadId)
+                               uint32_t threadId)
 {
     Allocator *allocator = allocators_[threadId];
     ForkJoinSlice slice(perThread, threadId, numThreads_, allocator, this);
@@ -447,7 +418,7 @@ ForkJoinShared::joinRendezvous(ForkJoinSlice &slice) {
     JS_ASSERT(rendezvous_);
 
     AutoLockMonitor lock(*this);
-    const size_t index = rendezvousIndex_;
+    const uint32_t index = rendezvousIndex_;
     blocked_ += 1;
 
     // If we're the last to arrive, let the main thread know about it.
@@ -477,12 +448,14 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &slice) {
     PR_NotifyAllCondVar(rendezvousEnd_);
 }
 
+#endif
+
 /****************************************************************************
  * ForkJoinSlice
  */
 
 ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
-                             size_t sliceId, size_t numSlices,
+                             uint32_t sliceId, uint32_t numSlices,
                              Allocator *allocator, ForkJoinShared *shared)
     : perThreadData(perThreadData),
       sliceId(sliceId),
@@ -494,25 +467,83 @@ ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
 bool
 ForkJoinSlice::isMainThread()
 {
+#ifdef JS_THREADSAFE
     return perThreadData == &shared->runtime()->mainThread;
+#else
+    return true;
+#endif
 }
 
 JSRuntime *
 ForkJoinSlice::runtime()
 {
+#ifdef JS_THREADSAFE
     return shared->runtime();
+#else
+    return NULL;
+#endif
 }
 
 bool
 ForkJoinSlice::check()
 {
+#ifdef JS_THREADSAFE
     return shared->check(*this);
+#else
+    return false;
+#endif
 }
 
 bool
 ForkJoinSlice::setFatal()
 {
+#ifdef JS_THREADSAFE
     return shared->setFatal();
+#else
+    return false;
+#endif
 }
+
+bool
+ForkJoinSlice::Initialize()
+{
+#ifdef JS_THREADSAFE
+    PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
+    return status == PR_SUCCESS;
+#else
+    return true;
+#endif
+}
+
+/****************************************************************************/
+
+uint32_t ForkJoinSlices(JSContext *cx)
+{
+#ifndef JS_THREADSAFE
+    return 1;
+#else
+    return cx->runtime->threadPool.numWorkers() + 1;
+#endif
+}
+
+ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
+{
+#   ifndef JS_THREADSAFE
+    return TP_RETRY_SEQUENTIALLY;
+#   else
+    AutoEnterParallelSection enter(cx);
+    JS_ASSERT(!InParallelSection()); // Recursive use of the ThreadPool is not supported.
+
+    ThreadPool *threadPool = &cx->runtime->threadPool;
+    uint32_t numThreads = threadPool->numWorkers() + 1; // parallel workers plus this main thread
+
+    ForkJoinShared shared(cx, threadPool, op, numThreads, numThreads - 1);
+    if (!shared.init())
+        return TP_RETRY_SEQUENTIALLY;
+
+    return shared.execute();
+#   endif
+}
+
 
 }

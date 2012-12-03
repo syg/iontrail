@@ -37,8 +37,9 @@ struct JSFunction : public JSObject
                                        decompilable nor constructible. */
         SELF_HOSTED_CTOR = 0x0200,  /* function is self-hosted builtin constructor and
                                        must be constructible but not decompilable. */
-        HAS_REST         = 0x0400,  /* function has a rest (...) parameter */
-        HAS_DEFAULTS     = 0x0800,  /* function has at least one default parameter */
+        CALLSITE_CLONE   = 0x0400,  /* function is cloned anew at each call site. */
+        HAS_REST         = 0x0800,  /* function has a rest (...) parameter */
+        HAS_DEFAULTS     = 0x1000,  /* function has at least one default parameter */
 
         /* Derived Flags values for convenience: */
         NATIVE_FUN = 0,
@@ -89,6 +90,7 @@ struct JSFunction : public JSObject
     bool isLambda()                 const { return flags & LAMBDA; }
     bool isSelfHostedBuiltin()      const { return flags & SELF_HOSTED; }
     bool isSelfHostedConstructor()  const { return flags & SELF_HOSTED_CTOR; }
+    bool shouldCloneAtCallsite()    const { return flags & CALLSITE_CLONE; }
     bool hasRest()                  const { return flags & HAS_REST; }
     bool hasDefaults()              const { return flags & HAS_DEFAULTS; }
 
@@ -106,6 +108,7 @@ struct JSFunction : public JSObject
 
     /* Returns the strictness of this function, which must be interpreted. */
     inline bool inStrictMode() const;
+
 
     void setArgCount(uint16_t nargs) {
         JS_ASSERT(this->nargs == 0);

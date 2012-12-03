@@ -60,6 +60,7 @@ class MNode;
 class MUse;
 class MIRGraph;
 class MResumePoint;
+class MCall;
 
 static inline bool isOSRLikeValue (MDefinition *def);
 
@@ -4911,6 +4912,46 @@ class MCallGetIntrinsicValue : public MNullaryInstruction
     }
 };
 
+class MCallsiteCloneCache
+  : public MUnaryInstruction,
+    public SingleObjectPolicy
+{
+    CompilerRootScript callScript_;
+    jsbytecode *callPc_;
+
+    MCallsiteCloneCache(MDefinition *callee, JSScript *callScript, jsbytecode *callPc)
+      : MUnaryInstruction(callee),
+        callScript_(callScript),
+        callPc_(callPc)
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(CallsiteCloneCache);
+
+    static MCallsiteCloneCache *New(MDefinition *callee, JSScript *callScript, jsbytecode *callPc) {
+        return new MCallsiteCloneCache(callee, callScript, callPc);
+    }
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    MDefinition *callee() const {
+        return getOperand(0);
+    }
+    JSScript *callScript() const {
+        return callScript_;
+    }
+    jsbytecode *callPc() const {
+        return callPc_;
+    }
+
+    // Callsite cloning is idempotent.
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
 class MSetPropertyInstruction : public MBinaryInstruction
 {
     CompilerRootPropertyName name_;
@@ -5524,10 +5565,12 @@ class MGetArgument
    }
 };
 
-class MParWriteGuard : public MBinaryInstruction
+class MParWriteGuard
+  : public MBinaryInstruction,
+    public ObjectPolicy<1>
 {
     MParWriteGuard(MDefinition *parThreadContext,
-                     MDefinition *obj)
+                   MDefinition *obj)
       : MBinaryInstruction(parThreadContext, obj)
     {
         setResultType(MIRType_None);

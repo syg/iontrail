@@ -29,19 +29,10 @@
  * > ExecuteForkJoinOp(cx, op);
  *
  * |ExecuteForkJoinOp()| will fire up the workers in the runtime's
- * thread pool, have them execute the callbacks defined in the
- * |ForkJoinOp| class, and then return once all the workers have
- * completed.
- *
- * There are three callbacks defined in |ForkJoinOp|.  The first,
- * |pre()|, is invoked before the parallel section begins.  It informs
- * you how many slices your problem will be divided into (effectively,
- * how many worker threads there will be).  This is often useful for
- * allocating an array for the workers to store their result or
- * something like that.
- *
- * Next, you will receive |N| calls to the |parallel()| callback,
- * where |N| is the number of slices that were specified in |pre()|.
+ * thread pool, have them execute the callback |parallel()| defined in
+ * the |ForkJoinOp| class, and then return once all the workers have
+ * completed.  You will receive |N| calls to the |parallel()|
+ * callback, where |N| is the value returned by |ForkJoinSlice()|.
  * Each callback will be supplied with a |ForkJoinSlice| instance
  * providing some context.
  *
@@ -49,9 +40,6 @@
  * thread, but that is not something you should rely upon---if we
  * implement work-stealing, for example, then it could be that a
  * single worker thread winds up handling multiple slices.
- *
- * Finally, after the operation is complete the |post()| callback is
- * invoked, giving you a chance to collect the various results.
  *
  * Operation callback:
  *
@@ -133,9 +121,22 @@ struct ForkJoinOp;
 // |N+1| slices, as the main thread will also execute one slice.
 ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op);
 
+// Returns the number of slices that a fork-join op will have when
+// executed.
+uint32_t ForkJoinSlices(JSContext *cx);
+
 class ForkJoinShared;
 class AutoRendezvous;
 class AutoSetForkJoinSlice;
+
+#ifdef DEBUG
+struct IonTraceData {
+    uint32_t bblock;
+    uint32_t lir;
+    uint32_t execModeInt;
+    const char *opcode;
+};
+#endif
 
 struct ForkJoinSlice
 {
@@ -144,17 +145,21 @@ public:
     PerThreadData *perThreadData;
 
     // Which slice should you process? Ranges from 0 to |numSlices|.
-    const size_t sliceId;
+    const uint32_t sliceId;
 
     // How many slices are there in total?
-    const size_t numSlices;
+    const uint32_t numSlices;
 
     // Allocator to use when allocating on this thread.  See
     // |ion::ParFunctions::ParNewGCThing()|.  This should move
     // into |perThreadData|.
     Allocator *const allocator;
 
-    ForkJoinSlice(PerThreadData *perThreadData, size_t sliceId, size_t numSlices,
+#ifdef DEBUG
+    IonTraceData traceData;
+#endif
+
+    ForkJoinSlice(PerThreadData *perThreadData, uint32_t sliceId, uint32_t numSlices,
                   Allocator *allocator, ForkJoinShared *shared);
 
     // True if this is the main thread, false if it is one of the parallel workers
@@ -186,7 +191,9 @@ private:
     friend class AutoRendezvous;
     friend class AutoSetForkJoinSlice;
 
+#ifdef JS_THREADSAFE
     static PRUintn ThreadPrivateIndex; // initialized by Initialize()
+#endif
 
     ForkJoinShared *const shared;
 };
@@ -196,31 +203,18 @@ private:
 struct ForkJoinOp
 {
 public:
-    // Invoked before parallel phase begins; informs the task set how
-    // many slices there will be and gives it a chance to initialize
-    // per-slice data structures.
-    //
-    // Returns true on success, false to halt parallel execution.
-    virtual bool pre(size_t numSlices) = 0;
-
     // Invoked from each parallel thread to process one slice.  The
     // |ForkJoinSlice| which is supplied will also be available using
     // TLS.
     //
     // Returns true on success, false to halt parallel execution.
     virtual bool parallel(ForkJoinSlice &slice) = 0;
-
-    // Invoked after parallel phase ends if execution was successful
-    // (not aborted)
-    //
-    // Returns true on success, false to halt parallel execution.
-    virtual bool post(size_t numSlices) = 0;
 };
 
 /* True if this thread is currently executing a ParallelArray
    operation across multiple threads. */
 static inline bool InParallelSection() {
-#   ifdef JS_THREADSAFE_ION
+#   ifdef JS_THREADSAFE
     return ForkJoinSlice::current() != NULL;
 #   else
     return false;
@@ -229,4 +223,4 @@ static inline bool InParallelSection() {
 
 #endif
 
-}
+} /* end namespace js */

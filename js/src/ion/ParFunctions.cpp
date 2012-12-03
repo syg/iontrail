@@ -18,7 +18,7 @@ namespace ion {
 
 // Load the current thread context.
 ForkJoinSlice *ParForkJoinSlice() {
-    return js::ForkJoinSlice::current();
+    return ForkJoinSlice::current();
 }
 
 // ParNewGCThing() is called in place of NewGCThing() when executing
@@ -26,6 +26,7 @@ ForkJoinSlice *ParForkJoinSlice() {
 // allocates from there.
 JSObject *
 ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize) {
+    JS_ASSERT(ForkJoinSlice::current() == slice);
     void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
     return static_cast<JSObject *>(t);
 }
@@ -33,30 +34,101 @@ ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize)
 // Check that the object was created by the current thread
 // (and hence is writable).
 bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
+    JS_ASSERT(ForkJoinSlice::current() == slice);
     return slice->allocator->arenas.containsArena(slice->runtime(),
                                                   object->arenaHeader());
 }
 
+#ifdef DEBUG
+static void printTrace(const char *prefix, struct IonTraceData *cached) {
+        fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / Opcode %s\n",
+                prefix,
+                cached->bblock, cached->lir,
+                cached->execModeInt, cached->opcode);
+}
+#endif
+
+#ifdef DEBUG
+struct IonTraceData seqTraceData;
+#endif
+
 void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
            const char *opcode) {
+#ifdef DEBUG
+    static enum { NotSet, All, Bailouts } traceMode;
+
     /*
        If you set IONFLAGS=trace, this function will be invoked before every LIR.
 
-       You can either modify it to do whatever you like, or use gdb scription.
+       You can either modify it to do whatever you like, or use gdb scripting.
        For example:
 
        break ParTrace
-       commands 1
+       commands
        continue
        exit
      */
-    fprintf(stderr, "Block %3u / LIR %3u / Mode %u / Opcode %s\n",
-            bblock, lir, execModeInt, opcode);
+
+    if (traceMode == NotSet) {
+        // Racy, but that's ok.
+        const char *env = getenv("IONFLAGS");
+        if (strstr(env, "trace-all")) {
+            traceMode = All;
+        } else {
+            traceMode = Bailouts;
+        }
+    }
+
+    IonTraceData *cached;
+    if (execModeInt == 0) {
+        cached = &seqTraceData;
+    } else {
+        cached = &ForkJoinSlice::current()->traceData;
+    }
+
+    if (bblock == 0xDEADBEEF) {
+        printTrace("BAILOUT", cached);
+    }
+
+    cached->bblock = bblock;
+    cached->lir = lir;
+    cached->execModeInt = execModeInt;
+    cached->opcode = opcode;
+
+    if (traceMode == All)
+        printTrace("Exec", cached);
+#endif
 }
 
+bool ParCheckOverRecursed(ForkJoinSlice *slice) {
+    JS_ASSERT(ForkJoinSlice::current() == slice);
+
+    // When an interrupt is triggered, we currently overwrite the
+    // stack limit with a sentinel value that brings us here.
+    // Therefore, we must check whether this is really a stack overrun
+    // and, if not, check whether an interrupt is needed.
+    if (slice->isMainThread()) {
+        int stackDummy_;
+        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(slice->runtime()), &stackDummy_)) {
+            return false;
+        } else {
+            return ParCheckInterrupt(slice);
+        }
+    } else {
+        // FIXME---we don't do this for worker threads, which means
+        // that technically they can recurse forever---or at least a
+        // long time---without ever checking the interrupt.
+        return false;
+    }
+}
 
 bool ParCheckInterrupt(ForkJoinSlice *slice) {
-    return slice->check();
+    JS_ASSERT(ForkJoinSlice::current() == slice);
+    bool result = slice->check();
+    if (!result) {
+        return false;
+    }
+    return true;
 }
 
 bool ParExtendArray(ParExtendArrayArgs *args) {

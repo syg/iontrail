@@ -2351,17 +2351,17 @@ js_CreateThis(JSContext *cx, Class *newclasp, HandleObject callee)
 static inline JSObject *
 CreateThisForFunctionWithType(JSContext *cx, HandleTypeObject type, JSObject *parent)
 {
-    if (type->construct && type->construct->isNewScript()) {
+    if (type->newScript) {
         /*
          * Make an object with the type's associated finalize kind and shape,
          * which reflects any properties that will definitely be added to the
          * object before it is read from.
          */
-        gc::AllocKind kind = type->construct->allocKind;
+        gc::AllocKind kind = type->newScript->allocKind;
         RootedObject res(cx, NewObjectWithType(cx, type, parent, kind));
         if (res)
             JS_ALWAYS_TRUE(JSObject::setLastProperty(cx, res,
-                                                     (Shape *) type->construct->shape.get()));
+                                                     (Shape *) type->newScript->shape.get()));
         return res;
     }
 
@@ -3319,22 +3319,20 @@ JSObject::growSlots(JSContext *cx, HandleObject obj, uint32_t oldCount, uint32_t
      * type to give these objects a larger number of fixed slots when future
      * objects are constructed.
      */
-    if (!obj->hasLazyType() && !oldCount && obj->type()->construct &&
-        obj->type()->construct->isNewScript())
-    {
-        gc::AllocKind kind = obj->type()->construct->allocKind;
+    if (!obj->hasLazyType() && !oldCount && obj->type()->newScript) {
+        gc::AllocKind kind = obj->type()->newScript->allocKind;
         unsigned newScriptSlots = gc::GetGCKindSlots(kind);
         if (newScriptSlots == obj->numFixedSlots() && gc::TryIncrementAllocKind(&kind)) {
             AutoEnterTypeInference enter(cx);
 
             Rooted<TypeObject*> typeObj(cx, obj->type());
-            RootedShape shape(cx, typeObj->construct->shape);
+            RootedShape shape(cx, typeObj->newScript->shape);
             JSObject *reshapedObj = NewReshapedObject(cx, typeObj, obj->getParent(), kind, shape);
             if (!reshapedObj)
                 return false;
 
-            typeObj->construct->allocKind = kind;
-            typeObj->construct->shape = reshapedObj->lastProperty();
+            typeObj->newScript->allocKind = kind;
+            typeObj->newScript->shape = reshapedObj->lastProperty();
             typeObj->markStateChange(cx);
         }
     }

@@ -11,6 +11,7 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "IonCode.h"
+#include "CompileInfo.h"
 #include "jsinfer.h"
 #include "jsinterp.h"
 
@@ -18,7 +19,7 @@ namespace js {
 namespace ion {
 
 class TempAllocator;
-class ParallelCompilationContext; // in ParallelArrayAnalysis.h
+class ParallelCompileContext; // in ParallelArrayAnalysis.h
 
 struct IonOptions
 {
@@ -146,6 +147,12 @@ struct IonOptions
     // stop running this function in IonMonkey. (default 512)
     uint32 slowCallLimit;
 
+    // Whether we are in parallel warmup mode. This is mutated during runtime
+    // from within the parallel intrinsics.
+    //
+    // Default: NULL
+    ParallelCompileContext *parallelWarmupContext;
+
     void setEagerCompilation() {
         eagerCompilation = true;
         usesBeforeCompile = usesBeforeCompileNoJaeger = 0;
@@ -155,6 +162,17 @@ struct IonOptions
         smallFunctionUsesBeforeInlining = 0;
 
         parallelCompilation = false;
+    }
+
+    void startParallelWarmup(ParallelCompileContext *compileContext) {
+        JS_ASSERT(compileContext);
+        JS_ASSERT(!parallelWarmupContext);
+        parallelWarmupContext = compileContext;
+    }
+
+    void finishParallelWarmup() {
+        JS_ASSERT(parallelWarmupContext);
+        parallelWarmupContext = NULL;
     }
 
     IonOptions()
@@ -179,7 +197,8 @@ struct IonOptions
         inlineMaxTotalBytecodeLength(800),
         inlineUseCountRatio(128),
         eagerCompilation(false),
-        slowCallLimit(512)
+        slowCallLimit(512),
+        parallelWarmupContext(NULL)
     {
     }
 };
@@ -229,12 +248,6 @@ MethodStatus CanEnterAtBranch(JSContext *cx, HandleScript script,
 MethodStatus CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType);
 MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, uint32_t numActualArgs);
 
-MethodStatus
-CanEnterParallelArrayKernel(JSContext *cx,
-                            HandleFunction fun,
-                            ParallelCompilationContext &compileContext);
-
-
 enum IonExecStatus
 {
     // The method call had to be aborted due to a stack limit check. This
@@ -269,6 +282,7 @@ IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgsList &args);
 void Invalidate(types::TypeCompartment &types, FreeOp *fop,
                 const Vector<types::RecompileInfo> &invalid, bool resetUses = true);
 void Invalidate(JSContext *cx, const Vector<types::RecompileInfo> &invalid, bool resetUses = true);
+bool Invalidate(JSContext *cx, JSScript *script, ExecutionMode mode, bool resetUses = true);
 bool Invalidate(JSContext *cx, JSScript *script, bool resetUses = true);
 
 void MarkFromIon(JSRuntime *rt, Value *vp);

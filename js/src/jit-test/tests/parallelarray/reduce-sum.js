@@ -1,15 +1,16 @@
 load(libdir + "parallelarray-helpers.js");
 
 function testReduce() {
-    function mul(v, p) { return v*p; }
+    function sum(v, p) { return v+p; }
 
     var array = [];
-    for (var i = 1; i <= 1024; i++) array.push(i);
-    var expected = array.reduce(mul);
+    for (var i = 1; i <= 512; i++) array.push(i);
+    var expected = array.reduce(sum);
 
     var parray = new ParallelArray(array);
     assertParallelArrayModesEq(["seq", "par"], expected, function(m) {
-        return parray.reduce(mul, m);
+        d = parray.reduce(sum, m);
+        return d;
     });
 }
 

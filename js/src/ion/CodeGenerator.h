@@ -24,6 +24,7 @@ namespace ion {
 class OutOfLineNewArray;
 class OutOfLineNewObject;
 class CheckOverRecursedFailure;
+class ParCheckOverRecursedFailure;
 class OutOfLineUnboxDouble;
 class OutOfLineCache;
 class OutOfLineStoreElementHole;
@@ -83,8 +84,6 @@ class CodeGenerator : public CodeGeneratorSpecific
                                 uint32 argc, uint32 unusedStack);
     bool visitCallGeneric(LCallGeneric *call);
     bool visitCallKnown(LCallKnown *call);
-    bool emitCallToKnownScript(LCallKnown *call, Register calleereg, uint32 unusedStack,
-                               Label *slowPath, Label *end);
     bool visitCallConstructor(LCallConstructor *call);
     bool emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraStackSize);
     void emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSpace);
@@ -193,7 +192,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool);
 
     bool visitParCheckOverRecursed(LParCheckOverRecursed *lir);
+    bool visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool);
+
     bool visitParCheckInterrupt(LParCheckInterrupt *lir);
+
+    bool callParCheckInterrupt(Register threadCtxReg, Register tempReg);
 
     bool visitUnboxDouble(LUnboxDouble *lir);
     bool visitOutOfLineUnboxDouble(OutOfLineUnboxDouble *ool);
@@ -204,6 +207,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineSetPropertyCache(OutOfLineCache *ool);
     bool visitOutOfLineBindNameCache(OutOfLineCache *ool);
     bool visitOutOfLineGetNameCache(OutOfLineCache *ool);
+    bool visitOutOfLineCallsiteCloneCache(OutOfLineCache *ool);
 
     bool visitOutOfLineParLambda(OutOfLineParLambda *ool);
     bool visitOutOfLineParNew(OutOfLineParNew *ool);
@@ -228,6 +232,9 @@ class CodeGenerator : public CodeGeneratorSpecific
         return visitCache(ins);
     }
     bool visitGetNameCache(LGetNameCache *ins) {
+        return visitCache(ins);
+    }
+    bool visitCallsiteCloneCache(LCallsiteCloneCache *ins) {
         return visitCache(ins);
     }
 

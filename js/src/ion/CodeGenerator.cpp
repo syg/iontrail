@@ -169,7 +169,7 @@ CodeGenerator::visitTestVAndBranch(LTestVAndBranch *lir)
     masm.jump(lir->ifFalse());
     return true;
 }
- 
+
 bool
 CodeGenerator::visitPolyInlineDispatch(LPolyInlineDispatch *lir)
 {
@@ -928,14 +928,32 @@ CodeGenerator::visitCallDOMNative(LCallDOMNative *call)
     return true;
 }
 
+typedef bool (*pf)(JSContext *cx, HandlePropertyName, MutableHandleValue);
+static const VMFunction Info = FunctionInfo<pf>(GetIntrinsicValue);
+
 bool
 CodeGenerator::visitCallGetIntrinsicValue(LCallGetIntrinsicValue *lir)
 {
-    typedef bool (*pf)(JSContext *cx, HandlePropertyName, MutableHandleValue);
-    static const VMFunction Info = FunctionInfo<pf>(GetIntrinsicValue);
+    // When compiling parallel kernels, always bail.
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        pushArg(ImmGCPtr(lir->mir()->name()));
+        return callVM(Info, lir);
+      }
 
-    pushArg(ImmGCPtr(lir->mir()->name()));
-    return callVM(Info, lir);
+      case ParallelExecution: {
+        Label *bail;
+        if (!ensureOutOfLineParallelAbort(&bail))
+            return false;
+
+        masm.jump(bail);
+        return true;
+      }
+
+      default:
+        JS_NOT_REACHED("Bad execution mode");
+        return false;
+    }
 }
 
 typedef bool (*InvokeFunctionFn)(JSContext *, JSFunction *, uint32, Value *, Value *);
@@ -980,7 +998,20 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     Register objreg    = ToRegister(call->getTempObject());
     Register nargsreg  = ToRegister(call->getNargsReg());
     uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
-    Label invoke, thunk, makeCall, end;
+    ExecutionMode executionMode = gen->info().executionMode();
+    Label invoke, thunk, makeCall, end, *slowPath;
+
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    switch (executionMode) {
+      case SequentialExecution:
+        slowPath = &invoke;
+        break;
+      case ParallelExecution:
+        if (!ensureOutOfLineParallelAbort(&slowPath))
+            return false;
+        break;
+    }
 
     // Known-target case is handled by LCallKnown.
     JS_ASSERT(!call->hasSingleTarget());
@@ -1000,15 +1031,14 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         return false;
 
     // Guard that calleereg is a non-native function:
-    masm.branchIfFunctionIsNative(calleereg, &invoke);
+    masm.branchIfFunctionIsNative(calleereg, slowPath);
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.loadPtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
-    ExecutionMode executionMode = gen->info().executionMode();
     masm.loadPtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &invoke);
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
 
     // Nestle the StackPointer up to the argument vector.
     masm.freeStack(unusedStack);
@@ -1051,9 +1081,11 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     masm.jump(&end);
 
     // Handle uncompiled or native functions.
-    masm.bind(&invoke);
-    if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-        return false;
+    if (slowPath == &invoke) {
+        masm.bind(&invoke);
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
+    }
 
     masm.bind(&end);
     dropArguments(call->numStackArgs() + 1);
@@ -1061,26 +1093,42 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 }
 
 bool
-CodeGenerator::emitCallToKnownScript(
-    LCallKnown *call, Register calleereg, uint32 unusedStack,
-    Label *slowPath, Label *end)
+CodeGenerator::visitCallKnown(LCallKnown *call)
 {
-    JSContext *cx = GetIonContext()->cx;
+    JSContext *cx      = GetIonContext()->cx;
+    Register calleereg = ToRegister(call->getFunction());
     Register objreg    = ToRegister(call->getTempObject());
+    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     JSFunction *target = call->getSingleTarget();
+    ExecutionMode executionMode = gen->info().executionMode();
+    Label end, invoke, *slowPath;
 
-    // Native single targets are handled by LCallNative.
+    // When compiling parallel kernels, the slow path is a bail instead of
+    // calling Invoke.
+    switch (executionMode) {
+      case SequentialExecution:
+        slowPath = &invoke;
+        break;
+      case ParallelExecution:
+        if (!ensureOutOfLineParallelAbort(&slowPath))
+            return false;
+        break;
+    }
+
+     // Native single targets are handled by LCallNative.
     JS_ASSERT(!target->isNative());
-
     // Missing arguments must have been explicitly appended by the IonBuilder.
     JS_ASSERT(target->nargs <= call->numStackArgs());
 
     masm.checkStackAlignment();
 
-    // If the function is known to be uncompilable, only emit the call to InvokeFunction.
-    ExecutionMode executionMode = gen->info().executionMode();
+    // If the function is known to be uncompilable, just emit the call to
+    // Invoke in sequential mode, else mark as cannot compile.
     RootedScript targetScript(cx, target->script());
     if (GetIonScript(targetScript, executionMode) == ION_DISABLED_SCRIPT) {
+        if (executionMode == ParallelExecution)
+            return false;
+
         if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
             return false;
 
@@ -1124,44 +1172,13 @@ CodeGenerator::emitCallToKnownScript(
     // The return address has already been removed from the Ion frame.
     int prefixGarbage = sizeof(IonJSFrameLayout) - sizeof(void *);
     masm.adjustStack(prefixGarbage - unusedStack);
-    masm.jump(end);
-    return true;
-}
+    masm.jump(&end);
 
-bool
-CodeGenerator::visitCallKnown(LCallKnown *call)
-{
-    Register calleereg = ToRegister(call->getFunction());
-    uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
-    Label end;
-
-    switch (gen->info().executionMode()) {
-      case ParallelExecution: {
-          Label *bail;
-          if (!ensureOutOfLineParallelAbort(&bail))
-              return false;
-
-          if (!emitCallToKnownScript(call, calleereg, unusedStack,
-                                     bail, &end))
-              return false;
-
-          break;
-      }
-
-      case SequentialExecution: {
-          Label invoke;
-
-          if (!emitCallToKnownScript(call, calleereg, unusedStack,
-                                     &invoke, &end))
-              return false;
-
-          // Handle uncompiled functions.
-          masm.bind(&invoke);
-          if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
-              return false;
-
-          break;
-      }
+    // Handle uncompiled functions.
+    if (slowPath == &invoke) {
+        masm.bind(&invoke);
+        if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
+            return false;
     }
 
     masm.bind(&end);
@@ -1495,47 +1512,6 @@ class CheckOverRecursedFailure : public OutOfLineCodeBase<CodeGenerator>
 };
 
 bool
-CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
-{
-    // See above: the only different between this code and
-    // visitCheckOverRecursed() is that this code runs in parallel mode
-    // and hence uses the ionStackLimit from the current thread state
-    Register threadContextReg = ToRegister(lir->threadContext());
-    Register limitReg = ToRegister(lir->getTempReg());
-
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, perThreadData)), limitReg);
-    masm.loadPtr(Address(limitReg, offsetof(PerThreadData, ionStackLimit)), limitReg);
-
-    // Conditional forward (unlikely) branch to failure.
-    Label *bail;
-    if (!ensureOutOfLineParallelAbort(&bail))
-        return false;
-    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, limitReg, bail);
-
-    return true;
-}
-
-bool
-CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
-{
-    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
-
-    const Register tempReg = ToRegister(lir->getTempReg());
-    masm.setupUnalignedABICall(1, tempReg);
-    masm.passABIArg(ToRegister(lir->threadContext()));
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
-
-    Label *bail;
-    if (!ensureOutOfLineParallelAbort(&bail))
-        return false;
-
-    // branch to the OOL failure code if false is returned
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
-
-    return true;
-}
-
-bool
 CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed *lir)
 {
     // Ensure that this frame will not cross the stack limit.
@@ -1611,6 +1587,84 @@ CodeGenerator::visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool)
     return true;
 }
 
+// Out-of-line path to report over-recursed error and fail.
+class ParCheckOverRecursedFailure : public OutOfLineCodeBase<CodeGenerator>
+{
+    LParCheckOverRecursed *lir_;
+
+  public:
+    ParCheckOverRecursedFailure(LParCheckOverRecursed *lir)
+      : lir_(lir)
+    { }
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitParCheckOverRecursedFailure(this);
+    }
+
+    LParCheckOverRecursed *lir() const {
+        return lir_;
+    }
+};
+
+bool
+CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
+{
+    // See above: the only difference between this code and
+    // visitCheckOverRecursed() is that this code runs in parallel mode
+    // and hence uses the ionStackLimit from the current thread state
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register limitReg = ToRegister(lir->getTempReg());
+
+    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, perThreadData)), limitReg);
+    masm.loadPtr(Address(limitReg, offsetof(PerThreadData, ionStackLimit)), limitReg);
+
+    // Conditional forward (unlikely) branch to failure.
+    ParCheckOverRecursedFailure *ool = new ParCheckOverRecursedFailure(lir);
+    if (!addOutOfLineCode(ool))
+        return false;
+    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, limitReg, ool->entry());
+    masm.bind(ool->rejoin());
+
+    return true;
+}
+
+bool
+CodeGenerator::visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool)
+{
+    saveLive(ool->lir());
+    masm.movePtr(ToRegister(ool->lir()->threadContext()), CallTempReg0);
+    if (!callParCheckInterrupt(CallTempReg0, CallTempReg1))
+        return false;
+    restoreLive(ool->lir());
+    masm.jump(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
+{
+    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
+    const Register threadContextReg = ToRegister(lir->threadContext());
+    const Register tempReg = ToRegister(lir->getTempReg());
+    return callParCheckInterrupt(threadContextReg, tempReg);
+}
+
+bool
+CodeGenerator::callParCheckInterrupt(Register threadCtxReg, Register tempReg)
+{
+    masm.setupUnalignedABICall(1, tempReg);
+    masm.passABIArg(threadCtxReg);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
+
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+
+    // branch to the OOL failure code if false is returned
+    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+    return true;
+}
+
 IonScriptCounts *
 CodeGenerator::maybeCreateScriptCounts()
 {
@@ -1671,13 +1725,12 @@ CodeGenerator::generateBody()
         current = graph.getBlock(i);
 
         LInstructionIterator iter = current->begin();
-        size_t instrIdx = 0;
 
         // Separately visit the label at the start of every block, so that
         // count instrumentation is inserted after the block label is bound.
         if (!iter->accept(this))
             return false;
-        iter++, instrIdx++;
+        iter++;
 
         mozilla::Maybe<Sprinter> printer;
         if (counts) {
@@ -1687,7 +1740,7 @@ CodeGenerator::generateBody()
                 return false;
         }
 
-        for (; iter != current->end(); iter++, instrIdx++) {
+        for (; iter != current->end(); iter++) {
             IonSpew(IonSpew_Codegen, "instruction %s", iter->opName());
             if (counts)
                 printer.ref().printf("[%s]\n", iter->opName());
@@ -1697,7 +1750,7 @@ CodeGenerator::generateBody()
                     return false;
             }
 
-            if (!maybeCallTrace(i, instrIdx, iter->opName()))
+            if (!maybeCallTrace(i, iter->id(), iter->opName()))
                 return false;
 
             if (!iter->accept(this))
@@ -3864,6 +3917,8 @@ class OutOfLineCache : public OutOfLineCodeBase<CodeGenerator>
             return codegen->visitOutOfLineBindNameCache(this);
           case LInstruction::LOp_GetNameCache:
             return codegen->visitOutOfLineGetNameCache(this);
+          case LInstruction::LOp_CallsiteCloneCache:
+            return codegen->visitOutOfLineCallsiteCloneCache(this);
           default:
             JS_NOT_REACHED("Bad instruction");
             return false;
@@ -3900,6 +3955,42 @@ CodeGenerator::visitCache(LInstruction *ins)
     masm.bind(ool->rejoin());
 
     ool->setInlineJump(jump, label);
+    return true;
+}
+
+typedef JSObject *(*CallsiteCloneCacheFn)(JSContext *, size_t, HandleObject);
+static const VMFunction CallsiteCloneCacheInfo =
+    FunctionInfo<CallsiteCloneCacheFn>(CallsiteCloneCache);
+
+bool
+CodeGenerator::visitOutOfLineCallsiteCloneCache(OutOfLineCache *ool)
+{
+    LCallsiteCloneCache *lir = ool->cache()->toCallsiteCloneCache();
+    const MCallsiteCloneCache *mir = lir->mir();
+    Register callee = ToRegister(lir->callee());
+    RegisterSet liveRegs = lir->safepoint()->liveRegs();
+    Register output = ToRegister(lir->output());
+
+    IonCacheCallsiteClone cache(ool->getInlineJump(), ool->getInlineLabel(),
+                                masm.labelForPatch(), liveRegs,
+                                callee, mir->callScript(), mir->callPc(), output);
+
+    JS_ASSERT(!mir->resumePoint());
+    cache.setIdempotent();
+
+    size_t cacheIndex = allocateCache(cache);
+
+    saveLive(lir);
+
+    pushArg(callee);
+    pushArg(Imm32(cacheIndex));
+    if (!callVM(CallsiteCloneCacheInfo, lir))
+        return false;
+
+    masm.storeCallResult(output);
+    restoreLive(lir);
+
+    masm.jump(ool->rejoin());
     return true;
 }
 

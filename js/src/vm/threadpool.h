@@ -8,17 +8,16 @@
 #ifndef jsthreadpool_h___
 #define jsthreadpool_h___
 
-#if defined(JS_THREADSAFE) && defined(JS_ION)
-# define JS_THREADSAFE_ION
-#endif
-
 #include <stddef.h>
 #include "mozilla/StandardInteger.h"
-#include "prtypes.h"
 #include "js/Vector.h"
 #include "jsalloc.h"
-#include "prlock.h"
-#include "prcvar.h"
+
+#ifdef JS_THREADSAFE
+#  include "prtypes.h"
+#  include "prlock.h"
+#  include "prcvar.h"
+#endif
 
 struct JSContext;
 struct JSRuntime;
@@ -29,12 +28,12 @@ namespace js {
 
 class ThreadPoolWorker;
 
-typedef void (*TaskFun)(void *userdata, size_t workerId, uintptr_t stackLimit);
+typedef void (*TaskFun)(void *userdata, uint32_t workerId, uintptr_t stackLimit);
 
 class TaskExecutor
 {
 public:
-    virtual void executeFromWorker(size_t workerId, uintptr_t stackLimit) = 0;
+    virtual void executeFromWorker(uint32_t workerId, uintptr_t stackLimit) = 0;
 };
 
 /*
@@ -70,14 +69,14 @@ public:
 class ThreadPool
 {
 private:
-    friend struct ThreadPoolWorker;
+    friend class ThreadPoolWorker;
 
     // Initialized at startup only:
     JSRuntime *const runtime_;
     js::Vector<ThreadPoolWorker*, 8, SystemAllocPolicy> workers_;
 
     // Next worker for |submitOne()|. Atomically modified.
-    size_t nextId_;
+    uint32_t nextId_;
 
     void terminateWorkers();
 
@@ -88,7 +87,7 @@ public:
     bool init();
 
     // Return number of worker threads in the pool.
-    size_t numWorkers() { return workers_.length(); }
+    uint32_t numWorkers() { return workers_.length(); }
 
     // See comment on class:
     bool submitOne(TaskExecutor *executor);

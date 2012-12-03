@@ -120,6 +120,7 @@ class Compiler : public BaseCompiler
          * more comments.
          */
         uint32_t     callIndex;
+        Label        funGuardLabel;
         DataLabelPtr funGuard;
         Jump         funJump;
         Jump         hotJump;
@@ -663,7 +664,7 @@ private:
     bool jsop_setprop(PropertyName *name, bool popGuaranteed);
     void jsop_setprop_slow(PropertyName *name);
     bool jsop_instanceof();
-    void jsop_intrinsicname(PropertyName *name, JSValueType type);
+    bool jsop_intrinsicname(PropertyName *name, JSValueType type);
     void jsop_name(PropertyName *name, JSValueType type);
     bool jsop_xname(PropertyName *name);
     void enterBlock(StaticBlockObject *block);
