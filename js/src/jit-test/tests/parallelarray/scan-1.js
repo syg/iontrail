@@ -3,15 +3,6 @@ load(libdir + "parallelarray-helpers.js");
 function testScan() {
   function sum(a, b) { return a+b; }
 
-  function seq_scan(array, f) {
-    var result = [];
-    result[0] = array[0];
-    for (var i = 1; i < array.length; i++) {
-      result[i] = f(result[i-1], array[i]);
-    }
-    return result;
-  }
-
   var array = [];
   for (var i = 1; i <= 64; i++) array.push(i);
   var expected = seq_scan(array, sum);

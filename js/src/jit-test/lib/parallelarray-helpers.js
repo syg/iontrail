@@ -3,9 +3,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 function range(n, m) {
+  // Returns an array with [n..m] (include on n, exclusive on m)
+
   var result = [];
   for (var i = n; i < m; i++)
     result.push(i);
+  return result;
+}
+
+function seq_scan(array, f) {
+  // Simple sequential version of scan() that operates over an array
+
+  var result = [];
+  result[0] = array[0];
+  for (var i = 1; i < array.length; i++) {
+    result[i] = f(result[i-1], array[i]);
+  }
   return result;
 }
 
