@@ -881,6 +881,12 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
 {
   PaintContext paintContext(aTarget, aLayer, aCallback, aCallbackData, aReadback);
 
+  // Don't attempt to paint layers with a singular transform, cairo will
+  // just throw an error.
+  if (aLayer->GetEffectiveTransform().IsSingular()) {
+    return;
+  }
+
   RenderTraceScope trace("BasicLayerManager::PaintLayer", "707070");
 
   const nsIntRect* clipRect = aLayer->GetEffectiveClipRect();
@@ -1299,7 +1305,8 @@ bool
 BasicShadowLayerManager::ProgressiveUpdateCallback(bool aHasPendingNewThebesContent,
                                                    gfx::Rect& aViewport,
                                                    float& aScaleX,
-                                                   float& aScaleY)
+                                                   float& aScaleY,
+                                                   bool aDrawingCritical)
 {
 #ifdef MOZ_WIDGET_ANDROID
   Layer* primaryScrollable = GetPrimaryScrollableLayer();
@@ -1311,13 +1318,16 @@ BasicShadowLayerManager::ProgressiveUpdateCallback(bool aHasPendingNewThebesCont
     const gfx3DMatrix& rootTransform = GetRoot()->GetTransform();
     float devPixelRatioX = 1 / rootTransform.GetXScale();
     float devPixelRatioY = 1 / rootTransform.GetYScale();
-    gfx::Rect displayPort((metrics.mDisplayPort.x + metrics.mScrollOffset.x) * devPixelRatioX,
-                          (metrics.mDisplayPort.y + metrics.mScrollOffset.y) * devPixelRatioY,
-                          metrics.mDisplayPort.width * devPixelRatioX,
-                          metrics.mDisplayPort.height * devPixelRatioY);
+    const gfx::Rect& metricsDisplayPort =
+      (aDrawingCritical && !metrics.mCriticalDisplayPort.IsEmpty()) ?
+        metrics.mCriticalDisplayPort : metrics.mDisplayPort;
+    gfx::Rect displayPort((metricsDisplayPort.x + metrics.mScrollOffset.x) * devPixelRatioX,
+                          (metricsDisplayPort.y + metrics.mScrollOffset.y) * devPixelRatioY,
+                          metricsDisplayPort.width * devPixelRatioX,
+                          metricsDisplayPort.height * devPixelRatioY);
 
     return AndroidBridge::Bridge()->ProgressiveUpdateCallback(
-      aHasPendingNewThebesContent, displayPort, devPixelRatioX,
+      aHasPendingNewThebesContent, displayPort, devPixelRatioX, aDrawingCritical,
       aViewport, aScaleX, aScaleY);
   }
 #endif

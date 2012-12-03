@@ -757,14 +757,14 @@ this.DOMApplicationRegistry = {
     let app = this.webapps[download.appId];
 
     app.progress = 0;
-    app.installState = app.previousState;
+    app.installState = download.previousState;
     app.downloading = false;
     app.downloadAvailable = false;
     app.downloadSize = 0;
     this._saveApps((function() {
       this.broadcastMessage("Webapps:PackageEvent",
                              { type: "canceled",
-                               manifestURL:  aApp.manifestURL,
+                               manifestURL:  app.manifestURL,
                                app: app,
                                error: "DOWNLOAD_CANCELED" });
     }).bind(this));
@@ -779,9 +779,42 @@ this.DOMApplicationRegistry = {
       return;
     }
 
+    // First of all, we check if the download is supposed to update an
+    // already installed application.
+    let isUpdate = (app.installState == "installed");
+
+    // An app download would only be triggered for two reasons: an app
+    // update or while retrying to download a previously failed or canceled
+    // instalation.
+    app.retryingDownload = !isUpdate;
+
     // We need to get the update manifest here, not the webapp manifest.
     let file = FileUtils.getFile(DIRECTORY_NAME,
                                  ["webapps", id, "update.webapp"], true);
+
+    if (!file.exists()) {
+      // This is a hosted app, let's check if it has an appcache
+      // and download it.
+      this._readManifests([{ id: id }], (function readManifest(aResults) {
+        let jsonManifest = aResults[0].manifest;
+        let manifest = new ManifestHelper(jsonManifest, app.origin);
+
+        if (manifest.appcache_path) {
+          debug("appcache found");
+          this.startOfflineCacheDownload(manifest, app, null, null, isUpdate);
+        } else {
+          // hosted app with no appcache, nothing to do, but we fire a
+          // downloaded event
+          DOMApplicationRegistry.broadcastMessage("Webapps:PackageEvent",
+                                                  { type: "downloaded",
+                                                    manifestURL: aManifestURL,
+                                                    app: app,
+                                                    manifest: jsonManifest });
+        }
+      }).bind(this));
+
+      return;
+    }
 
     this._loadJSONAsync(file, (function(aJSON) {
       if (!aJSON) {
@@ -791,7 +824,7 @@ this.DOMApplicationRegistry = {
 
       let manifest = new ManifestHelper(aJSON, app.installOrigin);
       this.downloadPackage(manifest, { manifestURL: aManifestURL,
-                                       origin: app.origin }, true,
+                                       origin: app.origin }, isUpdate,
         function(aId, aManifest) {
           // Success! Keep the zip in of TmpD, we'll move it out when
           // applyDownload() will be called.
@@ -815,6 +848,10 @@ this.DOMApplicationRegistry = {
                                                       manifestURL: aManifestURL,
                                                       app: app,
                                                       manifest: aManifest });
+            if (app.installState == "pending") {
+              // We restarted a failed download, apply it automatically.
+              DOMApplicationRegistry.applyDownload(aManifestURL);
+            }
           });
         });
     }).bind(this));
@@ -822,12 +859,11 @@ this.DOMApplicationRegistry = {
 
   applyDownload: function applyDownload(aManifestURL) {
     debug("applyDownload for " + aManifestURL);
-    let app = this.getAppByManifestURL(aManifestURL);
+    let id = this._appIdForManifestURL(aManifestURL);
+    let app = this.webapps[id];
     if (!app || (app && !app.readyToApplyDownload)) {
       return;
     }
-
-    let id = this._appIdForManifestURL(app.manifestURL);
 
     // Clean up the deprecated manifest cache if needed.
     if (id in this._manifestCache) {
@@ -851,29 +887,47 @@ this.DOMApplicationRegistry = {
 
     // Get the manifest, and set properties.
     this.getManifestFor(app.origin, (function(aData) {
+      app.downloading = false;
+      app.downloadAvailable = false;
+      app.downloadSize = 0;
+      app.installState = "installed";
       app.readyToApplyDownload = false;
-      this.broadcastMessage("Webapps:PackageEvent",
-                            { type: "applied",
-                              manifestURL: app.manifestURL,
-                              app: app,
-                              manifest: aData });
-      // Update the permissions for this app.
-      PermissionsInstaller.installPermissions({ manifest: aData,
-                                                origin: app.origin,
-                                                manifestURL: app.manifestURL },
-                                              true);
+      delete app.retryingDownload;
+
+      DOMApplicationRegistry._saveApps(function() {
+        DOMApplicationRegistry.broadcastMessage("Webapps:PackageEvent",
+                                                { type: "applied",
+                                                  manifestURL: app.manifestURL,
+                                                  app: app,
+                                                  manifest: aData });
+        // Update the permissions for this app.
+        PermissionsInstaller.installPermissions({ manifest: aData,
+                                                  origin: app.origin,
+                                                  manifestURL: app.manifestURL },
+                                                true);
+      });
     }).bind(this));
   },
 
   startOfflineCacheDownload: function startOfflineCacheDownload(aManifest, aApp,
                                                                 aProfileDir,
-                                                                aOfflineCacheObserver) {
+                                                                aOfflineCacheObserver,
+                                                                aIsUpdate) {
     // if the manifest has an appcache_path property, use it to populate the appcache
     if (aManifest.appcache_path) {
       let appcacheURI = Services.io.newURI(aManifest.fullAppcachePath(), null, null);
       let updateService = Cc["@mozilla.org/offlinecacheupdate-service;1"]
                             .getService(Ci.nsIOfflineCacheUpdateService);
       let docURI = Services.io.newURI(aManifest.fullLaunchPath(), null, null);
+      // We determine the app's 'installState' according to its previous
+      // state. Cancelled download should remain as 'pending'. Successfully
+      // installed apps should morph to 'updating'.
+      if (aIsUpdate) {
+        aApp.installState = "updating";
+      }
+      // We set the 'downloading' flag right before starting the app
+      // download/update.
+      aApp.downloading = true;
       let cacheUpdate = aProfileDir ? updateService.scheduleCustomProfileUpdate(appcacheURI, docURI, aProfileDir)
                                     : updateService.scheduleAppUpdate(appcacheURI, docURI, aApp.localId, false);
       cacheUpdate.addObserver(new AppcacheObserver(aApp), false);
@@ -1104,6 +1158,7 @@ this.DOMApplicationRegistry = {
     appObject.localId = localId;
     appObject.basePath = FileUtils.getDir(DIRECTORY_NAME, ["webapps"], true, true).path;
     let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
+    dir.permissions = FileUtils.PERMS_DIRECTORY;
     let manFile = dir.clone();
     manFile.append(manifestName);
     let jsonManifest = aData.isPackage ? app.updateManifest : app.manifest;
@@ -1180,6 +1235,7 @@ this.DOMApplicationRegistry = {
         let zipFile = FileUtils.getFile("TmpD", ["webapps", aId, "application.zip"], true);
         let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", aId], true, true);
         zipFile.moveTo(dir, "application.zip");
+        zipFile.permissions = FileUtils.PERMS_FILE;
         let tmpDir = FileUtils.getDir("TmpD", ["webapps", aId], true, true);
         try {
           tmpDir.remove(true);
@@ -1299,7 +1355,7 @@ this.DOMApplicationRegistry = {
     // - add the new app to the registry.
     // If we fail at any step, we backout the previous ones and return an error.
 
-    debug(JSON.stringify(aApp));
+    debug("downloadPackage " + JSON.stringify(aApp));
 
     let id = this._appIdForManifestURL(aApp.manifestURL);
     let app = this.webapps[id];
@@ -1312,10 +1368,22 @@ this.DOMApplicationRegistry = {
       try {
         dir.remove(true);
       } catch (e) { }
-        self.broadcastMessage("Webapps:PackageEvent",
-                              { type: "error",
-                                manifestURL:  aApp.manifestURL,
-                                error: aError });
+
+      // We avoid notifying the error to the DOM side if the app download
+      // was cancelled via cancelDownload, which already sends its own
+      // notification.
+      if (!app.downloading && !app.downloadAvailable && !app.downloadSize) {
+        return;
+      }
+
+      let download = self.downloads[aApp.manifestURL];
+      app.downloading = false;
+      app.installState = download.previousState;
+      self.broadcastMessage("Webapps:PackageEvent",
+                            { type: "error",
+                              manifestURL:  aApp.manifestURL,
+                              error: aError,
+                              app: app });
     }
 
     function getInferedStatus() {
@@ -1368,12 +1436,20 @@ this.DOMApplicationRegistry = {
           self.broadcastMessage("Webapps:PackageEvent",
                                 { type: "progress",
                                   manifestURL: aApp.manifestURL,
-                                  progress: aProgress });
+                                  progress: aProgress,
+                                  app: app });
         },
         onStatus: function notifStatus(aRequest, aContext, aStatus, aStatusArg) { }
       }
-      NetUtil.asyncFetch(requestChannel,
-      function(aInput, aResult, aRequest) {
+
+      // We set the 'downloading' flag to true right before starting the fetch.
+      app.downloading = true;
+      // We determine the app's 'installState' according to its previous
+      // state. Cancelled download should remain as 'pending'. Successfully
+      // installed apps should morph to 'updating'.
+      app.installState = aIsUpdate ? "updating" : "pending";
+
+      NetUtil.asyncFetch(requestChannel, function(aInput, aResult, aRequest) {
         if (!Components.isSuccessCode(aResult)) {
           // We failed to fetch the zip.
           cleanup("NETWORK_ERROR");
@@ -1628,7 +1704,8 @@ this.DOMApplicationRegistry = {
       return;
 
     let id = this._appId(aOrigin);
-    if (!id || this.webapps[id].installState == "pending") {
+    let app = this.webapps[id];
+    if (!id || (app.installState == "pending" && !app.retryingDownload)) {
       aCallback(null);
       return;
     }
@@ -1889,6 +1966,8 @@ this.DOMApplicationRegistry = {
  * Appcache download observer
  */
 let AppcacheObserver = function(aApp) {
+  debug("Creating AppcacheObserver for " + aApp.origin +
+        " - " + aApp.installState);
   this.app = aApp;
   this.startStatus = aApp.installState;
 };
@@ -1899,20 +1978,28 @@ AppcacheObserver.prototype = {
     let mustSave = false;
     let app = this.app;
 
+    debug("Offline cache state change for " + app.origin + " : " + aState);
+
     let setStatus = function appObs_setStatus(aStatus) {
+      debug("Offlinecache setStatus to " + aStatus + " for " + app.origin);
       mustSave = (app.installState != aStatus);
       app.installState = aStatus;
-      app.downloading = false;
+      if (aStatus == "installed") {
+        app.downloading = false;
+        app.downloadAvailable = false;
+      }
       DOMApplicationRegistry.broadcastMessage("Webapps:OfflineCache",
                                               { manifest: app.manifestURL,
                                                 installState: app.installState });
     }
 
     let setError = function appObs_setError(aError) {
+      debug("Offlinecache setError to " + aError);
       DOMApplicationRegistry.broadcastMessage("Webapps:OfflineCache",
                                               { manifest: app.manifestURL,
                                                 error: aError });
       app.downloading = false;
+      app.downloadAvailable = false;
       mustSave = true;
     }
 

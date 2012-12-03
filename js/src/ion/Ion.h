@@ -21,6 +21,12 @@ namespace ion {
 class TempAllocator;
 class ParallelCompileContext; // in ParallelArrayAnalysis.h
 
+// Possible register allocators which may be used.
+enum IonRegisterAllocator {
+    RegisterAllocator_LSRA,
+    RegisterAllocator_Stupid
+};
+
 struct IonOptions
 {
     // Toggles whether global value numbering is used.
@@ -49,11 +55,10 @@ struct IonOptions
     // Default: true
     bool limitScriptSize;
 
-    // Toggles whether Linear Scan Register Allocation is used. If LSRA is not
-    // used, then Greedy Register Allocation is used instead.
+    // Describes which register allocator to use.
     //
-    // Default: true
-    bool lsra;
+    // Default: LSRA
+    IonRegisterAllocator registerAllocator;
 
     // Toggles whether inlining is performed.
     //
@@ -147,6 +152,13 @@ struct IonOptions
     // stop running this function in IonMonkey. (default 512)
     uint32 slowCallLimit;
 
+    // When caller runs in IM, but callee not, we take a slow path to the interpreter.
+    // This has a significant overhead. In order to decrease the number of times this happens,
+    // the useCount gets incremented faster to compile this function in IM and use the fastpath.
+    //
+    // Default: 5
+    uint32 slowCallIncUseCount;
+
     // Whether we are in parallel warmup mode. This is mutated during runtime
     // from within the parallel intrinsics.
     //
@@ -181,7 +193,7 @@ struct IonOptions
         licm(true),
         osr(true),
         limitScriptSize(true),
-        lsra(true),
+        registerAllocator(RegisterAllocator_LSRA),
         inlining(true),
         edgeCaseAnalysis(true),
         rangeAnalysis(true),
@@ -198,6 +210,7 @@ struct IonOptions
         inlineUseCountRatio(128),
         eagerCompilation(false),
         slowCallLimit(512),
+        slowCallIncUseCount(5),
         parallelWarmupContext(NULL)
     {
     }
@@ -285,7 +298,8 @@ void Invalidate(JSContext *cx, const Vector<types::RecompileInfo> &invalid, bool
 bool Invalidate(JSContext *cx, JSScript *script, ExecutionMode mode, bool resetUses = true);
 bool Invalidate(JSContext *cx, JSScript *script, bool resetUses = true);
 
-void MarkFromIon(JSRuntime *rt, Value *vp);
+void MarkValueFromIon(JSRuntime *rt, Value *vp);
+void MarkShapeFromIon(JSRuntime *rt, Shape **shapep);
 
 void ToggleBarriers(JSCompartment *comp, bool needs);
 

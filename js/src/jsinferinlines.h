@@ -505,6 +505,8 @@ GetTypeCallerInitObject(JSContext *cx, JSProtoKey key)
     return GetTypeNewObject(cx, key);
 }
 
+void MarkIteratorUnknownSlow(JSContext *cx);
+
 /*
  * When using a custom iterator within the initialization of a 'for in' loop,
  * mark the iterator values as unknown.
@@ -512,11 +514,12 @@ GetTypeCallerInitObject(JSContext *cx, JSProtoKey key)
 inline void
 MarkIteratorUnknown(JSContext *cx)
 {
-    extern void MarkIteratorUnknownSlow(JSContext *cx);
-
     if (cx->typeInferenceEnabled())
         MarkIteratorUnknownSlow(cx);
 }
+
+void TypeMonitorCallSlow(JSContext *cx, HandleObject callee, const CallArgs &args,
+                         bool constructing);
 
 /*
  * Monitor a javascript call, either on entry to the interpreter or made
@@ -525,14 +528,11 @@ MarkIteratorUnknown(JSContext *cx)
 inline bool
 TypeMonitorCall(JSContext *cx, const js::CallArgs &args, bool constructing)
 {
-    extern void TypeMonitorCallSlow(JSContext *cx, HandleObject callee,
-                                    const CallArgs &args, bool constructing);
-
     js::RootedObject callee(cx, &args.callee());
     if (callee->isFunction()) {
         JSFunction *fun = callee->toFunction();
         if (fun->isInterpreted()) {
-            js::RootedScript script(cx, fun->script());
+            js::RootedScript script(cx, fun->nonLazyScript());
             if (!script->ensureRanAnalysis(cx))
                 return false;
             if (cx->typeInferenceEnabled())
@@ -706,7 +706,7 @@ UseNewTypeForClone(JSFunction *fun)
      * instance a singleton type and clone the underlying script.
      */
 
-    RawScript script = fun->script().get(nogc);
+    RawScript script = fun->nonLazyScript().get(nogc);
 
     if (script->length >= 50)
         return false;
@@ -1297,7 +1297,7 @@ Type::typeObject() const
 }
 
 inline bool
-TypeSet::hasType(Type type)
+TypeSet::hasType(Type type) const
 {
     if (unknown())
         return true;
@@ -1434,7 +1434,7 @@ TypeSet::setOwnProperty(JSContext *cx, bool configured)
 }
 
 inline unsigned
-TypeSet::getObjectCount()
+TypeSet::getObjectCount() const
 {
     JS_ASSERT(!unknownObject());
     uint32_t count = baseObjectCount();
@@ -1444,7 +1444,7 @@ TypeSet::getObjectCount()
 }
 
 inline TypeObjectKey *
-TypeSet::getObject(unsigned i)
+TypeSet::getObject(unsigned i) const
 {
     JS_ASSERT(i < getObjectCount());
     if (baseObjectCount() == 1) {
@@ -1455,14 +1455,14 @@ TypeSet::getObject(unsigned i)
 }
 
 inline RawObject
-TypeSet::getSingleObject(unsigned i)
+TypeSet::getSingleObject(unsigned i) const
 {
     TypeObjectKey *key = getObject(i);
     return (uintptr_t(key) & 1) ? (JSObject *)(uintptr_t(key) ^ 1) : NULL;
 }
 
 inline TypeObject *
-TypeSet::getTypeObject(unsigned i)
+TypeSet::getTypeObject(unsigned i) const
 {
     TypeObjectKey *key = getObject(i);
     return (key && !(uintptr_t(key) & 1)) ? (TypeObject *) key : NULL;

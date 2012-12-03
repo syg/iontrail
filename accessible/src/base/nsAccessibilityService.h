@@ -8,8 +8,7 @@
 
 #include "nsIAccessibilityService.h"
 
-#include "nsAccDocManager.h"
-
+#include "mozilla/a11y/DocManager.h"
 #include "mozilla/a11y/FocusManager.h"
 
 #include "nsIObserver.h"
@@ -64,12 +63,15 @@ bool ShouldA11yBeEnabled();
 } // namespace a11y
 } // namespace mozilla
 
-class nsAccessibilityService : public nsAccDocManager,
+class nsAccessibilityService : public mozilla::a11y::DocManager,
                                public mozilla::a11y::FocusManager,
                                public nsIAccessibilityService,
                                public nsIObserver
 {
 public:
+  typedef mozilla::a11y::Accessible Accessible;
+  typedef mozilla::a11y::DocAccessible DocAccessible;
+
   virtual ~nsAccessibilityService();
 
   NS_DECL_ISUPPORTS_INHERITED
@@ -81,7 +83,7 @@ public:
                                                 bool aCanCreate);
   already_AddRefed<Accessible>
     CreateHTMLObjectFrameAccessible(nsObjectFrame* aFrame, nsIContent* aContent,
-                                    DocAccessible* aDoc);
+                                    Accessible* aContext);
 
   /**
    * Adds/remove ATK root accessible for gtk+ native window to/from children
@@ -153,11 +155,11 @@ public:
    * one.
    *
    * @param  aNode             [in] the given node
-   * @param  aDoc              [in] the doc accessible of the node
+   * @param  aContext          [in] context the accessible is created in
    * @param  aIsSubtreeHidden  [out, optional] indicates whether the node's
    *                             frame and its subtree is hidden
    */
-  Accessible* GetOrCreateAccessible(nsINode* aNode, DocAccessible* aDoc,
+  Accessible* GetOrCreateAccessible(nsINode* aNode, Accessible* aContext,
                                     bool* aIsSubtreeHidden = nullptr);
 
 private:
@@ -190,15 +192,14 @@ private:
    */
   already_AddRefed<Accessible>
     CreateHTMLAccessibleByMarkup(nsIFrame* aFrame, nsIContent* aContent,
-                                 DocAccessible* aDoc,
-                                 bool aIsLegalPartOfHTMLTable);
+                                 Accessible* aContext);
 
   /**
    * Create an accessible whose type depends on the given frame.
    */
   already_AddRefed<Accessible>
     CreateAccessibleByFrameType(nsIFrame* aFrame, nsIContent* aContent,
-                                DocAccessible* aDoc);
+                                Accessible* aContext);
 
   /**
    * Create accessible if parent is a deck frame.

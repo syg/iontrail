@@ -77,29 +77,34 @@ class RemoteAutomation(Automation):
 
         if (status == 1 and self._devicemanager.processExist(proc.procName)):
             # Then we timed out, make sure Fennec is dead
-            print "TEST-UNEXPECTED-FAIL | %s | application ran for longer than " \
-                  "allowed maximum time of %d seconds" % (self.lastTestSeen, int(maxTime))
+            if maxTime:
+                print "TEST-UNEXPECTED-FAIL | %s | application ran for longer than " \
+                      "allowed maximum time of %s seconds" % (self.lastTestSeen, maxTime)
+            else:
+                print "TEST-UNEXPECTED-FAIL | %s | application ran for longer than " \
+                      "allowed maximum time" % (self.lastTestSeen)
             proc.kill()
 
         return status
 
     def checkForCrashes(self, directory, symbolsPath):
         remoteCrashDir = self._remoteProfile + '/minidumps/'
-        if self._devicemanager.dirExists(remoteCrashDir):
-            dumpDir = tempfile.mkdtemp()
-            self._devicemanager.getDirectory(remoteCrashDir, dumpDir)
-            automationutils.checkForCrashes(dumpDir, symbolsPath,
-                                            self.lastTestSeen)
-            try:
-                shutil.rmtree(dumpDir)
-            except:
-                print "WARNING: unable to remove directory: %s" % dumpDir
-        else:
+        if not self._devicemanager.dirExists(remoteCrashDir):
             # As of this writing, the minidumps directory is automatically
             # created when fennec (first) starts, so its lack of presence
             # is a hint that something went wrong.
-            print "WARNING: No crash directory (%s) on remote " \
-                "device" % remoteCrashDir
+            print "Automation Error: No crash directory (%s) found on remote device" % remoteCrashDir
+            # Whilst no crash was found, the run should still display as a failure
+            return True
+        dumpDir = tempfile.mkdtemp()
+        self._devicemanager.getDirectory(remoteCrashDir, dumpDir)
+        crashed = automationutils.checkForCrashes(dumpDir, symbolsPath,
+                                        self.lastTestSeen)
+        try:
+            shutil.rmtree(dumpDir)
+        except:
+            print "WARNING: unable to remove directory: %s" % dumpDir
+        return crashed
 
     def buildCommandLine(self, app, debuggerInfo, profileDir, testURL, extraArgs):
         # If remote profile is specified, use that instead

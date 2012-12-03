@@ -119,7 +119,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     // Emits a test of a value against all types in a TypeSet. A scratch
     // register is required.
     template <typename T>
-    void guardTypeSet(const T &address, types::TypeSet *types, Register scratch,
+    void guardTypeSet(const T &address, const types::TypeSet *types, Register scratch,
                       Label *mismatched);
 
     void loadObjShape(Register objReg, Register dest) {
@@ -275,7 +275,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void branchTestValueTruthy(const ValueOperand &value, Label *ifTrue, FloatRegister fr);
 
-    void branchIfFunctionIsNative(Register fun, Label *label) {
+    void branchIfFunctionHasNoScript(Register fun, Label *label) {
         // 16-bit loads are slow and unaligned 32-bit loads may be too so
         // perform an aligned 32-bit load and adjust the bitmask accordingly.
         JS_STATIC_ASSERT(offsetof(JSFunction, nargs) % sizeof(uint32_t) == 0);
@@ -385,7 +385,10 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     template <typename T>
     void callPreBarrier(const T &address, MIRType type) {
-        JS_ASSERT(type == MIRType_Value || type == MIRType_String || type == MIRType_Object);
+        JS_ASSERT(type == MIRType_Value ||
+                  type == MIRType_String ||
+                  type == MIRType_Object ||
+                  type == MIRType_Shape);
         Label done;
 
         if (type == MIRType_Value)
@@ -395,7 +398,9 @@ class MacroAssembler : public MacroAssemblerSpecific
         computeEffectiveAddress(address, PreBarrierReg);
 
         JSCompartment *compartment = GetIonContext()->compartment;
-        IonCode *preBarrier = compartment->ionCompartment()->preBarrier();
+        IonCode *preBarrier = (type == MIRType_Shape)
+                              ? compartment->ionCompartment()->shapePreBarrier()
+                              : compartment->ionCompartment()->valuePreBarrier();
 
         call(preBarrier);
         Pop(PreBarrierReg);
@@ -653,6 +658,9 @@ class MacroAssembler : public MacroAssemblerSpecific
         movePtr(ImmWord(p->sizePointer()), temp);
         add32(Imm32(-1), Address(temp, 0));
     }
+
+    void printf(const char *output);
+    void printf(const char *output, Register value);
 };
 
 } // namespace ion

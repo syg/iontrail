@@ -115,6 +115,13 @@ WebMReader::WebMReader(AbstractMediaDecoder* aDecoder)
   mHasAudio(false)
 {
   MOZ_COUNT_CTOR(WebMReader);
+  // Zero these member vars to avoid crashes in VP8 destroy and Vorbis clear
+  // functions when destructor is called before |Init|.
+  memset(&mVP8, 0, sizeof(vpx_codec_ctx_t));
+  memset(&mVorbisBlock, 0, sizeof(vorbis_block));
+  memset(&mVorbisDsp, 0, sizeof(vorbis_dsp_state));
+  memset(&mVorbisInfo, 0, sizeof(vorbis_info));
+  memset(&mVorbisComment, 0, sizeof(vorbis_comment));
 }
 
 WebMReader::~WebMReader()
@@ -182,7 +189,7 @@ void WebMReader::Cleanup()
   }
 }
 
-nsresult WebMReader::ReadMetadata(nsVideoInfo* aInfo,
+nsresult WebMReader::ReadMetadata(VideoInfo* aInfo,
                                     MetadataTags** aTags)
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
@@ -257,7 +264,7 @@ nsresult WebMReader::ReadMetadata(nsVideoInfo* aInfo,
       // that our video frame creation code doesn't overflow.
       nsIntSize displaySize(params.display_width, params.display_height);
       nsIntSize frameSize(params.width, params.height);
-      if (!nsVideoInfo::ValidateVideoRegion(frameSize, pictureRect, displaySize)) {
+      if (!VideoInfo::ValidateVideoRegion(frameSize, pictureRect, displaySize)) {
         // Video track's frame sizes will overflow. Ignore the video track.
         continue;
       }
@@ -526,11 +533,11 @@ nsReturnRef<NesteggPacketHolder> WebMReader::NextPacket(TrackType aTrackType)
 {
   // The packet queue that packets will be pushed on if they
   // are not the type we are interested in.
-  PacketQueue& otherPackets = 
+  WebMPacketQueue& otherPackets =
     aTrackType == VIDEO ? mAudioPackets : mVideoPackets;
 
   // The packet queue for the type that we are interested in.
-  PacketQueue &packets =
+  WebMPacketQueue &packets =
     aTrackType == VIDEO ? mVideoPackets : mAudioPackets;
 
   // Flag to indicate that we do need to playback these types of

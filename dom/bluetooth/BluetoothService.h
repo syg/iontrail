@@ -303,12 +303,14 @@ public:
     return mEnabled;
   }
 
+  bool
+  IsToggling() const;
+
 protected:
   BluetoothService()
-  : mEnabled(false), mSettingsCheckInProgress(false),
-    mRegisteredForLocalAgent(false)
+  : mEnabled(false)
 #ifdef DEBUG
-    , mLastRequestedEnable(false)
+  , mLastRequestedEnable(false)
 #endif
   {
     mBluetoothSignalObserverTable.Init();
@@ -398,8 +400,6 @@ protected:
   BluetoothManagerList mLiveManagers;
 
   bool mEnabled;
-  bool mSettingsCheckInProgress;
-  bool mRegisteredForLocalAgent;
 
 #ifdef DEBUG
   bool mLastRequestedEnable;

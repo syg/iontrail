@@ -157,6 +157,7 @@ function BreakpointsView() {
   this._onEditorUnload = this._onEditorUnload.bind(this);
   this._onEditorSelection = this._onEditorSelection.bind(this);
   this._onEditorContextMenu = this._onEditorContextMenu.bind(this);
+  this._onEditorContextMenuPopupHidden = this._onEditorContextMenuPopupHidden.bind(this);
   this._onBreakpointClick = this._onBreakpointClick.bind(this);
   this._onCheckboxClick = this._onCheckboxClick.bind(this);
   this._onConditionalPopupShowing = this._onConditionalPopupShowing.bind(this);
@@ -174,6 +175,7 @@ create({ constructor: BreakpointsView, proto: MenuContainer.prototype }, {
     this._container = new StackList(document.getElementById("breakpoints"));
     this._commandset = document.getElementById("debuggerCommands");
     this._popupset = document.getElementById("debuggerPopupset");
+    this._cmPopup = document.getElementById("sourceEditorContextMenu");
     this._cbPanel = document.getElementById("conditional-breakpoint-panel");
     this._cbTextbox = document.getElementById("conditional-breakpoint-textbox");
 
@@ -184,9 +186,10 @@ create({ constructor: BreakpointsView, proto: MenuContainer.prototype }, {
     window.addEventListener("Debugger:EditorLoaded", this._onEditorLoad, false);
     window.addEventListener("Debugger:EditorUnloaded", this._onEditorUnload, false);
     this._container.addEventListener("click", this._onBreakpointClick, false);
-    this._cbPanel.addEventListener("popupshowing", this._onConditionalPopupShowing, false)
-    this._cbPanel.addEventListener("popupshown", this._onConditionalPopupShown, false)
-    this._cbPanel.addEventListener("popuphiding", this._onConditionalPopupHiding, false)
+    this._cmPopup.addEventListener("popuphidden", this._onEditorContextMenuPopupHidden, false);
+    this._cbPanel.addEventListener("popupshowing", this._onConditionalPopupShowing, false);
+    this._cbPanel.addEventListener("popupshown", this._onConditionalPopupShown, false);
+    this._cbPanel.addEventListener("popuphiding", this._onConditionalPopupHiding, false);
     this._cbTextbox.addEventListener("keypress", this._onConditionalTextboxKeyPress, false);
 
     this._cache = new Map();
@@ -200,10 +203,13 @@ create({ constructor: BreakpointsView, proto: MenuContainer.prototype }, {
     window.removeEventListener("Debugger:EditorLoaded", this._onEditorLoad, false);
     window.removeEventListener("Debugger:EditorUnloaded", this._onEditorUnload, false);
     this._container.removeEventListener("click", this._onBreakpointClick, false);
+    this._cmPopup.removeEventListener("popuphidden", this._onEditorContextMenuPopupHidden, false);
     this._cbPanel.removeEventListener("popupshowing", this._onConditionalPopupShowing, false);
     this._cbPanel.removeEventListener("popupshown", this._onConditionalPopupShown, false);
-    this._cbPanel.removeEventListener("popuphiding", this._onConditionalPopupHiding, false)
+    this._cbPanel.removeEventListener("popuphiding", this._onConditionalPopupHiding, false);
     this._cbTextbox.removeEventListener("keypress", this._onConditionalTextboxKeyPress, false);
+
+    this._cbPanel.hidePopup();
   },
 
   /**
@@ -639,6 +645,13 @@ create({ constructor: BreakpointsView, proto: MenuContainer.prototype }, {
   },
 
   /**
+   * The context menu popup hidden listener for the source editor.
+   */
+  _onEditorContextMenuPopupHidden: function DVB__onEditorContextMenuPopupHidden() {
+    this._editorContextMenuLineNumber = -1;
+  },
+
+  /**
    * Called when the add breakpoint key sequence was pressed.
    */
   _onCmdAddBreakpoint: function BP__onCmdAddBreakpoint() {
@@ -918,6 +931,7 @@ create({ constructor: BreakpointsView, proto: MenuContainer.prototype }, {
 
   _popupset: null,
   _commandset: null,
+  _cmPopup: null,
   _cbPanel: null,
   _cbTextbox: null,
   _popupShown: false,
@@ -931,6 +945,8 @@ create({ constructor: BreakpointsView, proto: MenuContainer.prototype }, {
 function WatchExpressionsView() {
   dumpn("WatchExpressionsView was instantiated");
   MenuContainer.call(this);
+  this.switchExpression = this.switchExpression.bind(this);
+  this.deleteExpression = this.deleteExpression.bind(this);
   this._createItemView = this._createItemView.bind(this);
   this._onClick = this._onClick.bind(this);
   this._onClose = this._onClose.bind(this);
@@ -1014,9 +1030,52 @@ create({ constructor: WatchExpressionsView, proto: MenuContainer.prototype }, {
    * @param number aIndex
    *        The index used to identify the watch expression.
    */
-  removeExpression: function DVWE_removeExpression(aIndex) {
+  removeExpressionAt: function DVWE_removeExpressionAt(aIndex) {
     this.remove(this._cache[aIndex]);
     this._cache.splice(aIndex, 1);
+  },
+
+  /**
+   * Changes the watch expression corresponding to the specified variable item.
+   *
+   * @param Variable aVar
+   *        The variable representing the watch expression evaluation.
+   * @param string aExpression
+   *        The new watch expression text.
+   */
+  switchExpression: function DVWE_switchExpression(aVar, aExpression) {
+    let expressionItem =
+      [i for (i of this._cache) if (i.attachment.expression == aVar.name)][0];
+
+    // Remove the watch expression if it's going to be a duplicate.
+    if (!aExpression || this.getExpressions().indexOf(aExpression) != -1) {
+      this.deleteExpression(aVar);
+      return;
+    }
+
+    // Save the watch expression code string.
+    expressionItem.attachment.expression = aExpression;
+    expressionItem.target.inputNode.value = aExpression;
+
+    // Synchronize with the controller's watch expressions store.
+    DebuggerController.StackFrames.syncWatchExpressions();
+  },
+
+  /**
+   * Removes the watch expression corresponding to the specified variable item.
+   *
+   * @param Variable aVar
+   *        The variable representing the watch expression evaluation.
+   */
+  deleteExpression: function DVWE_deleteExpression(aVar) {
+    let expressionItem =
+      [i for (i of this._cache) if (i.attachment.expression == aVar.name)][0];
+
+    // Remove the watch expression at its respective index.
+    this.removeExpressionAt(this._cache.indexOf(expressionItem));
+
+    // Synchronize with the controller's watch expressions store.
+    DebuggerController.StackFrames.syncWatchExpressions();
   },
 
   /**
@@ -1087,7 +1146,7 @@ create({ constructor: WatchExpressionsView, proto: MenuContainer.prototype }, {
    */
   _onClose: function DVWE__onClose(e) {
     let expressionItem = this.getItemForElement(e.target);
-    this.removeExpression(this._cache.indexOf(expressionItem));
+    this.removeExpressionAt(this._cache.indexOf(expressionItem));
 
     // Synchronize with the controller's watch expressions store.
     DebuggerController.StackFrames.syncWatchExpressions();
@@ -1102,15 +1161,15 @@ create({ constructor: WatchExpressionsView, proto: MenuContainer.prototype }, {
   _onBlur: function DVWE__onBlur({ target: textbox }) {
     let expressionItem = this.getItemForElement(textbox);
     let oldExpression = expressionItem.attachment.expression;
-    let newExpression = textbox.value;
+    let newExpression = textbox.value.trim();
 
     // Remove the watch expression if it's empty.
     if (!newExpression) {
-      this.removeExpression(this._cache.indexOf(expressionItem));
+      this.removeExpressionAt(this._cache.indexOf(expressionItem));
     }
     // Remove the watch expression if it's a duplicate.
     else if (!oldExpression && this.getExpressions().indexOf(newExpression) != -1) {
-      this.removeExpression(this._cache.indexOf(expressionItem));
+      this.removeExpressionAt(this._cache.indexOf(expressionItem));
     }
     // Expression is eligible.
     else {
@@ -1271,19 +1330,50 @@ create({ constructor: GlobalSearchView, proto: MenuContainer.prototype }, {
   },
 
   /**
-   * Schedules searching for a string in all of the sources.
+   * Allows searches to be scheduled and delayed to avoid redundant calls.
    */
-  scheduleSearch: function DVGS_scheduleSearch() {
+  delayedSearch: true,
+
+  /**
+   * Schedules searching for a string in all of the sources.
+   *
+   * @param string aQuery
+   *        The string to search for.
+   */
+  scheduleSearch: function DVGS_scheduleSearch(aQuery) {
+    if (!this.delayedSearch) {
+      this.performSearch(aQuery);
+      return;
+    }
+    let delay = Math.max(GLOBAL_SEARCH_ACTION_MAX_DELAY / aQuery.length);
+
     window.clearTimeout(this._searchTimeout);
-    this._searchTimeout = window.setTimeout(this._startSearch, GLOBAL_SEARCH_ACTION_DELAY);
+    this._searchFunction = this._startSearch.bind(this, aQuery);
+    this._searchTimeout = window.setTimeout(this._searchFunction, delay);
+  },
+
+  /**
+   * Immediately searches for a string in all of the sources.
+   *
+   * @param string aQuery
+   *        The string to search for.
+   */
+  performSearch: function DVGS_performSearch(aQuery) {
+    window.clearTimeout(this._searchTimeout);
+    this._searchFunction = null;
+    this._startSearch(aQuery);
   },
 
   /**
    * Starts searching for a string in all of the sources.
+   *
+   * @param string aQuery
+   *        The string to search for.
    */
-  _startSearch: function DVGS__startSearch() {
+  _startSearch: function DVGS__startSearch(aQuery) {
     let locations = DebuggerView.Sources.values;
     this._sourcesCount = locations.length;
+    this._searchedToken = aQuery;
 
     this._fetchSources(
       this._onFetchSourceFinished,
@@ -1349,7 +1439,7 @@ create({ constructor: GlobalSearchView, proto: MenuContainer.prototype }, {
    */
   _performGlobalSearch: function DVGS__performGlobalSearch() {
     // Get the currently searched token from the filtering input.
-    let token = DebuggerView.Filtering.searchedToken;
+    let token = this._searchedToken;
 
     // Make sure we're actually searching for something.
     if (!token) {
@@ -1611,6 +1701,8 @@ create({ constructor: GlobalSearchView, proto: MenuContainer.prototype }, {
   _currentlyFocusedMatch: -1,
   _forceExpandResults: false,
   _searchTimeout: null,
+  _searchFunction: null,
+  _searchedToken: "",
   _sourcesCount: -1,
   _cache: null
 });
@@ -1708,6 +1800,11 @@ SourceResults.prototype = {
   },
 
   /**
+   * Relaxes the auto-expand rules to always show as many results as possible.
+   */
+  alwaysExpand: true,
+
+  /**
    * Gets this element's expanded state.
    * @return boolean
    */
@@ -1781,7 +1878,8 @@ SourceResults.prototype = {
     aElementNode.resultsHeader = resultsHeader;
     aElementNode.resultsContainer = resultsContainer;
 
-    if (aExpandFlag && aMatchCount < GLOBAL_SEARCH_EXPAND_MAX_RESULTS) {
+    if ((aExpandFlag || this.alwaysExpand) &&
+         aMatchCount < GLOBAL_SEARCH_EXPAND_MAX_RESULTS) {
       this.expand();
     }
 

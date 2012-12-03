@@ -48,6 +48,7 @@ let DebuggerController = {
       return;
     }
     this._isInitialized = true;
+
     window.removeEventListener("load", this._startupDebugger, true);
 
     DebuggerView.initialize(function() {
@@ -145,14 +146,34 @@ let DebuggerController = {
    * wiring event handlers as necessary.
    */
   _connect: function DC__connect() {
-    if (window._isRemoteDebugger && !this._prepareConnection()) {
+    function callback() {
+      window.dispatchEvent("Debugger:Connected");
+    }
+
+    let client;
+    // Remote debugging gets the debuggee from a RemoteTarget object.
+    if (this._target && this._target.isRemote) {
+      client = this.client = this._target.client;
+
+      this._target.on("close", this._onTabDetached);
+      this._target.on("navigate", this._onTabNavigated);
+
+      if (this._target.chrome) {
+        let dbg = this._target.form.chromeDebugger;
+        this._startChromeDebugging(client, dbg, callback);
+      } else {
+        this._startDebuggingTab(client, this._target.form, callback);
+      }
       return;
     }
-    let transport = (window._isChromeDebugger || window._isRemoteDebugger)
+
+    // Content debugging can connect directly to the page.
+    // TODO: convert this to use a TabTarget.
+    let transport = window._isChromeDebugger
       ? debuggerSocketConnect(Prefs.remoteHost, Prefs.remotePort)
       : DebuggerServer.connectPipe();
+    client = this.client = new DebuggerClient(transport);
 
-    let client = this.client = new DebuggerClient(transport);
     client.addListener("tabNavigated", this._onTabNavigated);
     client.addListener("tabDetached", this._onTabDetached);
 
@@ -160,12 +181,11 @@ let DebuggerController = {
       client.listTabs(function(aResponse) {
         if (window._isChromeDebugger) {
           let dbg = aResponse.chromeDebugger;
-          this._startChromeDebugging(client, dbg);
+          this._startChromeDebugging(client, dbg, callback);
         } else {
           let tab = aResponse.tabs[aResponse.selected];
-          this._startDebuggingTab(client, tab);
+          this._startDebuggingTab(client, tab, callback);
         }
-        window.dispatchEvent("Debugger:Connected");
       }.bind(this));
     }.bind(this));
   },
@@ -180,9 +200,12 @@ let DebuggerController = {
     }
     this.client.removeListener("tabNavigated", this._onTabNavigated);
     this.client.removeListener("tabDetached", this._onTabDetached);
-    this.client.close();
 
-    this.client = null;
+    if (!this._target.isRemote) {
+      this.client.close();
+      this.client = null;
+    }
+
     this.tabClient = null;
     this.activeThread = null;
   },
@@ -212,7 +235,8 @@ let DebuggerController = {
    * @param object aTabGrip
    *        The remote protocol grip of the tab.
    */
-  _startDebuggingTab: function DC__startDebuggingTab(aClient, aTabGrip) {
+  _startDebuggingTab: function DC__startDebuggingTab
+      (aClient, aTabGrip, aCallback=function(){}) {
     if (!aClient) {
       Cu.reportError("No client found!");
       return;
@@ -238,6 +262,7 @@ let DebuggerController = {
         this.SourceScripts.connect();
         aThreadClient.resume();
 
+        aCallback();
       }.bind(this));
     }.bind(this));
   },
@@ -250,7 +275,8 @@ let DebuggerController = {
    * @param object aChromeDebugger
    *        The remote protocol grip of the chrome debugger.
    */
-  _startChromeDebugging: function DC__startChromeDebugging(aClient, aChromeDebugger) {
+  _startChromeDebugging: function DC__startChromeDebugging
+      (aClient, aChromeDebugger, aCallback=function(){}) {
     if (!aClient) {
       Cu.reportError("No client found!");
       return;
@@ -269,6 +295,7 @@ let DebuggerController = {
       this.SourceScripts.connect();
       aThreadClient.resume();
 
+      aCallback();
     }.bind(this));
   },
 
@@ -469,14 +496,17 @@ StackFrames.prototype = {
     if (this.currentBreakpointLocation) {
       let { url, line } = this.currentBreakpointLocation;
       let breakpointClient = DebuggerController.Breakpoints.getBreakpoint(url, line);
-      let conditionalExpression = breakpointClient.conditionalExpression;
-      if (conditionalExpression) {
-        // Evaluating the current breakpoint's conditional expression will
-        // cause the stack frames to be cleared and active thread to pause,
-        // sending a 'clientEvaluated' packed and adding the frames again.
-        this.evaluate(conditionalExpression, 0);
-        this._isConditionalBreakpointEvaluation = true;
-        return;
+      if (breakpointClient) {
+        // Make sure a breakpoint actually exists at the specified url and line.
+        let conditionalExpression = breakpointClient.conditionalExpression;
+        if (conditionalExpression) {
+          // Evaluating the current breakpoint's conditional expression will
+          // cause the stack frames to be cleared and active thread to pause,
+          // sending a 'clientEvaluated' packed and adding the frames again.
+          this.evaluate(conditionalExpression, 0);
+          this._isConditionalBreakpointEvaluation = true;
+          return;
+        }
       }
     }
     // Got our evaluation of the current breakpoint's conditional expression.
@@ -506,7 +536,7 @@ StackFrames.prototype = {
       // If an error was thrown during the evaluation of the watch expressions,
       // then at least one expression evaluation could not be performed.
       if (this.currentEvaluation.throw) {
-        DebuggerView.WatchExpressions.removeExpression(0);
+        DebuggerView.WatchExpressions.removeExpressionAt(0);
         DebuggerController.StackFrames.syncWatchExpressions();
         return;
       }
@@ -597,11 +627,15 @@ StackFrames.prototype = {
 
     // If watch expressions evaluation results are available, create a scope
     // to contain all the values.
-    if (watchExpressionsEvaluation) {
+    if (this.syncedWatchExpressions && watchExpressionsEvaluation) {
       let label = L10N.getStr("watchExpressionsScopeLabel");
       let arrow = L10N.getStr("watchExpressionsSeparatorLabel");
       let scope = DebuggerView.Variables.addScope(label);
       scope.separator = arrow;
+      scope.allowNameInput = true;
+      scope.allowDeletion = true;
+      scope.switch = DebuggerView.WatchExpressions.switchExpression;
+      scope.delete = DebuggerView.WatchExpressions.deleteExpression;
 
       // The evaluation hasn't thrown, so display the returned results and
       // always expand the watch expressions scope by default.
@@ -924,15 +958,19 @@ StackFrames.prototype = {
     if (list.length) {
       this.syncedWatchExpressions =
         this.currentWatchExpressions = "[" + list.map(function(str)
-          "(function() {" +
+          // Avoid yielding an empty pseudo-array when evaluating `arguments`,
+          // since they're overridden by the expression's closure scope.
+          "(function(arguments) {" +
+            // Make sure all the quotes are escaped in the expression's syntax.
             "try { return eval(\"" + str.replace(/"/g, "\\$&") + "\"); }" +
             "catch(e) { return e.name + ': ' + e.message; }" +
-          "})()"
+          "})(arguments)"
         ).join(",") + "]";
     } else {
       this.syncedWatchExpressions =
         this.currentWatchExpressions = null;
     }
+    this.currentFrame = null;
     this._onFrames();
   },
 
@@ -1315,11 +1353,10 @@ Breakpoints.prototype = {
     this.activeThread.setBreakpoint(aLocation, function(aResponse, aBreakpointClient) {
       let { url, line } = aResponse.actualLocation || aLocation;
 
-      // Prevent this new breakpoint from being repositioned on top of an
-      // already existing one.
+      // If the response contains a breakpoint that exists in the cache, prevent
+      // it from being shown in the source editor at an incorrect position.
       if (this.getBreakpoint(url, line)) {
         this._hideBreakpoint(aBreakpointClient);
-        aBreakpointClient.remove();
         return;
       }
 

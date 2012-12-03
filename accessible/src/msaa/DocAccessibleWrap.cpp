@@ -78,7 +78,8 @@ DocAccessibleWrap::QueryInterface(REFIID iid, void** ppv)
 STDMETHODIMP
 DocAccessibleWrap::get_URL(/* [out] */ BSTR __RPC_FAR *aURL)
 {
-__try {
+  A11Y_TRYBLOCK_BEGIN
+
   *aURL = NULL;
 
   nsAutoString URL;
@@ -92,14 +93,14 @@ __try {
   *aURL = ::SysAllocStringLen(URL.get(), URL.Length());
   return *aURL ? S_OK : E_OUTOFMEMORY;
 
-} __except(FilterA11yExceptions(::GetExceptionCode(), GetExceptionInformation())) { }
-  return E_FAIL;
+  A11Y_TRYBLOCK_END
 }
 
 STDMETHODIMP
 DocAccessibleWrap::get_title( /* [out] */ BSTR __RPC_FAR *aTitle)
 {
-__try {
+  A11Y_TRYBLOCK_BEGIN
+
   *aTitle = NULL;
 
   nsAutoString title;
@@ -110,14 +111,14 @@ __try {
   *aTitle = ::SysAllocStringLen(title.get(), title.Length());
   return *aTitle ? S_OK : E_OUTOFMEMORY;
 
-} __except(FilterA11yExceptions(::GetExceptionCode(), GetExceptionInformation())) { }
-  return E_FAIL;
+  A11Y_TRYBLOCK_END
 }
 
 STDMETHODIMP
 DocAccessibleWrap::get_mimeType(/* [out] */ BSTR __RPC_FAR *aMimeType)
 {
-__try {
+  A11Y_TRYBLOCK_BEGIN
+
   *aMimeType = NULL;
 
   nsAutoString mimeType;
@@ -131,14 +132,14 @@ __try {
   *aMimeType = ::SysAllocStringLen(mimeType.get(), mimeType.Length());
   return *aMimeType ? S_OK : E_OUTOFMEMORY;
 
-} __except(FilterA11yExceptions(::GetExceptionCode(), GetExceptionInformation())) { }
-  return E_FAIL;
+  A11Y_TRYBLOCK_END
 }
 
 STDMETHODIMP
 DocAccessibleWrap::get_docType(/* [out] */ BSTR __RPC_FAR *aDocType)
 {
-__try {
+  A11Y_TRYBLOCK_BEGIN
+
   *aDocType = NULL;
 
   nsAutoString docType;
@@ -152,15 +153,15 @@ __try {
   *aDocType = ::SysAllocStringLen(docType.get(), docType.Length());
   return *aDocType ? S_OK : E_OUTOFMEMORY;
 
-} __except(FilterA11yExceptions(::GetExceptionCode(), GetExceptionInformation())) { }
-  return E_FAIL;
+  A11Y_TRYBLOCK_END
 }
 
 STDMETHODIMP
 DocAccessibleWrap::get_nameSpaceURIForID(/* [in] */  short aNameSpaceID,
   /* [out] */ BSTR __RPC_FAR *aNameSpaceURI)
 {
-__try {
+  A11Y_TRYBLOCK_BEGIN
+
   *aNameSpaceURI = NULL;
 
   if (aNameSpaceID < 0)
@@ -179,18 +180,18 @@ __try {
 
   return *aNameSpaceURI ? S_OK : E_OUTOFMEMORY;
 
-} __except(FilterA11yExceptions(::GetExceptionCode(), GetExceptionInformation())) { }
-  return E_FAIL;
+  A11Y_TRYBLOCK_END
 }
 
 STDMETHODIMP
 DocAccessibleWrap::put_alternateViewMediaTypes( /* [in] */ BSTR __RPC_FAR *aCommaSeparatedMediaTypes)
 {
-__try {
-  *aCommaSeparatedMediaTypes = NULL;
-} __except(FilterA11yExceptions(::GetExceptionCode(), GetExceptionInformation())) { }
+  A11Y_TRYBLOCK_BEGIN
 
+  *aCommaSeparatedMediaTypes = NULL;
   return E_NOTIMPL;
+
+  A11Y_TRYBLOCK_END
 }
 
 STDMETHODIMP
@@ -222,7 +223,7 @@ DocAccessibleWrap::Shutdown()
   // Do window emulation specific shutdown if emulation was started.
   if (nsWinUtils::IsWindowEmulationStarted()) {
     // Destroy window created for root document.
-    if (nsCoreUtils::IsTabDocument(mDocument)) {
+    if (nsCoreUtils::IsTabDocument(mDocumentNode)) {
       sHWNDCache.Remove(mHWND);
       ::DestroyWindow(static_cast<HWND>(mHWND));
     }
@@ -252,9 +253,9 @@ DocAccessibleWrap::DoInitialUpdate()
 
   if (nsWinUtils::IsWindowEmulationStarted()) {
     // Create window for tab document.
-    if (nsCoreUtils::IsTabDocument(mDocument)) {
+    if (nsCoreUtils::IsTabDocument(mDocumentNode)) {
       mozilla::dom::TabChild* tabChild =
-        mozilla::dom::GetTabChildFrom(mDocument->GetShell());
+        mozilla::dom::GetTabChildFrom(mDocumentNode->GetShell());
 
       a11y::RootAccessible* rootDocument = RootAccessible();
 
@@ -274,7 +275,7 @@ DocAccessibleWrap::DoInitialUpdate()
         x = rootX - x;
         y -= rootY;
 
-        nsCOMPtr<nsISupports> container = mDocument->GetContainer();
+        nsCOMPtr<nsISupports> container = mDocumentNode->GetContainer();
         nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
         docShell->GetIsActive(&isActive);
       }

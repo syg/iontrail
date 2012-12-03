@@ -95,43 +95,8 @@ members = [
     'nsIDOMDocument.onmouseenter',
     'nsIDOMDocument.onmouseleave',
     'nsIDOMDocument.URL',
-    'nsIDOMElement.removeAttributeNS',
-    'nsIDOMElement.removeAttribute',
-    'nsIDOMElement.getAttribute',
-    'nsIDOMElement.getElementsByTagName',
-    'nsIDOMElement.setAttribute',
-    'nsIDOMElement.getElementsByTagNameNS',
-    'nsIDOMElement.hasAttributeNS',
-    'nsIDOMElement.tagName',
-    'nsIDOMElement.setAttributeNS',
-    'nsIDOMElement.hasAttribute',
-    'nsIDOMElement.getAttributeNS',
-    'nsIDOMElement.onmouseenter',
-    'nsIDOMElement.onmouseleave',
-    'nsIDOMElement.getElementsByClassName',
-    'nsIDOMElement.getClientRects',
-    'nsIDOMElement.getBoundingClientRect',
-    'nsIDOMElement.scrollTop',
-    'nsIDOMElement.scrollLeft',
-    'nsIDOMElement.scrollHeight',
-    'nsIDOMElement.scrollWidth',
-    'nsIDOMElement.clientTop',
-    'nsIDOMElement.clientLeft',
-    'nsIDOMElement.clientHeight',
-    'nsIDOMElement.clientWidth',
-    'nsIDOMElement.firstElementChild',
-    'nsIDOMElement.lastElementChild',
-    'nsIDOMElement.previousElementSibling',
-    'nsIDOMElement.nextElementSibling',
-    'nsIDOMElement.childElementCount',
-    'nsIDOMElement.children',
-    'nsIDOMElement.classList',
-    'nsIDOMElement.setCapture',
-    'nsIDOMElement.releaseCapture',
-    'nsIDOMElement.mozMatchesSelector',
     'nsIDOMNamedNodeMap.item',
     'nsIDOMNamedNodeMap.length',
-    'nsIDOMNode.*',
     'nsIDOMNodeSelector.querySelector',
     'nsIDOMNodeSelector.querySelectorAll',
     'nsIDOMText.splitText',
@@ -483,18 +448,15 @@ customIncludes = [
     'nsDOMStringMap.h',
     'HTMLPropertiesCollection.h',
     'nsHTMLMenuElement.h',
-    'nsICSSDeclaration.h'
+    'nsICSSDeclaration.h',
+    'mozilla/dom/NodeBinding.h',
+    'mozilla/dom/ElementBinding.h'
     ]
 
 customReturnInterfaces = [
     'nsIDOMCanvasPattern',
     'nsIDOMCanvasGradient',
     ]
-
-nsIDOMNode_GetChildNodes_customMethodCallCode = """
-    nsChildContentList* result = static_cast<nsChildContentList*>(self->ChildNodes());
-    rv = NS_OK;
-"""
 
 nsIDOMHTMLDocument_Write_customMethodCallCode = """
     nsAString &str = arg0;
@@ -518,114 +480,6 @@ nsIDOMStorage_Clear_customMethodCallCode = """
 """
 
 customMethodCalls = {
-    'nsIDOMNode_GetNextSibling': {
-        'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetNextSibling();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetFirstChild': {
-        'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetFirstChild();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetChildNodes': {
-        'thisType': 'nsINode',
-        'code': nsIDOMNode_GetChildNodes_customMethodCallCode
-        },
-    'nsIDOMNode_GetPreviousSibling': {
-        'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetPreviousSibling();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetLastChild': {
-        'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetLastChild();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetOwnerDocument': {
-        'thisType': 'nsINode',
-        'code': '    nsIDocument *result = self->GetOwnerDocument();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetParentNode': {
-        'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetParentNode();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetParentElement': {
-        'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetElementParent();',
-        'canFail': False
-        },
-    'nsIDOMNode_InsertBefore': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'arg1Type': 'nsINode',
-        'code': '    nsINode* result;'
-                '    if (arg0) {\n'
-                '        mozilla::ErrorResult error;\n'
-                '        result = self->InsertBefore(*arg0, arg1, error);\n'
-                '        rv = error.ErrorCode();\n'
-                '    } else {\n'
-                '        rv = NS_ERROR_NULL_POINTER;\n'
-                '        result = nullptr;\n'
-                '    }'
-        },
-    'nsIDOMNode_ReplaceChild': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'arg1Type': 'nsINode',
-        'code': '    nsINode* result;'
-                '    if (arg0 && arg1) {\n'
-                '        mozilla::ErrorResult error;\n'
-                '        result = self->ReplaceChild(*arg0, *arg1, error);\n'
-                '        rv = error.ErrorCode();\n'
-                '    } else {\n'
-                '        rv = NS_ERROR_NULL_POINTER;\n'
-                '        result = nullptr;\n'
-                '    }'
-        },
-    'nsIDOMNode_RemoveChild': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'code': '    nsINode* result;\n'
-                '    if (arg0) {\n'
-                '        mozilla::ErrorResult error;\n'
-                '        result = self->RemoveChild(*arg0, error);\n'
-                '        rv = error.ErrorCode();\n'
-                '    } else {\n'
-                '        rv = NS_ERROR_NULL_POINTER;\n'
-                '        result = nullptr;\n'
-                '    }'
-        },
-    'nsIDOMNode_AppendChild': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'code': '    nsINode* result;\n'
-                '    if (arg0) {\n'
-                '        mozilla::ErrorResult error;\n'
-                '        result = self->AppendChild(*arg0, error);\n'
-                '        rv = error.ErrorCode();\n'
-                '    } else {\n'
-                '        rv = NS_ERROR_NULL_POINTER;\n'
-                '        result = nullptr;\n'
-                '    }'
-        },
-    'nsIDOMNode_GetNodeType': {
-        'thisType': 'nsINode',
-        'code': 'uint16_t result = self->NodeType();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetNodeName': {
-        'thisType': 'nsINode',
-        'code': 'nsString result = self->NodeName();',
-        'canFail': False
-        },
-    'nsIDOMNode_GetLocalName': {
-        'thisType': 'nsINode',
-        'code': 'nsString result = self->LocalName();',
-        'canFail': False
-        },
     'nsIDOMHTMLDocument_': {
         'thisType': 'nsHTMLDocument'
         },
@@ -656,101 +510,6 @@ customMethodCalls = {
     'nsIDOMStorage_Clear': {
         'code': nsIDOMStorage_Clear_customMethodCallCode
         },
-    'nsIDOMElement_GetScrollTop': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ScrollTop();',
-        'canFail': False
-        },
-    'nsIDOMElement_SetScrollTop': {
-        'thisType': 'mozilla::dom::Element',
-        'canFail': False
-        },
-    'nsIDOMElement_GetScrollLeft': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ScrollLeft();',
-        'canFail': False
-        },
-    'nsIDOMElement_SetScrollLeft': {
-        'thisType': 'mozilla::dom::Element',
-        'canFail': False
-        },
-    'nsIDOMElement_GetScrollHeight': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ScrollHeight();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetScrollWidth': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ScrollWidth();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetClientTop': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ClientTop();',
-        'canFail': False
-        },
-    'nsIDOMElement_SetClientTop': {
-        'thisType': 'mozilla::dom::Element',
-        'canFail': False
-        },
-    'nsIDOMElement_GetClientLeft': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ClientLeft();',
-        'canFail': False
-        },
-    'nsIDOMElement_SetClientLeft': {
-        'thisType': 'mozilla::dom::Element',
-        'canFail': False
-        },
-    'nsIDOMElement_GetClientHeight': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ClientHeight();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetClientWidth': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    int32_t result = self->ClientWidth();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetFirstElementChild': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    nsIContent *result = self->GetFirstElementChild();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetLastElementChild': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    nsIContent *result = self->GetLastElementChild();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetPreviousElementSibling': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    nsIContent *result = self->GetPreviousElementSibling();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetNextElementSibling': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    nsIContent *result = self->GetNextElementSibling();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetClassList': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    nsDOMTokenList *result = self->ClassList();',
-        'canFail': False
-        },
-    'nsIDOMElement_SetCapture': {
-        'thisType': 'mozilla::dom::Element',
-        'canFail': False
-        },
-    'nsIDOMElement_ReleaseCapture': {
-        'thisType': 'mozilla::dom::Element',
-        'canFail': False
-        },
-    'nsIDOMElement_MozMatchesSelector': {
-        'thisType': 'mozilla::dom::Element',
-        'code': '    mozilla::ErrorResult error;\n'
-                '    bool result = self->MozMatchesSelector(arg0, error);\n'
-                '    rv = error.ErrorCode();'
-        },
     'nsIDOMNodeSelector_QuerySelector': {
         'thisType': 'nsINode',
         'code': '    mozilla::ErrorResult error;\n'
@@ -763,59 +522,6 @@ customMethodCalls = {
         'code': '    mozilla::ErrorResult error;\n'
                 '    nsCOMPtr<nsINodeList> result = self->QuerySelectorAll(arg0, error);\n'
                 '    rv = error.ErrorCode();'
-        },
-    'nsIDOMNode_Normalize': {
-        'thisType': 'nsINode',
-        'canFail': False
-        },
-    'nsIDOMNode_GetBaseURI': {
-        'thisType': 'nsINode',
-        'canFail': False
-        },
-    'nsIDOMNode_CompareDocumentPosition': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'code': '    uint16_t result;\n'
-                '    if (arg0) {\n'
-                '        result = self->CompareDocumentPosition(*arg0);\n'
-                '        rv = NS_OK;\n'
-                '    } else {\n'
-                '        rv = NS_ERROR_INVALID_ARG;\n'
-                '    }',
-        'canFail': True
-        },
-    'nsIDOMNode_GetTextContent': {
-        'thisType': 'nsINode',
-        'canFail': False
-        },
-    'nsIDOMNode_LookupPrefix': {
-        'thisType': 'nsINode',
-        'canFail': False
-        },
-    'nsIDOMNode_IsDefaultNamespace': {
-        'thisType': 'nsINode',
-        'code': '    bool result = self->IsDefaultNamespace(arg0);',
-        'canFail': False
-        },
-    'nsIDOMNode_LookupNamespaceURI': {
-        'thisType': 'nsINode',
-        'canFail': False
-        },
-    'nsIDOMNode_IsEqualNode': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'code': '    bool result = self->IsEqualNode(arg0);',
-        'canFail': False
-        },
-    'nsIDOMNode_GetUserData': {
-        'thisType': 'nsINode',
-        'canFail': False
-        },
-    'nsIDOMNode_Contains': {
-        'thisType': 'nsINode',
-        'arg0Type': 'nsINode',
-        'code': '    bool result = self->Contains(arg0);',
-        'canFail': False
         },
     'nsIDOMHTMLElement_': {
         'thisType': 'nsGenericHTMLElement'
@@ -905,14 +611,6 @@ customMethodCalls = {
                 'self->GetElementsByTagNameNS(arg0, arg1);',
         'canFail': False
         },
-    'nsIDOMElement_': {
-        'thisType': 'mozilla::dom::Element'
-        },
-    'nsIDOMElement_GetTagName': {
-        'thisType': 'mozilla::dom::Element',
-        'code': 'nsString result = self->NodeName();',
-        'canFail': False
-        },
     'nsIDOMDocument_CreateElement': {
         'thisType': 'nsDocument',
         'code': '    nsCOMPtr<nsIContent> result;\n'
@@ -951,94 +649,6 @@ customMethodCalls = {
     'nsIDOMDocument_SetOnmouseleave' : {
         'thisType' : 'nsDocument',
         'unwrapThisFailureFatal' : False
-        },
-    'nsIDOMElement_GetOnmouseenter' : {
-        'thisType' : 'mozilla::dom::Element',
-        'unwrapThisFailureFatal' : False
-        },
-    'nsIDOMElement_SetOnmouseenter' : {
-        'thisType' : 'mozilla::dom::Element',
-        'unwrapThisFailureFatal' : False
-        },
-    'nsIDOMElement_GetOnmouseleave' : {
-        'thisType' : 'mozilla::dom::Element',
-        'unwrapThisFailureFatal' : False
-        },
-    'nsIDOMElement_SetOnmouseleave' : {
-        'thisType' : 'mozilla::dom::Element',
-        'unwrapThisFailureFatal' : False
-        },
-    'nsIDOMElement_RemoveAttributeNS' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    mozilla::ErrorResult error;\n'
-                '    self->RemoveAttributeNS(arg0, arg1, error);\n'
-                '    rv = error.ErrorCode();'
-        },
-    'nsIDOMElement_RemoveAttribute' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    mozilla::ErrorResult error;\n'
-                '    self->RemoveAttribute(arg0, error);\n'
-                '    rv = error.ErrorCode();'
-        },
-    'nsIDOMElement_GetAttribute' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    nsString result;\n'
-                '    self->GetAttribute(arg0, result);',
-        'canFail': False
-        },
-    'nsIDOMElement_GetAttributeNS' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    nsString result;\n'
-                '    self->GetAttributeNS(arg0, arg1, result);',
-        'canFail': False
-        },
-    'nsIDOMElement_SetAttribute' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    mozilla::ErrorResult error;\n'
-                '    self->SetAttribute(arg0, arg1, error);\n'
-                '    rv = error.ErrorCode();'
-        },
-    'nsIDOMElement_SetAttributeNS' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    mozilla::ErrorResult error;\n'
-                '    self->SetAttributeNS(arg0, arg1, arg2, error);\n'
-                '    rv = error.ErrorCode();'
-        },
-    'nsIDOMElement_HasAttribute' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    bool result = self->HasAttribute(arg0);',
-        'canFail': False
-        },
-    'nsIDOMElement_HasAttributeNS' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    bool result = self->HasAttributeNS(arg0, arg1);',
-        'canFail': False
-        },
-    'nsIDOMElement_GetElementsByTagName' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    nsCOMPtr<nsIHTMLCollection> result = self->GetElementsByTagName(arg0);',
-        'canFail': False
-        },
-    'nsIDOMElement_GetClientRects' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    mozilla::ErrorResult error;\n'
-                '    nsRefPtr<nsClientRectList> result = self->GetClientRects(error);\n'
-                '    rv = error.ErrorCode();'
-        },
-    'nsIDOMElement_GetBoundingClientRect' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    nsRefPtr<nsClientRect> result = self->GetBoundingClientRect();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetChildElementCount' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    uint32_t result = self->ChildElementCount();',
-        'canFail': False
-        },
-    'nsIDOMElement_GetChildElements' : {
-        'thisType' : 'mozilla::dom::Element',
-        'code': '    nsIHTMLCollection* result = self->Children();',
-        'canFail': False
         },
     'nsIDOMHTMLElement_GetTitle': {
         'thisType' : 'nsGenericHTMLElement',
@@ -1218,4 +828,9 @@ customMethodCalls = {
         'thisType' : 'nsIDOMWindow',
         'unwrapThisFailureFatal' : False
         }
+    }
+
+newBindingProperties = {
+    'nsIDOMNode': 'mozilla::dom::NodeBinding::sNativePropertyHooks.mNativeProperties.regular',
+    'nsIDOMElement': 'mozilla::dom::ElementBinding::sNativePropertyHooks.mNativeProperties.regular'
     }

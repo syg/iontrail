@@ -224,7 +224,7 @@ public:
    *
    * @param aIgnoreSelf Whether the required attribute and the checked state
    * of the current radio should be ignored.
-   * @note This method shouldn't be called if the radio elemnet hasn't a group.
+   * @note This method shouldn't be called if the radio element hasn't a group.
    */
   void     UpdateValueMissingValidityStateForRadio(bool aIgnoreSelf);
 
@@ -511,11 +511,13 @@ protected:
    */
   nsresult SetDefaultValueAsValue();
 
+  virtual void SetDirectionIfAuto(bool aAuto, bool aNotify);
+
   /**
    * Return if an element should have a specific validity UI
    * (with :-moz-ui-invalid and :-moz-ui-valid pseudo-classes).
    *
-   * @return Whether the elemnet should have a validity UI.
+   * @return Whether the element should have a validity UI.
    */
   bool ShouldShowValidityUI() const {
     /**

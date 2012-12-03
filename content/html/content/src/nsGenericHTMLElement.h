@@ -715,6 +715,8 @@ public:
 
   virtual bool IsLabelable() const;
 
+  static bool PrefEnabled();
+
 protected:
   /**
    * Add/remove this element to the documents name cache
@@ -776,6 +778,10 @@ protected:
    * @return whether the name is an event handler name
    */
   bool IsEventName(nsIAtom* aName);
+
+  virtual nsresult BeforeSetAttr(int32_t aNamespaceID, nsIAtom* aName,
+                                 const nsAttrValueOrString* aValue,
+                                 bool aNotify);
 
   virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
                                 const nsAttrValue* aValue, bool aNotify);

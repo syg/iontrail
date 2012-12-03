@@ -574,6 +574,7 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
                                const nsRect& aVisibleRect,
                                const nsRect& aViewport,
                                nsRect* aDisplayPort,
+                               nsRect* aCriticalDisplayPort,
                                ViewID aScrollId,
                                const nsDisplayItem::ContainerParameters& aContainerParameters,
                                bool aMayHaveTouchListeners) {
@@ -599,6 +600,14 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
       NSAppUnitsToDoublePixels(aDisplayPort->y, auPerDevPixel),
       NSAppUnitsToDoublePixels(aDisplayPort->width, auPerDevPixel),
       NSAppUnitsToDoublePixels(aDisplayPort->height, auPerDevPixel));
+
+      if (aCriticalDisplayPort) {
+        metrics.mCriticalDisplayPort = mozilla::gfx::Rect(
+          NSAppUnitsToDoublePixels(aCriticalDisplayPort->x, auPerDevPixel),
+          NSAppUnitsToDoublePixels(aCriticalDisplayPort->y, auPerDevPixel),
+          NSAppUnitsToDoublePixels(aCriticalDisplayPort->width, auPerDevPixel),
+          NSAppUnitsToDoublePixels(aCriticalDisplayPort->height, auPerDevPixel));
+      }
   }
 
   nsIScrollableFrame* scrollableFrame = nullptr;
@@ -657,7 +666,6 @@ nsDisplayListBuilder::~nsDisplayListBuilder() {
 
   nsCSSRendering::EndFrameTreesLocked();
 
-  PL_FreeArenaPool(&mPool);
   PL_FinishArenaPool(&mPool);
   MOZ_COUNT_DTOR(nsDisplayListBuilder);
 }
@@ -1090,12 +1098,15 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
                                                    : FrameMetrics::NULL_SCROLL_ID;
 
   nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
-  nsRect displayport;
+  nsRect displayport, criticalDisplayport;
   bool usingDisplayport = false;
+  bool usingCriticalDisplayport = false;
   if (rootScrollFrame) {
     nsIContent* content = rootScrollFrame->GetContent();
     if (content) {
       usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
+      usingCriticalDisplayport =
+        nsLayoutUtils::GetCriticalDisplayPort(content, &criticalDisplayport);
     }
   }
 
@@ -1114,8 +1125,9 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
 
   RecordFrameMetrics(aForFrame, rootScrollFrame,
                      root, mVisibleRect, viewport,
-                     (usingDisplayport ? &displayport : nullptr), id,
-                     containerParameters, mayHaveTouchListeners);
+                     (usingDisplayport ? &displayport : nullptr),
+                     (usingCriticalDisplayport ? &criticalDisplayport : nullptr),
+                     id, containerParameters, mayHaveTouchListeners);
   if (usingDisplayport &&
       !(root->GetContentFlags() & Layer::CONTENT_OPAQUE)) {
     // See bug 693938, attachment 567017
@@ -1409,8 +1421,23 @@ void nsDisplayList::Sort(nsDisplayListBuilder* aBuilder,
   ::Sort(this, Count(), aCmp, aClosure);
 }
 
-bool nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
-                                          nsRegion* aVisibleRegion) {
+/* static */ bool
+nsDisplayItem::ForceActiveLayers()
+{
+  static bool sForce = false;
+  static bool sForceCached = false;
+
+  if (!sForceCached) {
+    Preferences::AddBoolVarCache(&sForce, "layers.force-active", false);
+    sForceCached = true;
+  }
+
+  return sForce;
+}
+
+bool
+nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
+                                   nsRegion* aVisibleRegion) {
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
 
@@ -1503,6 +1530,8 @@ nsDisplayBackgroundImage::nsDisplayBackgroundImage(nsDisplayListBuilder* aBuilde
       aBuilder->SetHasFixedItems();
     }
   }
+
+  mBounds = GetBoundsInternal();
 }
 
 nsDisplayBackgroundImage::~nsDisplayBackgroundImage()
@@ -1692,7 +1721,8 @@ nsDisplayBackgroundImage::IsSingleFixedPositionImage(nsDisplayListBuilder* aBuil
 }
 
 bool
-nsDisplayBackgroundImage::TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder)
+nsDisplayBackgroundImage::TryOptimizeToImageLayer(LayerManager* aManager,
+                                                  nsDisplayListBuilder* aBuilder)
 {
   if (mIsThemed || !mBackgroundStyle)
     return false;
@@ -1716,7 +1746,7 @@ nsDisplayBackgroundImage::TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder
   if (!imageRenderer->IsRasterImage())
     return false;
 
-  nsRefPtr<ImageContainer> imageContainer = imageRenderer->GetContainer();
+  nsRefPtr<ImageContainer> imageContainer = imageRenderer->GetContainer(aManager);
   // Image is not ready to be made into a layer yet
   if (!imageContainer)
     return false;
@@ -1740,9 +1770,10 @@ nsDisplayBackgroundImage::TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder
 }
 
 already_AddRefed<ImageContainer>
-nsDisplayBackgroundImage::GetContainer(nsDisplayListBuilder *aBuilder)
+nsDisplayBackgroundImage::GetContainer(LayerManager* aManager,
+                                       nsDisplayListBuilder *aBuilder)
 {
-  if (!TryOptimizeToImageLayer(aBuilder)) {
+  if (!TryOptimizeToImageLayer(aManager, aBuilder)) {
     return nullptr;
   }
 
@@ -1758,7 +1789,7 @@ nsDisplayBackgroundImage::GetLayerState(nsDisplayListBuilder* aBuilder,
 {
   if (!aManager->IsCompositingCheap() ||
       !nsLayoutUtils::GPUImageScalingEnabled() ||
-      !TryOptimizeToImageLayer(aBuilder)) {
+      !TryOptimizeToImageLayer(aManager, aBuilder)) {
     return LAYER_NONE;
   }
 
@@ -1775,12 +1806,12 @@ nsDisplayBackgroundImage::GetLayerState(nsDisplayListBuilder* aBuilder,
 
   // If we are not scaling at all, no point in separating this into a layer.
   if (scale.width == 1.0f && scale.height == 1.0f) {
-    return LAYER_INACTIVE;
+    return LAYER_NONE;
   }
 
   // If the target size is pretty small, no point in using a layer.
   if (destRect.width * destRect.height < 64 * 64) {
-    return LAYER_INACTIVE;
+    return LAYER_NONE;
   }
 
   return LAYER_ACTIVE;
@@ -2070,6 +2101,11 @@ void nsDisplayBackgroundImage::ComputeInvalidationRegion(nsDisplayListBuilder* a
 nsRect
 nsDisplayBackgroundImage::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) {
   *aSnap = true;
+  return mBounds;
+}
+
+nsRect
+nsDisplayBackgroundImage::GetBoundsInternal() {
   nsPresContext* presContext = mFrame->PresContext();
 
   if (mIsThemed) {
@@ -2687,7 +2723,8 @@ already_AddRefed<Layer>
 nsDisplayOpacity::BuildLayer(nsDisplayListBuilder* aBuilder,
                              LayerManager* aManager,
                              const ContainerParameters& aContainerParameters) {
-  if (mFrame->GetStyleDisplay()->mOpacity == 0) {
+  if (mFrame->GetStyleDisplay()->mOpacity == 0 && mFrame->GetContent() &&
+      !nsLayoutUtils::HasAnimationsForCompositor(mFrame->GetContent(), eCSSProperty_opacity)) {
     return nullptr;
   }
   nsRefPtr<Layer> container = aManager->GetLayerBuilder()->
@@ -2947,13 +2984,17 @@ nsDisplayScrollLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
                     mScrollFrame->GetOffsetToCrossDoc(ReferenceFrame());
 
   bool usingDisplayport = false;
-  nsRect displayport;
+  bool usingCriticalDisplayport = false;
+  nsRect displayport, criticalDisplayport;
   if (content) {
     usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
+    usingCriticalDisplayport =
+      nsLayoutUtils::GetCriticalDisplayPort(content, &criticalDisplayport);
   }
   RecordFrameMetrics(mScrolledFrame, mScrollFrame, layer, mVisibleRect, viewport,
-                     (usingDisplayport ? &displayport : nullptr), scrollId,
-                     aContainerParameters, false);
+                     (usingDisplayport ? &displayport : nullptr),
+                     (usingCriticalDisplayport ? &criticalDisplayport : nullptr),
+                     scrollId, aContainerParameters, false);
 
   return layer.forget();
 }

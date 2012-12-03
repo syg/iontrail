@@ -29,9 +29,7 @@
 using namespace js;
 using namespace js::gc;
 
-namespace js {
-int sWrapperFamily;
-}
+int js::sWrapperFamily;
 
 void *
 Wrapper::getWrapperFamily()
@@ -825,8 +823,6 @@ SecurityWrapper<Base>::regexp_toShared(JSContext *cx, JSObject *obj, RegExpGuard
 template class js::SecurityWrapper<Wrapper>;
 template class js::SecurityWrapper<CrossCompartmentWrapper>;
 
-namespace js {
-
 DeadObjectProxy::DeadObjectProxy()
   : BaseProxyHandler(&sDeadObjectFamily)
 {
@@ -969,8 +965,6 @@ DeadObjectProxy::getPrototypeOf(JSContext *cx, JSObject *proxy, JSObject **proto
 DeadObjectProxy DeadObjectProxy::singleton;
 int DeadObjectProxy::sDeadObjectFamily;
 
-} // namespace js
-
 JSObject *
 js::NewDeadProxyObject(JSContext *cx, JSObject *parent)
 {
@@ -1002,6 +996,8 @@ js::NukeCrossCompartmentWrapper(JSContext *cx, JSObject *wrapper)
 {
     JS_ASSERT(IsCrossCompartmentWrapper(wrapper));
 
+    NotifyGCNukeWrapper(wrapper);
+
     NukeSlot(wrapper, JSSLOT_PROXY_PRIVATE, NullValue());
     SetProxyHandler(wrapper, &DeadObjectProxy::singleton);
 
@@ -1012,6 +1008,8 @@ js::NukeCrossCompartmentWrapper(JSContext *cx, JSObject *wrapper)
 
     NukeSlot(wrapper, JSSLOT_PROXY_EXTRA + 0, NullValue());
     NukeSlot(wrapper, JSSLOT_PROXY_EXTRA + 1, NullValue());
+
+    JS_ASSERT(IsDeadProxyObject(wrapper));
 }
 
 /*
@@ -1023,7 +1021,7 @@ js::NukeCrossCompartmentWrapper(JSContext *cx, JSObject *wrapper)
  * option of how to handle the global object.
  */
 JS_FRIEND_API(JSBool)
-js::NukeCrossCompartmentWrappers(JSContext* cx, 
+js::NukeCrossCompartmentWrappers(JSContext* cx,
                                  const CompartmentFilter& sourceFilter,
                                  const CompartmentFilter& targetFilter,
                                  js::NukeReferencesToWindow nukeReferencesToWindow)

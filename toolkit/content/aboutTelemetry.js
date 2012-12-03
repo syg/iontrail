@@ -13,11 +13,14 @@ Cu.import("resource://gre/modules/Services.jsm");
 const Telemetry = Services.telemetry;
 const bundle = Services.strings.createBundle(
   "chrome://global/locale/aboutTelemetry.properties");
+const brandBundle = Services.strings.createBundle(
+  "chrome://branding/locale/brand.properties");
 const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].
   getService(Ci.nsIObserver);
 
 // Maximum height of a histogram bar (in em)
 const MAX_BAR_HEIGHT = 18;
+const PREF_TELEMETRY_SERVER_OWNER = "toolkit.telemetry.server_owner";
 const PREF_TELEMETRY_ENABLED = "toolkit.telemetry.enabled";
 const PREF_DEBUG_SLOW_SQL = "toolkit.telemetry.debugSlowSql";
 const PREF_SYMBOL_SERVER_URI = "profiler.symbolicationUrl";
@@ -222,17 +225,19 @@ let ChromeHangs = {
     document.getElementById("hide-symbols").classList.add("hidden");
 
     let hangs = Telemetry.chromeHangs;
-    if (hangs.length == 0) {
+    let stacks = hangs.stacks;
+    if (stacks.length == 0) {
       showEmptySectionMessage("chrome-hangs-section");
       return;
     }
 
     this.renderMemoryMap(hangsDiv);
 
-    for (let i = 0; i < hangs.length; ++i) {
-      let currentHang = hangs[i];
-      this.renderHangHeader(hangsDiv, i + 1, currentHang.duration);
-      this.renderStack(hangsDiv, currentHang.stack)
+    let durations = hangs.durations;
+    for (let i = 0; i < stacks.length; ++i) {
+      let stack = stacks[i];
+      this.renderHangHeader(hangsDiv, i + 1, durations[i]);
+      this.renderStack(hangsDiv, stack)
     }
   },
 
@@ -279,8 +284,9 @@ let ChromeHangs = {
     aDiv.appendChild(document.createTextNode(this.memoryMapTitle));
     aDiv.appendChild(document.createElement("br"));
 
-    let singleMemoryMap = Telemetry.chromeHangs[0].memoryMap;
-    for (let currentModule of singleMemoryMap) {
+    let hangs = Telemetry.chromeHangs;
+    let memoryMap = hangs.memoryMap;
+    for (let currentModule of memoryMap) {
       aDiv.appendChild(document.createTextNode(currentModule.join(" ")));
       aDiv.appendChild(document.createElement("br"));
     }
@@ -295,16 +301,21 @@ let ChromeHangs = {
     let symbolServerURI =
       getPref(PREF_SYMBOL_SERVER_URI, DEFAULT_SYMBOL_SERVER_URI);
 
-    let chromeHangsJSON = JSON.stringify(Telemetry.chromeHangs);
+    let hangs = Telemetry.chromeHangs;
+    let memoryMap = hangs.memoryMap;
+    let stacks = hangs.stacks;
+    let request = {"memoryMap" : memoryMap, "stacks" : stacks,
+                   "version" : 2};
+    let requestJSON = JSON.stringify(request);
 
     this.symbolRequest = XMLHttpRequest();
     this.symbolRequest.open("POST", symbolServerURI, true);
     this.symbolRequest.setRequestHeader("Content-type", "application/json");
-    this.symbolRequest.setRequestHeader("Content-length", chromeHangsJSON.length);
+    this.symbolRequest.setRequestHeader("Content-length", requestJSON.length);
     this.symbolRequest.setRequestHeader("Connection", "close");
 
     this.symbolRequest.onreadystatechange = this.handleSymbolResponse.bind(this);
-    this.symbolRequest.send(chromeHangsJSON);
+    this.symbolRequest.send(requestJSON);
   },
 
   /**
@@ -335,9 +346,11 @@ let ChromeHangs = {
     }
 
     let hangs = Telemetry.chromeHangs;
+    let stacks = hangs.stacks;
+    let durations = hangs.durations;
     for (let i = 0; i < jsonResponse.length; ++i) {
       let stack = jsonResponse[i];
-      let hangDuration = hangs[i].duration;
+      let hangDuration = durations[i];
       this.renderHangHeader(hangsDiv, i + 1, hangDuration);
 
       for (let symbol of stack) {
@@ -588,6 +601,19 @@ function toggleSection(aEvent) {
   toggleLinks[1].classList.toggle("hidden");
 }
 
+/**
+ * Sets the text of the page header based on a config pref + bundle strings
+ */
+function setupPageHeader()
+{
+  let serverOwner = getPref(PREF_TELEMETRY_SERVER_OWNER, "Mozilla");
+  let brandName = brandBundle.GetStringFromName("brandFullName");
+  let subtitleText = bundle.formatStringFromName(
+    "pageSubtitle", [serverOwner, brandName], 2);
+
+  let subtitleElement = document.getElementById("page-subtitle");
+  subtitleElement.appendChild(document.createTextNode(subtitleText));
+}
 
 /**
  * Initializes load/unload, pref change and mouse-click listeners
@@ -634,6 +660,9 @@ function setupListeners() {
 
 function onLoad() {
   window.removeEventListener("load", onLoad);
+
+  // Set the text in the page header
+  setupPageHeader();
 
   // Set up event listeners
   setupListeners();

@@ -420,8 +420,13 @@ struct IonBlockCounts
     // Hit count for this block.
     uint64 hitCount_;
 
-    // Information about the code generated for this block.
+    // Text information about the code generated for this block.
     char *code_;
+
+    // Number of bytes of code generated in this block. Spill code is counted
+    // separately from other, instruction implementing code.
+    uint32 instructionBytes_;
+    uint32 spillBytes_;
 
   public:
 
@@ -484,6 +489,22 @@ struct IonBlockCounts
 
     const char *code() const {
         return code_;
+    }
+
+    void setInstructionBytes(uint32 bytes) {
+        instructionBytes_ = bytes;
+    }
+
+    uint32 instructionBytes() const {
+        return instructionBytes_;
+    }
+
+    void setSpillBytes(uint32 bytes) {
+        spillBytes_ = bytes;
+    }
+
+    uint32 spillBytes() const {
+        return spillBytes_;
     }
 };
 
@@ -555,8 +576,25 @@ struct AutoFlushCache {
     static void updateTop(uintptr_t p, size_t len);
     ~AutoFlushCache();
     AutoFlushCache(const char * nonce, IonCompartment *comp = NULL);
+    void flushAnyway();
 };
 
+// If you are currently in the middle of modifing Ion-compiled code, which
+// is going to be flushed at *some* point, but determine that you *must*
+// call a function *right* *now*, two things can go wrong:
+//   1)  The flusher that you were using is still active, but you are about to
+//       enter jitted code, so it needs to be flushed
+//   2) the called function can re-enter a compilation/modification path which
+//       will use your AFC, and thus not flush when his compilation is done
+
+struct AutoFlushInhibitor {
+  private:
+    IonCompartment *ic_;
+    AutoFlushCache *afc;
+  public:
+    AutoFlushInhibitor(IonCompartment *ic);
+    ~AutoFlushInhibitor();
+};
 } // namespace ion
 
 namespace gc {

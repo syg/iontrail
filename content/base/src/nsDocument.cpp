@@ -177,7 +177,6 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
-using namespace mozilla::directionality;
 
 typedef nsTArray<Link*> LinkArray;
 
@@ -1411,6 +1410,7 @@ nsDocument::~nsDocument()
   }
   indx = mCatalogSheets.Count();
   while (--indx >= 0) {
+    static_cast<nsCSSStyleSheet*>(mCatalogSheets[indx])->SetOwningNode(nullptr);
     mCatalogSheets[indx]->SetOwningDocument(nullptr);
   }
   if (mAttrStyleSheet) {
@@ -3550,10 +3550,11 @@ nsDocument::GetCatalogStyleSheetAt(int32_t aIndex) const
 }
 
 void
-nsDocument::AddCatalogStyleSheet(nsIStyleSheet* aSheet)
+nsDocument::AddCatalogStyleSheet(nsCSSStyleSheet* aSheet)
 {
   mCatalogSheets.AppendObject(aSheet);
   aSheet->SetOwningDocument(this);
+  aSheet->SetOwningNode(this);
 
   if (aSheet->IsApplicable()) {
     // This is like |AddStyleSheetToStyleSets|, but for an agent sheet.
@@ -6775,7 +6776,7 @@ nsDocument::Destroy()
   mLayoutHistoryState = nullptr;
 
   // Shut down our external resource map.  We might not need this for
-  // leak-fixing if we fix DocumentViewerImpl to do cycle-collection, but
+  // leak-fixing if we fix nsDocumentViewer to do cycle-collection, but
   // tearing down all those frame trees right now is the right thing to do.
   mExternalResourceMap.Shutdown();
 

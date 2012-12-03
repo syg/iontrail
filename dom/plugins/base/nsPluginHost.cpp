@@ -1347,6 +1347,31 @@ nsPluginHost::GetBlocklistStateForType(const char *aMimeType, uint32_t *aState)
   return NS_ERROR_FAILURE;
 }
 
+NS_IMETHODIMP
+nsPluginHost::GetPermissionStringForType(const nsACString &aMimeType, nsACString &aPermissionString)
+{
+  aPermissionString.Truncate();
+  uint32_t blocklistState;
+  nsresult rv = GetBlocklistStateForType(aMimeType.Data(), &blocklistState);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsPluginTag *tag = FindPluginForType(aMimeType.Data(), true);
+  if (!tag) {
+    return NS_ERROR_FAILURE;
+  }
+
+  if (blocklistState == nsIBlocklistService::STATE_VULNERABLE_UPDATE_AVAILABLE ||
+      blocklistState == nsIBlocklistService::STATE_VULNERABLE_NO_UPDATE) {
+    aPermissionString.AssignLiteral("plugin-vulnerable:");
+  }
+  else {
+    aPermissionString.AssignLiteral("plugin:");
+  }
+
+  aPermissionString.Append(tag->mFileName);
+
+  return NS_OK;
+}
+
 // check comma delimitered extensions
 static int CompareExtensions(const char *aExtensionList, const char *aExtension)
 {
@@ -1716,7 +1741,7 @@ nsPluginHost::NormalizeHostname(nsCString& host)
 // first match.
 nsresult
 nsPluginHost::EnumerateSiteData(const nsACString& domain,
-                                const nsTArray<nsCString>& sites,
+                                const InfallibleTArray<nsCString>& sites,
                                 InfallibleTArray<nsCString>& result,
                                 bool firstMatchOnly)
 {

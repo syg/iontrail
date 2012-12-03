@@ -8,6 +8,7 @@
 /* rendering object for CSS "display: flex" */
 
 #include "nsFlexContainerFrame.h"
+#include "nsDisplayList.h"
 #include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include "nsStyleContext.h"
@@ -954,6 +955,24 @@ nsFlexContainerFrame::GetFrameName(nsAString& aResult) const
 }
 #endif // DEBUG
 
+// Helper for BuildDisplayList, to implement this special-case for flex items
+// from the spec:
+//    Flex items paint exactly the same as block-level elements in the
+//    normal flow, except that 'z-index' values other than 'auto' create
+//    a stacking context even if 'position' is 'static'.
+// http://www.w3.org/TR/2012/CR-css3-flexbox-20120918/#painting
+uint32_t
+GetDisplayFlagsForFlexItem(nsIFrame* aFrame)
+{
+  MOZ_ASSERT(aFrame->IsFlexItem(), "Should only be called on flex items");
+
+  const nsStylePosition* pos = aFrame->GetStylePosition();
+  if (pos->mZIndex.GetUnit() == eStyleUnit_Integer) {
+    return nsIFrame::DISPLAY_CHILD_FORCE_STACKING_CONTEXT;
+  }
+  return 0;
+}
+
 NS_IMETHODIMP
 nsFlexContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                        const nsRect&           aDirtyRect,
@@ -962,8 +981,12 @@ nsFlexContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // Our children are all block-level, so their borders/backgrounds all go on
+  // the BlockBorderBackgrounds list.
+  nsDisplayListSet childLists(aLists, aLists.BlockBorderBackgrounds());
   for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {
-    rv = BuildDisplayListForChild(aBuilder, e.get(), aDirtyRect, aLists);
+    rv = BuildDisplayListForChild(aBuilder, e.get(), aDirtyRect, childLists,
+                                  GetDisplayFlagsForFlexItem(e.get()));
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -1277,26 +1300,23 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
 #endif // DEBUG
 }
 
-const nsTArray<SortableFrame>
-BuildSortedChildArray(const nsFrameList& aChildren)
+void
+BuildSortedChildArray(const nsFrameList& aChildren,
+		      nsTArray<SortableFrame>& aSortedChildren)
 {
-  // NOTE: To benefit from Return Value Optimization, we must only return
-  // this value:
-  nsTArray<SortableFrame> sortedChildArray(aChildren.GetLength());
+  aSortedChildren.SetCapacity(aChildren.GetLength());
 
   // Throw all our children in the array...
   uint32_t indexInFrameList = 0;
   for (nsFrameList::Enumerator e(aChildren); !e.AtEnd(); e.Next()) {
     int32_t orderValue = e.get()->GetStylePosition()->mOrder;
-    sortedChildArray.AppendElement(SortableFrame(e.get(), orderValue,
-                                                 indexInFrameList));
+    aSortedChildren.AppendElement(SortableFrame(e.get(), orderValue,
+						indexInFrameList));
     indexInFrameList++;
   }
 
   // ... and sort (by 'order' property)
-  sortedChildArray.Sort();
-
-  return sortedChildArray;
+  aSortedChildren.Sort();
 }
 
 MainAxisPositionTracker::
@@ -1768,7 +1788,8 @@ nsFlexContainerFrame::GenerateFlexItems(
   MOZ_ASSERT(aFlexItems.IsEmpty(), "Expecting outparam to start out empty");
 
   // Sort by 'order' property:
-  const nsTArray<SortableFrame> sortedChildren = BuildSortedChildArray(mFrames);
+  nsTArray<SortableFrame> sortedChildren;
+  BuildSortedChildArray(mFrames, sortedChildren);
 
   // Build list of unresolved flex items:
 

@@ -1020,7 +1020,6 @@ IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
 
     // Ensure stack is aligned.
     DebugOnly<uint32> initialStack = masm.framePushed();
-    masm.checkStackAlignment();
 
     Label success, exception;
 
@@ -1173,7 +1172,10 @@ IonCacheSetProperty::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject 
     masm.pop(object());     // restore object reg
 
     /* Changing object shape.  Write the object's new shape. */
-    masm.storePtr(ImmGCPtr(newShape), Address(object(), JSObject::offsetOfShape()));
+    Address shapeAddr(object(), JSObject::offsetOfShape());
+    if (cx->compartment->needsBarrier())
+        masm.callPreBarrier(shapeAddr, MIRType_Shape);
+    masm.storePtr(ImmGCPtr(newShape), shapeAddr);
 
     /* Set the value on the object. */
     if (obj->isFixedSlot(propShape->slot())) {
@@ -1624,7 +1626,7 @@ GenerateScopeChainGuard(MacroAssembler &masm, JSObject *scopeObj,
         CallObject *callObj = &scopeObj->asCall();
         if (!callObj->isForEval()) {
             RawFunction fun = &callObj->callee();
-            RawScript script = fun->script().get(nogc);
+            RawScript script = fun->nonLazyScript().get(nogc);
             if (!script->funHasExtensibleScope)
                 return;
         }
@@ -1925,6 +1927,7 @@ js::ion::GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
 
     return true;
 }
+<<<<<<< HEAD
 
 bool
 IonCacheCallsiteClone::attach(JSContext *cx, IonScript *ion, HandleFunction original,
@@ -1993,3 +1996,5 @@ js::ion::CallsiteCloneCache(JSContext *cx, size_t cacheIndex, HandleObject calle
 
 
 
+=======
+>>>>>>> mozilla/master

@@ -233,7 +233,7 @@ JS_GetEmptyString(JSRuntime *rt)
 static void
 AssertHeapIsIdle(JSRuntime *rt)
 {
-    JS_ASSERT(rt->heapState == JSRuntime::Idle);
+    JS_ASSERT(rt->heapState == js::Idle);
 }
 
 static void
@@ -245,7 +245,7 @@ AssertHeapIsIdle(JSContext *cx)
 static void
 AssertHeapIsIdleOrIterating(JSRuntime *rt)
 {
-    JS_ASSERT(rt->heapState != JSRuntime::Collecting);
+    JS_ASSERT(rt->heapState != js::Collecting);
 }
 
 static void
@@ -680,59 +680,69 @@ static JSBool js_NewRuntimeWasCalled = JS_FALSE;
 /*
  * Thread Local Storage slot for storing the runtime for a thread.
  */
-namespace js {
-mozilla::ThreadLocal<PerThreadData *> TlsPerThreadData;
-}
-
-namespace JS {
+mozilla::ThreadLocal<PerThreadData *> js::TlsPerThreadData;
 
 #ifdef DEBUG
 JS_FRIEND_API(void)
-EnterAssertNoGCScope()
+JS::EnterAssertNoGCScope()
 {
     ++TlsPerThreadData.get()->gcAssertNoGCDepth;
 }
 
 JS_FRIEND_API(void)
-LeaveAssertNoGCScope()
+JS::LeaveAssertNoGCScope()
 {
     --TlsPerThreadData.get()->gcAssertNoGCDepth;
     JS_ASSERT(TlsPerThreadData.get()->gcAssertNoGCDepth >= 0);
 }
 
 JS_FRIEND_API(bool)
-InNoGCScope()
+JS::InNoGCScope()
 {
     return TlsPerThreadData.get()->gcAssertNoGCDepth > 0;
 }
 
 JS_FRIEND_API(bool)
-NeedRelaxedRootChecks()
+JS::isGCEnabled()
+{
+    return !TlsPerThreadData.get()->suppressGC;
+}
+
+JS_FRIEND_API(bool)
+JS::NeedRelaxedRootChecks()
 {
     return TlsPerThreadData.get()->gcRelaxRootChecks;
 }
 #else
-JS_FRIEND_API(void) EnterAssertNoGCScope() {}
-JS_FRIEND_API(void) LeaveAssertNoGCScope() {}
-JS_FRIEND_API(bool) InNoGCScope() { return false; }
-JS_FRIEND_API(bool) NeedRelaxedRootChecks() { return false; }
+JS_FRIEND_API(void) JS::EnterAssertNoGCScope() {}
+JS_FRIEND_API(void) JS::LeaveAssertNoGCScope() {}
+JS_FRIEND_API(bool) JS::InNoGCScope() { return false; }
+JS_FRIEND_API(bool) JS::isGCEnabled() { return true; }
+JS_FRIEND_API(bool) JS::NeedRelaxedRootChecks() { return false; }
 #endif
-
-} /* namespace JS */
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
+<<<<<<< HEAD
 js::PerThreadData::PerThreadData(JSRuntime *runtime)
   : PerThreadDataFriendFields()
   , runtime_(runtime)
+=======
+PerThreadData::PerThreadData(JSRuntime *runtime)
+  : runtime_(runtime),
+>>>>>>> mozilla/master
 #ifdef DEBUG
-  , gcRelaxRootChecks(false)
-  , gcAssertNoGCDepth(0)
+    gcRelaxRootChecks(false),
+    gcAssertNoGCDepth(0),
 #endif
+<<<<<<< HEAD
   , ionTop(NULL)
   , ionJSContext(NULL)
   , ionStackLimit(0)
   , ionActivation(NULL)
+=======
+    suppressGC(0)
+>>>>>>> mozilla/master
 {}
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
@@ -790,7 +800,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcDynamicMarkSlice(false),
     gcShouldCleanUpEverything(false),
     gcIsNeeded(0),
-    gcWeakMapList(NULL),
     gcStats(thisFromCtor()),
     gcNumber(0),
     gcStartNumber(0),
@@ -801,9 +810,13 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcIncrementalState(gc::NO_INCREMENTAL),
     gcLastMarkSlice(false),
     gcSweepOnBackgroundThread(false),
+    gcFoundBlackGrayEdges(false),
     gcSweepingCompartments(NULL),
+    gcCompartmentGroupIndex(0),
+    gcRemainingCompartmentGroups(NULL),
+    gcCompartmentGroup(NULL),
     gcSweepPhase(0),
-    gcSweepCompartmentIndex(0),
+    gcSweepCompartment(NULL),
     gcSweepKindIndex(0),
     gcArenasAllocatedDuringSweep(NULL),
     gcInterFrameGC(0),
@@ -844,8 +857,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     profilingScripts(false),
     alwaysPreserveCode(false),
     hadOutOfMemory(false),
-    debugScopes(NULL),
-    liveArrayBuffers(NULL),
     data(NULL),
     gcLock(NULL),
     gcHelperThread(thisFromCtor()),
@@ -876,15 +887,14 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #ifdef DEBUG
     noGCOrAllocationCheck(0),
 #endif
-    inOOMReport(0),
     jitHardening(false),
     ionPcScriptCache(NULL),
     threadPool(this),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
-    useHelperThreads_(useHelperThreads)
+    useHelperThreads_(useHelperThreads),
+    requestedHelperThreadCount(-1)
 {
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
-    JS_INIT_CLIST(&debuggerList);
     JS_INIT_CLIST(&onNewGlobalObjectWatchers);
 
     PodZero(&debugHooks);
@@ -956,12 +966,6 @@ JSRuntime::init(uint32_t maxbytes)
     if (!evalCache.init())
         return false;
 
-    debugScopes = this->new_<DebugScopes>(this);
-    if (!debugScopes || !debugScopes->init()) {
-        js_delete(debugScopes);
-        return false;
-    }
-
     nativeStackBase = GetNativeStackBase();
     return true;
 }
@@ -971,8 +975,6 @@ JSRuntime::~JSRuntime()
 #ifdef JS_THREADSAFE
     clearOwnerThread();
 #endif
-
-    js_delete(debugScopes);
 
     /*
      * Even though all objects in the compartment are dead, we may have keep
@@ -2948,9 +2950,9 @@ JS_PUBLIC_API(JSBool)
 JS_IsAboutToBeFinalized(void *thing)
 {
     gc::Cell *t = static_cast<gc::Cell *>(thing);
-    bool isMarked = IsCellMarked(&t);
+    bool isDying = IsCellAboutToBeFinalized(&t);
     JS_ASSERT(t == thing);
-    return !isMarked;
+    return isDying;
 }
 
 JS_PUBLIC_API(void)
@@ -4878,8 +4880,8 @@ JS_CloneFunctionObject(JSContext *cx, JSObject *funobjArg, JSRawObject parentArg
      * script, we cannot clone it without breaking the compiler's assumptions.
      */
     RootedFunction fun(cx, funobj->toFunction());
-    if (fun->isInterpreted() && (fun->script()->enclosingStaticScope() ||
-        (fun->script()->compileAndGo && !parent->isGlobal())))
+    if (fun->isInterpreted() && (fun->nonLazyScript()->enclosingStaticScope() ||
+        (fun->nonLazyScript()->compileAndGo && !parent->isGlobal())))
     {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_BAD_CLONE_FUNOBJ_SCOPE);
         return NULL;
@@ -5012,8 +5014,8 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
 
             flags &= ~JSFUN_GENERIC_NATIVE;
             JSFunction *fun = js_DefineFunction(cx, ctor, id, js_generic_native_method_dispatcher,
-                                    fs->nargs + 1, flags, NullPtr(),
-                                    JSFunction::ExtendedFinalizeKind);
+                                                fs->nargs + 1, flags,
+                                                JSFunction::ExtendedFinalizeKind);
             if (!fun)
                 return JS_FALSE;
 
@@ -5034,19 +5036,36 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
         if (fs->selfHostedName && cx->runtime->isSelfHostedGlobal(cx->global()))
             return JS_TRUE;
 
-        Rooted<PropertyName*> selfHostedPropertyName(cx);
+        /*
+         * Delay cloning self-hosted functions until they are called. This is
+         * achieved by passing js_DefineFunction a NULL JSNative which
+         * produces an interpreted JSFunction where !hasScript. Interpreted
+         * call paths then call InitializeLazyFunctionScript if !hasScript.
+         */
         if (fs->selfHostedName) {
-            JSAtom *selfHostedAtom = Atomize(cx, fs->selfHostedName, strlen(fs->selfHostedName));
-            if (!selfHostedAtom)
+            RootedFunction fun(cx, js_DefineFunction(cx, obj, id, /* native = */ NULL, fs->nargs, 0,
+                                                     JSFunction::ExtendedFinalizeKind));
+            if (!fun)
                 return JS_FALSE;
-            selfHostedPropertyName = selfHostedAtom->asPropertyName();
+            JSFunction::setSingletonType(cx, fun);
+            fun->setIsSelfHostedBuiltin();
+            fun->setExtendedSlot(0, PrivateValue(fs));
+            RootedAtom shAtom(cx, Atomize(cx, fs->selfHostedName, strlen(fs->selfHostedName)));
+            if (!shAtom)
+                return JS_FALSE;
+            RootedObject holder(cx, cx->global()->intrinsicsHolder());
+            if (!JS_DefinePropertyById(cx,holder, AtomToId(shAtom),
+                                       ObjectValue(*fun), NULL, NULL, 0))
+            {
+                return JS_FALSE;
+            }
+        } else {
+            JSFunction *fun = js_DefineFunction(cx, obj, id, fs->call.op, fs->nargs, flags);
+            if (!fun)
+                return JS_FALSE;
+            if (fs->call.info)
+                fun->setJitInfo(fs->call.info);
         }
-        JSFunction *fun = js_DefineFunction(cx, obj, id, fs->call.op, fs->nargs, flags,
-                                            selfHostedPropertyName);
-        if (!fun)
-            return JS_FALSE;
-        if (fs->call.info)
-            fun->setJitInfo(fs->call.info);
     }
     return JS_TRUE;
 }
@@ -5483,16 +5502,20 @@ JS_CompileFunction(JSContext *cx, JSObject *objArg, const char *name,
 }
 
 JS_PUBLIC_API(JSString *)
-JS_DecompileScript(JSContext *cx, JSScript *script, const char *name, unsigned indent)
+JS_DecompileScript(JSContext *cx, JSScript *scriptArg, const char *name, unsigned indent)
 {
     JS_THREADSAFE_ASSERT(cx->compartment != cx->runtime->atomsCompartment);
 
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
+    RootedScript script(cx, scriptArg);
     RootedFunction fun(cx, script->function());
     if (fun)
         return JS_DecompileFunction(cx, fun, indent);
-    return script->sourceData(cx);
+    bool haveSource = script->scriptSource()->hasSourceData();
+    if (!haveSource && !JSScript::loadSource(cx, script, &haveSource))
+        return NULL;
+    return haveSource ? script->sourceData(cx) : js_NewStringCopyZ(cx, "[no source]");
 }
 
 JS_PUBLIC_API(JSString *)
@@ -5771,10 +5794,8 @@ JS_CallFunctionValue(JSContext *cx, JSObject *objArg, jsval fval, unsigned argc,
     return Invoke(cx, ObjectOrNullValue(obj), fval, argc, argv, rval);
 }
 
-namespace JS {
-
 JS_PUBLIC_API(bool)
-Call(JSContext *cx, jsval thisv, jsval fval, unsigned argc, jsval *argv, jsval *rval)
+JS::Call(JSContext *cx, jsval thisv, jsval fval, unsigned argc, jsval *argv, jsval *rval)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
@@ -5783,8 +5804,6 @@ Call(JSContext *cx, jsval thisv, jsval fval, unsigned argc, jsval *argv, jsval *
 
     return Invoke(cx, thisv, fval, argc, argv, rval);
 }
-
-} // namespace JS
 
 JS_PUBLIC_API(JSObject *)
 JS_New(JSContext *cx, JSObject *ctorArg, unsigned argc, jsval *argv)
@@ -7027,6 +7046,14 @@ JS_ScheduleGC(JSContext *cx, uint32_t count)
 }
 #endif
 
+JS_PUBLIC_API(void)
+JS_SetParallelCompilationEnabled(JSContext *cx, bool enabled)
+{
+#ifdef JS_ION
+    ion::js_IonOptions.parallelCompilation = enabled;
+#endif
+}
+
 /************************************************************************/
 
 #if !defined(STATIC_EXPORTABLE_JS_API) && !defined(STATIC_JS_API) && defined(XP_WIN)
@@ -7107,8 +7134,6 @@ JS_CallOnce(JSCallOnceType *once, JSInitCallback func)
 #endif
 }
 
-namespace JS {
-
 AutoGCRooter::AutoGCRooter(JSContext *cx, ptrdiff_t tag)
   : down(cx->runtime->autoGCRooters), tag(tag), stackTop(&cx->runtime->autoGCRooters)
 {
@@ -7118,15 +7143,13 @@ AutoGCRooter::AutoGCRooter(JSContext *cx, ptrdiff_t tag)
 
 #ifdef DEBUG
 JS_PUBLIC_API(void)
-AssertArgumentsAreSane(JSContext *cx, const JS::Value &value)
+JS::AssertArgumentsAreSane(JSContext *cx, const JS::Value &value)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, value);
 }
 #endif /* DEBUG */
-
-} // namespace JS
 
 JS_PUBLIC_API(void *)
 JS_EncodeScript(JSContext *cx, JSRawScript scriptArg, uint32_t *lengthp)

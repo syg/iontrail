@@ -259,7 +259,7 @@ public:
     void SetPageRect(const gfx::Rect& aCssPageRect);
     void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
                           nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
-    bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
+    bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
     bool CreateFrame(AutoLocalJNIFrame *jniFrame, AndroidLayerRendererFrame& aFrame);
     bool ActivateProgram(AutoLocalJNIFrame *jniFrame);
     bool DeactivateProgram(AutoLocalJNIFrame *jniFrame);
@@ -655,11 +655,11 @@ public:
     int Action() { return mAction; }
     int Type() { return mType; }
     int64_t Time() { return mTime; }
-    nsTArray<nsIntPoint> Points() { return mPoints; }
-    nsTArray<int> PointIndicies() { return mPointIndicies; }
-    nsTArray<float> Pressures() { return mPressures; }
-    nsTArray<float> Orientations() { return mOrientations; }
-    nsTArray<nsIntPoint> PointRadii() { return mPointRadii; }
+    const nsTArray<nsIntPoint>& Points() { return mPoints; }
+    const nsTArray<int>& PointIndicies() { return mPointIndicies; }
+    const nsTArray<float>& Pressures() { return mPressures; }
+    const nsTArray<float>& Orientations() { return mOrientations; }
+    const nsTArray<nsIntPoint>& PointRadii() { return mPointRadii; }
     double X() { return mX; }
     double Y() { return mY; }
     double Z() { return mZ; }

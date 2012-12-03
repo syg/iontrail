@@ -106,7 +106,7 @@ class LayerManager;
 #define CAPTURE_RETARGETTOELEMENT 2
 // true if the current capture wants drags to be prevented
 #define CAPTURE_PREVENTDRAG 4
-// true when the mouse is pointer locked, and events are sent to locked elemnt
+// true when the mouse is pointer locked, and events are sent to locked element
 #define CAPTURE_POINTERLOCK 8
 
 typedef struct CapturingContentInfo {
@@ -1294,6 +1294,14 @@ public:
     return mFontSizeInflationLineThreshold;
   }
 
+  bool FontSizeInflationForceEnabled() const {
+    return mFontSizeInflationForceEnabled;
+  }
+
+  bool FontSizeInflationDisabledInMasterProcess() const {
+    return mFontSizeInflationDisabledInMasterProcess;
+  }
+
   virtual void AddInvalidateHiddenPresShellObserver(nsRefreshDriver *aDriver) = 0;
 
   void InvalidatePresShellIfHidden();
@@ -1445,6 +1453,8 @@ protected:
   uint32_t mFontSizeInflationEmPerLine;
   uint32_t mFontSizeInflationMinTwips;
   uint32_t mFontSizeInflationLineThreshold;
+  bool mFontSizeInflationForceEnabled;
+  bool mFontSizeInflationDisabledInMasterProcess;
 
   // The maximum width of a line box. Text on a single line that exceeds this
   // width will be wrapped. A value of 0 indicates that no limit is enforced.

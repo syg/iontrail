@@ -109,6 +109,7 @@ nsEventListenerManager::nsEventListenerManager(nsISupports* aTarget) :
   mMayHaveAudioAvailableEventListener(false),
   mMayHaveTouchEventListener(false),
   mMayHaveMouseEnterLeaveEventListener(false),
+  mClearingListeners(false),
   mNoListenerForEvent(0),
   mTarget(aTarget)
 {
@@ -136,7 +137,12 @@ nsEventListenerManager::~nsEventListenerManager()
 void
 nsEventListenerManager::RemoveAllListeners()
 {
+  if (mClearingListeners) {
+    return;
+  }
+  mClearingListeners = true;
   mListeners.Clear();
+  mClearingListeners = false;
 }
 
 void
@@ -150,15 +156,20 @@ NS_IMPL_CYCLE_COLLECTION_NATIVE_CLASS(nsEventListenerManager)
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsEventListenerManager, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(nsEventListenerManager, Release)
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsEventListenerManager)
-  uint32_t count = tmp->mListeners.Length();
-  for (uint32_t i = 0; i < count; i++) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mListeners[i] mListener");
-    cb.NoteXPCOMChild(tmp->mListeners.ElementAt(i).mListener.get());
-  }  
+inline void
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            nsListenerStruct& aField,
+                            const char* aName,
+                            unsigned aFlags)
+{
+  CycleCollectionNoteChild(aCallback, aField.mListener.get(), aName, aFlags);
+}
+
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEventListenerManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mListeners)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_NATIVE(nsEventListenerManager)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsEventListenerManager)
   tmp->Disconnect();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -199,7 +210,7 @@ nsEventListenerManager::AddEventListener(nsIDOMEventListener *aListener,
 {
   NS_ABORT_IF_FALSE((aType && aTypeAtom) || aAllEvents, "Missing type");
 
-  if (!aListener) {
+  if (!aListener || mClearingListeners) {
     return;
   }
 
@@ -414,7 +425,7 @@ nsEventListenerManager::RemoveEventListener(nsIDOMEventListener *aListener,
                                             int32_t aFlags,
                                             bool aAllEvents)
 {
-  if (!aListener || !aType) {
+  if (!aListener || !aType || mClearingListeners) {
     return;
   }
 
@@ -604,7 +615,11 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
     // XXX sXBL/XBL2 issue -- do we really want the owner here?  What
     // if that's the XBL document?
     doc = node->OwnerDoc();
-    global = doc->GetScriptGlobalObject();
+    MOZ_ASSERT(!doc->IsLoadedAsData(), "Should not get in here at all");
+
+    // We want to allow compiling an event handler even in an unloaded
+    // document, so use GetScopeObject here, not GetScriptHandlingObject.
+    global = doc->GetScopeObject();
   } else {
     nsCOMPtr<nsPIDOMWindow> win = GetTargetAsInnerWindow();
     if (win) {
@@ -622,6 +637,13 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
     // loaded as data.
     return NS_OK;
   }
+
+#ifdef DEBUG
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(global);
+  if (win) {
+    MOZ_ASSERT(win->IsInnerWindow(), "We should not have an outer window here!");
+  }
+#endif
 
   nsresult rv = NS_OK;
   // return early preventing the event listener from being added
@@ -694,6 +716,10 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
 void
 nsEventListenerManager::RemoveEventHandler(nsIAtom* aName)
 {
+  if (mClearingListeners) {
+    return;
+  }
+
   uint32_t eventType = nsContentUtils::GetEventId(aName);
   nsListenerStruct* ls = FindEventHandler(eventType, aName);
 

@@ -266,6 +266,9 @@ struct WeakMapTracer {
 extern JS_FRIEND_API(void)
 TraceWeakMaps(WeakMapTracer *trc);
 
+extern JS_FRIEND_API(bool)
+GCThingIsMarkedGray(void *thing);
+
 JS_FRIEND_API(void)
 UnmarkGrayGCThing(void *thing);
 
@@ -305,18 +308,18 @@ struct BaseShape {
 };
 
 struct Shape {
-    BaseShape   *base;
-    jsid        _1;
-    uint32_t    slotInfo;
+    shadow::BaseShape *base;
+    jsid              _1;
+    uint32_t          slotInfo;
 
     static const uint32_t FIXED_SLOTS_SHIFT = 27;
 };
 
 struct Object {
-    Shape       *shape;
-    TypeObject  *type;
-    js::Value   *slots;
-    js::Value   *_1;
+    shadow::Shape      *shape;
+    shadow::TypeObject *type;
+    js::Value          *slots;
+    js::Value          *_1;
 
     size_t numFixedSlots() const { return shape->slotInfo >> Shape::FIXED_SLOTS_SHIFT; }
     Value *fixedSlots() const {
@@ -882,6 +885,12 @@ IsIncrementalBarrierNeeded(JSRuntime *rt);
 
 extern JS_FRIEND_API(bool)
 IsIncrementalBarrierNeeded(JSContext *cx);
+
+extern JS_FRIEND_API(bool)
+IsIncrementalBarrierNeededOnObject(RawObject obj);
+
+extern JS_FRIEND_API(bool)
+IsIncrementalBarrierNeededOnScript(JSScript *obj);
 
 extern JS_FRIEND_API(void)
 IncrementalReferenceBarrier(void *ptr);

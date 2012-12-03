@@ -200,3 +200,34 @@ function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
   }
   runNextTest();
 }
+
+function updateBlocklist(aCallback) {
+  var blocklistNotifier = Cc["@mozilla.org/extensions/blocklist;1"]
+                          .getService(Ci.nsITimerCallback);
+  var observer = function() {
+    aCallback();
+    Services.obs.removeObserver(observer, "blocklist-updated");
+  };
+  Services.obs.addObserver(observer, "blocklist-updated", false);
+  blocklistNotifier.notify(null);
+}
+
+var _originalTestBlocklistURL = null;
+function setAndUpdateBlocklist(aURL, aCallback) {
+  if (!_originalTestBlocklistURL)
+    _originalTestBlocklistURL = Services.prefs.getCharPref("extensions.blocklist.url");
+  Services.prefs.setCharPref("extensions.blocklist.url", aURL);
+  updateBlocklist(aCallback);
+}
+
+function resetBlocklist() {
+  Services.prefs.setCharPref("extensions.blocklist.url", _originalTestBlocklistURL);
+}
+
+function whenNewWindowLoaded(aOptions, aCallback) {
+  let win = OpenBrowserWindow(aOptions);
+  win.addEventListener("load", function onLoad() {
+    win.removeEventListener("load", onLoad, false);
+    aCallback(win);
+  }, false);
+}

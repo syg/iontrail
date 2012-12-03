@@ -15,8 +15,10 @@
 
 namespace mozilla {
 
-MediaPluginReader::MediaPluginReader(AbstractMediaDecoder *aDecoder) :
+MediaPluginReader::MediaPluginReader(AbstractMediaDecoder *aDecoder,
+                                     const nsACString& aContentType) :
   MediaDecoderReader(aDecoder),
+  mType(aContentType),
   mPlugin(NULL),
   mHasAudio(false),
   mHasVideo(false),
@@ -24,7 +26,6 @@ MediaPluginReader::MediaPluginReader(AbstractMediaDecoder *aDecoder) :
   mAudioSeekTimeUs(-1),
   mLastVideoFrame(NULL)
 {
-  reinterpret_cast<MediaPluginDecoder *>(aDecoder)->GetContentType(mType);
 }
 
 MediaPluginReader::~MediaPluginReader()
@@ -37,7 +38,7 @@ nsresult MediaPluginReader::Init(MediaDecoderReader* aCloneDonor)
   return NS_OK;
 }
 
-nsresult MediaPluginReader::ReadMetadata(nsVideoInfo* aInfo,
+nsresult MediaPluginReader::ReadMetadata(VideoInfo* aInfo,
                                            MetadataTags** aTags)
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
@@ -66,7 +67,7 @@ nsresult MediaPluginReader::ReadMetadata(nsVideoInfo* aInfo,
     // that our video frame creation code doesn't overflow.
     nsIntSize displaySize(width, height);
     nsIntSize frameSize(width, height);
-    if (!nsVideoInfo::ValidateVideoRegion(frameSize, pictureRect, displaySize)) {
+    if (!VideoInfo::ValidateVideoRegion(frameSize, pictureRect, displaySize)) {
       return NS_ERROR_FAILURE;
     }
 
@@ -158,6 +159,9 @@ bool MediaPluginReader::DecodeVideoFrame(bool &aKeyframeSkip,
 #endif
       aKeyframeSkip = false;
     }
+
+    if (frame.mSize == 0)
+      return true;
 
     VideoData::YCbCrBuffer b;
     b.mPlanes[0].mData = static_cast<uint8_t *>(frame.Y.mData);

@@ -125,6 +125,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitFromCharCode(MFromCharCode *ins);
     bool visitStart(MStart *start);
     bool visitOsrEntry(MOsrEntry *entry);
+    bool visitNop(MNop *nop);
     bool visitOsrValue(MOsrValue *value);
     bool visitOsrScopeChain(MOsrScopeChain *object);
     bool visitToDouble(MToDouble *convert);
@@ -193,6 +194,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitIn(MIn *ins);
     bool visitInArray(MInArray *ins);
     bool visitInstanceOf(MInstanceOf *ins);
+    bool visitCallInstanceOf(MCallInstanceOf *ins);
     bool visitFunctionBoundary(MFunctionBoundary *ins);
     bool visitSetDOMProperty(MSetDOMProperty *ins);
     bool visitGetDOMProperty(MGetDOMProperty *ins);

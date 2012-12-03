@@ -440,7 +440,8 @@ public:
     nsCOMPtr<nsIDOMWindow> window =
       do_QueryInterface(tabParent->GetBrowserDOMWindow());
     WindowIdentifier newID(id, window);
-    hal::Vibrate(pattern, newID);
+    // Have to copy, because Vibrate doesn't take a compatible array type
+    hal::Vibrate(nsTArray<uint32_t>(pattern), newID);
     return true;
   }
 
@@ -750,7 +751,8 @@ public:
   RecvEnableSwitchNotifications(const SwitchDevice& aDevice) MOZ_OVERRIDE
   {
     // Content has no reason to listen to switch events currently.
-    return false;
+    hal::RegisterSwitchObserver(aDevice, this);
+    return true;
   }
 
   virtual bool
@@ -769,7 +771,8 @@ public:
   RecvGetCurrentSwitchState(const SwitchDevice& aDevice, hal::SwitchState *aState) MOZ_OVERRIDE
   {
     // Content has no reason to listen to switch events currently.
-    return false;
+    *aState = hal::GetCurrentSwitchState(aDevice);
+    return true;
   }
 
   virtual bool

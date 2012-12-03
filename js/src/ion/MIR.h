@@ -24,12 +24,14 @@
 #include "IonMacroAssembler.h"
 #include "Bailouts.h"
 #include "FixedList.h"
-#include "RangeAnalysis.h"
 #include "CompilerRoot.h"
 
 namespace js {
 namespace ion {
+
 class ValueNumberData;
+class Range;
+
 static const inline
 MIRType MIRTypeFromValue(const js::Value &vp)
 {
@@ -229,11 +231,7 @@ class MDefinition : public MNode
     uint32 id_;                    // Instruction ID, which after block re-ordering
                                    // is sorted within a basic block.
     ValueNumberData *valueNumber_; // The instruction's value number (see GVN for details in use)
-
-    // Bug 765126: This should be a pointer. The range should only be allocated if range analysis is
-    // enabled.
-    Range range_;                  // The most specific known range for this def.
-
+    Range *range_;                 // Any computed range for this def.
     MIRType resultType_;           // Representation of result type.
     uint32 flags_;                 // Bit flags.
     union {
@@ -293,8 +291,11 @@ class MDefinition : public MNode
         return trackedPc_;
     }
 
-    Range *range() {
-        return &range_;
+    Range *range() const {
+        return range_;
+    }
+    void setRange(Range *range) {
+        range_ = range;
     }
 
     virtual HashNumber valueHash() const;
@@ -307,9 +308,10 @@ class MDefinition : public MNode
     virtual void analyzeEdgeCasesBackward();
     virtual void analyzeTruncateBackward();
     bool earlyAbortCheck();
-    // Propagate a range. Return true if the range changed.
-    virtual bool recomputeRange() {
-        return false;
+
+    // Compute an absolute or symbolic range for the value of this node.
+    // Ranges are only computed for definitions whose type is int32.
+    virtual void computeRange() {
     }
 
     MNode::Kind kind() const {
@@ -606,6 +608,25 @@ class MOsrEntry : public MNullaryInstruction
     }
 };
 
+// No-op instruction. This cannot be moved or eliminated, and is intended for
+// anchoring resume points at arbitrary points in a block.
+class MNop : public MNullaryInstruction
+{
+  protected:
+    MNop() {
+    }
+
+  public:
+    INSTRUCTION_HEADER(Nop);
+    static MNop *New() {
+        return new MNop();
+    }
+
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
 // A constant js::Value.
 class MConstant : public MNullaryInstruction
 {
@@ -633,17 +654,19 @@ class MConstant : public MNullaryInstruction
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+
+    void computeRange();
 };
 
 class MParameter : public MNullaryInstruction
 {
     int32 index_;
-    types::StackTypeSet *typeSet_;
+    const types::TypeSet *typeSet_;
 
   public:
     static const int32 THIS_SLOT = -1;
 
-    MParameter(int32 index, types::StackTypeSet *types)
+    MParameter(int32 index, const types::TypeSet *types)
       : index_(index),
         typeSet_(types)
     {
@@ -652,12 +675,12 @@ class MParameter : public MNullaryInstruction
 
   public:
     INSTRUCTION_HEADER(Parameter);
-    static MParameter *New(int32 index, types::StackTypeSet *types);
+    static MParameter *New(int32 index, const types::TypeSet *types);
 
     int32 index() const {
         return index_;
     }
-    types::StackTypeSet *typeSet() const {
+    const types::TypeSet *typeSet() const {
         return typeSet_;
     }
     void printOpcode(FILE *fp);
@@ -862,6 +885,17 @@ class MGoto : public MAryControlInstruction<0, 1>
     }
 };
 
+enum BranchDirection {
+    FALSE_BRANCH,
+    TRUE_BRANCH
+};
+
+static inline BranchDirection
+NegateBranchDirection(BranchDirection dir)
+{
+    return (dir == FALSE_BRANCH) ? TRUE_BRANCH : FALSE_BRANCH;
+}
+
 // Tests if the input instruction evaluates to true or false, and jumps to the
 // start of a corresponding basic block.
 class MTest
@@ -884,6 +918,9 @@ class MTest
     }
     MBasicBlock *ifFalse() const {
         return getSuccessor(1);
+    }
+    MBasicBlock *branchSuccessor(BranchDirection dir) const {
+        return (dir == TRUE_BRANCH) ? ifTrue() : ifFalse();
     }
     TypePolicy *typePolicy() {
         return this;
@@ -1736,7 +1773,6 @@ class MToInt32 : public MUnaryInstruction
     {
         setResultType(MIRType_Int32);
         setMovable();
-        range()->set(JSVAL_INT_MIN, JSVAL_INT_MAX);
     }
 
   public:
@@ -1758,6 +1794,9 @@ class MToInt32 : public MUnaryInstruction
     bool canBeNegativeZero() {
         return canBeNegativeZero_;
     }
+    void setCanBeNegativeZero(bool negativeZero) {
+        canBeNegativeZero_ = negativeZero;
+    }
 
     bool congruentTo(MDefinition *const &ins) const {
         return congruentIfOperandsEqual(ins);
@@ -1777,7 +1816,6 @@ class MTruncateToInt32 : public MUnaryInstruction
     {
         setResultType(MIRType_Int32);
         setMovable();
-        range()->set(JSVAL_INT_MIN, JSVAL_INT_MAX);
     }
 
   public:
@@ -1843,7 +1881,6 @@ class MBitNot
     {
         setResultType(MIRType_Int32);
         setMovable();
-        range()->set(JSVAL_INT_MIN, JSVAL_INT_MAX);
     }
 
   public:
@@ -1939,7 +1976,6 @@ class MBinaryBitwiseInstruction
     {
         setResultType(MIRType_Int32);
         setMovable();
-        range()->set(JSVAL_INT_MIN, JSVAL_INT_MAX);
     }
 
   public:
@@ -1982,12 +2018,7 @@ class MBitAnd : public MBinaryBitwiseInstruction
     MDefinition *foldIfEqual() {
         return getOperand(0); // x & x => x;
     }
-    bool recomputeRange() {
-        Range *left = getOperand(0)->range();
-        Range *right = getOperand(1)->range();
-        return range()->update(Range::and_(left, right));
-    }
-
+    void computeRange();
 };
 
 class MBitOr : public MBinaryBitwiseInstruction
@@ -2066,15 +2097,7 @@ class MLsh : public MShiftInstruction
         return getOperand(0);
     }
 
-    bool recomputeRange() {
-        MDefinition *right = getOperand(1);
-        if (!right->isConstant())
-            return false;
-
-        int32 c = right->toConstant()->value().toInt32();
-        const Range *other = getOperand(0)->range();
-        return range()->update(Range::shl(other, c));
-    }
+    void computeRange();
 };
 
 class MRsh : public MShiftInstruction
@@ -2092,15 +2115,7 @@ class MRsh : public MShiftInstruction
         // x >> 0 => x
         return getOperand(0);
     }
-    bool recomputeRange() {
-        MDefinition *right = getOperand(1);
-        if (!right->isConstant())
-            return false;
-
-        int32 c = right->toConstant()->value().toInt32();
-        Range *other = getOperand(0)->range();
-        return range()->update(Range::shr(other, c));
-    }
+    void computeRange();
 };
 
 class MUrsh : public MShiftInstruction
@@ -2174,6 +2189,11 @@ class MBinaryArithInstruction
     virtual double getIdentity() = 0;
 
     void infer(JSContext *cx, const TypeOracle::BinaryTypes &b);
+
+    void setInt32() {
+        specialization_ = MIRType_Int32;
+        setResultType(MIRType_Int32);
+    }
 
     bool congruentTo(MDefinition *const &ins) const {
         return MBinaryInstruction::congruentTo(ins);
@@ -2261,17 +2281,7 @@ class MAbs
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
-    bool recomputeRange() {
-        if (specialization_ != MIRType_Int32)
-            return false;
-
-        Range *other = getOperand(0)->range();
-        Range r(0,
-                Max(Range::abs64((int64_t)other->lower()),
-                    Range::abs64((int64_t)other->upper())));
-
-        return range()->update(r);
-    }
+    void computeRange();
 };
 
 // Inline implementation of Math.sqrt().
@@ -2466,26 +2476,16 @@ class MAdd : public MBinaryArithInstruction
     bool isTruncated() const {
         return implicitTruncate_;
     }
-    void setTruncated(bool val) {
-        implicitTruncate_ = val;
+    void setTruncated(bool truncate) {
+        implicitTruncate_ = truncate;
     }
     bool updateForReplacement(MDefinition *ins);
     double getIdentity() {
         return 0;
     }
 
-    bool fallible() {
-        return !isTruncated() && !range()->isFinite();
-    }
-
-    bool recomputeRange() {
-        if (specialization() != MIRType_Int32)
-            return false;
-        Range *left = getOperand(0)->range();
-        Range *right = getOperand(1)->range();
-        Range next = isTruncated() ? Range::addTruncate(left,right) : Range::add(left, right);
-        return range()->update(next);
-    }
+    bool fallible();
+    void computeRange();
 };
 
 class MSub : public MBinaryArithInstruction
@@ -2508,8 +2508,8 @@ class MSub : public MBinaryArithInstruction
     bool isTruncated() const {
         return implicitTruncate_;
     }
-    void setTruncated(bool val) {
-        implicitTruncate_ = val;
+    void setTruncated(bool truncate) {
+        implicitTruncate_ = truncate;
     }
     bool updateForReplacement(MDefinition *ins);
 
@@ -2517,18 +2517,8 @@ class MSub : public MBinaryArithInstruction
         return 0;
     }
 
-    bool fallible() {
-        return !isTruncated() && !range()->isFinite();
-    }
-
-    bool recomputeRange() {
-        if (specialization() != MIRType_Int32)
-            return false;
-        Range *left = getOperand(0)->range();
-        Range *right = getOperand(1)->range();
-        Range next = isTruncated() ? Range::subTruncate(left,right) : Range::sub(left, right);
-        return range()->update(next);
-    }
+    bool fallible();
+    void computeRange();
 };
 
 class MMul : public MBinaryArithInstruction
@@ -2575,30 +2565,22 @@ class MMul : public MBinaryArithInstruction
         return 1;
     }
 
-    bool canOverflow() {
-        return !implicitTruncate_ && !range()->isFinite();
-    }
+    bool canOverflow();
 
     bool canBeNegativeZero() {
-        if (range()->lower() > 0 || range()->upper() < 0)
-            return false;
         return canBeNegativeZero_;
     }
+    void setCanBeNegativeZero(bool negativeZero) {
+        canBeNegativeZero_ = negativeZero;
+    }
+
     bool updateForReplacement(MDefinition *ins);
 
     bool fallible() {
         return canBeNegativeZero_ || canOverflow();
     }
 
-    bool recomputeRange() {
-        if (specialization() != MIRType_Int32)
-            return false;
-        Range *left = getOperand(0)->range();
-        Range *right = getOperand(1)->range();
-        if (isPossibleTruncated())
-            implicitTruncate_ = !Range::precisionLossMul(left, right);
-        return range()->update(Range::mul(left, right));
-    }
+    void computeRange();
 
     bool isPossibleTruncated() const {
         return possibleTruncate_;
@@ -2606,6 +2588,13 @@ class MMul : public MBinaryArithInstruction
 
     void setPossibleTruncated(bool truncate) {
         possibleTruncate_ = truncate;
+
+        // We can remove the negative zero check, because op if it is only used truncated.
+        // The "Possible" in the function name means that we are not sure,
+        // that "integer mul and disregarding overflow" == "double mul and ToInt32"
+        // Note: when removing truncated state, we have to add negative zero check again,
+        // because we are not sure if it was removed by this or other passes.
+        canBeNegativeZero_ = !truncate;
     }
 };
 
@@ -2651,12 +2640,15 @@ class MDiv : public MBinaryArithInstruction
     bool isTruncated() const {
         return implicitTruncate_;
     }
-    void setTruncated(bool val) {
-        implicitTruncate_ = val;
+    void setTruncated(bool truncate) {
+        implicitTruncate_ = truncate;
     }
 
     bool canBeNegativeZero() {
         return canBeNegativeZero_;
+    }
+    void setCanBeNegativeZero(bool negativeZero) {
+        canBeNegativeZero_ = negativeZero;
     }
 
     bool canBeNegativeOverflow() {
@@ -2690,21 +2682,7 @@ class MMod : public MBinaryArithInstruction
         return 1;
     }
 
-    bool recomputeRange() {
-        if (specialization() != MIRType_Int32)
-            return false;
-        Range *rhs = getOperand(1)->range();
-        int64_t a = Range::abs64((int64_t)rhs->lower());
-        int64_t b = Range::abs64((int64_t)rhs->upper());
-        if (a ==0 && b == 0) {
-            // We should never take something % 0.
-            Range r(INT_MIN, INT_MAX);
-            return range()->update(r);
-        }
-        int64_t bound = Max(1-a, b-1);
-        Range r(-bound, bound);
-        return range()->update(r);
-    }
+    void computeRange();
 };
 
 class MConcat
@@ -2744,8 +2722,6 @@ class MCharCodeAt
     {
         setMovable();
         setResultType(MIRType_Int32);
-        range()->set(0, 65535); //ECMA 262 says that the integer will be
-                                //non-negative and less than 65535.
     }
 
   public:
@@ -2763,6 +2739,8 @@ class MCharCodeAt
         // Strings are immutable, so there is no implicit dependency.
         return AliasSet::None();
     }
+
+    void computeRange();
 };
 
 class MFromCharCode
@@ -2795,9 +2773,6 @@ class MPhi : public MDefinition, public InlineForwardListNode<MPhi>
     bool triedToSpecialize_;
     bool hasBytecodeUses_;
     bool isIterator_;
-    // For every input to the phi, track how many times it has changed
-    // Only used in loop headers, so it defaults to 0 elements to conserve space
-    js::Vector<RangeChangeCount, 0, IonAllocPolicy> changeCounts_;
     MPhi(uint32 slot)
       : slot_(slot),
         triedToSpecialize_(false),
@@ -2854,10 +2829,7 @@ class MPhi : public MDefinition, public InlineForwardListNode<MPhi>
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
-    bool recomputeRange();
-    bool initCounts() {
-        return changeCounts_.resize(inputs_.length());
-    }
+    void computeRange();
 };
 
 // The goal of a Beta node is to split a def at a conditionally taken
@@ -2865,19 +2837,20 @@ class MPhi : public MDefinition, public InlineForwardListNode<MPhi>
 class MBeta : public MUnaryInstruction
 {
   private:
-    Range comparison_;
+    const Range *comparison_;
     MDefinition *val_;
-    MBeta(MDefinition *val, const Range &comp)
+    MBeta(MDefinition *val, const Range *comp)
         : MUnaryInstruction(val),
           comparison_(comp),
           val_(val)
     {
+        setResultType(val->type());
     }
 
   public:
     INSTRUCTION_HEADER(Beta);
     void printOpcode(FILE *fp);
-    static MBeta *New(MDefinition *val, const Range &comp)
+    static MBeta *New(MDefinition *val, const Range *comp)
     {
         return new MBeta(val, comp);
     }
@@ -2886,7 +2859,7 @@ class MBeta : public MUnaryInstruction
         return AliasSet::None();
     }
 
-    bool recomputeRange();
+    void computeRange();
 };
 
 // MIR representation of a Value on the OSR StackFrame.
@@ -3624,9 +3597,7 @@ class MBoundsCheckLower
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
-    bool fallible() {
-        return range()->lower() < minimum_;
-    }
+    bool fallible();
 };
 
 // Load a value from a dense array's element vector and does a hole check if the
@@ -4102,7 +4073,6 @@ class MClampToUint8
     {
         setResultType(MIRType_Int32);
         setMovable();
-        range()->set(0, 255);
     }
 
   public:
@@ -4126,6 +4096,7 @@ class MClampToUint8
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    void computeRange();
 };
 
 class MLoadFixedSlot
@@ -5066,11 +5037,11 @@ class MCallGetProperty
     public BoxInputsPolicy
 {
     CompilerRootPropertyName name_;
-    bool markEffectful_;
+    bool idempotent_;
 
     MCallGetProperty(MDefinition *value, HandlePropertyName name)
       : MUnaryInstruction(value), name_(name),
-        markEffectful_(true)
+        idempotent_(false)
     {
         setResultType(MIRType_Value);
     }
@@ -5094,11 +5065,11 @@ class MCallGetProperty
     // Constructors need to perform a GetProp on the function prototype.
     // Since getters cannot be set on the prototype, fetching is non-effectful.
     // The operation may be safely repeated in case of bailout.
-    void markUneffectful() {
-        markEffectful_ = false;
+    void setIdempotent() {
+        idempotent_ = true;
     }
     AliasSet getAliasSet() const {
-        if (markEffectful_)
+        if (!idempotent_)
             return AliasSet::Store(AliasSet::Any);
         return AliasSet::None();
     }
@@ -5198,33 +5169,49 @@ class MSetDOMProperty
 };
 
 class MGetDOMProperty
-  : public MAryInstruction<1>,
+  : public MAryInstruction<2>,
     public ObjectPolicy<0>
 {
-    const JSJitPropertyOp func_;
-    bool isInfallible_;
+    const JSJitInfo *info_;
 
-    MGetDOMProperty(const JSJitPropertyOp func, MDefinition *obj, bool isInfallible)
-      : func_(func), isInfallible_(isInfallible)
+    MGetDOMProperty(const JSJitInfo *jitinfo, MDefinition *obj, MDefinition *guard)
+      : info_(jitinfo)
     {
+        JS_ASSERT(jitinfo);
+
         initOperand(0, obj);
 
+        // Pin the guard as an operand if we want to hoist later
+        initOperand(1, guard);
+
+        // We are movable iff the jitinfo says we can be.
+        if (jitinfo->isConstant)
+            setMovable();
+
         setResultType(MIRType_Value);
+    }
+
+  protected:
+    const JSJitInfo *info() const {
+        return info_;
     }
 
   public:
     INSTRUCTION_HEADER(GetDOMProperty);
 
-    static MGetDOMProperty *New(const JSJitPropertyOp func, MDefinition *obj, bool isInfallible)
+    static MGetDOMProperty *New(const JSJitInfo *info, MDefinition *obj, MDefinition *guard)
     {
-        return new MGetDOMProperty(func, obj, isInfallible);
+        return new MGetDOMProperty(info, obj, guard);
     }
 
     const JSJitPropertyOp fun() {
-        return func_;
+        return info_->op;
     }
-    bool isInfallible() {
-        return isInfallible_;
+    bool isInfallible() const {
+        return info_->isInfallible;
+    }
+    bool isDomConstant() const {
+        return info_->isConstant;
     }
     MDefinition *object() {
         return getOperand(0);
@@ -5233,6 +5220,29 @@ class MGetDOMProperty
     TypePolicy *typePolicy() {
         return this;
     }
+
+    bool congruentTo(MDefinition *const &ins) const {
+        if (!isDomConstant())
+            return false;
+
+        if (!ins->isGetDOMProperty())
+            return false;
+
+        // Checking the jitinfo is the same as checking the constant function
+        if (!(info() == ins->toGetDOMProperty()->info()))
+            return false;
+
+        return congruentIfOperandsEqual(ins);
+    }
+
+    AliasSet getAliasSet() const {
+        // The whole point of constancy is that it's non-effectful and doesn't
+        // conflict with anything
+        if (isDomConstant())
+            return AliasSet::None();
+        return AliasSet::Store(AliasSet::Any);
+    }
+
 };
 
 class MStringLength
@@ -5488,19 +5498,45 @@ class MInArray
     }
 };
 
-// Implementation for instanceof operator.
+// Implementation for instanceof operator with specific rhs.
 class MInstanceOf
-  : public MBinaryInstruction,
+  : public MUnaryInstruction,
     public InstanceOfPolicy
 {
+    CompilerRootObject protoObj_;
+
   public:
-    MInstanceOf(MDefinition *obj, MDefinition *proto)
-      : MBinaryInstruction(obj, proto)
+    MInstanceOf(MDefinition *obj, RawObject proto)
+      : MUnaryInstruction(obj),
+        protoObj_(proto)
     {
         setResultType(MIRType_Boolean);
     }
 
     INSTRUCTION_HEADER(InstanceOf);
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+
+    RawObject prototypeObject() {
+        return protoObj_;
+    }
+};
+
+// Implementation for instanceof operator with unknown rhs.
+class MCallInstanceOf
+  : public MBinaryInstruction,
+    public MixPolicy<BoxPolicy<0>, ObjectPolicy<1> >
+{
+  public:
+    MCallInstanceOf(MDefinition *obj, MDefinition *proto)
+      : MBinaryInstruction(obj, proto)
+    {
+        setResultType(MIRType_Boolean);
+    }
+
+    INSTRUCTION_HEADER(CallInstanceOf);
 
     TypePolicy *typePolicy() {
         return this;
@@ -5604,9 +5640,9 @@ class MParWriteGuard
 class MTypeBarrier : public MUnaryInstruction
 {
     BailoutKind bailoutKind_;
-    types::TypeSet *typeSet_;
+    const types::TypeSet *typeSet_;
 
-    MTypeBarrier(MDefinition *def, types::TypeSet *types)
+    MTypeBarrier(MDefinition *def, const types::TypeSet *types)
       : MUnaryInstruction(def),
         typeSet_(types)
     {
@@ -5621,7 +5657,7 @@ class MTypeBarrier : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(TypeBarrier);
 
-    static MTypeBarrier *New(MDefinition *def, types::TypeSet *types) {
+    static MTypeBarrier *New(MDefinition *def, const types::TypeSet *types) {
         return new MTypeBarrier(def, types);
     }
     bool congruentTo(MDefinition * const &def) const {
@@ -5633,7 +5669,7 @@ class MTypeBarrier : public MUnaryInstruction
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
-    types::TypeSet *typeSet() const {
+    const types::TypeSet *typeSet() const {
         return typeSet_;
     }
     AliasSet getAliasSet() const {
@@ -5646,9 +5682,9 @@ class MTypeBarrier : public MUnaryInstruction
 // TypeScript::Monitor inside these stubs.
 class MMonitorTypes : public MUnaryInstruction
 {
-    types::TypeSet *typeSet_;
+    const types::TypeSet *typeSet_;
 
-    MMonitorTypes(MDefinition *def, types::TypeSet *types)
+    MMonitorTypes(MDefinition *def, const types::TypeSet *types)
       : MUnaryInstruction(def),
         typeSet_(types)
     {
@@ -5660,13 +5696,13 @@ class MMonitorTypes : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(MonitorTypes);
 
-    static MMonitorTypes *New(MDefinition *def, types::TypeSet *types) {
+    static MMonitorTypes *New(MDefinition *def, const types::TypeSet *types) {
         return new MMonitorTypes(def, types);
     }
     MDefinition *input() const {
         return getOperand(0);
     }
-    types::TypeSet *typeSet() const {
+    const types::TypeSet *typeSet() const {
         return typeSet_;
     }
     AliasSet getAliasSet() const {
@@ -5896,6 +5932,7 @@ class MResumePoint : public MNode
     uint32 stackDepth_;
     jsbytecode *pc_;
     MResumePoint *caller_;
+    MInstruction *instruction_;
     Mode mode_;
 
     MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *parent, Mode mode);
@@ -5939,6 +5976,12 @@ class MResumePoint : public MNode
         for (MResumePoint *it = caller_; it; it = it->caller_)
             count++;
         return count;
+    }
+    MInstruction *instruction() {
+        return instruction_;
+    }
+    void setInstruction(MInstruction *ins) {
+        instruction_ = ins;
     }
     Mode mode() const {
         return mode_;

@@ -1714,6 +1714,8 @@ needs-focus == 731726-1.html 731726-1-ref.html
 == 758561-1.html 758561-1-ref.html
 fuzzy-if(true,1,19) == 759036-1.html 759036-1-ref.html
 fuzzy-if(true,17,5859) == 759036-2.html 759036-2-ref.html
+== 776443-1.html 776443-1-ref.html
+== 776443-2.html 776443-2-ref.html
 == 776265-1a.html 776265-1-ref.html
 == 776265-1b.html 776265-1-ref.html
 == 776265-1c.html 776265-1-ref.html
@@ -1723,8 +1725,12 @@ fuzzy-if(true,17,5859) == 759036-2.html 759036-2-ref.html
 == 776265-2c.html 776265-2-ref.html
 == 776265-2d.html 776265-2-ref.html
 == 787947-1.html 787947-1-ref.html
+== 796847-1.svg 796847-1-ref.svg
 fuzzy(40,800) == 797797-1.html 797797-1-ref.html # 'opacity:N' and rgba(,,,N) text don't match precisely
 fuzzy(40,800) == 797797-2.html 797797-2-ref.html # 'opacity:N' and rgba(,,,N) text don't match precisely
 == 801994-1.html 801994-1-ref.html
 == 804323-1.html 804323-1-ref.html
 == 811301-1.html 811301-1-ref.html
+== 812824-1.html 812824-1-ref.html
+== 814677.html 814677-ref.html
+== 815593-1.html 815593-1-ref.html

@@ -80,6 +80,7 @@ final class GeckoEditable
     private int mUIUpdateSeqno;
     private int mLastUIUpdateSeqno;
     private boolean mUpdateGecko;
+    private boolean mFocused;
 
     /* An action that alters the Editable
 
@@ -126,7 +127,9 @@ final class GeckoEditable
         }
 
         static Action newSetSelection(int start, int end) {
-            if (start < 0 || start > end) {
+            // start == -1 when the start offset should remain the same
+            // end == -1 when the end offset should remain the same
+            if (start < -1 || end < -1) {
                 throw new IllegalArgumentException("invalid selection offsets");
             }
             final Action action = new Action(TYPE_SET_SELECTION);
@@ -224,7 +227,7 @@ final class GeckoEditable
             if (DEBUG) {
                 GeckoApp.assertOnUiThread();
             }
-            if (!mActions.isEmpty()) {
+            if (mFocused && !mActions.isEmpty()) {
                 mActionsActive.acquireUninterruptibly();
                 mActionsActive.release();
             }
@@ -432,8 +435,12 @@ final class GeckoEditable
         switch (action.mType) {
         case Action.TYPE_SET_SELECTION:
             final int len = mText.length();
-            final int selStart = Math.min(action.mStart, len);
-            final int selEnd = Math.min(action.mEnd, len);
+            final int curStart = Selection.getSelectionStart(mText);
+            final int curEnd = Selection.getSelectionEnd(mText);
+            // start == -1 when the start offset should remain the same
+            // end == -1 when the end offset should remain the same
+            final int selStart = Math.min(action.mStart < 0 ? curStart : action.mStart, len);
+            final int selEnd = Math.min(action.mEnd < 0 ? curEnd : action.mEnd, len);
 
             if (selStart < action.mStart || selEnd < action.mEnd) {
                 Log.w(LOGTAG, "IME sync error: selection out of bounds");
@@ -477,10 +484,15 @@ final class GeckoEditable
             public void run() {
                 // Make sure there are no other things going on
                 mActionQueue.syncWithGecko();
-                if (type == NOTIFY_IME_FOCUSCHANGE && state != IME_FOCUS_STATE_BLUR) {
-                    // Unmask events on the Gecko side
-                    GeckoAppShell.sendEventToGecko(GeckoEvent.createIMEEvent(
-                            GeckoEvent.IME_ACKNOWLEDGE_FOCUS));
+                if (type == NOTIFY_IME_FOCUSCHANGE) {
+                    if (state == IME_FOCUS_STATE_BLUR) {
+                        mFocused = false;
+                    } else {
+                        mFocused = true;
+                        // Unmask events on the Gecko side
+                        GeckoAppShell.sendEventToGecko(GeckoEvent.createIMEEvent(
+                                GeckoEvent.IME_ACKNOWLEDGE_FOCUS));
+                    }
                 }
                 if (mListener != null) {
                     mListener.notifyIME(type, state);
@@ -514,7 +526,7 @@ final class GeckoEditable
             // GeckoEditableListener methods should all be called from the Gecko thread
             GeckoApp.assertOnGeckoThread();
         }
-        if (start < 0 || start > end || end > mText.length()) {
+        if (start < 0 || start > mText.length() || end < 0 || end > mText.length()) {
             throw new IllegalArgumentException("invalid selection notification range");
         }
         final int seqnoWhenPosted = ++mGeckoUpdateSeqno;
@@ -656,9 +668,11 @@ final class GeckoEditable
                 what == Selection.SELECTION_END) {
             Log.w(LOGTAG, "selection removed with removeSpan()");
         }
-        // Okay to remove immediately
-        mText.removeSpan(what);
-        mActionQueue.offer(new Action(Action.TYPE_REMOVE_SPAN));
+        if (mText.getSpanStart(what) >= 0) { // only remove if it's there
+            // Okay to remove immediately
+            mText.removeSpan(what);
+            mActionQueue.offer(new Action(Action.TYPE_REMOVE_SPAN));
+        }
     }
 
     @Override

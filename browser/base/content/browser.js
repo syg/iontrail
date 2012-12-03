@@ -62,9 +62,8 @@ XPCOMUtils.defineLazyGetter(window, "gFindBar", function() {
   return findbar;
 });
 
-__defineGetter__("gPrefService", function() {
-  delete this.gPrefService;
-  return this.gPrefService = Services.prefs;
+XPCOMUtils.defineLazyGetter(this, "gPrefService", function() {
+  return Services.prefs;
 });
 
 __defineGetter__("AddonManager", function() {
@@ -87,17 +86,14 @@ __defineSetter__("PluralForm", function (val) {
 });
 
 XPCOMUtils.defineLazyModuleGetter(this, "TelemetryStopwatch",
-                                  "resource://gre/modules/TelemetryStopwatch.jsm");
+  "resource://gre/modules/TelemetryStopwatch.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "AboutHomeUtils",
-                                  "resource:///modules/AboutHomeUtils.jsm");
+  "resource:///modules/AboutHomeUtils.jsm");
 
 #ifdef MOZ_SERVICES_SYNC
-XPCOMUtils.defineLazyGetter(this, "Weave", function() {
-  let tmp = {};
-  Cu.import("resource://services-sync/main.js", tmp);
-  return tmp.Weave;
-});
+XPCOMUtils.defineLazyModuleGetter(this, "Weave",
+  "resource://services-sync/main.js");
 #endif
 
 XPCOMUtils.defineLazyGetter(this, "PopupNotifications", function () {
@@ -109,6 +105,7 @@ XPCOMUtils.defineLazyGetter(this, "PopupNotifications", function () {
                                       document.getElementById("notification-popup-box"));
   } catch (ex) {
     Cu.reportError(ex);
+    return null;
   }
 });
 
@@ -118,39 +115,21 @@ XPCOMUtils.defineLazyGetter(this, "DeveloperToolbar", function() {
   return new tmp.DeveloperToolbar(window, document.getElementById("developer-toolbar"));
 });
 
-XPCOMUtils.defineLazyGetter(this, "InspectorUI", function() {
-  let tmp = {};
-  Cu.import("resource:///modules/inspector.jsm", tmp);
-  return new tmp.InspectorUI(window);
-});
-
 XPCOMUtils.defineLazyGetter(this, "DebuggerUI", function() {
   let tmp = {};
   Cu.import("resource:///modules/devtools/DebuggerUI.jsm", tmp);
   return new tmp.DebuggerUI(window);
 });
 
-XPCOMUtils.defineLazyGetter(this, "Tilt", function() {
-  let tmp = {};
-  Cu.import("resource:///modules/devtools/Tilt.jsm", tmp);
-  return new tmp.Tilt(window);
-});
-
-XPCOMUtils.defineLazyGetter(this, "Social", function() {
-  let tmp = {};
-  Cu.import("resource:///modules/Social.jsm", tmp);
-  return tmp.Social;
-});
+XPCOMUtils.defineLazyModuleGetter(this, "Social",
+  "resource:///modules/Social.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
   "resource:///modules/PageThumbs.jsm");
 
 #ifdef MOZ_SAFE_BROWSING
-XPCOMUtils.defineLazyGetter(this, "SafeBrowsing", function() {
-  let tmp = {};
-  Cu.import("resource://gre/modules/SafeBrowsing.jsm", tmp);
-  return tmp.SafeBrowsing;
-});
+XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
+  "resource://gre/modules/SafeBrowsing.jsm");
 #endif
 
 XPCOMUtils.defineLazyModuleGetter(this, "gBrowserNewTabPreloader",
@@ -505,13 +484,13 @@ var gPopupBlockerObserver = {
       if (pm.testPermission(uri, "popup") == pm.ALLOW_ACTION) {
         // Offer an item to block popups for this site, if a whitelist entry exists
         // already for it.
-        let blockString = gNavigatorBundle.getFormattedString("popupBlock", [uri.host]);
+        let blockString = gNavigatorBundle.getFormattedString("popupBlock", [uri.host || uri.spec]);
         blockedPopupAllowSite.setAttribute("label", blockString);
         blockedPopupAllowSite.setAttribute("block", "true");
       }
       else {
         // Offer an item to allow popups for this site
-        let allowString = gNavigatorBundle.getFormattedString("popupAllow", [uri.host]);
+        let allowString = gNavigatorBundle.getFormattedString("popupAllow", [uri.host || uri.spec]);
         blockedPopupAllowSite.setAttribute("label", allowString);
         blockedPopupAllowSite.removeAttribute("block");
       }
@@ -1436,26 +1415,6 @@ var gBrowserInit = {
       }
     }
 
-    // Enable Debugger?
-    let enabled = gPrefService.getBoolPref("devtools.debugger.enabled");
-    if (enabled) {
-      let cmd = document.getElementById("Tools:Debugger");
-      cmd.removeAttribute("disabled");
-      cmd.removeAttribute("hidden");
-    }
-
-    // Enable Remote Debugger?
-    let enabled = gPrefService.getBoolPref("devtools.debugger.remote-enabled");
-    if (enabled) {
-      let cmd = document.getElementById("Tools:RemoteDebugger");
-      cmd.removeAttribute("disabled");
-      cmd.removeAttribute("hidden");
-
-      cmd = document.getElementById("Tools:RemoteWebConsole");
-      cmd.removeAttribute("disabled");
-      cmd.removeAttribute("hidden");
-    }
-
     // Enable Chrome Debugger?
     let enabled = gPrefService.getBoolPref("devtools.chrome.enabled") &&
                   gPrefService.getBoolPref("devtools.debugger.chrome-enabled") &&
@@ -1484,14 +1443,6 @@ var gBrowserInit = {
       cmd.removeAttribute("hidden");
     }
 
-    // Enable Style Editor?
-    let styleEditorEnabled = gPrefService.getBoolPref(StyleEditor.prefEnabledName);
-    if (styleEditorEnabled) {
-      let cmd = document.getElementById("Tools:StyleEditor");
-      cmd.removeAttribute("disabled");
-      cmd.removeAttribute("hidden");
-    }
-
 #ifdef MENUBAR_CAN_AUTOHIDE
     // If the user (or the locale) hasn't enabled the top-level "Character
     // Encoding" menu via the "browser.menu.showCharacterEncoding" preference,
@@ -1508,6 +1459,9 @@ var gBrowserInit = {
       cmd.removeAttribute("disabled");
       cmd.removeAttribute("hidden");
     }
+
+    // Add Devtools menuitems and listeners
+    gDevTools.registerBrowserWindow(window);
 
     let appMenuButton = document.getElementById("appmenu-button");
     let appMenuPopup = document.getElementById("appmenu-popup");
@@ -1551,8 +1505,7 @@ var gBrowserInit = {
     if (!gStartupRan)
       return;
 
-    if (!__lookupGetter__("InspectorUI"))
-      InspectorUI.destroy();
+    gDevTools.forgetBrowserWindow(window);
 
     // First clean up services initialized in gBrowserInit.onLoad (or those whose
     // uninit methods don't depend on the services having been initialized).
@@ -1650,7 +1603,7 @@ var gBrowserInit = {
                          'viewToolbarsMenu', 'viewSidebarMenuMenu', 'Browser:Reload',
                          'viewFullZoomMenu', 'pageStyleMenu', 'charsetMenu', 'View:PageSource', 'View:FullScreen',
                          'viewHistorySidebar', 'Browser:AddBookmarkAs', 'Browser:BookmarkAllTabs',
-                         'View:PageInfo', 'Tasks:InspectPage', 'Browser:ToggleTabView', 'Browser:ToggleAddonBar'];
+                         'View:PageInfo', 'Browser:ToggleTabView', 'Browser:ToggleAddonBar'];
     var element;
 
     for (let disabledItem of disabledItems) {
@@ -3320,7 +3273,7 @@ const BrowserSearch = {
         win.BrowserSearch.webSearch();
       } else {
         // If there are no open browser windows, open a new one
-        function observer(subject, topic, data) {
+        var observer = function observer(subject, topic, data) {
           if (subject == win) {
             BrowserSearch.webSearch();
             Services.obs.removeObserver(observer, "browser-delayed-startup-finished");
@@ -3536,15 +3489,18 @@ function OpenBrowserWindow(options)
   var wintype = document.documentElement.getAttribute('windowtype');
 
   var extraFeatures = "";
+  var forcePrivate = false;
 #ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-  if (typeof options == "object" &&
-      "private" in options &&
-      options.private) {
+  forcePrivate = typeof options == "object" && "private" in options && options.private;
+#else
+  forcePrivate = gPrivateBrowsingUI.privateBrowsingEnabled;
+#endif
+
+  if (forcePrivate) {
     extraFeatures = ",private";
     // Force the new window to load about:privatebrowsing instead of the default home page
     defaultArgs = "about:privatebrowsing";
   }
-#endif
 
   // if and only if the current window is a browser window and it has a document with a character
   // set, then extract the current charset menu setting from the current document and use it to
@@ -4163,12 +4119,12 @@ var XULBrowserWindow = {
       }
 
       // Utility functions for disabling find
-      function shouldDisableFind(aDocument) {
+      var shouldDisableFind = function shouldDisableFind(aDocument) {
         let docElt = aDocument.documentElement;
         return docElt && docElt.getAttribute("disablefastfind") == "true";
       }
 
-      function disableFindCommands(aDisable) {
+      var disableFindCommands = function disableFindCommands(aDisable) {
         let findCommands = [document.getElementById("cmd_find"),
                             document.getElementById("cmd_findAgain"),
                             document.getElementById("cmd_findPrevious")];
@@ -4180,7 +4136,7 @@ var XULBrowserWindow = {
         }
       }
 
-      function onContentRSChange(e) {
+      var onContentRSChange = function onContentRSChange(e) {
         if (e.target.readyState != "interactive" && e.target.readyState != "complete")
           return;
 
@@ -5160,7 +5116,7 @@ function getBrowserSelection(aCharLen) {
   // try getting a selected text in text input.
   if (!selection) {
     let element = commandDispatcher.focusedElement;
-    function isOnTextInput(elem) {
+    var isOnTextInput = function isOnTextInput(elem) {
       // we avoid to return a value if a selection is in password field.
       // ref. bug 565717
       return elem instanceof HTMLTextAreaElement ||
@@ -6283,7 +6239,7 @@ function BrowserOpenAddonsMgr(aView) {
     let emWindow;
     let browserWindow;
 
-    function receivePong(aSubject, aTopic, aData) {
+    var receivePong = function receivePong(aSubject, aTopic, aData) {
       let browserWin = aSubject.QueryInterface(Ci.nsIInterfaceRequestor)
                                .getInterface(Ci.nsIWebNavigation)
                                .QueryInterface(Ci.nsIDocShellTreeItem)
@@ -7453,6 +7409,12 @@ var TabContextMenu = {
   }
 };
 
+XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
+                                  "resource:///modules/devtools/gDevTools.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "DevToolsXULCommands",
+                                  "resource:///modules/devtools/gDevTools.jsm");
+
 XPCOMUtils.defineLazyGetter(this, "HUDConsoleUI", function () {
   let tempScope = {};
   Cu.import("resource:///modules/HUDService.jsm", tempScope);
@@ -7461,6 +7423,7 @@ XPCOMUtils.defineLazyGetter(this, "HUDConsoleUI", function () {
   }
   catch (ex) {
     Components.utils.reportError(ex);
+    return null;
   }
 });
 
@@ -7547,41 +7510,6 @@ XPCOMUtils.defineLazyGetter(ResponsiveUI, "ResponsiveUIManager", function() {
   Cu.import("resource:///modules/devtools/responsivedesign.jsm", tmp);
   return tmp.ResponsiveUIManager;
 });
-
-var StyleEditor = {
-  prefEnabledName: "devtools.styleeditor.enabled",
-  /**
-   * Opens the style editor. If the UI is already open, it will be focused.
-   *
-   * @param {CSSStyleSheet} [aSelectedStyleSheet] default Stylesheet.
-   * @param {Number} [aLine] Line to which the caret should be moved (one-indexed).
-   * @param {Number} [aCol] Column to which the caret should be moved (one-indexed).
-   */
-  openChrome: function SE_openChrome(aSelectedStyleSheet, aLine, aCol)
-  {
-    let contentWindow = gBrowser.selectedBrowser.contentWindow;
-    let win = this.StyleEditorManager.getEditorForWindow(contentWindow);
-    if (win) {
-      this.StyleEditorManager.selectEditor(win);
-      return win;
-    } else {
-      return this.StyleEditorManager.newEditor(contentWindow, window,
-                                               aSelectedStyleSheet, aLine, aCol);
-    }
-  },
-
-  toggle: function SE_toggle()
-  {
-    this.StyleEditorManager.toggleEditor(gBrowser.contentWindow, window);
-  }
-};
-
-XPCOMUtils.defineLazyGetter(StyleEditor, "StyleEditorManager", function() {
-  let tmp = {};
-  Cu.import("resource:///modules/devtools/StyleEditor.jsm", tmp);
-  return new tmp.StyleEditorManager(window);
-});
-
 
 XPCOMUtils.defineLazyGetter(window, "gShowPageResizers", function () {
 #ifdef XP_WIN

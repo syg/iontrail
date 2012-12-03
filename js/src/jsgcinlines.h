@@ -64,12 +64,12 @@ GetGCThingTraceKind(const void *thing)
 /* Capacity for slotsToThingKind */
 const size_t SLOTS_TO_THING_KIND_LIMIT = 17;
 
+extern AllocKind slotsToThingKind[];
+
 /* Get the best kind to use when making an object with the given slot count. */
 static inline AllocKind
 GetGCObjectKind(size_t numSlots)
 {
-    extern AllocKind slotsToThingKind[];
-
     AutoAssertNoGC nogc;
     if (numSlots >= SLOTS_TO_THING_KIND_LIMIT)
         return FINALIZE_OBJECT16;
@@ -451,6 +451,32 @@ class GCCompartmentsIter {
     JSCompartment *operator->() const { return get(); }
 };
 
+class GCCompartmentGroupIter {
+  private:
+    JSCompartment *current;
+
+  public:
+    GCCompartmentGroupIter(JSRuntime *rt) {
+        JS_ASSERT(rt->isHeapBusy());
+        current = rt->gcCompartmentGroup;
+    }
+
+    bool done() const { return current == NULL; }
+
+    void next() {
+        JS_ASSERT(!done());
+        current = NextGraphNode(current);
+    }
+
+    JSCompartment *get() const {
+        JS_ASSERT(!done());
+        return current;
+    }
+
+    operator JSCompartment *() const { return get(); }
+    JSCompartment *operator->() const { return get(); }
+};
+
 /*
  * Allocates a new GC thing. After a successful allocation the caller must
  * fully initialize the thing before calling any function that can potentially
@@ -486,7 +512,7 @@ NewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
     if (!t)
         t = js::gc::ArenaLists::refillFreeList(cx, kind);
 
-    JS_ASSERT_IF(t && comp->wasGCStarted() && comp->needsBarrier(),
+    JS_ASSERT_IF(t && comp->wasGCStarted() && (comp->isGCMarking() || comp->isGCSweeping()),
                  static_cast<T *>(t)->arenaHeader()->allocatedDuringIncremental);
 
 #if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
@@ -513,8 +539,14 @@ TryNewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
         return NULL;
 #endif
 
+<<<<<<< HEAD
     void *t = cx->compartment->allocator.arenas.allocateFromFreeList(kind, thingSize);
     JS_ASSERT_IF(t && cx->compartment->wasGCStarted() && cx->compartment->needsBarrier(),
+=======
+    JSCompartment *comp = cx->compartment;
+    void *t = comp->arenas.allocateFromFreeList(kind, thingSize);
+    JS_ASSERT_IF(t && comp->wasGCStarted() && (comp->isGCMarking() || comp->isGCSweeping()),
+>>>>>>> mozilla/master
                  static_cast<T *>(t)->arenaHeader()->allocatedDuringIncremental);
 
 #if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
@@ -531,7 +563,6 @@ TryNewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
 inline JSObject *
 js_NewGCObject(JSContext *cx, js::gc::AllocKind kind)
 {
-    AssertCanGC();
     JS_ASSERT(kind >= js::gc::FINALIZE_OBJECT0 && kind <= js::gc::FINALIZE_OBJECT_LAST);
     return js::gc::NewGCThing<JSObject>(cx, kind, js::gc::Arena::thingSize(kind));
 }
@@ -539,7 +570,6 @@ js_NewGCObject(JSContext *cx, js::gc::AllocKind kind)
 inline JSObject *
 js_TryNewGCObject(JSContext *cx, js::gc::AllocKind kind)
 {
-    AssertCanGC();
     JS_ASSERT(kind >= js::gc::FINALIZE_OBJECT0 && kind <= js::gc::FINALIZE_OBJECT_LAST);
     return js::gc::TryNewGCThing<JSObject>(cx, kind, js::gc::Arena::thingSize(kind));
 }
@@ -547,21 +577,18 @@ js_TryNewGCObject(JSContext *cx, js::gc::AllocKind kind)
 inline JSString *
 js_NewGCString(JSContext *cx)
 {
-    AssertCanGC();
     return js::gc::NewGCThing<JSString>(cx, js::gc::FINALIZE_STRING, sizeof(JSString));
 }
 
 inline JSShortString *
 js_NewGCShortString(JSContext *cx)
 {
-    AssertCanGC();
     return js::gc::NewGCThing<JSShortString>(cx, js::gc::FINALIZE_SHORT_STRING, sizeof(JSShortString));
 }
 
 inline JSExternalString *
 js_NewGCExternalString(JSContext *cx)
 {
-    AssertCanGC();
     return js::gc::NewGCThing<JSExternalString>(cx, js::gc::FINALIZE_EXTERNAL_STRING,
                                                 sizeof(JSExternalString));
 }
@@ -569,21 +596,18 @@ js_NewGCExternalString(JSContext *cx)
 inline JSScript *
 js_NewGCScript(JSContext *cx)
 {
-    AssertCanGC();
     return js::gc::NewGCThing<JSScript>(cx, js::gc::FINALIZE_SCRIPT, sizeof(JSScript));
 }
 
 inline js::Shape *
 js_NewGCShape(JSContext *cx)
 {
-    AssertCanGC();
     return js::gc::NewGCThing<js::Shape>(cx, js::gc::FINALIZE_SHAPE, sizeof(js::Shape));
 }
 
-inline js::BaseShape *
+inline js::Return<js::BaseShape*>
 js_NewGCBaseShape(JSContext *cx)
 {
-    AssertCanGC();
     return js::gc::NewGCThing<js::BaseShape>(cx, js::gc::FINALIZE_BASE_SHAPE, sizeof(js::BaseShape));
 }
 

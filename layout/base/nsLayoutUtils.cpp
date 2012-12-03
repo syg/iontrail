@@ -78,6 +78,8 @@
 #include "nsSVGOuterSVGFrame.h"
 #include "nsStyleStructInlines.h"
 
+#include "mozilla/dom/PBrowserChild.h"
+#include "mozilla/dom/TabChild.h"
 #include "mozilla/Preferences.h"
 
 #ifdef MOZ_XUL
@@ -108,6 +110,8 @@ typedef FrameMetrics::ViewID ViewID;
 /* static */ uint32_t nsLayoutUtils::sFontSizeInflationLineThreshold;
 /* static */ int32_t  nsLayoutUtils::sFontSizeInflationMappingIntercept;
 /* static */ uint32_t nsLayoutUtils::sFontSizeInflationMaxRatio;
+/* static */ bool nsLayoutUtils::sFontSizeInflationForceEnabled;
+/* static */ bool nsLayoutUtils::sFontSizeInflationDisabledInMasterProcess;
 
 static ViewID sScrollIdCounter = FrameMetrics::START_SCROLL_ID;
 
@@ -365,6 +369,20 @@ bool
 nsLayoutUtils::GetDisplayPort(nsIContent* aContent, nsRect *aResult)
 {
   void* property = aContent->GetProperty(nsGkAtoms::DisplayPort);
+  if (!property) {
+    return false;
+  }
+
+  if (aResult) {
+    *aResult = *static_cast<nsRect*>(property);
+  }
+  return true;
+}
+
+bool
+nsLayoutUtils::GetCriticalDisplayPort(nsIContent* aContent, nsRect* aResult)
+{
+  void* property = aContent->GetProperty(nsGkAtoms::CriticalDisplayPort);
   if (!property) {
     return false;
   }
@@ -1174,7 +1192,8 @@ nsLayoutUtils::GetPopupFrameForEventCoordinates(nsPresContext* aPresContext,
   if (!pm) {
     return nullptr;
   }
-  nsTArray<nsIFrame*> popups = pm->GetVisiblePopups();
+  nsTArray<nsIFrame*> popups;
+  pm->GetVisiblePopups(popups);
   uint32_t i;
   // Search from top to bottom
   for (i = 0; i < popups.Length(); i++) {
@@ -1903,7 +1922,7 @@ nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFram
 
 int32_t
 nsLayoutUtils::GetZIndex(nsIFrame* aFrame) {
-  if (!aFrame->IsPositioned())
+  if (!aFrame->IsPositioned() && !aFrame->IsFlexItem())
     return 0;
 
   const nsStylePosition* position =
@@ -2525,7 +2544,9 @@ nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
 
   // If we have a specified width (or a specified 'min-width' greater
   // than the specified 'max-width', which works out to the same thing),
-  // don't even bother getting the frame's intrinsic width.
+  // don't even bother getting the frame's intrinsic width, because in
+  // this case GetAbsoluteCoord(styleWidth, w) will always succeed, so
+  // we'll never need the intrinsic dimensions.
   if (styleWidth.GetUnit() == eStyleUnit_Enumerated &&
       (styleWidth.GetIntValue() == NS_STYLE_WIDTH_MAX_CONTENT ||
        styleWidth.GetIntValue() == NS_STYLE_WIDTH_MIN_CONTENT)) {
@@ -2534,7 +2555,7 @@ nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
     // For -moz-max-content and -moz-min-content, we handle them like
     // specified widths, but ignore -moz-box-sizing.
     boxSizing = NS_STYLE_BOX_SIZING_CONTENT;
-  } else if (styleWidth.GetUnit() != eStyleUnit_Coord &&
+  } else if (!styleWidth.ConvertsToLength() &&
              !(haveFixedMinWidth && haveFixedMaxWidth && maxw <= minw)) {
 #ifdef DEBUG_INTRINSIC_WIDTH
     ++gNoiseIndent;
@@ -4752,6 +4773,10 @@ nsLayoutUtils::Initialize()
                                "font.size.inflation.lineThreshold");
   Preferences::AddIntVarCache(&sFontSizeInflationMappingIntercept,
                               "font.size.inflation.mappingIntercept");
+  Preferences::AddBoolVarCache(&sFontSizeInflationForceEnabled,
+                               "font.size.inflation.forceEnabled");
+  Preferences::AddBoolVarCache(&sFontSizeInflationDisabledInMasterProcess,
+                               "font.size.inflation.disabledInMasterProcess");
 
 #ifdef MOZ_FLEXBOX
   Preferences::RegisterCallback(FlexboxEnabledPrefChangeCallback,
@@ -5135,6 +5160,22 @@ nsLayoutUtils::FontSizeInflationEnabled(nsPresContext *aPresContext)
        presShell->FontSizeInflationMinTwips() == 0) ||
        aPresContext->IsChrome()) {
     return false;
+  }
+  // Force-enabling font inflation always trumps the heuristics here.
+  if (!presShell->FontSizeInflationForceEnabled()) {
+    if (TabChild* tab = GetTabChildFrom(presShell)) {
+      // We're in a child process.  Cancel inflation if we're not
+      // async-pan zoomed.
+      if (!tab->IsAsyncPanZoomEnabled()) {
+        return false;
+      }
+    } else if (XRE_GetProcessType() == GeckoProcessType_Default) {
+      // We're in the master process.  Cancel inflation if it's been
+      // explicitly disabled.
+      if (presShell->FontSizeInflationDisabledInMasterProcess()) {
+        return false;
+      }
+    }
   }
 
   // XXXjwir3:

@@ -71,7 +71,7 @@ if ("nsIAudioManager" in Ci) {
   audioSettings = [
     // settings name, default value, stream type
     ['audio.volume.voice_call', 10, nsIAudioManager.STREAM_TYPE_VOICE_CALL],
-    ['audio.volume.system', 10,  nsIAudioManager.STREAM_TYPE_SYSTEM],
+    ['audio.volume.system', 15,  nsIAudioManager.STREAM_TYPE_SYSTEM],
     ['audio.volume.ring', 7, nsIAudioManager.STREAM_TYPE_RING],
     ['audio.volume.music', 15, nsIAudioManager.STREAM_TYPE_MUSIC],
     ['audio.volume.alarm', 7, nsIAudioManager.STREAM_TYPE_ALARM],
@@ -80,7 +80,7 @@ if ("nsIAudioManager" in Ci) {
     ['audio.volume.enforced_audible', 7, nsIAudioManager.STREAM_TYPE_ENFORCED_AUDIBLE],
     ['audio.volume.dtmf', 15, nsIAudioManager.STREAM_TYPE_DTMF],
     ['audio.volume.tts', 15, nsIAudioManager.STREAM_TYPE_TTS],
-    ['audio.volume.fm', 10, nsIAudioManager.STREAM_TYPE_FM],
+    ['audio.volume.fm', 15, nsIAudioManager.STREAM_TYPE_FM],
   ];
 }
 
@@ -121,19 +121,21 @@ SettingsListener.observe('language.current', 'en-US', function(value) {
     Services.prefs.setCharPref(prefName, value + ', ' + intl);
   }
 
-  shell.start();
+  if (shell.hasStarted() == false) {
+    shell.start();
+  }
 });
 
 // =================== RIL ====================
 (function RILSettingsToPrefs() {
-  let strPrefs = ['ril.data.mmsc', 'ril.data.mmsproxy'];
+  let strPrefs = ['ril.mms.mmsc', 'ril.mms.mmsproxy'];
   strPrefs.forEach(function(key) {
     SettingsListener.observe(key, "", function(value) {
       Services.prefs.setCharPref(key, value);
     });
   });
 
-  ['ril.data.mmsport'].forEach(function(key) {
+  ['ril.mms.mmsport'].forEach(function(key) {
     SettingsListener.observe(key, null, function(value) {
       if (value != null) {
         Services.prefs.setIntPref(key, value);
@@ -200,18 +202,7 @@ SettingsListener.observe('devtools.debugger.remote-enabled', false, function(val
   Services.prefs.setBoolPref('devtools.debugger.remote-enabled', value);
   // This preference is consulted during startup
   Services.prefs.savePrefFile(null);
-});
-
-SettingsListener.observe('devtools.debugger.log', false, function(value) {
-  Services.prefs.setBoolPref('devtools.debugger.log', value);
-});
-
-SettingsListener.observe('devtools.debugger.remote-port', 6000, function(value) {
-  Services.prefs.setIntPref('devtools.debugger.remote-port', value);
-});
-
-SettingsListener.observe('devtools.debugger.force-local', true, function(value) {
-  Services.prefs.setBoolPref('devtools.debugger.force-local', value);
+  value ? startDebugger() : stopDebugger();
 });
 
 SettingsListener.observe('debug.log-animations.enabled', false, function(value) {

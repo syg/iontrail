@@ -130,6 +130,17 @@ LSnapshot::New(MIRGenerator *gen, MResumePoint *mir, BailoutKind kind)
     return snapshot;
 }
 
+void
+LSnapshot::rewriteRecoveredInput(LUse input)
+{
+    // Mark any operands to this snapshot with the same value as input as being
+    // equal to the instruction's result.
+    for (size_t i = 0; i < numEntries(); i++) {
+        if (getEntry(i)->isUse() && getEntry(i)->toUse()->virtualRegister() == input.virtualRegister())
+            setEntry(i, LUse(input.virtualRegister(), LUse::RECOVERED_INPUT));
+    }
+}
+
 bool
 LPhi::init(MIRGenerator *gen)
 {
@@ -312,6 +323,44 @@ LInstruction::initSafepoint()
     JS_ASSERT(!safepoint_);
     safepoint_ = new LSafepoint();
     JS_ASSERT(safepoint_);
+}
+
+bool
+LMoveGroup::add(LAllocation *from, LAllocation *to)
+{
+#ifdef DEBUG
+    JS_ASSERT(*from != *to);
+    for (size_t i = 0; i < moves_.length(); i++)
+        JS_ASSERT(*to != *moves_[i].to());
+#endif
+    return moves_.append(LMove(from, to));
+}
+
+bool
+LMoveGroup::addAfter(LAllocation *from, LAllocation *to)
+{
+    // Transform the operands to this move so that performing the result
+    // simultaneously with existing moves in the group will have the same
+    // effect as if the original move took place after the existing moves.
+
+    for (size_t i = 0; i < moves_.length(); i++) {
+        if (*moves_[i].to() == *from) {
+            from = moves_[i].from();
+            break;
+        }
+    }
+
+    if (*from == *to)
+        return true;
+
+    for (size_t i = 0; i < moves_.length(); i++) {
+        if (*to == *moves_[i].to()) {
+            moves_[i] = LMove(from, to);
+            return true;
+        }
+    }
+
+    return add(from, to);
 }
 
 void

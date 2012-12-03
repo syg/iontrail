@@ -260,6 +260,7 @@ class IonBuilder : public MIRGenerator
     bool resume(MInstruction *ins, jsbytecode *pc, MResumePoint::Mode mode);
     bool resumeAt(MInstruction *ins, jsbytecode *pc);
     bool resumeAfter(MInstruction *ins);
+    bool maybeInsertResume();
 
     void insertRecompileCheck();
 
@@ -429,7 +430,8 @@ class IonBuilder : public MIRGenerator
 
     inline bool TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types,
                                    HandleId id, JSFunction **funcp,
-                                   bool isGetter, bool *isDOM);
+                                   bool isGetter, bool *isDOM,
+                                   MDefinition **guardOut);
 
     bool annotateGetPropertyCache(JSContext *cx, MDefinition *obj, MGetPropertyCache *getPropCache,
                                   types::StackTypeSet *objTypes, types::StackTypeSet *pushedTypes);
@@ -442,6 +444,8 @@ class IonBuilder : public MIRGenerator
                            types::StackTypeSet *types, types::StackTypeSet *barrier,
                            MBasicBlock *bottom,
                            Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns);
+
+    const types::TypeSet *cloneTypeSet(const types::TypeSet *types);
 
     // A builder is inextricably tied to a particular script.
     HeapPtrScript script_;

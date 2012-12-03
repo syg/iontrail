@@ -73,7 +73,7 @@ struct DrawOptions {
 
   Float mAlpha;
   CompositionOp mCompositionOp : 8;
-  AntialiasMode mAntialiasMode : 2;
+  AntialiasMode mAntialiasMode : 3;
   Snapping mSnapping : 1;
 };
 
@@ -926,6 +926,7 @@ public:
 
   static uint64_t GetD2DVRAMUsageDrawTarget();
   static uint64_t GetD2DVRAMUsageSourceSurface();
+  static void D2DCleanup();
 
 private:
   static ID3D10Device1 *mD3D10Device;

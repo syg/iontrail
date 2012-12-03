@@ -33,7 +33,7 @@ function test()
     gTab = aTab;
     gDebuggee = aDebuggee;
     gPane = aPane;
-    gDebugger = gPane.contentWindow;
+    gDebugger = gPane.panelWin;
     gBreakpoints = gDebugger.DebuggerController.Breakpoints;
     gBreakpointsPane = gDebugger.DebuggerView.Breakpoints;
 
@@ -83,7 +83,7 @@ function test()
     is(gScripts.selectedValue, gScripts.values[0],
           "The correct script is selected");
 
-    gBreakpoints = gPane.breakpoints;
+    gBreakpoints = gPane.getAllBreakpoints();
     is(Object.keys(gBreakpoints), 0, "no breakpoints");
     ok(!gPane.getBreakpoint("foo", 3), "getBreakpoint('foo', 3) returns falsey");
 
@@ -173,6 +173,81 @@ function test()
         waitForPopup(false, function() {
           is(gBreakpointsPane.selectedClient.conditionalExpression, "bamboocha",
             "The bamboocha expression wasn't fonud on the conditional breakpoint");
+
+          executeSoon(setContextMenu);
+        });
+      });
+    });
+  }
+
+  function setContextMenu()
+  {
+    let contextMenu = gDebugger.document.getElementById("sourceEditorContextMenu");
+
+    contextMenu.addEventListener("popupshown", function onPopupShown() {
+      contextMenu.removeEventListener("popupshown", onPopupShown, false);
+
+      contextMenu.addEventListener("popuphidden", function onPopupHidden() {
+        contextMenu.removeEventListener("popuphidden", onPopupHidden, false);
+
+        executeSoon(addBreakpoint4);
+      }, false);
+
+      gBreakpointsPane._editorContextMenuLineNumber = 0;
+      contextMenu.hidePopup();
+    }, false);
+
+    gBreakpointsPane._editorContextMenuLineNumber = 14;
+    contextMenu.openPopup(gEditor.editorElement, "overlap", 0, 0, true, false);
+  }
+
+  function addBreakpoint4()
+  {
+    gEditor.setCaretPosition(14);
+    gBreakpointsPane._onCmdAddBreakpoint();
+
+    waitForBreakpoint(15, function() {
+      waitForCaretPos(14, function() {
+        waitForPopup(false, function() {
+          testBreakpoint(gBreakpointsPane.selectedItem,
+                         gBreakpointsPane.selectedClient,
+                         gScripts.selectedValue, 15, false, false, true);
+
+          executeSoon(delBreakpoint4);
+        });
+      });
+    });
+  }
+
+  function delBreakpoint4()
+  {
+    gEditor.setCaretPosition(14);
+    gBreakpointsPane._onCmdAddBreakpoint();
+
+    waitForBreakpoint(null, function() {
+      waitForCaretPos(14, function() {
+        waitForPopup(false, function() {
+          is(gBreakpointsPane.selectedItem, null,
+            "There should be no selected breakpoint in the breakpoints pane.")
+          is(gBreakpointsPane._popupShown, false,
+            "The breakpoint conditional expression popup should not be shown.");
+
+          executeSoon(moveHighlight1);
+        });
+      });
+    });
+  }
+
+  function moveHighlight1()
+  {
+    gEditor.setCaretPosition(13);
+
+    waitForBreakpoint(14, function() {
+      waitForCaretPos(13, function() {
+        waitForPopup(false, function() {
+          testBreakpoint(gBreakpointsPane.selectedItem,
+                         gBreakpointsPane.selectedClient,
+                         gScripts.selectedValue, 14, true, false, true);
 
           executeSoon(testHighlights1);
         });
@@ -388,8 +463,8 @@ function test()
       "The breakpoint on line " + line + " should be enabled.");
     is(aBreakpointItem.attachment.isConditional, conditional,
       "The breakpoint on line " + line + " should " + (conditional ? "" : "not ") + "be conditional.");
-    is(gBreakpointsPane._popupShown, conditional,
-      "The breakpoint conditional expression popup should" + (conditional ? "" : "not ") + "be shown.");
+    is(gBreakpointsPane._popupShown, popup,
+      "The breakpoint conditional expression popup should" + (popup ? "" : "not ") + "be shown.");
 
     is(aBreakpointClient.location.url, url,
        "The breakpoint's client url is correct");

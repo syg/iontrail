@@ -10,10 +10,10 @@ import android.graphics.Canvas;
 import android.graphics.Path;
 import android.graphics.PorterDuff.Mode;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.StateListDrawable;
 import android.util.AttributeSet;
-import android.widget.LinearLayout;
 
-public class BrowserToolbarBackground extends LinearLayout
+public class BrowserToolbarBackground extends GeckoLinearLayout
                                       implements CanvasDelegate.DrawManager,
                                                  LightweightTheme.OnChangeListener { 
     private GeckoActivity mActivity;
@@ -21,7 +21,7 @@ public class BrowserToolbarBackground extends LinearLayout
     private CurveTowards mSide;
     private CanvasDelegate mCanvasDelegate;
 
-    private enum CurveTowards { NONE, LEFT, RIGHT };
+    public enum CurveTowards { NONE, LEFT, RIGHT };
 
     public BrowserToolbarBackground(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -98,12 +98,16 @@ public class BrowserToolbarBackground extends LinearLayout
         if (drawable == null)
             return;
 
+        StateListDrawable stateList = new StateListDrawable();
+        stateList.addState(new int[] { R.attr.state_private }, mActivity.getResources().getDrawable(R.drawable.address_bar_bg_private));
+        stateList.addState(new int[] {}, drawable);
+
         int[] padding =  new int[] { getPaddingLeft(),
                                      getPaddingTop(),
                                      getPaddingRight(),
                                      getPaddingBottom()
                                    };
-        setBackgroundDrawable(drawable);
+        setBackgroundDrawable(stateList);
         setPadding(padding[0], padding[1], padding[2], padding[3]);
     }
 
@@ -122,5 +126,17 @@ public class BrowserToolbarBackground extends LinearLayout
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         super.onLayout(changed, left, top, right, bottom);
         onLightweightThemeChanged();
+    }
+
+    public CurveTowards getCurveTowards() {
+        return mSide;
+    }
+
+    public void setCurveTowards(CurveTowards side) {
+        if (side == mSide)
+            return;
+
+        mSide = side;
+        invalidate();
     }
 }

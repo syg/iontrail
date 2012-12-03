@@ -103,7 +103,6 @@ using namespace mozilla::dom;
 #define XML_HTTP_REQUEST_LOADING          (1 << 3) // 3 LOADING
 #define XML_HTTP_REQUEST_DONE             (1 << 4) // 4 DONE
 #define XML_HTTP_REQUEST_SENT             (1 << 5) // Internal, OPENED in IE and external view
-#define XML_HTTP_REQUEST_STOPPED          (1 << 6) // Internal, LOADING in IE and external view
 // The above states are mutually exclusive, change with ChangeState() only.
 // The states below can be combined.
 #define XML_HTTP_REQUEST_ABORTED        (1 << 7)  // Internal
@@ -128,8 +127,7 @@ using namespace mozilla::dom;
    XML_HTTP_REQUEST_HEADERS_RECEIVED |      \
    XML_HTTP_REQUEST_LOADING |               \
    XML_HTTP_REQUEST_DONE |                  \
-   XML_HTTP_REQUEST_SENT |                  \
-   XML_HTTP_REQUEST_STOPPED)
+   XML_HTTP_REQUEST_SENT)
 
 #define NS_BADCERTHANDLER_CONTRACTID \
   "@mozilla.org/content/xmlhttprequest-bad-cert-handler;1"
@@ -420,8 +418,7 @@ nsXMLHttpRequest::~nsXMLHttpRequest()
 {
   mState |= XML_HTTP_REQUEST_DELETED;
 
-  if (mState & (XML_HTTP_REQUEST_STOPPED |
-                XML_HTTP_REQUEST_SENT |
+  if (mState & (XML_HTTP_REQUEST_SENT |
                 XML_HTTP_REQUEST_LOADING)) {
     Abort();
   }
@@ -1080,18 +1077,6 @@ nsXMLHttpRequest::SetResponseType(nsXMLHttpRequest::ResponseTypeEnum aResponseTy
   // Set the responseType attribute's value to the given value.
   mResponseType = aResponseType;
 
-  // If the state is OPENED, SetCacheAsFile would have no effect here
-  // because the channel hasn't initialized the cache entry yet.
-  // SetCacheAsFile will be called from OnStartRequest.
-  // If the state is HEADERS_RECEIVED, however, we need to call
-  // it immediately because OnStartRequest is already dispatched.
-  if (mState & XML_HTTP_REQUEST_HEADERS_RECEIVED) {
-    nsCOMPtr<nsICachingChannel> cc(do_QueryInterface(mChannel));
-    if (cc) {
-      cc->SetCacheAsFile(mResponseType == XML_HTTP_RESPONSE_TYPE_BLOB ||
-                         mResponseType == XML_HTTP_RESPONSE_TYPE_MOZ_BLOB);
-    }
-  }
 }
 
 /* readonly attribute jsval response; */
@@ -1623,8 +1608,6 @@ nsXMLHttpRequest::DispatchProgressEvent(nsDOMEventTargetHelper* aTarget,
     return;
   }
 
-  event->SetTrusted(true);
-
   nsCOMPtr<nsIDOMProgressEvent> progress = do_QueryInterface(event);
   if (!progress) {
     return;
@@ -1632,6 +1615,8 @@ nsXMLHttpRequest::DispatchProgressEvent(nsDOMEventTargetHelper* aTarget,
 
   progress->InitProgressEvent(aType, false, false, aLengthComputable,
                               aLoaded, (aTotal == UINT64_MAX) ? 0 : aTotal);
+
+  event->SetTrusted(true);
 
   if (aUseLSEventWrapper) {
     nsCOMPtr<nsIDOMProgressEvent> xhrprogressEvent =
@@ -1770,8 +1755,7 @@ nsXMLHttpRequest::Open(const nsACString& method, const nsACString& url,
   if (mState & (XML_HTTP_REQUEST_OPENED |
                 XML_HTTP_REQUEST_HEADERS_RECEIVED |
                 XML_HTTP_REQUEST_LOADING |
-                XML_HTTP_REQUEST_SENT |
-                XML_HTTP_REQUEST_STOPPED)) {
+                XML_HTTP_REQUEST_SENT)) {
     // IE aborts as well
     Abort();
 
@@ -1969,37 +1953,22 @@ nsXMLHttpRequest::StreamReaderFunc(nsIInputStream* in,
 bool nsXMLHttpRequest::CreateDOMFile(nsIRequest *request)
 {
   nsCOMPtr<nsIFile> file;
-  nsCOMPtr<nsICachingChannel> cc(do_QueryInterface(request));
-  if (cc) {
-    cc->GetCacheFile(getter_AddRefs(file));
-  } else {
-    nsCOMPtr<nsIFileChannel> fc = do_QueryInterface(request);
-    if (fc) {
-      fc->GetFile(getter_AddRefs(file));
-    }
+  nsCOMPtr<nsIFileChannel> fc = do_QueryInterface(request);
+  if (fc) {
+    fc->GetFile(getter_AddRefs(file));
   }
-  bool fromFile = false;
-  if (file) {
-    nsAutoCString contentType;
-    mChannel->GetContentType(contentType);
-    nsCOMPtr<nsISupports> cacheToken;
-    if (cc) {
-      cc->GetCacheToken(getter_AddRefs(cacheToken));
-      // We need to call IsFromCache to determine whether the response is
-      // fully cached (i.e. whether we can skip reading the response).
-      cc->IsFromCache(&fromFile);
-    } else {
-      // If the response is coming from the local resource, we can skip
-      // reading the response unconditionally.
-      fromFile = true;
-    }
 
-    mDOMFile =
-      new nsDOMFileFile(file, NS_ConvertASCIItoUTF16(contentType), cacheToken);
-    mBlobSet = nullptr;
-    NS_ASSERTION(mResponseBody.IsEmpty(), "mResponseBody should be empty");
-  }
-  return fromFile;
+  if (!file)
+    return false;
+
+  nsAutoCString contentType;
+  mChannel->GetContentType(contentType);
+
+  mDOMFile =
+    new nsDOMFileFile(file, EmptyString(), NS_ConvertASCIItoUTF16(contentType));
+  mBlobSet = nullptr;
+  NS_ASSERTION(mResponseBody.IsEmpty(), "mResponseBody should be empty");
+  return true;
 }
 
 NS_IMETHODIMP
@@ -2130,14 +2099,6 @@ nsXMLHttpRequest::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
   mState |= XML_HTTP_REQUEST_PARSEBODY;
   mState &= ~XML_HTTP_REQUEST_MPART_HEADERS;
   ChangeState(XML_HTTP_REQUEST_HEADERS_RECEIVED);
-
-  if (mResponseType == XML_HTTP_RESPONSE_TYPE_BLOB ||
-      mResponseType == XML_HTTP_RESPONSE_TYPE_MOZ_BLOB) {
-    nsCOMPtr<nsICachingChannel> cc(do_QueryInterface(mChannel));
-    if (cc) {
-      cc->SetCacheAsFile(true);
-    }
-  }
 
   ResetResponse();
 
@@ -3346,7 +3307,7 @@ nsXMLHttpRequest::ReadyState()
   if (mState & XML_HTTP_REQUEST_HEADERS_RECEIVED) {
     return HEADERS_RECEIVED;
   }
-  if (mState & (XML_HTTP_REQUEST_LOADING | XML_HTTP_REQUEST_STOPPED)) {
+  if (mState & XML_HTTP_REQUEST_LOADING) {
     return LOADING;
   }
   MOZ_ASSERT(mState & XML_HTTP_REQUEST_DONE);
@@ -3459,13 +3420,13 @@ nsXMLHttpRequest::WithCredentials()
 NS_IMETHODIMP
 nsXMLHttpRequest::SetWithCredentials(bool aWithCredentials)
 {
-  nsresult rv = NS_OK;
+  ErrorResult rv;
   SetWithCredentials(aWithCredentials, rv);
-  return rv;
+  return rv.ErrorCode();
 }
 
 void
-nsXMLHttpRequest::SetWithCredentials(bool aWithCredentials, nsresult& aRv)
+nsXMLHttpRequest::SetWithCredentials(bool aWithCredentials, ErrorResult& aRv)
 {
   // Return error if we're already processing a request
   if (XML_HTTP_REQUEST_SENT & mState) {
@@ -3477,7 +3438,7 @@ nsXMLHttpRequest::SetWithCredentials(bool aWithCredentials, nsresult& aRv)
   if (HasOrHasHadOwner() &&
       !(mState & (XML_HTTP_REQUEST_UNSENT | XML_HTTP_REQUEST_ASYNC))) {
     LogMessage("WithCredentialsSyncXHRWarning", GetOwner());
-    aRv = NS_ERROR_DOM_INVALID_ACCESS_ERR;
+    aRv.Throw(NS_ERROR_DOM_INVALID_ACCESS_ERR);
     return;
   }
 
@@ -3505,7 +3466,8 @@ nsXMLHttpRequest::ChangeState(uint32_t aState, bool aBroadcast)
     mProgressNotifier->Cancel();
   }
 
-  if ((aState & XML_HTTP_REQUEST_LOADSTATES) && // Broadcast load states only
+  if ((aState & XML_HTTP_REQUEST_LOADSTATES) &&  // Broadcast load states only
+      aState != XML_HTTP_REQUEST_SENT && // And not internal ones
       aBroadcast &&
       (mState & XML_HTTP_REQUEST_ASYNC ||
        aState & XML_HTTP_REQUEST_OPENED ||

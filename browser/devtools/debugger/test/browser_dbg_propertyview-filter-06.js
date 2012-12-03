@@ -21,10 +21,11 @@ function test()
   debug_tab_pane(TAB_URL, function(aTab, aDebuggee, aPane) {
     gTab = aTab;
     gPane = aPane;
-    gDebugger = gPane.contentWindow;
+    gDebugger = gPane.panelWin;
     gDebuggee = aDebuggee;
 
     gDebugger.DebuggerController.StackFrames.autoScopeExpand = false;
+    gDebugger.DebuggerView.Variables.delayedSearch = false;
     prepareVariables(testVariablesFiltering);
   });
 }

@@ -109,9 +109,9 @@ CPPSRCS		= \
 		jswatchpoint.cpp \
 		jsweakmap.cpp \
 		jsworkers.cpp \
-		threadpool.cpp \
-		monitor.cpp \
-		forkjoin.cpp \
+		ThreadPool.cpp \
+		Monitor.cpp \
+		ForkJoin.cpp \
 		jswrapper.cpp \
 		jsxml.cpp \
 		prmjtime.cpp \
@@ -142,10 +142,14 @@ CPPSRCS		= \
 		RegExpObject.cpp \
 		RegExpStatics.cpp \
 		RegExp.cpp \
+		RootMarking.cpp \
 		Marking.cpp \
 		Memory.cpp \
 		Statistics.cpp \
 		StoreBuffer.cpp \
+		FindSCCs.cpp \
+		Iteration.cpp \
+		Verifier.cpp \
 		StringBuffer.cpp \
 		Unicode.cpp \
 		Xdr.cpp \
@@ -288,14 +292,17 @@ CPPSRCS +=	MIR.cpp \
 		LICM.cpp \
 		LinearScan.cpp \
 		LIR.cpp \
+		LiveRangeAllocator.cpp \
 		Lowering.cpp \
 		Lowering-shared.cpp \
 		MCallOptimize.cpp \
 		MIRGraph.cpp \
 		MoveResolver.cpp \
 		EdgeCaseAnalysis.cpp \
+		RegisterAllocator.cpp \
 		Snapshots.cpp \
 		Safepoints.cpp \
+		StupidAllocator.cpp \
 		TypeOracle.cpp \
 		TypePolicy.cpp \
 		ValueNumbering.cpp \

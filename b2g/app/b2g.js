@@ -355,7 +355,7 @@ pref("security.fileuri.strict_origin_policy", false);
 
 // Default Content Security Policy to apply to privileged and certified apps
 pref("security.apps.privileged.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
-pref("security.apps.certified.CSP.default", "options inline-script eval-script; default-src *; script-src 'self'; object-src 'none'; style-src 'self'");
+pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self'");
 
 // Temporarily force-enable GL compositing.  This is default-disabled
 // deep within the bowels of the widgetry system.  Remove me when GL
@@ -375,8 +375,11 @@ pref("browser.link.open_newwindow.restriction", 0);
 // work), but make in-process browser frames the default.
 pref("dom.mozBrowserFramesEnabled", true);
 
-pref("dom.ipc.tabs.disabled", false);
+// Enable a (virtually) unlimited number of mozbrowser processes.
+// We'll run out of PIDs on UNIX-y systems before we hit this limit.
+pref("dom.ipc.processCount", 100000);
 
+pref("dom.ipc.tabs.disabled", false);
 pref("dom.ipc.browser_frames.oop_by_default", false);
 
 // Temporary permission hack for WebSMS
@@ -413,10 +416,6 @@ pref("dom.mozTCPSocket.enabled", true);
 // secondary bug isn't really worth investigating since it's obseleted
 // by bug 710563.
 pref("layout.frame_rate.precise", true);
-
-// Temporary remote js console hack
-pref("b2g.remote-js.enabled", true);
-pref("b2g.remote-js.port", 9999);
 
 // Handle hardware buttons in the b2g chrome package
 pref("b2g.keys.menu.enabled", true);
@@ -584,6 +583,15 @@ pref("network.activity.blipIntervalMilliseconds", 250);
 
 pref("jsloader.reuseGlobal", true);
 
+// Enable font inflation for browser tab content.
+pref("font.size.inflation.minTwips", 120);
+// And disable it for lingering master-process UI.
+pref("font.size.inflation.disabledInMasterProcess", true);
+
 // Enable freeing dirty pages when minimizing memory; this reduces memory
 // consumption when applications are sent to the background.
 pref("memory.free_dirty_pages", true);
+
+// UAProfile settings
+pref("wap.UAProf.url", "");
+pref("wap.UAProf.tagname", "x-wap-profile");

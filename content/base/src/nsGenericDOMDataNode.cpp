@@ -26,6 +26,7 @@
 #include "nsEventDispatcher.h"
 #include "nsCOMArray.h"
 #include "nsNodeUtils.h"
+#include "mozilla/dom/DirectionalityUtils.h"
 #include "nsBindingManager.h"
 #include "nsCCUncollectableMarker.h"
 #include "mozAutoDocUpdate.h"
@@ -277,6 +278,10 @@ nsGenericDOMDataNode::SetTextInternal(uint32_t aOffset, uint32_t aCount,
       aDetails
     };
     nsNodeUtils::CharacterDataWillChange(this, &info);
+  }
+
+  if (NodeType() == nsIDOMNode::TEXT_NODE) {
+    SetDirectionFromChangedTextNode(this, aOffset, aBuffer, aLength, aNotify);
   }
 
   if (aOffset == 0 && endOffset == textLength) {
@@ -839,6 +844,7 @@ nsGenericDOMDataNode::AppendText(const PRUnichar* aBuffer,
 bool
 nsGenericDOMDataNode::TextIsOnlyWhitespace()
 {
+  // FIXME: should this method take content language into account?
   if (mText.Is2b()) {
     // The fragment contains non-8bit characters and such characters
     // are never considered whitespace.
@@ -851,7 +857,7 @@ nsGenericDOMDataNode::TextIsOnlyWhitespace()
   while (cp < end) {
     char ch = *cp;
 
-    if (!XP_IS_SPACE(ch)) {
+    if (!dom::IsSpaceCharacter(ch)) {
       return false;
     }
 

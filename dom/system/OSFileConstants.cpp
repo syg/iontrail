@@ -36,9 +36,15 @@
 #include "nsAutoPtr.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "mozJSComponentLoader.h"
 
 #include "OSFileConstants.h"
 #include "nsIOSFileConstantsService.h"
+
+#if defined(__DragonFly__) || defined(__FreeBSD__) \
+  || defined(__NetBSD__) || defined(__OpenBSD__)
+#define __dd_fd dd_fd
+#endif
 
 /**
  * This module defines the basic libc constants (error numbers, open modes,
@@ -63,6 +69,7 @@ typedef struct {
   nsString libDir;
   nsString tmpDir;
   nsString profileDir;
+  nsString localProfileDir;
 } Paths;
 
 /**
@@ -132,6 +139,7 @@ nsresult InitOSFileConstants()
 
   GetPathToSpecialDir(NS_OS_TEMP_DIR, paths->tmpDir);
   GetPathToSpecialDir(NS_APP_USER_PROFILE_50_DIR, paths->profileDir);
+  GetPathToSpecialDir(NS_APP_USER_PROFILE_LOCAL_50_DIR, paths->localProfileDir);
 
   gPaths = paths.forget();
   return NS_OK;
@@ -380,8 +388,8 @@ static dom::ConstantSpec gLibcProperties[] =
   { "OSFILE_OFFSETOF_DIRENT_D_TYPE", INT_TO_JSVAL(offsetof (struct dirent, d_type)) },
 #endif // defined(DT_UNKNOWN)
 
-  // Under MacOS X, |dirfd| is a macro rather than a function, so we
-  // need a little help to get it to work
+  // Under MacOS X and BSDs, |dirfd| is a macro rather than a
+  // function, so we need a little help to get it to work
 #if defined(dirfd)
   { "OSFILE_SIZEOF_DIR", INT_TO_JSVAL(sizeof (DIR)) },
 
@@ -675,6 +683,10 @@ bool DefineOSFileConstants(JSContext *cx, JSObject *global)
     return false;
   }
 
+  if (!SetStringProperty(cx, objPath, "localProfileDir", gPaths->localProfileDir)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -699,11 +711,13 @@ OSFileConstantsService::Init(JSContext *aCx)
     return rv;
   }
 
-  JSObject *global = JS_GetGlobalForScopeChain(aCx);
-  if (!global) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  if (!mozilla::DefineOSFileConstants(aCx, global)) {
+  JSObject *targetObj = nullptr;
+
+  mozJSComponentLoader* loader = mozJSComponentLoader::Get();
+  rv = loader->FindTargetObject(aCx, &targetObj);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!mozilla::DefineOSFileConstants(aCx, targetObj)) {
     return NS_ERROR_FAILURE;
   }
 

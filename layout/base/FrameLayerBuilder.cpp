@@ -1322,7 +1322,9 @@ ContainerState::CreateOrRecycleThebesLayer(const nsIFrame* aActiveScrolledRoot,
   // We need a new thebes layer
   nsRefPtr<ThebesLayer> layer;
   ThebesDisplayItemLayerUserData* data;
+#ifndef MOZ_ANDROID_OMTC
   bool didResetScrollPositionForLayerPixelAlignment = false;
+#endif
   if (mNextFreeRecycledThebesLayer < mRecycledThebesLayers.Length()) {
     // Recycle a layer
     layer = mRecycledThebesLayers[mNextFreeRecycledThebesLayer];
@@ -1348,7 +1350,9 @@ ContainerState::CreateOrRecycleThebesLayer(const nsIFrame* aActiveScrolledRoot,
         !FuzzyEqual(data->mYScale, mParameters.mYScale, 0.00001) ||
         data->mAppUnitsPerDevPixel != mAppUnitsPerDevPixel) {
       InvalidateEntireThebesLayer(layer, aActiveScrolledRoot);
+#ifndef MOZ_ANDROID_OMTC
       didResetScrollPositionForLayerPixelAlignment = true;
+#endif
     }
     if (!data->mRegionToInvalidate.IsEmpty()) {
 #ifdef DEBUG_INVALIDATIONS
@@ -1375,7 +1379,9 @@ ContainerState::CreateOrRecycleThebesLayer(const nsIFrame* aActiveScrolledRoot,
     data = new ThebesDisplayItemLayerUserData();
     layer->SetUserData(&gThebesDisplayItemLayerUserData, data);
     ResetScrollPositionForLayerPixelAlignment(aActiveScrolledRoot);
+#ifndef MOZ_ANDROID_OMTC
     didResetScrollPositionForLayerPixelAlignment = true;
+#endif
   }
   data->mXScale = mParameters.mXScale;
   data->mYScale = mParameters.mYScale;
@@ -1407,7 +1413,7 @@ ContainerState::CreateOrRecycleThebesLayer(const nsIFrame* aActiveScrolledRoot,
 #ifndef MOZ_ANDROID_OMTC
   // Calculate exact position of the top-left of the active scrolled root.
   // This might not be 0,0 due to the snapping in ScaleToNearestPixels.
-  gfxPoint activeScrolledRootTopLeft = scaledOffset - matrix.GetTranslation();
+  gfxPoint activeScrolledRootTopLeft = scaledOffset - matrix.GetTranslation() + mParameters.mOffset;
   // If it has changed, then we need to invalidate the entire layer since the
   // pixels in the layer buffer have the content at a (subpixel) offset
   // from what we need.
@@ -1534,7 +1540,7 @@ ContainerState::ThebesLayerData::CanOptimizeImageLayer(nsDisplayListBuilder* aBu
     return nullptr;
   }
 
-  return mImage->GetContainer(aBuilder);
+  return mImage->GetContainer(mLayer->Manager(), aBuilder);
 }
 
 void
@@ -2031,6 +2037,10 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
     itemVisibleRect.IntersectRect(itemVisibleRect, itemDrawRect);
 
     LayerState layerState = item->GetLayerState(mBuilder, mManager, mParameters);
+    if (layerState == LAYER_INACTIVE &&
+        nsDisplayItem::ForceActiveLayers()) {
+      layerState = LAYER_ACTIVE;
+    }
 
     bool isFixed;
     bool forceInactive;
@@ -2403,7 +2413,9 @@ FrameLayerBuilder::AddThebesDisplayItem(ThebesLayer* aLayer,
       props->MoveBy(-offset);
       nsIntRegion invalid = props->ComputeDifferences(layer, nullptr);
       if (aLayerState == LAYER_SVG_EFFECTS) {
-        invalid = nsSVGIntegrationUtils::AdjustInvalidAreaForSVGEffects(aItem->GetUnderlyingFrame(), invalid.GetBounds());
+        invalid = nsSVGIntegrationUtils::AdjustInvalidAreaForSVGEffects(aItem->GetUnderlyingFrame(),
+                                                                        aItem->ToReferenceFrame(),
+                                                                        invalid.GetBounds());
       }
       if (!invalid.IsEmpty()) {
 #ifdef DEBUG_INVALIDATIONS
@@ -2824,6 +2836,10 @@ FrameLayerBuilder::BuildContainerLayerFor(nsDisplayListBuilder* aBuilder,
   }
 
   LayerState state = aContainerItem ? aContainerItem->GetLayerState(aBuilder, aManager, aParameters) : LAYER_ACTIVE;
+  if (state == LAYER_INACTIVE &&
+      nsDisplayItem::ForceActiveLayers()) {
+    state = LAYER_ACTIVE;
+  }
 
   if (aContainerItem && state == LAYER_ACTIVE_EMPTY) {
     // Empty layers only have metadata and should never have display items. We
@@ -2856,9 +2872,11 @@ FrameLayerBuilder::BuildContainerLayerFor(nsDisplayListBuilder* aBuilder,
   nsRect bounds;
   nsIntRect pixBounds;
   int32_t appUnitsPerDevPixel;
-  uint32_t stateFlags =
-    (aContainerFrame->GetStateBits() & NS_FRAME_NO_COMPONENT_ALPHA) ?
-      ContainerState::NO_COMPONENT_ALPHA : 0;
+  uint32_t stateFlags = 0;
+  if ((aContainerFrame->GetStateBits() & NS_FRAME_NO_COMPONENT_ALPHA) &&
+      mRetainingManager && !mRetainingManager->AreComponentAlphaLayersEnabled()) {
+    stateFlags = ContainerState::NO_COMPONENT_ALPHA;
+  }
   uint32_t flags;
   while (true) {
     ContainerState state(aBuilder, aManager, aManager->GetLayerBuilder(),

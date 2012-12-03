@@ -60,7 +60,7 @@ public:
     nsresult Init();
     nsresult AddStandardRequestHeaders(nsHttpHeaderArray *);
     nsresult AddConnectionHeader(nsHttpHeaderArray *,
-                                 uint8_t capabilities);
+                                 uint32_t capabilities);
     bool     IsAcceptableEncoding(const char *encoding);
 
     const nsAFlatCString &UserAgent();
@@ -177,6 +177,12 @@ public:
     // callable from socket thread only
     uint32_t Get32BitsOfPseudoRandom();
 
+    // Called by the channel synchronously during asyncOpen
+    void OnOpeningRequest(nsIHttpChannel *chan)
+    {
+        NotifyObservers(chan, NS_HTTP_ON_OPENING_REQUEST_TOPIC);
+    }
+
     // Called by the channel before writing a request
     void OnModifyRequest(nsIHttpChannel *chan)
     {
@@ -281,7 +287,7 @@ private:
 
     uint8_t  mHttpVersion;
     uint8_t  mProxyHttpVersion;
-    uint8_t  mCapabilities;
+    uint32_t mCapabilities;
     uint8_t  mReferrerLevel;
 
     bool mFastFallbackToIPv4;

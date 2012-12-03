@@ -175,7 +175,6 @@ var BrowserApp = {
     Services.obs.addObserver(this, "Session:Forward", false);
     Services.obs.addObserver(this, "Session:Reload", false);
     Services.obs.addObserver(this, "Session:Stop", false);
-    Services.obs.addObserver(this, "Session:Restore", false);
     Services.obs.addObserver(this, "SaveAs:PDF", false);
     Services.obs.addObserver(this, "Browser:Quit", false);
     Services.obs.addObserver(this, "Preferences:Get", false);
@@ -282,13 +281,11 @@ var BrowserApp = {
     event.initEvent("UIReady", true, false);
     window.dispatchEvent(event);
 
-    let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    if (ss.shouldRestore()) {
-      this.restoreSession(false, null);
-    }
-
     if (updated)
       this.onAppUpdated();
+
+    // Store the low-precision buffer pref
+    this.gUseLowPrecision = Services.prefs.getBoolPref("layers.low-precision-buffer");
 
     // notify java that gecko has loaded
     sendMessageToJava({
@@ -309,34 +306,6 @@ var BrowserApp = {
     // Bug 778855 - Perf regression if we do this here. To be addressed in bug 779008.
     setTimeout(function() { SafeBrowsing.init(); }, 5000);
 #endif
-  },
-
-  restoreSession: function (restoringOOM, sessionString) {
-    // Be ready to handle any restore failures by making sure we have a valid tab opened
-    let restoreCleanup = {
-      observe: function (aSubject, aTopic, aData) {
-        Services.obs.removeObserver(restoreCleanup, "sessionstore-windows-restored");
-
-        if (this.tabs.length == 0) {
-          this.addTab("about:home", {
-            showProgress: false,
-            selected: true
-          });
-        }
-
-        // Let Java know we're done restoring tabs so tabs added after this can be animated
-        sendMessageToJava({
-          gecko: {
-            type: "Session:RestoreEnd"
-          }
-        });
-      }.bind(this)
-    };
-    Services.obs.addObserver(restoreCleanup, "sessionstore-windows-restored", false);
-
-    // Start the restore
-    let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    ss.restoreLastSession(restoringOOM, sessionString);
   },
 
   isAppUpdated: function() {
@@ -427,6 +396,26 @@ var BrowserApp = {
             title: title
           }
         });
+      });
+
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.playMedia"),
+      NativeWindow.contextmenus.mediaContext("media-paused"),
+      function(aTarget) {
+        aTarget.play();
+      });
+
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.pauseMedia"),
+      NativeWindow.contextmenus.mediaContext("media-playing"),
+      function(aTarget) {
+        aTarget.pause();
+      });
+
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.shareMedia"),
+      NativeWindow.contextmenus.SelectorContext("video"),
+      function(aTarget) {
+        let url = (aTarget.currentSrc || aTarget.src);
+        let title = aTarget.textContent || aTarget.title;
+        NativeWindow.contextmenus._shareStringWithDefault(url, title);
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.fullScreen"),
@@ -1147,9 +1136,6 @@ var BrowserApp = {
       }
     } else if (aTopic == "gather-telemetry") {
       sendMessageToJava({ gecko: { type: "Telemetry:Gather" }});
-    } else if (aTopic == "Session:Restore") {
-      let data = JSON.parse(aData);
-      this.restoreSession(data.restoringOOM, data.sessionString);
     }
   },
 
@@ -1203,16 +1189,25 @@ var NativeWindow = {
   menu: {
     _callbacks: [],
     _menuId: 0,
-    add: function(aName, aIcon, aCallback) {
-      sendMessageToJava({
-        gecko: {
-          type: "Menu:Add",
-          name: aName,
-          icon: aIcon,
-          id: this._menuId
-        }
-      });
-      this._callbacks[this._menuId] = aCallback;
+    add: function() {
+      let options;
+      if (arguments.length == 1) {
+        options = arguments[0];
+      } else if (arguments.length == 3) {
+          options = {
+            name: arguments[0],
+            icon: arguments[1],
+            callback: arguments[2]
+          };
+      } else {
+         return;
+      }
+
+      options.type = "Menu:Add";
+      options.id = this._menuId;
+
+      sendMessageToJava({ gecko: options });
+      this._callbacks[this._menuId] = options.callback;
       this._menuId++;
       return this._menuId - 1;
     },
@@ -1432,6 +1427,25 @@ var NativeWindow = {
           return (request && (request.imageStatus & request.STATUS_SIZE_AVAILABLE));
         }
         return false;
+      }
+    },
+
+    mediaContext: function(aMode) {
+      return {
+        matches: function(aElt) {
+          if (aElt instanceof Ci.nsIDOMHTMLMediaElement) {
+            let hasError = aElt.error != null || aElt.networkState == aElt.NETWORK_NO_SOURCE;
+            if (hasError)
+              return false;
+
+            let paused = aElt.paused || aElt.ended;
+            if (paused && aMode == "media-paused")
+              return true;
+            if (!paused && aMode == "media-playing")
+              return true;
+          }
+          return false;
+        }
       }
     },
 
@@ -1664,6 +1678,9 @@ var SelectionHandler = {
           // Knowing when the page is done drawing is hard, so let's just cancel
           // the selection when the window changes. We should fix this later.
           this.endSelection();
+        } else if (this._activeType == this.TYPE_CURSOR) {
+          //  Hide the cursor if the window changes
+          this.hideThumb();
         }
         break;
       }
@@ -2458,6 +2475,7 @@ function Tab(aURL, aParams) {
   this.desktopMode = false;
   this.originalURI = null;
   this.savedArticle = null;
+  this.hasTouchListener = false;
 
   this.create(aURL, aParams);
 }
@@ -2745,7 +2763,32 @@ Tab.prototype = {
         Math.abs(displayPort.y - this._oldDisplayPort.y) > epsilon ||
         Math.abs(displayPort.width - this._oldDisplayPort.width) > epsilon ||
         Math.abs(displayPort.height - this._oldDisplayPort.height) > epsilon) {
-      cwu.setDisplayPortForElement(displayPort.x, displayPort.y, displayPort.width, displayPort.height, element);
+      if (BrowserApp.gUseLowPrecision) {
+        // Set the display-port to be 4x the size of the critical display-port,
+        // on each dimension, giving us a 0.25x lower precision buffer around the
+        // critical display-port. Spare area is *not* redistributed to the other
+        // axis, as display-list building and invalidation cost scales with the
+        // size of the display-port.
+        let pageRect = cwu.getRootBounds();
+        let pageXMost = pageRect.right - geckoScrollX;
+        let pageYMost = pageRect.bottom - geckoScrollY;
+
+        let dpW = Math.min(pageRect.right - pageRect.left, displayPort.width * 4);
+        let dpH = Math.min(pageRect.bottom - pageRect.top, displayPort.height * 4);
+
+        let dpX = Math.min(Math.max(displayPort.x - displayPort.width * 1.5,
+                                    pageRect.left - geckoScrollX), pageXMost - dpW);
+        let dpY = Math.min(Math.max(displayPort.y - displayPort.height * 1.5,
+                                    pageRect.top - geckoScrollY), pageYMost - dpH);
+        cwu.setDisplayPortForElement(dpX, dpY, dpW, dpH, element);
+        cwu.setCriticalDisplayPortForElement(displayPort.x, displayPort.y,
+                                             displayPort.width, displayPort.height,
+                                             element);
+      } else {
+        cwu.setDisplayPortForElement(displayPort.x, displayPort.y,
+                                     displayPort.width, displayPort.height,
+                                     element);
+      }
     }
 
     this._oldDisplayPort = displayPort;
@@ -3187,6 +3230,11 @@ Tab.prototype = {
           }
         });
 
+        // For low-memory devices, don't allow reader mode since it takes up a lot of memory.
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=792603 for details.
+        if (Cc["@mozilla.org/xpcom/memory-service;1"].getService(Ci.nsIMemory).isLowMemoryPlatform())
+          return;
+
         // Once document is fully loaded, parse it
         Reader.parseDocumentFromTab(this.id, function (article) {
           // Do nothing if there's no article or the page in this tab has
@@ -3309,6 +3357,7 @@ Tab.prototype = {
       // XXX This code assumes that this is the earliest hook we have at which
       // browser.contentDocument is changed to the new document we're loading
       this.contentDocumentIsDisplayed = false;
+      this.hasTouchListener = false;
     } else {
       this.sendViewportUpdate();
     }
@@ -3711,9 +3760,10 @@ var BrowserEventHandler = {
   observe: function(aSubject, aTopic, aData) {
     if (aTopic == "dom-touch-listener-added") {
       let tab = BrowserApp.getTabForWindow(aSubject.top);
-      if (!tab)
+      if (!tab || tab.hasTouchListener)
         return;
 
+      tab.hasTouchListener = true;
       sendMessageToJava({
         gecko: {
           type: "Tab:HasTouchListener",
@@ -3721,14 +3771,22 @@ var BrowserEventHandler = {
         }
       });
       return;
+    } else if (aTopic == "nsPref:changed") {
+      if (aData == "browser.zoom.reflowOnZoom") {
+        this.updateReflozPref();
+      }
+      return;
     }
 
     // the remaining events are all dependent on the browser content document being the
     // same as the browser displayed document. if they are not the same, we should ignore
     // the event.
-    if (!BrowserApp.isBrowserContentDocumentDisplayed())
-      return;
+    if (BrowserApp.isBrowserContentDocumentDisplayed()) {
+      this.handleUserEvent(aTopic, aData);
+    }
+  },
 
+  handleUserEvent: function(aTopic, aData) {
     if (aTopic == "Gesture:Scroll") {
       // If we've lost our scrollable element, return. Don't cancel the
       // override, as we probably don't want Java to handle panning until the
@@ -3800,10 +3858,6 @@ var BrowserEventHandler = {
       this.onPinch(aData);
     } else if (aTopic == "MozMagnifyGesture") {
       this.onPinchFinish(aData, this._mLastPinchPoint.x, this._mLastPinchPoint.y);
-    } else if (aTopic == "nsPref:changed") {
-      if (aData == "browser.zoom.reflowOnZoom") {
-        this.updateReflozPref();
-      }
     }
   },
 
@@ -5980,18 +6034,15 @@ var PermissionsHelper = {
                          "allowed" : "denied";
           let valueString = Strings.browser.GetStringFromName(typeStrings[valueKey]);
 
-          // If we implement a two-line UI, we will need to pass the label and
-          // value individually and let java handle the formatting
-          let setting = Strings.browser.formatStringFromName("siteSettings.labelToValue",
-                                                             [ label, valueString ], 2);
           permissions.push({
             type: type,
-            setting: setting
+            setting: label,
+            value: valueString
           });
         }
 
         // Keep track of permissions, so we know which ones to clear
-        this._currentPermissions = permissions; 
+        this._currentPermissions = permissions;
 
         let host;
         try {
@@ -7787,11 +7838,13 @@ var Tabs = {
     }
     // if the tab was last touched more than browser.tabs.expireTime seconds ago,
     // zombify it
-    let tabAgeMs = Date.now() - lruTab.lastTouchedAt;
-    if (lruTab && tabAgeMs > expireTimeMs) {
-      MemoryObserver.zombify(lruTab);
-      Telemetry.addData("FENNEC_TAB_EXPIRED", tabAgeMs / 1000);
-      return true;
+    if (lruTab) {
+      let tabAgeMs = Date.now() - lruTab.lastTouchedAt;
+      if (tabAgeMs > expireTimeMs) {
+        MemoryObserver.zombify(lruTab);
+        Telemetry.addData("FENNEC_TAB_EXPIRED", tabAgeMs / 1000);
+        return true;
+      }
     }
     return false;
   },

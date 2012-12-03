@@ -350,12 +350,18 @@ intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
     char *errorArgs[3] = {NULL, NULL, NULL};
     for (unsigned i = 1; i < 4 && i < args.length(); i++) {
         RootedValue val(cx, args[i]);
-        if (val.isInt32() || val.isString()) {
+        if (val.isInt32()) {
+            JSString *str = ToString(cx, val);
+            if (!str)
+                return false;
+            errorArgs[i - 1] = JS_EncodeString(cx, str);
+        } else if (val.isString()) {
             errorArgs[i - 1] = JS_EncodeString(cx, ToString(cx, val));
         } else {
-            ptrdiff_t spIndex = cx->stack.spIndexOf(val.address());
-            errorArgs[i - 1] = DecompileValueGenerator(cx, spIndex, val, NullPtr(), 1);
+            errorArgs[i - 1] = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, val, NullPtr());
         }
+        if (!errorArgs[i - 1])
+            return false;
     }
 
     JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, errorNumber,
@@ -363,6 +369,31 @@ intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
     for (unsigned i = 0; i < 3; i++)
         js_free(errorArgs[i]);
     return false;
+}
+
+/*
+ * Used to decompile values in the nearest non-builtin stack frame, falling
+ * back to decompiling in the current frame. Helpful for printing higher-order
+ * function arguments.
+ * 
+ * The user must supply the argument number of the value in question; it
+ * _cannot_ be automatically determined.
+ */
+static JSBool
+intrinsic_DecompileArg(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 2);
+
+    RootedValue value(cx, args[1]);
+    ScopedFreePtr<char> str(DecompileArgument(cx, args[0].toInt32(), value));
+    if (!str)
+        return false;
+    RootedAtom atom(cx, Atomize(cx, str, strlen(str)));
+    if (!atom)
+        return false;
+    args.rval().setString(atom);
+    return true;
 }
 
 static JSBool
@@ -547,6 +578,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("Dump",               intrinsic_Dump,                 1,0),
 #endif
 
+    JS_FN("_DecompileArg",      intrinsic_DecompileArg,         2,0),
     JS_FN("_SetFunctionFlags",  intrinsic_SetFunctionFlags,     2,0),
     JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
     JS_FN("_SetNonBuiltinCallerInitObjectType", intrinsic_SetNonBuiltinCallerInitObjectType, 1,0),
@@ -604,27 +636,42 @@ JSRuntime::markSelfHostedGlobal(JSTracer *trc)
     MarkObjectRoot(trc, &selfHostedGlobal_, "self-hosting global");
 }
 
-JSFunction *
-JSRuntime::getSelfHostedFunction(JSContext *cx, Handle<PropertyName*> name)
+bool
+JSRuntime::getUnclonedSelfHostedValue(JSContext *cx, Handle<PropertyName*> name,
+                                      MutableHandleValue vp)
 {
-    RootedObject holder(cx, cx->global()->getIntrinsicsHolder());
-    RootedId id(cx, NameToId(name));
-    RootedValue funVal(cx, NullValue());
-    if (!cloneSelfHostedValueById(cx, id, holder, &funVal))
-        return NULL;
-    return funVal.toObject().toFunction();
+    RootedObject shg(cx, selfHostedGlobal_);
+    AutoCompartment ac(cx, shg);
+    return JS_GetPropertyById(cx, shg, NameToId(name), vp.address());
 }
 
 bool
-JSRuntime::cloneSelfHostedValueById(JSContext *cx, HandleId id, HandleObject holder, MutableHandleValue vp)
+JSRuntime::cloneSelfHostedFunctionScript(JSContext *cx, Handle<PropertyName*> name,
+                                         Handle<JSFunction*> targetFun)
 {
-    Value funVal;
-    {
-        RootedObject shg(cx, selfHostedGlobal_);
-        AutoCompartment ac(cx, shg);
-        if (!JS_GetPropertyById(cx, shg, id, &funVal) || !funVal.isObject())
-            return false;
-    }
+    RootedValue funVal(cx);
+    if (!getUnclonedSelfHostedValue(cx, name, &funVal))
+        return false;
+
+    RootedFunction sourceFun(cx, funVal.toObject().toFunction());
+    Rooted<JSScript*> sourceScript(cx, sourceFun->nonLazyScript());
+    JS_ASSERT(!sourceScript->enclosingStaticScope());
+    RawScript cscript = CloneScript(cx, NullPtr(), targetFun, sourceScript);
+    if (!cscript)
+        return false;
+    targetFun->setScript(cscript);
+    cscript->setFunction(targetFun);
+    JS_ASSERT(sourceFun->nargs == targetFun->nargs);
+    targetFun->flags = sourceFun->flags | JSFunction::EXTENDED;
+    return true;
+}
+
+bool
+JSRuntime::cloneSelfHostedValue(JSContext *cx, Handle<PropertyName*> name, MutableHandleValue vp)
+{
+    RootedValue funVal(cx);
+    if (!getUnclonedSelfHostedValue(cx, name, &funVal))
+        return false;
 
     /*
      * We don't clone if we're operating in the self-hosting global, as that
@@ -632,15 +679,16 @@ JSRuntime::cloneSelfHostedValueById(JSContext *cx, HandleId id, HandleObject hol
      * initializing the runtime (see JSRuntime::initSelfHosting).
      */
     if (cx->global() == selfHostedGlobal_) {
-        vp.set(ObjectValue(funVal.toObject()));
-    } else {
-        RootedObject clone(cx, JS_CloneFunctionObject(cx,  &funVal.toObject(), cx->global()));
+        vp.set(funVal);
+    } else if (funVal.isObject() && funVal.toObject().isFunction()) {
+        RootedFunction fun(cx, funVal.toObject().toFunction());
+        RootedObject clone(cx, CloneFunctionObject(cx, fun, cx->global(), fun->getAllocKind()));
         if (!clone)
             return false;
         vp.set(ObjectValue(*clone));
+    } else {
+        vp.set(UndefinedValue());
     }
-    DebugOnly<bool> ok = JS_DefinePropertyById(cx, holder, id, vp, NULL, NULL, 0);
-    JS_ASSERT(ok);
     return true;
 }
 
@@ -764,8 +812,6 @@ js::DestroyContext(JSContext *cx, DestroyContextMode mode)
     js_delete(cx);
 }
 
-namespace js {
-
 bool
 AutoResolving::alreadyStartedSlow() const
 {
@@ -778,8 +824,6 @@ AutoResolving::alreadyStartedSlow() const
     } while (!!(cursor = cursor->link));
     return false;
 }
-
-} /* namespace js */
 
 static void
 ReportError(JSContext *cx, const char *message, JSErrorReport *reportp,
@@ -880,9 +924,8 @@ js_ReportOutOfMemory(JSContext *cx)
      */
     cx->clearPendingException();
     if (onError) {
-        ++cx->runtime->inOOMReport;
+        AutoSuppressGC suppressGC(cx);
         onError(cx, msg, &report);
-        --cx->runtime->inOOMReport;
     }
 }
 
@@ -977,11 +1020,9 @@ js_ReportErrorVA(JSContext *cx, unsigned flags, const char *format, va_list ap)
     return warning;
 }
 
-namespace js {
-
 /* |callee| requires a usage string provided by JS_DefineFunctionsWithHelp. */
 void
-ReportUsageError(JSContext *cx, HandleObject callee, const char *msg)
+js::ReportUsageError(JSContext *cx, HandleObject callee, const char *msg)
 {
     const char *usageStr = "usage";
     PropertyName *usageAtom = Atomize(cx, usageStr, strlen(usageStr))->asPropertyName();
@@ -1007,8 +1048,8 @@ ReportUsageError(JSContext *cx, HandleObject callee, const char *msg)
 }
 
 bool
-PrintError(JSContext *cx, FILE *file, const char *message, JSErrorReport *report,
-           bool reportWarnings)
+js::PrintError(JSContext *cx, FILE *file, const char *message, JSErrorReport *report,
+               bool reportWarnings)
 {
     if (!report) {
         fprintf(file, "%s\n", message);
@@ -1077,8 +1118,6 @@ PrintError(JSContext *cx, FILE *file, const char *message, JSErrorReport *report
     JS_free(cx, prefix);
     return true;
 }
-
-} /* namespace js */
 
 /*
  * The arguments from ap need to be packaged up into an array and stored
@@ -1833,8 +1872,6 @@ JSContext::mark(JSTracer *trc)
     MarkValueRoot(trc, &iterValue, "iterValue");
 }
 
-namespace JS {
-
 #if defined JS_THREADSAFE && defined DEBUG
 
 AutoCheckRequestDepth::AutoCheckRequestDepth(JSContext *cx)
@@ -1852,5 +1889,3 @@ AutoCheckRequestDepth::~AutoCheckRequestDepth()
 }
 
 #endif
-
-} // namespace JS

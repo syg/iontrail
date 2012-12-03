@@ -1152,7 +1152,12 @@ nsObjectFrame::DidSetWidgetGeometry()
   if (!mWidget && mInstanceOwner) {
     // UpdateWindowVisibility will notify the plugin of position changes
     // by updating the NPWindow and calling NPP_SetWindow/AsyncSetWindow.
-    mInstanceOwner->UpdateWindowVisibility(!mNextConfigurationBounds.IsEmpty());
+    // We treat windowless plugins inside popups as always visible, since
+    // plugins inside popups don't get valid mNextConfigurationBounds
+    // set up.
+    mInstanceOwner->UpdateWindowVisibility(
+      nsLayoutUtils::IsPopup(nsLayoutUtils::GetDisplayRootFrame(this)) ||
+      !mNextConfigurationBounds.IsEmpty());
   }
 #endif
 }
@@ -1250,10 +1255,15 @@ nsObjectFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
         nsDisplayGeneric(aBuilder, this, PaintPrintPlugin, "PrintPlugin",
                          nsDisplayItem::TYPE_PRINT_PLUGIN));
   } else {
+    LayerState state = GetLayerState(aBuilder, nullptr);
+    if (state == LAYER_INACTIVE &&
+        nsDisplayItem::ForceActiveLayers()) {
+      state = LAYER_ACTIVE;
+    }
     // We don't need this on Android, and it just confuses things
 #if !MOZ_WIDGET_ANDROID
     if (aBuilder->IsPaintingToWindow() &&
-        GetLayerState(aBuilder, nullptr) == LAYER_ACTIVE &&
+        state == LAYER_ACTIVE &&
         IsTransparentMode()) {
       rv = replacedContent.AppendNewToTop(new (aBuilder)
           nsDisplayPluginReadback(aBuilder, this));
@@ -1263,7 +1273,7 @@ nsObjectFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
 #if MOZ_WIDGET_ANDROID
     if (aBuilder->IsPaintingToWindow() &&
-        GetLayerState(aBuilder, nullptr) == LAYER_ACTIVE) {
+        state == LAYER_ACTIVE) {
 
       nsTArray<nsNPAPIPluginInstance::VideoInfo*> videos;
       mInstanceOwner->GetVideos(videos);

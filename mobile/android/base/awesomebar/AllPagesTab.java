@@ -9,6 +9,7 @@ import org.mozilla.gecko.AwesomeBar.ContextMenuSubject;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
+import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoAsyncTask;
 import org.mozilla.gecko.util.GeckoEventListener;
 
@@ -27,7 +28,6 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.SystemClock;
 import android.text.TextUtils;
-import android.util.Base64;
 import android.util.Log;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.AlphaAnimation;
@@ -262,8 +262,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
             final String url = mCursor.getString(mCursor.getColumnIndexOrThrow(URLColumns.URL));
 
-            Favicons favicons = GeckoApp.mAppContext.getFavicons();
-            Bitmap bitmap = favicons.getFaviconFromMemCache(url);
+            Bitmap bitmap = Favicons.getInstance().getFaviconFromMemCache(url);
             byte[] favicon = null;
 
             if (bitmap != null) {
@@ -553,7 +552,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                 JSONObject engineJSON = engines.getJSONObject(i);
                 String name = engineJSON.getString("name");
                 String iconURI = engineJSON.getString("iconURI");
-                Bitmap icon = getBitmapFromDataURI(iconURI);
+                Bitmap icon = BitmapUtils.getBitmapFromDataURI(iconURI);
                 if (name.equals(suggestEngine) && suggestTemplate != null) {
                     // suggest engine should be at the front of the list
                     mSearchEngines.add(0, new SearchEngine(name, icon));
@@ -562,6 +561,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                     mSearchEngines.add(new SearchEngine(name, icon));
                 }
             }
+            mCursorAdapter.notifyDataSetChanged();
 
             // show suggestions opt-in if user hasn't been prompted
             if (!suggestionsPrompted && mSuggestClient != null) {
@@ -571,18 +571,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
             Log.e(LOGTAG, "Error getting search engine JSON", e);
         }
 
-        mCursorAdapter.notifyDataSetChanged();
         filterSuggestions(mSearchTerm);
-    }
-
-    private Bitmap getBitmapFromDataURI(String dataURI) {
-        try {
-            byte[] raw = Base64.decode(dataURI.substring(22), Base64.DEFAULT);
-            return BitmapFactory.decodeByteArray(raw, 0, raw.length);
-        } catch(Exception ex) {
-            Log.i(LOGTAG, "exception while decoding bitmap: " + dataURI, ex);
-        }
-        return null;
     }
 
     private void showSuggestionsOptIn() {
@@ -745,8 +734,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
             // We only want to load favicons from DB if they are not in the
             // memory cache yet.
-            Favicons favicons = GeckoApp.mAppContext.getFavicons();
-            if (favicons.getFaviconFromMemCache(url) != null)
+            if (Favicons.getInstance().getFaviconFromMemCache(url) != null)
                 continue;
 
             urls.add(url);
@@ -760,8 +748,6 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
             if (c == null || !c.moveToFirst())
                 return;
 
-            Favicons favicons = GeckoApp.mAppContext.getFavicons();
-
             do {
                 final String url = c.getString(c.getColumnIndexOrThrow(Combined.URL));
                 final byte[] b = c.getBlob(c.getColumnIndexOrThrow(Combined.FAVICON));
@@ -772,7 +758,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                 if (favicon == null)
                     continue;
 
-                favicons.putFaviconInMemCache(url, favicon);
+                Favicons.getInstance().putFaviconInMemCache(url, favicon);
             } while (c.moveToNext());
         } finally {
             if (c != null)
@@ -801,8 +787,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
     private void displayFavicon(AwesomeEntryViewHolder viewHolder) {
         final String url = viewHolder.urlView.getText().toString();
-        Favicons favicons = GeckoApp.mAppContext.getFavicons();
-        Bitmap bitmap = favicons.getFaviconFromMemCache(url);
+        Bitmap bitmap = Favicons.getInstance().getFaviconFromMemCache(url);
         updateFavicon(viewHolder.faviconView, bitmap);
     }
 

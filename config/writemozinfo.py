@@ -39,6 +39,10 @@ def build_dict(env=os.environ):
     # Widget toolkit, just pass the value directly through.
     d["toolkit"] = env["MOZ_WIDGET_TOOLKIT"]
     
+    # Application name
+    if 'MOZ_APP_NAME' in env:
+      d["appname"] = env["MOZ_APP_NAME"]
+
     # processor
     p = env["TARGET_CPU"]
     # for universal mac builds, put in a special value
@@ -65,6 +69,9 @@ def build_dict(env=os.environ):
 
     # crashreporter
     d["crashreporter"] = 'MOZ_CRASHREPORTER' in env and env['MOZ_CRASHREPORTER'] == '1'
+
+    # per-window private browsing
+    d["perwindowprivatebrowsing"] = 'MOZ_PER_WINDOW_PRIVATE_BROWSING' in env and env['MOZ_PER_WINDOW_PRIVATE_BROWSING'] == '1'
     return d
 
 #TODO: replace this with the json module when Python >= 2.6 is a requirement.

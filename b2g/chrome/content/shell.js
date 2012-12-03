@@ -81,6 +81,13 @@ var shell = {
     return this.CrashSubmit;
   },
 
+  onlineForCrashReport: function shell_onlineForCrashReport() {
+    let wifiManager = navigator.mozWifiManager;
+    let onWifi = (wifiManager &&
+                  (wifiManager.connection.status == 'connected'));
+    return !Services.io.offline && onWifi;
+  },
+
   reportCrash: function shell_reportCrash(isChrome, aCrashID) {
     let crashID = aCrashID;
     try {
@@ -113,16 +120,19 @@ var shell = {
 
   // This function submits a crash when we're online.
   submitCrash: function shell_submitCrash(aCrashID) {
-    if (!Services.io.offline) {
+    if (this.onlineForCrashReport()) {
       this.CrashSubmit.submit(aCrashID);
       return;
     }
+
     Services.obs.addObserver(function observer(subject, topic, state) {
-      if (state == 'online') {
+      let network = subject.QueryInterface(Ci.nsINetworkInterface);
+      if (network.state == Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED
+          && network.type == Ci.nsINetworkInterface.NETWORK_TYPE_WIFI) {
         shell.CrashSubmit.submit(aCrashID);
         Services.obs.removeObserver(observer, topic);
       }
-    }, "network:offline-status-changed", false);
+    }, "network-interface-state-changed", false);
   },
 
   get contentBrowser() {
@@ -142,9 +152,16 @@ var shell = {
 
   get manifestURL() {
     return Services.prefs.getCharPref('browser.manifestURL');
-   },
+  },
+
+  _started: false,
+  hasStarted: function shell_hasStarted() {
+    return this._started;
+  },
 
   start: function shell_start() {
+    this._started = true;
+
     // This forces the initialization of the cookie service before we hit the
     // network.
     // See bug 810209
@@ -226,17 +243,6 @@ var shell = {
     window.addEventListener('sizemodechange', this);
     this.contentBrowser.addEventListener('mozbrowserloadstart', this, true);
 
-    // Until the volume can be set from the content side, set it to a
-    // a specific value when the device starts. This way the front-end
-    // can display a notification when the volume change and show a volume
-    // level modified from this point.
-    // try catch block must be used since the emulator fails here. bug 746429
-    try {
-      Services.audioManager.masterVolume = 0.5;
-    } catch(e) {
-      dump('Error setting master volume: ' + e + '\n');
-    }
-
     CustomEventManager.init();
     WebappsHelper.init();
     AccessFu.attach(window);
@@ -257,6 +263,7 @@ var shell = {
     ppmm.addMessageListener("dial-handler", this);
     ppmm.addMessageListener("sms-handler", this);
     ppmm.addMessageListener("mail-handler", this);
+    ppmm.addMessageListener("app-notification-send", AlertsHelper);
   },
 
   stop: function shell_stop() {
@@ -395,6 +402,8 @@ var shell = {
         content.addEventListener('load', function shell_homeLoaded() {
           content.removeEventListener('load', shell_homeLoaded);
           shell.isHomeLoaded = true;
+
+          Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
 
           if ('pendingChromeEvents' in shell) {
             shell.pendingChromeEvents.forEach((shell.sendChromeEvent).bind(shell));
@@ -551,57 +560,6 @@ Services.obs.addObserver(function onBluetoothVolumeChange(subject, topic, data) 
   });
 }, 'bluetooth-volume-change', false);
 
-(function Repl() {
-  if (!Services.prefs.getBoolPref('b2g.remote-js.enabled')) {
-    return;
-  }
-  const prompt = 'JS> ';
-  let output;
-  let reader = {
-    onInputStreamReady : function repl_readInput(input) {
-      let sin = Cc['@mozilla.org/scriptableinputstream;1']
-                  .createInstance(Ci.nsIScriptableInputStream);
-      sin.init(input);
-      try {
-        let val = eval(sin.read(sin.available()));
-        let ret = (typeof val === 'undefined') ? 'undefined\n' : val + '\n';
-        output.write(ret, ret.length);
-        // TODO: check if socket has been closed
-      } catch (e) {
-        if (e.result === Cr.NS_BASE_STREAM_CLOSED ||
-            (typeof e === 'object' && e.result === Cr.NS_BASE_STREAM_CLOSED)) {
-          return;
-        }
-        let message = (typeof e === 'object') ? e.message + '\n' : e + '\n';
-        output.write(message, message.length);
-      }
-      output.write(prompt, prompt.length);
-      input.asyncWait(reader, 0, 0, Services.tm.mainThread);
-    }
-  }
-  let listener = {
-    onSocketAccepted: function repl_acceptConnection(serverSocket, clientSocket) {
-      dump('Accepted connection on ' + clientSocket.host + '\n');
-      let input = clientSocket.openInputStream(Ci.nsITransport.OPEN_BLOCKING, 0, 0)
-                              .QueryInterface(Ci.nsIAsyncInputStream);
-      output = clientSocket.openOutputStream(Ci.nsITransport.OPEN_BLOCKING, 0, 0);
-      output.write(prompt, prompt.length);
-      input.asyncWait(reader, 0, 0, Services.tm.mainThread);
-    },
-    onStopListening: function repl_onStopListening() {
-      if (output) {
-        output.close();
-      }
-    }
-  }
-  let serverPort = Services.prefs.getIntPref('b2g.remote-js.port');
-  let serverSocket = Cc['@mozilla.org/network/server-socket;1']
-                       .createInstance(Ci.nsIServerSocket);
-  serverSocket.init(serverPort, true, -1);
-  dump('Opened socket on ' + serverSocket.port + '\n');
-  serverSocket.asyncListen(listener);
-})();
-
 var CustomEventManager = {
   init: function custevt_init() {
     window.addEventListener("ContentStart", (function(evt) {
@@ -654,8 +612,19 @@ var AlertsHelper = {
       return;
 
     let listener = this._listeners[detail.id];
-    let topic = detail.type == "desktop-notification-click" ? "alertclickcallback" : "alertfinished";
-    listener.observer.observe(null, topic, listener.cookie);
+    if (!listener)
+     return;
+
+    let topic = detail.type == "desktop-notification-click" ? "alertclickcallback"
+                                                            : "alertfinished";
+
+    if (detail.id.startsWith("alert")) {
+      listener.observer.observe(null, topic, listener.cookie);
+    } else {
+      listener.mm.sendAsyncMessage("app-notification-return",
+                                   { id: detail.id,
+                                     type: detail.type });
+    }
 
     // we're done with this notification
     if (topic === "alertfinished")
@@ -668,23 +637,71 @@ var AlertsHelper = {
     return id;
   },
 
+  registerAppListener: function alertRegisterAppListener(id, mm, title, text,
+                                                         manifestURL, imageURL) {
+    this._listeners[id] = {
+      mm: mm,
+      title: title,
+      text: text,
+      manifestURL: manifestURL,
+      imageURL: imageURL
+    };
+  },
+
+  showNotification: function alert_showNotification(imageUrl,
+                                                    title,
+                                                    text,
+                                                    textClickable,
+                                                    cookie,
+                                                    id,
+                                                    name,
+                                                    manifestUrl) {
+    function send(appName, appIcon) {
+      shell.sendChromeEvent({
+        type: "desktop-notification",
+        id: id,
+        icon: imageUrl,
+        title: title,
+        text: text,
+        appName: appName,
+        appIcon: appIcon
+      });
+    }
+
+    // If we have a manifest URL, get the icon and title from the manifest
+    // to prevent spoofing.
+    if (manifestUrl && manifestUrl.length) {
+      let app = DOMApplicationRegistry.getAppByManifestURL(manifestUrl);
+      DOMApplicationRegistry.getManifestFor(app.origin, function(aManifest) {
+        let helper = new ManifestHelper(aManifest, app.origin);
+        send(helper.name, helper.iconURLForSize(128));
+      });
+    } else {
+      send(null, null);
+    }
+  },
+
   showAlertNotification: function alert_showAlertNotification(imageUrl,
                                                               title,
                                                               text,
                                                               textClickable,
                                                               cookie,
                                                               alertListener,
-                                                              name)
-  {
-    let id = this.registerListener(cookie, alertListener);
-    shell.sendChromeEvent({
-      type: "desktop-notification",
-      id: id,
-      icon: imageUrl,
-      title: title,
-      text: text
-    });
-  }
+                                                              name) {
+    let id = this.registerListener(null, alertListener);
+    this.showNotification(imageUrl, title, text, textClickable, cookie,
+                          id, name, null);
+  },
+
+  receiveMessage: function alert_receiveMessage(message) {
+    let data = message.data;
+
+    this.registerAppListener(data.id, message.target, data.title, data.text,
+                             data.manifestURL, data.imageURL);
+    this.showNotification(data.imageURL, data.title, data.text,
+                          data.textClickable, null,
+                          data.id, null, data.manifestURL);
+  },
 }
 
 var WebappsHelper = {
@@ -707,6 +724,7 @@ var WebappsHelper = {
       return;
 
     let installer = this._installers[detail.id];
+    delete this._installers[detail.id];
     switch (detail.type) {
       case "webapps-install-granted":
         DOMApplicationRegistry.confirmInstall(installer);
@@ -764,11 +782,17 @@ function startDebugger() {
   }
 }
 
-window.addEventListener('ContentStart', function(evt) {
-  if (Services.prefs.getBoolPref('devtools.debugger.remote-enabled')) {
-    startDebugger();
+function stopDebugger() {
+  if (!DebuggerServer.initialized) {
+    return;
   }
-});
+
+  try {
+    DebuggerServer.closeListener();
+  } catch (e) {
+    dump('Unable to stop debugger server: ' + e + '\n');
+  }
+}
 
 // This is the backend for Gaia's screenshot feature.  Gaia requests a
 // screenshot by sending a mozContentEvent with detail.type set to

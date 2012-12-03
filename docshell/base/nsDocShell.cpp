@@ -114,7 +114,6 @@
 #include "nsIObserver.h"
 #include "nsINestedURI.h"
 #include "nsITransportSecurityInfo.h"
-#include "nsISSLSocketControl.h"
 #include "nsINSSErrorsService.h"
 #include "nsIApplicationCache.h"
 #include "nsIApplicationCacheChannel.h"
@@ -1502,6 +1501,7 @@ nsDocShell::LoadURI(nsIURI * aURI,
                         flags,
                         target.get(),
                         nullptr,         // No type hint
+                        NullString(),    // No forced download
                         postStream,
                         headersStream,
                         loadType,
@@ -4175,11 +4175,8 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
                 nsCOMPtr<nsIStrictTransportSecurityService> stss =
                           do_GetService(NS_STSSERVICE_CONTRACTID, &rv);
                 NS_ENSURE_SUCCESS(rv, rv);
-                uint32_t flags = 0;
-                nsCOMPtr<nsISSLSocketControl> socketControl = do_QueryInterface(tsi);
-                if (socketControl) {
-                    socketControl->GetProviderFlags(&flags);
-                }
+                uint32_t flags =
+                  mInPrivateBrowsing ? nsISocketProvider::NO_PERMANENT_STORAGE : 0;
                 
                 bool isStsHost = false;
                 rv = stss->IsStsURI(aURI, flags, &isStsHost);
@@ -4498,7 +4495,7 @@ nsDocShell::LoadErrorPage(nsIURI *aURI, const PRUnichar *aURL,
 
     return InternalLoad(errorPageURI, nullptr, nullptr,
                         INTERNAL_LOAD_FLAGS_INHERIT_OWNER, nullptr, nullptr,
-                        nullptr, nullptr, LOAD_ERROR_PAGE,
+                        NullString(), nullptr, nullptr, LOAD_ERROR_PAGE,
                         nullptr, true, nullptr, nullptr);
 }
 
@@ -4529,7 +4526,7 @@ nsDocShell::Reload(uint32_t aReloadFlags)
 
     if (!canReload)
       return NS_OK;
-    
+
     /* If you change this part of code, make sure bug 45297 does not re-occur */
     if (mOSHE) {
         rv = LoadHistoryEntry(mOSHE, loadType);
@@ -4553,15 +4550,15 @@ nsDocShell::Reload(uint32_t aReloadFlags)
                           INTERNAL_LOAD_FLAGS_NONE, // Do not inherit owner from document
                           nullptr,         // No window target
                           NS_LossyConvertUTF16toASCII(contentTypeHint).get(),
+                          NullString(),    // No forced download
                           nullptr,         // No post data
                           nullptr,         // No headers data
-                          loadType,       // Load type
+                          loadType,        // Load type
                           nullptr,         // No SHEntry
                           true,
                           nullptr,         // No nsIDocShell
                           nullptr);        // No nsIRequest
     }
-    
 
     return rv;
 }
@@ -6229,8 +6226,6 @@ NS_IMETHODIMP
 nsDocShell::OnStateChange(nsIWebProgress * aProgress, nsIRequest * aRequest,
                           uint32_t aStateFlags, nsresult aStatus)
 {
-    nsresult rv;
-
     if ((~aStateFlags & (STATE_START | STATE_IS_NETWORK)) == 0) {
         // Save timing statistics.
         nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
@@ -6245,7 +6240,7 @@ nsDocShell::OnStateChange(nsIWebProgress * aProgress, nsIRequest * aRequest,
 
         // We don't update navigation timing for wyciwyg channels
         if (this == aProgress && !wcwgChannel){
-            rv = MaybeInitTiming();
+            MaybeInitTiming();
             if (mTiming) {
                 mTiming->NotifyFetchStart(uri, ConvertLoadTypeToNavigationType(mLoadType));
             } 
@@ -6289,11 +6284,11 @@ nsDocShell::OnStateChange(nsIWebProgress * aProgress, nsIRequest * aRequest,
                 // from the channel and store it in session history.
                 // Pass false for aCloneChildren, since we're creating
                 // a new DOM here.
-                rv = AddToSessionHistory(uri, wcwgChannel, nullptr, false,
-                                         getter_AddRefs(mLSHE));
+                AddToSessionHistory(uri, wcwgChannel, nullptr, false,
+                                    getter_AddRefs(mLSHE));
                 SetCurrentURI(uri, aRequest, true, 0);
                 // Save history state of the previous page
-                rv = PersistLayoutHistoryState();
+                PersistLayoutHistoryState();
                 // We'll never get an Embed() for this load, so just go ahead
                 // and SetHistoryEntry now.
                 SetHistoryEntry(&mOSHE, mLSHE);
@@ -8324,12 +8319,13 @@ public:
             mTypeHint = aTypeHint;
         }
     }
-    
+
     NS_IMETHOD Run() {
         return mDocShell->InternalLoad(mURI, mReferrer, mOwner, mFlags,
                                        nullptr, mTypeHint.get(),
-                                       mPostData, mHeadersData, mLoadType,
-                                       mSHEntry, mFirstParty, nullptr, nullptr);
+                                       NullString(), mPostData, mHeadersData,
+                                       mLoadType, mSHEntry, mFirstParty,
+                                       nullptr, nullptr);
     }
 
 private:
@@ -8374,6 +8370,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
                          uint32_t aFlags,
                          const PRUnichar *aWindowTarget,
                          const char* aTypeHint,
+                         const nsAString& aFileName,
                          nsIInputStream * aPostData,
                          nsIInputStream * aHeadersData,
                          uint32_t aLoadType,
@@ -8393,7 +8390,6 @@ nsDocShell::InternalLoad(nsIURI * aURI,
         PR_LogPrint("DOCSHELL %p InternalLoad %s\n", this, spec.get());
     }
 #endif
-    
     // Initialize aDocShell/aRequest
     if (aDocShell) {
         *aDocShell = nullptr;
@@ -8608,6 +8604,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
                                               aFlags,
                                               nullptr,         // No window target
                                               aTypeHint,
+                                              NullString(),    // No forced download
                                               aPostData,
                                               aHeadersData,
                                               aLoadType,
@@ -9102,8 +9099,8 @@ nsDocShell::InternalLoad(nsIURI * aURI,
     nsCOMPtr<nsIRequest> req;
     rv = DoURILoad(aURI, aReferrer,
                    !(aFlags & INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER),
-                   owner, aTypeHint, aPostData, aHeadersData, aFirstParty,
-                   aDocShell, getter_AddRefs(req),
+                   owner, aTypeHint, aFileName, aPostData, aHeadersData,
+                   aFirstParty, aDocShell, getter_AddRefs(req),
                    (aFlags & INTERNAL_LOAD_FLAGS_FIRST_LOAD) != 0,
                    (aFlags & INTERNAL_LOAD_FLAGS_BYPASS_CLASSIFIER) != 0,
                    (aFlags & INTERNAL_LOAD_FLAGS_FORCE_ALLOW_COOKIES) != 0);
@@ -9176,6 +9173,7 @@ nsDocShell::DoURILoad(nsIURI * aURI,
                       bool aSendReferrer,
                       nsISupports * aOwner,
                       const char * aTypeHint,
+                      const nsAString & aFileName,
                       nsIInputStream * aPostData,
                       nsIInputStream * aHeadersData,
                       bool aFirstParty,
@@ -9275,11 +9273,19 @@ nsDocShell::DoURILoad(nsIURI * aURI,
     if (aTypeHint && *aTypeHint) {
         channel->SetContentType(nsDependentCString(aTypeHint));
         mContentTypeHint = aTypeHint;
-    }
-    else {
+    } else {
         mContentTypeHint.Truncate();
     }
-    
+
+    if (!aFileName.IsVoid()) {
+        rv = channel->SetContentDisposition(nsIChannel::DISPOSITION_ATTACHMENT);
+        NS_ENSURE_SUCCESS(rv, rv);
+        if (!aFileName.IsEmpty()) {
+            rv = channel->SetContentDispositionFilename(aFileName);
+            NS_ENSURE_SUCCESS(rv, rv);
+        }
+    }
+
     //hack
     nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
     nsCOMPtr<nsIHttpChannelInternal> httpChannelInternal(do_QueryInterface(channel));
@@ -10316,10 +10322,13 @@ nsDocShell::ShouldAddToSessionHistory(nsIURI * aURI)
         }
     }
 
-    rv = aURI->GetSpec(buf);
-    NS_ENSURE_SUCCESS(rv, true);
-
     rv = Preferences::GetDefaultCString("browser.newtab.url", &pref);
+
+    if (NS_FAILED(rv)) {
+        return true;
+    }
+
+    rv = aURI->GetSpec(buf);
     NS_ENSURE_SUCCESS(rv, true);
 
     return !buf.Equals(pref);
@@ -10589,11 +10598,12 @@ nsDocShell::LoadHistoryEntry(nsISHEntry * aEntry, uint32_t aLoadType)
                       owner,
                       INTERNAL_LOAD_FLAGS_NONE, // Do not inherit owner from document (security-critical!)
                       nullptr,            // No window target
-                      contentType.get(), // Type hint
-                      postData,          // Post data stream
+                      contentType.get(),  // Type hint
+                      NullString(),       // No forced file download
+                      postData,           // Post data stream
                       nullptr,            // No headers stream
-                      aLoadType,         // Load type
-                      aEntry,            // SHEntry
+                      aLoadType,          // Load type
+                      aEntry,             // SHEntry
                       true,
                       nullptr,            // No nsIDocShell
                       nullptr);           // No nsIRequest
@@ -11826,7 +11836,8 @@ public:
   OnLinkClickEvent(nsDocShell* aHandler, nsIContent* aContent,
                    nsIURI* aURI,
                    const PRUnichar* aTargetSpec,
-                   nsIInputStream* aPostDataStream, 
+                   const nsAString& aFileName,
+                   nsIInputStream* aPostDataStream,
                    nsIInputStream* aHeadersDataStream,
                    bool aIsTrusted);
 
@@ -11837,8 +11848,8 @@ public:
     nsCxPusher pusher;
     if (mIsTrusted || pusher.Push(mContent)) {
       mHandler->OnLinkClickSync(mContent, mURI,
-                                mTargetSpec.get(), mPostDataStream,
-                                mHeadersDataStream,
+                                mTargetSpec.get(), mFileName,
+                                mPostDataStream, mHeadersDataStream,
                                 nullptr, nullptr);
     }
     return NS_OK;
@@ -11848,6 +11859,7 @@ private:
   nsRefPtr<nsDocShell>     mHandler;
   nsCOMPtr<nsIURI>         mURI;
   nsString                 mTargetSpec;
+  nsString                mFileName;
   nsCOMPtr<nsIInputStream> mPostDataStream;
   nsCOMPtr<nsIInputStream> mHeadersDataStream;
   nsCOMPtr<nsIContent>     mContent;
@@ -11859,12 +11871,14 @@ OnLinkClickEvent::OnLinkClickEvent(nsDocShell* aHandler,
                                    nsIContent *aContent,
                                    nsIURI* aURI,
                                    const PRUnichar* aTargetSpec,
+                                   const nsAString& aFileName,
                                    nsIInputStream* aPostDataStream,
                                    nsIInputStream* aHeadersDataStream,
                                    bool aIsTrusted)
   : mHandler(aHandler)
   , mURI(aURI)
   , mTargetSpec(aTargetSpec)
+  , mFileName(aFileName)
   , mPostDataStream(aPostDataStream)
   , mHeadersDataStream(aHeadersDataStream)
   , mContent(aContent)
@@ -11881,6 +11895,7 @@ NS_IMETHODIMP
 nsDocShell::OnLinkClick(nsIContent* aContent,
                         nsIURI* aURI,
                         const PRUnichar* aTargetSpec,
+                        const nsAString& aFileName,
                         nsIInputStream* aPostDataStream,
                         nsIInputStream* aHeadersDataStream,
                         bool aIsTrusted)
@@ -11920,7 +11935,7 @@ nsDocShell::OnLinkClick(nsIContent* aContent,
     target = aTargetSpec;  
 
   nsCOMPtr<nsIRunnable> ev =
-      new OnLinkClickEvent(this, aContent, aURI, target.get(),
+      new OnLinkClickEvent(this, aContent, aURI, target.get(), aFileName, 
                            aPostDataStream, aHeadersDataStream, aIsTrusted);
   return NS_DispatchToCurrentThread(ev);
 }
@@ -11929,6 +11944,7 @@ NS_IMETHODIMP
 nsDocShell::OnLinkClickSync(nsIContent *aContent,
                             nsIURI* aURI,
                             const PRUnichar* aTargetSpec,
+                            const nsAString& aFileName,
                             nsIInputStream* aPostDataStream,
                             nsIInputStream* aHeadersDataStream,
                             nsIDocShell** aDocShell,
@@ -12021,7 +12037,7 @@ nsDocShell::OnLinkClickSync(nsIContent *aContent,
   if (!clonedURI) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  
+
   nsresult rv = InternalLoad(clonedURI,                 // New URI
                              referer,                   // Referer URI
                              aContent->NodePrincipal(), // Owner is our node's
@@ -12029,11 +12045,12 @@ nsDocShell::OnLinkClickSync(nsIContent *aContent,
                              INTERNAL_LOAD_FLAGS_NONE,
                              target.get(),              // Window target
                              NS_LossyConvertUTF16toASCII(typeHint).get(),
+                             aFileName,                 // Download as file
                              aPostDataStream,           // Post data stream
                              aHeadersDataStream,        // Headers stream
                              LOAD_LINK,                 // Load type
-                             nullptr,                    // No SHEntry
-                             true,                   // first party site
+                             nullptr,                   // No SHEntry
+                             true,                      // first party site
                              aDocShell,                 // DocShell out-param
                              aRequest);                 // Request out-param
   if (NS_SUCCEEDED(rv)) {

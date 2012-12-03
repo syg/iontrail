@@ -333,7 +333,7 @@ class GlobalObject : public JSObject
         return &getPrototype(JSProto_Iterator).toObject();
     }
 
-    JSObject *getIntrinsicsHolder() {
+    JSObject *intrinsicsHolder() {
         JS_ASSERT(!getSlotRef(INTRINSICS).isUndefined());
         return &getSlotRef(INTRINSICS).toObject();
     }
@@ -392,11 +392,10 @@ class GlobalObject : public JSObject
         RootedId id(cx, NameToId(name));
         if (HasDataProperty(cx, holder, id, value.address()))
             return true;
-        bool ok = cx->runtime->cloneSelfHostedValueById(cx, id, holder, value);
-        if (!ok)
+        Rooted<PropertyName*> rootedName(cx, name);
+        if (!cx->runtime->cloneSelfHostedValue(cx, rootedName, value))
             return false;
-
-        ok = JS_DefinePropertyById(cx, holder, id, value, NULL, NULL, 0);
+        mozilla::DebugOnly<bool> ok = JS_DefinePropertyById(cx, holder, id, value, NULL, NULL, 0);
         JS_ASSERT(ok);
         return true;
     }

@@ -896,6 +896,12 @@ public:
   { return false; }
 
   /**
+   * Returns true if all layers that can be active should be forced to be
+   * active. Requires setting the pref layers.force-active=true.
+   */
+  static bool ForceActiveLayers();
+
+  /**
    * @return LAYER_NONE if BuildLayer will return null. In this case
    * there is no layer for the item, and Paint should be called instead
    * to paint the content using Thebes.
@@ -914,6 +920,9 @@ public:
    * changing frequently. In this case it makes sense to keep the layer
    * as a separate buffer in VRAM and composite it into the destination
    * every time we paint.
+   *
+   * Users of GetLayerState should check ForceActiveLayers() and if it returns
+   * true, change a returned value of LAYER_INACTIVE to LAYER_ACTIVE.
    */
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                    LayerManager* aManager,
@@ -1551,7 +1560,8 @@ public:
     : nsDisplayItem(aBuilder, aFrame)
   {}
 
-  virtual already_AddRefed<ImageContainer> GetContainer(nsDisplayListBuilder* aBuilder) = 0;
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder* aBuilder) = 0;
   virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) = 0;
 
   virtual bool SupportsOptimizingToImage() { return true; }
@@ -1877,7 +1887,8 @@ public:
                                          const nsDisplayItemGeometry* aGeometry,
                                          nsRegion* aInvalidRegion) MOZ_OVERRIDE;
   
-  virtual already_AddRefed<ImageContainer> GetContainer(nsDisplayListBuilder *aBuilder) MOZ_OVERRIDE;
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder *aBuilder) MOZ_OVERRIDE;
   virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) MOZ_OVERRIDE;
 
   static nsRegion GetInsideClipRegion(nsDisplayItem* aItem, nsPresContext* aPresContext, uint8_t aClip,
@@ -1886,10 +1897,11 @@ protected:
   typedef class mozilla::layers::ImageContainer ImageContainer;
   typedef class mozilla::layers::ImageLayer ImageLayer;
 
-  bool TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder);
+  bool TryOptimizeToImageLayer(LayerManager* aManager, nsDisplayListBuilder* aBuilder);
   bool IsSingleFixedPositionImage(nsDisplayListBuilder* aBuilder,
                                   const nsRect& aClipRect,
                                   gfxRect* aDestRect);
+  nsRect GetBoundsInternal();
 
   // Cache the result of nsCSSRendering::FindBackground. Always null if
   // mIsThemed is true or if FindBackground returned false.
@@ -1897,6 +1909,8 @@ protected:
   /* If this background can be a simple image layer, we store the format here. */
   nsRefPtr<ImageContainer> mImageContainer;
   gfxRect mDestRect;
+  /* Bounds of this display item */
+  nsRect mBounds;
   uint32_t mLayer;
 
   nsITheme::Transparency mThemeTransparency;

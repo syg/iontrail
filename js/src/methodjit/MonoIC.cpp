@@ -1002,7 +1002,7 @@ class CallCompiler : public BaseCompiler
         /* Guard that it's the same script. */
         Address scriptAddr(ic.funObjReg, JSFunction::offsetOfNativeOrScript());
         Jump funGuard = masm.branchPtr(Assembler::NotEqual, scriptAddr,
-                                       ImmPtr(obj->toFunction()->script().get(nogc)));
+                                       ImmPtr(obj->toFunction()->nonLazyScript().get(nogc)));
         Jump done = masm.jump();
 
         LinkerHelper linker(masm, JSC::JAEGER_CODE);
@@ -1308,7 +1308,7 @@ class CallCompiler : public BaseCompiler
                 !ic.hasIonStub() &&
                 ic.frameSize.isStatic() &&
                 ic.frameSize.staticArgc() <= ion::SNAPSHOT_MAX_NARGS &&
-                fun->script()->hasIonScript())
+                fun->hasScript() && fun->nonLazyScript()->hasIonScript())
             {
                 if (!generateIonStub())
                     THROWV(NULL);
@@ -1319,7 +1319,7 @@ class CallCompiler : public BaseCompiler
 
         AutoAssertNoGC nogc;
         JS_ASSERT(fun);
-        JSScript *script = fun->script().get(nogc);
+        JSScript *script = fun->nonLazyScript().get(nogc);
         JS_ASSERT(script);
 
         uint32_t flags = callingNew ? StackFrame::CONSTRUCTING : 0;
@@ -1338,7 +1338,8 @@ class CallCompiler : public BaseCompiler
             } else if (ic.fastGuardedObject &&
                        !ic.hasJsFunCheck &&
                        !ic.fastGuardedNative &&
-                       ic.fastGuardedObject->toFunction()->script() == fun->script()) {
+                       ic.fastGuardedObject->toFunction()->nonLazyScript() == fun->nonLazyScript())
+            {
                 /*
                  * Note: Multiple "function guard" stubs are not yet
                  * supported, thus the fastGuardedNative check.
@@ -1493,7 +1494,7 @@ ic::GenerateArgumentCheckStub(VMFrame &f)
     JITScript *jit = f.jit();
     StackFrame *fp = f.fp();
     JSFunction *fun = fp->fun();
-    JSScript *script = fun->script().get(nogc);
+    JSScript *script = fun->nonLazyScript().get(nogc);
 
     if (jit->argsCheckPool)
         jit->resetArgsCheck();

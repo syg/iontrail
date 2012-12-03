@@ -31,9 +31,11 @@
 #include "nsSize.h"
 #include "nsNetCID.h"
 #include "nsIContent.h"
-
-#include "mozilla/Preferences.h"
 #include "nsVersionComparator.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/unused.h"
+
+using namespace mozilla;
 
 #ifdef MOZ_WIDGET_ANDROID
 #include "ANPBase.h"
@@ -47,7 +49,6 @@
 #include "GLContextProvider.h"
 #include "TexturePoolOGL.h"
 
-using namespace mozilla;
 using namespace mozilla::gl;
 
 typedef nsNPAPIPluginInstance::TextureInfo TextureInfo;
@@ -129,7 +130,10 @@ public:
     if (mTextureInfo.mWidth == 0 || mTextureInfo.mHeight == 0)
       return 0;
 
-    SharedTextureHandle handle = sPluginContext->CreateSharedHandle(TextureImage::ThreadShared, (void*)mTextureInfo.mTexture, GLContext::TextureID);
+    SharedTextureHandle handle =
+      sPluginContext->CreateSharedHandle(GLContext::SameProcess,
+                                         (void*)mTextureInfo.mTexture,
+                                         GLContext::TextureID);
 
     // We want forget about this now, so delete the texture. Assigning it to zero
     // ensures that we create a new one in Lock()
@@ -575,7 +579,7 @@ nsresult nsNPAPIPluginInstance::SetWindow(NPWindow* window)
 
     NPPAutoPusher nppPusher(&mNPP);
 
-    NPError error;
+    DebugOnly<NPError> error;
     NS_TRY_SAFE_CALL_RETURN(error, (*pluginFunctions->setwindow)(&mNPP, (NPWindow*)window), this);
 
     mInPluginInitCall = oldVal;
@@ -583,7 +587,7 @@ nsresult nsNPAPIPluginInstance::SetWindow(NPWindow* window)
     NPP_PLUGIN_LOG(PLUGIN_LOG_NORMAL,
     ("NPP SetWindow called: this=%p, [x=%d,y=%d,w=%d,h=%d], clip[t=%d,b=%d,l=%d,r=%d], return=%d\n",
     this, window->x, window->y, window->width, window->height,
-    window->clipRect.top, window->clipRect.bottom, window->clipRect.left, window->clipRect.right, error));
+    window->clipRect.top, window->clipRect.bottom, window->clipRect.left, window->clipRect.right, (NPError)error));
   }
   return NS_OK;
 }
@@ -1000,7 +1004,9 @@ SharedTextureHandle nsNPAPIPluginInstance::CreateSharedHandle()
     return mContentTexture->CreateSharedHandle();
   } else if (mContentSurface) {
     EnsureGLContext();
-    return sPluginContext->CreateSharedHandle(TextureImage::ThreadShared, mContentSurface, GLContext::SurfaceTexture);
+    return sPluginContext->CreateSharedHandle(GLContext::SameProcess,
+                                              mContentSurface,
+                                              GLContext::SurfaceTexture);
   } else return 0;
 }
 

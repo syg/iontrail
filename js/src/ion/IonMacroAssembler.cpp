@@ -15,7 +15,7 @@ using namespace js;
 using namespace js::ion;
 
 template <typename T> void
-MacroAssembler::guardTypeSet(const T &address, types::TypeSet *types,
+MacroAssembler::guardTypeSet(const T &address, const types::TypeSet *types,
                              Register scratch, Label *mismatched)
 {
     JS_ASSERT(!types->unknown());
@@ -64,9 +64,9 @@ MacroAssembler::guardTypeSet(const T &address, types::TypeSet *types,
     bind(&matched);
 }
 
-template void MacroAssembler::guardTypeSet(const Address &address, types::TypeSet *types,
+template void MacroAssembler::guardTypeSet(const Address &address, const types::TypeSet *types,
                                            Register scratch, Label *mismatched);
-template void MacroAssembler::guardTypeSet(const ValueOperand &value, types::TypeSet *types,
+template void MacroAssembler::guardTypeSet(const ValueOperand &value, const types::TypeSet *types,
                                            Register scratch, Label *mismatched);
 
 void
@@ -629,3 +629,47 @@ MacroAssembler::generateBailoutTail(Register scratch)
     }
 }
 
+void printf0_(const char *output) {
+    printf("%s", output);
+}
+
+void
+MacroAssembler::printf(const char *output)
+{
+    RegisterSet regs = RegisterSet::Volatile();
+    PushRegsInMask(regs);
+
+    Register temp = regs.takeGeneral();
+
+    setupUnalignedABICall(1, temp);
+    movePtr(ImmWord(output), temp);
+    passABIArg(temp);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, printf0_));
+
+    PopRegsInMask(RegisterSet::Volatile());
+}
+
+void printf1_(const char *output, uintptr_t value) {
+    char *line = JS_sprintf_append(NULL, output, value);
+    printf("%s", line);
+    js_free(line);
+}
+
+void
+MacroAssembler::printf(const char *output, Register value)
+{
+    RegisterSet regs = RegisterSet::Volatile();
+    PushRegsInMask(regs);
+
+    regs.maybeTake(value);
+
+    Register temp = regs.takeGeneral();
+
+    setupUnalignedABICall(2, temp);
+    movePtr(ImmWord(output), temp);
+    passABIArg(temp);
+    passABIArg(value);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, printf1_));
+
+    PopRegsInMask(RegisterSet::Volatile());
+}

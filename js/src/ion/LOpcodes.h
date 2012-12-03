@@ -178,6 +178,7 @@
     _(InArray)                      \
     _(InstanceOfO)                  \
     _(InstanceOfV)                  \
+    _(CallInstanceOf)               \
     _(InterruptCheck)               \
     _(ParCheckInterrupt)            \
     _(FunctionBoundary)             \

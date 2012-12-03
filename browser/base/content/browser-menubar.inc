@@ -505,7 +505,8 @@
                         accesskey="&addons.accesskey;"
                         key="key_openAddons"
                         command="Tools:Addons"/>
-              <menu id="menu_socialAmbientMenu">
+              <menu id="menu_socialAmbientMenu"
+                    observes="socialActiveBroadcaster">
                 <menupopup id="menu_social-statusarea-popup">
                   <menuitem class="social-statusarea-user menuitem-iconic" pack="start" align="center"
                             observes="socialBroadcaster_userDetails"
@@ -534,6 +535,12 @@
                             command="Social:ToggleNotifications"
                             label="&social.toggleNotifications.label;"
                             accesskey="&social.toggleNotifications.accesskey;"/>
+                  <menuitem id="menu_focusChatBar"
+                            label="&social.chatBar.label;"
+                            accesskey="&social.chatBar.accesskey;"
+                            key="focusChatBar"
+                            command="Social:FocusChat"
+                            class="show-only-for-keyboard"/>
                   <menuseparator class="social-statusarea-separator"/>
                   <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
                   <menuitem class="social-remove-menuitem" command="Social:Remove"/>
@@ -557,20 +564,34 @@
                     label="&webDeveloperMenu.label;"
                     accesskey="&webDeveloperMenu.accesskey;">
                 <menupopup id="menuWebDeveloperPopup">
-                  <menuitem id="menu_devToolbar" observes="devtoolsMenuBroadcaster_DevToolbar" accesskey="&devToolbarMenu.accesskey;"/>
-                  <menuitem id="webConsole" observes="devtoolsMenuBroadcaster_WebConsole" accesskey="&webConsoleCmd.accesskey;"/>
-                  <menuitem id="menu_remoteWebConsole" observes="devtoolsMenuBroadcaster_RemoteWebConsole"/>
-                  <menuitem id="menu_pageinspect" observes="devtoolsMenuBroadcaster_Inspect" accesskey="&inspectMenu.accesskey;"/>
-                  <menuitem id="menu_responsiveUI" observes="devtoolsMenuBroadcaster_ResponsiveUI" accesskey="&responsiveDesignTool.accesskey;"/>
-                  <menuitem id="menu_debugger" observes="devtoolsMenuBroadcaster_Debugger" accesskey="&debuggerMenu.accesskey;"/>
-                  <menuitem id="menu_remoteDebugger" observes="devtoolsMenuBroadcaster_RemoteDebugger"/>
-                  <menuitem id="menu_chromeDebugger" observes="devtoolsMenuBroadcaster_ChromeDebugger"/>
-                  <menuitem id="menu_scratchpad" observes="devtoolsMenuBroadcaster_Scratchpad" accesskey="&scratchpad.accesskey;"/>
-                  <menuitem id="menu_styleeditor" observes="devtoolsMenuBroadcaster_StyleEditor" accesskey="&styleeditor.accesskey;"/>
-                  <menuitem id="menu_pageSource" observes="devtoolsMenuBroadcaster_PageSource" accesskey="&pageSourceCmd.accesskey;"/>
-                  <menuitem id="javascriptConsole" observes="devtoolsMenuBroadcaster_ErrorConsole" accesskey="&errorConsoleCmd.accesskey;"/>
+                  <menuitem id="menu_devToolbox"
+                            observes="devtoolsMenuBroadcaster_DevToolbox"
+                            accesskey="&devToolbox.accesskey;"/>
+                  <menuseparator id="menu_devtools_separator"/>
+                  <menuitem id="menu_devToolbar"
+                            observes="devtoolsMenuBroadcaster_DevToolbar"
+                            accesskey="&devToolbarMenu.accesskey;"/>
+                  <menuitem id="menu_chromeDebugger"
+                            observes="devtoolsMenuBroadcaster_ChromeDebugger"/>
+                  <menuitem id="menu_responsiveUI"
+                            observes="devtoolsMenuBroadcaster_ResponsiveUI"
+                            accesskey="&responsiveDesignTool.accesskey;"/>
+                  <menuitem id="menu_scratchpad"
+                            observes="devtoolsMenuBroadcaster_Scratchpad"
+                            accesskey="&scratchpad.accesskey;"/>
+                  <menuitem id="menu_pageSource"
+                            observes="devtoolsMenuBroadcaster_PageSource"
+                            accesskey="&pageSourceCmd.accesskey;"/>
+                  <menuitem id="javascriptConsole"
+                            observes="devtoolsMenuBroadcaster_ErrorConsole"
+                            accesskey="&errorConsoleCmd.accesskey;"/>
+                  <menuseparator id="menu_devToolsConnectSeparator"/>
+                  <menuitem id="menu_devtools_connect"
+                            observes="devtoolsMenuBroadcaster_connect"/>
                   <menuseparator id="devToolsEndSeparator"/>
-                  <menuitem id="getMoreDevtools" observes="devtoolsMenuBroadcaster_GetMoreTools" accesskey="&getMoreDevtoolsCmd.accesskey;"/>
+                  <menuitem id="getMoreDevtools"
+                            observes="devtoolsMenuBroadcaster_GetMoreTools"
+                            accesskey="&getMoreDevtoolsCmd.accesskey;"/>
                 </menupopup>
               </menu>
               <menuitem id="menu_pageInfo"

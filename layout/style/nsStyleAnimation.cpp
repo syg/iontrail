@@ -487,7 +487,7 @@ nsStyleAnimation::ComputeDistance(nsCSSProperty aProperty,
       unit[1] = GetCommonUnit(aProperty, pair1->mYValue.GetUnit(),
                               pair2->mYValue.GetUnit());
       if (unit[0] == eCSSUnit_Null || unit[1] == eCSSUnit_Null ||
-          unit[0] == eCSSUnit_URL) {
+          unit[0] == eCSSUnit_URL || unit[0] == eCSSUnit_Enumerated) {
         return false;
       }
 
@@ -1827,7 +1827,7 @@ nsStyleAnimation::AddWeighted(nsCSSProperty aProperty,
       unit[1] = GetCommonUnit(aProperty, pair1->mYValue.GetUnit(),
                               pair2->mYValue.GetUnit());
       if (unit[0] == eCSSUnit_Null || unit[1] == eCSSUnit_Null ||
-          unit[0] == eCSSUnit_URL) {
+          unit[0] == eCSSUnit_URL || unit[0] == eCSSUnit_Enumerated) {
         return false;
       }
 
@@ -2338,12 +2338,9 @@ nsStyleAnimation::ComputeValue(nsCSSProperty aProperty,
 
 bool
 nsStyleAnimation::UncomputeValue(nsCSSProperty aProperty,
-                                 nsPresContext* aPresContext,
                                  const Value& aComputedValue,
                                  nsCSSValue& aSpecifiedValue)
 {
-  NS_ABORT_IF_FALSE(aPresContext, "null pres context");
-
   switch (aComputedValue.GetUnit()) {
     case eUnit_Normal:
       aSpecifiedValue.SetNormalValue();
@@ -2430,11 +2427,9 @@ nsStyleAnimation::UncomputeValue(nsCSSProperty aProperty,
 
 bool
 nsStyleAnimation::UncomputeValue(nsCSSProperty aProperty,
-                                 nsPresContext* aPresContext,
                                  const Value& aComputedValue,
                                  nsAString& aSpecifiedValue)
 {
-  NS_ABORT_IF_FALSE(aPresContext, "null pres context");
   aSpecifiedValue.Truncate(); // Clear outparam, if it's not already empty
 
   if (aComputedValue.GetUnit() == eUnit_UnparsedString) {
@@ -2442,8 +2437,7 @@ nsStyleAnimation::UncomputeValue(nsCSSProperty aProperty,
     return true;
   }
   nsCSSValue val;
-  if (!nsStyleAnimation::UncomputeValue(aProperty, aPresContext,
-                                        aComputedValue, val)) {
+  if (!nsStyleAnimation::UncomputeValue(aProperty, aComputedValue, val)) {
     return false;
   }
 
@@ -3126,6 +3120,17 @@ nsStyleAnimation::ExtractComputedValue(nsCSSProperty aProperty,
                                      doc->GetDocumentURI(),
                                      doc->NodePrincipal());
         pair->mXValue.SetURLValue(url);
+        pair->mYValue.SetColorValue(paint.mFallbackColor);
+        aComputedValue.SetAndAdoptCSSValuePairValue(pair.forget(),
+                                                    eUnit_CSSValuePair);
+        return true;
+      }
+      if (paint.mType == eStyleSVGPaintType_ObjectFill ||
+          paint.mType == eStyleSVGPaintType_ObjectStroke) {
+        nsAutoPtr<nsCSSValuePair> pair(new nsCSSValuePair);
+        pair->mXValue.SetIntValue(paint.mType == eStyleSVGPaintType_ObjectFill ?
+                                    NS_COLOR_OBJECTFILL : NS_COLOR_OBJECTSTROKE,
+                                  eCSSUnit_Enumerated);
         pair->mYValue.SetColorValue(paint.mFallbackColor);
         aComputedValue.SetAndAdoptCSSValuePairValue(pair.forget(),
                                                     eUnit_CSSValuePair);

@@ -1,6 +1,6 @@
 [
 {
-"clang_version": "r167750"
+"clang_version": "r168596"
 },
 {
 "size": 47,
@@ -9,8 +9,8 @@
 "filename": "setup.sh"
 },
 {
-"size": 56161789,
-"digest": "43a35be63f9ea1c73a1b22532b5484b131f0c25bdb6a2f39e31c968b6c3477f6640450cc8dab8e17df80f20e367b8cbc0a74986a4eefd7ac9b9adf2b0859e55e",
+"size": 56147341,
+"digest": "4baed5cbe0189a509b6a328ee35ee488250677f8ea149e6d01af74c7a4a27c898a4112f78af57b33a4e788b2947813b65ab0922e06b67bd504878803dab44f5c",
 "algorithm": "sha512",
 "filename": "clang.tar.bz2"
 }

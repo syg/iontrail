@@ -1763,6 +1763,9 @@ nsObjectLoadingContent::LoadObject(bool aNotify,
       
       rv = mFrameLoader->CheckForRecursiveLoad(mURI);
       if (NS_FAILED(rv)) {
+        LOG(("OBJLC [%p]: Aborting recursive load", this));
+        mFrameLoader->Destroy();
+        mFrameLoader = nullptr;
         mType = eType_Null;
         break;
       }
@@ -1829,6 +1832,9 @@ nsObjectLoadingContent::LoadObject(bool aNotify,
       CloseChannel();
     }
 
+    // Don't try to initialize final listener below
+    finalListener = nullptr;
+
     // Don't notify, as LoadFallback doesn't know of our previous state
     // (so really this is just setting mFallbackType)
     LoadFallback(fallbackType, false);
@@ -1841,8 +1847,6 @@ nsObjectLoadingContent::LoadObject(bool aNotify,
   // Pass load on to finalListener if loading with a channel
   //
 
-  // If we re-entered and loaded something else, that load will have cleaned up
-  // our our listener.
   if (!mIsLoading) {
     LOG(("OBJLC [%p]: Re-entered before dispatching to final listener", this));
   } else if (finalListener) {
@@ -1867,6 +1871,7 @@ nsObjectLoadingContent::LoadObject(bool aNotify,
       mIsLoading = true;
       UnloadObject(false);
       NS_ENSURE_TRUE(mIsLoading, NS_OK);
+      CloseChannel();
       LoadFallback(fallbackType, true);
     }
   }
@@ -2558,9 +2563,12 @@ nsObjectLoadingContent::ShouldPlay(FallbackType &aReason)
   // the system principal, i.e. in chrome pages. That way the click-to-play
   // code here wouldn't matter at all. Bug 775301 is tracking this.
   if (!nsContentUtils::IsSystemPrincipal(topDoc->NodePrincipal())) {
+    nsAutoCString permissionString;
+    rv = pluginHost->GetPermissionStringForType(mContentType, permissionString);
+    NS_ENSURE_SUCCESS(rv, false);
     uint32_t permission;
     rv = permissionManager->TestPermissionFromPrincipal(topDoc->NodePrincipal(),
-                                                        "plugins",
+                                                        permissionString.Data(),
                                                         &permission);
     NS_ENSURE_SUCCESS(rv, false);
     allowPerm = permission == nsIPermissionManager::ALLOW_ACTION;

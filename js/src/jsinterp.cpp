@@ -379,6 +379,10 @@ js::InvokeKernel(JSContext *cx, CallArgs args, MaybeConstruct construct)
     if (fun->isNative())
         return CallJSNative(cx, fun->native(), args);
 
+    RootedScript script(cx, fun->getOrCreateScript(cx));
+    if (!script)
+        return false;
+
     if (!TypeMonitorCall(cx, args, construct))
         return false;
 
@@ -388,7 +392,6 @@ js::InvokeKernel(JSContext *cx, CallArgs args, MaybeConstruct construct)
         return false;
 
     /* Run function until JSOP_STOP, JSOP_RETURN or error. */
-    RootedScript script(cx, fun->script());
     JSBool ok = RunScript(cx, script, ifg.fp());
 
     /* Propagate the return value out. */
@@ -2367,7 +2370,9 @@ BEGIN_CASE(JSOP_FUNCALL)
 
     InitialFrameFlags initial = construct ? INITIAL_CONSTRUCT : INITIAL_NONE;
     bool newType = cx->typeInferenceEnabled() && UseNewType(cx, script, regs.pc);
-    RawScript funScript = fun->script().unsafeGet();
+    RawScript funScript = fun->getOrCreateScript(cx).unsafeGet();
+    if (!funScript)
+        goto error;
     if (!cx->stack.pushInlineFrame(cx, regs, args, *fun, funScript, initial))
         goto error;
 
@@ -3059,7 +3064,7 @@ BEGIN_CASE(JSOP_ENDINIT)
 {
     /* FIXME remove JSOP_ENDINIT bug 588522 */
     JS_ASSERT(regs.stackDepth() >= 1);
-    JS_ASSERT(regs.sp[-1].isObject());
+    JS_ASSERT(regs.sp[-1].isObject() || regs.sp[-1].isUndefined());
 }
 END_CASE(JSOP_ENDINIT)
 

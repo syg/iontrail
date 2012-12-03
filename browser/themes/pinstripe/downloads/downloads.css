@@ -26,13 +26,12 @@
   cursor: pointer;
 }
 
-#downloadsPanel:not([hasdownloads]) > #downloadsHistory {
+#downloadsPanel:not([hasdownloads]) #downloadsHistory {
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
 }
 
-#downloadsSummary,
-#downloadsPanel[hasdownloads] > #downloadsHistory {
+#downloadsPanel[hasdownloads] #downloadsFooter {
   background: #e5e5e5;
   border-top: 1px solid hsla(0,0%,0%,.1);
   box-shadow: 0 -1px hsla(0,0%,100%,.5) inset, 0 1px 1px hsla(0,0%,0%,.03) inset;
@@ -49,7 +48,7 @@
   border-top-right-radius: 6px;
 }
 
-#downloadsPanel:not([hasdownloads]) > #downloadsHistory:-moz-focusring > .button-box {
+#downloadsPanel:not([hasdownloads]) #downloadsHistory:-moz-focusring > .button-box {
   border-bottom-left-radius: 6px;
   border-bottom-right-radius: 6px;
 }
@@ -66,6 +65,12 @@ richlistitem[type="download"] {
 #downloadsSummary {
   padding: 8px 38px 8px 12px;
   cursor: pointer;
+  -moz-user-focus: normal;
+}
+
+#downloadsSummary:-moz-focusring {
+  outline: 1px -moz-dialogtext dotted;
+  outline-offset: -5px;
 }
 
 #downloadsSummary > .downloadTypeIcon {
@@ -100,8 +105,8 @@ richlistitem[type="download"]:last-child {
 .downloadTypeIcon {
   -moz-margin-end: 8px;
   /* Prevent flickering when changing states. */
-  min-height: 32px;
-  min-width: 32px;
+  height: 32px;
+  width: 32px;
 }
 
 .blockedIcon {
@@ -159,13 +164,13 @@ richlistitem[type="download"][state="1"]:hover {
 .downloadButton.downloadShow {
   -moz-image-region: rect(16px, 16px, 32px, 0px);
 }
-richlistitem[type="download"][state="1"]:hover > .downloadButton.downloadShow {
+richlistitem[type="download"][state="1"]:hover .downloadButton.downloadShow {
   -moz-image-region: rect(16px, 32px, 32px, 16px);
 }
-richlistitem[type="download"][state="1"]:hover > .downloadButton.downloadShow:hover {
+richlistitem[type="download"][state="1"]:hover .downloadButton.downloadShow:hover {
   -moz-image-region: rect(16px, 48px, 32px, 32px);
 }
-richlistitem[type="download"][state="1"]:hover > .downloadButton.downloadShow:active {
+richlistitem[type="download"][state="1"]:hover .downloadButton.downloadShow:active {
   -moz-image-region: rect(16px, 64px, 32px, 48px);
 }
 

@@ -595,7 +595,7 @@ public:
 
   virtual int32_t GetNumberOfCatalogStyleSheets() const;
   virtual nsIStyleSheet* GetCatalogStyleSheetAt(int32_t aIndex) const;
-  virtual void AddCatalogStyleSheet(nsIStyleSheet* aSheet);
+  virtual void AddCatalogStyleSheet(nsCSSStyleSheet* aSheet);
   virtual void EnsureCatalogStyleSheet(const char *aStyleSheetURI);
 
   virtual nsresult LoadAdditionalStyleSheet(additionalSheetType aType, nsIURI* aSheetURI);
@@ -1053,7 +1053,7 @@ protected:
   nsresult SetFirstBaseNodeWithHref(nsIContent *node);
 
   inline void
-  SetDocumentDirectionality(mozilla::directionality::Directionality aDir)
+  SetDocumentDirectionality(mozilla::Directionality aDir)
   {
     mDirectionality = aDir;
   }

@@ -17,6 +17,7 @@ let SocialUI = {
 
     Services.prefs.addObserver("social.sidebar.open", this, false);
     Services.prefs.addObserver("social.toast-notifications.enabled", this, false);
+    Services.prefs.addObserver("social.active", this, false);
 
     gBrowser.addEventListener("ActivateSocialFeature", this._activationEventHandler, true, true);
 
@@ -26,6 +27,7 @@ let SocialUI = {
       SocialChatBar.update();
     });
 
+    this.updateActiveBroadcaster();
     Social.init(this._providerReady.bind(this));
   },
 
@@ -39,6 +41,7 @@ let SocialUI = {
 
     Services.prefs.removeObserver("social.sidebar.open", this);
     Services.prefs.removeObserver("social.toast-notifications.enabled", this);
+    Services.prefs.removeObserver("social.active", this);
   },
 
   showProfile: function SocialUI_showProfile() {
@@ -62,6 +65,7 @@ let SocialUI = {
           SocialSidebar.update();
           SocialChatBar.update();
           SocialFlyout.unload();
+          SocialMenu.populate();
         } catch (e) {
           Components.utils.reportError(e);
           throw e;
@@ -86,6 +90,8 @@ let SocialUI = {
         }
         break;
       case "nsPref:changed":
+        this.updateActiveBroadcaster();
+        this.updateToggleCommand();
         SocialSidebar.update();
         SocialToolbar.updateButton();
         SocialMenu.populate();
@@ -128,6 +134,11 @@ let SocialUI = {
     toggleCommand.setAttribute("label", label);
     toggleCommand.setAttribute("accesskey", accesskey);
     toggleCommand.setAttribute("hidden", Social.active ? "false" : "true");
+  },
+
+  updateActiveBroadcaster: function SocialUI_updateActiveBroadcaster() {
+    let broadcaster = document.getElementById("socialActiveBroadcaster");
+    broadcaster.hidden = !Social.active;
   },
 
   // This handles "ActivateSocialFeature" events fired against content documents
@@ -247,11 +258,14 @@ let SocialChatBar = {
       this.chatbar.openChat(aProvider, aURL, aCallback, aMode);
   },
   update: function() {
-    if (!this.isAvailable)
+    let command = document.getElementById("Social:FocusChat");
+    if (!this.isAvailable) {
       this.chatbar.removeAll();
-    else {
-      this.chatbar.hidden = document.mozFullScreen;
+      command.hidden = true;
+    } else {
+      this.chatbar.hidden = command.hidden = document.mozFullScreen;
     }
+    command.setAttribute("disabled", command.hidden ? "true" : "false");
   },
   focus: function SocialChatBar_focus() {
     this.chatbar.focus();
@@ -360,7 +374,7 @@ let SocialFlyout = {
 
     iframe.removeAttribute("src");
     iframe.webNavigation.loadURI("about:socialerror?mode=compactInfo", null, null, null, null);
-    sizeSocialPanelToContent(iframe);
+    sizeSocialPanelToContent(this.panel, iframe);
   },
 
   unload: function() {
@@ -385,8 +399,10 @@ let SocialFlyout = {
       iframe.addEventListener("load", function panelBrowserOnload(e) {
         iframe.removeEventListener("load", panelBrowserOnload, true);
         setTimeout(function() {
-          SocialFlyout._dynamicResizer.start(panel, iframe);
-          SocialFlyout.dispatchPanelEvent("socialFrameShow");
+          if (SocialFlyout._dynamicResizer) { // may go null if hidden quickly
+            SocialFlyout._dynamicResizer.start(panel, iframe);
+            SocialFlyout.dispatchPanelEvent("socialFrameShow");
+          }
         }, 0);
       }, true);
     }
@@ -497,6 +513,10 @@ let SocialShareButton = {
       shareButton.hidden = !Social.uiVisible || Social.provider.recommendInfo == null ||
                            !SocialUI.haveLoggedInUser() ||
                            !this.canSharePage(gBrowser.currentURI);
+    // also update the relevent command's disabled state so the keyboard
+    // shortcut only works when available.
+    let cmd = document.getElementById("Social:SharePage");
+    cmd.setAttribute("disabled", shareButton.hidden ? "true" : "false");
   },
 
   onClick: function SSB_onClick(aEvent) {
@@ -592,7 +612,6 @@ let SocialShareButton = {
 
 var SocialMenu = {
   populate: function SocialMenu_populate() {
-    // This menu is only accessible through keyboard navigation.
     let submenu = document.getElementById("menu_social-statusarea-popup");
     let ambientMenuItems = submenu.getElementsByClassName("ambient-menuitem");
     while (ambientMenuItems.length)
@@ -601,7 +620,7 @@ var SocialMenu = {
     let separator = document.getElementById("socialAmbientMenuSeparator");
     separator.hidden = true;
     let provider = Social.provider;
-    if (Social.active && provider) {
+    if (provider && provider.enabled) {
       let iconNames = Object.keys(provider.ambientNotificationIcons);
       for (let name of iconNames) {
         let icon = provider.ambientNotificationIcons[name];
@@ -645,7 +664,6 @@ var SocialToolbar = {
 
   updateButtonHiddenState: function SocialToolbar_updateButtonHiddenState() {
     let tbi = document.getElementById("social-toolbar-item");
-    tbi.hidden = !Social.active;
     let socialEnabled = Social.enabled;
     for (let className of ["social-statusarea-separator", "social-statusarea-user"]) {
       for (let element of document.getElementsByClassName(className))
@@ -697,7 +715,7 @@ var SocialToolbar = {
     let command = document.getElementById("Social:ToggleNotifications");
     command.setAttribute("checked", Services.prefs.getBoolPref("social.toast-notifications.enabled"));
 
-    const CACHE_PREF_NAME = "social.cached.notificationIcons";
+    const CACHE_PREF_NAME = "social.cached.ambientNotificationIcons";
     // provider.profile == undefined means no response yet from the provider
     // to tell us whether the user is logged in or not.
     if (!Social.provider || !Social.provider.enabled ||
@@ -714,7 +732,8 @@ var SocialToolbar = {
       // a cached version for this provider.
       let cached;
       try {
-        cached = JSON.parse(Services.prefs.getCharPref(CACHE_PREF_NAME));
+        cached = JSON.parse(Services.prefs.getComplexValue(CACHE_PREF_NAME,
+                                                           Ci.nsISupportsString).data);
       } catch (ex) {}
       if (cached && cached.provider == Social.provider.origin && cached.data) {
         icons = cached.data;
@@ -727,9 +746,11 @@ var SocialToolbar = {
     } else {
       // We have a logged in user - save the current set of icons back to the
       // "cache" so we can use them next startup.
-      Services.prefs.setCharPref(CACHE_PREF_NAME,
-                                 JSON.stringify({provider: Social.provider.origin,
-                                                 data: icons}));
+      let str = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
+      str.data = JSON.stringify({provider: Social.provider.origin, data: icons});
+      Services.prefs.setComplexValue(CACHE_PREF_NAME,
+                                     Ci.nsISupportsString,
+                                     str);
     }
 
     let notificationFrames = document.createDocumentFragment();
@@ -887,7 +908,8 @@ var SocialToolbar = {
     aNotificationFrame.removeAttribute("src");
     aNotificationFrame.webNavigation.loadURI("about:socialerror?mode=tryAgainOnly&url=" +
                                              encodeURIComponent(src), null, null, null, null);
-    sizeSocialPanelToContent(aNotificationFrame);
+    let panel = aNotificationFrame.parentNode;
+    sizeSocialPanelToContent(panel, aNotificationFrame);
   }
 }
 
@@ -1070,7 +1092,9 @@ SocialErrorListener.prototype = {
         break;
 
       case "sidebar":
-        SocialSidebar.setSidebarErrorMessage("sidebar-error");
+        // a frameworker error "trumps" a sidebar error.
+        let reason = Social.errorState ? Social.errorState : "sidebar-error";
+        SocialSidebar.setSidebarErrorMessage(reason);
         break;
 
       case "notification-panel":

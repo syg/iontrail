@@ -106,7 +106,7 @@ function openUILink(url, event, aIgnoreButton, aIgnoreAlt, aAllowThirdPartyFixup
       allowThirdPartyFixup: aAllowThirdPartyFixup,
       postData: aPostData,
       referrerURI: aReferrerURI,
-      initiatingDoc: event.target.ownerDocument
+      initiatingDoc: event ? event.target.ownerDocument : null
     };
   }
 
@@ -222,8 +222,14 @@ function openLinkIn(url, where, params) {
   // Currently, this parameter works only for where=="tab" or "current"
   var aIsUTF8               = params.isUTF8;
   var aInitiatingDoc        = params.initiatingDoc;
+  var aIsPrivate            = params.private;
 
   if (where == "save") {
+    if (!aInitiatingDoc) {
+      Components.utils.reportError("openUILink/openLinkIn was called with " +
+        "where == 'save' but without initiatingDoc.  See bug 814264.");
+      return;
+    }
     saveURL(url, null, null, true, null, aReferrerURI, aInitiatingDoc);
     return;
   }
@@ -262,8 +268,14 @@ function openLinkIn(url, where, params) {
     sa.AppendElement(aPostData);
     sa.AppendElement(allowThirdPartyFixupSupports);
 
-    Services.ww.openWindow(w || window, getBrowserURL(),
-                           null, "chrome,dialog=no,all", sa);
+    let features = "chrome,dialog=no,all";
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+    if (aIsPrivate) {
+      features += ",private";
+    }
+#endif
+
+    Services.ww.openWindow(w || window, getBrowserURL(), null, features, sa);
     return;
   }
 

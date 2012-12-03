@@ -123,6 +123,22 @@ then
 fi
 MOZ_BUILD_ROOT=`pwd`
 
+dnl Do not allow building if a clobber is required
+dnl ==============================================================
+dnl TODO Make this better, ideally this would clobber automaticially
+if test -e $_objdir/CLOBBER; then
+  if test $_topsrcdir/CLOBBER -nt $_objdir/CLOBBER; then
+    echo "	***"
+    echo "	*	CLOBBER has been modified indicating a clobber is required:"
+    cat $_topsrcdir/CLOBBER | sed '/^#/d' | sed 's/^/	*	/'
+    echo "	***"
+    exit 1
+    break;
+  fi
+else
+  touch $_objdir/CLOBBER
+fi
+
 MOZ_PATH_PROGS(PYTHON, $PYTHON python2.7 python2.6 python2.5 python)
 if test -z "$PYTHON"; then
     AC_MSG_ERROR([python was not found in \$PATH])
@@ -727,6 +743,18 @@ EOF
                 "$_WINDRES_RELEASE_VERSION" -lt "$WINDRES_RELEASE_VERSION"
         then
             AC_MSG_ERROR([windres version $WINDRES_VERSION or higher is required to build.])
+        fi
+
+        AC_CHECK_PROGS(MIDL, $target-widl widl)
+        if test -n "$MIDL"; then
+            case "$target" in
+            i*86-*)
+                MIDL_FLAGS="$MIDL_FLAGS --win32 -m32"
+                ;;
+            x86_64-*)
+                MIDL_FLAGS="$MIDL_FLAGS --win64 -m64"
+                ;;
+            esac
         fi
 
         MOZ_WINSDK_MAXVER=0x06020000
@@ -4193,6 +4221,7 @@ MOZ_OGG=1
 MOZ_RAW=
 MOZ_SYDNEYAUDIO=
 MOZ_SPEEX_RESAMPLER=1
+MOZ_SOUNDTOUCH=1
 MOZ_CUBEB=
 MOZ_VORBIS=
 MOZ_TREMOR=
@@ -4262,6 +4291,7 @@ ACCESSIBILITY=1
 MOZ_SYS_MSG=
 MOZ_TIME_MANAGER=
 MOZ_PAY=
+MOZ_AUDIO_CHANNEL_MANAGER=
 
 case "$target_os" in
     mingw*)
@@ -5164,6 +5194,16 @@ MOZ_ARG_DISABLE_BOOL(accessibility,
     ACCESSIBILITY=,
     ACCESSIBILITY=1 )
 if test "$ACCESSIBILITY"; then
+    case "$target" in
+    *-mingw*)
+        if test -z "$MIDL"; then
+            if test "$GCC" != "yes"; then
+                AC_MSG_ERROR([MIDL could not be found. Building accessibility without MIDL is not supported.])
+            else
+                AC_MSG_ERROR([You have accessibility enabled, but widl could not be found. Add --disable-accessibility to your mozconfig or install widl. See https://developer.mozilla.org/en-US/docs/Cross_Compile_Mozilla_for_Mingw32 for details.])
+            fi
+        fi
+    esac
     AC_DEFINE(ACCESSIBILITY)
 fi
 
@@ -5552,6 +5592,10 @@ if test -n "$MOZ_SPEEX_RESAMPLER"; then
     AC_DEFINE(MOZ_SPEEX_RESAMPLER)
 fi
 
+if test -n "$MOZ_SOUNDTOUCH"; then
+    AC_DEFINE(MOZ_SOUNDTOUCH)
+fi
+
 if test -n "$MOZ_CUBEB"; then
     case "$target" in
     *-android*|*-linuxandroid*)
@@ -5604,10 +5648,24 @@ dnl ========================================================
 
 dnl If using sydneyaudio with Linux, ensure that the alsa library is available
 if test -n "$MOZ_SYDNEYAUDIO" -a "$OS_TARGET" = "Linux"; then
+    MOZ_ALSA=1
+fi
+
+MOZ_ARG_ENABLE_BOOL(alsa,
+[  --enable-alsa          Enable Alsa support (default on Linux)],
+MOZ_ALSA=1,
+MOZ_ALSA=)
+
+if test -n "$MOZ_ALSA"; then
+    AC_DEFINE(MOZ_CUBEB)
     PKG_CHECK_MODULES(MOZ_ALSA, alsa, ,
          [echo "$MOZ_ALSA_PKG_ERRORS"
           AC_MSG_ERROR([Need alsa for Ogg, Wave or WebM decoding on Linux.  Disable with --disable-ogg --disable-wave --disable-webm.  (On Ubuntu, you might try installing the package libasound2-dev.)])])
 fi
+
+AC_SUBST(MOZ_ALSA)
+AC_SUBST(MOZ_ALSA_CFLAGS)
+AC_SUBST(MOZ_ALSA_LIBS)
 
 dnl ========================================================
 dnl = Enable PulseAudio
@@ -6690,6 +6748,7 @@ AC_SUBST(MOZ_GL_PROVIDER)
 AC_DEFINE_UNQUOTED(MOZ_GL_PROVIDER, GLContextProvider$MOZ_GL_PROVIDER)
 fi
 AC_SUBST(MOZ_GL_DEFAULT_PROVIDER)
+AC_DEFINE_UNQUOTED(GL_PROVIDER_$MOZ_GL_DEFAULT_PROVIDER)
 
 dnl ========================================================
 dnl = faststripe theme
@@ -7421,6 +7480,14 @@ if test -n "$MOZ_PAY"; then
     AC_DEFINE(MOZ_PAY)
 fi
 AC_SUBST(MOZ_PAY)
+
+dnl ========================================================
+dnl = Enable Support for AudioChannelManager API
+dnl ========================================================
+if test -n "$MOZ_AUDIO_CHANNEL_MANAGER"; then
+    AC_DEFINE(MOZ_AUDIO_CHANNEL_MANAGER)
+fi
+AC_SUBST(MOZ_AUDIO_CHANNEL_MANAGER)
 
 dnl ========================================================
 dnl = Support for demangling undefined symbols
@@ -8214,6 +8281,18 @@ if test -n "$MOZ_SERVICES_CRYPTO"; then
   AC_DEFINE(MOZ_SERVICES_CRYPTO)
 fi
 
+dnl Build Firefox Health Reporter Service
+AC_SUBST(MOZ_SERVICES_HEALTHREPORT)
+if test -n "$MOZ_SERVICES_HEALTHREPORT"; then
+  AC_DEFINE(MOZ_SERVICES_HEALTHREPORT)
+fi
+
+dnl Build Services metrics component
+AC_SUBST(MOZ_SERVICES_METRICS)
+if test -n "$MOZ_SERVICES_METRICS"; then
+  AC_DEFINE(MOZ_SERVICES_METRICS)
+fi
+
 dnl Build Notifications if required
 AC_SUBST(MOZ_SERVICES_NOTIFICATIONS)
 if test -n "$MOZ_SERVICES_NOTIFICATIONS"; then
@@ -8453,6 +8532,8 @@ AC_SUBST(MOZ_UA_OS_AGNOSTIC)
 if test -n "$MOZ_UA_OS_AGNOSTIC"; then
   AC_DEFINE(MOZ_UA_OS_AGNOSTIC)
 fi
+AC_DEFINE_UNQUOTED(MOZ_UA_BUILDID, "$MOZ_UA_BUILDID")
+AC_SUBST(MOZ_UA_BUILDID)
 
 # We can't use the static application.ini data when building against
 # a libxul SDK.
@@ -8593,6 +8674,7 @@ AC_SUBST(MOZ_APP_EXTRA_LIBS)
 AC_SUBST(MOZ_MEDIA)
 AC_SUBST(MOZ_SYDNEYAUDIO)
 AC_SUBST(MOZ_SPEEX_RESAMPLER)
+AC_SUBST(MOZ_SOUNDTOUCH)
 AC_SUBST(MOZ_CUBEB)
 AC_SUBST(MOZ_WAVE)
 AC_SUBST(MOZ_VORBIS)
@@ -8606,8 +8688,6 @@ AC_SUBST(MOZ_VP8_ERROR_CONCEALMENT)
 AC_SUBST(MOZ_VP8_ENCODER)
 AC_SUBST(MOZ_VP8)
 AC_SUBST(MOZ_OGG)
-AC_SUBST(MOZ_ALSA_LIBS)
-AC_SUBST(MOZ_ALSA_CFLAGS)
 AC_SUBST(VPX_AS)
 AC_SUBST(VPX_ASFLAGS)
 AC_SUBST(VPX_DASH_C_FLAG)
@@ -8858,6 +8938,8 @@ MOZ_DEBUG=${MOZ_DEBUG} \
 MOZ_WIDGET_TOOLKIT=${MOZ_WIDGET_TOOLKIT} \
 UNIVERSAL_BINARY=${UNIVERSAL_BINARY} \
 MOZ_CRASHREPORTER=${MOZ_CRASHREPORTER} \
+MOZ_APP_NAME=${MOZ_APP_NAME} \
+MOZ_PER_WINDOW_PRIVATE_BROWSING=${MOZ_PER_WINDOW_PRIVATE_BROWSING} \
   $PYTHON ${_topsrcdir}/config/writemozinfo.py ./mozinfo.json.tmp
 if cmp -s ./mozinfo.json.tmp ./mozinfo.json; then
   rm ./mozinfo.json.tmp

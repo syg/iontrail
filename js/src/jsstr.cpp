@@ -2370,10 +2370,10 @@ LambdaIsGetElem(JSObject &lambda)
         return NULL;
 
     JSFunction *fun = lambda.toFunction();
-    if (!fun->isInterpreted())
+    if (!fun->hasScript())
         return NULL;
 
-    RawScript script = fun->script().get(nogc);
+    RawScript script = fun->nonLazyScript().get(nogc);
     jsbytecode *pc = script->code;
 
     /*
@@ -3464,10 +3464,8 @@ js_ValueToSource(JSContext *cx, const Value &v)
     return ToString(cx, rval);
 }
 
-namespace js {
-
 bool
-EqualStrings(JSContext *cx, JSString *str1, JSString *str2, bool *result)
+js::EqualStrings(JSContext *cx, JSString *str1, JSString *str2, bool *result)
 {
     if (str1 == str2) {
         *result = true;
@@ -3492,7 +3490,7 @@ EqualStrings(JSContext *cx, JSString *str1, JSString *str2, bool *result)
 }
 
 bool
-EqualStrings(JSLinearString *str1, JSLinearString *str2)
+js::EqualStrings(JSLinearString *str1, JSLinearString *str2)
 {
     if (str1 == str2)
         return true;
@@ -3503,10 +3501,6 @@ EqualStrings(JSLinearString *str1, JSLinearString *str2)
 
     return PodEqual(str1->chars(), str2->chars(), length1);
 }
-
-}  /* namespace js */
-
-namespace js {
 
 static bool
 CompareStringsImpl(JSContext *cx, JSString *str1, JSString *str2, int32_t *result)
@@ -3531,17 +3525,13 @@ CompareStringsImpl(JSContext *cx, JSString *str1, JSString *str2, int32_t *resul
 }
 
 bool
-CompareStrings(JSContext *cx, JSString *str1, JSString *str2, int32_t *result)
+js::CompareStrings(JSContext *cx, JSString *str1, JSString *str2, int32_t *result)
 {
     return CompareStringsImpl(cx, str1, str2, result);
 }
 
-}  /* namespace js */
-
-namespace js {
-
 bool
-StringEqualsAscii(JSLinearString *str, const char *asciiBytes)
+js::StringEqualsAscii(JSLinearString *str, const char *asciiBytes)
 {
     size_t length = strlen(asciiBytes);
 #ifdef DEBUG
@@ -3557,8 +3547,6 @@ StringEqualsAscii(JSLinearString *str, const char *asciiBytes)
     }
     return true;
 }
-
-} /* namespacejs */
 
 size_t
 js_strlen(const jschar *s)
@@ -3604,10 +3592,8 @@ js_strchr_limit(const jschar *s, jschar c, const jschar *limit)
     return NULL;
 }
 
-namespace js {
-
 jschar *
-InflateString(JSContext *cx, const char *bytes, size_t *lengthp)
+js::InflateString(JSContext *cx, const char *bytes, size_t *lengthp)
 {
     AssertCanGC();
     size_t nchars;
@@ -3634,7 +3620,7 @@ InflateString(JSContext *cx, const char *bytes, size_t *lengthp)
 }
 
 jschar *
-InflateUTF8String(JSContext *cx, const char *bytes, size_t *lengthp)
+js::InflateUTF8String(JSContext *cx, const char *bytes, size_t *lengthp)
 {
     AssertCanGC();
     size_t nchars;
@@ -3667,7 +3653,7 @@ InflateUTF8String(JSContext *cx, const char *bytes, size_t *lengthp)
  * May be called with null cx.
  */
 char *
-DeflateString(JSContext *maybecx, const jschar *chars, size_t nchars)
+js::DeflateString(JSContext *maybecx, const jschar *chars, size_t nchars)
 {
     AutoAssertNoGC nogc;
     size_t nbytes = nchars;
@@ -3683,13 +3669,13 @@ DeflateString(JSContext *maybecx, const jschar *chars, size_t nchars)
 }
 
 size_t
-GetDeflatedStringLength(JSContext *cx, const jschar *chars, size_t nchars)
+js::GetDeflatedStringLength(JSContext *cx, const jschar *chars, size_t nchars)
 {
     return nchars;
 }
 
 bool
-DeflateStringToBuffer(JSContext *maybecx, const jschar *src, size_t srclen,
+js::DeflateStringToBuffer(JSContext *maybecx, const jschar *src, size_t srclen,
                           char *dst, size_t *dstlenp)
 {
     size_t dstlen = *dstlenp;
@@ -3708,9 +3694,8 @@ DeflateStringToBuffer(JSContext *maybecx, const jschar *src, size_t srclen,
     return JS_TRUE;
 }
 
-
 bool
-InflateStringToBuffer(JSContext *maybecx, const char *src, size_t srclen,
+js::InflateStringToBuffer(JSContext *maybecx, const char *src, size_t srclen,
                           jschar *dst, size_t *dstlenp)
 {
     if (dst) {
@@ -3732,7 +3717,7 @@ InflateStringToBuffer(JSContext *maybecx, const char *src, size_t srclen,
 }
 
 bool
-InflateUTF8StringToBuffer(JSContext *cx, const char *src, size_t srclen,
+js::InflateUTF8StringToBuffer(JSContext *cx, const char *src, size_t srclen,
                               jschar *dst, size_t *dstlenp)
 {
     size_t dstlen, origDstlen, offset, j, n;
@@ -3811,8 +3796,6 @@ bufferTooSmall:
     }
     return JS_FALSE;
 }
-
-} /* namepsace js */
 
 const jschar js_uriReservedPlusPound_ucstr[] =
     {';', '/', '?', ':', '@', '&', '=', '+', '$', ',', '#', 0};
@@ -4188,10 +4171,9 @@ Utf8ToOneUcs4Char(const uint8_t *utf8Buffer, int utf8Length)
     return ucs4Char;
 }
 
-namespace js {
-
 size_t
-PutEscapedStringImpl(char *buffer, size_t bufferSize, FILE *fp, JSLinearString *str, uint32_t quote)
+js::PutEscapedStringImpl(char *buffer, size_t bufferSize, FILE *fp, JSLinearString *str,
+                         uint32_t quote)
 {
     enum {
         STOP, FIRST_QUOTE, LAST_QUOTE, CHARS, ESCAPE_START, ESCAPE_MORE
@@ -4300,5 +4282,3 @@ PutEscapedStringImpl(char *buffer, size_t bufferSize, FILE *fp, JSLinearString *
         buffer[n] = '\0';
     return n;
 }
-
-} /* namespace js */

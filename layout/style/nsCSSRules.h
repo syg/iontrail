@@ -13,7 +13,9 @@
 
 #include "mozilla/css/GroupRule.h"
 #include "mozilla/Preferences.h"
+#include "nsIDOMCSSConditionRule.h"
 #include "nsIDOMCSSFontFaceRule.h"
+#include "nsIDOMCSSGroupingRule.h"
 #include "nsIDOMCSSMediaRule.h"
 #include "nsIDOMCSSMozDocumentRule.h"
 #include "nsIDOMCSSSupportsRule.h"
@@ -69,6 +71,12 @@ public:
   // nsIDOMCSSRule interface
   NS_DECL_NSIDOMCSSRULE
 
+  // nsIDOMCSSGroupingRule interface
+  NS_DECL_NSIDOMCSSGROUPINGRULE
+
+  // nsIDOMCSSConditionRule interface
+  NS_DECL_NSIDOMCSSCONDITIONRULE
+
   // nsIDOMCSSMediaRule interface
   NS_DECL_NSIDOMCSSMEDIARULE
 
@@ -83,6 +91,8 @@ public:
     SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
 
 protected:
+  void AppendConditionText(nsAString& aOutput);
+
   nsRefPtr<nsMediaList> mMedia;
 };
 
@@ -117,6 +127,12 @@ public:
 
   // nsIDOMCSSRule interface
   NS_DECL_NSIDOMCSSRULE
+
+  // nsIDOMCSSGroupingRule interface
+  NS_DECL_NSIDOMCSSGROUPINGRULE
+
+  // nsIDOMCSSConditionRule interface
+  NS_DECL_NSIDOMCSSCONDITIONRULE
 
   // nsIDOMCSSMozDocumentRule interface
   NS_DECL_NSIDOMCSSMOZDOCUMENTRULE
@@ -153,6 +169,8 @@ public:
     SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
 
 protected:
+  void AppendConditionText(nsAString& aOutput);
+
   nsAutoPtr<URL> mURLs; // linked list of |struct URL| above.
 };
 
@@ -336,7 +354,7 @@ class nsCSSKeyframeRule MOZ_FINAL : public mozilla::css::Rule,
 {
 public:
   // WARNING: Steals the contents of aKeys *and* aDeclaration
-  nsCSSKeyframeRule(nsTArray<float> aKeys,
+  nsCSSKeyframeRule(InfallibleTArray<float>& aKeys,
                     nsAutoPtr<mozilla::css::Declaration> aDeclaration)
     : mDeclaration(aDeclaration)
   {
@@ -371,8 +389,10 @@ public:
 
   virtual size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const MOZ_OVERRIDE;
 
+  void DoGetKeyText(nsAString &aKeyText) const;
+
 private:
-  nsAutoTArray<float, 1>                     mKeys;
+  nsTArray<float>                            mKeys;
   nsAutoPtr<mozilla::css::Declaration>       mDeclaration;
   // lazily created when needed:
   nsRefPtr<nsCSSKeyframeStyleDeclaration>    mDOMDeclaration;
@@ -534,6 +554,12 @@ public:
 
   // nsIDOMCSSRule interface
   NS_DECL_NSIDOMCSSRULE
+
+  // nsIDOMCSSGroupingRule interface
+  NS_DECL_NSIDOMCSSGROUPINGRULE
+
+  // nsIDOMCSSConditionRule interface
+  NS_DECL_NSIDOMCSSCONDITIONRULE
 
   // nsIDOMCSSSupportsRule interface
   NS_DECL_NSIDOMCSSSUPPORTSRULE

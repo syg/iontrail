@@ -186,7 +186,7 @@ nsPluginInstanceOwner::GetImageContainer()
 
   SharedTextureImage::Data data;
   data.mHandle = mInstance->CreateSharedHandle();
-  data.mShareType = mozilla::gl::TextureImage::ThreadShared;
+  data.mShareType = mozilla::gl::GLContext::SameProcess;
   data.mInverted = mInstance->Inverted();
 
   gfxRect r = GetPluginRect();
@@ -563,7 +563,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetURL(const char *aURL,
     Preferences::GetInt("privacy.popups.disable_from_plugins");
   nsAutoPopupStatePusher popupStatePusher((PopupControlState)blockPopups);
 
-  rv = lh->OnLinkClick(mContent, uri, unitarget.get(), 
+  rv = lh->OnLinkClick(mContent, uri, unitarget.get(), NullString(),
                        aPostStream, headersDataStream, true);
 
   return rv;
@@ -1723,8 +1723,10 @@ already_AddRefed<ImageContainer> nsPluginInstanceOwner::GetImageContainerForVide
 
   SharedTextureImage::Data data;
 
-  data.mHandle = mInstance->GLContext()->CreateSharedHandle(gl::TextureImage::ThreadShared, aVideoInfo->mSurfaceTexture, gl::GLContext::SurfaceTexture);
-  data.mShareType = mozilla::gl::TextureImage::ThreadShared;
+  data.mShareType = gl::GLContext::SameProcess;
+  data.mHandle = mInstance->GLContext()->CreateSharedHandle(data.mShareType,
+                                                            aVideoInfo->mSurfaceTexture,
+                                                            gl::GLContext::SurfaceTexture);
 
   // The logic below for Honeycomb is just a guess, but seems to work. We don't have a separate
   // inverted flag for video.

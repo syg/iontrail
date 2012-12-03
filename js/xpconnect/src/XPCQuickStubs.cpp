@@ -320,6 +320,9 @@ xpc_qsDefineQuickStubs(JSContext *cx, JSObject *proto, unsigned flags,
                         return false;
                 }
 
+                if (entry->newBindingProperties) {
+                    mozilla::dom::DefineWebIDLBindingPropertiesOnXPCProto(cx, proto, entry->newBindingProperties);
+                }
                 // Next.
                 size_t j = entry->parentInterface;
                 if (j == XPC_QS_NULL_INDEX)
@@ -793,27 +796,6 @@ xpc_qsUnwrapThisFromCcxImpl(XPCCallContext &ccx,
     if (NS_FAILED(rv))
         return xpc_qsThrow(ccx.GetJSContext(), rv);
     return true;
-}
-
-JSObject*
-xpc_qsUnwrapObj(JS::Value v, nsISupports **ppArgRef, nsresult *rv)
-{
-    if (v.isNullOrUndefined()) {
-        *ppArgRef = nullptr;
-        *rv = NS_OK;
-        return nullptr;
-    }
-
-    if (!v.isObject()) {
-        *ppArgRef = nullptr;
-        *rv = ((v.isInt32() && v.toInt32() == 0)
-               ? NS_ERROR_XPC_BAD_CONVERT_JS_ZERO_ISNOT_NULL
-               : NS_ERROR_XPC_BAD_CONVERT_JS);
-        return nullptr;
-    }
-
-    *rv = NS_OK;
-    return &v.toObject();
 }
 
 nsresult

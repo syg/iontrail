@@ -485,6 +485,11 @@ public:
     static XPCJSRuntime* GetRuntimeInstance();
     XPCJSRuntime* GetRuntime() {return mRuntime;}
 
+#ifdef DEBUG
+    void SetObjectToUnlink(void* aObject);
+    void AssertNoObjectsToTrace(void* aPossibleJSHolder);
+#endif
+
     // Gets addref'd pointer
     static nsresult GetInterfaceInfoManager(nsIInterfaceInfoSuperManager** iim,
                                             nsXPConnect* xpc = nullptr);
@@ -730,11 +735,11 @@ public:
     // buffer with things to finalize in the return value.
     typedef void* (*DeferredFinalizeStartFunction)();
 
-    // Called to finalize a number of objects. Slice is the number of objects to
-    // finalize, if it's -1 all objects should be finalized. data is the pointer
-    // returned by DeferredFinalizeStartFunction. Should return if it finalized
-    // all objects remaining in the buffer.
-    typedef bool (*DeferredFinalizeFunction)(int32_t slice, void* data);
+    // Called to finalize a number of objects. Slice is the number of objects
+    // to finalize, or if it's UINT32_MAX, all objects should be finalized.
+    // data is the pointer returned by DeferredFinalizeStartFunction.
+    // Return value indicates whether it finalized all objects in the buffer.
+    typedef bool (*DeferredFinalizeFunction)(uint32_t slice, void* data);
 
 private:
     struct DeferredFinalizeFunctions
@@ -825,6 +830,10 @@ public:
     nsresult AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer);
     nsresult RemoveJSHolder(void* aHolder);
     nsresult TestJSHolder(void* aHolder, bool* aRetval);
+#ifdef DEBUG
+    void SetObjectToUnlink(void* aObject) { mObjectToUnlink = aObject; }
+    void AssertNoObjectsToTrace(void* aPossibleJSHolder);
+#endif
 
     static void SuspectWrappedNative(XPCWrappedNative *wrapper,
                                      nsCycleCollectionTraversalCallback &cb);
@@ -990,6 +999,10 @@ private:
 
     friend class AutoLockWatchdog;
     friend class XPCIncrementalReleaseRunnable;
+
+#ifdef DEBUG
+    void* mObjectToUnlink;
+#endif
 };
 
 /***************************************************************************/
@@ -2780,8 +2793,7 @@ public:
                            XPCWrappedNativeScope* aOldScope,
                            XPCWrappedNativeScope* aNewScope,
                            JSObject* aNewParent,
-                           nsISupports* aCOMObj,
-                           XPCWrappedNative** aWrapper);
+                           nsISupports* aCOMObj);
 
     bool IsOrphan();
     nsresult RescueOrphans(XPCCallContext& ccx);

@@ -419,7 +419,7 @@ public:
     mSandboxFlags = sandboxFlags;
   }
 
-  inline mozilla::directionality::Directionality GetDocumentDirectionality() {
+  inline mozilla::Directionality GetDocumentDirectionality() {
     return mDirectionality;
   }
   
@@ -600,7 +600,7 @@ public:
    */
   virtual int32_t GetNumberOfCatalogStyleSheets() const = 0;
   virtual nsIStyleSheet* GetCatalogStyleSheetAt(int32_t aIndex) const = 0;
-  virtual void AddCatalogStyleSheet(nsIStyleSheet* aSheet) = 0;
+  virtual void AddCatalogStyleSheet(nsCSSStyleSheet* aSheet) = 0;
   virtual void EnsureCatalogStyleSheet(const char *aStyleSheetURI) = 0;
 
   enum additionalSheetType {
@@ -1916,7 +1916,7 @@ protected:
   uint32_t mSandboxFlags;
 
   // The root directionality of this document.
-  mozilla::directionality::Directionality mDirectionality;
+  mozilla::Directionality mDirectionality;
 
   nsCString mContentLanguage;
 private:
@@ -2060,10 +2060,10 @@ private:
 
 // XXX These belong somewhere else
 nsresult
-NS_NewHTMLDocument(nsIDocument** aInstancePtrResult);
+NS_NewHTMLDocument(nsIDocument** aInstancePtrResult, bool aLoadedAsData = false);
 
 nsresult
-NS_NewXMLDocument(nsIDocument** aInstancePtrResult);
+NS_NewXMLDocument(nsIDocument** aInstancePtrResult, bool aLoadedAsData = false);
 
 nsresult
 NS_NewSVGDocument(nsIDocument** aInstancePtrResult);

@@ -279,7 +279,15 @@ nsHttpHandler::Init()
     rv = InitConnectionMgr();
     if (NS_FAILED(rv)) return rv;
 
+#ifdef ANDROID
     mProductSub.AssignLiteral(MOZILLA_UAVERSION);
+#else
+    mProductSub.AssignLiteral(MOZ_UA_BUILDID);
+#endif
+    if (mProductSub.IsEmpty() && appInfo)
+        appInfo->GetPlatformBuildID(mProductSub);
+    if (mProductSub.Length() > 8)
+        mProductSub.SetLength(8);
 
 #if DEBUG
     // dump user agent prefs
@@ -374,7 +382,7 @@ nsHttpHandler::AddStandardRequestHeaders(nsHttpHeaderArray *request)
 
 nsresult
 nsHttpHandler::AddConnectionHeader(nsHttpHeaderArray *request,
-                                   uint8_t caps)
+                                   uint32_t caps)
 {
     // RFC2616 section 19.6.2 states that the "Connection: keep-alive"
     // and "Keep-alive" request headers should not be sent by HTTP/1.1
@@ -1484,7 +1492,7 @@ nsHttpHandler::NewProxiedChannel(nsIURI *uri,
         httpChannel = new nsHttpChannel();
     }
 
-    uint8_t caps = mCapabilities;
+    uint32_t caps = mCapabilities;
 
     if (https) {
         // enable pipelining over SSL if requested

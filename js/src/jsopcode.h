@@ -296,14 +296,6 @@ StackDefs(JSScript *script, jsbytecode *pc);
 /*
  * Decompilers, for script, function, and expression pretty-printing.
  */
-extern JSBool
-js_DecompileScript(JSPrinter *jp, JSScript *script);
-
-extern JSBool
-js_DecompileFunctionBody(JSPrinter *jp);
-
-extern JSBool
-js_DecompileFunction(JSPrinter *jp);
 
 /*
  * Some C++ compilers treat the language linkage (extern "C" vs.
@@ -361,6 +353,13 @@ namespace js {
 char *
 DecompileValueGenerator(JSContext *cx, int spindex, HandleValue v,
                         HandleString fallback, int skipStackHits = 0);
+
+/*
+ * Decompile the formal argument at formalIndex in the nearest non-builtin
+ * stack frame, falling back with converting v to source.
+ */
+char *
+DecompileArgument(JSContext *cx, int formalIndex, HandleValue v);
 
 /*
  * Sprintf, but with unlimited and automatically allocated buffering.

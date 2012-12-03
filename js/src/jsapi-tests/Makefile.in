@@ -32,8 +32,11 @@ CPPSRCS = \
   testDeepFreeze.cpp \
   testDefineGetterSetterNonEnumerable.cpp \
   testDefineProperty.cpp \
+  testEnclosingFunction.cpp \
+  testErrorCopying.cpp \
   testExtendedEq.cpp \
   testExternalStrings.cpp \
+  testFindSCCs.cpp \
   testFuncCallback.cpp \
   testFunctionProperties.cpp \
   testGCOutOfMemory.cpp \
@@ -44,12 +47,14 @@ CPPSRCS = \
   testIntString.cpp \
   testIntTypesABI.cpp \
   testIntern.cpp \
+  testJSEvaluateScript.cpp \
   testLookup.cpp \
   testLooselyEqual.cpp \
   testNewObject.cpp \
   testOps.cpp \
   testOriginPrincipals.cpp \
   testParseJSON.cpp \
+  testProfileStrings.cpp \
   testPropCache.cpp \
   testRegExp.cpp \
   testResolveRecursion.cpp \
@@ -57,15 +62,12 @@ CPPSRCS = \
   testScriptInfo.cpp \
   testScriptObject.cpp \
   testSetProperty.cpp \
+  testSourcePolicy.cpp \
   testStringBuffer.cpp \
   testTrap.cpp \
   testTypedArrays.cpp \
   testVersion.cpp \
   testXDR.cpp \
-  testProfileStrings.cpp \
-  testJSEvaluateScript.cpp \
-  testErrorCopying.cpp \
-  testEnclosingFunction.cpp \
   $(NULL)
 
 # Disabled: an entirely unrelated test seems to cause this to fail.  Moreover,

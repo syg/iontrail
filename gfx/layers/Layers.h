@@ -482,7 +482,7 @@ public:
   void LogSelf(const char* aPrefix="");
 
   void StartFrameTimeRecording();
-  nsTArray<float> StopFrameTimeRecording();
+  void StopFrameTimeRecording(nsTArray<float>& aTimes);
 
   void PostPresent();
 
@@ -722,6 +722,8 @@ public:
    */
   void SetBaseTransform(const gfx3DMatrix& aMatrix)
   {
+    NS_ASSERTION(!aMatrix.IsSingular(), 
+                 "Shouldn't be trying to draw with a singular matrix!");
     mPendingTransform = nullptr;
     if (mTransform == aMatrix) {
       return;

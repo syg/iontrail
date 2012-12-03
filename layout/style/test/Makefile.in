@@ -62,7 +62,7 @@ MOCHITEST_FILES =	test_acid3_test46.html \
 		test_bug391221.html \
 		test_bug397427.html \
 		test_bug399349.html \
-		$(warning test_bug401046.html is disabled for intermittent failures. Bug 701060) \
+		$(filter disabled-for-intermittent-failures--bug-701060, test_bug401046.html) \
 		test_bug405818.html \
 		test_bug412901.html \
 		test_bug437915.html \
@@ -92,6 +92,8 @@ MOCHITEST_FILES =	test_acid3_test46.html \
 		test_compute_data_with_start_struct.html \
 		test_computed_style.html \
 		test_computed_style_no_pseudo.html \
+		test_condition_text.html \
+		test_condition_text_assignment.html \
 		test_default_computed_style.html \
 		test_css_cross_domain.html \
 		test_css_eof_handling.html \
@@ -125,6 +127,7 @@ MOCHITEST_FILES =	test_acid3_test46.html \
 		test_priority_preservation.html \
 		test_property_syntax_errors.html \
 		test_rem_unit.html \
+		test_rule_insertion.html \
 		test_rule_serialization.html \
 		test_rules_out_of_sheets.html \
 		test_selectors.html \

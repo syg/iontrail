@@ -151,6 +151,12 @@ tier_platform_dirs += \
 		$(NULL)
 endif
 
+ifdef MOZ_SOUNDTOUCH
+tier_platform_dirs += \
+		media/libsoundtouch \
+		$(NULL)
+endif
+
 ifdef MOZ_CUBEB
 tier_platform_dirs += \
 		media/libcubeb \
@@ -161,7 +167,14 @@ ifdef MOZ_OMX_PLUGIN
 tier_platform_dirs += \
 		media/omx-plugin/lib/ics/libutils \
 		media/omx-plugin/lib/ics/libstagefright \
+		media/omx-plugin/lib/gb/libutils \
+		media/omx-plugin/lib/gb/libstagefright \
+		media/omx-plugin/lib/gb235/libstagefright \
 		media/omx-plugin \
+		media/omx-plugin/gb \
+		media/omx-plugin/gb235 \
+		media/omx-plugin/lib/hc/libstagefright \
+		media/omx-plugin/hc \
 		$(NULL)
 endif
 

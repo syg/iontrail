@@ -41,8 +41,8 @@ static inline bool
 ShouldMonitorReturnType(JSFunction *fun)
 {
     return fun->isInterpreted() &&
-           (!fun->script()->hasAnalysis() ||
-            !fun->script()->analysis()->ranInference());
+           (!fun->nonLazyScript()->hasAnalysis() ||
+            !fun->nonLazyScript()->analysis()->ranInference());
 }
 
 bool
@@ -62,18 +62,26 @@ InvokeFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *argv, Value *
 
     // In order to prevent massive bouncing between Ion and JM, see if we keep
     // hitting functions that are uncompilable.
+    if (fun->isInterpreted()) {
+        if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx).unsafeGet())
+            return false;
+        if (!fun->nonLazyScript()->canIonCompile()) {
+            JSScript *script = GetTopIonJSScript(cx);
+            if (script->hasIonScript() &&
+                ++script->ion->slowCallCount >= js_IonOptions.slowCallLimit)
+            {
+                AutoFlushCache afc("InvokeFunction");
 
-    if (fun->isInterpreted() && !fun->script()->canIonCompile()) {
-        JSScript *script = GetTopIonJSScript(cx);
-        if (script->hasIonScript() &&
-            ++script->ion->slowCallCount >= js_IonOptions.slowCallLimit)
-        {
-            AutoFlushCache afc("InvokeFunction");
-
-            // Poison the script so we don't try to run it again. This will
-            // trigger invalidation.
-            ForbidCompilation(cx, script);
+                // Poison the script so we don't try to run it again. This will
+                // trigger invalidation.
+                ForbidCompilation(cx, script);
+            }
         }
+
+        // When caller runs in IM, but callee not, we take a slow path to the interpreter.
+        // This has a significant overhead. In order to decrease the number of times this happens,
+        // the useCount gets incremented faster to compile this function in IM and use the fastpath.
+        fun->nonLazyScript()->incUseCount(js_IonOptions.slowCallIncUseCount);
     }
 
     // TI will return false for monitorReturnTypes, meaning there is no
@@ -101,7 +109,18 @@ InvokeConstructor(JSContext *cx, JSObject *obj, uint32 argc, Value *argv, Value 
     Value fval = ObjectValue(*obj);
 
     // See the comment in InvokeFunction.
-    bool needsMonitor = !obj->isFunction() || ShouldMonitorReturnType(obj->toFunction());
+    bool needsMonitor;
+
+    if (obj->isFunction()) {
+        if (obj->toFunction()->isInterpretedLazy() &&
+            !obj->toFunction()->getOrCreateScript(cx).unsafeGet())
+        {
+            return false;
+        }
+        needsMonitor = ShouldMonitorReturnType(obj->toFunction());
+    } else {
+        needsMonitor = true;
+    }
 
     // Data in the argument vector is arranged for a JIT -> JIT call.
     Value *argvWithoutThis = argv + 1;

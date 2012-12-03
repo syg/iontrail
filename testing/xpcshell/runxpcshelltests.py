@@ -730,6 +730,14 @@ class XPCShellTests(object):
       self.mozInfo = parse_json(open(mozInfoFile).read())
     mozinfo.update(self.mozInfo)
 
+    # The appDirKey is a optional entry in either the default or individual test
+    # sections that defines a relative application directory for test runs. If
+    # defined we pass 'grePath/$appDirKey' for the -a parameter of the xpcshell
+    # test harness.
+    appDirKey = None
+    if "appname" in self.mozInfo:
+      appDirKey = self.mozInfo["appname"] + "-appdir"
+
     # We have to do this before we build the test list so we know whether or
     # not to run tests that depend on having the node spdy server
     self.trySetupNode()
@@ -776,6 +784,15 @@ class XPCShellTests(object):
 
       # Check for known-fail tests
       expected = test['expected'] == 'pass'
+
+      # By default self.appPath will equal the gre dir. If specified in the
+      # xpcshell.ini file, set a different app dir for this test.
+      if appDirKey != None and appDirKey in test:
+        relAppDir = test[appDirKey]
+        relAppDir = os.path.join(self.xrePath, relAppDir)
+        self.appPath = os.path.abspath(relAppDir)
+      else:
+        self.appPath = None
 
       testdir = os.path.dirname(name)
       self.buildXpcsCmd(testdir)
@@ -870,7 +887,16 @@ class XPCShellTests(object):
             self.todoCount += 1
             xunitResult["todo"] = True
 
-        checkForCrashes(testdir, self.symbolsPath, testName=name)
+        if checkForCrashes(testdir, self.symbolsPath, testName=name):
+          message = "PROCESS-CRASH | %s | application crashed" % name
+          self.failCount += 1
+          xunitResult["passed"] = False
+          xunitResult["failure"] = {
+            "type": "PROCESS-CRASH",
+            "message": message,
+            "text": stdout
+          }
+
         # Find child process(es) leak log(s), if any: See InitLog() in
         # xpcom/base/nsTraceRefcntImpl.cpp for logfile naming logic
         leakLogs = [self.leakLogFile]

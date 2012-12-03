@@ -552,6 +552,10 @@ nsEventStatus AsyncPanZoomController::OnLongPress(const TapGestureInput& aEvent)
 }
 
 nsEventStatus AsyncPanZoomController::OnSingleTapUp(const TapGestureInput& aEvent) {
+  return nsEventStatus_eIgnore;
+}
+
+nsEventStatus AsyncPanZoomController::OnSingleTapConfirmed(const TapGestureInput& aEvent) {
   if (mGeckoContentController) {
     MonitorAutoLock monitor(mMonitor);
 
@@ -563,11 +567,6 @@ nsEventStatus AsyncPanZoomController::OnSingleTapUp(const TapGestureInput& aEven
                                                         NS_lround(point.y)));
     return nsEventStatus_eConsumeNoDefault;
   }
-  return nsEventStatus_eIgnore;
-}
-
-nsEventStatus AsyncPanZoomController::OnSingleTapConfirmed(const TapGestureInput& aEvent) {
-  // XXX: Implement this.
   return nsEventStatus_eIgnore;
 }
 
@@ -854,17 +853,15 @@ const gfx::Rect AsyncPanZoomController::CalculatePendingDisplayPort(
   // probably not work at all for RTL content. This is not intended to be
   // incredibly accurate; it'll just prevent the entire displayport from being
   // outside the content rect (which causes bad things to happen).
-  if (enlargedX || enlargedY) {
-    if (scrollOffset.x + compositionBounds.width > scrollableRect.width) {
-      scrollOffset.x -= compositionBounds.width + scrollOffset.x - scrollableRect.width;
-    } else if (scrollOffset.x < scrollableRect.x) {
-      scrollOffset.x = scrollableRect.x;
-    }
-    if (scrollOffset.y + compositionBounds.height > scrollableRect.height) {
-      scrollOffset.y -= compositionBounds.height + scrollOffset.y - scrollableRect.height;
-    } else if (scrollOffset.y < scrollableRect.y) {
-      scrollOffset.y = scrollableRect.y;
-    }
+  if (scrollOffset.x + compositionBounds.width > scrollableRect.width) {
+    scrollOffset.x -= compositionBounds.width + scrollOffset.x - scrollableRect.width;
+  } else if (scrollOffset.x < scrollableRect.x) {
+    scrollOffset.x = scrollableRect.x;
+  }
+  if (scrollOffset.y + compositionBounds.height > scrollableRect.height) {
+    scrollOffset.y -= compositionBounds.height + scrollOffset.y - scrollableRect.height;
+  } else if (scrollOffset.y < scrollableRect.y) {
+    scrollOffset.y = scrollableRect.y;
   }
 
   gfx::Rect shiftedDisplayPort = displayPort;
@@ -1210,33 +1207,11 @@ void AsyncPanZoomController::ZoomToRect(const gfxRect& aRect) {
                              y + dh/2,
                              cssPageRect.width,
                              y + dh/2 + newHeight);
-    } else {
-      float targetRatio = float(compositionBounds.width) / float(compositionBounds.height);
-      float rectRatio = zoomToRect.width / zoomToRect.height;
-
-      if (fabsf(targetRatio - rectRatio) < EPSILON) {
-        // All good, do nothing.
-      } else if (targetRatio < rectRatio) {
-        // Need to increase zoomToRect height.
-        float newHeight = zoomToRect.height / targetRatio;
-        zoomToRect.y -= (newHeight - zoomToRect.height) / 2;
-        zoomToRect.height = newHeight;
-      } else { // (targetRatio > rectRatio) {
-        // Need to increase zoomToRect width.
-        float newWidth = targetRatio * zoomToRect.width;
-        zoomToRect.x -= (newWidth - zoomToRect.width) / 2;
-        zoomToRect.width = newWidth;
-      }
-
-      zoomToRect = zoomToRect.Intersect(cssPageRect);
     }
 
     gfxFloat targetResolution =
       NS_MIN(compositionBounds.width / zoomToRect.width,
              compositionBounds.height / zoomToRect.height);
-    gfxFloat targetZoom = clamped(float(targetResolution / resolution.width),
-                                  mMinZoom, mMaxZoom);
-    mEndZoomToMetrics.mZoom = gfxSize(targetZoom, targetZoom);
 
     // Recalculate the zoom to rect using the new dimensions.
     zoomToRect.width = compositionBounds.width / targetResolution;
@@ -1248,8 +1223,33 @@ void AsyncPanZoomController::ZoomToRect(const gfxRect& aRect) {
     // Do one final recalculation to get the resolution.
     targetResolution = NS_MAX(compositionBounds.width / zoomToRect.width,
                               compositionBounds.height / zoomToRect.height);
-    targetZoom = targetResolution / resolution.width;
-    mEndZoomToMetrics.mZoom = gfxSize(targetZoom, targetZoom);
+    float targetZoom = float(targetResolution / resolution.width) * mFrameMetrics.mZoom.width;
+
+    // If current zoom is equal to mMaxZoom,
+    // user still double-tapping it, just zoom-out to the full page size
+    if (mFrameMetrics.mZoom.width == mMaxZoom && targetZoom >= mMaxZoom) {
+      nsIntRect cssCompositionBounds = compositionBounds;
+      cssCompositionBounds.ScaleInverseRoundIn(resolution.width,
+                                               resolution.height);
+      cssCompositionBounds.MoveBy(scrollOffset.x, scrollOffset.y);
+
+      float y = mFrameMetrics.mScrollOffset.y;
+      float newHeight =
+        cssCompositionBounds.height * cssPageRect.width / cssCompositionBounds.width;
+      float dh = cssCompositionBounds.height - newHeight;
+
+      zoomToRect = gfx::Rect(0.0f,
+                             y + dh/2,
+                             cssPageRect.width,
+                             y + dh/2 + newHeight);
+
+      zoomToRect = zoomToRect.Intersect(cssPageRect);
+      // assign 1 to targetZoom is a shortcut
+      targetZoom = 1;
+    }
+
+    gfxFloat targetFinalZoom = clamped(targetZoom, mMinZoom, mMaxZoom);
+    mEndZoomToMetrics.mZoom = gfxSize(targetFinalZoom, targetFinalZoom);
 
     mStartZoomToMetrics = mFrameMetrics;
     mEndZoomToMetrics.mScrollOffset =

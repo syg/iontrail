@@ -19,7 +19,7 @@
 inline bool
 JSFunction::inStrictMode() const
 {
-    return script()->strictModeCode;
+    return nonLazyScript()->strictModeCode;
 }
 
 inline void
@@ -205,8 +205,6 @@ GetFunctionNameBytes(JSContext *cx, JSFunction *fun, JSAutoByteString *bytes)
         return bytes->encode(cx, atom);
     return js_anonymous_str;
 }
-
-extern JSFunctionSpec function_methods[];
 
 extern JSBool
 Function(JSContext *cx, unsigned argc, Value *vp);

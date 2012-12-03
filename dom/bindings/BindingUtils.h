@@ -187,7 +187,7 @@ IsDOMObject(JSObject* obj)
 // of thing it's looking at).
 // U must be something that a T* can be assigned to (e.g. T* or an nsRefPtr<T>).
 template <prototypes::ID PrototypeID, class T, typename U>
-inline nsresult
+MOZ_ALWAYS_INLINE nsresult
 UnwrapObject(JSContext* cx, JSObject* obj, U& value)
 {
   /* First check to see whether we have a DOM object */
@@ -398,6 +398,9 @@ bool
 DefineUnforgeableAttributes(JSContext* cx, JSObject* obj,
                             Prefable<JSPropertySpec>* props);
 
+bool
+DefineWebIDLBindingPropertiesOnXPCProto(JSContext* cx, JSObject* proto, const NativeProperties* properties);
+
 // If *vp is an object and *vp and obj are not in the same compartment, wrap *vp
 // into the compartment of obj (typically by replacing it with an Xray or
 // cross-compartment wrapper around the original object).
@@ -471,20 +474,63 @@ public:
                             sizeof(Check<T>(nullptr)) == sizeof(yes);
 };
 
-// Create a JSObject wrapping "value", for cases when "value" is a
-// non-wrapper-cached object using WebIDL bindings.  "value" must implement a
-// WrapObject() method taking a JSContext and a scope.
-template <class T>
-inline bool
-WrapNewBindingObject(JSContext* cx, JSObject* scope, T* value, JS::Value* vp)
+#ifdef DEBUG
+template <class T, bool isISupports=IsISupports<T>::Value>
+struct
+CheckWrapperCacheCast
 {
-  JSObject* obj = value->GetWrapper();
-  if (obj && js::GetObjectCompartment(obj) == js::GetObjectCompartment(scope)) {
-    *vp = JS::ObjectValue(*obj);
+  static bool Check()
+  {
+    return reinterpret_cast<uintptr_t>(
+      static_cast<nsWrapperCache*>(
+        reinterpret_cast<T*>(1))) == 1;
+  }
+};
+template <class T>
+struct
+CheckWrapperCacheCast<T, true>
+{
+  static bool Check()
+  {
     return true;
   }
+};
+#endif
 
-  if (!obj) {
+MOZ_ALWAYS_INLINE bool
+CouldBeDOMBinding(void*)
+{
+  return true;
+}
+
+MOZ_ALWAYS_INLINE bool
+CouldBeDOMBinding(nsWrapperCache* aCache)
+{
+  return aCache->IsDOMBinding();
+}
+
+// Create a JSObject wrapping "value", if there isn't one already, and store it
+// in *vp.  "value" must be a concrete class that implements a
+// GetWrapperPreserveColor() which can return its existing wrapper, if any, and
+// a WrapObject() which will try to create a wrapper. Typically, this is done by
+// having "value" inherit from nsWrapperCache.
+template <class T>
+MOZ_ALWAYS_INLINE bool
+WrapNewBindingObject(JSContext* cx, JSObject* scope, T* value, JS::Value* vp)
+{
+  JSObject* obj = value->GetWrapperPreserveColor();
+  if (obj) {
+    xpc_UnmarkNonNullGrayObject(obj);
+    if (js::GetObjectCompartment(obj) == js::GetObjectCompartment(scope)) {
+      *vp = JS::ObjectValue(*obj);
+      return true;
+    }
+  } else {
+    // Inline this here while we have non-dom objects in wrapper caches.
+    if (!CouldBeDOMBinding(value)) {
+      return false;
+    }
+
     bool triedToWrap;
     obj = value->WrapObject(cx, scope, &triedToWrap);
     if (!obj) {
@@ -497,21 +543,21 @@ WrapNewBindingObject(JSContext* cx, JSObject* scope, T* value, JS::Value* vp)
   }
 
 #ifdef DEBUG
-  // Some sanity asserts about our object.  Specifically:
-  // 1)  If our class claims we're nsISupports, we better be nsISupports
-  //     XXXbz ideally, we could assert that reinterpret_cast to nsISupports
-  //     does the right thing, but I don't see a way to do it.  :(
-  // 2)  If our class doesn't claim we're nsISupports we better be
-  //     reinterpret_castable to nsWrapperCache.
   const DOMClass* clasp = nullptr;
   DOMObjectSlot slot = GetDOMClass(obj, clasp);
-  MOZ_ASSERT(slot != eNonDOMObject, "Totally unexpected object here");
-  MOZ_ASSERT(clasp, "What happened here?");
-  MOZ_ASSERT_IF(clasp->mDOMObjectIsISupports, IsISupports<T>::Value);
-//  MOZ_ASSERT_IF(!clasp->mDOMObjectIsISupports,
-//                reinterpret_cast<uintptr_t>(
-//                  static_cast<nsWrapperCache*>(
-//                    reinterpret_cast<T*>(1))) == 1);
+  // slot can be eNonDOMObject if the cache contained a non-DOM object from a
+  // different compartment than scope.
+  if (slot != eNonDOMObject) {
+    // Some sanity asserts about our object.  Specifically:
+    // 1)  If our class claims we're nsISupports, we better be nsISupports
+    //     XXXbz ideally, we could assert that reinterpret_cast to nsISupports
+    //     does the right thing, but I don't see a way to do it.  :(
+    // 2)  If our class doesn't claim we're nsISupports we better be
+    //     reinterpret_castable to nsWrapperCache.
+    MOZ_ASSERT(clasp, "What happened here?");
+    MOZ_ASSERT_IF(clasp->mDOMObjectIsISupports, IsISupports<T>::Value);
+    MOZ_ASSERT(CheckWrapperCacheCast<T>::Check());
+  }
 #endif
 
   // When called via XrayWrapper, we end up here while running in the
@@ -524,11 +570,9 @@ WrapNewBindingObject(JSContext* cx, JSObject* scope, T* value, JS::Value* vp)
   return JS_WrapValue(cx, vp);
 }
 
-// Create a JSObject wrapping "value", if there isn't one already, and store it
-// in *vp.  "value" must be a concrete class that implements a GetWrapper()
-// which can return its existing wrapper, if any, and a WrapObject() which will
-// try to create a wrapper.  Typically, this is done by having "value" inherit
-// from nsWrapperCache.
+// Create a JSObject wrapping "value", for cases when "value" is a
+// non-wrapper-cached object using WebIDL bindings.  "value" must implement a
+// WrapObject() method taking a JSContext and a scope.
 template <class T>
 inline bool
 WrapNewBindingNonWrapperCachedObject(JSContext* cx, JSObject* scope, T* value,
@@ -565,26 +609,47 @@ WrapNewBindingNonWrapperCachedObject(JSContext* cx, JSObject* scope,
   return WrapNewBindingNonWrapperCachedObject(cx, scope, value.get(), vp);
 }
 
+// Only set allowNativeWrapper to false if you really know you need it, if in
+// doubt use true. Setting it to false disables security wrappers.
+bool
+NativeInterface2JSObjectAndThrowIfFailed(JSContext* aCx,
+                                         JSObject* aScope,
+                                         JS::Value* aRetval,
+                                         xpcObjectHelper& aHelper,
+                                         const nsIID* aIID,
+                                         bool aAllowNativeWrapper);
+
+inline nsWrapperCache*
+GetWrapperCache(nsWrapperCache* cache)
+{
+  return cache;
+}
+
+inline nsWrapperCache*
+GetWrapperCache(nsGlobalWindow* not_allowed);
+
+inline nsWrapperCache*
+GetWrapperCache(void* p)
+{
+  return NULL;
+}
+
 /**
  * A method to handle new-binding wrap failure, by possibly falling back to
  * wrapping as a non-new-binding object.
  */
-bool
-DoHandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope,
-                                  nsISupports* value, JS::Value* vp);
-
-/**
- * An easy way to call the above when you have a value which
- * multiply-inherits from nsISupports.
- */
 template <class T>
-bool
+MOZ_ALWAYS_INLINE bool
 HandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope, T* value,
                                 JS::Value* vp)
 {
-  nsCOMPtr<nsISupports> val;
-  CallQueryInterface(value, getter_AddRefs(val));
-  return DoHandleNewBindingWrappingFailure(cx, scope, val, vp);
+  if (JS_IsExceptionPending(cx)) {
+    return false;
+  }
+
+  qsObjectHelper helper(value, GetWrapperCache(value));
+  return NativeInterface2JSObjectAndThrowIfFailed(cx, scope, vp, helper,
+                                                  nullptr, true);
 }
 
 // Helper for smart pointers (nsAutoPtr/nsRefPtr/nsCOMPtr).
@@ -670,21 +735,6 @@ FindEnumStringIndex(JSContext* cx, JS::Value v, const EnumEntry* values,
 
   *ok = EnumValueNotFound<InvalidValueFatal>(cx, chars, length, type);
   return -1;
-}
-
-inline nsWrapperCache*
-GetWrapperCache(nsWrapperCache* cache)
-{
-  return cache;
-}
-
-inline nsWrapperCache*
-GetWrapperCache(nsGlobalWindow* not_allowed);
-
-inline nsWrapperCache*
-GetWrapperCache(void* p)
-{
-  return NULL;
 }
 
 struct ParentObject {
@@ -913,7 +963,13 @@ struct WrapNativeParentHelper
     }
 
     bool triedToWrap;
-    obj = parent->WrapObject(cx, scope, &triedToWrap);
+    // Inline this here while we have non-dom objects in wrapper caches.
+    if (!CouldBeDOMBinding(parent)) {
+      triedToWrap = false;
+    } else {
+      obj = parent->WrapObject(cx, scope, &triedToWrap);
+    }
+
     if (!triedToWrap) {
       obj = WrapNativeParentFallback<T>::Wrap(cx, scope, parent, cache);
     }

@@ -27,6 +27,7 @@ import org.json.JSONObject;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -82,10 +83,12 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.AbsoluteLayout;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.RelativeLayout;
+import android.widget.SimpleAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -158,7 +161,6 @@ abstract public class GeckoApp
     public View getView() { return mGeckoLayout; }
     public SurfaceView cameraView;
     public static GeckoApp mAppContext;
-    public boolean mDOMFullScreen = false;
     protected MenuPresenter mMenuPresenter;
     protected MenuPanel mMenuPanel;
     protected Menu mMenu;
@@ -188,7 +190,6 @@ abstract public class GeckoApp
 
     protected int mRestoreMode = RESTORE_NONE;
     protected boolean mInitialized = false;
-    protected Telemetry.Timer mAboutHomeStartupTimer;
     private Telemetry.Timer mJavaUiStartupTimer;
     private Telemetry.Timer mGeckoReadyStartupTimer;
 
@@ -225,7 +226,7 @@ abstract public class GeckoApp
         }
     }
 
-    void toggleChrome(final Boolean aShow) { }
+    void toggleChrome(final boolean aShow) { }
 
     void focusChrome() { }
 
@@ -441,13 +442,6 @@ abstract public class GeckoApp
         return null;
     }
 
-    synchronized Favicons getFavicons() {
-        if (mFavicons == null)
-            mFavicons = new Favicons(this);
-
-        return mFavicons;
-    }
-
     Class<?> getPluginClass(String packageName, String className)
             throws NameNotFoundException, ClassNotFoundException {
         Context pluginContext = mAppContext.createPackageContext(packageName,
@@ -587,6 +581,11 @@ abstract public class GeckoApp
 
     @Override
     public boolean onMenuOpened(int featureId, Menu menu) {
+        // exit full-screen mode whenever the menu is opened
+        if (mLayerView.isFullScreen()) {
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("FullScreen:Exit", null));
+        }
+
         if (Build.VERSION.SDK_INT >= 11 && featureId == Window.FEATURE_OPTIONS_PANEL) {
             if (mMenu == null) {
                 onCreatePanelMenu(featureId, menu);
@@ -779,7 +778,7 @@ abstract public class GeckoApp
         (new GeckoAsyncTask<Void, Void, String>(mAppContext, GeckoAppShell.getHandler()) {
             @Override
             public String doInBackground(Void... params) {
-                return getFavicons().getFaviconUrlForPageUrl(url);
+                return Favicons.getInstance().getFaviconUrlForPageUrl(url);
             }
 
             @Override
@@ -988,9 +987,17 @@ abstract public class GeckoApp
             } else if (event.equals("ToggleChrome:Focus")) {
                 focusChrome();
             } else if (event.equals("DOMFullScreen:Start")) {
-                mDOMFullScreen = true;
+                // Local ref to layerView for thread safety
+                LayerView layerView = mLayerView;
+                if (layerView != null) {
+                    layerView.setFullScreen(true);
+                }
             } else if (event.equals("DOMFullScreen:Stop")) {
-                mDOMFullScreen = false;
+                // Local ref to layerView for thread safety
+                LayerView layerView = mLayerView;
+                if (layerView != null) {
+                    layerView.setFullScreen(false);
+                }
             } else if (event.equals("Permissions:Data")) {
                 String host = message.getString("host");
                 JSONArray permissions = message.getJSONArray("permissions");
@@ -1108,14 +1115,14 @@ abstract public class GeckoApp
     /**
      * @param aPermissions
      *        Array of JSON objects to represent site permissions.
-     *        Example: { type: "offline-app", setting: "Store Offline Data: Allow" }
+     *        Example: { type: "offline-app", setting: "Store Offline Data", value: "Allow" }
      */
     private void showSiteSettingsDialog(String aHost, JSONArray aPermissions) {
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
         View customTitleView = getLayoutInflater().inflate(R.layout.site_setting_title, null);
         ((TextView) customTitleView.findViewById(R.id.title)).setText(R.string.site_settings_title);
-        ((TextView) customTitleView.findViewById(R.id.host)).setText(aHost);        
+        ((TextView) customTitleView.findViewById(R.id.host)).setText(aHost);
         builder.setCustomTitle(customTitleView);
 
         // If there are no permissions to clear, show the user a message about that.
@@ -1123,24 +1130,32 @@ abstract public class GeckoApp
         if (aPermissions.length() == 0) {
             builder.setMessage(R.string.site_settings_no_settings);
         } else {
-            // Eventually we should use a list adapter and custom checkable list items
-            // to make a two-line UI to match the mock-ups
-            CharSequence[] items = new CharSequence[aPermissions.length()];
-            boolean[] states = new boolean[aPermissions.length()];
+
+            ArrayList <HashMap<String, String>> itemList = new ArrayList <HashMap<String, String>>();
             for (int i = 0; i < aPermissions.length(); i++) {
                 try {
-                    items[i] = aPermissions.getJSONObject(i).getString("setting");
-                    // Make all the items checked by default.
-                    states[i] = true;
+                    JSONObject permObj = aPermissions.getJSONObject(i);
+                    HashMap<String, String> map = new HashMap<String, String>();
+                    map.put("setting", permObj.getString("setting"));
+                    map.put("value", permObj.getString("value"));
+                    itemList.add(map);
                 } catch (JSONException e) {
                     Log.w(LOGTAG, "Exception populating settings items.", e);
                 }
             }
-            builder.setMultiChoiceItems(items, states, new DialogInterface.OnMultiChoiceClickListener(){
-                public void onClick(DialogInterface dialog, int item, boolean state) {
-                    // Do nothing
-                }
-            });
+
+            // setMultiChoiceItems doesn't support using an adapter, so we're creating a hack with
+            // setSingleChoiceItems and changing the choiceMode below when we create the dialog
+            builder.setSingleChoiceItems(new SimpleAdapter(
+                GeckoApp.this,
+                itemList,
+                R.layout.site_setting_item,
+                new String[] { "setting", "value" },
+                new int[] { R.id.setting, R.id.value }
+                ), -1, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int id) { }
+                });
+
             builder.setPositiveButton(R.string.site_settings_clear, new DialogInterface.OnClickListener() {
                 public void onClick(DialogInterface dialog, int id) {
                     ListView listView = ((AlertDialog) dialog).getListView();
@@ -1148,12 +1163,12 @@ abstract public class GeckoApp
 
                     // An array of the indices of the permissions we want to clear
                     JSONArray permissionsToClear = new JSONArray();
-                    for (int i = 0; i < checkedItemPositions.size(); i++) {
-                        boolean checked = checkedItemPositions.get(i);
-                        if (checked)
+                    for (int i = 0; i < checkedItemPositions.size(); i++)
+                        if (checkedItemPositions.get(i))
                             permissionsToClear.put(i);
-                    }
-                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Permissions:Clear", permissionsToClear.toString()));
+
+                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent(
+                        "Permissions:Clear", permissionsToClear.toString()));
                 }
             });
         }
@@ -1161,12 +1176,21 @@ abstract public class GeckoApp
         builder.setNegativeButton(R.string.site_settings_cancel, new DialogInterface.OnClickListener(){
             public void onClick(DialogInterface dialog, int id) {
                 dialog.cancel();
-            }            
+            }
         });
 
         mMainHandler.post(new Runnable() {
             public void run() {
-                builder.create().show();
+                Dialog dialog = builder.create();
+                dialog.show();
+
+                ListView listView = ((AlertDialog) dialog).getListView();
+                if (listView != null) {
+                    listView.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
+                    int listSize = listView.getAdapter().getCount();
+                    for (int i = 0; i < listSize; i++)
+                        listView.setItemChecked(i, true);
+                }
             }
         });
     }
@@ -1443,13 +1467,13 @@ abstract public class GeckoApp
 
         // The clock starts...now. Better hurry!
         mJavaUiStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_JAVAUI");
-        mAboutHomeStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_ABOUTHOME");
         mGeckoReadyStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_GECKOREADY");
 
         ((GeckoApplication)getApplication()).initialize();
 
         mAppContext = this;
         Tabs.getInstance().attachToActivity(this);
+        Favicons.getInstance().attachToContext(this);
 
         // Check to see if the activity is restarted after configuration change.
         if (getLastNonConfigurationInstance() != null) {
@@ -1628,6 +1652,7 @@ abstract public class GeckoApp
         Tabs.registerOnTabsChangedListener(this);
 
         // If we are doing a restore, read the session data and send it to Gecko
+        String restoreMessage = null;
         if (mRestoreMode != RESTORE_NONE) {
             try {
                 String sessionString = getProfile().readSessionFile(false);
@@ -1677,13 +1702,15 @@ abstract public class GeckoApp
                 JSONObject restoreData = new JSONObject();
                 restoreData.put("restoringOOM", mRestoreMode == RESTORE_OOM);
                 restoreData.put("sessionString", sessionString);
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Session:Restore", restoreData.toString()));
+                restoreMessage = restoreData.toString();
             } catch (Exception e) {
                 // If restore failed, do a normal startup
                 Log.e(LOGTAG, "An error occurred during restore", e);
                 mRestoreMode = RESTORE_NONE;
             }
         }
+
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Session:Restore", restoreMessage));
 
         if (mRestoreMode == RESTORE_OOM) {
             // If we successfully did an OOM restore, we now have tab stubs
@@ -2427,7 +2454,7 @@ abstract public class GeckoApp
 
     public boolean showAwesomebar(AwesomeBar.Target aTarget, String aUrl) {
         Intent intent = new Intent(getBaseContext(), AwesomeBar.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION | Intent.FLAG_ACTIVITY_NO_HISTORY);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
         intent.putExtra(AwesomeBar.TARGET_KEY, aTarget.name());
 
         // if we were passed in a url, show it
@@ -2448,6 +2475,7 @@ abstract public class GeckoApp
 
         int requestCode = GeckoAppShell.sActivityHelper.makeRequestCodeForAwesomebar();
         startActivityForResult(intent, requestCode);
+        overridePendingTransition (R.anim.awesomebar_fade_in, R.anim.awesomebar_hold_still);
         return true;
     }
 
@@ -2484,7 +2512,7 @@ abstract public class GeckoApp
             return;
         }
 
-        if (mDOMFullScreen) {
+        if (mLayerView.isFullScreen()) {
             GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("FullScreen:Exit", null));
             return;
         }

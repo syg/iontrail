@@ -19,11 +19,12 @@
 #include "LinearScan.h"
 #include "ParallelArrayAnalysis.h"
 #include "jscompartment.h"
-#include "vm/threadpool.h"
-#include "vm/forkjoin.h"
+#include "vm/ThreadPool.h"
+#include "vm/ForkJoin.h"
 #include "IonCompartment.h"
 #include "CodeGenerator.h"
 #include "jsworkers.h"
+#include "StupidAllocator.h"
 
 #if defined(JS_CPU_X86)
 # include "x86/Lowering-x86.h"
@@ -53,7 +54,7 @@ using namespace js::ion;
 IonOptions ion::js_IonOptions;
 
 // Assert that IonCode is gc::Cell aligned.
-JS_STATIC_ASSERT(sizeof(IonCode) % gc::CellSize == 0);
+JS_STATIC_ASSERT(sizeof(IonCode) % gc::Cell::CellSize == 0);
 
 #ifdef JS_THREADSAFE
 static bool IonTLSInitialized = false;
@@ -193,8 +194,12 @@ IonRuntime::initialize(JSContext *cx)
     if (!enterJIT_)
         return false;
 
-    preBarrier_ = generatePreBarrier(cx);
-    if (!preBarrier_)
+    valuePreBarrier_ = generatePreBarrier(cx, MIRType_Value);
+    if (!valuePreBarrier_)
+        return false;
+
+    shapePreBarrier_ = generatePreBarrier(cx, MIRType_Shape);
+    if (!shapePreBarrier_)
         return false;
 
     for (VMFunction *fun = VMFunction::functions; fun; fun = fun->next) {
@@ -853,6 +858,15 @@ OptimizeMIR(MIRGenerator *mir)
 
         if (mir->shouldCancel("Alias analysis"))
             return NULL;
+
+        // Eliminating dead resume point operands requires basic block
+        // instructions to be numbered. Reuse the numbering computed during
+        // alias analysis.
+        if (!EliminateDeadResumePointOperands(mir, graph))
+            return NULL;
+
+        if (mir->shouldCancel("Eliminate dead resume point operands"))
+            return NULL;
     }
 
     if (js_IonOptions.edgeCaseAnalysis) {
@@ -874,6 +888,17 @@ OptimizeMIR(MIRGenerator *mir)
         AssertGraphCoherency(graph);
 
         if (mir->shouldCancel("GVN"))
+            return NULL;
+    }
+
+    if (js_IonOptions.licm) {
+        LICM licm(mir, graph);
+        if (!licm.analyze())
+            return NULL;
+        IonSpewPass("LICM");
+        AssertGraphCoherency(graph);
+
+        if (mir->shouldCancel("LICM"))
             return NULL;
     }
 
@@ -912,16 +937,8 @@ OptimizeMIR(MIRGenerator *mir)
     if (mir->shouldCancel("DCE"))
         return NULL;
 
-    if (js_IonOptions.licm) {
-        LICM licm(mir, graph);
-        if (!licm.analyze())
-            return NULL;
-        IonSpewPass("LICM");
-        AssertGraphCoherency(graph);
-
-        if (mir->shouldCancel("LICM"))
-            return NULL;
-    }
+    // Passes after this point must not move instructions; these analyses
+    // depend on knowing the final order in which instructions will execute.
 
     if (js_IonOptions.edgeCaseAnalysis) {
         EdgeCaseAnalysis edgeCaseAnalysis(mir, graph);
@@ -963,15 +980,46 @@ GenerateLIR(MIRGenerator *mir)
     if (mir->shouldCancel("Generate LIR"))
         return NULL;
 
-    if (js_IonOptions.lsra) {
+    AllocationIntegrityState integrity(*lir);
+
+    switch (js_IonOptions.registerAllocator) {
+      case RegisterAllocator_LSRA: {
+#ifdef DEBUG
+        integrity.record();
+#endif
+
         LinearScanAllocator regalloc(mir, &lirgen, *lir);
         if (!regalloc.go())
             return NULL;
-        IonSpewPass("Allocate Registers", &regalloc);
 
-        if (mir->shouldCancel("Allocate Registers"))
+#ifdef DEBUG
+        integrity.check(false);
+#endif
+
+        IonSpewPass("Allocate Registers [LSRA]", &regalloc);
+        break;
+      }
+
+      case RegisterAllocator_Stupid: {
+        // Use the integrity checker to populate safepoint information, so
+        // run it in all builds.
+        integrity.record();
+
+        StupidAllocator regalloc(mir, &lirgen, *lir);
+        if (!regalloc.go())
             return NULL;
+        if (!integrity.check(true))
+            return NULL;
+        IonSpewPass("Allocate Registers [Stupid]");
+        break;
+      }
+
+      default:
+        JS_NOT_REACHED("Bad regalloc");
     }
+
+    if (mir->shouldCancel("Allocate Registers"))
+        return NULL;
 
     CodeGenerator *codegen = js_new<CodeGenerator>(mir, lir);
     if (!codegen || !codegen->generate()) {
@@ -1152,7 +1200,13 @@ SequentialCompileContext::compile(IonBuilder *builder, MIRGraph *graph,
     }
     builder->clearForBackEnd();
 
-    if (js_IonOptions.parallelCompilation && OffThreadCompilationAvailable(cx)) {
+    // Try to compile the script off thread, if possible. Compilation cannot be
+    // performed off thread during an incremental GC, as doing so may trip
+    // incremental read barriers.
+    if (js_IonOptions.parallelCompilation &&
+        OffThreadCompilationAvailable(cx) &&
+        !cx->compartment->needsBarrier())
+    {
         builder->script()->ion = ION_COMPILING_SCRIPT;
 
         if (!StartOffThreadIonCompile(cx, builder)) {
@@ -1565,14 +1619,13 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
 
     // Caller must construct |this| before invoking the Ion function.
     JS_ASSERT_IF(fp->isConstructing(), fp->functionThis().isObject());
-
     Value result = Int32Value(numActualArgs);
     {
         AssertCompartmentUnchanged pcc(cx);
         IonContext ictx(cx, cx->compartment, NULL);
         IonActivation activation(cx, fp);
         JSAutoResolveFlags rf(cx, RESOLVE_INFER);
-
+        AutoFlushInhibitor afi(cx->compartment->ionCompartment());
         // Single transition point from Interpreter to Ion.
         enter(jitcode, maxArgc, maxArgv, fp, calleeToken, &result);
     }
@@ -1668,7 +1721,7 @@ ion::FastInvoke(JSContext *cx, HandleFunction fun, CallArgsList &args)
 {
     JS_CHECK_RECURSION(cx, return IonExec_Error);
 
-    RootedScript script(cx, fun->script());
+    RootedScript script(cx, fun->nonLazyScript());
     IonScript *ion = script->ionScript();
     IonCode *code = ion->method();
     void *jitcode = code->raw();
@@ -2003,11 +2056,15 @@ ion::FinishInvalidation(FreeOp *fop, JSScript *script)
 }
 
 void
-ion::MarkFromIon(JSRuntime *rt, Value *vp)
+ion::MarkValueFromIon(JSRuntime *rt, Value *vp)
 {
-    JS_ASSERT_IF(vp->isMarkable(),
-                 ((gc::Cell*)vp->toGCThing())->compartment()->needsBarrier());
     gc::MarkValueUnbarriered(&rt->gcMarker, vp, "write barrier");
+}
+
+void
+ion::MarkShapeFromIon(JSRuntime *rt, Shape **shapep)
+{
+    gc::MarkShapeUnbarriered(&rt->gcMarker, shapep, "write barrier");
 }
 
 void
@@ -2079,6 +2136,31 @@ AutoFlushCache::AutoFlushCache(const char *nonce, IonCompartment *comp)
     }
     myCompartment_ = comp;
 }
+
+AutoFlushInhibitor::AutoFlushInhibitor(IonCompartment *ic) : ic_(ic), afc(NULL)
+{
+    if (!ic)
+        return;
+    afc = ic->flusher();
+    // Ensure that called functions get a fresh flusher
+    ic->setFlusher(NULL);
+    // Ensure the current flusher has been flushed
+    if (afc) {
+        afc->flushAnyway();
+        IonSpewCont(IonSpew_CacheFlush, "}");
+    }
+}
+AutoFlushInhibitor::~AutoFlushInhibitor()
+{
+    if (!ic_)
+        return;
+    JS_ASSERT(ic_->flusher() == NULL);
+    // Ensure any future modifications are recorded
+    ic_->setFlusher(afc);
+    if (afc)
+        IonSpewCont(IonSpew_CacheFlush, "{");
+}
+
 int js::ion::LabelBase::id_count = 0;
 
 void
