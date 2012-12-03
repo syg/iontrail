@@ -266,21 +266,17 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-// TODO---this class should not should not require so many
-// temporaries!
-class LParNew : public LInstructionHelper<1, 1, 3>
+class LParNew : public LInstructionHelper<1, 1, 2>
 {
   public:
     LIR_HEADER(ParNew);
 
     LParNew(const LAllocation &parThreadContext,
             const LDefinition &temp1,
-            const LDefinition &temp2,
-            const LDefinition &temp3) {
+            const LDefinition &temp2) {
         setOperand(0, parThreadContext);
         setTemp(0, temp1);
         setTemp(1, temp2);
-        setTemp(2, temp3);
     }
 
     MParNew *mir() const {
@@ -326,18 +322,16 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
     }
 };
 
-class LParNewCallObject : public LInstructionHelper<1, 2, 3>
+class LParNewCallObject : public LInstructionHelper<1, 2, 2>
 {
     LParNewCallObject(const LAllocation &parThreadContext,
                       const LAllocation &slots,
                       const LDefinition &temp1,
-                      const LDefinition &temp2,
-                      const LDefinition &temp3) {
+                      const LDefinition &temp2) {
         setOperand(0, parThreadContext);
         setOperand(1, slots);
         setTemp(0, temp1);
         setTemp(1, temp2);
-        setTemp(2, temp3);
     }
 
 public:
@@ -346,17 +340,15 @@ public:
     static LParNewCallObject *NewWithSlots(const LAllocation &parThreadContext,
                                            const LAllocation &slots,
                                            const LDefinition &temp1,
-                                           const LDefinition &temp2,
-                                           const LDefinition &temp3) {
-        return new LParNewCallObject(parThreadContext, slots, temp1, temp2, temp3);
+                                           const LDefinition &temp2) {
+        return new LParNewCallObject(parThreadContext, slots, temp1, temp2);
     }
 
     static LParNewCallObject *NewSansSlots(const LAllocation &parThreadContext,
                                            const LDefinition &temp1,
-                                           const LDefinition &temp2,
-                                           const LDefinition &temp3) {
+                                           const LDefinition &temp2) {
         LAllocation slots = LConstantIndex::Bogus();
-        return new LParNewCallObject(parThreadContext, slots, temp1, temp2, temp3);
+        return new LParNewCallObject(parThreadContext, slots, temp1, temp2);
     }
 
     const LAllocation *threadContext() {
@@ -1953,7 +1945,7 @@ class LLambda : public LInstructionHelper<1, 1, 0>
 };
 
 // TODO: this class should not require so many temporaries.
-class LParLambda : public LInstructionHelper<1, 2, 3>
+class LParLambda : public LInstructionHelper<1, 2, 2>
 {
   public:
     LIR_HEADER(ParLambda);
@@ -1961,13 +1953,11 @@ class LParLambda : public LInstructionHelper<1, 2, 3>
     LParLambda(const LAllocation &parThreadContext,
                const LAllocation &scopeChain,
                const LDefinition &temp1,
-               const LDefinition &temp2,
-               const LDefinition &temp3) {
+               const LDefinition &temp2) {
         setOperand(0, parThreadContext);
         setOperand(1, scopeChain);
         setTemp(0, temp1);
         setTemp(1, temp2);
-        setTemp(2, temp3);
     }
     const LAllocation *threadContext() {
         return getOperand(0);

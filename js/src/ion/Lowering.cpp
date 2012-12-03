@@ -194,16 +194,14 @@ LIRGenerator::visitParNewCallObject(MParNewCallObject *ins)
         useFixed(ins->threadContext(), CallTempReg0);
     const LDefinition &temp1 = tempFixed(CallTempReg1);
     const LDefinition &temp2 = tempFixed(CallTempReg2);
-    const LDefinition &temp3 = tempFixed(CallTempReg3);
 
     LParNewCallObject *lir;
     if (ins->slots()->type() == MIRType_Slots) {
-        const LAllocation &slots = useFixed(ins->slots(), CallTempReg4);
+        const LAllocation &slots = useFixed(ins->slots(), CallTempReg3);
         lir = LParNewCallObject::NewWithSlots(parThreadContext, slots,
-                                              temp1, temp2, temp3);
+                                              temp1, temp2);
     } else {
-        lir = LParNewCallObject::NewSansSlots(parThreadContext,
-                                              temp1, temp2, temp3);
+        lir = LParNewCallObject::NewSansSlots(parThreadContext, temp1, temp2);
     }
 
     // Below, assignSafepoint is to support use of save/restoreLive
@@ -1238,8 +1236,7 @@ LIRGenerator::visitParLambda(MParLambda *ins)
     LParLambda *lir = new LParLambda(useFixed(ins->threadContext(), CallTempReg0),
                                      useFixed(ins->scopeChain(), CallTempReg1),
                                      tempFixed(CallTempReg2),
-                                     tempFixed(CallTempReg3),
-                                     tempFixed(CallTempReg4));
+                                     tempFixed(CallTempReg3));
 
     // Below, assignSafepoint is to support use of save/restoreLive
     return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
@@ -1323,8 +1320,7 @@ LIRGenerator::visitParNew(MParNew *ins)
 {
     LParNew *lir = new LParNew(useFixed(ins->threadContext(), CallTempReg0),
                                tempFixed(CallTempReg1),
-                               tempFixed(CallTempReg2),
-                               tempFixed(CallTempReg3));
+                               tempFixed(CallTempReg2));
 
     // Below, assignSafepoint is to support use of save/restoreLive
     return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
