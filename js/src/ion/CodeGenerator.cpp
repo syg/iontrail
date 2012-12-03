@@ -1985,7 +1985,6 @@ CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
     Register threadContextReg = ToRegister(lir->threadContext());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
-    Register tempReg3 = ToRegister(lir->getTemp2());
 
     // This is an inlined version of newGCThing.
 
@@ -2001,14 +2000,13 @@ CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
 
     // If LIMIT <= FIRST, bail to OOL code
     masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
-    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
+    masm.branchPtr(Assembler::BelowOrEqual,
+                   Address(tempReg1, offsetof(gc::FreeSpan, last)),
+                   tempReg2, ool->entry());
 
-    masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
-
+    masm.movePtr(tempReg2, resultReg);
     masm.addPtr(Imm32(thingSize), tempReg2);
     masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
-    masm.movePtr(tempReg2, resultReg);
-    masm.subPtr(Imm32(thingSize), resultReg);
 
     // TO INVESTIGATE: does ! lir->slots()->isRegister() imply that
     // there is no slots array at all?  And also, do we need to
@@ -2031,7 +2029,6 @@ CodeGenerator::visitOutOfLineParNewCallObject(OutOfLineParNewCallObject *ool)
     Register threadContextReg = ToRegister(lir->threadContext());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
-    Register tempReg3 = ToRegister(lir->getTemp2());
 
     saveLive(lir);
 
@@ -2048,7 +2045,8 @@ CodeGenerator::visitOutOfLineParNewCallObject(OutOfLineParNewCallObject *ool)
     if (lir->hasDynamicSlots())
         masm.push(ToRegister(lir->slots()));
 
-    masm.setupUnalignedABICall(3, tempReg3);
+    masm.setupUnalignedABICall(3, tempReg2);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
     masm.passABIArg(threadContextReg);
     masm.passABIArg(tempReg1);
     masm.passABIArg(tempReg2);

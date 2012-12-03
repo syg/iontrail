@@ -390,10 +390,6 @@ public:
     const LAllocation *getTemp1() {
         return getTemp(1)->output();
     }
-
-    const LAllocation *getTemp2() {
-        return getTemp(2)->output();
-    }
 };
 
 class LNewStringObject : public LInstructionHelper<1, 1, 1>
