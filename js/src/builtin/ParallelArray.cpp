@@ -397,8 +397,10 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
     if (!ToUint32(cx, args[0], &length))
         return ExecutionFatal;
 
-    if (length < ForkJoinSlices(cx))
+    if (length < ForkJoinSlices(cx)) {
+        args.rval().setUndefined();
         return ExecutionDisqualified;
+    }
 
     RootedObject fun(cx, &args[1].toObject());
 
