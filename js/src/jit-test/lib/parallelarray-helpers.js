@@ -2,6 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+function range(n, m) {
+  var result = [];
+  for (var i = n; i < m; i++)
+    result.push(i);
+  return result;
+}
+
 function assertAlmostEq(v1, v2) {
   // + and other fp ops can vary somewhat when run in parallel!
   assertEq(typeof v1, "number");
