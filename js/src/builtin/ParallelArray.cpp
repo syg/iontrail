@@ -122,9 +122,9 @@ Spew(JSContext *cx, SpewChannel channel, const char *fmt, ...)
 
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stdout, "[ParallelArray] %s:%u: ", script->filename, PCToLineNumber(script, pc));
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
+    fprintf(stderr, "[ParallelArray] %s:%u: ", script->filename, PCToLineNumber(script, pc));
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
     va_end(ap);
 }
 
@@ -335,24 +335,28 @@ class BuildArrayOp : public ArrayOp
     bool warmup() {
         JS_ASSERT(InWarmup());
 
-        Spew(cx_, SpewOps, "%s: warmup phase", name_);
+        uint32_t slices = ForkJoinSlices(cx_);
+        for (uint32_t id = 0; id < slices; id++) {
+            Spew(cx_, SpewOps, "%s: warmup %u/%u", name_, id, slices);
 
-        InvokeArgsGuard args;
-        if (!cx_->stack.pushInvokeArgs(cx_, baseArgc + funArgc_, &args))
-            return false;
+            InvokeArgsGuard args;
+            if (!cx_->stack.pushInvokeArgs(cx_, baseArgc + funArgc_, &args))
+                return false;
 
-        args.setCallee(ObjectValue(*fun_));
-        args.setThis(UndefinedValue());
+            args.setCallee(ObjectValue(*fun_));
+            args.setThis(UndefinedValue());
 
-        args[0].setObject(*buffer_);
-        args[1].setInt32(0);
-        args[2].setInt32(ForkJoinSlices(cx_));
-        args[3].setBoolean(true); // warmup
-        for (uint32_t i = 0; i < funArgc_; i++)
-            args[baseArgc + i] = funArgs_[i];
+            // run the warmup with each of the ids
+            args[0].setObject(*buffer_);
+            args[1].setInt32(id);
+            args[2].setInt32(slices);
+            args[3].setBoolean(true); // warmup
+            for (uint32_t i = 0; i < funArgc_; i++)
+                args[baseArgc + i] = funArgs_[i];
 
-        if (!Invoke(cx_, args))
-            return false;
+            if (!Invoke(cx_, args))
+                return false;
+        }
 
         JS_ASSERT(InWarmup());
         return true;

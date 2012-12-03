@@ -252,10 +252,37 @@ function ParallelArrayMap(f) {
 }
 
 function ParallelArrayReduce(f) {
-  var length = this.length;
+  var length = this.shape[0];
 
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Parallel Version
+
+  var slices = %ParallelSlices();
+  if (length > slices) {
+    // Attempt parallel reduction, but only if there is at least one
+    // element per thread.  Otherwise the various slices having to
+    // reduce empty spans of the source array.
+    var subreductions = %ParallelBuildArray(slices, fill, this, f);
+    if (subreductions) {
+      // can't use reduce because subreductions is an array, not a
+      // parallel array:
+      var a = subreductions[0];
+      for (var i = 1; i < subreductions.length; i++)
+        a = f(a, subreductions[i]);
+      return a;
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Sequential Version
+
+  return reduce(this, 0, length, f);
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Helpers
 
   function reduce(self, start, end, f) {
     // The accumulator: the objet petit a.
@@ -274,24 +301,6 @@ function ParallelArrayReduce(f) {
     if (warmup) { end = TruncateEnd(start, end); }
     result[id] = reduce(self, start, end, f);
   }
-
-  var threads = %_GetThreadPoolInfo().numThreads;
-  if (length > threads) {
-    // Attempt parallel reduction, but only if there is at least one
-    // element per thread.  Otherwise the various threads having to
-    // reduce empty spans of the source array.
-    var subreductions = %ParallelBuildArray(threads, fill, this, f);
-    if (subreductions) {
-      // can't use reduce because subreductions is an array, not a
-      // parallel array:
-      var a = subreductions[0];
-      for (var i = 1; i < subreductions.length; i++)
-        a = f(a, subreductions[i]);
-      return a;
-    }
-  }
-
-  return reduce(this, 0, length, f);
 }
 
 function ParallelArrayScan(f) {
@@ -300,14 +309,132 @@ function ParallelArrayScan(f) {
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
-  var a = this.get(0);
-  for (var i = 1; i < length; i++) {
-    a = f(a, this.get(i));
-    result[i] = a;
+  ///////////////////////////////////////////////////////////////////////////
+  // Parallel version
+
+  var slices = %ParallelSlices();
+  if (length > slices) { // Each worker thread will have something to do.
+    // compute scan of each slice: see comment on phase1() below
+    var phase1buffer = %ParallelBuildArray(length, phase1, this, f);
+
+    if (phase1buffer) {
+      // build intermediate array: see comment on phase2() below
+      var intermediates = [];
+      var [start, end] = ComputeTileBounds(length, 0, slices);
+      var acc = phase1buffer[end-1];
+      intermediates[0] = acc;
+      for (var i = 1; i < slices - 1; i++) {
+        [start, end] = ComputeTileBounds(length, i, slices);
+        acc = f(acc, phase1buffer[end-1]);
+        intermediates[i] = acc;
+      }
+
+      // compute phase1 scan results with intermediates
+      //
+      // FIXME---if we had a %UnsafeWrite() primitive, we could reuse
+      // the phase1buffer here and would not need to construct a new
+      // buffer!
+      var phase2buffer = %ParallelBuildArray(length, phase2,
+                                             this, f, phase1buffer, intermediates);
+      if (phase2buffer) {
+        return new global.ParallelArray([length], phase2buffer, 0);
+      }
+    }
   }
 
-  return new global.ParallelArray(buffer);
+  ///////////////////////////////////////////////////////////////////////////
+  // Sequential version
+
+  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  var acc = this.get(0);
+  buffer[0] = acc;
+  for (var i = 1; i < length; i++) {
+    acc = f(acc, this.get(i));
+    buffer[i] = acc;
+  }
+  return new global.ParallelArray([length], buffer, 0);
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Helpers
+
+  function phase1(result, id, n, warmup, self, f) {
+    // In phase 1, we divide the source array into n even slices and
+    // compute scan on each slice sequentially as it were the entire
+    // array.  This function is responsible for computing one of those
+    // slices.
+    //
+    // So, if we have an array [A,B,C,D,E,F,G,H,I], n == 3, and our function
+    // |f| is sum, then would wind up computing a result array like:
+    //
+    //     [A, A+B, A+B+C, D, D+E, D+E+F, G, G+H, G+H+I]
+    //      ^~~~~~~~~~~~^  ^~~~~~~~~~~~^  ^~~~~~~~~~~~~^
+    //      Slice 0        Slice 1        Slice 2
+    //
+    // Read on in phase2 to see what we do next!
+    var [start, end] = ComputeTileBounds(self.shape[0], id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
+    var acc = self.get(start);
+    result[start] = acc;
+    for (var i = start + 1; i < end; i++) {
+      var elem = self.get(i);
+      acc = f(acc, elem);
+      result[i] = acc;
+    }
+  }
+
+  function phase2(result, id, n, warmup, self, f, phase1buffer, intermediates) {
+    // After computing the phase1 results, we compute an
+    // |intermediates| array.  |intermediates[i]| contains the result
+    // of reducing the final value from each preceding slice j<i with
+    // the final value of slice i.  So, to continue our previous
+    // example, the intermediates array would contain:
+    //
+    //   [A+B+C, (A+B+C)+(D+E+F), ((A+B+C)+(D+E+F))+(G+H+I)]
+    //
+    // Here I have used parenthesization to make clear the order of
+    // evaluation in each case.
+    //
+    //   An aside: currently the intermediates array is computed
+    //   sequentially.  In principle, we could compute it in parallel,
+    //   at the cost of doing duplicate work.  This did not seem
+    //   particularly advantageous to me, particularly as the number
+    //   of slices is typically quite small (one per core), so I opted
+    //   to just compute it sequentially.
+    //
+    // Phase 2 contains the results of phase1 with the intermediates
+    // array to produce the final scan results.  The idea is to
+    // iterate over each element S[i] in the slice |id|, which
+    // currently contains the result of reducing with S[0]...S[i]
+    // (where S0 is the first thing in the slice), and combine that
+    // with |intermediate[id-1]|, which represents the result of
+    // reducing everything in the input array prior to the slice.
+    //
+    // To continue with our example, in phase 1 we computed slice 1 to
+    // be [D, D+E, D+E+F].  We will combine those results with
+    // |intermediates[1-1]|, which is |A+B+C|, so that the final
+    // result is [(A+B+C)+D, (A+B+C)+(D+E), (A+B+C)+(D+E+F)].  Again I
+    // am using parentheses to clarify how these results were reduced.
+    //
+    // These is one subtle point here!
+
+    var [start, end] = ComputeTileBounds(self.shape[0], id, n);
+    if (warmup) { end = TruncateEnd(start, end); }
+    if (id == 0) {
+      for (var i = start; i < end; i++) {
+        result[i] = phase1buffer[i];
+      }
+
+      // NB: this setup is not great for warmups, since it means that
+      // the code below is never executed during warmup mode.  Unfortunately,
+      // it's not clear how best to fake the situation.
+    } else {
+      var intermediate_idx = id - 1;
+      var intermediate = intermediates[intermediate_idx];
+      for (var i = start; i < end; i++) {
+        result[i] = f(intermediate, phase1buffer[i]);
+      }
+    }
+  }
 }
 
 function ParallelArrayScatter(targets, zero, f, length) {
@@ -369,9 +496,9 @@ function ParallelArrayFilter(filters) {
 
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
-  var threads = %_GetThreadPoolInfo().numThreads;
-  if (length > threads) {
-    var keepers = %ParallelBuildArray(threads, count_keepers, filters);
+  var slices = %ParallelSlices();
+  if (length > slices) {
+    var keepers = %ParallelBuildArray(slices, count_keepers, filters);
     if (keepers) {
       var total = 0;
       for (var i = 0; i < keepers.length; i++)
@@ -421,10 +548,10 @@ function ParallelArrayFilter(filters) {
 function ParallelArrayPartition(amount) {
   if (amount >>> 0 !== amount)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
-  
+
   var length = this.shape[0];
   var partitions = (length / amount) | 0;
-  
+
   if (partitions * amount !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
 
@@ -516,7 +643,7 @@ function ParallelArrayLength() {
 }
 
 function ParallelArrayToString() {
-  var l = this.length;
+  var l = this.shape[0];
   if (l == 0)
     return "<>";
 
@@ -534,7 +661,7 @@ function ParallelArrayToString() {
 //
 // function CheckIndices(shape, index1d) {
 //   let idx = ComputeIndices(shape, index1d);
-// 
+//
 //   let c = 0;
 //   for (var i = 0; i < shape.length; i++) {
 //     var stride = 1;

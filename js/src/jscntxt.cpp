@@ -462,8 +462,56 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 static JSBool
 intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
 {
+    // Usage: %ParallelBuildArray(length, func, args...)
+    //
+    // Creates an array of length |length| and invokes |func| many
+    // times in parallel in order to populate it.  Executed based on
+    // the fork join pool described in vm/ForkJoin.h.  If func() has
+    // not been compiled for parallel execution, it will first be
+    // invoked various times sequentially as a warmup phase, which is
+    // used to gather TI information and to determine which functions
+    // func() will invoke.
+    //
+    // Note: Parallel execution is never guaranteed.  It can fail for
+    // any number of reasons, only some of which are in your control:
+    // in case of such a failure, %ParallelBuildArray will return
+    // undefined.
+    //
+    // func() should expect the following arguments:
+    //
+    //     func(result, id, n, warmup, args...)
+    //
+    // Here, |result| is the result array; |id| is the slice id. |n|
+    // is the total number of slices; |warmup| is true if this is the
+    // warmup phase; and |args| are the additional arguments passed to
+    // |%ParallelBuildArray()|.
+    //
+    // It is up to you to ensure that, given |n| invocations of
+    // |func()|, |result| is fully populated and there are no data
+    // races.  Currently, when |func| is compiled, the compiler will
+    // magically permit it to write to its first argument without
+    // enforcing the usual data-race requirements.  This should
+    // eventually become an intrinsic (e.g. |%UnsafeSetElement()|)
+    //
+    // Typically, if |warmup| is true, you will want to do less work.
+    //
+    // See ParallelArray.js for examples.
+
     CallArgs args = CallArgsFromVp(argc, vp);
     return parallel::BuildArray(cx, args) != parallel::ExecutionFatal;
+}
+
+static JSBool
+intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %ParallelSlices()
+    //
+    // Returns the number of parallel slices that will be created
+    // by %ParallelBuildArray().
+
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setInt32(ForkJoinSlices(cx));
+    return true;
 }
 
 JSFunctionSpec intrinsic_functions[] = {
@@ -471,7 +519,9 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
+
     JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
+    JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
 
 #ifdef DEBUG
     JS_FN("Dump",               intrinsic_Dump,                 1,0),
