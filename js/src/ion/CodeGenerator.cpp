@@ -356,7 +356,6 @@ CodeGenerator::visitParLambda(LParLambda *lir)
     Register scopeChainReg    = ToRegister(lir->scopeChain());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
-    Register tempReg3 = ToRegister(lir->getTemp2());
 
     // Let FREESPAN denote forkJoinSlice->arenaLists->freeLists[thingKind]
     // Let FIRST    denote FREESPAN->first
@@ -364,16 +363,17 @@ CodeGenerator::visitParLambda(LParLambda *lir)
 
     // tempReg1 = (FreeSpan*) FREESPAN
     // tempReg2 = (uintptr_t) FIRST
-    // tempReg3 = (uintptr_t) LIMIT
     masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)),
                  tempReg1);
     uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
     masm.addPtr(Imm32(freeSpanOffset), tempReg1);
     masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
-    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
 
     // if LIMIT <= FIRST, bail to OOL code
-    masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
+    masm.branchPtr(Assembler::BelowOrEqual,
+                   Address(tempReg1, offsetof(gc::FreeSpan, last)),
+                   tempReg2, ool->entry());
+
     // resultReg = FIRST
     // FIRST += thingSize
     masm.movePtr(tempReg2, resultReg);
@@ -417,7 +417,6 @@ CodeGenerator::visitOutOfLineParLambda(OutOfLineParLambda *ool)
     Register scopeChainReg    = ToRegister(lir->scopeChain());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
-    Register tempReg3 = ToRegister(lir->getTemp2());
 
     saveLive(lir);
     // scopeChainReg is not live reg as recorded in lir object, so
@@ -425,9 +424,9 @@ CodeGenerator::visitOutOfLineParLambda(OutOfLineParLambda *ool)
     masm.push(scopeChainReg);
 
     masm.move32(Imm32(ool->allocKind), tempReg1);
-    masm.move32(Imm32(ool->thingSize), tempReg2);
 
-    masm.setupUnalignedABICall(3, tempReg3);
+    masm.setupUnalignedABICall(3, tempReg2);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
     masm.passABIArg(threadContextReg);
     masm.passABIArg(tempReg1);
     masm.passABIArg(tempReg2);
@@ -2122,7 +2121,6 @@ CodeGenerator::visitParNew(LParNew *lir)
     Register threadContextReg = ToRegister(lir->threadContext());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
-    Register tempReg3 = ToRegister(lir->getTemp2());
 
     // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
     masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)), tempReg1);
@@ -2133,9 +2131,10 @@ CodeGenerator::visitParNew(LParNew *lir)
 
     // If LIMIT <= FIRST, bail to OOL code
     masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
-    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, last)), tempReg3);
 
-    masm.branchPtr(Assembler::BelowOrEqual, tempReg3, tempReg2, ool->entry());
+    masm.branchPtr(Assembler::BelowOrEqual,
+                   Address(tempReg1, offsetof(gc::FreeSpan, last)),
+                   tempReg2, ool->entry());
 
     // objReg = FIRST
     // FIRST += thingSize
@@ -2158,14 +2157,13 @@ CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
     Register threadContextReg = ToRegister(lir->threadContext());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
-    Register tempReg3 = ToRegister(lir->getTemp2());
 
     saveLive(lir);
 
     masm.move32(Imm32(ool->allocKind), tempReg1);
-    masm.move32(Imm32(ool->thingSize), tempReg2);
 
-    masm.setupUnalignedABICall(3, tempReg3);
+    masm.setupUnalignedABICall(3, tempReg2);
+    masm.move32(Imm32(ool->thingSize), tempReg2);
     masm.passABIArg(threadContextReg);
     masm.passABIArg(tempReg1);
     masm.passABIArg(tempReg2);

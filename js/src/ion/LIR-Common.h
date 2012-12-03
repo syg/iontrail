@@ -298,10 +298,6 @@ class LParNew : public LInstructionHelper<1, 1, 3>
     const LAllocation *getTemp1() {
         return getTemp(1)->output();
     }
-
-    const LAllocation *getTemp2() {
-        return getTemp(2)->output();
-    }
 };
 
 // Allocates a new CallObject. The inputs are:
@@ -1987,9 +1983,6 @@ class LParLambda : public LInstructionHelper<1, 2, 3>
     }
     const LAllocation *getTemp1() {
         return getTemp(1)->output();
-    }
-    const LAllocation *getTemp2() {
-        return getTemp(2)->output();
     }
 };
 
