@@ -266,11 +266,9 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-// TODO---this class should not be a CallInstructionHelper, and it
-// should not require so many temporaries!  These are intended for the
-// OOL slow path; but we should just use the masm instructions to
-// locally push/pop the state in that case.
-class LParNew : public LCallInstructionHelper<1, 1, 3>
+// TODO---this class should not should not require so many
+// temporaries!
+class LParNew : public LInstructionHelper<1, 1, 3>
 {
   public:
     LIR_HEADER(ParNew);
@@ -1962,9 +1960,9 @@ class LLambda : public LInstructionHelper<1, 1, 0>
     }
 };
 
-// TODO: same notes as LParNew apply here --- this class should not be
-// a CallInstructionHelper, and it should not require so many
-// temporaries.  Both can probably be fixed in tandem.
+// TODO: this class should not be a CallInstructionHelper, and should
+// not require so many temporaries.  Both can probably be fixed in
+// tandem.  See change history where ParNew shed CallInstructionHelper.
 class LParLambda : public LCallInstructionHelper<1, 2, 3>
 {
   public:

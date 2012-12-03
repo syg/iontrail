@@ -1320,7 +1320,11 @@ LIRGenerator::visitParNew(MParNew *ins)
                                tempFixed(CallTempReg1),
                                tempFixed(CallTempReg2),
                                tempFixed(CallTempReg3));
-    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
+
+    // assignSafepoint initializes ins->safepoint_, to support use of
+    // saveLive/restoreLive in CodeGenerator for OutOfLineParNew.
+    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
+        && assignSafepoint(lir, ins);
 }
 
 bool
