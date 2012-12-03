@@ -330,7 +330,7 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
     }
 };
 
-class LParNewCallObject : public LCallInstructionHelper<1, 2, 3>
+class LParNewCallObject : public LInstructionHelper<1, 2, 3>
 {
     LParNewCallObject(const LAllocation &parThreadContext,
                       const LAllocation &slots,

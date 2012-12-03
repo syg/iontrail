@@ -2033,6 +2033,8 @@ CodeGenerator::visitOutOfLineParNewCallObject(OutOfLineParNewCallObject *ool)
     Register tempReg2 = ToRegister(lir->getTemp1());
     Register tempReg3 = ToRegister(lir->getTemp2());
 
+    saveLive(lir);
+
     masm.move32(Imm32(ool->allocKind), tempReg1);
     masm.move32(Imm32(ool->thingSize), tempReg2);
 
@@ -2054,6 +2056,9 @@ CodeGenerator::visitOutOfLineParNewCallObject(OutOfLineParNewCallObject *ool)
     JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
     if (lir->hasDynamicSlots())
         masm.pop(ToRegister(lir->slots()));
+
+    restoreLive(lir);
+
     masm.jump(ool->rejoin());
 
     return true;
