@@ -1238,7 +1238,10 @@ LIRGenerator::visitParLambda(MParLambda *ins)
                                      tempFixed(CallTempReg2),
                                      tempFixed(CallTempReg3),
                                      tempFixed(CallTempReg4));
-    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
+
+    // Below, assignSafepoint is to support use of save/restoreLive
+    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
+        && assignSafepoint(lir, ins);
 }
 
 bool

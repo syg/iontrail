@@ -1960,10 +1960,8 @@ class LLambda : public LInstructionHelper<1, 1, 0>
     }
 };
 
-// TODO: this class should not be a CallInstructionHelper, and should
-// not require so many temporaries.  Both can probably be fixed in
-// tandem.  See change history where ParNew shed CallInstructionHelper.
-class LParLambda : public LCallInstructionHelper<1, 2, 3>
+// TODO: this class should not require so many temporaries.
+class LParLambda : public LInstructionHelper<1, 2, 3>
 {
   public:
     LIR_HEADER(ParLambda);
