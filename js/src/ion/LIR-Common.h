@@ -266,23 +266,17 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-// TODO---this class should not be a CallInstructionHelper, and it
-// should not require so many temporaries!  These are intended for the
-// OOL slow path; but we should just use the masm instructions to
-// locally push/pop the state in that case.
-class LParNew : public LCallInstructionHelper<1, 1, 3>
+class LParNew : public LInstructionHelper<1, 1, 2>
 {
   public:
     LIR_HEADER(ParNew);
 
     LParNew(const LAllocation &parThreadContext,
             const LDefinition &temp1,
-            const LDefinition &temp2,
-            const LDefinition &temp3) {
+            const LDefinition &temp2) {
         setOperand(0, parThreadContext);
         setTemp(0, temp1);
         setTemp(1, temp2);
-        setTemp(2, temp3);
     }
 
     MParNew *mir() const {
@@ -299,10 +293,6 @@ class LParNew : public LCallInstructionHelper<1, 1, 3>
 
     const LAllocation *getTemp1() {
         return getTemp(1)->output();
-    }
-
-    const LAllocation *getTemp2() {
-        return getTemp(2)->output();
     }
 };
 
@@ -329,6 +319,64 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
     }
     MNewCallObject *mir() const {
         return mir_->toNewCallObject();
+    }
+};
+
+class LParNewCallObject : public LInstructionHelper<1, 2, 2>
+{
+    LParNewCallObject(const LAllocation &parThreadContext,
+                      const LAllocation &slots,
+                      const LDefinition &temp1,
+                      const LDefinition &temp2) {
+        setOperand(0, parThreadContext);
+        setOperand(1, slots);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+    }
+
+public:
+    LIR_HEADER(ParNewCallObject);
+
+    static LParNewCallObject *NewWithSlots(const LAllocation &parThreadContext,
+                                           const LAllocation &slots,
+                                           const LDefinition &temp1,
+                                           const LDefinition &temp2) {
+        return new LParNewCallObject(parThreadContext, slots, temp1, temp2);
+    }
+
+    static LParNewCallObject *NewSansSlots(const LAllocation &parThreadContext,
+                                           const LDefinition &temp1,
+                                           const LDefinition &temp2) {
+        LAllocation slots = LConstantIndex::Bogus();
+        return new LParNewCallObject(parThreadContext, slots, temp1, temp2);
+    }
+
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+
+    const LAllocation *slots() {
+        return getOperand(1);
+    }
+
+    const bool hasDynamicSlots() {
+        // TO INVESTIGATE: Felix tried using isRegister() method here,
+        // but for useFixed(_, CallTempN), isRegister() is false (and
+        // isUse() is true).  So for now ignore that and try to match
+        // the LConstantIndex::Bogus() generated above instead.
+        return slots() && ! slots()->isConstant();
+    }
+
+    const MParNewCallObject *mir() const {
+        return mir_->toParNewCallObject();
+    }
+
+    const LAllocation *getTemp0() {
+        return getTemp(0)->output();
+    }
+
+    const LAllocation *getTemp1() {
+        return getTemp(1)->output();
     }
 };
 
@@ -1893,6 +1941,38 @@ class LLambda : public LInstructionHelper<1, 1, 0>
     }
     const MLambda *mir() const {
         return mir_->toLambda();
+    }
+};
+
+// TODO: this class should not require so many temporaries.
+class LParLambda : public LInstructionHelper<1, 2, 2>
+{
+  public:
+    LIR_HEADER(ParLambda);
+
+    LParLambda(const LAllocation &parThreadContext,
+               const LAllocation &scopeChain,
+               const LDefinition &temp1,
+               const LDefinition &temp2) {
+        setOperand(0, parThreadContext);
+        setOperand(1, scopeChain);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+    }
+    const LAllocation *threadContext() {
+        return getOperand(0);
+    }
+    const LAllocation *scopeChain() {
+        return getOperand(1);
+    }
+    const MParLambda *mir() const {
+        return mir_->toParLambda();
+    }
+    const LAllocation *getTemp0() {
+        return getTemp(0)->output();
+    }
+    const LAllocation *getTemp1() {
+        return getTemp(1)->output();
     }
 };
 

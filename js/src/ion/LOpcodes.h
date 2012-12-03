@@ -28,6 +28,7 @@
     _(NewCallObject)                \
     _(NewStringObject)              \
     _(ParNew)                       \
+    _(ParNewCallObject)             \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
     _(ParCheckOverRecursed)         \
@@ -102,6 +103,7 @@
     _(RegExpTest)                   \
     _(Lambda)                       \
     _(LambdaForSingleton)           \
+    _(ParLambda)                    \
     _(ImplicitThis)                 \
     _(Slots)                        \
     _(Elements)                     \

@@ -135,15 +135,15 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ToInt32)
     SAFE_OP(TruncateToInt32)
     UNSAFE_OP(ToString)
-    UNSAFE_OP(NewSlots)
+    SAFE_OP(NewSlots)
     COND_SAFE_OP(NewArray)
     COND_SAFE_OP(NewObject)
-    UNSAFE_OP(NewCallObject)
+    COND_SAFE_OP(NewCallObject)
     UNSAFE_OP(InitProp)
     COND_SAFE_OP(Start)
     UNSAFE_OP(OsrEntry)
     UNSAFE_OP(RegExp)
-    UNSAFE_OP(Lambda)
+    COND_SAFE_OP(Lambda)
     UNSAFE_OP(ImplicitThis)
     SAFE_OP(Slots)
     SAFE_OP(Elements)
@@ -365,6 +365,32 @@ ParallelArrayVisitor::visitStart(MStart *ins) {
 // down to a (possibly inlined) invocation of NewGCThing()---are
 // replaced with MParNew, which is supplied with the thread context.
 // These allocations will take place using per-helper-thread arenas.
+
+bool
+ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins) {
+    // fast path: replace with ParNewCallObject op
+    MDefinition *threadContext = this->threadContext();
+
+    MParNewCallObject *parNewCallObjectInstruction =
+        MParNewCallObject::New(threadContext, ins);
+    replace(ins, parNewCallObjectInstruction);
+    return true;
+}
+
+bool
+ParallelArrayVisitor::visitLambda(MLambda *ins) {
+    if (ins->fun()->hasSingletonType() ||
+        types::UseNewTypeForClone(ins->fun())) {
+        // slow path: bail on parallel execution.
+        return false;
+    }
+
+    // fast path: replace with ParLambda op
+    MDefinition *threadContext = this->threadContext();
+    MParLambda *parLambdaInstruction = MParLambda::New(threadContext, ins);
+    replace(ins, parLambdaInstruction);
+    return true;
+}
 
 bool
 ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {

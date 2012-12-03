@@ -1399,6 +1399,7 @@ LinearScanAllocator::splitBlockingIntervals(LAllocation allocation)
     if (fixed->numRanges() > 0) {
         CodePosition fixedPos = current->intersect(fixed);
         if (fixedPos != CodePosition::MIN) {
+            JS_ASSERT(fixedPos > current->start());
             JS_ASSERT(fixedPos < current->end());
             if (!splitInterval(current, fixedPos))
                 return false;

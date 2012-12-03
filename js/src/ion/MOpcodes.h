@@ -73,6 +73,7 @@ namespace ion {
     _(NewArray)                                                             \
     _(NewObject)                                                            \
     _(NewCallObject)                                                        \
+    _(ParNewCallObject)                                                     \
     _(NewStringObject)                                                      \
     _(ParNew)                                                               \
     _(InitProp)                                                             \
@@ -81,6 +82,7 @@ namespace ion {
     _(RegExp)                                                               \
     _(RegExpTest)                                                           \
     _(Lambda)                                                               \
+    _(ParLambda)                                                            \
     _(ImplicitThis)                                                         \
     _(Slots)                                                                \
     _(Elements)                                                             \
