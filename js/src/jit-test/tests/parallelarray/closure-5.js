@@ -1,5 +1,7 @@
+load(libdir + "parallelarray-helpers.js");
+
 function testClosureCreationAndInvocation() {
-  var a = [1,2,3,4,5,21];
+  var a = range(1, 65);
   var p = new ParallelArray(a);
   function makeaddv(v) {
     var u = v - 1;
@@ -28,7 +30,8 @@ function testClosureCreationAndInvocation() {
                                   h,g,f,e,d,c,b,a]; };
   };
   var m = p.map(makeaddv);
-  assertEq(m.get(5)(1)[2], 20);
+  print(m.get(20)(1)[2]);
+  assertEq(m.get(20)(1)[2], 20);
 }
 
 testClosureCreationAndInvocation();
