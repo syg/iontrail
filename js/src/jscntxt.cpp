@@ -415,7 +415,7 @@ intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
     if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
         return false;
     if (ToBoolean(propv))
-        fun->setShouldCloneAtCallsite();
+        fun->setIsCloneAtCallsite();
 
     id = AtomToId(Atomize(cx, "constructible", strlen("constructible")));
     if (!JSObject::getGeneric(cx, flags, flags, id, &propv))

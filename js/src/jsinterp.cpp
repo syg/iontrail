@@ -2342,11 +2342,15 @@ BEGIN_CASE(JSOP_FUNCALL)
      * Some builtins are marked as clone-at-call-site to increase precision of
      * TI and JITs.
      */
-    if (isFunction && cx->typeInferenceEnabled() && fun->shouldCloneAtCallsite()) {
-        fun = CloneFunctionAtCallsite(cx, fun, script, regs.pc);
-        if (!fun)
+    if (isFunction) {
+        if (fun->isInterpretedLazy() && !fun->initializeLazyScript(cx))
             goto error;
-        args.setCallee(ObjectValue(*fun));
+        if (cx->typeInferenceEnabled() && fun->isCloneAtCallsite()) {
+            fun = CloneFunctionAtCallsite(cx, fun, script, regs.pc);
+            if (!fun)
+                goto error;
+            args.setCallee(ObjectValue(*fun));
+        }
     }
 
     /* Don't bother trying to fast-path calls to scripted non-constructors. */
@@ -2370,9 +2374,7 @@ BEGIN_CASE(JSOP_FUNCALL)
 
     InitialFrameFlags initial = construct ? INITIAL_CONSTRUCT : INITIAL_NONE;
     bool newType = cx->typeInferenceEnabled() && UseNewType(cx, script, regs.pc);
-    RawScript funScript = fun->getOrCreateScript(cx).unsafeGet();
-    if (!funScript)
-        goto error;
+    RawScript funScript = fun->nonLazyScript().unsafeGet();
     if (!cx->stack.pushInlineFrame(cx, regs, args, *fun, funScript, initial))
         goto error;
 

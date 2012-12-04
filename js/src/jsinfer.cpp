@@ -1253,14 +1253,14 @@ TypeConstraintSetElement::newType(JSContext *cx, TypeSet *source, Type type)
 }
 
 static inline JSFunction *
-CloneCallee(JSContext *cx, HandleObject object, HandleScript script, jsbytecode *pc)
+CloneCallee(JSContext *cx, JSFunction *fun_, HandleScript script, jsbytecode *pc)
 {
     /*
      * To avoid computing the callee PC at the callsite when we clone to
      * propagate the cloned function type to this point, we do not monitor in
      * the interpreter and simply clone again when doing analysis.
      */
-    RootedFunction fun(cx, object->toFunction());
+    RootedFunction fun(cx, fun_);
     JSFunction *callee = CloneFunctionAtCallsite(cx, fun, script, pc);
     if (!callee)
         return NULL;
@@ -1353,13 +1353,7 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             return;
         }
 
-        if (obj->toFunction()->shouldCloneAtCallsite()) {
-            callee = CloneCallee(cx, obj, script, pc);
-            if (!callee)
-                return;
-        } else {
-            callee = obj->toFunction();
-        }
+        callee = obj->toFunction();
     } else if (type.isTypeObject()) {
         callee = type.typeObject()->interpretedFunction;
         if (!callee)
@@ -1369,7 +1363,16 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
         return;
     }
 
-    RootedScript calleeScript(cx, callee->getOrCreateScript(cx));
+    if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx))
+        return;
+
+    if (callee->isCloneAtCallsite()) {
+        callee = CloneCallee(cx, callee, script, pc);
+        if (!callee)
+            return;
+    }
+
+    RootedScript calleeScript(cx, callee->nonLazyScript());
     if (!calleeScript)
         return;
     if (!calleeScript->ensureHasTypes(cx))
@@ -1438,14 +1441,7 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         if (!object->isFunction() || !object->toFunction()->isInterpreted())
             return;
 
-        if (object->toFunction()->shouldCloneAtCallsite()) {
-            RootedScript script(cx, script_);
-            callee = CloneCallee(cx, object, script, callpc);
-            if (!callee)
-                return;
-        } else {
-            callee = object->toFunction();
-        }
+        callee = object->toFunction();
     } else if (type.isTypeObject()) {
         TypeObject *object = type.typeObject();
         if (!object->interpretedFunction)
@@ -1456,7 +1452,17 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         return;
     }
 
-    if (!(callee->getOrCreateScript(cx).unsafeGet() && callee->nonLazyScript()->ensureHasTypes(cx)))
+    if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx))
+        return;
+
+    if (callee->isCloneAtCallsite()) {
+        RootedScript script(cx, script_);
+        callee = CloneCallee(cx, callee, script, callpc);
+        if (!callee)
+            return;
+    }
+
+    if (!callee->nonLazyScript()->ensureHasTypes(cx))
         return;
 
     TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript().unsafeGet());

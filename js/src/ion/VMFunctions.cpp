@@ -48,23 +48,24 @@ ShouldMonitorReturnType(JSFunction *fun)
 bool
 InvokeFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *argv, Value *rval)
 {
-    if (fun->shouldCloneAtCallsite()) {
-        RootedFunction original(cx, fun);
-        RootedScript script(cx);
-        jsbytecode *pc;
-        types::TypeScript::GetPcScript(cx, &script, &pc);
-        fun = CloneFunctionAtCallsite(cx, original, script, pc);
-        if (!fun)
-            return false;
-    }
-
     Value fval = ObjectValue(*fun);
 
     // In order to prevent massive bouncing between Ion and JM, see if we keep
     // hitting functions that are uncompilable.
     if (fun->isInterpreted()) {
-        if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx).unsafeGet())
+        if (fun->isInterpretedLazy() && !fun->initializeLazyScript(cx))
             return false;
+
+        if (fun->isCloneAtCallsite()) {
+            RootedFunction original(cx, fun);
+            RootedScript script(cx);
+            jsbytecode *pc;
+            types::TypeScript::GetPcScript(cx, &script, &pc);
+            fun = CloneFunctionAtCallsite(cx, original, script, pc);
+            if (!fun)
+                return false;
+        }
+
         if (!fun->nonLazyScript()->canIonCompile()) {
             JSScript *script = GetTopIonJSScript(cx);
             if (script->hasIonScript() &&
@@ -113,7 +114,7 @@ InvokeConstructor(JSContext *cx, JSObject *obj, uint32 argc, Value *argv, Value 
 
     if (obj->isFunction()) {
         if (obj->toFunction()->isInterpretedLazy() &&
-            !obj->toFunction()->getOrCreateScript(cx).unsafeGet())
+            !obj->toFunction()->initializeLazyScript(cx))
         {
             return false;
         }

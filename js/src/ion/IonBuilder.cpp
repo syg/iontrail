@@ -175,7 +175,7 @@ IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleF
     if (!obj || !obj->isFunction())
         return true;
 
-    if (obj->toFunction()->shouldCloneAtCallsite()) {
+    if (obj->toFunction()->isCloneAtCallsite()) {
         if (isClone)
             *isClone = true;
         RootedFunction fun(cx, obj->toFunction());
@@ -214,7 +214,7 @@ IonBuilder::getPolyCallTargets(uint32 argc, jsbytecode *pc, AutoObjectVector &ta
         JSObject *obj = calleeTypes->getSingleObject(i);
         if (!obj || !obj->isFunction())
             return true;
-        if (obj->toFunction()->shouldCloneAtCallsite()) {
+        if (obj->toFunction()->isCloneAtCallsite()) {
             *hasClones = true;
             fun = obj->toFunction();
             obj = CloneFunctionAtCallsite(cx, fun, script, pc);
@@ -3670,7 +3670,7 @@ AllFunctionsAreCallsiteClone(types::TypeSet *funTypes)
         JSObject *obj = funTypes->getSingleObject(i);
         if (!obj || !obj->isFunction())
             return false;
-        callsiteClone = callsiteClone && obj->toFunction()->shouldCloneAtCallsite();
+        callsiteClone = callsiteClone && obj->toFunction()->isCloneAtCallsite();
     }
     return callsiteClone;
 }

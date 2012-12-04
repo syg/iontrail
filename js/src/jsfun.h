@@ -75,7 +75,6 @@ struct JSFunction : public JSObject
   private:
     js::HeapPtrAtom  atom_;       /* name for diagnostics and decompiling */
 
-    bool initializeLazyScript(JSContext *cx);
   public:
 
     /* A function can be classified as either native (C++) or interpreted (JS): */
@@ -95,7 +94,7 @@ struct JSFunction : public JSObject
     bool isLambda()                 const { return flags & LAMBDA; }
     bool isSelfHostedBuiltin()      const { return flags & SELF_HOSTED; }
     bool isSelfHostedConstructor()  const { return flags & SELF_HOSTED_CTOR; }
-    bool shouldCloneAtCallsite()    const { return flags & CALLSITE_CLONE; }
+    bool isCloneAtCallsite()        const { return flags & CALLSITE_CLONE; }
     bool hasRest()                  const { return flags & HAS_REST; }
     bool hasDefaults()              const { return flags & HAS_DEFAULTS; }
 
@@ -113,6 +112,9 @@ struct JSFunction : public JSObject
 
     /* Returns the strictness of this function, which must be interpreted. */
     inline bool inStrictMode() const;
+
+    /* Initializes lazy scripts and determines clone-at-callsite. */
+    inline bool getOrSetIsCloneAtCallsite(JSContext *cx);
 
 
     void setArgCount(uint16_t nargs) {
@@ -140,7 +142,7 @@ struct JSFunction : public JSObject
         flags |= SELF_HOSTED_CTOR;
     }
 
-    void setShouldCloneAtCallsite() {
+    void setIsCloneAtCallsite() {
         flags |= CALLSITE_CLONE;
     }
 
@@ -184,6 +186,8 @@ struct JSFunction : public JSObject
 
     static inline size_t offsetOfEnvironment() { return offsetof(JSFunction, u.i.env_); }
     static inline size_t offsetOfAtom() { return offsetof(JSFunction, atom_); }
+
+    bool initializeLazyScript(JSContext *cx);
 
     js::Return<JSScript*> getOrCreateScript(JSContext *cx) {
         JS_ASSERT(isInterpreted());
