@@ -24,7 +24,7 @@
 #include "methodjit/MonoIC.h"
 #include "methodjit/Retcon.h"
 #include "vm/Debugger.h"
-#include "vm/forkjoin.h"
+#include "vm/ForkJoin.h"
 #include "yarr/BumpPointerAllocator.h"
 
 #include "jsgcinlines.h"
@@ -34,7 +34,7 @@
 #include "ion/IonCompartment.h"
 #include "ion/Ion.h"
 #endif
-#include "vm/forkjoininlines.h"
+#include "vm/ForkJoin-inl.h"
 
 #if ENABLE_YARR_JIT
 #include "assembler/jit/ExecutableAllocator.h"

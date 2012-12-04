@@ -1935,7 +1935,7 @@ js::MaybeGC(JSContext *cx)
         return;
     }
 
-    if (comp->allocator.gcMallocAndFreeBytes > comp->allocator.gcTriggerMallocAndFreeBytes) {
+    if (comp->allocator.getMallocAndFreeBytes() > comp->gcTriggerMallocAndFreeBytes) {
         PrepareCompartmentForGC(comp);
         GCSlice(rt, GC_NORMAL, gcreason::MAYBEGC);
         return;
@@ -3572,7 +3572,7 @@ EndSweepPhase(JSRuntime *rt, JSGCInvocationKind gckind, bool lastGC)
     }
 
     for (CompartmentsIter c(rt); !c.done(); c.next()) {
-        c->setGCLastBytes(c->gcBytes, c->gcMallocAndFreeBytes, gckind);
+        c->setGCLastBytes(c->gcBytes, c->allocator.getMallocAndFreeBytes(), gckind);
         if (c->isCollecting()) {
             JS_ASSERT(c->isGCFinished());
             c->setGCState(JSCompartment::NoGC);

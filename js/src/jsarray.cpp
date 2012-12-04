@@ -90,7 +90,7 @@
 #include "jsscope.h"
 #include "jswrapper.h"
 #include "vm/threadpool.h"
-#include "vm/forkjoin.h"
+#include "vm/ForkJoin.h"
 #include "methodjit/MethodJIT.h"
 #include "methodjit/StubCalls.h"
 #include "methodjit/StubCalls-inl.h"
@@ -2178,7 +2178,7 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
             }
         } else {
             // note: currently, array.sort() cannot be used from parallel code
-            JS_ASSERT(!InParallelSection());
+            JS_ASSERT(!js::InParallelSection());
             FastInvokeGuard fig(cx, fval);
             if (!MergeSort(vec.begin(), n, vec.begin() + n,
                            SortComparatorFunction(cx, fval, fig))) {
@@ -2984,7 +2984,7 @@ array_map(JSContext *cx, unsigned argc, Value *vp)
 
     /* Step 8. */
     RootedValue kValue(cx);
-    JS_ASSERT(!InParallelSection());
+    JS_ASSERT(!js::InParallelSection());
     FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     while (k < len) {

@@ -39,8 +39,8 @@
 #include "jsscope.h"
 #include "jsstr.h"
 #include "jsversion.h"
-#include "vm/threadpool.h"
-#include "vm/forkjoin.h"
+#include "vm/ThreadPool.h"
+#include "vm/ForkJoin.h"
 
 #include "builtin/RegExp.h"
 #include "js/HashTable.h"
@@ -48,6 +48,7 @@
 #include "vm/NumericConversions.h"
 #include "vm/RegExpObject.h"
 #include "vm/StringBuffer.h"
+#include "vm/ForkJoin-inl.h"
 
 #include "jsinferinlines.h"
 #include "jsinterpinlines.h"
