@@ -8,8 +8,8 @@
 #ifndef jsion_par_functions_h__
 #define jsion_par_functions_h__
 
-#include "vm/threadpool.h"
-#include "vm/forkjoin.h"
+#include "vm/ThreadPool.h"
+#include "vm/ForkJoin.h"
 #include "gc/Heap.h"
 
 namespace js {

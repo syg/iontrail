@@ -13,7 +13,7 @@
 
 #include "vm/String.h"
 #include "vm/GlobalObject.h"
-#include "vm/threadpool.h"
+#include "vm/ThreadPool.h"
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"

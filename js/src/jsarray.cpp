@@ -89,8 +89,6 @@
 #include "jsobj.h"
 #include "jsscope.h"
 #include "jswrapper.h"
-#include "vm/threadpool.h"
-#include "vm/ForkJoin.h"
 #include "methodjit/MethodJIT.h"
 #include "methodjit/StubCalls.h"
 #include "methodjit/StubCalls-inl.h"
