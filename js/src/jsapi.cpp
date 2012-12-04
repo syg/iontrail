@@ -723,26 +723,18 @@ JS_FRIEND_API(bool) JS::NeedRelaxedRootChecks() { return false; }
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
-<<<<<<< HEAD
 js::PerThreadData::PerThreadData(JSRuntime *runtime)
-  : PerThreadDataFriendFields()
-  , runtime_(runtime)
-=======
-PerThreadData::PerThreadData(JSRuntime *runtime)
-  : runtime_(runtime),
->>>>>>> mozilla/master
+  : PerThreadDataFriendFields(),
+    runtime_(runtime),
 #ifdef DEBUG
     gcRelaxRootChecks(false),
     gcAssertNoGCDepth(0),
 #endif
-<<<<<<< HEAD
-  , ionTop(NULL)
-  , ionJSContext(NULL)
-  , ionStackLimit(0)
-  , ionActivation(NULL)
-=======
+    ionTop(NULL),
+    ionJSContext(NULL),
+    ionStackLimit(0),
+    ionActivation(NULL),
     suppressGC(0)
->>>>>>> mozilla/master
 {}
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)

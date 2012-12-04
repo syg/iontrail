@@ -118,7 +118,6 @@ class AutoDebugModeGC;
 struct DebugScopes;
 }
 
-<<<<<<< HEAD
 namespace js {
 
 /*
@@ -175,10 +174,7 @@ public:
 
 }
 
-struct JSCompartment : private JS::shadow::Compartment
-=======
 struct JSCompartment : public js::gc::GraphNodeBase
->>>>>>> mozilla/master
 {
     JSRuntime                    *rt;
     JSPrincipals                 *principals;

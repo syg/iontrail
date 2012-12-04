@@ -74,14 +74,9 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     lastAnimationTime(0),
     regExps(rt),
     propertyTree(thisForCtor()),
-<<<<<<< HEAD
-=======
-    gcMallocAndFreeBytes(0),
-    gcTriggerMallocAndFreeBytes(0),
     gcIncomingGrayPointers(NULL),
     gcLiveArrayBuffers(NULL),
     gcWeakMapList(NULL),
->>>>>>> mozilla/master
     gcMallocBytes(0),
     debugModeBits(rt->debugMode ? DebugFromC : 0),
     watchpointMap(NULL),

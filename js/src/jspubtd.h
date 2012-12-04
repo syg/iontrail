@@ -19,7 +19,7 @@
  * Unfortunately, typedefs (hence jsval) cannot be declared.
  */
 #ifdef __cplusplus
-namespace JS { class Value; struct PerThreadData; }
+namespace JS { class Value; }
 #endif
 
 /*

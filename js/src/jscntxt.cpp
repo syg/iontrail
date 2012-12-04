@@ -47,6 +47,7 @@
 #include "ion/IonFrames.h"
 #include "builtin/ParallelArray.h"
 #endif
+#include "vm/ForkJoin.h"
 
 #ifdef JS_METHODJIT
 # include "assembler/assembler/MacroAssembler.h"
@@ -63,7 +64,7 @@
 #include "jscompartment.h"
 #include "jsobjinlines.h"
 #include "jsinferinlines.h"
-#include "vm/forkjoininlines.h"
+#include "vm/ForkJoin-inl.h"
 
 #include "selfhosted.out.h"
 
@@ -261,7 +262,7 @@ JSFunction *
 js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
     JS_ASSERT(types::UseNewTypeForClone(fun));
-    JS_ASSERT(!fun->script()->enclosingStaticScope());
+    // XXX SHU XXX JS_ASSERT(!fun->script()->enclosingStaticScope());
 
     typedef CallsiteCloneKey Key;
     typedef CallsiteCloneTable Table;

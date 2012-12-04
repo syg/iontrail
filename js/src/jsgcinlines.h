@@ -539,14 +539,9 @@ TryNewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
         return NULL;
 #endif
 
-<<<<<<< HEAD
-    void *t = cx->compartment->allocator.arenas.allocateFromFreeList(kind, thingSize);
-    JS_ASSERT_IF(t && cx->compartment->wasGCStarted() && cx->compartment->needsBarrier(),
-=======
     JSCompartment *comp = cx->compartment;
-    void *t = comp->arenas.allocateFromFreeList(kind, thingSize);
+    void *t = comp->allocator.arenas.allocateFromFreeList(kind, thingSize);
     JS_ASSERT_IF(t && comp->wasGCStarted() && (comp->isGCMarking() || comp->isGCSweeping()),
->>>>>>> mozilla/master
                  static_cast<T *>(t)->arenaHeader()->allocatedDuringIncremental);
 
 #if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
