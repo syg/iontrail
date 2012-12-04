@@ -142,6 +142,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(InitProp)
     COND_SAFE_OP(Start)
     UNSAFE_OP(OsrEntry)
+    SAFE_OP(Nop)
     UNSAFE_OP(RegExp)
     COND_SAFE_OP(Lambda)
     UNSAFE_OP(ImplicitThis)
