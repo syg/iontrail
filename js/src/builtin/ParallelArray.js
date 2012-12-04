@@ -401,7 +401,7 @@ function ParallelArrayScan(f) {
     //   of slices is typically quite small (one per core), so I opted
     //   to just compute it sequentially.
     //
-    // Phase 2 contains the results of phase1 with the intermediates
+    // Phase 2 combines the results of phase1 with the intermediates
     // array to produce the final scan results.  The idea is to
     // iterate over each element S[i] in the slice |id|, which
     // currently contains the result of reducing with S[0]...S[i]
@@ -414,8 +414,6 @@ function ParallelArrayScan(f) {
     // |intermediates[1-1]|, which is |A+B+C|, so that the final
     // result is [(A+B+C)+D, (A+B+C)+(D+E), (A+B+C)+(D+E+F)].  Again I
     // am using parentheses to clarify how these results were reduced.
-    //
-    // These is one subtle point here!
 
     var [start, end] = ComputeTileBounds(self.shape[0], id, n);
     if (warmup) { end = TruncateEnd(start, end); }
@@ -423,10 +421,6 @@ function ParallelArrayScan(f) {
       for (var i = start; i < end; i++) {
         result[i] = phase1buffer[i];
       }
-
-      // NB: this setup is not great for warmups, since it means that
-      // the code below is never executed during warmup mode.  Unfortunately,
-      // it's not clear how best to fake the situation.
     } else {
       var intermediate_idx = id - 1;
       var intermediate = intermediates[intermediate_idx];
