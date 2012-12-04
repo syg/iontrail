@@ -1348,7 +1348,7 @@ bool
 LIRGenerator::visitParThreadContext(MParThreadContext *ins)
 {
     LParThreadContext *lir = new LParThreadContext(tempFixed(CallTempReg0));
-    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)));
+    return defineReturn(lir, ins);
 }
 
 bool
