@@ -181,7 +181,7 @@ function ParallelArrayBuild(self, shape, f) {
   function fill1(result, id, n, warmup, f) {
     var [start, end] = ComputeTileBounds(result.length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
-    for (var i = start; i < end; i += step) {
+    for (var i = start; i < end; i++) {
       result[i] = f(i);
     }
   }
