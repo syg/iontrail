@@ -238,6 +238,21 @@ class FastestIonInvoke
     }
 };
 
+struct AutoEnterParallelWarmup
+{
+    AutoEnterParallelWarmup(ParallelCompileContext *compileContext) {
+        ion::js_IonOptions.startParallelWarmup(compileContext);
+    }
+    ~AutoEnterParallelWarmup() {
+        ion::js_IonOptions.finishParallelWarmup();
+    }
+};
+
+static inline bool
+InWarmup() {
+    return ion::js_IonOptions.parallelWarmupContext != NULL;
+}
+
 class ArrayOp : public ForkJoinOp
 {
   protected:
@@ -290,12 +305,11 @@ class ArrayOp : public ForkJoinOp
             // we need to do a few "warm-up" iterations to give type inference
             // some data to work with and to record all functions called.
             ParallelCompileContext compileContext(cx_);
-            ion::js_IonOptions.startParallelWarmup(&compileContext);
-            if (!warmup())
-                return Method_Error;
-
-            // If warmup returned false, assume that we finished warming up.
-            ion::js_IonOptions.finishParallelWarmup();
+            {
+                AutoEnterParallelWarmup enter(&compileContext);
+                if (!warmup())
+                    return Method_Error;
+            }
 
             // After warming up, compile the outer kernel as a special
             // self-hosted kernel that can unsafely write to the buffer.
@@ -309,11 +323,6 @@ class ArrayOp : public ForkJoinOp
     virtual bool warmup() { return true; }
     virtual bool parallel(ForkJoinSlice &slice) = 0;
 };
-
-static inline bool
-InWarmup() {
-    return ion::js_IonOptions.parallelWarmupContext != NULL;
-}
 
 class BuildArrayOp : public ArrayOp
 {
@@ -358,7 +367,6 @@ class BuildArrayOp : public ArrayOp
                 return false;
         }
 
-        JS_ASSERT(InWarmup());
         return true;
     }
 
