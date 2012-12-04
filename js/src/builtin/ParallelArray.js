@@ -238,7 +238,7 @@ function ParallelArrayMap(f) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++) {
-      result[i] = f(self.get(i));
+      result[i] = f(self.get(i), i, self);
     }
   }
 
