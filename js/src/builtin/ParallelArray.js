@@ -586,11 +586,16 @@ function ParallelArrayGet1(i) {
 
 function ParallelArrayGet2(x, y) {
   var udef; // For some reason `undefined` doesn't work
+  var xw = this.shape[0];
   var yw = this.shape[1];
   if (x === udef) {
     return this;
+  } else if (x >= xw) {
+    return udef;
   } else if (y === udef) {
     return new global.ParallelArray([yw], this.buffer, this.offset + x*yw);
+  } else if (y >= yw) {
+    return udef;
   } else {
     var offset = y + x*yw;
     return this.buffer[this.offset + offset];
@@ -599,14 +604,21 @@ function ParallelArrayGet2(x, y) {
 
 function ParallelArrayGet3(x, y, z) {
   var udef; // For some reason `undefined` doesn't work
+  var xw = this.shape[0];
   var yw = this.shape[1];
   var zw = this.shape[2];
   if (x === udef) {
     return this;
+  } else if (x >= xw) {
+    return udef;
   } else if (y === udef) {
     return new global.ParallelArray([yw, zw], this.buffer, this.offset + x*yw*zw);
+  } else if (y >= yw) {
+    return udef;
   } else if (z === udef) {
     return new global.ParallelArray([zw], this.buffer, this.offset + y*zw + x*yw*zw);
+  } else if (z >= zw) {
+    return udef;
   } else {
     var offset = z + y*zw + x*yw*zw;
     return this.buffer[this.offset + offset];
@@ -614,6 +626,7 @@ function ParallelArrayGet3(x, y, z) {
 }
 
 function ParallelArrayGetN(...coords) {
+  var udef; // For some reason `undefined` doesn't work
   if (coords.length == 0)
     return this;
 
@@ -627,6 +640,8 @@ function ParallelArrayGetN(...coords) {
   var sdimensionality = this.shape.length;
   var cdimensionality = coords.length;
   for (var i = 0; i < cdimensionality; i++) {
+    if (coords[i] >= this.shape[i])
+      return udef;
     offset += coords[i] * products[sdimensionality - i - 1];
   }
 
