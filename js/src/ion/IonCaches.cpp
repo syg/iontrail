@@ -1927,7 +1927,6 @@ js::ion::GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
 
     return true;
 }
-<<<<<<< HEAD
 
 bool
 IonCacheCallsiteClone::attach(JSContext *cx, IonScript *ion, HandleFunction original,
@@ -1993,8 +1992,3 @@ js::ion::CallsiteCloneCache(JSContext *cx, size_t cacheIndex, HandleObject calle
 
     return clone;
 }
-
-
-
-=======
->>>>>>> mozilla/master

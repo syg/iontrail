@@ -235,10 +235,10 @@ ParallelCompileContext::addInvocation(StackFrame *fp)
 
     // We don't go through normal Ion or JM paths that bump the use count, so
     // do it here so we can get inlining of hot functions.
-    fun->script()->incUseCount();
+    fun->nonLazyScript()->incUseCount();
 
     // Already compiled for parallel execution? Our work is done.
-    if (fun->script()->hasParallelIonScript())
+    if (fun->nonLazyScript()->hasParallelIonScript())
         return true;
 
     if (!invokedFunctions_.append(fun)) {
@@ -255,9 +255,9 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
     JS_ASSERT(!compilingKernel_);
 
     // Compile the kernel first as it can unsafely write to a buffer argument.
-    if (!kernel->script()->hasParallelIonScript()) {
+    if (!kernel->nonLazyScript()->hasParallelIonScript()) {
         IonSpew(IonSpew_ParallelArray, "Compiling kernel %s:%u",
-                kernel->script()->filename, kernel->script()->lineno);
+                kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
         MethodStatus status = compileFunction(kernel, true);
         if (status != Method_Compiled) {
             compilingKernel_ = false;
@@ -270,9 +270,9 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
         RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
 
         IonSpew(IonSpew_ParallelArray, "Compiling invoked fn %s:%u",
-                fun->script()->filename, fun->script()->lineno);
+                fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
 
-        if (fun->script()->hasParallelIonScript()) {
+        if (fun->nonLazyScript()->hasParallelIonScript()) {
             IonSpew(IonSpew_ParallelArray, "Already compiled");
             continue;
         }
@@ -286,16 +286,16 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
     // one of the invoked functions, which would cause the earlier
     // functions (such as the kernel itself) to be collected.  In this
     // event, we give up and fallback to sequential for now.
-    if (!kernel->script()->hasParallelIonScript()) {
+    if (!kernel->nonLazyScript()->hasParallelIonScript()) {
         IonSpew(IonSpew_ParallelArray, "Kernel script %s:%u was garbage-collected or invalidated",
-                kernel->script()->filename, kernel->script()->lineno);
+                kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
         return Method_Skipped;
     }
     for (size_t i = 0; i < invokedFunctions_.length(); i++) {
         RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
-        if (!fun->script()->hasParallelIonScript()) {
+        if (!fun->nonLazyScript()->hasParallelIonScript()) {
             IonSpew(IonSpew_ParallelArray, "Invoked script %s:%u was garbage-collected or invalidated",
-                    fun->script()->filename, fun->script()->lineno);
+                    fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
             return Method_Skipped;
         }
     }

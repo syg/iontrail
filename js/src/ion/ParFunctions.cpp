@@ -9,9 +9,10 @@
 #include "ParFunctions.h"
 
 #include "jsinterpinlines.h"
-#include "vm/forkjoininlines.h"
 #include "jscompartmentinlines.h"
 #include "jsarrayinlines.h"
+
+#include "vm/ForkJoin-inl.h"
 
 namespace js {
 namespace ion {

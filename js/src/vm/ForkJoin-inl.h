@@ -22,7 +22,7 @@ ForkJoinSlice::current()
 
 // True if this thread is currently executing a parallel operation across
 // multiple threads.
-static inline bool
+inline bool
 InParallelSection()
 {
 #ifdef JS_THREADSAFE

@@ -205,7 +205,7 @@ struct ForkJoinOp
     virtual bool parallel(ForkJoinSlice &slice) = 0;
 };
 
-static inline bool InParallelSection();
+inline bool InParallelSection();
 
 } // namespace js
 

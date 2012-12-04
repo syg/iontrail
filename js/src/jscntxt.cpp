@@ -262,7 +262,7 @@ JSFunction *
 js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
     JS_ASSERT(types::UseNewTypeForClone(fun));
-    // XXX SHU XXX JS_ASSERT(!fun->script()->enclosingStaticScope());
+    JS_ASSERT(!fun->nonLazyScript()->enclosingStaticScope());
 
     typedef CallsiteCloneKey Key;
     typedef CallsiteCloneTable Table;

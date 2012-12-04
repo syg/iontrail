@@ -1481,7 +1481,7 @@ ParallelCompileContext::compileFunction1(HandleFunction fun)
     JS_ASSERT(ion::IsEnabled(cx_));
     JS_ASSERT(fun->isInterpreted());
 
-    RootedScript script(cx_, fun->script());
+    RootedScript script(cx_, fun->nonLazyScript());
 
     // Skip if the script has been disabled.
     if (script->parallelIon == ION_DISABLED_SCRIPT)

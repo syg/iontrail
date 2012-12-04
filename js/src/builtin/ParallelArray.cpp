@@ -224,7 +224,7 @@ class FastestIonInvoke
         argv_[1] = UndefinedValue();
 
         // Find JIT code pointer.
-        IonScript *ion = callee->script()->parallelIonScript();
+        IonScript *ion = callee->nonLazyScript()->parallelIonScript();
         IonCode *code = ion->method();
         jitcode_ = code->raw();
         enter_ = cx->compartment->ionCompartment()->enterJIT();
@@ -281,7 +281,7 @@ class ArrayOp : public ForkJoinOp
         bool hasIonScript;
         {
             AutoAssertNoGC nogc;
-            hasIonScript = callee->script()->hasParallelIonScript();
+            hasIonScript = callee->getOrCreateScript(cx_)->hasParallelIonScript();
         }
 
         if (!hasIonScript) {
@@ -429,7 +429,7 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
         args.rval().setObject(*buffer);
     } else {
         if (status == ExecutionBailout) {
-            RootedScript script(cx, fun->toFunction()->script());
+            RootedScript script(cx, fun->toFunction()->nonLazyScript());
             Invalidate(cx, script, ParallelExecution);
         }
 
@@ -607,7 +607,10 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
         if (!atom)
             return NULL;
         Rooted<PropertyName *> lengthProp(cx, atom->asPropertyName());
-        RootedObject lengthGetter(cx, cx->runtime->getSelfHostedFunction(cx, lengthProp));
+        RootedValue lengthValue(cx);
+        if (!cx->global()->getIntrinsicValue(cx, lengthProp, &lengthValue))
+            return NULL;
+        RootedObject lengthGetter(cx, &lengthValue.toObject());
         if (!lengthGetter)
             return NULL;
 
