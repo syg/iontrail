@@ -1641,15 +1641,82 @@ CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
     return true;
 }
 
+// SaveLiveRegs is a helper class intended to cope with the pattern
+// for OOL bailouts that crops up occasionally in parallel code.  The
+// general pattern of these cases is to (1) save the live registers,
+// which adjusts the stack; (2) invoke some C ABI code to check and
+// then (3) bailout if this C function returns false. This leads to a
+// somewhat awkward problem: before we bailout, we have to return the
+// stack to its original value.
+//
+// Restoring the stack proves to be somewhat awkward to do, though.
+// Generally we need to check the ReturnReg if it is zero and branch
+// to the bailout code if so. But if we do this without calling
+// restoreLive(), then the stack is misaligned.  If we call
+// restoreLive() first, then I fear that the ReturnReg might be
+// overwritten.  If we try to branch to a temporary point and call
+// restoreLive() there, masm gets upset because it is trying to track
+// how much data has been pushed and now it sees one call to
+// saveLive() but two calls to restoreLive()!
+//
+// So what we do instead is to (a) record how much data was pushed
+// before and after the live registers and compute the diff; (b) in
+// the event of a bailout, adjust the stack by that much without
+// notifying masm.  SaveLiveRegs helps with this process by encapsulating
+// the code to save the amount of data and to fix the stack along the
+// bailout path.
+class SaveLiveRegs
+{
+    CodeGenerator &gen_;
+    LInstruction *lir_;
+    int32_t diff_;
+
+  public:
+    SaveLiveRegs(CodeGenerator &gen, LInstruction *lir)
+      : gen_(gen), lir_(lir), diff_(0) {}
+
+    void save() {
+        size_t originalPushed = gen_.masm.framePushed();
+        gen_.saveLive(lir_);
+        size_t finalPushed = gen_.masm.framePushed();
+        diff_ = finalPushed - originalPushed; // (a) above: compute adjustment
+    }
+
+    void restore() {
+        gen_.restoreLive(lir_);
+    }
+
+    void fixStack() {
+        // (b) above: adjust stack.  Somewhat hackily, we use freeStack()
+        // with a register to avoid modifying masm.framePushed().
+        // Probably it'd be better to add another variant of freeStack().
+        gen_.masm.mov(Imm32(diff_), CallTempReg0);
+        gen_.masm.freeStack(CallTempReg0);
+    }
+};
+
 bool
 CodeGenerator::visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool)
 {
-    saveLive(ool->lir());
+    SaveLiveRegs regs(*this, ool->lir());
+    Label abort;
+
+    regs.save();
     masm.movePtr(ToRegister(ool->lir()->threadContext()), CallTempReg0);
-    if (!callParCheckInterrupt(CallTempReg0, CallTempReg1))
-        return false;
-    restoreLive(ool->lir());
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.passABIArg(CallTempReg0);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckOverRecursed));
+    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &abort);
+    regs.restore();
     masm.jump(ool->rejoin());
+
+    masm.bind(&abort);
+    regs.fixStack();
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+    masm.jump(bail);
+
     return true;
 }
 
@@ -1659,14 +1726,8 @@ CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
     JS_ASSERT(gen->info().executionMode() == ParallelExecution);
     const Register threadContextReg = ToRegister(lir->threadContext());
     const Register tempReg = ToRegister(lir->getTempReg());
-    return callParCheckInterrupt(threadContextReg, tempReg);
-}
-
-bool
-CodeGenerator::callParCheckInterrupt(Register threadCtxReg, Register tempReg)
-{
     masm.setupUnalignedABICall(1, tempReg);
-    masm.passABIArg(threadCtxReg);
+    masm.passABIArg(threadContextReg);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
 
     Label *bail;
@@ -3226,6 +3287,7 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.bind(&indexWouldExceedCapacity);
         //masm.breakpoint();
 
+        // FIXME---stack adjustment is wrong here
         saveLive(ins);
         masm.reserveStack(sizeof(ParExtendArrayArgs));
         masm.storePtr(object, Address(StackPointer, offsetof(ParExtendArrayArgs, object)));

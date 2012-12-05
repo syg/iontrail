@@ -197,8 +197,6 @@ class CodeGenerator : public CodeGeneratorSpecific
 
     bool visitParCheckInterrupt(LParCheckInterrupt *lir);
 
-    bool callParCheckInterrupt(Register threadCtxReg, Register tempReg);
-
     bool visitUnboxDouble(LUnboxDouble *lir);
     bool visitOutOfLineUnboxDouble(OutOfLineUnboxDouble *ool);
     bool visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool);

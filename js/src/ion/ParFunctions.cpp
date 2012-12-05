@@ -128,9 +128,11 @@ ion::ParCheckOverRecursed(ForkJoinSlice *slice)
             return ParCheckInterrupt(slice);
         }
     } else {
-        // FIXME---we don't do this for worker threads, which means
-        // that technically they can recurse forever---or at least a
-        // long time---without ever checking the interrupt.
+        // FIXME---we don't ovewrite the stack limit for worker
+        // threads, which means that technically they can recurse
+        // forever---or at least a long time---without ever checking
+        // the interrupt.  it also means that if we get here on a
+        // worker thread, this is a real stack overrun!
         return false;
     }
 }
