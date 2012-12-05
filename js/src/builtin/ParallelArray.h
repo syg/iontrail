@@ -52,11 +52,14 @@ class ParallelArrayObject : public JSObject
     static FixedHeapPtr<PropertyName> propNames[NumFixedSlots];
 
     static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
+    static JSBool construct(JSContext *cx, uint32_t whichCtor, CallArgs &args);
 
     static bool initProps(JSContext *cx, HandleObject obj);
 
   public:
     static Class class_;
+
+    static JSBool intrinsicNewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 
     static JSObject *initClass(JSContext *cx, HandleObject obj);
     static bool is(const Value &v);

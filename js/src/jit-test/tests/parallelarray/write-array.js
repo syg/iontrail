@@ -9,7 +9,7 @@ function buildSimple() {
             obj[1] += 1;
             obj[2] += 1;
             return obj;
-        } /*FIXME , m*/ );
+        }, m);
     });
 
 }

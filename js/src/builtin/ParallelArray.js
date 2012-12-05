@@ -255,7 +255,7 @@ function ParallelArrayMap(f) {
     buffer = %_SetNonBuiltinCallerInitObjectType([]);
     fill(buffer, 0, 1, false, this, f, length);
   }
-  return new global.ParallelArray([buffer.length], buffer, 0);
+  return %NewParallelArray([buffer.length], buffer, 0);
 }
 
 function ParallelArrayReduce(f) {
@@ -344,7 +344,7 @@ function ParallelArrayScan(f) {
       var phase2buffer = %ParallelBuildArray(length, phase2,
                                              this, f, phase1buffer, intermediates);
       if (phase2buffer) {
-        return new global.ParallelArray([length], phase2buffer, 0);
+        return %NewParallelArray([length], phase2buffer, 0);
       }
     }
   }
@@ -359,7 +359,7 @@ function ParallelArrayScan(f) {
     acc = f(acc, this.get(i));
     buffer[i] = acc;
   }
-  return new global.ParallelArray([length], buffer, 0);
+  return %NewParallelArray([length], buffer, 0);
 
   ///////////////////////////////////////////////////////////////////////////
   // Helpers
@@ -486,7 +486,7 @@ function ParallelArrayScatter(targets, zero, f, length) {
   buffer.length = length || source.length;
   fill(buffer, 0, 1, targets, zero, f, source);
 
-  return new global.ParallelArray(buffer);
+  return %NewParallelArray([buffer.length], buffer, 0);
 }
 
 function ParallelArrayFilter(filters) {
@@ -506,7 +506,7 @@ function ParallelArrayFilter(filters) {
         total += keepers[i];
       var buffer = %ParallelBuildArray(total, copy_keepers, this, filters, keepers);
       if (buffer) {
-        return new global.ParallelArray([total], buffer, 0);
+        return %NewParallelArray([total], buffer, 0);
       }
     }
   }
@@ -518,7 +518,7 @@ function ParallelArrayFilter(filters) {
     if (filters[i])
       buffer[pos++] = this.get(i);
   }
-  return new global.ParallelArray(buffer);
+  return %NewParallelArray([buffer.length], buffer, 0);
 
   function count_keepers(result, id, n, warmup, filters) {
     var [start, end] = ComputeTileBounds(filters.length, id, n);
@@ -559,7 +559,7 @@ function ParallelArrayPartition(amount) {
   var shape = [partitions, amount];
   for (var i = 1; i < this.shape.length; i++)
     shape.push(this.shape[i]);
-  return new global.ParallelArray(shape, this.buffer, this.offset);
+  return %NewParallelArray(shape, this.buffer, this.offset);
 }
 
 function ParallelArrayFlatten() {
@@ -569,7 +569,7 @@ function ParallelArrayFlatten() {
   var shape = [this.shape[0] * this.shape[1]];
   for (var i = 2; i < this.shape.length; i++)
     shape.push(this.shape[i]);
-  return new global.ParallelArray(shape, this.buffer, this.offset);
+  return %NewParallelArray(shape, this.buffer, this.offset);
 }
 
 //
@@ -594,7 +594,7 @@ function ParallelArrayGet2(x, y) {
   } else if (x >= xw) {
     return udef;
   } else if (y === udef) {
-    return new global.ParallelArray([yw], this.buffer, this.offset + x*yw);
+    return %NewParallelArray([yw], this.buffer, this.offset + x*yw);
   } else if (y >= yw) {
     return udef;
   } else {
@@ -613,11 +613,11 @@ function ParallelArrayGet3(x, y, z) {
   } else if (x >= xw) {
     return udef;
   } else if (y === udef) {
-    return new global.ParallelArray([yw, zw], this.buffer, this.offset + x*yw*zw);
+    return %NewParallelArray([yw, zw], this.buffer, this.offset + x*yw*zw);
   } else if (y >= yw) {
     return udef;
   } else if (z === udef) {
-    return new global.ParallelArray([zw], this.buffer, this.offset + y*zw + x*yw*zw);
+    return %NewParallelArray([zw], this.buffer, this.offset + y*zw + x*yw*zw);
   } else if (z >= zw) {
     return udef;
   } else {
@@ -648,7 +648,7 @@ function ParallelArrayGetN(...coords) {
 
   if (cdimensionality < sdimensionality) {
     var shape = this.shape.slice(cdimensionality);
-    return new global.ParallelArray(shape, this.buffer, offset);
+    return %NewParallelArray(shape, this.buffer, offset);
   } else {
     return this.buffer[offset];
   }

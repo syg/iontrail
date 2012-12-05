@@ -376,7 +376,7 @@ intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
  * Used to decompile values in the nearest non-builtin stack frame, falling
  * back to decompiling in the current frame. Helpful for printing higher-order
  * function arguments.
- * 
+ *
  * The user must supply the argument number of the value in question; it
  * _cannot_ be automatically determined.
  */
@@ -566,6 +566,16 @@ intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static JSBool
+intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %NewParallelArray(shape, buffer, offset)
+    //
+    // Creates a new parallel array using the internal constructor.
+
+    return js::ParallelArrayObject::intrinsicNewParallelArray(cx, argc, vp);
+}
+
 JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",           intrinsic_ToObject,             1,0),
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
@@ -574,6 +584,7 @@ JSFunctionSpec intrinsic_functions[] = {
 
     JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
     JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
+    JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
 
 #ifdef DEBUG
     JS_FN("Dump",               intrinsic_Dump,                 1,0),

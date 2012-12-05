@@ -510,7 +510,23 @@ ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args0 = CallArgsFromVp(argc, vp);
 
     // See comment in ParallelArray.js about splitting constructors.
-    uint32_t whichCtor = js::Min(args0.length(), NumCtors - 1);
+    // Note that the final constructor (NumCtors - 1) is only
+    // accessible via the %NewParallelArray() intrinsic, as it's for
+    // internal use only.
+    uint32_t whichCtor = js::Min(args0.length(), NumCtors - 2);
+    return construct(cx, whichCtor, args0);
+}
+
+/*static*/ JSBool
+ParallelArrayObject::intrinsicNewParallelArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return construct(cx, NumCtors - 1, args);
+}
+
+/*static*/ JSBool
+ParallelArrayObject::construct(JSContext *cx, uint32_t whichCtor, CallArgs &args0)
+{
     RootedValue ctor(cx, UndefinedValue());
     if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctor))
         return false;
