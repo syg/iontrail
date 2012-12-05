@@ -1,21 +1,22 @@
 load(libdir + "parallelarray-helpers.js");
 
 function testMap() {
-    var nums = [];
-    for (var i = 0; i < 1000; i++) {
-        nums[i] = i;
-    }
-    nums = new ParallelArray([nums]);
+  // At least on my machine, this test is successful, whereas
+  // `alloc-too-many-objs.js` fails to run in parallel because of
+  // issues around GC.
 
-    assertParallelArrayModesCommute(["seq", "par"], function(m) {
-        nums.map(function (v) {
-            var x = [];
-            for (var i = 0; i < 500000; i++) {
-                x[i] = {from: v};
-            }
-            return x;
-        }, m)
-    });
+  var nums = new ParallelArray(range(0, 10));
+
+  assertParallelArrayModesCommute(["seq", "par"], function(m) {
+    print(m.mode+" "+m.expect);
+    nums.map(function (v) {
+      var x = [];
+      for (var i = 0; i < 50000; i++) {
+        x[i] = {from: v};
+      }
+      return x;
+    }, m)
+  });
 }
 
 testMap();

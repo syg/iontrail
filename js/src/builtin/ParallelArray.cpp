@@ -416,8 +416,36 @@ HasScript(Vector<types::RecompileInfo> &scripts, JSScript *script)
     return false;
 }
 
+static ExecutionStatus BuildArray1(JSContext *cx, CallArgs &args);
+
 ExecutionStatus
-js::parallel::BuildArray(JSContext *cx, CallArgs args)
+js::parallel::BuildArray(JSContext *cx, CallArgs &args)
+{
+    ExecutionStatus status = BuildArray1(cx, args);
+
+    if (status != ExecutionFatal) {
+        if (args[2].isObject()) {
+            RootedObject feedback(cx, &args[2].toObject());
+            if (feedback && feedback->isFunction()) {
+                const char *statusCString = ExecutionStatusToString(status);
+                RootedString statusString(cx, JS_NewStringCopyZ(cx, statusCString));
+                InvokeArgsGuard args1;
+                if (!cx->stack.pushInvokeArgs(cx, 1, &args1))
+                    return ExecutionFatal;
+                args1.setCallee(ObjectValue(*feedback));
+                args1.setThis(UndefinedValue());
+                args1[0].setString(statusString);
+                if (!Invoke(cx, args1))
+                    return ExecutionFatal;
+            }
+        }
+    }
+
+    return status;
+}
+
+static ExecutionStatus
+BuildArray1(JSContext *cx, CallArgs &args)
 {
     JS_ASSERT(args[1].isObject());
     JS_ASSERT(args[1].toObject().isFunction());
@@ -453,7 +481,7 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
     if (edr != JSObject::ED_OK)
         return ExecutionFatal;
 
-    BuildArrayOp op(cx, buffer, fun, args.array() + 2, args.length() - 2);
+    BuildArrayOp op(cx, buffer, fun, args.array() + 3, args.length() - 3);
     ExecutionStatus status = op.apply();
 
     // If we bailed out, invalidate the kernel to be reanalyzed (all the way
@@ -492,8 +520,8 @@ FixedHeapPtr<PropertyName> ParallelArrayObject::propNames[NumFixedSlots];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
-    { "map",       JSOP_NULLWRAPPER, 1, 0, "ParallelArrayMap"       },
-    { "reduce",    JSOP_NULLWRAPPER, 1, 0, "ParallelArrayReduce"    },
+    { "map",       JSOP_NULLWRAPPER, 2, 0, "ParallelArrayMap"       },
+    { "reduce",    JSOP_NULLWRAPPER, 2, 0, "ParallelArrayReduce"    },
     { "scan",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScan"      },
     { "scatter",   JSOP_NULLWRAPPER, 4, 0, "ParallelArrayScatter"   },
     { "filter",    JSOP_NULLWRAPPER, 1, 0, "ParallelArrayFilter"    },

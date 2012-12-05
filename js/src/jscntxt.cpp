@@ -514,7 +514,7 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 static JSBool
 intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %ParallelBuildArray(length, func, args...)
+    // Usage: %ParallelBuildArray(length, func, feedback, args...)
     //
     // Creates an array of length |length| and invokes |func| many
     // times in parallel in order to populate it.  Executed based on
@@ -523,6 +523,14 @@ intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
     // invoked various times sequentially as a warmup phase, which is
     // used to gather TI information and to determine which functions
     // func() will invoke.
+    //
+    // The |feedback| argument is optional.  If provided, it should be
+    // a closure.  This closure will be invoked with one of the
+    // following strings, depending on the outcome:
+    // - "success" -- execution was successful
+    // - "disqualified" -- warmup or compilation failed
+    // - "bailout" -- execution started, but bailed
+    // The precise details of this closure are likely to evolve.
     //
     // Note: Parallel execution is never guaranteed.  It can fail for
     // any number of reasons, only some of which are in your control:
@@ -582,7 +590,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
 
-    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   2,0),
+    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   3,0),
     JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
     JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
 

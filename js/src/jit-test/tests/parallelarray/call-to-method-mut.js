@@ -1,3 +1,5 @@
+load(libdir + "parallelarray-helpers.js");
+
 function MyClass(a) {
   this.a = a;
 }
@@ -7,8 +9,10 @@ MyClass.prototype.getA = function() {
 }
 
 function testMap() {
+  var instances = range(22, 22+64).map(function (i) { return new MyClass(i); });
+
   // first time, everything goes well.
-  var p = new ParallelArray([new MyClass(22), new MyClass(23)]);
+  var p = new ParallelArray(instances);
   var q = p.map(function(e) { return e.getA(); },
                 {mode: "par", expect: "success"});
   print(q);

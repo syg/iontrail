@@ -1,17 +1,22 @@
 load(libdir + "parallelarray-helpers.js");
 
 function testReduce() {
-    function sum(v, p) { return v*p; }
+  // This test is interesting because during warmup v*p remains an
+  // integer but this ceases to be true once real execution proceeds.
+  // By the end, it will just be infinity.
+  function mul(v, p) { return v*p; }
 
-    var array = [];
-    for (var i = 1; i <= 512; i++) array.push(i);
-    var expected = array.reduce(sum);
-
-    var parray = new ParallelArray(array);
-    assertParallelArrayModesEq(["seq", "par"], expected, function(m) {
-        d = parray.reduce(sum, m);
-        return d;
-    });
+  var array = range(1, 513);
+  var expected = array.reduce(sum);
+  var parray = new ParallelArray(array);
+  var modes = ["seq", "par"];
+  for (var i = 0; i < 2; i++) {
+    assertAlmostEq(expected, parray.reduce(mul, {mode: modes[i], expect: "success"}));
+  }
+  // assertParallelArrayModesEq(["seq", "par"], expected, function(m) {
+  //   d = parray.reduce(sum, m);
+  //   return d;
+  // });
 }
 
 testReduce();

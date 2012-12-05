@@ -127,3 +127,18 @@ function comparePerformance(opts) {
               opts[0].name + ": " + (rel|0) + "%");
     }
 }
+
+function compareAgainstArray(jsarray, opname, func, cmpFunction) {
+  var expected = jsarray[opname].apply(jsarray, [func]);
+  var parray = new ParallelArray(jsarray);
+
+  // Unfortunately, it sometimes happens that running 'par' twice in a
+  // row causes bailouts and other unfortunate things!
+
+  assertParallelArrayModesEq(["seq", "par", "par"], expected, function(m) {
+    print(m.mode + " " + m.expect);
+    var result = parray[opname].apply(parray, [func, m]);
+    // print(result.toString());
+    return result;
+  }, cmpFunction);
+}

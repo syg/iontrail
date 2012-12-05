@@ -137,7 +137,7 @@ function ParallelArrayBuild(self, shape, f) {
 
   if (shape.length === 1) {
     var length = shape[0];
-    var buffer = %ParallelBuildArray(length, fill1, f);
+    var buffer = %ParallelBuildArray(length, fill1, null, f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
@@ -148,7 +148,7 @@ function ParallelArrayBuild(self, shape, f) {
     self.buffer = buffer;
   } else if (shape.length === 2) {
     var length = shape[0] * shape[1];
-    var buffer = %ParallelBuildArray(length, fill2, shape[1], f);
+    var buffer = %ParallelBuildArray(length, fill2, null, shape[1], f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
@@ -159,7 +159,7 @@ function ParallelArrayBuild(self, shape, f) {
     self.buffer = buffer;
   } else if (shape.length == 3) {
     var length = shape[0] * shape[1] * shape[2];
-    var buffer = %ParallelBuildArray(length, fill3, shape[1], shape[2], f);
+    var buffer = %ParallelBuildArray(length, fill3, null, shape[1], shape[2], f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
@@ -174,7 +174,7 @@ function ParallelArrayBuild(self, shape, f) {
       length *= shape[i];
     }
 
-    var buffer = %ParallelBuildArray(length, fillN, shape, f);
+    var buffer = %ParallelBuildArray(length, fillN, null, shape, f);
     if (!buffer) {
       buffer = %_SetNonBuiltinCallerInitObjectType([]);
       buffer.length = length;
@@ -240,8 +240,28 @@ function ParallelArrayBuild(self, shape, f) {
   }
 }
 
-function ParallelArrayMap(f) {
-  function fill(result, id, n, warmup, self, f, length) {
+function ParallelArrayMap(f, m) {
+  var self = this;
+  var length = self.shape[0];
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Parallel
+
+  if (TryParallel(m)) {
+    var buffer = %ParallelBuildArray(length, fill, CheckParallel(m));
+    if (buffer) {
+      return %NewParallelArray([buffer.length], buffer, 0);
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Sequential
+
+  buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  fill(buffer, 0, 1, false);
+  return %NewParallelArray([buffer.length], buffer, 0);
+
+  function fill(result, id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++) {
@@ -249,17 +269,15 @@ function ParallelArrayMap(f) {
     }
   }
 
-  var length = this.shape[0];
-  var buffer = %ParallelBuildArray(length, fill, this, f, length);
-  if (!buffer) {
-    buffer = %_SetNonBuiltinCallerInitObjectType([]);
-    fill(buffer, 0, 1, false, this, f, length);
+  function feedback(result) {
+    if (result !== m.expect) {
+    }
   }
-  return %NewParallelArray([buffer.length], buffer, 0);
 }
 
-function ParallelArrayReduce(f) {
-  var length = this.shape[0];
+function ParallelArrayReduce(f, m) {
+  var self = this;
+  var length = self.shape[0];
 
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
@@ -267,31 +285,33 @@ function ParallelArrayReduce(f) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel Version
 
-  var slices = %ParallelSlices();
-  if (length > slices) {
-    // Attempt parallel reduction, but only if there is at least one
-    // element per thread.  Otherwise the various slices having to
-    // reduce empty spans of the source array.
-    var subreductions = %ParallelBuildArray(slices, fill, this, f);
-    if (subreductions) {
-      // can't use reduce because subreductions is an array, not a
-      // parallel array:
-      var a = subreductions[0];
-      for (var i = 1; i < subreductions.length; i++)
-        a = f(a, subreductions[i]);
-      return a;
+  if (TryParallel(m)) {
+    var slices = %ParallelSlices();
+    if (length > slices) {
+      // Attempt parallel reduction, but only if there is at least one
+      // element per thread.  Otherwise the various slices having to
+      // reduce empty spans of the source array.
+      var subreductions = %ParallelBuildArray(slices, fill, CheckParallel(m));
+      if (subreductions) {
+        // can't use reduce because subreductions is an array, not a
+        // parallel array:
+        var a = subreductions[0];
+        for (var i = 1; i < subreductions.length; i++)
+          a = f(a, subreductions[i]);
+        return a;
+      }
     }
   }
 
   ///////////////////////////////////////////////////////////////////////////
   // Sequential Version
 
-  return reduce(this, 0, length, f);
+  return reduce(0, length);
 
   ///////////////////////////////////////////////////////////////////////////
   // Helpers
 
-  function reduce(self, start, end, f) {
+  function reduce(start, end) {
     // The accumulator: the objet petit a.
     //
     // "A VM's accumulator register is Objet petit a: the unattainable object
@@ -303,10 +323,10 @@ function ParallelArrayReduce(f) {
     return a;
   }
 
-  function fill(result, id, n, warmup, self, f) {
+  function fill(result, id, n, warmup) {
     var [start, end] = ComputeTileBounds(self.length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
-    result[id] = reduce(self, start, end, f);
+    result[id] = reduce(start, end);
   }
 }
 
@@ -322,7 +342,7 @@ function ParallelArrayScan(f) {
   var slices = %ParallelSlices();
   if (length > slices) { // Each worker thread will have something to do.
     // compute scan of each slice: see comment on phase1() below
-    var phase1buffer = %ParallelBuildArray(length, phase1, this, f);
+    var phase1buffer = %ParallelBuildArray(length, phase1, null, this, f);
 
     if (phase1buffer) {
       // build intermediate array: see comment on phase2() below
@@ -341,7 +361,7 @@ function ParallelArrayScan(f) {
       // FIXME---if we had a %UnsafeWrite() primitive, we could reuse
       // the phase1buffer here and would not need to construct a new
       // buffer!
-      var phase2buffer = %ParallelBuildArray(length, phase2,
+      var phase2buffer = %ParallelBuildArray(length, phase2, null,
                                              this, f, phase1buffer, intermediates);
       if (phase2buffer) {
         return %NewParallelArray([length], phase2buffer, 0);
@@ -499,12 +519,13 @@ function ParallelArrayFilter(filters) {
   // Parallel version
   var slices = %ParallelSlices();
   if (length > slices) {
-    var keepers = %ParallelBuildArray(slices, count_keepers, filters);
+    var keepers = %ParallelBuildArray(slices, count_keepers, null, filters);
     if (keepers) {
       var total = 0;
       for (var i = 0; i < keepers.length; i++)
         total += keepers[i];
-      var buffer = %ParallelBuildArray(total, copy_keepers, this, filters, keepers);
+      var buffer = %ParallelBuildArray(total, copy_keepers, null, this,
+                                       filters, keepers);
       if (buffer) {
         return %NewParallelArray([total], buffer, 0);
       }
@@ -686,6 +707,20 @@ function ParallelArrayToString() {
   }
   result += open + this.get(l-1).toString() + close;
   return result;
+}
+
+function TryParallel(m) {
+  return !m || m.mode === "par";
+}
+
+function CheckParallel(m) {
+  if (!m)
+    return null;
+  return function(result) {
+    if (result !== m.expect) {
+        %ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, m.expect, result);
+    }
+  };
 }
 
 // Unit Test Functions
