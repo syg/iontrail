@@ -1,4 +1,3 @@
-// |jit-test| error: Error;
 
 load(libdir + "parallelarray-helpers.js");
 
@@ -10,5 +9,6 @@ function testMap() {
 }
 
 // FIXME---mode assertions not impl in self-hosted code
+// |jit-test| error: Error;
 // testMap();
 
