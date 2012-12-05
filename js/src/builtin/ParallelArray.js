@@ -268,7 +268,6 @@ function ParallelArrayReduce(f) {
   // Parallel Version
 
   var slices = %ParallelSlices();
-  global.print(slices + " slices");
   if (length > slices) {
     // Attempt parallel reduction, but only if there is at least one
     // element per thread.  Otherwise the various slices having to
@@ -278,10 +277,8 @@ function ParallelArrayReduce(f) {
       // can't use reduce because subreductions is an array, not a
       // parallel array:
       var a = subreductions[0];
-      for (var i = 1; i < subreductions.length; i++) {
-        global.print("subred " + i);
+      for (var i = 1; i < subreductions.length; i++)
         a = f(a, subreductions[i]);
-      }
       return a;
     }
   }
@@ -309,11 +306,7 @@ function ParallelArrayReduce(f) {
   function fill(result, id, n, warmup, self, f) {
     var [start, end] = ComputeTileBounds(self.length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
-    var a = self.get(start);
-    for (var i = start+1; i < end; i++)
-      a = f(a, self.get(i));
-    result[id] = a;
-    //result[id] = reduce(self, start, end, f);
+    result[id] = reduce(self, start, end, f);
   }
 }
 
