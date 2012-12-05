@@ -14,11 +14,13 @@
 
 #include "vm/ForkJoin-inl.h"
 
-namespace js {
-namespace ion {
+using namespace js;
+using namespace ion;
 
 // Load the current thread context.
-ForkJoinSlice *ParForkJoinSlice() {
+ForkJoinSlice *
+ion::ParForkJoinSlice()
+{
     return ForkJoinSlice::current();
 }
 
@@ -26,7 +28,8 @@ ForkJoinSlice *ParForkJoinSlice() {
 // parallel code.  It uses the ArenaLists for the current thread and
 // allocates from there.
 JSObject *
-ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize) {
+ion::ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize)
+{
     JS_ASSERT(ForkJoinSlice::current() == slice);
     void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
     return static_cast<JSObject *>(t);
@@ -34,14 +37,18 @@ ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize)
 
 // Check that the object was created by the current thread
 // (and hence is writable).
-bool ParWriteGuard(ForkJoinSlice *slice, JSObject *object) {
+bool
+ion::ParWriteGuard(ForkJoinSlice *slice, JSObject *object)
+{
     JS_ASSERT(ForkJoinSlice::current() == slice);
     return slice->allocator->arenas.containsArena(slice->runtime(),
                                                   object->arenaHeader());
 }
 
 #ifdef DEBUG
-static void printTrace(const char *prefix, struct IonTraceData *cached) {
+static void
+printTrace(const char *prefix, struct IonTraceData *cached)
+{
         fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / Opcode %s\n",
                 prefix,
                 cached->bblock, cached->lir,
@@ -53,8 +60,10 @@ static void printTrace(const char *prefix, struct IonTraceData *cached) {
 struct IonTraceData seqTraceData;
 #endif
 
-void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
-           const char *opcode) {
+void
+ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
+      const char *opcode)
+{
 #ifdef DEBUG
     static enum { NotSet, All, Bailouts } traceMode;
 
@@ -101,7 +110,9 @@ void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 #endif
 }
 
-bool ParCheckOverRecursed(ForkJoinSlice *slice) {
+bool
+ion::ParCheckOverRecursed(ForkJoinSlice *slice)
+{
     JS_ASSERT(ForkJoinSlice::current() == slice);
 
     // When an interrupt is triggered, we currently overwrite the
@@ -123,7 +134,9 @@ bool ParCheckOverRecursed(ForkJoinSlice *slice) {
     }
 }
 
-bool ParCheckInterrupt(ForkJoinSlice *slice) {
+bool
+ion::ParCheckInterrupt(ForkJoinSlice *slice)
+{
     JS_ASSERT(ForkJoinSlice::current() == slice);
     bool result = slice->check();
     if (!result) {
@@ -132,7 +145,9 @@ bool ParCheckInterrupt(ForkJoinSlice *slice) {
     return true;
 }
 
-bool ParExtendArray(ParExtendArrayArgs *args) {
+bool
+ion::ParExtendArray(ParExtendArrayArgs *args)
+{
     // It is awkward to have the MIR pass the current slice in, so
     // just fetch it from TLS.  Extending the array is kind of the
     // slow path anyhow as it reallocates the elements vector.
@@ -140,6 +155,3 @@ bool ParExtendArray(ParExtendArrayArgs *args) {
     return (args->object->parExtendDenseArray(slice->allocator,
                                               &args->value, 1) == JSObject::ED_OK);
 }
-
-} /* namespace ion */
-} /* namespace js */
