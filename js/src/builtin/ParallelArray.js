@@ -72,6 +72,13 @@ function StepIndices(shape, indices) {
   }
 }
 
+function CloneArrayLike(array) {
+  var result = [], l = array.length;
+  for (var i = 0; i < l; i++)
+    result[i] = array[i];
+  return result;
+}
+
 // Constructor
 //
 // We split the 3 construction cases so that we don't case on arguments, which
@@ -105,7 +112,7 @@ function ParallelArrayConstruct2(shape, f) {
   if (typeof shape === 'number') {
     return ParallelArrayBuild(this, [shape], f);
   } else {
-    return ParallelArrayBuild(this, shape, f);
+    return ParallelArrayBuild(this, CloneArrayLike(shape), f);
   }
 }
 
