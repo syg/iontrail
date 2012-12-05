@@ -595,15 +595,6 @@ function ParallelArrayFlatten() {
   return %NewParallelArray(shape, this.buffer, this.offset);
 }
 
-// Mark the main operations as clone-at-callsite for better precision.
-/*
-%_SetFunctionFlags(ParallelArrayMap,     { cloneAtCallsite: true });
-%_SetFunctionFlags(ParallelArrayReduce,  { cloneAtCallsite: true });
-%_SetFunctionFlags(ParallelArrayScan,    { cloneAtCallsite: true });
-%_SetFunctionFlags(ParallelArrayScatter, { cloneAtCallsite: true });
-%_SetFunctionFlags(ParallelArrayFilter,  { cloneAtCallsite: true });
-*/
-
 //
 // Accessors and utilities.
 //
@@ -724,6 +715,23 @@ function CheckParallel(m) {
     }
   };
 }
+
+// Mark the main operations as clone-at-callsite for better precision.
+%_SetFunctionFlags(ParallelArrayConstruct0, { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayConstruct1, { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayConstruct2, { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayConstruct3, { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayBuild,      { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayMap,        { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayReduce,     { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayScan,       { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayScatter,    { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayFilter,     { cloneAtCallsite: true });
+
+// Mark the common getters as clone-at-callsite.
+%_SetFunctionFlags(ParallelArrayGet1,       { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayGet2,       { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayGet3,       { cloneAtCallsite: true });
 
 // Unit Test Functions
 //

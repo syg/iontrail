@@ -291,6 +291,13 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     if (!table.add(p, key, clone.get()))
         return NULL;
 
+#ifdef DEBUG
+    fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) from %p to %p\n",
+            fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+            script->filename, PCToLineNumber(script, pc), script.get(),
+            fun->nonLazyScript().unsafeGet(), clone->nonLazyScript().unsafeGet());
+#endif
+
     return clone;
 }
 

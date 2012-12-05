@@ -590,10 +590,6 @@ ParallelArrayObject::intrinsicNewParallelArray(JSContext *cx, unsigned argc, Val
 /*static*/ JSBool
 ParallelArrayObject::construct(JSContext *cx, uint32_t whichCtor, CallArgs &args0)
 {
-    RootedValue ctor(cx, UndefinedValue());
-    if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctor))
-        return false;
-
     gc::AllocKind kind = gc::GetGCObjectKind(NumFixedSlots);
     RootedObject result(cx, NewBuiltinClassInstance(cx, &class_, kind));
     if (!result)
@@ -603,28 +599,45 @@ ParallelArrayObject::construct(JSContext *cx, uint32_t whichCtor, CallArgs &args
     if (!initProps(cx, result))
         return false;
 
-    // Create the type object for the PA.  Add in the current
-    // properties as definite properties if this type object is newly
-    // created.  To tell if it is newly created, we check whether it
-    // has any properties yet or not, since any returned type object
-    // must have been created by this same C++ code and hence would
-    // already have properties if it had been returned before.
-    types::TypeObject *paTypeObject =
-        types::GetTypeCallerInitObject(cx, JSProto_ParallelArray);
-    if (!paTypeObject)
+    RootedValue ctorValue(cx);
+    if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctorValue))
         return false;
-    if (paTypeObject->getPropertyCount() == 0) {
-        if (!paTypeObject->addDefiniteProperties(cx, result))
-            return false;
-        JS_ASSERT(paTypeObject->getPropertyCount() == NumFixedSlots);
+    RootedFunction ctor(cx, ctorValue.toObject().toFunction());
+
+    if (cx->typeInferenceEnabled()) {
+        jsbytecode *pc;
+        RootedScript script(cx, cx->stack.currentScript(&pc));
+        if (script) {
+            if (ctor->isCloneAtCallsite()) {
+                ctor = CloneFunctionAtCallsite(cx, ctor, script, pc);
+                if (!ctor)
+                    return false;
+            }
+
+            // Create the type object for the PA.  Add in the current
+            // properties as definite properties if this type object is newly
+            // created.  To tell if it is newly created, we check whether it
+            // has any properties yet or not, since any returned type object
+            // must have been created by this same C++ code and hence would
+            // already have properties if it had been returned before.
+            types::TypeObject *paTypeObject =
+                types::TypeScript::InitObject(cx, script, pc, JSProto_ParallelArray);
+            if (!paTypeObject)
+                return false;
+            if (paTypeObject->getPropertyCount() == 0) {
+                if (!paTypeObject->addDefiniteProperties(cx, result))
+                    return false;
+                JS_ASSERT(paTypeObject->getPropertyCount() == NumFixedSlots);
+            }
+            result->setType(paTypeObject);
+        }
     }
-    result->setType(paTypeObject);
 
     InvokeArgsGuard args;
     if (!cx->stack.pushInvokeArgs(cx, args0.length(), &args))
         return false;
 
-    args.setCallee(ctor);
+    args.setCallee(ObjectValue(*ctor));
     args.setThis(ObjectValue(*result));
 
     for (uint32_t i = 0; i < args0.length(); i++)
@@ -707,9 +720,9 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
         if (!DefineNativeProperty(cx, proto, lengthId, value,
                                   JS_DATA_TO_FUNC_PTR(PropertyOp, lengthGetter.get()), NULL,
                                   flags, 0, 0))
-            {
-                return NULL;
-            }
+        {
+            return NULL;
+        }
     }
 
     return proto;
