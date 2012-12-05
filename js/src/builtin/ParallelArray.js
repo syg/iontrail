@@ -109,7 +109,7 @@ function ParallelArrayConstruct1(buffer) {
 }
 
 function ParallelArrayConstruct2(shape, f) {
-  if (typeof shape === 'number') {
+  if (typeof shape === "number") {
     return ParallelArrayBuild(this, [shape], f);
   } else {
     return ParallelArrayBuild(this, CloneArrayLike(shape), f);
@@ -661,15 +661,21 @@ function ParallelArrayLength() {
 function ParallelArrayToString() {
   var l = this.shape[0];
   if (l == 0)
-    return "<>";
+    return "";
 
-  var result = "<";
+  var open, close;
+  if (this.shape.length > 1) {
+    open = "<"; close = ">";
+  } else {
+    open = close = "";
+  }
+
+  var result = "";
   for (var i = 0; i < l - 1; i++) {
-    result += this.get(i).toString();
+    result += open + this.get(i).toString() + close;
     result += ",";
   }
-  result += this.get(l-1).toString();
-  result += ">";
+  result += open + this.get(l-1).toString() + close;
   return result;
 }
 

@@ -7,9 +7,9 @@ function testMap() {
     };
     var q = p.map(func, { mode: "par", expect: "success" });
     for (var i = 0; i < 5; i++) {
-        if (q[i].f != p[i] + 2)
+        if (q.get(i).f != p.get(i) + 2)
             throw new Exception("Index " + i + " is wrong: " +
-                                q[i].f + " vs " + (p[i] + 2));
+                                q.get(i).f + " vs " + (p.get(i) + 2));
     }
 }
 
