@@ -3287,8 +3287,10 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.bind(&indexWouldExceedCapacity);
         //masm.breakpoint();
 
-        // FIXME---stack adjustment is wrong here
-        saveLive(ins);
+        SaveLiveRegs regs(*this, ins);
+        Label abort;
+
+        regs.save();
         masm.reserveStack(sizeof(ParExtendArrayArgs));
         masm.storePtr(object, Address(StackPointer, offsetof(ParExtendArrayArgs, object)));
         masm.storeConstantOrRegister(value, Address(StackPointer,
@@ -3297,10 +3299,14 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.setupUnalignedABICall(1, CallTempReg1);
         masm.passABIArg(CallTempReg0);
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParExtendArray));
-        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
         masm.freeStack(sizeof(ParExtendArrayArgs));
-        restoreLive(ins);
+        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &abort);
+        regs.restore();
         masm.jump(ool->rejoin());
+
+        masm.bind(&abort);
+        regs.fixStack();
+        masm.jump(bail);
 
         // If the problem is that we are trying to write an index that
         // is not the initialized length, that would result in a
