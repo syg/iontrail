@@ -7,6 +7,5 @@ function testElement() {
   assertEq(desc.value, 9);
 }
 
-// FIXME---getOwnPropertyDescriptor on an element
-//         doesn't work right now with self-hosted impl
+// FIXME self-hosted object not array-like, exposes internal properties
 // testElement();

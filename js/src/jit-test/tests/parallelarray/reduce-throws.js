@@ -13,5 +13,5 @@ function testReduceThrows() {
   }, TypeError);
 }
 
-// FIXME throw correct exceptions in reduce
+// FIXME throw correct exception
 // testReduceThrows();

@@ -20,5 +20,5 @@ function testElement() {
   assertEq(p2[0], undefined);
 }
 
-// FIXME---self-hosted objects will behave just like ordinary objects
+// FIXME self-hosted object not array-like, exposes internal properties
 // testElement();

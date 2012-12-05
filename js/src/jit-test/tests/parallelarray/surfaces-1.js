@@ -51,5 +51,5 @@ function test() {
   checkAccessor("shape");
 }
 
-// FIXME---surface exposure in general not well implemented
+// FIXME self-hosted object not array-like, exposes internal properties
 // test();

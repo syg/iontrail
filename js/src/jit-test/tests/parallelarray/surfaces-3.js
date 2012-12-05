@@ -1,4 +1,4 @@
 // ParallelArray objects are frozen.
 
-// FIXME---self-hosted not frozen
+// FIXME not frozen
 // assertEq(Object.isFrozen(new ParallelArray), true);

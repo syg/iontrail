@@ -6,5 +6,5 @@ function testLength() {
   assertEq(p.length, 4);
 }
 
-// FIXME---immutability not enforced in self-hosted code
+// FIXME immutability not enforced
 // testLength();

@@ -27,5 +27,5 @@ function testScatterThrows() {
 
 }
 
-// FIXME---error reporting in self-hosted impl
+// FIXME throw correct exception
 // testScatterThrows();

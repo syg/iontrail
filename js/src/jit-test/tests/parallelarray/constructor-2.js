@@ -10,6 +10,5 @@ function buildWithHoles() {
   assertEq(Object.keys(p).join(","), Object.keys(b).join(","));
 }
 
-// FIXME---self-hosted doesn't support Object.keys() on the
-//         parallel array object yet.
+// FIXME self-hosted object not array-like, exposes internal properties
 // buildWithHoles();

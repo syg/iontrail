@@ -11,6 +11,6 @@ function testScatter() {
   }
 }
 
-// FIXME---scatter on N-dim not impl. in self-hosted
+// FIXME scatter on N-dim not implemented
 // testScatter();
 

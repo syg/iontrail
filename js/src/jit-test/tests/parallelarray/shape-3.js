@@ -12,5 +12,5 @@ function testInfer() {
   assertEqArray(p.shape, [2]);
 }
 
-// FIXME---inferred shape
+// FIXME logical shape not implemented
 // testInfer();

@@ -9,5 +9,5 @@ function testGet() {
   assertEq(p.get(1,1), 3);
 }
 
-// FIXME---logical shape does not work in self-hosted code yet
+// FIXME logical shape not implemented
 // testGet();

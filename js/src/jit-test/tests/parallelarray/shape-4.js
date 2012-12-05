@@ -9,5 +9,5 @@ function testShape() {
   assertEqArray(p.shape, [4]);
 }
 
-// FIXME---immutability is not enforced
+// FIXME immutability not enforced
 // testShape();

@@ -6,5 +6,5 @@ function testGet() {
   assertEq(p2.get({ 0: 1, 1: 0, length: 2 }), 1);
 }
 
-// FIXME---get() does not take array-like things anymore
+// FIXME get() changed to take multiple arguments and not a list (update test?)
 // testGet();

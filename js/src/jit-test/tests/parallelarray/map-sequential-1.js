@@ -8,7 +8,7 @@ function testMap() {
   assertEqParallelArray(m, new ParallelArray(range(1, 64)));
 }
 
-// FIXME---mode assertions not impl in self-hosted code
+// FIXME mode assertions not supported
 // |jit-test| error: Error;
 // testMap();
 

@@ -20,7 +20,7 @@ function test(obj) {
     testcase(obj, ParallelArray.prototype.get, [1]);
 }
 
-// FIXME---self-hosted does not check type of this
+// FIXME check type of this
 // test(ParallelArray.prototype);
 // test(Object.create(new ParallelArray));
 // test({});

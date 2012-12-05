@@ -11,5 +11,5 @@ function buildPA() {
   assertEq(p1d.toString(), p2d.toString());
 }
 
-// FIXME---ParallelArrays are not array-like in the current prototype
+// FIXME self-hosted object not array-like, exposes internal properties
 // buildPA();

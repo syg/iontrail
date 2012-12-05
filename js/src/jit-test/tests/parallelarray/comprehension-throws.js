@@ -22,5 +22,5 @@ function buildComprehension() {
   }, RangeError);
 }
 
-// FIXME throw correct exception in ctor
+// FIXME throw correct exception
 // buildComprehension();

@@ -14,5 +14,5 @@ function testScanThrows() {
   }, TypeError);
 }
 
-// FIXME throw correct exceptions in scan
+// FIXME throw correct exception
 // testScanThrows();

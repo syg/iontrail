@@ -4,5 +4,5 @@ function testEnumerate() {
     assertEq(i >= 0 && i < p.length, true);
 }
 
-// FIXME---property enumeration doesn't work right now with self-hosted impl
+// FIXME self-hosted object not array-like, exposes internal properties
 // testEnumerate();

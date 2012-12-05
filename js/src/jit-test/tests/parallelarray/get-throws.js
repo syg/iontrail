@@ -11,5 +11,5 @@ function testGetThrows() {
   }, TypeError);
 }
 
-// FIXME---since we do not take an array in self-hosted, not relevant
+// FIXME get() changed to take multiple arguments and not a list (update test?) 
 // testGetThrows();
