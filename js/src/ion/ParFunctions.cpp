@@ -34,7 +34,6 @@ ion::ParNewGCThing(gc::AllocKind allocKind)
     ForkJoinSlice *slice = ForkJoinSlice::current();
     uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
     void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
-    fprintf(stderr, "ParNewGCThing for slice=%p returning %p\n", slice, t);
     return static_cast<JSObject *>(t);
 }
 

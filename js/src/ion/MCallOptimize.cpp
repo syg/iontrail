@@ -74,6 +74,10 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     if (native == regexp_test)
         return inlineRegExpTest(argc, constructing);
 
+    // Parallel Array
+    if (native == intrinsic_UnsafeSetDenseArrayElement)
+        return inlineUnsafeSetDenseArrayElement(argc, constructing);
+
     return InliningStatus_NotInlined;
 }
 
@@ -816,6 +820,66 @@ IonBuilder::inlineRegExpTest(uint32_t argc, bool constructing)
     current->add(match);
     current->push(match);
     if (!resumeAfter(match))
+        return InliningStatus_Error;
+
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing)
+{
+    if (argc != 3 || constructing)
+        return InliningStatus_NotInlined;
+
+    if (getInlineArgType(argc, 1) != MIRType_Object)
+        return InliningStatus_NotInlined;
+
+    if (getInlineArgType(argc, 2) != MIRType_Int32)
+        return InliningStatus_NotInlined;
+
+    // Note: we do not check the conditions that are asserted as true
+    // in intrinsic_UnsafeSetDenseArrayElement():
+    // - arr is a dense array
+    // - idx < initialized length
+
+    types::StackTypeSet *arrTypes = getInlineArgTypeSet(argc, 1);
+    JS_ASSERT(!arrTypes->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY));
+
+    // Inference doesn't model the constraints here properly, so check
+    // that the type information already reflects possible side
+    // effects of this call.  Perhaps it would be better to add this
+    // intrinsic to inference, however?  I cribbed this code from the
+    // concat() call; hopefully it's complete. - nmatsakis
+    /*
+    if (arrTypes->getObjectCount() != 1)
+        return InliningStatus_NotInlined;
+    types::TypeObject *arrType = arrTypes->getTypeObject(0);
+    if (!arrType)
+        return InliningStatus_NotInlined;
+    types::HeapTypeSet *arrElemTypes = arrType->getProperty(cx, JSID_VOID, false);
+    if (!arrElemTypes)
+        return InliningStatus_Error;
+    types::StackTypeSet *valueTypes = getInlineArgTypeSet(argc, 3);
+    if (!valueTypes->knownSubset(cx, arrElemTypes))
+        return InliningStatus_NotInlined;
+    */
+
+    MDefinitionVector argv;
+    if (!discardCall(argc, argv, current))
+        return InliningStatus_Error;
+
+    MElements *elements = MElements::New(argv[1]);
+    current->add(elements);
+
+    MToInt32 *toInt32 = MToInt32::New(argv[2]);
+    current->add(toInt32);
+
+    MStoreElement *store = MStoreElement::New(elements, toInt32, argv[3]);
+    store->setRacy();
+    current->add(store);
+    current->push(store);
+
+    if (!resumeAfter(store))
         return InliningStatus_Error;
 
     return InliningStatus_Inlined;

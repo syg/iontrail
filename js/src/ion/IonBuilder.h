@@ -436,6 +436,9 @@ class IonBuilder : public MIRGenerator
     // RegExp natives.
     InliningStatus inlineRegExpTest(uint32_t argc, bool constructing);
 
+    // Parallel Array.
+    InliningStatus inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing);
+
     InliningStatus inlineNativeCall(JSNative native, uint32_t argc, bool constructing);
 
     bool jsop_call_inline(HandleFunction callee, uint32_t argc, bool constructing,

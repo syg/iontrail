@@ -441,7 +441,11 @@ intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 
     void dumpValue(const Value &v); // in jsobj.cpp
     RootedValue val(cx, args[0]);
-    dumpValue(val);
+    if (val.isObject()) {
+        val.toObject().dump();
+    } else {
+        dumpValue(val);
+    }
     fprintf(stderr, "\n");
 
     args.rval().setUndefined();
@@ -519,17 +523,16 @@ intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %ParallelBuildArray(length, func, feedback, args...)
+    // Usage: %ParallelDo(func, feedback, args...)
     //
-    // Creates an array of length |length| and invokes |func| many
-    // times in parallel in order to populate it.  Executed based on
-    // the fork join pool described in vm/ForkJoin.h.  If func() has
-    // not been compiled for parallel execution, it will first be
-    // invoked various times sequentially as a warmup phase, which is
-    // used to gather TI information and to determine which functions
-    // func() will invoke.
+    // Invokes |func| many times in parallel.  Executed based on the
+    // fork join pool described in vm/ForkJoin.h.  If func() has not
+    // been compiled for parallel execution, it will first be invoked
+    // various times sequentially as a warmup phase, which is used to
+    // gather TI information and to determine which functions func()
+    // will invoke.
     //
     // The |feedback| argument is optional.  If provided, it should be
     // a closure.  This closure will be invoked with one of the
@@ -546,26 +549,17 @@ intrinsic_ParallelBuildArray(JSContext *cx, unsigned argc, Value *vp)
     //
     // func() should expect the following arguments:
     //
-    //     func(result, id, n, warmup, args...)
+    //     func(id, n, warmup, args...)
     //
-    // Here, |result| is the result array; |id| is the slice id. |n|
-    // is the total number of slices; |warmup| is true if this is the
-    // warmup phase; and |args| are the additional arguments passed to
-    // |%ParallelBuildArray()|.
-    //
-    // It is up to you to ensure that, given |n| invocations of
-    // |func()|, |result| is fully populated and there are no data
-    // races.  Currently, when |func| is compiled, the compiler will
-    // magically permit it to write to its first argument without
-    // enforcing the usual data-race requirements.  This should
-    // eventually become an intrinsic (e.g. |%UnsafeSetElement()|)
-    //
+    // Here, |id| is the slice id. |n| is the total number of slices;
+    // |warmup| is true if this is the warmup phase; and |args| are
+    // the additional arguments passed to |%ParallelBuildArray()|.
     // Typically, if |warmup| is true, you will want to do less work.
     //
     // See ParallelArray.js for examples.
 
     CallArgs args = CallArgsFromVp(argc, vp);
-    return parallel::BuildArray(cx, args) != parallel::ExecutionFatal;
+    return parallel::Do(cx, args) != parallel::ExecutionFatal;
 }
 
 static JSBool
@@ -591,15 +585,83 @@ intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
     return js::ParallelArrayObject::intrinsicNewParallelArray(cx, argc, vp);
 }
 
+static JSBool
+intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %DenseArray(length)
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    // Check that index is an int32
+    if (!args[0].isInt32()) {
+        JS_ReportError(cx, "Expected int32 as second argument");
+        return false;
+    }
+    uint32_t length = args[0].toInt32();
+
+    // Make a new buffer and initialize it up to length.
+    RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
+    if (!buffer)
+        return false;
+
+    types::TypeObject *newtype = types::GetTypeCallerInitObject(cx, JSProto_Array);
+    if (!newtype)
+        return false;
+    buffer->setType(newtype);
+
+    JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
+    switch (edr) {
+      case JSObject::ED_OK:
+        args.rval().setObject(*buffer);
+        return true;
+
+      case JSObject::ED_SPARSE: // shouldn't happen!
+        JS_ASSERT(!"%EnsureDenseArrayElements() would yield sparse array");
+        JS_ReportError(cx, "%EnsureDenseArrayElements() would yield sparse array");
+        break;
+
+      case JSObject::ED_FAILED:
+        break;
+    }
+    return false;
+}
+
+JSBool
+js::intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %UnsafeSetDenseArrayElement(arr, idx, elem)
+    //
+    // Updates element |idx| of the dense array |arr|.  |arr| must be
+    // a dense array and the index must be an int32 less than the
+    // initialized length of |arr|.  Use
+    // |%EnsureDenseResultArrayElements| to ensure that the
+    // initialized length is long enough.
+
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    JS_ASSERT(args[0].isObject() && args[0].toObject().isDenseArray());
+    JS_ASSERT(args[1].isInt32());
+    JS_ASSERT(args[1].isInt32());
+
+    RootedObject arrobj(cx, &args[0].toObject());
+    uint32_t idx = args[1].toInt32();
+
+    JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
+
+    JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[2]);
+    return true;
+}
+
 JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",           intrinsic_ToObject,             1,0),
     JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
     JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
 
-    JS_FN("ParallelBuildArray", intrinsic_ParallelBuildArray,   3,0),
+    JS_FN("ParallelDo",         intrinsic_ParallelDo,           2,0),
     JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
     JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
+    JS_FN("DenseArray",         intrinsic_DenseArray,           1,0),
+    JS_FN("UnsafeSetDenseArrayElement", intrinsic_UnsafeSetDenseArrayElement, 3,0),
 
 #ifdef DEBUG
     JS_FN("Dump",               intrinsic_Dump,                 1,0),

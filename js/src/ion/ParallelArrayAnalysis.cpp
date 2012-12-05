@@ -54,6 +54,13 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
         return insertWriteGuard(prop, prop->obj()); \
     }
 
+#define MAYBE_WRITE_GUARDED_OP(op, obj)                                       \
+    virtual bool visit##op(M##op *prop) {                                     \
+        if (prop->racy())                                                     \
+            return true;                                                      \
+        return insertWriteGuard(prop, prop->obj());                           \
+    }
+
 class ParallelArrayVisitor : public MInstructionVisitor
 {
     ParallelCompileContext &compileContext_;
@@ -169,8 +176,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(BoundsCheckLower)
     SAFE_OP(LoadElement)
     SAFE_OP(LoadElementHole)
-    WRITE_GUARDED_OP(StoreElement, elements) // FIXME--unsafe if it triggers a resize
-    WRITE_GUARDED_OP(StoreElementHole, elements) // FIXME--unsafe if it triggers a resize
+    MAYBE_WRITE_GUARDED_OP(StoreElement, elements)
+    WRITE_GUARDED_OP(StoreElementHole, elements)
     UNSAFE_OP(ArrayPopShift)
     UNSAFE_OP(ArrayPush)
     SAFE_OP(LoadTypedArrayElement)
@@ -202,21 +209,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
 
 ParallelCompileContext::ParallelCompileContext(JSContext *cx)
     : cx_(cx),
-      invokedFunctions_(cx),
-      compilingKernel_(false)
+      invokedFunctions_(cx)
 {
-}
-
-bool
-ParallelCompileContext::canUnsafelyWrite(MInstruction *write, MDefinition *obj)
-{
-    // By convention, allow the elements of the first argument of the
-    // self-hosted kernel parallel code to be stored to, unsafely, without a
-    // guard.
-    if (!write->isStoreElement() && !write->isStoreElementHole())
-        return false;
-
-    return compilingKernel_ && obj->isParameter() && obj->toParameter()->index() == 0;
 }
 
 bool
@@ -253,18 +247,14 @@ ParallelCompileContext::addInvocation(StackFrame *fp)
 MethodStatus
 ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 {
-    JS_ASSERT(!compilingKernel_);
-
     // Compile the kernel first as it can unsafely write to a buffer argument.
     if (!kernel->nonLazyScript()->hasParallelIonScript()) {
         IonSpew(IonSpew_ParallelArray, "Compiling kernel %p:%s:%u",
                 kernel.get(), kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
-        MethodStatus status = compileFunction(kernel, true);
+        MethodStatus status = compileFunction(kernel);
         if (status != Method_Compiled) {
-            compilingKernel_ = false;
             return status;
         }
-        compilingKernel_ = false;
     }
 
     for (size_t i = 0; i < invokedFunctions_.length(); i++) {
@@ -278,7 +268,7 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
             continue;
         }
 
-        MethodStatus status = compileFunction(fun, (fun == kernel));
+        MethodStatus status = compileFunction(fun);
         if (status != Method_Compiled)
             return status;
     }
@@ -303,16 +293,6 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 
 
     return Method_Compiled;
-}
-
-MethodStatus
-ParallelCompileContext::compileFunction(HandleFunction kernel, bool isKernel)
-{
-    JS_ASSERT(compilingKernel_ == false);
-    compilingKernel_ = isKernel;
-    MethodStatus ms = compileFunction1(kernel);
-    compilingKernel_ = false;
-    return ms;
 }
 
 bool
@@ -517,34 +497,11 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
 
     switch (object->op()) {
       case MDefinition::Op_ParNew:
-          // MParNew will always be creating something thread-local, omit the guard
-          IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
-          return true;
-      case MDefinition::Op_Parameter:
-        if (compileContext_.canUnsafelyWrite(writeInstruction, object)) {
-            // XXX: Super gross hack. We know the buffer in self-hosted code
-            // is initialized up to length, so we won't ever write to a hole.
-            IonSpew(IonSpew_ParallelArray, "Write to buffer in self-hosted code does not require guard");
-
-            MStoreElement *store;
-            if (writeInstruction->isStoreElementHole()) {
-                IonSpew(IonSpew_ParallelArray, "Unholing already-unsafe buffer write");
-                MStoreElementHole *storeHole = writeInstruction->toStoreElementHole();
-                store = MStoreElement::New(storeHole->elements(), storeHole->index(),
-                                           storeHole->value());
-                replace(writeInstruction, store);
-            } else {
-                store = writeInstruction->toStoreElement();
-            }
-
-            // Since we initialize with the JS_ARRAY_HOLE, we have to always
-            // write the tag.
-            store->setElementType(MIRType_Value);
-
-            return true;
-        }
-      break;
-      default: break;
+        // MParNew will always be creating something thread-local, omit the guard
+        IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
+        return true;
+      default:
+        break;
     }
 
     MDefinition *threadContext = this->threadContext();

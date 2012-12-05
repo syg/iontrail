@@ -540,16 +540,20 @@ ForkJoinSlice::Initialize()
 void
 ForkJoinSlice::requestGC(gcreason::Reason reason)
 {
+#ifdef JS_THREADSAFE
     shared->requestGC(reason);
     triggerAbort();
+#endif
 }
 
 void
 ForkJoinSlice::requestCompartmentGC(JSCompartment *compartment,
                                     gcreason::Reason reason)
 {
+#ifdef JS_THREADSAFE
     shared->requestCompartmentGC(compartment, reason);
     triggerAbort();
+#endif
 }
 
 void
