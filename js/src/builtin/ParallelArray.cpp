@@ -253,27 +253,28 @@ InWarmup() {
     return ion::js_IonOptions.parallelWarmupContext != NULL;
 }
 
-class ArrayOp : public ForkJoinOp
+class ParallelDo : public ForkJoinOp
 {
-  protected:
+    static const uint32_t baseArgc = 3;
+
     JSContext *cx_;
-    const char *name_;
-    HeapPtrObject buffer_;
     HeapPtrObject fun_;
+    Value *funArgs_;
+    uint32_t funArgc_;
 
   public:
     Vector<JSScript *> pendingInvalidations;
 
-    ArrayOp(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun)
+    ParallelDo(JSContext *cx, HandleObject fun, Value *funArgs, uint32_t funArgc)
       : cx_(cx),
-        name_(name),
-        buffer_(buffer),
         fun_(fun),
+        funArgs_(funArgs),
+        funArgc_(funArgc),
         pendingInvalidations(cx)
     { }
 
     ExecutionStatus apply() {
-        Spew(cx_, SpewOps, "%s: attempting parallel compilation", name_);
+        Spew(cx_, SpewOps, "ParallelDo: attempting parallel compilation");
         if (!ion::IsEnabled(cx_))
             return ExecutionDisqualified;
 
@@ -286,9 +287,9 @@ class ArrayOp : public ForkJoinOp
         if (status != Method_Compiled)
             return ExecutionDisqualified;
 
-        Spew(cx_, SpewOps, "%s: entering parallel section", name_);
+        Spew(cx_, SpewOps, "ParallelDo: entering parallel section");
         ParallelResult pr = js::ExecuteForkJoinOp(cx_, *this);
-        return ToExecutionStatus(cx_, name_, pr);
+        return ToExecutionStatus(cx_, "ParallelDo", pr);
     }
 
     MethodStatus compileForParallelExecution() {
@@ -322,32 +323,11 @@ class ArrayOp : public ForkJoinOp
 
             // After warming up, compile the outer kernel as a special
             // self-hosted kernel that can unsafely write to the buffer.
-            Spew(cx_, SpewOps, "%s: compilation", name_);
+            Spew(cx_, SpewOps, "ParallelDo: compilation");
             return compileContext.compileKernelAndInvokedFunctions(callee);
         }
 
         return Method_Compiled;
-    }
-
-    virtual bool warmup() { return true; }
-    virtual bool parallel(ForkJoinSlice &slice) = 0;
-};
-
-class BuildArrayOp : public ArrayOp
-{
-    static const uint32_t baseArgc = 4;
-
-    Value *funArgs_;
-    uint32_t funArgc_;
-
-  public:
-    BuildArrayOp(JSContext *cx, HandleObject buffer, HandleObject fun,
-                 Value *funArgs, uint32_t funArgc)
-      : ArrayOp(cx, "fill", buffer, fun),
-        funArgs_(funArgs),
-        funArgc_(funArgc)
-    {
-        JS_ASSERT(buffer->isDenseArray());
     }
 
     bool warmup() {
@@ -355,7 +335,7 @@ class BuildArrayOp : public ArrayOp
 
         uint32_t slices = ForkJoinSlices(cx_);
         for (uint32_t id = 0; id < slices; id++) {
-            Spew(cx_, SpewOps, "%s: warmup %u/%u", name_, id, slices);
+            Spew(cx_, SpewOps, "ParallelDo: warmup %u/%u", id, slices);
 
             InvokeArgsGuard args;
             if (!cx_->stack.pushInvokeArgs(cx_, baseArgc + funArgc_, &args))
@@ -365,10 +345,9 @@ class BuildArrayOp : public ArrayOp
             args.setThis(UndefinedValue());
 
             // run the warmup with each of the ids
-            args[0].setObject(*buffer_);
-            args[1].setInt32(id);
-            args[2].setInt32(slices);
-            args[3].setBoolean(true); // warmup
+            args[0].setInt32(id);
+            args[1].setInt32(slices);
+            args[2].setBoolean(true); // warmup
             for (uint32_t i = 0; i < funArgc_; i++)
                 args[baseArgc + i] = funArgs_[i];
 
@@ -379,7 +358,7 @@ class BuildArrayOp : public ArrayOp
         return true;
     }
 
-    bool parallel(ForkJoinSlice &slice) {
+    virtual bool parallel(ForkJoinSlice &slice) {
         // Setting maximum argc at 10, since it is more than we
         // actually use in practice.  If you add parameters, you may
         // have to adjust this.
@@ -388,10 +367,9 @@ class BuildArrayOp : public ArrayOp
         FastestIonInvoke<10> fii(cx_, fun, funArgc_ + baseArgc);
 
         // The first 3 arguments: buffer, thread id, and number of threads.
-        fii.args[0] = ObjectValue(*buffer_);
-        fii.args[1] = Int32Value(slice.sliceId);
-        fii.args[2] = Int32Value(slice.numSlices);
-        fii.args[3] = BooleanValue(false); // warmup
+        fii.args[0] = Int32Value(slice.sliceId);
+        fii.args[1] = Int32Value(slice.numSlices);
+        fii.args[2] = BooleanValue(false); // warmup
         for (uint32_t i = 0; i < funArgc_; i++)
             fii.args[baseArgc + i] = funArgs_[i];
 
@@ -418,16 +396,16 @@ HasScript(Vector<types::RecompileInfo> &scripts, JSScript *script)
     return false;
 }
 
-static ExecutionStatus BuildArray1(JSContext *cx, CallArgs &args);
+static ExecutionStatus Do1(JSContext *cx, CallArgs &args);
 
 ExecutionStatus
-js::parallel::BuildArray(JSContext *cx, CallArgs &args)
+js::parallel::Do(JSContext *cx, CallArgs &args)
 {
-    ExecutionStatus status = BuildArray1(cx, args);
+    ExecutionStatus status = Do1(cx, args);
 
     if (status != ExecutionFatal) {
-        if (args[2].isObject()) {
-            RootedObject feedback(cx, &args[2].toObject());
+        if (args[1].isObject()) {
+            RootedObject feedback(cx, &args[1].toObject());
             if (feedback && feedback->isFunction()) {
                 const char *statusCString = ExecutionStatusToString(status);
                 RootedString statusString(cx, JS_NewStringCopyZ(cx, statusCString));
@@ -447,38 +425,19 @@ js::parallel::BuildArray(JSContext *cx, CallArgs &args)
 }
 
 static ExecutionStatus
-BuildArray1(JSContext *cx, CallArgs &args)
+Do1(JSContext *cx, CallArgs &args)
 {
-    JS_ASSERT(args[1].isObject());
-    JS_ASSERT(args[1].toObject().isFunction());
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().isFunction());
 
     // Nesting is not allowed.
     if (InWarmup()) {
-        args.rval().setUndefined();
+        args.rval().setBoolean(false);
         return ExecutionDisqualified;
     }
 
-    uint32_t length;
-    if (!ToUint32(cx, args[0], &length))
-        return ExecutionFatal;
-
-    RootedObject fun(cx, &args[1].toObject());
-
-    // Make a new buffer and initialize it up to length.
-    RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
-    if (!buffer)
-        return ExecutionFatal;
-
-    types::TypeObject *newtype = types::GetTypeCallerInitObject(cx, JSProto_Array);
-    if (!newtype)
-        return ExecutionFatal;
-    buffer->setType(newtype);
-
-    JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
-    if (edr != JSObject::ED_OK)
-        return ExecutionFatal;
-
-    BuildArrayOp op(cx, buffer, fun, args.array() + 3, args.length() - 3);
+    RootedObject fun(cx, &args[0].toObject());
+    ParallelDo op(cx, fun, args.array() + 2, args.length() - 2);
     ExecutionStatus status = op.apply();
 
     // If we bailed out, invalidate the kernel to be reanalyzed (all the way
@@ -486,7 +445,7 @@ BuildArray1(JSContext *cx, CallArgs &args)
     //
     // TODO: This is too coarse grained.
     if (status == ExecutionSucceeded) {
-        args.rval().setObject(*buffer);
+        args.rval().setBoolean(true);
     } else {
         if (status == ExecutionBailout) {
             Vector<types::RecompileInfo> invalid(cx);
@@ -501,7 +460,7 @@ BuildArray1(JSContext *cx, CallArgs &args)
             Invalidate(cx, invalid);
         }
 
-        args.rval().setUndefined();
+        args.rval().setBoolean(false);
     }
 
     return status;
