@@ -508,8 +508,7 @@ bool
 CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 {
     if (!oolParallelAbort) {
-        oolParallelAbort = new OutOfLineParallelAbort(
-            parallelBailoutIndex++);
+        oolParallelAbort = new OutOfLineParallelAbort(parallelBailoutIndex++);
         if (!addOutOfLineCode(oolParallelAbort))
             return false;
     }

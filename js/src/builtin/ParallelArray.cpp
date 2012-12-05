@@ -262,14 +262,23 @@ class ArrayOp : public ForkJoinOp
     HeapPtrObject fun_;
 
   public:
+    Vector<JSScript *> pendingInvalidations;
+
     ArrayOp(JSContext *cx, const char *name, HandleObject buffer, HandleObject fun)
-      : cx_(cx), name_(name), buffer_(buffer), fun_(fun)
-    {}
+      : cx_(cx),
+        name_(name),
+        buffer_(buffer),
+        fun_(fun),
+        pendingInvalidations(cx)
+    { }
 
     ExecutionStatus apply() {
         Spew(cx_, SpewOps, "%s: attempting parallel compilation", name_);
         if (!ion::IsEnabled(cx_))
             return ExecutionDisqualified;
+
+        if (!pendingInvalidations.resize(ForkJoinSlices(cx_)))
+            return ExecutionFatal;
 
         MethodStatus status = compileForParallelExecution();
         if (status == Method_Error)
@@ -385,9 +394,27 @@ class BuildArrayOp : public ArrayOp
         fii.args[3] = BooleanValue(false); // warmup
         for (uint32_t i = 0; i < funArgc_; i++)
             fii.args[baseArgc + i] = funArgs_[i];
-        return fii.invoke();
+
+        bool ok = fii.invoke();
+        if (ok) {
+            pendingInvalidations[slice.sliceId] = NULL;
+        } else {
+            JS_ASSERT(pt->parallelAbortedScript);
+            pendingInvalidations[slice.sliceId] = pt->parallelAbortedScript;
+        }
+        return ok;
     }
 };
+
+static inline bool
+HasScript(Vector<types::RecompileInfo> &scripts, JSScript *script)
+{
+    for (uint32_t i = 0; i < scripts.length(); i++) {
+        if (scripts[i] == script->parallelIonScript()->recompileInfo())
+            return true;
+    }
+    return false;
+}
 
 ExecutionStatus
 js::parallel::BuildArray(JSContext *cx, CallArgs args)
@@ -437,8 +464,16 @@ js::parallel::BuildArray(JSContext *cx, CallArgs args)
         args.rval().setObject(*buffer);
     } else {
         if (status == ExecutionBailout) {
-            RootedScript script(cx, fun->toFunction()->nonLazyScript());
-            Invalidate(cx, script, ParallelExecution);
+            Vector<types::RecompileInfo> invalid(cx);
+            for (uint32_t i = 0; i < op.pendingInvalidations.length(); i++) {
+                JSScript *script = op.pendingInvalidations[i];
+                if (script && !HasScript(invalid, script)) {
+                    JS_ASSERT(script->hasParallelIonScript());
+                    if (!invalid.append(script->parallelIonScript()->recompileInfo()))
+                        return ExecutionFatal;
+                }
+            }
+            Invalidate(cx, invalid);
         }
 
         args.rval().setUndefined();

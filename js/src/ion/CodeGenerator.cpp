@@ -1081,13 +1081,20 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     masm.jump(&end);
 
     // Handle uncompiled or native functions.
-    if (slowPath == &invoke) {
+    if (executionMode == SequentialExecution) {
+        JS_ASSERT(slowPath == &invoke);
         masm.bind(&invoke);
         if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
             return false;
     }
 
     masm.bind(&end);
+
+    // In parallel mode, we have to propagate errors all the way up, since
+    // that's how we bail out.
+    if (executionMode == ParallelExecution)
+        masm.branchTestMagic(Assembler::Equal, JSReturnOperand, slowPath);
+
     dropArguments(call->numStackArgs() + 1);
     return true;
 }
@@ -1175,13 +1182,19 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     masm.jump(&end);
 
     // Handle uncompiled functions.
-    if (slowPath == &invoke) {
+    if (executionMode == SequentialExecution) {
+        JS_ASSERT(slowPath == &invoke);
         masm.bind(&invoke);
         if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
             return false;
     }
 
     masm.bind(&end);
+
+    // In parallel mode, we have to propagate errors all the way up, since
+    // that's how we bail out.
+    if (executionMode == ParallelExecution)
+        masm.branchTestMagic(Assembler::Equal, JSReturnOperand, slowPath);
 
     // If the return value of the constructing function is Primitive,
     // replace the return value with the Object from CreateThis.

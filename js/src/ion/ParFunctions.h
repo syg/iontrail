@@ -19,6 +19,7 @@ ForkJoinSlice *ParForkJoinSlice();
 JSObject *ParNewGCThing(ForkJoinSlice *threadContext, gc::AllocKind allocKind, uint32_t thingSize);
 bool ParWriteGuard(ForkJoinSlice *context, JSObject *object);
 void ParBailout(uint32_t id);
+bool ParCheckOverRecursed(ForkJoinSlice *slice);
 bool ParCheckInterrupt(ForkJoinSlice *context);
 
 // We pass the arguments in a structure because, in code gen, it is
@@ -29,6 +30,8 @@ struct ParExtendArrayArgs {
     Value value;
 };
 bool ParExtendArray(ParExtendArrayArgs *args);
+
+void ParallelAbort(JSScript *script);
 
 // XXX wrong file, not specific to par
 void Trace(uint32_t bblock, uint32_t lir,

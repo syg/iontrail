@@ -268,6 +268,7 @@ function ParallelArrayReduce(f) {
   // Parallel Version
 
   var slices = %ParallelSlices();
+  global.print(slices + " slices");
   if (length > slices) {
     // Attempt parallel reduction, but only if there is at least one
     // element per thread.  Otherwise the various slices having to
@@ -277,8 +278,10 @@ function ParallelArrayReduce(f) {
       // can't use reduce because subreductions is an array, not a
       // parallel array:
       var a = subreductions[0];
-      for (var i = 1; i < subreductions.length; i++)
+      for (var i = 1; i < subreductions.length; i++) {
+        global.print("subred " + i);
         a = f(a, subreductions[i]);
+      }
       return a;
     }
   }
@@ -306,7 +309,11 @@ function ParallelArrayReduce(f) {
   function fill(result, id, n, warmup, self, f) {
     var [start, end] = ComputeTileBounds(self.length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
-    result[id] = reduce(self, start, end, f);
+    var a = self.get(start);
+    for (var i = start+1; i < end; i++)
+      a = f(a, self.get(i));
+    result[id] = a;
+    //result[id] = reduce(self, start, end, f);
   }
 }
 
@@ -571,6 +578,15 @@ function ParallelArrayFlatten() {
     shape.push(this.shape[i]);
   return %NewParallelArray(shape, this.buffer, this.offset);
 }
+
+// Mark the main operations as clone-at-callsite for better precision.
+/*
+%_SetFunctionFlags(ParallelArrayMap,     { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayReduce,  { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayScan,    { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayScatter, { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayFilter,  { cloneAtCallsite: true });
+*/
 
 //
 // Accessors and utilities.

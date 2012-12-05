@@ -7,6 +7,7 @@
 
 #include "jsinterp.h"
 #include "ParFunctions.h"
+#include "IonSpewer.h"
 
 #include "jsinterpinlines.h"
 #include "jscompartmentinlines.h"
@@ -154,4 +155,16 @@ ion::ParExtendArray(ParExtendArrayArgs *args)
     ForkJoinSlice *slice = js::ForkJoinSlice::current();
     return (args->object->parExtendDenseArray(slice->allocator,
                                               &args->value, 1) == JSObject::ED_OK);
+}
+
+void
+ion::ParallelAbort(JSScript *script)
+{
+    JS_ASSERT(InParallelSection());
+
+    IonSpew(IonSpew_Bailouts, "Took parallel abort from %s:%d", script->filename, script->lineno);
+
+    PerThreadData *pt = ForkJoinSlice::current()->perThreadData;
+    if (!pt->parallelAbortedScript)
+        pt->parallelAbortedScript = script;
 }

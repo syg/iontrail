@@ -1395,12 +1395,11 @@ CodeGeneratorX86Shared::visitOutOfLineTruncate(OutOfLineTruncate *ool)
 bool
 CodeGeneratorX86Shared::visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool)
 {
-#   ifdef TRACE_PAR_BAILOUTS
+    JS_ASSERT(current);
+    masm.movePtr(ImmWord((void *) current->mir()->info().script()), CallTempReg0);
     masm.setupUnalignedABICall(1, CallTempReg1);
-    masm.mov(Imm32(ool->index), CallTempReg0);
     masm.passABIArg(CallTempReg0);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParBailout));
-#   endif
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParallelAbort));
 
     masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
     masm.jump(returnLabel_);

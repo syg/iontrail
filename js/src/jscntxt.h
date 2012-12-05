@@ -474,6 +474,9 @@ class PerThreadData : public js::PerThreadDataFriendFields
     // This points to the most recent Ion activation running on the thread.
     js::ion::IonActivation  *ionActivation;
 
+    // If we took a parallel bailout, the script that bailed out is stored here.
+    JSScript            *parallelAbortedScript;
+
     /*
      * When this flag is non-zero, any attempt to GC will be skipped. It is used
      * to suppress GC when reporting an OOM (see js_ReportOutOfMemory) and in
