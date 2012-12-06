@@ -1241,16 +1241,10 @@ class CallCompiler : public BaseCompiler
         // Load the clone.
         masm.move(ImmPtr(fun), ic.funObjReg);
 
-        // Patch up the callee on the stack. At this point the callee lives at
-        // sp[-nargs].
-        // XXX: What happens when frame size isn't static?
-        if (ic.frameSize.isStatic()) {
-            Registers tempRegs(Registers::AvailRegs);
-            tempRegs.takeReg(ic.funObjReg);
-            RegisterID t0 = tempRegs.takeAnyReg().reg();
-            masm.loadPtr(FrameAddress(VMFrame::offsetOfRegsSp()), t0);
-            masm.storeValue(ObjectValue(*fun), Address(t0, -(fun->nargs) * sizeof(Value)));
-        }
+        // Patch up the callee on the stack.
+        CallArgs args = CallArgsFromSp(fun->nargs, f.regs.sp);
+        uint32_t vpOffset = (uint32_t) ((char *) args.base() - (char *) f.fp());
+        masm.storeValue(ObjectValue(*fun), Address(JSFrameReg, vpOffset));
 
         // Jump back to the first fun guard.
         Jump done = masm.jump();
