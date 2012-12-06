@@ -509,25 +509,27 @@ function ParallelArrayScatter(targets, zero, f, length) {
   return %NewParallelArray([buffer.length], buffer, 0);
 }
 
-function ParallelArrayFilter(filters) {
-  var length = this.shape[0];
+function ParallelArrayFilter(filters, m) {
+  var self = this;
+  var length = self.shape[0];
 
   if (filters.length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
-  var slices = %ParallelSlices();
-  if (length > slices) {
-    var keepers = %ParallelBuildArray(slices, count_keepers, null, filters);
-    if (keepers) {
-      var total = 0;
-      for (var i = 0; i < keepers.length; i++)
-        total += keepers[i];
-      var buffer = %ParallelBuildArray(total, copy_keepers, null, this,
-                                       filters, keepers);
-      if (buffer) {
-        return %NewParallelArray([total], buffer, 0);
+  if (TryParallel(m)) {
+    var slices = %ParallelSlices();
+    if (length > slices) {
+      var keepers = %ParallelBuildArray(slices, count_keepers, CheckParallel(m));
+      if (keepers) {
+        var total = 0;
+        for (var i = 0; i < keepers.length; i++)
+          total += keepers[i];
+        var buffer = %ParallelBuildArray(total, copy_keepers, CheckParallel(m));
+        if (buffer) {
+          return %NewParallelArray([total], buffer, 0);
+        }
       }
     }
   }
@@ -537,12 +539,12 @@ function ParallelArrayFilter(filters) {
   var buffer = %_SetNonBuiltinCallerInitObjectType([]);
   for (var i = 0, pos = 0; i < length; i++) {
     if (filters[i])
-      buffer[pos++] = this.get(i);
+      buffer[pos++] = self.get(i);
   }
   return %NewParallelArray([buffer.length], buffer, 0);
 
-  function count_keepers(result, id, n, warmup, filters) {
-    var [start, end] = ComputeTileBounds(filters.length, id, n);
+  function count_keepers(result, id, n, warmup) {
+    var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     var count = 0;
     for (var i = start; i < end; i++) {
@@ -552,8 +554,8 @@ function ParallelArrayFilter(filters) {
     result[id] = count;
   }
 
-  function copy_keepers(result, id, n, warmup, self, filters, keepers) {
-    var [start, end] = ComputeTileBounds(filters.length, id, n);
+  function copy_keepers(result, id, n, warmup) {
+    var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
 
     var pos = 0;
