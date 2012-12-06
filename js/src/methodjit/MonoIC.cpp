@@ -1271,7 +1271,8 @@ class CallCompiler : public BaseCompiler
 
         JaegerSpew(JSpew_PICs, "generated CALL clone stub %p (%lu bytes)\n",
                    start.executableAddress(), (unsigned long) masm.size());
-        JaegerSpew(JSpew_PICs, "guarding %p with clone %p\n", original.get(), fun.get());
+        JaegerSpew(JSpew_PICs, "guarding %p with clone %p\n",
+                   original->nonLazyScript().unsafeGet(), fun->nonLazyScript().unsafeGet());
 
         Repatcher repatch(f.chunk());
         repatch.relink(ic.funJump, start);
