@@ -23,6 +23,8 @@ function seq_scan(array, f) {
 }
 
 function assertAlmostEq(v1, v2) {
+  if (v1 === v2)
+    return true;
   // + and other fp ops can vary somewhat when run in parallel!
   assertEq(typeof v1, "number");
   assertEq(typeof v2, "number");
