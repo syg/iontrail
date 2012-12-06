@@ -1,3 +1,5 @@
+// |jit-test| error: InternalError;
+
 function kernel(n) {
   if (n > 10)
     // Note: no base case :)
@@ -10,7 +12,7 @@ function testMap() {
   // after warmup iters have completed!
   var r = [];
   for (var i = 0; i < 1024; i++) r[i] = i % 9;
-  r[762] = 22;
+  r[22] = 22;
   var p = new ParallelArray(r);
   p.map(kernel, { mode: "par", expect: "bailout" });
 }
