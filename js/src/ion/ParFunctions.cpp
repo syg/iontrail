@@ -50,10 +50,10 @@ ion::ParWriteGuard(ForkJoinSlice *slice, JSObject *object)
 static void
 printTrace(const char *prefix, struct IonTraceData *cached)
 {
-    // fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / Opcode %s\n",
-    //         prefix,
-    //         cached->bblock, cached->lir,
-    //         cached->execModeInt, cached->opcode);
+    fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / Opcode %s\n",
+            prefix,
+            cached->bblock, cached->lir,
+            cached->execModeInt, cached->opcode);
 }
 #endif
 
