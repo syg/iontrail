@@ -37,6 +37,8 @@ void ParallelAbort(JSScript *script);
 void Trace(uint32_t bblock, uint32_t lir,
            uint32_t execMode, const char *opcode);
 
+void ParCallToUncompiledScript(JSFunction *func);
+
 }
 }
 

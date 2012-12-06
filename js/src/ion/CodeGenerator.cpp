@@ -999,19 +999,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     Register nargsreg  = ToRegister(call->getNargsReg());
     uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     ExecutionMode executionMode = gen->info().executionMode();
-    Label invoke, thunk, makeCall, end, *slowPath;
-
-    // When compiling parallel kernels, the slow path is a bail instead of
-    // calling Invoke.
-    switch (executionMode) {
-      case SequentialExecution:
-        slowPath = &invoke;
-        break;
-      case ParallelExecution:
-        if (!ensureOutOfLineParallelAbort(&slowPath))
-            return false;
-        break;
-    }
+    Label uncompiled, thunk, makeCall, end;
 
     // Known-target case is handled by LCallKnown.
     JS_ASSERT(!call->hasSingleTarget());
@@ -1031,14 +1019,14 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         return false;
 
     // Guard that calleereg is an interpreted function with a JSScript:
-    masm.branchIfFunctionHasNoScript(calleereg, slowPath);
+    masm.branchIfFunctionHasNoScript(calleereg, &uncompiled);
 
     // Knowing that calleereg is a non-native function, load the JSScript.
     masm.loadPtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
     masm.loadPtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &uncompiled);
 
     // Nestle the StackPointer up to the argument vector.
     masm.freeStack(unusedStack);
@@ -1081,21 +1069,42 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     masm.jump(&end);
 
     // Handle uncompiled or native functions.
-    if (executionMode == SequentialExecution) {
-        JS_ASSERT(slowPath == &invoke);
-        masm.bind(&invoke);
+    masm.bind(&uncompiled);
+    switch (executionMode) {
+      case SequentialExecution:
         if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
             return false;
+        break;
+
+      case ParallelExecution:
+        if (!emitParCallToUncompiledScript(calleereg))
+            return false;
+        break;
     }
 
     masm.bind(&end);
 
-    // In parallel mode, we have to propagate errors all the way up, since
-    // that's how we bail out.
-    if (executionMode == ParallelExecution)
-        masm.branchTestMagic(Assembler::Equal, JSReturnOperand, slowPath);
+    if (!maybePropagateParallelBailout())
+        return false;
 
     dropArguments(call->numStackArgs() + 1);
+    return true;
+}
+
+// Generates a call to ParCallToUncompiledScript() and then bails out.
+// |calleeReg| should contain the JSFunction*.
+bool
+CodeGenerator::emitParCallToUncompiledScript(Register calleeReg)
+{
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+
+    masm.movePtr(calleeReg, CallTempReg0);
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.passABIArg(CallTempReg0);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCallToUncompiledScript));
+    masm.jump(bail);
     return true;
 }
 
@@ -1108,19 +1117,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     uint32 unusedStack = StackOffsetOfPassedArg(call->argslot());
     JSFunction *target = call->getSingleTarget();
     ExecutionMode executionMode = gen->info().executionMode();
-    Label end, invoke, *slowPath;
-
-    // When compiling parallel kernels, the slow path is a bail instead of
-    // calling Invoke.
-    switch (executionMode) {
-      case SequentialExecution:
-        slowPath = &invoke;
-        break;
-      case ParallelExecution:
-        if (!ensureOutOfLineParallelAbort(&slowPath))
-            return false;
-        break;
-    }
+    Label end, uncompiled;
 
      // Native single targets are handled by LCallNative.
     JS_ASSERT(!target->isNative());
@@ -1155,7 +1152,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     masm.loadPtr(Address(objreg, ionOffset(executionMode)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), slowPath);
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_COMPILING_SCRIPT), &uncompiled);
 
     // Load the start of the target IonCode.
     masm.loadPtr(Address(objreg, IonScript::offsetOfMethod()), objreg);
@@ -1182,19 +1179,23 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     masm.jump(&end);
 
     // Handle uncompiled functions.
-    if (executionMode == SequentialExecution) {
-        JS_ASSERT(slowPath == &invoke);
-        masm.bind(&invoke);
+    masm.bind(&uncompiled);
+    switch (executionMode) {
+      case SequentialExecution:
         if (!emitCallInvokeFunction(call, calleereg, call->numActualArgs(), unusedStack))
             return false;
+        break;
+
+      case ParallelExecution:
+        if (!emitParCallToUncompiledScript(calleereg))
+            return false;
+        break;
     }
 
     masm.bind(&end);
 
-    // In parallel mode, we have to propagate errors all the way up, since
-    // that's how we bail out.
-    if (executionMode == ParallelExecution)
-        masm.branchTestMagic(Assembler::Equal, JSReturnOperand, slowPath);
+    if (!maybePropagateParallelBailout())
+        return false;
 
     // If the return value of the constructing function is Primitive,
     // replace the return value with the Object from CreateThis.
@@ -1206,6 +1207,22 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     }
 
     dropArguments(call->numStackArgs() + 1);
+    return true;
+}
+
+bool
+CodeGenerator::maybePropagateParallelBailout()
+{
+    // In parallel mode, if we call another ion-compiled function and
+    // it returns JS_ION_ERROR, that indicates a bailout that we have
+    // to propagate up the stack.
+    ExecutionMode executionMode = gen->info().executionMode();
+    if (executionMode == ParallelExecution) {
+        Label *bail;
+        if (!ensureOutOfLineParallelAbort(&bail))
+            return false;
+        masm.branchTestMagic(Assembler::Equal, JSReturnOperand, bail);
+    }
     return true;
 }
 

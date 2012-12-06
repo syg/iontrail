@@ -170,3 +170,11 @@ ion::ParallelAbort(JSScript *script)
     if (!pt->parallelAbortedScript)
         pt->parallelAbortedScript = script;
 }
+
+void
+ion::ParCallToUncompiledScript(JSFunction *func)
+{
+    JS_ASSERT(InParallelSection());
+
+    IonSpew(IonSpew_Bailouts, "Call to uncompiled script: %p\n", func);
+}

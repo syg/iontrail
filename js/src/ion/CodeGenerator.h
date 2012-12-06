@@ -241,8 +241,12 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCache(LInstruction *load);
     bool visitCallSetProperty(LInstruction *ins);
 
+    bool maybePropagateParallelBailout();
+
     ConstantOrRegister getSetPropertyValue(LInstruction *ins);
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);
+
+    bool emitParCallToUncompiledScript(Register calleeReg);
 
     IonScriptCounts *maybeCreateScriptCounts();
 };
