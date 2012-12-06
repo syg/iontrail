@@ -1,5 +1,3 @@
-// |jit-test| error: InternalError;
-
 function kernel(n) {
   if (n > 10)
     // Note: no base case :)

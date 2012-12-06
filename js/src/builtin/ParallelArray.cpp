@@ -38,6 +38,22 @@ enum SpewChannel {
     NumSpewChannels
 };
 
+static const char *
+ExecutionStatusToString(ExecutionStatus status)
+{
+    switch (status) {
+      case ExecutionDisqualified:
+        return "disqualified";
+      case ExecutionBailout:
+        return "bailout";
+      case ExecutionFatal:
+        return "fatal";
+      case ExecutionSucceeded:
+        return "success";
+    }
+    return "(unknown status)";
+}
+
 #ifdef DEBUG
 
 static bool
@@ -126,22 +142,6 @@ Spew(JSContext *cx, SpewChannel channel, const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
-}
-
-static const char *
-ExecutionStatusToString(ExecutionStatus status)
-{
-    switch (status) {
-      case ExecutionDisqualified:
-        return "disqualified";
-      case ExecutionBailout:
-        return "bailout";
-      case ExecutionFatal:
-        return "fatal";
-      case ExecutionSucceeded:
-        return "success";
-    }
-    return "(unknown status)";
 }
 
 static void

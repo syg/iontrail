@@ -758,9 +758,7 @@ JSCompartment::setGCMaxMallocBytes(size_t value)
 void
 JSCompartment::onTooMuchMalloc()
 {
-    if (!InParallelSection()) {
-        TriggerCompartmentGC(this, gcreason::TOO_MUCH_MALLOC);
-    }
+    TriggerCompartmentGC(this, gcreason::TOO_MUCH_MALLOC);
 }
 
 

@@ -778,8 +778,7 @@ Chunk::fetchNextFreeArena(JSRuntime *rt)
 }
 
 ArenaHeader *
-Chunk::allocateArena(JSCompartment *comp, AllocKind thingKind,
-                     bool inParallel)
+Chunk::allocateArena(JSCompartment *comp, AllocKind thingKind)
 {
     JS_ASSERT(hasAvailableArenas());
 
@@ -798,7 +797,7 @@ Chunk::allocateArena(JSCompartment *comp, AllocKind thingKind,
     Probes::resizeHeap(comp, rt->gcBytes, rt->gcBytes + ArenaSize);
     rt->gcBytes += ArenaSize;
     comp->gcBytes += ArenaSize;
-    if (comp->gcBytes >= comp->gcTriggerBytes && !inParallel) {
+    if (comp->gcBytes >= comp->gcTriggerBytes) {
         /*
          * If we've allocated more than gcTriggerBytes, run a gc on
          * the next operational callback, rather than immediately.  If
@@ -1125,12 +1124,11 @@ ArenaLists::parallelAllocate(JSCompartment *comp, AllocKind thingKind, size_t th
     if (t)
         return t;
 
-    return allocateFromArena(comp, thingKind, true);
+    return allocateFromArena(comp, thingKind);
 }
 
 inline void *
-ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind,
-                              bool inParallel)
+ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind)
 {
     // Threading Note:
     //
@@ -1221,7 +1219,7 @@ ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind,
      * for allocations improving cache locality.
      */
     JS_ASSERT(!*al->cursor);
-    ArenaHeader *aheader = chunk->allocateArena(comp, thingKind, inParallel);
+    ArenaHeader *aheader = chunk->allocateArena(comp, thingKind);
     if (!aheader)
         return NULL;
 
@@ -1451,7 +1449,7 @@ ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
          * always try to allocate twice.
          */
         for (bool secondAttempt = false; ; secondAttempt = true) {
-            void *thing = comp->allocator.arenas.allocateFromArena(comp, thingKind, false);
+            void *thing = comp->allocator.arenas.allocateFromArena(comp, thingKind);
             if (JS_LIKELY(!!thing))
                 return thing;
             if (secondAttempt)
@@ -1873,6 +1871,13 @@ TriggerOperationCallback(JSRuntime *rt, gcreason::Reason reason)
 void
 js::TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 {
+    // Wait till end of parallel section to trigger GC.
+    ForkJoinSlice *slice = ForkJoinSlice::current();
+    if (slice != NULL) {
+        slice->requestGC(reason);
+        return;
+    }
+
     rt->assertValidThread();
 
     if (rt->isHeapBusy())
@@ -1885,6 +1890,13 @@ js::TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 void
 js::TriggerCompartmentGC(JSCompartment *comp, gcreason::Reason reason)
 {
+    // Wait till end of parallel section to trigger GC.
+    ForkJoinSlice *slice = ForkJoinSlice::current();
+    if (slice != NULL) {
+        slice->requestCompartmentGC(comp, reason);
+        return;
+    }
+
     JSRuntime *rt = comp->rt;
     rt->assertValidThread();
 

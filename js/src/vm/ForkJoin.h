@@ -168,6 +168,16 @@ struct ForkJoinSlice
     // For convenience, *always* returns false.
     bool setFatal();
 
+    // When the code would normally trigger a GC, we don't trigger it
+    // immediately but instead record that request here.  This will
+    // cause |ExecuteForkJoinOp()| to invoke |TriggerGC()| or
+    // |TriggerCompartmentGC()| as appropriate once the par. sec. is
+    // complete. This is done because those routines do various
+    // preparations that are not thread-safe, and because the full set
+    // of arenas is not available until the end of the par. sec.
+    void requestGC(gcreason::Reason reason);
+    void requestCompartmentGC(JSCompartment *compartment, gcreason::Reason reason);
+
     // During the parallel phase, this method should be invoked periodically,
     // for example on every backedge, similar to the interrupt check.  If it
     // returns false, then the parallel phase has been aborted and so you
@@ -189,6 +199,11 @@ struct ForkJoinSlice
     // Initialized by Initialize()
     static PRUintn ThreadPrivateIndex;
 #endif
+
+    // Sets the abort flag and adjusts ionStackLimit so as to cause
+    // the overrun check to fail.  This should lead to the operation
+    // as a whole aborting.
+    void triggerAbort();
 
     ForkJoinShared *const shared;
 };

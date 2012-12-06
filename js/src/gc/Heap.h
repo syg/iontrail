@@ -766,8 +766,7 @@ struct Chunk
     inline void insertToAvailableList(Chunk **insertPoint);
     inline void removeFromAvailableList();
 
-    ArenaHeader *allocateArena(JSCompartment *comp, AllocKind kind,
-                               bool inParallel);
+    ArenaHeader *allocateArena(JSCompartment *comp, AllocKind kind);
 
     void releaseArena(ArenaHeader *aheader);
 

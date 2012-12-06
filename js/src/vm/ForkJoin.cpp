@@ -46,9 +46,12 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     //
     // Only to be accessed while holding the lock.
 
-    uint32_t uncompleted_;     // Number of uncompleted worker threads.
-    uint32_t blocked_;         // Number of threads that have joined the rendezvous.
-    uint32_t rendezvousIndex_; // Number of rendezvous attempts
+    uint32_t uncompleted_;         // Number of uncompleted worker threads
+    uint32_t blocked_;             // Number of threads that have joined rendezvous
+    uint32_t rendezvousIndex_;     // Number of rendezvous attempts
+    bool gcRequested_;             // True if a worker requested a GC
+    gcreason::Reason gcReason_;    // Reason given to request GC
+    JSCompartment *gcCompartment_; // Compartment for GC, or NULL for full
 
     /////////////////////////////////////////////////////////////////////////
     // Asynchronous Flags
@@ -110,16 +113,24 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     // Invoked from parallel worker threads:
     virtual void executeFromWorker(uint32_t threadId, uintptr_t stackLimit);
 
-    // Moves all the per-thread arenas into the main compartment.  This can
-    // only safely be invoked on the main thread, either during a rendezvous
-    // or after the workers have completed.
-    void transferArenasToCompartment();
+    // Moves all the per-thread arenas into the main compartment and
+    // processes any pending requests for a GC.  This can only safely
+    // be invoked on the main thread, either during a rendezvous or
+    // after the workers have completed.
+    void transferArenasToCompartmentAndProcessGCRequests();
 
     // Invoked during processing by worker threads to "check in".
     bool check(ForkJoinSlice &threadCx);
 
     // See comment on |ForkJoinSlice::setFatal()| in forkjoin.h
     bool setFatal();
+
+    // Requests a GC, either full or specific to a compartment.
+    void requestGC(gcreason::Reason reason);
+    void requestCompartmentGC(JSCompartment *compartment, gcreason::Reason reason);
+
+    // Requests that computation abort.
+    void abort();
 
     JSRuntime *runtime() { return cx_->runtime; }
 };
@@ -172,6 +183,9 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
     uncompleted_(uncompleted),
     blocked_(0),
     rendezvousIndex_(0),
+    gcRequested_(false),
+    gcReason_(gcreason::NUM_REASONS),
+    gcCompartment_(NULL),
     abort_(false),
     fatal_(false),
     rendezvous_(false)
@@ -226,6 +240,7 @@ ForkJoinShared::execute()
 
     // Notify workers to start and execute one portion on this thread.
     {
+        gc::AutoSuppressGC gc(cx_);
         AutoUnlockMonitor unlock(*this);
         threadPool_->submitAll(this);
         executeFromMainThread();
@@ -235,7 +250,7 @@ ForkJoinShared::execute()
     while (uncompleted_ > 0)
         lock.wait();
 
-    transferArenasToCompartment();
+    transferArenasToCompartmentAndProcessGCRequests();
 
     // Check if any of the workers failed.
     if (abort_) {
@@ -250,11 +265,21 @@ ForkJoinShared::execute()
 }
 
 void
-ForkJoinShared::transferArenasToCompartment()
+ForkJoinShared::transferArenasToCompartmentAndProcessGCRequests()
 {
     JSCompartment *comp = cx_->compartment;
     for (unsigned i = 0; i < numSlices_; i++)
         comp->adoptWorkerAllocator(allocators_[i]);
+
+    if (gcRequested_) {
+        if (!gcCompartment_) {
+            TriggerGC(cx_->runtime, gcReason_);
+        } else {
+            TriggerCompartmentGC(gcCompartment_, gcReason_);
+        }
+        gcRequested_ = false;
+        gcCompartment_ = NULL;
+    }
 }
 
 void
@@ -293,7 +318,7 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
     AutoSetForkJoinSlice autoContext(&slice);
 
     if (!op_.parallel(slice))
-        abort_ = true;
+        abort();
 }
 
 bool
@@ -301,7 +326,7 @@ ForkJoinShared::setFatal()
 {
     // Might as well set the abort flag to true, as it will make propagation
     // faster.
-    abort_ = true;
+    abort();
     fatal_ = true;
     return false;
 }
@@ -408,6 +433,42 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &slice)
     PR_NotifyAllCondVar(rendezvousEnd_);
 }
 
+void
+ForkJoinShared::abort()
+{
+    abort_ = true;
+}
+
+void
+ForkJoinShared::requestGC(gcreason::Reason reason)
+{
+    AutoLockMonitor lock(*this);
+
+    gcCompartment_ = NULL;
+    gcReason_ = reason;
+    gcRequested_ = true;
+}
+
+void
+ForkJoinShared::requestCompartmentGC(JSCompartment *compartment,
+                                     gcreason::Reason reason)
+{
+    AutoLockMonitor lock(*this);
+
+    if (gcRequested_ && gcCompartment_ != compartment) {
+        // If a full GC has been requested, or a GC for another compartment,
+        // issue a request for a full GC.
+        gcCompartment_ = NULL;
+        gcReason_ = reason;
+        gcRequested_ = true;
+    } else {
+        // Otherwise, just GC this compartment.
+        gcCompartment_ = compartment;
+        gcReason_ = reason;
+        gcRequested_ = true;
+    }
+}
+
 #endif // JS_THREADSAFE
 
 /////////////////////////////////////////////////////////////////////////////
@@ -473,6 +534,37 @@ ForkJoinSlice::Initialize()
 #else
     return true;
 #endif
+}
+
+void
+ForkJoinSlice::requestGC(gcreason::Reason reason)
+{
+    shared->requestGC(reason);
+    triggerAbort();
+}
+
+void
+ForkJoinSlice::requestCompartmentGC(JSCompartment *compartment,
+                                    gcreason::Reason reason)
+{
+    shared->requestCompartmentGC(compartment, reason);
+    triggerAbort();
+}
+
+void
+ForkJoinSlice::triggerAbort()
+{
+    shared->abort();
+
+    // set iontracklimit to -1 so that on next entry to a function,
+    // the thread will trigger the overrecursedcheck.  If the thread
+    // is in a loop, then it will be calling ForkJoinSlice::check(),
+    // in which case it will notice the shared abort_ flag.
+    //
+    // In principle, we probably ought to set the ionStackLimit's for
+    // the other threads too, but right now the various slice objects
+    // are not on a central list so that's not possible.
+    perThreadData->ionStackLimit = -1;
 }
 
 /////////////////////////////////////////////////////////////////////////////

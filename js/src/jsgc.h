@@ -454,8 +454,7 @@ struct ArenaLists {
     inline void queueForForegroundSweep(FreeOp *fop, AllocKind thingKind);
     inline void queueForBackgroundSweep(FreeOp *fop, AllocKind thingKind);
 
-    inline void *allocateFromArena(JSCompartment *comp, AllocKind thingKind,
-                                   bool inParallel);
+    inline void *allocateFromArena(JSCompartment *comp, AllocKind thingKind);
 };
 
 /*

@@ -257,20 +257,19 @@ function ParallelArrayMap(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential
 
-  buffer = [];
-  fill(buffer, 0, 1, false);
-  return %NewParallelArray([buffer.length], buffer, 0);
+  if (TrySequential(m)) {
+    buffer = [];
+    fill(buffer, 0, 1, false);
+    return %NewParallelArray([buffer.length], buffer, 0);
+  }
+
+  return %NewParallelArray([0], [], 0);
 
   function fill(result, id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++) {
       result[i] = f(self.get(i), i, self);
-    }
-  }
-
-  function feedback(result) {
-    if (result !== m.expect) {
     }
   }
 }
@@ -306,7 +305,11 @@ function ParallelArrayReduce(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential Version
 
-  return reduce(0, length);
+  if (TrySequential(m)) {
+    return reduce(0, length);
+  }
+
+  return self.get(0);
 
   ///////////////////////////////////////////////////////////////////////////
   // Helpers
@@ -537,9 +540,11 @@ function ParallelArrayFilter(filters, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential version
   var buffer = [];
-  for (var i = 0, pos = 0; i < length; i++) {
-    if (filters[i])
-      buffer[pos++] = self.get(i);
+  if (TrySequential(m)) {
+    for (var i = 0, pos = 0; i < length; i++) {
+      if (filters[i])
+        buffer[pos++] = self.get(i);
+    }
   }
   return %NewParallelArray([buffer.length], buffer, 0);
 
@@ -704,6 +709,10 @@ function ParallelArrayToString() {
 
 function TryParallel(m) {
   return !m || m.mode === "par";
+}
+
+function TrySequential(m) {
+  return !m || m.mode === "seq";
 }
 
 function CheckParallel(m) {
