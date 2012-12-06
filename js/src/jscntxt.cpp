@@ -294,8 +294,8 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 #ifdef DEBUG
     fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) from %p to %p\n",
             fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-            script->filename, PCToLineNumber(script, pc), script.get(),
-            fun->nonLazyScript().unsafeGet(), clone->nonLazyScript().unsafeGet());
+            script->filename, PCToLineNumber(script, pc), script->function(),
+            fun.get(), clone.get());
 #endif
 
     return clone;
