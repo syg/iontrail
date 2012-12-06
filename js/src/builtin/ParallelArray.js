@@ -85,7 +85,7 @@ function CloneArrayLike(array) {
 // deoptimizes.
 
 function ParallelArrayConstruct0() {
-  this.buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  this.buffer = [];
   this.offset = 0;
   this.shape = [0];
   this.get = ParallelArrayGet1;
@@ -97,7 +97,7 @@ function ParallelArrayConstruct1(buffer) {
   if (length !== buffer.length)
     %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
 
-  var buffer1 = %_SetNonBuiltinCallerInitObjectType([]);
+  var buffer1 = [];
   for (var i = 0; i < length; i++) {
     buffer1[i] = buffer[i];
   }
@@ -139,7 +139,7 @@ function ParallelArrayBuild(self, shape, f) {
     var length = shape[0];
     var buffer = %ParallelBuildArray(length, fill1, null, f);
     if (!buffer) {
-      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer = [];
       buffer.length = length;
       fill1(buffer, 0, 1, false, f);
     }
@@ -150,7 +150,7 @@ function ParallelArrayBuild(self, shape, f) {
     var length = shape[0] * shape[1];
     var buffer = %ParallelBuildArray(length, fill2, null, shape[1], f);
     if (!buffer) {
-      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer = [];
       buffer.length = length;
       fill2(buffer, 0, 1, false, shape[1], f);
     }
@@ -161,7 +161,7 @@ function ParallelArrayBuild(self, shape, f) {
     var length = shape[0] * shape[1] * shape[2];
     var buffer = %ParallelBuildArray(length, fill3, null, shape[1], shape[2], f);
     if (!buffer) {
-      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer = [];
       buffer.length = length;
       fill3(buffer, 0, 1, false, shape[1], shape[2], f);
     }
@@ -176,7 +176,7 @@ function ParallelArrayBuild(self, shape, f) {
 
     var buffer = %ParallelBuildArray(length, fillN, null, shape, f);
     if (!buffer) {
-      buffer = %_SetNonBuiltinCallerInitObjectType([]);
+      buffer = [];
       buffer.length = length;
       fillN(buffer, 0, 1, false, shape, f);
     }
@@ -257,7 +257,7 @@ function ParallelArrayMap(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential
 
-  buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  buffer = [];
   fill(buffer, 0, 1, false);
   return %NewParallelArray([buffer.length], buffer, 0);
 
@@ -372,7 +372,7 @@ function ParallelArrayScan(f) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential version
 
-  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  var buffer = [];
   var acc = this.get(0);
   buffer[0] = acc;
   for (var i = 1; i < length; i++) {
@@ -502,7 +502,7 @@ function ParallelArrayScatter(targets, zero, f, length) {
   if (length && length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  var buffer = [];
   buffer.length = length || source.length;
   fill(buffer, 0, 1, targets, zero, f, source);
 
@@ -536,7 +536,7 @@ function ParallelArrayFilter(filters, m) {
 
   ///////////////////////////////////////////////////////////////////////////
   // Sequential version
-  var buffer = %_SetNonBuiltinCallerInitObjectType([]);
+  var buffer = [];
   for (var i = 0, pos = 0; i < length; i++) {
     if (filters[i])
       buffer[pos++] = self.get(i);
