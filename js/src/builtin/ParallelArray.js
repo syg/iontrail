@@ -335,7 +335,7 @@ function ParallelArrayReduce(f, m) {
   }
 
   function fill(result, id, n, warmup) {
-    var [start, end] = ComputeTileBounds(self.length, id, n);
+    var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     result[id] = reduce(start, end);
   }
