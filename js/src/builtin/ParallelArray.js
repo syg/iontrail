@@ -72,11 +72,8 @@ function StepIndices(shape, indices) {
   }
 }
 
-function CloneArrayLike(array) {
-  var result = [], l = array.length;
-  for (var i = 0; i < l; i++)
-    result[i] = array[i];
-  return result;
+function IsInteger(v) {
+  return (v | 0) === v;
 }
 
 // Constructor
@@ -110,9 +107,20 @@ function ParallelArrayConstruct1(buffer) {
 
 function ParallelArrayConstruct2(shape, f) {
   if (typeof shape === "number") {
-    return ParallelArrayBuild(this, [shape], f);
+    var length = shape >>> 0;
+    if (length !== shape)
+      %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+    return ParallelArrayBuild(this, [length], f);
   } else {
-    return ParallelArrayBuild(this, CloneArrayLike(shape), f);
+    var shape1 = [];
+    for (var i = 0, l = shape.length; i < l; i++) {
+      var s0 = shape[i];
+      var s1 = s0 >>> 0;
+      if (s1 !== s0)
+        %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+      shape1[i] = s1;
+    }
+    return ParallelArrayBuild(this, shape1, f);
   }
 }
 
