@@ -13,11 +13,12 @@ function testReduce() {
   print(expected);
 
   var parray = new ParallelArray(array);
-  var modes = ["par", "par"];
-  for (var i = 0; i < 2; i++) {
-    assertAlmostEq(expected, parray.reduce(mul, {mode: modes[i], expect: "success"}));
-  }
-  // compareAgainstArray(array, "reduce", mul, assertAlmostEq);
+  var results = ["success", "bailout", "bailout", "bailout"];
+  for (var i = 0; i < results.length; i++)
+    parray.reduce(mul, {mode: "par", expect: results[i]});
+
+  // Can we ever get this to work? or does the pattern of bailouts cause issues?
+  compareAgainstArray(array, "reduce", sum);
 }
 
 testReduce();
