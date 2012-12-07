@@ -257,8 +257,8 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
 
     // Compile the kernel first as it can unsafely write to a buffer argument.
     if (!kernel->nonLazyScript()->hasParallelIonScript()) {
-        IonSpew(IonSpew_ParallelArray, "Compiling kernel %s:%u",
-                kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
+        IonSpew(IonSpew_ParallelArray, "Compiling kernel %p:%s:%u",
+                kernel.get(), kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
         MethodStatus status = compileFunction(kernel, true);
         if (status != Method_Compiled) {
             compilingKernel_ = false;
@@ -270,8 +270,8 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
     for (size_t i = 0; i < invokedFunctions_.length(); i++) {
         RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
 
-        IonSpew(IonSpew_ParallelArray, "Compiling invoked fn %s:%u",
-                fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
+        IonSpew(IonSpew_ParallelArray, "Compiling invoked fn %p:%s:%u",
+                fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
 
         if (fun->nonLazyScript()->hasParallelIonScript()) {
             IonSpew(IonSpew_ParallelArray, "Already compiled");
@@ -288,15 +288,15 @@ ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
     // functions (such as the kernel itself) to be collected.  In this
     // event, we give up and fallback to sequential for now.
     if (!kernel->nonLazyScript()->hasParallelIonScript()) {
-        IonSpew(IonSpew_ParallelArray, "Kernel script %s:%u was garbage-collected or invalidated",
-                kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
+        IonSpew(IonSpew_ParallelArray, "Kernel script %p:%s:%u was garbage-collected or invalidated",
+                kernel.get(), kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
         return Method_Skipped;
     }
     for (size_t i = 0; i < invokedFunctions_.length(); i++) {
         RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
         if (!fun->nonLazyScript()->hasParallelIonScript()) {
-            IonSpew(IonSpew_ParallelArray, "Invoked script %s:%u was garbage-collected or invalidated",
-                    fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
+            IonSpew(IonSpew_ParallelArray, "Invoked script %p:%s:%u was garbage-collected or invalidated",
+                    fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
             return Method_Skipped;
         }
     }

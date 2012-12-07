@@ -1368,6 +1368,12 @@ check_backedge:
     if (op != JSOP_LOOPHEAD)
         DO_OP();
 
+#ifdef JS_THREADSAFE
+    if (ion::js_IonOptions.parallelWarmupContext) {
+        DO_OP();
+    }
+#endif
+
 #ifdef JS_METHODJIT
     // Attempt on-stack replacement with JaegerMonkey code, which is keyed to
     // the interpreter state at the JSOP_LOOPHEAD at the start of the loop.
