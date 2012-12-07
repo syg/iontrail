@@ -482,6 +482,7 @@ ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
       sliceId(sliceId),
       numSlices(numSlices),
       allocator(allocator),
+      abortedScript(NULL),
       shared(shared)
 { }
 

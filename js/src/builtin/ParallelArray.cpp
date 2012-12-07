@@ -397,10 +397,12 @@ class BuildArrayOp : public ArrayOp
 
         bool ok = fii.invoke();
         if (ok) {
+            JS_ASSERT(!slice.abortedScript);
             pendingInvalidations[slice.sliceId] = NULL;
         } else {
-            JS_ASSERT(pt->parallelAbortedScript);
-            pendingInvalidations[slice.sliceId] = pt->parallelAbortedScript;
+            JS_ASSERT(slice.abortedScript);
+            JSScript *script = slice.abortedScript;
+            pendingInvalidations[slice.sliceId] = script;
         }
         return ok;
     }

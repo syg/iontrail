@@ -148,6 +148,9 @@ struct ForkJoinSlice
     // |perThreadData|.
     Allocator *const allocator;
 
+    // If we took a parallel bailout, the script that bailed out is stored here.
+    JSScript *abortedScript;
+
     // Records the last instr. to execute on this thread.
 #ifdef DEBUG
     IonTraceData traceData;

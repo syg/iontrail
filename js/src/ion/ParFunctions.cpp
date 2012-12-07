@@ -164,11 +164,15 @@ ion::ParallelAbort(JSScript *script)
 {
     JS_ASSERT(InParallelSection());
 
-    IonSpew(IonSpew_Bailouts, "Took parallel abort from %s:%d", script->filename, script->lineno);
+    ForkJoinSlice *slice = ForkJoinSlice::current();
 
-    PerThreadData *pt = ForkJoinSlice::current()->perThreadData;
-    if (!pt->parallelAbortedScript)
-        pt->parallelAbortedScript = script;
+#ifdef DEBUG
+    fprintf(stderr, "[ParallelBailout] Took parallel abort from %s:%d (%p)\n",
+            script->filename, script->lineno, script);
+#endif
+
+    if (!slice->abortedScript)
+        slice->abortedScript = script;
 }
 
 void
@@ -176,5 +180,9 @@ ion::ParCallToUncompiledScript(JSFunction *func)
 {
     JS_ASSERT(InParallelSection());
 
-    IonSpew(IonSpew_Bailouts, "Call to uncompiled script: %p\n", func);
+#ifdef DEBUG
+    JSScript *script = func->nonLazyScript().unsafeGet();
+    fprintf(stderr, "[ParallelBailout] Call to uncompiled script: %p:%s:%d\n",
+            script, script->filename, script->lineno);
+#endif
 }

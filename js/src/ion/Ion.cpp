@@ -1934,8 +1934,8 @@ ion::Invalidate(types::TypeCompartment &types, FreeOp *fop,
           case types::CompilerOutput::Ion:
           case types::CompilerOutput::ParallelIon:
             JS_ASSERT(co.isValid());
-            IonSpew(IonSpew_Invalidate, " Invalidate %s:%u, IonScript %p",
-                    co.script->filename, co.script->lineno, co.ion());
+            IonSpew(IonSpew_Invalidate, " Invalidate %p:%s:%u, IonScript %p",
+                    co.script, co.script->filename, co.script->lineno, co.ion());
 
             // Keep the ion script alive during the invalidation and flag this
             // ionScript as being invalidated.  This increment is removed by the

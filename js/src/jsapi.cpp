@@ -734,7 +734,6 @@ js::PerThreadData::PerThreadData(JSRuntime *runtime)
     ionJSContext(NULL),
     ionStackLimit(0),
     ionActivation(NULL),
-    parallelAbortedScript(NULL),
     suppressGC(0)
 {}
 
