@@ -529,6 +529,7 @@ function ParallelArrayFilter(filters, m) {
         var total = 0;
         for (var i = 0; i < keepers.length; i++)
           total += keepers[i];
+
         var buffer = %ParallelBuildArray(total, copy_keepers, CheckParallel(m));
         if (buffer) {
           return %NewParallelArray([total], buffer, 0);
@@ -564,8 +565,10 @@ function ParallelArrayFilter(filters, m) {
     if (warmup) { end = TruncateEnd(start, end); }
 
     var pos = 0;
-    for (var i = 0; i < id; i++)
-      pos += keepers[i];
+    if (id > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
+      for (var i = 0; i < id; i++)
+        pos += keepers[i];
+    }
 
     for (var i = start; i < end; i++) {
       if (filters[i])
@@ -723,6 +726,19 @@ function CheckParallel(m) {
         %ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, m.expect, result);
     }
   };
+}
+
+// Drop in replacement for %ParallelBuildArray(), useful
+// for debugging.
+function SequentialBuildArray(length, func, feedback) {
+    %Dump("SequentialBuildArray");
+  var slices = %ParallelSlices();
+  var buffer = [];
+  buffer.length = length;
+  for (var id = 0; id < slices; id++)
+    func(buffer, id, slices, true);
+  for (var id = 0; id < slices; id++)
+    func(buffer, id, slices, false);
 }
 
 // Mark the main operations as clone-at-callsite for better precision.
