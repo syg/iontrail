@@ -477,6 +477,12 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // Inline allocation.
     void newGCThing(const Register &result, JSObject *templateObject, Label *fail);
+    void parNewGCThing(const Register &result,
+                       const Register &threadContextReg,
+                       const Register &tempReg1,
+                       const Register &tempReg2,
+                       JSObject *templateObject,
+                       Label *fail);
     void initGCThing(const Register &obj, JSObject *templateObject);
 
     // If the IonCode that created this assembler needs to transition into the VM,

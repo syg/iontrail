@@ -193,23 +193,20 @@ LIRGenerator::visitNewCallObject(MNewCallObject *ins)
 bool
 LIRGenerator::visitParNewCallObject(MParNewCallObject *ins)
 {
-    const LAllocation &parThreadContext =
-        useFixed(ins->threadContext(), CallTempReg0);
-    const LDefinition &temp1 = tempFixed(CallTempReg1);
-    const LDefinition &temp2 = tempFixed(CallTempReg2);
+    const LAllocation &parThreadContext = useRegister(ins->threadContext());
+    const LDefinition &temp1 = temp();
+    const LDefinition &temp2 = temp();
 
     LParNewCallObject *lir;
     if (ins->slots()->type() == MIRType_Slots) {
-        const LAllocation &slots = useFixed(ins->slots(), CallTempReg3);
+        const LAllocation &slots = useRegister(ins->slots());
         lir = LParNewCallObject::NewWithSlots(parThreadContext, slots,
                                               temp1, temp2);
     } else {
         lir = LParNewCallObject::NewSansSlots(parThreadContext, temp1, temp2);
     }
 
-    // Below, assignSafepoint is to support use of save/restoreLive
-    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
-        && assignSafepoint(lir, ins);
+    return define(lir, ins);
 }
 
 bool
@@ -1283,15 +1280,10 @@ LIRGenerator::visitParLambda(MParLambda *ins)
 {
     JS_ASSERT(!ins->fun()->hasSingletonType());
     JS_ASSERT(!types::UseNewTypeForClone(ins->fun()));
-
-    LParLambda *lir = new LParLambda(useFixed(ins->threadContext(), CallTempReg0),
-                                     useFixed(ins->scopeChain(), CallTempReg1),
-                                     tempFixed(CallTempReg2),
-                                     tempFixed(CallTempReg3));
-
-    // Below, assignSafepoint is to support use of save/restoreLive
-    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
-        && assignSafepoint(lir, ins);
+    LParLambda *lir = new LParLambda(useRegister(ins->threadContext()),
+                                     useRegister(ins->scopeChain()),
+                                     temp(), temp());
+    return define(lir, ins);
 }
 
 bool
@@ -1369,13 +1361,9 @@ LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 bool
 LIRGenerator::visitParNew(MParNew *ins)
 {
-    LParNew *lir = new LParNew(useFixed(ins->threadContext(), CallTempReg0),
-                               tempFixed(CallTempReg1),
-                               tempFixed(CallTempReg2));
-
-    // Below, assignSafepoint is to support use of save/restoreLive
-    return defineFixed(lir, ins, LAllocation(AnyRegister(ReturnReg)))
-        && assignSafepoint(lir, ins);
+    LParNew *lir = new LParNew(useRegister(ins->threadContext()),
+                               temp(), temp());
+    return define(lir, ins);
 }
 
 bool

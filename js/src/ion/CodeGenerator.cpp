@@ -268,24 +268,6 @@ CodeGenerator::visitRegExpTest(LRegExpTest *lir)
     return true;
 }
 
-class OutOfLineParLambda : public OutOfLineCodeBase<CodeGenerator>
-{
-public:
-    LParLambda *lir;
-    gc::AllocKind allocKind;
-    uint32_t thingSize;
-
-    OutOfLineParLambda(LParLambda *lir, gc::AllocKind allocKind, int thingSize)
-        : lir(lir),
-          allocKind(allocKind),
-          thingSize(thingSize)
-    {}
-
-    bool accept(CodeGenerator *codegen) {
-        return codegen->visitOutOfLineParLambda(this);
-    }
-};
-
 typedef JSObject *(*LambdaFn)(JSContext *, HandleFunction, HandleObject);
 static const VMFunction LambdaInfo =
     FunctionInfo<LambdaFn>(js::Lambda);
@@ -316,6 +298,17 @@ CodeGenerator::visitLambda(LLambda *lir)
     masm.newGCThing(output, fun, ool->entry());
     masm.initGCThing(output, fun);
 
+    emitLambdaInit(output, scopeChain, fun);
+
+    masm.bind(ool->rejoin());
+    return true;
+}
+
+void
+CodeGenerator::emitLambdaInit(const Register &output,
+                              const Register &scopeChain,
+                              JSFunction *fun)
+{
     // Initialize nargs and flags. We do this with a single uint32 to avoid
     // 16-bit writes.
     union {
@@ -334,110 +327,22 @@ CodeGenerator::visitLambda(LLambda *lir)
                   Address(output, JSFunction::offsetOfNativeOrScript()));
     masm.storePtr(scopeChain, Address(output, JSFunction::offsetOfEnvironment()));
     masm.storePtr(ImmGCPtr(fun->displayAtom()), Address(output, JSFunction::offsetOfAtom()));
-
-    masm.bind(ool->rejoin());
-    return true;
 }
 
 bool
 CodeGenerator::visitParLambda(LParLambda *lir)
 {
     Register resultReg = ToRegister(lir->output());
+    Register threadContextReg = ToRegister(lir->threadContext());
+    Register scopeChainReg    = ToRegister(lir->scopeChain());
+    Register tempReg1 = ToRegister(lir->getTemp0());
+    Register tempReg2 = ToRegister(lir->getTemp1());
     JSFunction *fun = lir->mir()->fun();
 
-    gc::AllocKind allocKind = fun->getAllocKind();
-    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
+    JS_ASSERT(scopeChainReg != resultReg);
 
-    OutOfLineCode *ool = new OutOfLineParLambda(lir, allocKind, thingSize);
-    if (!ool || !addOutOfLineCode(ool))
-        return false;
-
-    Register threadContextReg = ToRegister(lir->threadContext());
-    Register scopeChainReg    = ToRegister(lir->scopeChain());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
-
-    // Let FREESPAN denote forkJoinSlice->arenaLists->freeLists[thingKind]
-    // Let FIRST    denote FREESPAN->first
-    // Let LIMIT    denote FREESPAN->last
-
-    // tempReg1 = (FreeSpan*) FREESPAN
-    // tempReg2 = (uintptr_t) FIRST
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)),
-                 tempReg1);
-    uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
-    masm.addPtr(Imm32(freeSpanOffset), tempReg1);
-    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
-
-    // if LIMIT <= FIRST, bail to OOL code
-    masm.branchPtr(Assembler::BelowOrEqual,
-                   Address(tempReg1, offsetof(gc::FreeSpan, last)),
-                   tempReg2, ool->entry());
-
-    // resultReg = FIRST
-    // FIRST += thingSize
-    masm.movePtr(tempReg2, resultReg);
-    masm.addPtr(Imm32(thingSize), tempReg2);
-    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
-
-    // Slow path joins us here to complete the initialization
-    masm.bind(ool->rejoin());
-
-    masm.initGCThing(resultReg, fun);
-
-    // TODO: Factor common code with visitLambda
-
-    // Initialize nargs and flags. We do this with a single uint32 to avoid
-    // 16-bit writes.
-    union {
-        struct S {
-            uint16_t nargs;
-            uint16_t flags;
-        } s;
-        uint32_t word;
-    } u;
-    u.s.nargs = fun->nargs;
-    u.s.flags = fun->flags & ~JSFunction::EXTENDED;
-
-    JS_STATIC_ASSERT(offsetof(JSFunction, flags) == offsetof(JSFunction, nargs) + 2);
-    masm.store32(Imm32(u.word), Address(resultReg, offsetof(JSFunction, nargs)));
-    masm.storePtr(ImmGCPtr(fun->nonLazyScript().unsafeGet()),
-                  Address(resultReg, JSFunction::offsetOfNativeOrScript()));
-    masm.storePtr(scopeChainReg, Address(resultReg, JSFunction::offsetOfEnvironment()));
-    masm.storePtr(ImmGCPtr(fun->displayAtom()), Address(resultReg, JSFunction::offsetOfAtom()));
-
-    return true;
-}
-
-bool
-CodeGenerator::visitOutOfLineParLambda(OutOfLineParLambda *ool)
-{
-    LParLambda *lir = ool->lir;
-    Register threadContextReg = ToRegister(lir->threadContext());
-    Register scopeChainReg    = ToRegister(lir->scopeChain());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
-
-    saveLive(lir);
-    // scopeChainReg is not live reg as recorded in lir object, so
-    // stash away for subsequent computation.
-    masm.push(scopeChainReg);
-
-    masm.move32(Imm32(ool->allocKind), tempReg1);
-
-    masm.setupUnalignedABICall(3, tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg2);
-    masm.passABIArg(threadContextReg);
-    masm.passABIArg(tempReg1);
-    masm.passABIArg(tempReg2);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
-    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
-
-    masm.pop(scopeChainReg);
-    restoreLive(lir);
-
-    masm.jump(ool->rejoin());
-
+    emitParAllocateGCThing(resultReg, threadContextReg, tempReg1, tempReg2, fun);
+    emitLambdaInit(resultReg, scopeChainReg, fun);
     return true;
 }
 
@@ -1992,26 +1897,6 @@ CodeGenerator::visitNewSlots(LNewSlots *lir)
     return true;
 }
 
-class OutOfLineParNew : public OutOfLineCodeBase<CodeGenerator>
-{
-public:
-    LParNew *lir;
-    gc::AllocKind allocKind;
-    uint32_t thingSize;
-
-    OutOfLineParNew(LParNew *lir,
-                    gc::AllocKind allocKind,
-                    uint32_t thingSize)
-        : lir(lir),
-          allocKind(allocKind),
-          thingSize(thingSize)
-    {}
-
-    bool accept(CodeGenerator *codegen) {
-        return codegen->visitOutOfLineParNew(this);
-    }
-};
-
 bool
 CodeGenerator::visitNewArray(LNewArray *lir)
 {
@@ -2115,24 +2000,6 @@ CodeGenerator::visitOutOfLineNewObject(OutOfLineNewObject *ool)
     return true;
 }
 
-class OutOfLineParNewCallObject : public OutOfLineCodeBase<CodeGenerator>
-{
-public:
-    LParNewCallObject *lir;
-    gc::AllocKind allocKind;
-    uint32_t thingSize;
-
-    OutOfLineParNewCallObject(LParNewCallObject *lir, gc::AllocKind allocKind, int thingSize)
-        : lir(lir),
-          allocKind(allocKind),
-          thingSize(thingSize)
-    {}
-
-    bool accept(CodeGenerator *codegen) {
-        return codegen->visitOutOfLineParNewCallObject(this);
-    }
-};
-
 typedef JSObject *(*NewCallObjectFn)(JSContext *, HandleShape,
                                      HandleTypeObject, HeapSlot *);
 static const VMFunction NewCallObjectInfo =
@@ -2176,92 +2043,22 @@ bool
 CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
 {
     Register resultReg = ToRegister(lir->output());
-    JSObject *templateObj = lir->mir()->templateObj();
-
-    gc::AllocKind allocKind = templateObj->getAllocKind();
-    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
-
-    OutOfLineCode *ool =
-        new OutOfLineParNewCallObject(lir, allocKind, thingSize);
-    if (!ool || !addOutOfLineCode(ool))
-        return false;
-
     Register threadContextReg = ToRegister(lir->threadContext());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
+    JSObject *templateObj = lir->mir()->templateObj();
 
-    // This is an inlined version of newGCThing.
-
-    // TODO (post call-mark/temp-removal optimization): attempt to
-    // factor all of these inlined newGCThings into a common method,
-    // possibly in MacroAssembler.
-
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)),
-                 tempReg1);
-
-    uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
-    masm.addPtr(Imm32(freeSpanOffset), tempReg1);
-
-    // If LIMIT <= FIRST, bail to OOL code
-    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
-    masm.branchPtr(Assembler::BelowOrEqual,
-                   Address(tempReg1, offsetof(gc::FreeSpan, last)),
-                   tempReg2, ool->entry());
-
-    masm.movePtr(tempReg2, resultReg);
-    masm.addPtr(Imm32(thingSize), tempReg2);
-    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
+    emitParAllocateGCThing(resultReg, threadContextReg, tempReg1, tempReg2, templateObj);
 
     // TO INVESTIGATE: does ! lir->slots()->isRegister() imply that
     // there is no slots array at all?  And also, do we need to
     // store a NULL explicitly, or is this memory already zeroed?
 
-    masm.bind(ool->rejoin());
-    masm.initGCThing(resultReg, templateObj);
-
     if (lir->slots() && lir->slots()->isRegister()) {
-        masm.storePtr(ToRegister(lir->slots()), Address(resultReg, JSObject::offsetOfSlots()));
+        Register slotsReg = ToRegister(lir->slots());
+        JS_ASSERT(slotsReg != resultReg);
+        masm.storePtr(slotsReg, Address(resultReg, JSObject::offsetOfSlots()));
     }
-
-    return true;
-}
-
-bool
-CodeGenerator::visitOutOfLineParNewCallObject(OutOfLineParNewCallObject *ool)
-{
-    LParNewCallObject *lir = ool->lir;
-    Register threadContextReg = ToRegister(lir->threadContext());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
-
-    saveLive(lir);
-
-    masm.move32(Imm32(ool->allocKind), tempReg1);
-    masm.move32(Imm32(ool->thingSize), tempReg2);
-
-    // The contextual code for this slow-path (generated by
-    // visitParNewCallObject above) assumes that slots will live long
-    // enough to be used for initialization.  Since slots, if present,
-    // is currently passed and held in a CallTempReg (which may be
-    // clobbered by the ABI call below), we push/pop it here on the
-    // slow-path to maintain the invariant.
-
-    if (lir->hasDynamicSlots())
-        masm.push(ToRegister(lir->slots()));
-
-    masm.setupUnalignedABICall(3, tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg2);
-    masm.passABIArg(threadContextReg);
-    masm.passABIArg(tempReg1);
-    masm.passABIArg(tempReg2);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
-    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
-    if (lir->hasDynamicSlots())
-        masm.pop(ToRegister(lir->slots()));
-
-    restoreLive(lir);
-
-    masm.jump(ool->rejoin());
 
     return true;
 }
@@ -2304,81 +2101,86 @@ bool
 CodeGenerator::visitParNew(LParNew *lir)
 {
     Register objReg = ToRegister(lir->output());
-    JSObject *templateObject = lir->mir()->templateObject();
-
-    gc::AllocKind allocKind = templateObject->getAllocKind();
-    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
-
-    OutOfLineCode *ool = new OutOfLineParNew(lir, allocKind, thingSize);
-    if (!ool || !addOutOfLineCode(ool))
-        return false;
-
-    // This is an inlined version of newGCThing.  The normal version
-    // uses absolute addresses to reach precisely into the
-    // JSCompartment, which requires fewer temp registers.  This one
-    // can't do that as it must be per-thread.  Also, we ignore the
-    // gcZeal setting, as this is not relevant in parallel execution.
-
-    // Subtle: I wanted to use `objReg` for one of these temporaries,
-    // but the register allocator was assigning it to the same
-    // register as `threadContextReg`.  Then we overwrite that
-    // register which messed up the OOL code.
     Register threadContextReg = ToRegister(lir->threadContext());
     Register tempReg1 = ToRegister(lir->getTemp0());
     Register tempReg2 = ToRegister(lir->getTemp1());
+    JSObject *templateObject = lir->mir()->templateObject();
+    emitParAllocateGCThing(objReg, threadContextReg, tempReg1, tempReg2,
+                           templateObject);
+    return true;
+}
 
-    // tempReg1 = (ArenaLists*) forkJoinSlice->arenaLists
-    masm.loadPtr(Address(threadContextReg, offsetof(ForkJoinSlice, allocator)), tempReg1);
+class OutOfLineParNewGCThing : public OutOfLineCodeBase<CodeGenerator>
+{
+public:
+    gc::AllocKind allocKind;
+    Register objReg;
 
-    // tempReg1 = (FreeSpan*) &tempReg1.freeLists[thingKind]
-    uintptr_t freeSpanOffset = gc::ArenaLists::getFreeListOffset(allocKind);
-    masm.addPtr(Imm32(freeSpanOffset), tempReg1);
+    OutOfLineParNewGCThing(gc::AllocKind allocKind, Register objReg)
+        : allocKind(allocKind), objReg(objReg)
+    {}
 
-    // If LIMIT <= FIRST, bail to OOL code
-    masm.loadPtr(Address(tempReg1, offsetof(gc::FreeSpan, first)), tempReg2);
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineParNewGCThing(this);
+    }
+};
 
-    masm.branchPtr(Assembler::BelowOrEqual,
-                   Address(tempReg1, offsetof(gc::FreeSpan, last)),
-                   tempReg2, ool->entry());
+bool
+CodeGenerator::emitParAllocateGCThing(const Register &objReg,
+                                      const Register &threadContextReg,
+                                      const Register &tempReg1,
+                                      const Register &tempReg2,
+                                      JSObject *templateObj)
+{
+    gc::AllocKind allocKind = templateObj->getAllocKind();
+    OutOfLineParNewGCThing *ool = new OutOfLineParNewGCThing(allocKind, objReg);
+    if (!ool || !addOutOfLineCode(ool))
+        return false;
 
-    // objReg = FIRST
-    // FIRST += thingSize
-    masm.addPtr(Imm32(thingSize), tempReg2);
-    masm.storePtr(tempReg2, Address(tempReg1, offsetof(gc::FreeSpan, first)));
-    masm.movePtr(tempReg2, objReg);
-    masm.subPtr(Imm32(thingSize), objReg);
-
-    // Slow path joins us here to complete the initialization
+    masm.parNewGCThing(objReg, threadContextReg, tempReg1, tempReg2,
+                       templateObj, ool->entry());
     masm.bind(ool->rejoin());
-    masm.initGCThing(objReg, templateObject);
-
+    masm.initGCThing(objReg, templateObj);
     return true;
 }
 
 bool
-CodeGenerator::visitOutOfLineParNew(OutOfLineParNew *ool)
+CodeGenerator::visitOutOfLineParNewGCThing(OutOfLineParNewGCThing *ool)
 {
-    LParNew *lir = ool->lir;
-    Register threadContextReg = ToRegister(lir->threadContext());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
+    // As a fallback for allocation in par. exec. mode, we invoke the
+    // C helper ParNewGCThing(), which calls into the GC code.  If it
+    // returns NULL, we bail.  If returns non-NULL, we rejoin the
+    // original instruction.
 
-    saveLive(lir);
+    // This saves all caller-save registers, regardless of whether
+    // they are live.  This is wasteful but a simplification, given
+    // that for some of the LIR that this is used with
+    // (e.g., LParLambda) there are values in those registers
+    // that must not be clobbered but which are not technically
+    // considered live.
+    RegisterSet saveSet(RegisterSet::Volatile());
 
-    masm.move32(Imm32(ool->allocKind), tempReg1);
+    // Also preserve the temps we're about to overwrite,
+    // but don't bother to save the objReg.
+    if (!saveSet.has(CallTempReg0))
+        saveSet.add(CallTempReg0);
+    if (!saveSet.has(CallTempReg1))
+        saveSet.add(CallTempReg1);
+    if (saveSet.has(ool->objReg))
+        saveSet.take(AnyRegister(ool->objReg));
 
-    masm.setupUnalignedABICall(3, tempReg2);
-    masm.move32(Imm32(ool->thingSize), tempReg2);
-    masm.passABIArg(threadContextReg);
-    masm.passABIArg(tempReg1);
-    masm.passABIArg(tempReg2);
+    masm.PushRegsInMask(saveSet);
+    masm.move32(Imm32(ool->allocKind), CallTempReg0);
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.passABIArg(CallTempReg0);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParNewGCThing));
-    JS_ASSERT(ToRegister(lir->output()) == ReturnReg);
-
-    restoreLive(lir);
-
+    masm.movePtr(ReturnReg, ool->objReg);
+    masm.PopRegsInMask(saveSet);
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+    masm.branchTestPtr(Assembler::Zero, ool->objReg, ool->objReg, bail);
     masm.jump(ool->rejoin());
-
     return true;
 }
 

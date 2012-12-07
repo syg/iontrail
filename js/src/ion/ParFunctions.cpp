@@ -29,10 +29,12 @@ ion::ParForkJoinSlice()
 // parallel code.  It uses the ArenaLists for the current thread and
 // allocates from there.
 JSObject *
-ion::ParNewGCThing(ForkJoinSlice *slice, gc::AllocKind allocKind, uint32_t thingSize)
+ion::ParNewGCThing(gc::AllocKind allocKind)
 {
-    JS_ASSERT(ForkJoinSlice::current() == slice);
+    ForkJoinSlice *slice = ForkJoinSlice::current();
+    uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
     void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
+    fprintf(stderr, "ParNewGCThing for slice=%p returning %p\n", slice, t);
     return static_cast<JSObject *>(t);
 }
 
