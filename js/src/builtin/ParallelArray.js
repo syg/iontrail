@@ -530,10 +530,12 @@ function ParallelArrayFilter(filters, m) {
         for (var i = 0; i < keepers.length; i++)
           total += keepers[i];
 
+        if (total == 0)
+          return %NewParallelArray([0], [], 0);
+
         var buffer = %ParallelBuildArray(total, copy_keepers, CheckParallel(m));
-        if (buffer) {
+        if (buffer)
           return %NewParallelArray([total], buffer, 0);
-        }
       }
     }
   }
