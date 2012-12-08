@@ -318,6 +318,17 @@ class PerThreadData;
 
 struct PerThreadDataFriendFields
 {
+  private:
+    // Note: this type only exists to permit us to derive the offset of
+    // the perThread data within the real JSRuntime* type in a portable
+    // way.
+    struct RuntimeDummy : RuntimeFriendFields
+    {
+        void *perThread;
+    };
+
+  public:
+
     PerThreadDataFriendFields();
 
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
@@ -329,45 +340,30 @@ struct PerThreadDataFriendFields
 #endif
 
     /* Limit pointer for checking native stack consumption. */
-    uintptr_t           nativeStackLimit;
+    uintptr_t nativeStackLimit;
 
-    static inline PerThreadDataFriendFields *get(js::PerThreadData *pt);
-    static inline PerThreadDataFriendFields *getMainThread(JSRuntime *rt);
-    static inline const PerThreadDataFriendFields *getMainThread(const JSRuntime *rt);
+    static const size_t RuntimeMainThreadOffset = offsetof(RuntimeDummy, perThread);
+
+    static inline PerThreadDataFriendFields *get(js::PerThreadData *pt) {
+        return reinterpret_cast<PerThreadDataFriendFields *>(pt);
+    }
+
+    static inline PerThreadDataFriendFields *getMainThread(JSRuntime *rt) {
+        // mainThread must always appear directly after |RuntimeFriendFields|.
+        // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
+        return reinterpret_cast<PerThreadDataFriendFields *>(
+            reinterpret_cast<char*>(rt) + RuntimeMainThreadOffset);
+    }
+
+    static inline const PerThreadDataFriendFields *getMainThread(const JSRuntime *rt) {
+        // mainThread must always appear directly after |RuntimeFriendFields|.
+        // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
+        return reinterpret_cast<const PerThreadDataFriendFields *>(
+            reinterpret_cast<const char*>(rt) + RuntimeMainThreadOffset);
+    }
 };
-
-// Note: this type only exists to permit us to derive the offset of
-// the perThread data within the real JSRuntime* type in a portable
-// way.
-struct __RuntimeDummy : RuntimeFriendFields
-{
-    PerThreadDataFriendFields perThread;
-};
-
-#define JS_PERTHREADDATAOFFSET offsetof(__RuntimeDummy, perThread)
 
 } /* namespace js */
-
-js::PerThreadDataFriendFields *
-js::PerThreadDataFriendFields::get(js::PerThreadData *pt) {
-    return reinterpret_cast<PerThreadDataFriendFields *>(pt);
-}
-
-js::PerThreadDataFriendFields *
-js::PerThreadDataFriendFields::getMainThread(JSRuntime *rt) {
-    // mainThread must always appear directly after |RuntimeFriendFields|.
-    // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
-    return reinterpret_cast<PerThreadDataFriendFields *>(
-        reinterpret_cast<char*>(rt) + JS_PERTHREADDATAOFFSET);
-}
-
-const js::PerThreadDataFriendFields *
-js::PerThreadDataFriendFields::getMainThread(const JSRuntime *rt) {
-    // mainThread must always appear directly after |RuntimeFriendFields|.
-    // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
-    return reinterpret_cast<const PerThreadDataFriendFields *>(
-        reinterpret_cast<const char*>(rt) + JS_PERTHREADDATAOFFSET);
-}
 
 #endif /* __cplusplus */
 
