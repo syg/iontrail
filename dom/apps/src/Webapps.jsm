@@ -18,6 +18,7 @@ Cu.import('resource://gre/modules/ActivitiesService.jsm');
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import("resource://gre/modules/PermissionsInstaller.jsm");
 Cu.import("resource://gre/modules/OfflineCacheInstaller.jsm");
+Cu.import("resource://gre/modules/SystemMessagePermissionsChecker.jsm");
 
 function debug(aMsg) {
   //dump("-*-*- Webapps.jsm : " + aMsg + "\n");
@@ -41,6 +42,11 @@ XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
 XPCOMUtils.defineLazyGetter(this, "msgmgr", function() {
   return Cc["@mozilla.org/system-message-internal;1"]
          .getService(Ci.nsISystemMessagesInternal);
+});
+
+XPCOMUtils.defineLazyGetter(this, "updateSvc", function() {
+  return Cc["@mozilla.org/offlinecacheupdate-service;1"]
+           .getService(Ci.nsIOfflineCacheUpdateService);
 });
 
 #ifdef MOZ_WIDGET_GONK
@@ -301,6 +307,16 @@ this.DOMApplicationRegistry = {
         this.installSystemApps(onAppsLoaded);
       else
         onAppsLoaded();
+
+      // XXX: To be removed as soon as the app:// protocol is remoted.
+      // See Bug 819061
+      let dir = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      dir.initWithPath("/data");
+      dir.permissions = parseInt("755", 8);
+      dir.append("local");
+      dir.permissions = parseInt("755", 8);
+      dir.append("webapps");
+      dir.permissions = parseInt("755", 8);
 #else
       onAppsLoaded();
 #endif
@@ -333,7 +349,13 @@ this.DOMApplicationRegistry = {
       } else {
         messageName = aMessage;
       }
-      msgmgr.registerPage(messageName, href, manifestURL);
+
+      if (SystemMessagePermissionsChecker
+            .isSystemMessagePermittedToRegister(messageName,
+                                                aApp.origin,
+                                                aManifest)) {
+        msgmgr.registerPage(messageName, href, manifestURL);
+      }
     });
   },
 
@@ -380,7 +402,13 @@ this.DOMApplicationRegistry = {
 
       let launchPath = Services.io.newURI(description.href, null, null);
       let manifestURL = Services.io.newURI(aApp.manifestURL, null, null);
-      msgmgr.registerPage("activity", launchPath, manifestURL);
+
+      if (SystemMessagePermissionsChecker
+            .isSystemMessagePermittedToRegister("activity",
+                                                aApp.origin,
+                                                aManifest)) {
+        msgmgr.registerPage("activity", launchPath, manifestURL);
+      }
     }
     return activitiesToRegister;
   },
@@ -805,6 +833,8 @@ this.DOMApplicationRegistry = {
         } else {
           // hosted app with no appcache, nothing to do, but we fire a
           // downloaded event
+          debug("No appcache found, sending 'downloaded' for " + aManifestURL);
+          app.downloadAvailable = false;
           DOMApplicationRegistry.broadcastMessage("Webapps:PackageEvent",
                                                   { type: "downloaded",
                                                     manifestURL: aManifestURL,
@@ -916,8 +946,6 @@ this.DOMApplicationRegistry = {
     // if the manifest has an appcache_path property, use it to populate the appcache
     if (aManifest.appcache_path) {
       let appcacheURI = Services.io.newURI(aManifest.fullAppcachePath(), null, null);
-      let updateService = Cc["@mozilla.org/offlinecacheupdate-service;1"]
-                            .getService(Ci.nsIOfflineCacheUpdateService);
       let docURI = Services.io.newURI(aManifest.fullLaunchPath(), null, null);
       // We determine the app's 'installState' according to its previous
       // state. Cancelled download should remain as 'pending'. Successfully
@@ -928,8 +956,9 @@ this.DOMApplicationRegistry = {
       // We set the 'downloading' flag right before starting the app
       // download/update.
       aApp.downloading = true;
-      let cacheUpdate = aProfileDir ? updateService.scheduleCustomProfileUpdate(appcacheURI, docURI, aProfileDir)
-                                    : updateService.scheduleAppUpdate(appcacheURI, docURI, aApp.localId, false);
+      let cacheUpdate = aProfileDir
+        ? updateSvc.scheduleCustomProfileUpdate(appcacheURI, docURI, aProfileDir)
+        : updateSvc.scheduleAppUpdate(appcacheURI, docURI, aApp.localId, false);
       cacheUpdate.addObserver(new AppcacheObserver(aApp), false);
       if (aOfflineCacheObserver) {
         cacheUpdate.addObserver(aOfflineCacheObserver, false);
@@ -979,9 +1008,10 @@ this.DOMApplicationRegistry = {
     }
 
     function updateHostedApp(aManifest) {
-      debug("updateHostedApp");
+      debug("updateHostedApp " + aData.manifestURL);
       let id = this._appId(app.origin);
 
+      // Clean up the deprecated manifest cache if needed.
       if (id in this._manifestCache) {
         delete this._manifestCache[id];
       }
@@ -1007,18 +1037,11 @@ this.DOMApplicationRegistry = {
 
       let manifest = new ManifestHelper(aManifest, app.origin);
 
-      if (manifest.appcache_path) {
-        app.installState = "updating";
-        app.downloadAvailable = true;
-        app.downloading = true;
-        app.downloadsize = 0;
-        app.readyToApplyDownload = false;
-      } else {
-        app.installState = "installed";
-        app.downloadAvailable = false;
-        app.downloading = false;
-        app.readyToApplyDownload = false;
-      }
+      app.installState = "installed";
+      app.downloading = false;
+      app.downloadsize = 0;
+      app.readyToApplyDownload = false;
+      app.downloadAvailable = !!manifest.appcache_path;
 
       app.name = aManifest.name;
       app.csp = aManifest.csp || "";
@@ -1028,34 +1051,46 @@ this.DOMApplicationRegistry = {
       this.webapps[id] = app;
 
       this._saveApps(function() {
-        aData.event = "downloadapplied";
-        aMm.sendAsyncMessage("Webapps:CheckForUpdate:Return:OK", aData);
+        aData.app = app;
+        if (!manifest.appcache_path) {
+          aData.event = "downloadapplied";
+          aMm.sendAsyncMessage("Webapps:CheckForUpdate:Return:OK", aData);
+        } else {
+          // Check if the appcache is updatable, and send "downloadavailable" or
+          // "downloadapplied".
+          let updateObserver = {
+            observe: function(aSubject, aTopic, aData) {
+              aData.event =
+                aTopic == "offline-cache-update-available" ? "downloadavailable"
+                                                           : "downloadapplied";
+              aMm.sendAsyncMessage("Webapps:CheckForUpdate:Return:OK", aData);
+            }
+          }
+          updateSvc.checkForUpdate(Services.io.newURI(aData.manifestURL, null, null),
+                                   app.localId, false, updateObserver);
+        }
       });
-
-      // Preload the appcache if needed.
-      this.startOfflineCacheDownload(manifest, app);
 
       // Update the permissions for this app.
       PermissionsInstaller.installPermissions({ manifest: aManifest,
                                                 origin: app.origin,
                                                 manifestURL: aData.manifestURL },
-                                                true);
+                                              true);
     }
 
     // First, we download the manifest.
     let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
                 .createInstance(Ci.nsIXMLHttpRequest);
     xhr.open("GET", aData.manifestURL, true);
+    xhr.responseType = "json";
     if (app.etag) {
       xhr.setRequestHeader("If-None-Match", app.etag);
     }
 
     xhr.addEventListener("load", (function() {
       if (xhr.status == 200) {
-        let manifest;
-        try {
-          manifest = JSON.parse(xhr.responseText);
-        } catch(e) {
+        let manifest = xhr.response;
+        if (manifest == null) {
           sendError("MANIFEST_PARSE_ERROR");
           return;
         }
@@ -1545,7 +1580,7 @@ this.DOMApplicationRegistry = {
         continue;
       }
 
-      if (!this.webapps[id].removable)
+      if (!app.removable)
         return;
 
       // Clean up the deprecated manifest cache if needed.
@@ -1576,6 +1611,7 @@ this.DOMApplicationRegistry = {
       delete this.webapps[id];
 
       this._saveApps((function() {
+        aData.manifestURL = app.manifestURL;
         this.broadcastMessage("Webapps:Uninstall:Return:OK", aData);
         Services.obs.notifyObservers(this, "webapps-sync-uninstall", appNote);
         this.broadcastMessage("Webapps:RemoveApp", { id: id });
@@ -1775,13 +1811,15 @@ this.DOMApplicationRegistry = {
         }
 
         let origin = this.webapps[record.id].origin;
+        let manifestURL = this.webapps[record.id].manifestURL;
         delete this.webapps[record.id];
         let dir = this._getAppDir(record.id);
         try {
           dir.remove(true);
         } catch (e) {
         }
-        this.broadcastMessage("Webapps:Uninstall:Return:OK", { origin: origin });
+        this.broadcastMessage("Webapps:Uninstall:Return:OK", { origin: origin,
+                                                               manifestURL: manifestURL });
       } else {
         if (this.webapps[record.id]) {
           this.webapps[record.id] = record.value;

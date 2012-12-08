@@ -480,18 +480,19 @@ private:
   {
     if (RefLayer* ref = aLayer->AsRefLayer()) {
       if (const LayerTreeState* state = GetIndirectShadowTree(ref->GetReferentId())) {
-        Layer* referent = state->mRoot;
-        if (OP == Resolve) {
-          ref->ConnectReferentLayer(referent);
-          if (AsyncPanZoomController* apzc = state->mController) {
-            referent->SetUserData(&sPanZoomUserDataKey,
-                                  new PanZoomUserData(apzc));
+        if (Layer* referent = state->mRoot) {
+          if (OP == Resolve) {
+            ref->ConnectReferentLayer(referent);
+            if (AsyncPanZoomController* apzc = state->mController) {
+              referent->SetUserData(&sPanZoomUserDataKey,
+                                    new PanZoomUserData(apzc));
+            } else {
+              CompensateForContentScrollOffset(ref, referent);
+            }
           } else {
-            CompensateForContentScrollOffset(ref, referent);
+            ref->DetachReferentLayer(referent);
+            referent->RemoveUserData(&sPanZoomUserDataKey);
           }
-        } else {
-          ref->DetachReferentLayer(referent);
-          referent->RemoveUserData(&sPanZoomUserDataKey);
         }
       }
     }
@@ -682,11 +683,14 @@ SampleValue(float aPortion, Animation& aAnimation, nsStyleAnimation::Value& aSta
   TransformData& data = aAnimation.data().get_TransformData();
   nsPoint origin = data.origin();
   int32_t auPerCSSPixel = nsDeviceContext::AppUnitsPerCSSPixel();
+  nsDisplayTransform::FrameTransformProperties props(interpolatedList,
+                                                     data.mozOrigin(),
+                                                     data.perspectiveOrigin(),
+                                                     data.perspective());
   gfx3DMatrix transform =
-    nsDisplayTransform::GetResultingTransformMatrix(
-      nullptr, origin, auPerCSSPixel,
-      &data.bounds(), interpolatedList, &data.mozOrigin(),
-      &data.perspectiveOrigin(), &data.perspective());
+    nsDisplayTransform::GetResultingTransformMatrix(props, data.origin(),
+                                                    nsDeviceContext::AppUnitsPerCSSPixel(),
+                                                    &data.bounds());
   // NB: See nsDisplayTransform::GetTransform().
   gfxPoint3D newOrigin =
     gfxPoint3D(NS_round(NSAppUnitsToFloatPixels(origin.x, auPerCSSPixel)),

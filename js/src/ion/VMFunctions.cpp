@@ -46,7 +46,7 @@ ShouldMonitorReturnType(JSFunction *fun)
 }
 
 bool
-InvokeFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *argv, Value *rval)
+InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value *rval)
 {
     Value fval = ObjectValue(*fun);
 
@@ -105,7 +105,7 @@ InvokeFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *argv, Value *
 }
 
 bool
-InvokeConstructor(JSContext *cx, JSObject *obj, uint32 argc, Value *argv, Value *rval)
+InvokeConstructor(JSContext *cx, JSObject *obj, uint32_t argc, Value *argv, Value *rval)
 {
     Value fval = ObjectValue(*obj);
 

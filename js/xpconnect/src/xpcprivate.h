@@ -522,9 +522,6 @@ public:
 
     JSBool IsShuttingDown() const {return mShuttingDown;}
 
-    void EnsureGCBeforeCC() { mNeedGCBeforeCC = true; }
-    void ClearGCBeforeCC() { mNeedGCBeforeCC = false; }
-
     nsresult GetInfoForIID(const nsIID * aIID, nsIInterfaceInfo** info);
     nsresult GetInfoForName(const char * name, nsIInterfaceInfo** info);
 
@@ -579,7 +576,6 @@ private:
     nsIXPCSecurityManager*   mDefaultSecurityManager;
     uint16_t                 mDefaultSecurityManagerFlags;
     JSBool                   mShuttingDown;
-    JSBool                   mNeedGCBeforeCC;
 
     // nsIThreadInternal doesn't remember which observers it called
     // OnProcessNextEvent on when it gets around to calling AfterProcessNextEvent.
@@ -827,9 +823,9 @@ public:
     inline void AddWrappedJSRoot(nsXPCWrappedJS* wrappedJS);
     inline void AddObjectHolderRoot(XPCJSObjectHolder* holder);
 
-    nsresult AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer);
-    nsresult RemoveJSHolder(void* aHolder);
-    nsresult TestJSHolder(void* aHolder, bool* aRetval);
+    void AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer);
+    void RemoveJSHolder(void* aHolder);
+    bool TestJSHolder(void* aHolder);
 #ifdef DEBUG
     void SetObjectToUnlink(void* aObject) { mObjectToUnlink = aObject; }
     void AssertNoObjectsToTrace(void* aPossibleJSHolder);

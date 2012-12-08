@@ -558,11 +558,10 @@ js::TraceWeakMaps(WeakMapTracer *trc)
     WatchpointMap::traceAll(trc);
 }
 
-JS_FRIEND_API(bool)
-js::GCThingIsMarkedGray(void *thing)
+extern JS_FRIEND_API(bool)
+js::AreGCGrayBitsValid(JSRuntime *rt)
 {
-    JS_ASSERT(thing);
-    return reinterpret_cast<gc::Cell *>(thing)->isMarked(gc::GRAY);
+    return rt->gcGrayBitsValid;
 }
 
 JS_FRIEND_API(JSGCTraceKind)
@@ -573,15 +572,9 @@ js::GCThingTraceKind(void *thing)
 }
 
 JS_FRIEND_API(void)
-js::UnmarkGrayGCThing(void *thing)
+js::VisitGrayWrapperTargets(JSCompartment *comp, GCThingCallback callback, void *closure)
 {
-    static_cast<js::gc::Cell *>(thing)->unmark(js::gc::GRAY);
-}
-
-JS_FRIEND_API(void)
-js::VisitGrayWrapperTargets(JSCompartment *comp, GCThingCallback *callback, void *closure)
-{
-    for (WrapperMap::Enum e(comp->crossCompartmentWrappers); !e.empty(); e.popFront()) {
+    for (JSCompartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
         gc::Cell *thing = e.front().key.wrapped;
         if (thing->isMarked(gc::GRAY))
             callback(closure, thing);
@@ -892,18 +885,6 @@ JS_FRIEND_API(bool)
 js::IsIncrementalBarrierNeeded(JSContext *cx)
 {
     return IsIncrementalBarrierNeeded(cx->runtime);
-}
-
-JS_FRIEND_API(bool)
-js::IsIncrementalBarrierNeededOnObject(RawObject obj)
-{
-    return obj->compartment()->needsBarrier();
-}
-
-JS_FRIEND_API(bool)
-js::IsIncrementalBarrierNeededOnScript(JSScript *script)
-{
-    return script->compartment()->needsBarrier();
 }
 
 JS_FRIEND_API(void)

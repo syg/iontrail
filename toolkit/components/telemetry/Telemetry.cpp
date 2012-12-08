@@ -515,7 +515,19 @@ ReflectHistogramAndSamples(JSContext *cx, JSObject *obj, Histogram *h,
   if (!(JS_DefineProperty(cx, obj, "min", INT_TO_JSVAL(h->declared_min()), NULL, NULL, JSPROP_ENUMERATE)
         && JS_DefineProperty(cx, obj, "max", INT_TO_JSVAL(h->declared_max()), NULL, NULL, JSPROP_ENUMERATE)
         && JS_DefineProperty(cx, obj, "histogram_type", INT_TO_JSVAL(h->histogram_type()), NULL, NULL, JSPROP_ENUMERATE)
-        && JS_DefineProperty(cx, obj, "sum", DOUBLE_TO_JSVAL(ss.sum()), NULL, NULL, JSPROP_ENUMERATE))) {
+        && JS_DefineProperty(cx, obj, "sum", DOUBLE_TO_JSVAL(ss.sum()), NULL, NULL, JSPROP_ENUMERATE)
+        && JS_DefineProperty(cx, obj, "log_sum", DOUBLE_TO_JSVAL(ss.log_sum()), NULL, NULL, JSPROP_ENUMERATE)
+        && JS_DefineProperty(cx, obj, "log_sum_squares", DOUBLE_TO_JSVAL(ss.log_sum_squares()), NULL, NULL, JSPROP_ENUMERATE))) {
+    return REFLECT_FAILURE;
+  }
+
+  // Export |sum_squares| as two separate 32-bit properties so that we
+  // can accurately reconstruct it on the analysis side.
+  uint64_t sum_squares = ss.sum_squares();
+  uint32_t lo = sum_squares;
+  uint32_t hi = sum_squares >> 32;
+  if (!(JS_DefineProperty(cx, obj, "sum_squares_lo", INT_TO_JSVAL(lo), NULL, NULL, JSPROP_ENUMERATE)
+        && JS_DefineProperty(cx, obj, "sum_squares_hi", INT_TO_JSVAL(hi), NULL, NULL, JSPROP_ENUMERATE))) {
     return REFLECT_FAILURE;
   }
 
@@ -676,7 +688,7 @@ mHangReportsMutex("Telemetry::mHangReportsMutex")
 {
   // A whitelist to prevent Telemetry reporting on Addon & Thunderbird DBs
   const char *trackedDBs[] = {
-    "addons.sqlite", "chromeappsstore.sqlite", "content-prefs.sqlite",
+    "addons.sqlite", "content-prefs.sqlite",
     "cookies.sqlite", "downloads.sqlite", "extensions.sqlite",
     "formhistory.sqlite", "index.sqlite", "permissions.sqlite", "places.sqlite",
     "search.sqlite", "signons.sqlite", "urlclassifier3.sqlite",

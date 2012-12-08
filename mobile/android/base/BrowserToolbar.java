@@ -6,10 +6,8 @@
 package org.mozilla.gecko;
 
 import android.content.Context;
-import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.drawable.AnimationDrawable;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.StateListDrawable;
 import android.graphics.Rect;
@@ -22,8 +20,6 @@ import android.util.Log;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
 import android.view.MenuInflater;
-import android.view.MotionEvent;
-import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewGroup.MarginLayoutParams;
@@ -39,7 +35,6 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
-import android.widget.RelativeLayout;
 import android.widget.RelativeLayout.LayoutParams;
 import android.widget.TextView;
 import android.widget.ViewSwitcher;
@@ -68,8 +63,8 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private boolean mAnimateSiteSecurity;
     private GeckoImageButton mTabs;
     private int mTabsPaneWidth;
-    private ImageView mBack;
-    private ImageView mForward;
+    private ImageButton mBack;
+    private ImageButton mForward;
     public ImageButton mFavicon;
     public ImageButton mStop;
     public ImageButton mSiteSecurity;
@@ -491,8 +486,10 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 mAddressBarBg.requestLayout();
 
                 // If there are action bar items in the toolbar, we have to restore the
-                // alignment of the entry in relation to them.
-                if (mActionItemBar.getVisibility() == View.VISIBLE)
+                // alignment of the entry in relation to them. mAwesomeBarParams might
+                // be null if the activity holding the toolbar is killed before returning
+                // from awesome screen (e.g. "Don't keep activities" is on)
+                if (mActionItemBar.getVisibility() == View.VISIBLE && mAwesomeBarParams != null)
                     ((View) mAwesomeBar.getParent()).setLayoutParams(mAwesomeBarParams);
 
                 // Hide fake right edge, we only use for the animation
@@ -996,6 +993,12 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             ((GeckoTextView) mTabsCount.getCurrentView()).setPrivateMode(tab.isPrivate());
             mTitle.setPrivateMode(tab.isPrivate());
             mMenu.setPrivateMode(tab.isPrivate());
+
+            if (mBack instanceof BackButton)
+                ((BackButton) mBack).setPrivateMode(tab.isPrivate());
+
+            if (mForward instanceof ForwardButton)
+                ((ForwardButton) mForward).setPrivateMode(tab.isPrivate());
         }
     }
 
@@ -1081,65 +1084,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
             super.onLayout(changed, left, top, right, bottom);
             onLightweightThemeChanged();
-        }
-    }
-
-    // MenuPopup holds the MenuPanel in Honeycomb/ICS devices with no hardware key
-    public static class MenuPopup extends PopupWindow {
-        private RelativeLayout mPanel;
-        private int mYOffset;
-
-        public MenuPopup(Context context) {
-            super(context);
-            setFocusable(true);
-
-            // The arrow height is constant for both orientations.
-            mYOffset = (int) (context.getResources().getDimension(R.dimen.menu_popup_offset));
-
-            // Setting a null background makes the popup to not close on touching outside.
-            setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            setWindowLayoutMode(View.MeasureSpec.makeMeasureSpec(context.getResources().getDimensionPixelSize(R.dimen.menu_popup_width), View.MeasureSpec.AT_MOST),
-                                ViewGroup.LayoutParams.WRAP_CONTENT);
-
-            LayoutInflater inflater = LayoutInflater.from(context);
-            RelativeLayout layout = (RelativeLayout) inflater.inflate(R.layout.menu_popup, null);
-            setContentView(layout);
-
-            mPanel = (RelativeLayout) layout.findViewById(R.id.menu_panel);
-        }
-
-        public void setPanelView(View view) {
-            mPanel.removeAllViews();
-            mPanel.addView(view);
-        }
-
-        @Override
-        public void showAsDropDown(View anchor) {
-            showAsDropDown(anchor, 0, -mYOffset);
-        }
-    }
-
-    private class TailTouchDelegate extends TouchDelegate {
-        public TailTouchDelegate(Rect bounds, View delegateView) {
-            super(bounds, delegateView);
-        }
-
-        @Override 
-        public boolean onTouchEvent(MotionEvent event) {
-            switch (event.getAction()) {
-                case MotionEvent.ACTION_DOWN:
-                    // Android bug 36445: Touch Delegation not reset on ACTION_DOWN.
-                    if (!super.onTouchEvent(event)) {
-                        MotionEvent cancelEvent = MotionEvent.obtain(event);
-                        cancelEvent.setAction(MotionEvent.ACTION_CANCEL);
-                        super.onTouchEvent(cancelEvent);
-                        return false;
-                     } else {
-                        return true;
-                     }
-                default:
-                    return super.onTouchEvent(event);
-            }
         }
     }
 }

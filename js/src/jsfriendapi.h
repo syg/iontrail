@@ -12,8 +12,6 @@
 #include "jspubtd.h"
 #include "jsprvtd.h"
 
-#include "js/HeapAPI.h"
-
 #include "mozilla/GuardObjects.h"
 
 /*
@@ -267,16 +265,20 @@ extern JS_FRIEND_API(void)
 TraceWeakMaps(WeakMapTracer *trc);
 
 extern JS_FRIEND_API(bool)
-GCThingIsMarkedGray(void *thing);
+AreGCGrayBitsValid(JSRuntime *rt);
 
-JS_FRIEND_API(void)
-UnmarkGrayGCThing(void *thing);
+/*
+ * Unsets the gray bit for anything reachable from |thing|. |kind| should not be
+ * JSTRACE_SHAPE. |thing| should be non-null.
+ */
+extern JS_FRIEND_API(void)
+UnmarkGrayGCThingRecursively(void *thing, JSGCTraceKind kind);
 
 typedef void
-(GCThingCallback)(void *closure, void *gcthing);
+(*GCThingCallback)(void *closure, void *gcthing);
 
 extern JS_FRIEND_API(void)
-VisitGrayWrapperTargets(JSCompartment *comp, GCThingCallback *callback, void *closure);
+VisitGrayWrapperTargets(JSCompartment *comp, GCThingCallback callback, void *closure);
 
 extern JS_FRIEND_API(JSObject *)
 GetWeakmapKeyDelegate(JSObject *key);
@@ -288,7 +290,7 @@ GCThingTraceKind(void *thing);
  * Invoke cellCallback on every gray JS_OBJECT in the given compartment.
  */
 extern JS_FRIEND_API(void)
-IterateGrayObjects(JSCompartment *compartment, GCThingCallback *cellCallback, void *data);
+IterateGrayObjects(JSCompartment *compartment, GCThingCallback cellCallback, void *data);
 
 /*
  * Shadow declarations of JS internal structures, for access by inline access
@@ -885,12 +887,6 @@ IsIncrementalBarrierNeeded(JSRuntime *rt);
 
 extern JS_FRIEND_API(bool)
 IsIncrementalBarrierNeeded(JSContext *cx);
-
-extern JS_FRIEND_API(bool)
-IsIncrementalBarrierNeededOnObject(RawObject obj);
-
-extern JS_FRIEND_API(bool)
-IsIncrementalBarrierNeededOnScript(JSScript *obj);
 
 extern JS_FRIEND_API(void)
 IncrementalReferenceBarrier(void *ptr);

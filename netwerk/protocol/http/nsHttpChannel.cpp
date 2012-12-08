@@ -681,6 +681,31 @@ nsHttpChannel::ContinueHandleAsyncFallback(nsresult rv)
     return rv;
 }
 
+void
+nsHttpChannel::SetupTransactionLoadGroupInfo()
+{
+    // Find the loadgroup at the end of the chain in order
+    // to make sure all channels derived from the load group
+    // use the same connection scope.
+    nsCOMPtr<nsILoadGroup> rootLoadGroup = mLoadGroup;
+    while (rootLoadGroup) {
+        nsCOMPtr<nsILoadGroup> tmp;
+        rootLoadGroup->GetLoadGroup(getter_AddRefs(tmp));
+        if (tmp)
+            rootLoadGroup.swap(tmp);
+        else
+            break;
+    }
+
+    // Set the load group connection scope on the transaction
+    if (rootLoadGroup) {
+        nsCOMPtr<nsILoadGroupConnectionInfo> ci;
+        rootLoadGroup->GetConnectionInfo(getter_AddRefs(ci));
+        if (ci)
+            mTransaction->SetLoadGroupConnectionInfo(ci);
+    }
+}
+
 nsresult
 nsHttpChannel::SetupTransaction()
 {
@@ -854,6 +879,8 @@ nsHttpChannel::SetupTransaction()
         return rv;
     }
 
+    SetupTransactionLoadGroupInfo();
+    
     rv = nsInputStreamPump::Create(getter_AddRefs(mTransactionPump),
                                    responseStream);
     return rv;
@@ -4337,6 +4364,8 @@ nsHttpChannel::BeginConnect()
     // notify "http-on-modify-request" observers
     gHttpHandler->OnModifyRequest(this);
 
+    mRequestObserversCalled = true;
+
     // If mTimingEnabled flag is not set after OnModifyRequest() then
     // clear the already recorded AsyncOpen value for consistency.
     if (!mTimingEnabled)
@@ -4416,6 +4445,13 @@ nsHttpChannel::BeginConnect()
         (BYPASS_LOCAL_CACHE(mLoadFlags)))
         mCaps |= NS_HTTP_REFRESH_DNS;
 
+    if (gHttpHandler->CritialRequestPrioritization()) {
+        if (mLoadAsBlocking)
+            mCaps |= NS_HTTP_LOAD_AS_BLOCKING;
+        if (mLoadUnblocked)
+            mCaps |= NS_HTTP_LOAD_UNBLOCKED;
+    }
+
     // Force-Reload should reset the persistent connection pool for this host
     if (mLoadFlags & LOAD_FRESH_CONNECTION) {
         // just the initial document resets the whole pool
@@ -4455,7 +4491,7 @@ nsHttpChannel::BeginConnect()
 NS_IMETHODIMP
 nsHttpChannel::SetupFallbackChannel(const char *aFallbackKey)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     LOG(("nsHttpChannel::SetupFallbackChannel [this=%x, key=%s]",
          this, aFallbackKey));
@@ -5337,7 +5373,7 @@ nsHttpChannel::SetCacheKey(nsISupports *key)
 
     LOG(("nsHttpChannel::SetCacheKey [this=%p key=%p]\n", this, key));
 
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     if (!key)
         mPostID = 0;
@@ -5586,7 +5622,7 @@ nsHttpChannel::GetApplicationCache(nsIApplicationCache **out)
 NS_IMETHODIMP
 nsHttpChannel::SetApplicationCache(nsIApplicationCache *appCache)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mApplicationCache = appCache;
     return NS_OK;
@@ -5602,7 +5638,7 @@ nsHttpChannel::GetApplicationCacheForWrite(nsIApplicationCache **out)
 NS_IMETHODIMP
 nsHttpChannel::SetApplicationCacheForWrite(nsIApplicationCache *appCache)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mApplicationCacheForWrite = appCache;
     return NS_OK;
@@ -5625,7 +5661,7 @@ nsHttpChannel::GetInheritApplicationCache(bool *aInherit)
 NS_IMETHODIMP
 nsHttpChannel::SetInheritApplicationCache(bool aInherit)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mInheritApplicationCache = aInherit;
     return NS_OK;
@@ -5641,7 +5677,7 @@ nsHttpChannel::GetChooseApplicationCache(bool *aChoose)
 NS_IMETHODIMP
 nsHttpChannel::SetChooseApplicationCache(bool aChoose)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mChooseApplicationCache = aChoose;
     return NS_OK;

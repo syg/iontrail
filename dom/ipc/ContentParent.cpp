@@ -16,6 +16,7 @@
 #include "chrome/common/process_watcher.h"
 
 #include "AppProcessPermissions.h"
+#include "AudioChannelService.h"
 #include "CrashReporterParent.h"
 #include "IHistory.h"
 #include "IDBFactory.h"
@@ -1011,6 +1012,42 @@ ContentParent::RecvFirstIdle()
     return true;
 }
 
+bool
+ContentParent::RecvAudioChannelGetMuted(const AudioChannelType& aType,
+                                        const bool& aMozHidden,
+                                        bool* aValue)
+{
+    nsRefPtr<AudioChannelService> service =
+        AudioChannelService::GetAudioChannelService();
+    *aValue = false;
+    if (service) {
+        *aValue = service->GetMuted(aType, aMozHidden);
+    }
+    return true;
+}
+
+bool
+ContentParent::RecvAudioChannelRegisterType(const AudioChannelType& aType)
+{
+    nsRefPtr<AudioChannelService> service =
+        AudioChannelService::GetAudioChannelService();
+    if (service) {
+        service->RegisterType(aType);
+    }
+    return true;
+}
+
+bool
+ContentParent::RecvAudioChannelUnregisterType(const AudioChannelType& aType)
+{
+    nsRefPtr<AudioChannelService> service =
+        AudioChannelService::GetAudioChannelService();
+    if (service) {
+        service->UnregisterType(aType);
+    }
+    return true;
+}
+
 NS_IMPL_THREADSAFE_ISUPPORTS3(ContentParent,
                               nsIObserver,
                               nsIThreadObserver,
@@ -1833,9 +1870,6 @@ ContentParent::RecvAsyncMessage(const nsString& aMsg,
 bool
 ContentParent::RecvAddGeolocationListener()
 {
-  if (!AssertAppProcessPermission(this, "geolocation")) {
-    return false;
-  }
   if (mGeolocationWatchID == -1) {
     nsCOMPtr<nsIDOMGeoGeolocation> geo = do_GetService("@mozilla.org/geolocation;1");
     if (!geo) {
@@ -1850,28 +1884,20 @@ ContentParent::RecvAddGeolocationListener()
 bool
 ContentParent::RecvRemoveGeolocationListener()
 {
-  if (mGeolocationWatchID == -1) {
-    return true;
+  if (mGeolocationWatchID != -1) {
+    nsCOMPtr<nsIDOMGeoGeolocation> geo = do_GetService("@mozilla.org/geolocation;1");
+    if (!geo) {
+      return true;
+    }
+    geo->ClearWatch(mGeolocationWatchID);
+    mGeolocationWatchID = -1;
   }
-
-  if (!AssertAppProcessPermission(this, "geolocation")) {
-    return false;
-  }
-  nsCOMPtr<nsIDOMGeoGeolocation> geo = do_GetService("@mozilla.org/geolocation;1");
-  if (!geo) {
-    return true;
-  }
-  geo->ClearWatch(mGeolocationWatchID);
-  mGeolocationWatchID = -1;
   return true;
 }
 
 NS_IMETHODIMP
 ContentParent::HandleEvent(nsIDOMGeoPosition* postion)
 {
-  if (!AssertAppProcessPermission(this, "geolocation")) {
-    return NS_ERROR_FAILURE;
-  }
   unused << SendGeolocationUpdate(GeoPosition(postion));
   return NS_OK;
 }

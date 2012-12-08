@@ -1501,11 +1501,42 @@ ContainerState::FindOpaqueBackgroundColorFor(int32_t aThebesLayerIndex)
 
     // The candidate intersects our target. If any layer has a solid-color
     // area behind our target, this must be it. Scan its display items.
-    nsRect rect =
-      target->mVisibleRegion.GetBounds().ToAppUnits(mAppUnitsPerDevPixel);
-    rect.ScaleInverseRoundOut(mParameters.mXScale, mParameters.mYScale);
-    return mLayerBuilder->
-      FindOpaqueColorCovering(mBuilder, candidate->mLayer, rect);
+    nsIntRect deviceRect = target->mVisibleRegion.GetBounds();
+    nsRect appUnitRect = deviceRect.ToAppUnits(mAppUnitsPerDevPixel);
+    appUnitRect.ScaleInverseRoundOut(mParameters.mXScale, mParameters.mYScale);
+
+    FrameLayerBuilder::ThebesLayerItemsEntry* entry =
+      mLayerBuilder->GetThebesLayerItemsEntry(candidate->mLayer);
+    NS_ASSERTION(entry, "Must know about this layer!");
+    for (int32_t j = entry->mItems.Length() - 1; j >= 0; --j) {
+      nsDisplayItem* item = entry->mItems[j].mItem;
+      bool snap;
+      nsRect bounds = item->GetBounds(mBuilder, &snap);
+      if (snap && mSnappingEnabled) {
+        nsIntRect snappedBounds = ScaleToNearestPixels(bounds);
+        if (!snappedBounds.Intersects(deviceRect))
+          continue;
+
+        if (!snappedBounds.Contains(deviceRect))
+          break;
+
+      } else {
+        // The layer's visible rect is already (close enough to) pixel
+        // aligned, so no need to round out and in here.
+        if (!bounds.Intersects(appUnitRect))
+          continue;
+
+        if (!bounds.Contains(appUnitRect))
+          break;
+      }
+
+      nscolor color;
+      if (item->IsUniform(mBuilder, &color) && NS_GET_A(color) == 255)
+        return color;
+
+      break;
+    }
+    break;
   }
   return NS_RGBA(0,0,0,0);
 }
@@ -1987,6 +2018,58 @@ PaintInactiveLayer(nsDisplayListBuilder* aBuilder,
 #endif
 }
 
+/**
+ * Checks if aAncestor is an ancestor of aFrame
+ */
+static bool IsFrameAncestorOf(const nsIFrame *aAncestor, const nsIFrame *aFrame)
+{
+  if (!aFrame) {
+    return false;
+  }
+  for (const nsIFrame* f = aFrame; f; f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
+    if (f == aAncestor) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Chooses a single active scrolled root for the entire display list, used
+ * when we are flattening layers.
+ */
+static bool ChooseActiveScrolledRoot(nsDisplayListBuilder *aBuilder,
+                                     const nsDisplayList& aList,
+                                     const nsIFrame **aActiveScrolledRoot)
+{
+  for (nsDisplayItem* item = aList.GetBottom(); item; item = item->GetAbove()) {
+    nsDisplayItem::Type type = item->GetType();
+    if (type == nsDisplayItem::TYPE_CLIP ||
+        type == nsDisplayItem::TYPE_CLIP_ROUNDED_RECT) {
+      if (!ChooseActiveScrolledRoot(aBuilder,
+                                    *item->GetSameCoordinateSystemChildren(),
+                                    aActiveScrolledRoot)) {
+        return false;
+      }
+      continue;
+    }
+
+    if (!*aActiveScrolledRoot) {
+      // Try using the actual active scrolled root of the backmost item, as that
+      // should result in the least invalidation when scrolling.
+      aBuilder->IsFixedItem(item, aActiveScrolledRoot);
+    } else if (!IsFrameAncestorOf(*aActiveScrolledRoot, item->GetUnderlyingFrame())) {
+      // If there are items that aren't descendants of the background's active scrolled
+      // root, then give up and just use the container's reference frame instead.
+      return false;
+    }
+  }
+  if (!*aActiveScrolledRoot) {
+    return false;
+  }
+  return true;
+}
+
 /*
  * Iterate through the non-clip items in aList and its descendants.
  * For each item we compute the effective clip rect. Each item is assigned
@@ -2010,6 +2093,17 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
 
   const nsIFrame* lastActiveScrolledRoot = nullptr;
   nsPoint topLeft;
+
+  // When NO_COMPONENT_ALPHA is set, items will be flattened into a single
+  // layer, so we need to choose which active scrolled root to use for all
+  // items.
+  if (aFlags & NO_COMPONENT_ALPHA) {
+    if (!ChooseActiveScrolledRoot(mBuilder, aList, &lastActiveScrolledRoot)) {
+      lastActiveScrolledRoot = mContainerReferenceFrame;
+    }
+
+    topLeft = lastActiveScrolledRoot->GetOffsetToCrossDoc(mContainerReferenceFrame);
+  }
 
   for (nsDisplayItem* item = aList.GetBottom(); item; item = item->GetAbove()) {
     nsDisplayItem::Type type = item->GetType();
@@ -2046,12 +2140,8 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
     bool forceInactive;
     const nsIFrame* activeScrolledRoot;
     if (aFlags & NO_COMPONENT_ALPHA) {
-      // When NO_COMPONENT_ALPHA is set, items will be flattened onto the
-      // reference frame. In this case, force the active scrolled root to
-      // that frame.
       forceInactive = true;
-      activeScrolledRoot = mContainerReferenceFrame;
-      topLeft = nsPoint(0, 0);
+      activeScrolledRoot = lastActiveScrolledRoot;
       isFixed = mBuilder->IsFixedItem(item, nullptr, activeScrolledRoot);
     } else {
       forceInactive = false;
@@ -2554,28 +2644,6 @@ FrameLayerBuilder::SaveLastPaintOffset(ThebesLayer* aLayer)
   }
 }
 
-nscolor
-FrameLayerBuilder::FindOpaqueColorCovering(nsDisplayListBuilder* aBuilder,
-                                           ThebesLayer* aLayer,
-                                           const nsRect& aRect)
-{
-  ThebesLayerItemsEntry* entry = mThebesLayerItems.GetEntry(aLayer);
-  NS_ASSERTION(entry, "Must know about this layer!");
-  for (int32_t i = entry->mItems.Length() - 1; i >= 0; --i) {
-    nsDisplayItem* item = entry->mItems[i].mItem;
-    const nsRect& visible = item->GetVisibleRect();
-    if (!visible.Intersects(aRect))
-      continue;
-
-    nscolor color;
-    if (visible.Contains(aRect) && item->IsUniform(aBuilder, &color) &&
-        NS_GET_A(color) == 255)
-      return color;
-    break;
-  }
-  return NS_RGBA(0,0,0,0);
-}
-
 void
 ContainerState::CollectOldLayers()
 {
@@ -2668,20 +2736,30 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
     // This protects against floating-point inaccuracies causing problems
     // in the checks below.
     transform.NudgeToIntegers();
-  } 
-  if (aContainerFrame && aState == LAYER_INACTIVE) {
+  }
+  gfxMatrix transform2d;
+  if (aContainerFrame &&
+      aState == LAYER_INACTIVE &&
+      (!aTransform || (aTransform->Is2D(&transform2d) &&
+                       !transform2d.HasNonTranslation()))) {
     // When we have an inactive ContainerLayer, translate the container by the offset to the
     // reference frame (and offset all child layers by the reverse) so that the coordinate
     // space of the child layers isn't affected by scrolling.
+    // This gets confusing for complicated transform (since we'd have to compute the scale
+    // factors for the matrix), so we don't bother. Any frames that are building an nsDisplayTransform
+    // for a css transform would have 0,0 as their offset to the reference frame, so this doesn't
+    // matter.
     nsPoint appUnitOffset = aDisplayListBuilder->ToReferenceFrame(aContainerFrame);
     nscoord appUnitsPerDevPixel = aContainerFrame->PresContext()->AppUnitsPerDevPixel();
     offset = nsIntPoint(
         int32_t(NSAppUnitsToDoublePixels(appUnitOffset.x, appUnitsPerDevPixel)*aIncomingScale.mXScale),
         int32_t(NSAppUnitsToDoublePixels(appUnitOffset.y, appUnitsPerDevPixel)*aIncomingScale.mYScale));
   }
-  transform = transform * gfx3DMatrix::Translation(offset.x + aIncomingScale.mOffset.x, offset.y + aIncomingScale.mOffset.y, 0);
+  transform = gfx3DMatrix::Translation(aIncomingScale.mOffset.x, aIncomingScale.mOffset.y, 0) * 
+              transform * 
+              gfx3DMatrix::Translation(offset.x, offset.y, 0);
 
-  gfxMatrix transform2d;
+
   bool canDraw2D = transform.CanDraw2D(&transform2d);
   gfxSize scale;
   bool isRetained = aLayer->Manager()->IsWidgetLayerManager();

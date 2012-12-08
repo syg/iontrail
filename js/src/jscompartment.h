@@ -115,7 +115,7 @@ struct TypeInferenceSizes;
 
 namespace js {
 class AutoDebugModeGC;
-struct DebugScopes;
+class DebugScopes;
 }
 
 namespace js {
@@ -131,7 +131,7 @@ namespace js {
  */
 class Allocator
 {
-    JSCompartment *const compartment;
+    JSCompartment         *const compartment;
 
     /*
      * Keeps track of the total number of malloc bytes connected to a
@@ -165,16 +165,16 @@ public:
     inline void* calloc_(size_t bytes);
     inline void* realloc_(void* p, size_t bytes);
     inline void* realloc_(void* p, size_t oldBytes, size_t newBytes);
-    template <class T> T *pod_malloc();
-    template <class T> T *pod_calloc();
-    template <class T> T *pod_malloc(size_t numElems);
-    template <class T> T *pod_calloc(size_t numElems);
+    template <class T> inline T *pod_malloc();
+    template <class T> inline T *pod_calloc();
+    template <class T> inline T *pod_malloc(size_t numElems);
+    template <class T> inline T *pod_calloc(size_t numElems);
     JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)
 };
 
 }
 
-struct JSCompartment : public js::gc::GraphNodeBase
+struct JSCompartment : private JS::shadow::Compartment, public js::gc::GraphNodeBase<JSCompartment>
 {
     JSRuntime                    *rt;
     JSPrincipals                 *principals;
@@ -182,22 +182,26 @@ struct JSCompartment : public js::gc::GraphNodeBase
   private:
     friend struct JSRuntime;
     friend struct JSContext;
-    js::GlobalObject             *global_;
+    js::ReadBarriered<js::GlobalObject> global_;
+
+    unsigned                     enterCompartmentDepth;
+
   public:
-    // Nb: global_ might be NULL, if (a) it's the atoms compartment, or (b) the
-    // compartment's global has been collected.  The latter can happen if e.g.
-    // a string in a compartment is rooted but no object is, and thus the
-    // global isn't rooted, and thus the global can be finalized while the
-    // compartment lives on.
-    //
-    // In contrast, JSObject::global() is infallible because marking a JSObject
-    // always marks its global as well.
-    // TODO: add infallible JSScript::global()
-    //
-    js::GlobalObject *maybeGlobal() const {
-        JS_ASSERT_IF(global_, global_->compartment() == this);
-        return global_;
-    }
+    void enter() { enterCompartmentDepth++; }
+    void leave() { enterCompartmentDepth--; }
+
+    /*
+     * Nb: global_ might be NULL, if (a) it's the atoms compartment, or (b) the
+     * compartment's global has been collected.  The latter can happen if e.g.
+     * a string in a compartment is rooted but no object is, and thus the global
+     * isn't rooted, and thus the global can be finalized while the compartment
+     * lives on.
+     *
+     * In contrast, JSObject::global() is infallible because marking a JSObject
+     * always marks its global as well.
+     * TODO: add infallible JSScript::global()
+     */
+    inline js::GlobalObject *maybeGlobal() const;
 
     void initGlobal(js::GlobalObject &global) {
         JS_ASSERT(global.compartment() == this);
@@ -220,7 +224,6 @@ struct JSCompartment : public js::gc::GraphNodeBase
 #endif
 
   private:
-    bool                         needsBarrier_;
     bool                         ionUsingBarriers_;
   public:
 
@@ -335,7 +338,6 @@ struct JSCompartment : public js::gc::GraphNodeBase
         return gcState == Finished;
     }
 
-
     size_t                       gcBytes;
     size_t                       gcTriggerBytes;
     size_t                       gcTriggerMallocAndFreeBytes;
@@ -360,8 +362,11 @@ struct JSCompartment : public js::gc::GraphNodeBase
 
     void                         *data;
     bool                         active;  // GC flag, whether there are active frames
+
+  private:
     js::WrapperMap               crossCompartmentWrappers;
 
+  public:
     /*
      * These flags help us to discover if a compartment that shouldn't be alive
      * manages to outlive a GC.
@@ -464,6 +469,20 @@ struct JSCompartment : public js::gc::GraphNodeBase
     bool wrap(JSContext *cx, js::PropertyDescriptor *desc);
     bool wrap(JSContext *cx, js::AutoIdVector &props);
 
+    bool putWrapper(const js::CrossCompartmentKey& wrapped, const js::Value& wrapper);
+
+    js::WrapperMap::Ptr lookupWrapper(const js::Value& wrapped) {
+        return crossCompartmentWrappers.lookup(wrapped);
+    }
+
+    void removeWrapper(js::WrapperMap::Ptr p) {
+        crossCompartmentWrappers.remove(p);
+    }
+
+    struct WrapperEnum : public js::WrapperMap::Enum {
+        WrapperEnum(JSCompartment *c) : js::WrapperMap::Enum(c->crossCompartmentWrappers) {}
+    };
+
     void mark(JSTracer *trc);
     void markTypes(JSTracer *trc);
     void discardJitCode(js::FreeOp *fop, bool discardConstraints);
@@ -472,7 +491,7 @@ struct JSCompartment : public js::gc::GraphNodeBase
     void sweepCrossCompartmentWrappers();
     void purge();
 
-    virtual void findOutgoingEdges(js::gc::ComponentFinder& finder);
+    void findOutgoingEdges(js::gc::ComponentFinder<JSCompartment> &finder);
 
     void setGCLastBytes(size_t lastBytes, size_t lastMallocBytes, js::JSGCInvocationKind gckind);
     void reduceGCTriggerBytes(size_t amount);
@@ -596,7 +615,13 @@ JSContext::typeInferenceEnabled() const
 inline js::Handle<js::GlobalObject*>
 JSContext::global() const
 {
-    return js::Handle<js::GlobalObject*>::fromMarkedLocation(&compartment->global_);
+    /*
+     * It's safe to use |unsafeGet()| here because any compartment that is
+     * on-stack will be marked automatically, so there's no need for a read
+     * barrier on it. Once the compartment is popped, the handle is no longer
+     * safe to use.
+     */
+    return js::Handle<js::GlobalObject*>::fromMarkedLocation(compartment->global_.unsafeGet());
 }
 
 namespace js {
@@ -623,16 +648,8 @@ class AutoCompartment
     JSCompartment * const origin_;
 
   public:
-    AutoCompartment(JSContext *cx, JSObject *target)
-      : cx_(cx),
-        origin_(cx->compartment)
-    {
-        cx_->enterCompartment(target->compartment());
-    }
-
-    ~AutoCompartment() {
-        cx_->leaveCompartment(origin_);
-    }
+    inline AutoCompartment(JSContext *cx, JSObject *target);
+    inline ~AutoCompartment();
 
     JSContext *context() const { return cx_; }
     JSCompartment *origin() const { return origin_; }

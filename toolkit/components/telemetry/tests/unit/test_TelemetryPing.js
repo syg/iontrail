@@ -44,10 +44,10 @@ var httpserver = new HttpServer();
 var gFinished = false;
 
 function telemetry_ping () {
-  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsIObserver);
-  TelemetryPing.observe(null, "test-gather-startup", null);
-  TelemetryPing.observe(null, "test-enable-load-save-notifications", null);
-  TelemetryPing.observe(null, "test-ping", SERVER);
+  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsITelemetryPing);
+  TelemetryPing.gatherStartup();
+  TelemetryPing.enableLoadSaveNotifications();
+  TelemetryPing.testPing(SERVER);
 }
 
 // Mostly useful so that you can dump payloads from decodeRequestPayload.
@@ -99,8 +99,8 @@ function telemetryObserver(aSubject, aTopic, aData) {
   let histogramsFile = getSavedHistogramsFile("saved-histograms.dat");
   setupTestData();
 
-  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsIObserver);
-  TelemetryPing.observe(histogramsFile, "test-save-histograms", null);
+  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsITelemetryPing);
+  TelemetryPing.saveHistograms(histogramsFile, true);
   TelemetryPing.observe(histogramsFile, "test-load-histograms", null);
   telemetry_ping();
 }
@@ -209,7 +209,11 @@ function checkPayload(request, reason, successfulPings) {
     bucket_count: 3,
     histogram_type: 3,
     values: {0:1, 1:0},
-    sum: 0
+    sum: 0,
+    sum_squares_lo: 0,
+    sum_squares_hi: 0,
+    log_sum: 0,
+    log_sum_squares: 0
   };
   let flag = payload.histograms[TELEMETRY_TEST_FLAG];
   do_check_eq(uneval(flag), uneval(expected_flag));
@@ -220,7 +224,11 @@ function checkPayload(request, reason, successfulPings) {
     bucket_count: 3,
     histogram_type: 2,
     values: {0:1, 1:successfulPings, 2:0},
-    sum: successfulPings
+    sum: successfulPings,
+    sum_squares_lo: successfulPings,
+    sum_squares_hi: 0,
+    log_sum: 0,
+    log_sum_squares: 0
   };
   let tc = payload.histograms[TELEMETRY_SUCCESS];
   do_check_eq(uneval(tc), uneval(expected_tc));
@@ -269,7 +277,7 @@ function runAsyncTestObserver(aSubject, aTopic, aData) {
   httpserver.registerPathHandler(PATH, checkHistogramsAsync);
   let histogramsFile = getSavedHistogramsFile("saved-histograms2.dat");
 
-  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsIObserver);
+  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsITelemetryPing);
   Services.obs.addObserver(function(aSubject, aTopic, aData) {
     Services.obs.removeObserver(arguments.callee, aTopic);
 
@@ -280,7 +288,7 @@ function runAsyncTestObserver(aSubject, aTopic, aData) {
 
     TelemetryPing.observe(histogramsFile, "test-load-histograms", "async");
   }, "telemetry-test-save-complete", false);
-  TelemetryPing.observe(histogramsFile, "test-save-histograms", "async");
+  TelemetryPing.saveHistograms(histogramsFile, false);
 }
 
 function checkPersistedHistogramsAsync(request, response) {
@@ -306,15 +314,15 @@ function runInvalidJSONTest() {
   writeStringToFile(histogramsFile, "this.is.invalid.JSON");
   do_check_true(histogramsFile.exists());
   
-  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsIObserver);
+  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsITelemetryPing);
   TelemetryPing.observe(histogramsFile, "test-load-histograms", null);
   do_check_false(histogramsFile.exists());
 }
 
 function runOldPingFileTest() {
   let histogramsFile = getSavedHistogramsFile("old-histograms.dat");
-  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsIObserver);
-  TelemetryPing.observe(histogramsFile, "test-save-histograms", null);
+  const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].getService(Ci.nsITelemetryPing);
+  TelemetryPing.saveHistograms(histogramsFile, true);
   do_check_true(histogramsFile.exists());
 
   let mtime = histogramsFile.lastModifiedTime;

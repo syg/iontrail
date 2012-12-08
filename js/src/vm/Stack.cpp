@@ -689,7 +689,12 @@ StackSpace::markActiveCompartments()
 JS_FRIEND_API(bool)
 StackSpace::ensureSpaceSlow(JSContext *cx, MaybeReportError report, Value *from, ptrdiff_t nvals) const
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
+
     assertInvariants();
 
     JSCompartment *dest = cx->compartment;
@@ -869,7 +874,11 @@ Value *
 ContextStack::ensureOnTop(JSContext *cx, MaybeReportError report, unsigned nvars,
                           MaybeExtend extend, bool *pushedSeg)
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
 
     Value *firstUnused = space().firstUnused();
     FrameRegs *regs = cx->maybeRegs();
@@ -949,7 +958,12 @@ bool
 ContextStack::pushInvokeArgs(JSContext *cx, unsigned argc, InvokeArgsGuard *iag,
                              MaybeReportError report)
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
+
     JS_ASSERT(argc <= StackSpace::ARGS_LENGTH_MAX);
 
     unsigned nvars = 2 + argc;
@@ -988,7 +1002,12 @@ ContextStack::pushInvokeFrame(JSContext *cx, MaybeReportError report,
                               const CallArgs &args, JSFunction *fun,
                               InitialFrameFlags initial, FrameGuard *fg)
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
+
     JS_ASSERT(onTop());
     JS_ASSERT(space().firstUnused() == args.end());
 

@@ -31,8 +31,9 @@
 #include "gc/Statistics.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
-#include "vm/Stack.h"
+#include "vm/DateTime.h"
 #include "vm/SPSProfiler.h"
+#include "vm/Stack.h"
 #include "vm/ThreadPool.h"
 
 #include "ion/PcScriptCache.h"
@@ -690,6 +691,12 @@ struct JSRuntime : js::RuntimeFriendFields
     bool                gcShouldCleanUpEverything;
 
     /*
+     * The gray bits can become invalid if UnmarkGray overflows the stack. A
+     * full GC will reset this bit, since it fills in all the gray bits.
+     */
+    bool                gcGrayBitsValid;
+
+    /*
      * These flags must be kept separate so that a thread requesting a
      * compartment GC doesn't cancel another thread's concurrent request for a
      * full GC.
@@ -751,8 +758,8 @@ struct JSRuntime : js::RuntimeFriendFields
     /*
      * Incremental sweep state.
      */
-    JSCompartment       *gcRemainingCompartmentGroups;
-    JSCompartment       *gcCompartmentGroup;
+    JSCompartment       *gcCompartmentGroups;
+    JSCompartment       *gcCurrentCompartmentGroup;
     int                 gcSweepPhase;
     JSCompartment       *gcSweepCompartment;
     int                 gcSweepKindIndex;
@@ -930,7 +937,7 @@ struct JSRuntime : js::RuntimeFriendFields
     bool                alwaysPreserveCode;
 
     /* Had an out-of-memory error which did not populate an exception. */
-    JSBool              hadOutOfMemory;
+    bool                hadOutOfMemory;
 
     /*
      * Linked list of all js::Debugger objects. This may be accessed by the GC
@@ -1009,6 +1016,8 @@ struct JSRuntime : js::RuntimeFriendFields
 
     /* State used by jsdtoa.cpp. */
     DtoaState           *dtoaState;
+
+    js::DateTimeInfo    dateTimeInfo;
 
     js::ConservativeGCData conservativeGC;
 
@@ -1371,7 +1380,7 @@ struct JSContext : js::ContextFriendFields,
     bool                hasVersionOverride;
 
     /* Exception state -- the exception member is a GC root by definition. */
-    JSBool              throwing;            /* is there a pending exception? */
+    bool                throwing;            /* is there a pending exception? */
     js::Value           exception;           /* most-recently-thrown exception */
 
     /* Per-context run options. */
@@ -1415,33 +1424,8 @@ struct JSContext : js::ContextFriendFields,
         return enterCompartmentDepth_ > 0;
     }
 
-    void enterCompartment(JSCompartment *c) {
-        enterCompartmentDepth_++;
-        compartment = c;
-        if (throwing)
-            wrapPendingException();
-    }
-
-    inline void leaveCompartment(JSCompartment *oldCompartment) {
-        JS_ASSERT(hasEnteredCompartment());
-        enterCompartmentDepth_--;
-
-        /*
-         * Before we entered the current compartment, 'compartment' was
-         * 'oldCompartment', so we might want to simply set it back. However, we
-         * currently have this terrible scheme whereby defaultCompartmentObject_
-         * can be updated while enterCompartmentDepth_ > 0. In this case,
-         * oldCompartment != defaultCompartmentObject_->compartment and we must
-         * ignore oldCompartment.
-         */
-        if (hasEnteredCompartment() || !defaultCompartmentObject_)
-            compartment = oldCompartment;
-        else
-            compartment = defaultCompartmentObject_->compartment();
-
-        if (throwing)
-            wrapPendingException();
-    }
+    inline void enterCompartment(JSCompartment *c);
+    inline void leaveCompartment(JSCompartment *oldCompartment);
 
     /* See JS_SaveFrameChain/JS_RestoreFrameChain. */
   private:
@@ -1472,7 +1456,10 @@ struct JSContext : js::ContextFriendFields,
     /* Current execution stack. */
     js::ContextStack    stack;
 
-    /* Current global. */
+    /*
+     * Current global. This is only safe to use within the scope of the
+     * AutoCompartment from which it's called.
+     */
     inline js::Handle<js::GlobalObject*> global() const;
 
     /* ContextStack convenience functions */
@@ -1631,8 +1618,6 @@ struct JSContext : js::ContextFriendFields,
             functionCallback(fun, scr, this, entering);
     }
 #endif
-
-    DSTOffsetCache dstOffsetCache;
 
     /* List of currently active non-escaping enumerators (for-in). */
     js::PropertyIteratorObject *enumerators;
@@ -1868,49 +1853,6 @@ class AutoKeepAtoms {
         JS_KEEP_ATOMS(rt);
     }
     ~AutoKeepAtoms() { JS_UNKEEP_ATOMS(rt); }
-};
-
-class AutoReleasePtr {
-    void        *ptr;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-
-    AutoReleasePtr(const AutoReleasePtr &other) MOZ_DELETE;
-    AutoReleasePtr operator=(const AutoReleasePtr &other) MOZ_DELETE;
-
-  public:
-    explicit AutoReleasePtr(void *ptr
-                            JS_GUARD_OBJECT_NOTIFIER_PARAM)
-      : ptr(ptr)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    void forget() { ptr = NULL; }
-    ~AutoReleasePtr() { js_free(ptr); }
-};
-
-/*
- * FIXME: bug 602774: cleaner API for AutoReleaseNullablePtr
- */
-class AutoReleaseNullablePtr {
-    void        *ptr;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-
-    AutoReleaseNullablePtr(const AutoReleaseNullablePtr &other) MOZ_DELETE;
-    AutoReleaseNullablePtr operator=(const AutoReleaseNullablePtr &other) MOZ_DELETE;
-
-  public:
-    explicit AutoReleaseNullablePtr(void *ptr
-                                    JS_GUARD_OBJECT_NOTIFIER_PARAM)
-      : ptr(ptr)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    void reset(void *ptr2) {
-        if (ptr)
-            js_free(ptr);
-        ptr = ptr2;
-    }
-    ~AutoReleaseNullablePtr() { if (ptr) js_free(ptr); }
 };
 
 } /* namespace js */

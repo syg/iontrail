@@ -166,7 +166,7 @@ pref("media.wave.enabled", true);
 pref("media.webm.enabled", true);
 #endif
 #ifdef MOZ_DASH
-pref("media.dash.enabled", true);
+pref("media.dash.enabled", false);
 #endif
 #ifdef MOZ_GSTREAMER
 pref("media.gstreamer.enabled", true);
@@ -909,6 +909,14 @@ pref("network.http.connection-retry-timeout", 250);
 // The number of seconds after sending initial SYN for an HTTP connection
 // to give up if the OS does not give up first
 pref("network.http.connection-timeout", 90);
+
+// The maximum number of current global half open sockets allowable
+// when starting a new speculative connection.
+pref("network.http.speculative-parallel-limit", 6);
+
+// Whether or not to block requests for non head js/css items (e.g. media)
+// while those elements load.
+pref("network.http.rendering-critical-requests-prioritization", true);
 
 // Disable IPv6 for backup connections to workaround problems about broken
 // IPv6 connectivity.

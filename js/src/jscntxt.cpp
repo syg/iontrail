@@ -913,7 +913,7 @@ PopulateReportBlame(JSContext *cx, JSErrorReport *report)
         return;
 
     report->filename = iter.script()->filename;
-    report->lineno = PCToLineNumber(iter.script().get(nogc), iter.pc(), &report->column);
+    report->lineno = PCToLineNumber(iter.script(), iter.pc(), &report->column);
     report->originPrincipals = iter.script()->originPrincipals;
 }
 
@@ -1566,33 +1566,6 @@ jsbytecode*
 js_GetCurrentBytecodePC(JSContext* cx)
 {
     return cx->hasfp() ? cx->regs().pc : NULL;
-}
-
-void
-DSTOffsetCache::purge()
-{
-    /*
-     * NB: The initial range values are carefully chosen to result in a cache
-     *     miss on first use given the range of possible values.  Be careful
-     *     to keep these values and the caching algorithm in sync!
-     */
-    offsetMilliseconds = 0;
-    rangeStartSeconds = rangeEndSeconds = INT64_MIN;
-    oldOffsetMilliseconds = 0;
-    oldRangeStartSeconds = oldRangeEndSeconds = INT64_MIN;
-
-    sanityCheck();
-}
-
-/*
- * Since getDSTOffsetMilliseconds guarantees that all times seen will be
- * positive, we can initialize the range at construction time with large
- * negative numbers to ensure the first computation is always a cache miss and
- * doesn't return a bogus offset.
- */
-DSTOffsetCache::DSTOffsetCache()
-{
-    purge();
 }
 
 JSContext::JSContext(JSRuntime *rt)

@@ -183,7 +183,7 @@ ion::ParCallToUncompiledScript(JSFunction *func)
     JS_ASSERT(InParallelSection());
 
 #ifdef DEBUG
-    JSScript *script = func->nonLazyScript().unsafeGet();
+    RawScript script = func->nonLazyScript();
     fprintf(stderr, "[ParallelBailout] Call to uncompiled script: %p:%s:%d\n",
             script, script->filename, script->lineno);
 #endif

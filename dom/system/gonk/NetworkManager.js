@@ -440,7 +440,7 @@ NetworkManager.prototype = {
       dns2: network.dns2,
       gateway: network.gateway,
       httpproxy: network.httpProxyHost,
-      mmsproxy: Services.prefs.getCharPref("ril.data.mmsproxy")
+      mmsproxy: Services.prefs.getCharPref("ril.mms.mmsproxy")
     };
     this.worker.postMessage(options);
   },
@@ -454,7 +454,7 @@ NetworkManager.prototype = {
       dns2: network.dns2,
       gateway: network.gateway,
       httpproxy: network.httpProxyHost,
-      mmsproxy: Services.prefs.getCharPref("ril.data.mmsproxy")
+      mmsproxy: Services.prefs.getCharPref("ril.mms.mmsproxy")
     };
     this.worker.postMessage(options);
   },
@@ -467,6 +467,8 @@ NetworkManager.prototype = {
         Services.prefs.clearUserPref("network.proxy.share_proxy_settings");
         Services.prefs.clearUserPref("network.proxy.http");
         Services.prefs.clearUserPref("network.proxy.http_port");
+        Services.prefs.clearUserPref("network.proxy.ssl");
+        Services.prefs.clearUserPref("network.proxy.ssl_port");
         debug("No proxy support for " + this.active.name + " network interface.");
         return;
       }
@@ -477,8 +479,10 @@ NetworkManager.prototype = {
       // Do not use this proxy server for all protocols.
       Services.prefs.setBoolPref("network.proxy.share_proxy_settings", false);
       Services.prefs.setCharPref("network.proxy.http", this.active.httpProxyHost);
+      Services.prefs.setCharPref("network.proxy.ssl", this.active.httpProxyHost);
       let port = this.active.httpProxyPort == "" ? 8080 : this.active.httpProxyPort;
       Services.prefs.setIntPref("network.proxy.http_port", port);
+      Services.prefs.setIntPref("network.proxy.ssl_port", port);
     } catch (ex) {
        debug("Exception " + ex + ". Unable to set proxy setting for "
              + this.active.name + " network interface.");
@@ -597,7 +601,7 @@ NetworkManager.prototype = {
       debug("Invalid security type.");
       return null;
     }
-    if (!securityId) {
+    if (securityType != WIFI_SECURITY_TYPE_NONE && !securityId) {
       debug("Invalid security password.");
       return null;
     }

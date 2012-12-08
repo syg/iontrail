@@ -1465,7 +1465,7 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
     if (!callee->nonLazyScript()->ensureHasTypes(cx))
         return;
 
-    TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript().unsafeGet());
+    TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript());
     if (this->types)
         this->types->addSubset(cx, thisTypes);
     else
@@ -5600,7 +5600,7 @@ JSScript::makeAnalysis(JSContext *cx)
 /* static */ bool
 JSFunction::setTypeForScriptedFunction(JSContext *cx, HandleFunction fun, bool singleton)
 {
-    JS_ASSERT(fun->nonLazyScript().unsafeGet());
+    JS_ASSERT(fun->nonLazyScript());
     JS_ASSERT(fun->nonLazyScript()->function() == fun);
 
     if (!cx->typeInferenceEnabled())
@@ -6188,8 +6188,7 @@ TypeCompartment::sweep(FreeOp *fop)
     if (arrayTypeTable) {
         for (ArrayTypeTable::Enum e(*arrayTypeTable); !e.empty(); e.popFront()) {
             const ArrayTableKey &key = e.front().key;
-            TypeObject *obj = e.front().value;
-            JS_ASSERT(obj->proto == key.proto);
+            JS_ASSERT(e.front().value->proto == key.proto);
             JS_ASSERT(!key.type.isSingleObject());
 
             bool remove = false;

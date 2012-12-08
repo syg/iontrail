@@ -205,6 +205,7 @@ pref("extensions.{972ce4c6-7e08-4474-a285-3208198ce6fd}.description", "chrome://
 
 pref("xpinstall.whitelist.add", "addons.mozilla.org");
 pref("xpinstall.whitelist.add.36", "getpersonas.com");
+pref("xpinstall.whitelist.add.180", "marketplace.firefox.com");
 
 pref("lightweightThemes.update.enabled", true);
 
@@ -1041,7 +1042,7 @@ pref("devtools.debugger.ui.stackframes-width", 200);
 pref("devtools.debugger.ui.variables-width", 300);
 pref("devtools.debugger.ui.panes-visible-on-startup", false);
 pref("devtools.debugger.ui.variables-sorting-enabled", true);
-pref("devtools.debugger.ui.variables-non-enum-visible", true);
+pref("devtools.debugger.ui.variables-only-enum-visible", false);
 pref("devtools.debugger.ui.variables-searchbox-visible", false);
 
 // Enable the Tilt inspector

@@ -49,11 +49,11 @@ JSCompartment::JSCompartment(JSRuntime *rt)
   : rt(rt),
     principals(NULL),
     global_(NULL),
+    enterCompartmentDepth(0),
     allocator(this),
 #ifdef JSGC_GENERATIONAL
     gcStoreBuffer(&gcNursery),
 #endif
-    needsBarrier_(false),
     ionUsingBarriers_(false),
     gcScheduled(false),
     gcState(NoGC),
@@ -87,6 +87,10 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     , ionCompartment_(NULL)
 #endif
 {
+    /* Ensure that there are no vtables to mess us up here. */
+    JS_ASSERT(reinterpret_cast<JS::shadow::Compartment *>(this) ==
+              static_cast<JS::shadow::Compartment *>(this));
+
     setGCMaxMallocBytes(rt->gcMaxMallocBytes * 0.9);
 }
 
@@ -111,7 +115,8 @@ JSCompartment::init(JSContext *cx)
      * shouldn't interfere with benchmarks which create tons of date objects
      * (unless they also create tons of iframes, which seems unlikely).
      */
-    js_ClearDateCaches();
+    if (cx)
+        cx->runtime->dateTimeInfo.updateTimeZoneAdjustment();
 
     activeAnalysis = activeInference = false;
     types.init(cx);
@@ -230,6 +235,17 @@ WrapForSameCompartment(JSContext *cx, HandleObject obj, Value *vp)
 }
 
 bool
+JSCompartment::putWrapper(const CrossCompartmentKey &wrapped, const js::Value &wrapper)
+{
+    JS_ASSERT(wrapped.wrapped);
+    JS_ASSERT_IF(wrapped.kind == CrossCompartmentKey::StringWrapper, wrapper.isString());
+    JS_ASSERT_IF(wrapped.kind != CrossCompartmentKey::StringWrapper, wrapper.isObject());
+    // todo: uncomment when bug 815999 is fixed:
+    // JS_ASSERT(!wrapped.wrapped->isMarked(gc::GRAY));
+    return crossCompartmentWrappers.put(wrapped, wrapper);
+}
+
+bool
 JSCompartment::wrap(JSContext *cx, Value *vp, JSObject *existing)
 {
     JS_ASSERT(cx->compartment == this);
@@ -339,7 +355,7 @@ JSCompartment::wrap(JSContext *cx, Value *vp, JSObject *existing)
         if (!wrapped)
             return false;
         vp->setString(wrapped);
-        if (!crossCompartmentWrappers.put(orig, *vp))
+        if (!putWrapper(orig, *vp))
             return false;
 
         if (str->compartment()->isGCMarking()) {
@@ -387,7 +403,7 @@ JSCompartment::wrap(JSContext *cx, Value *vp, JSObject *existing)
 
     vp->setObject(*wrapper);
 
-    if (!crossCompartmentWrappers.put(key, *vp))
+    if (!putWrapper(key, *vp))
         return false;
 
     return true;
@@ -516,6 +532,13 @@ JSCompartment::mark(JSTracer *trc)
     if (ionCompartment_)
         ionCompartment_->mark(trc, this);
 #endif
+
+    /*
+     * If a compartment is on-stack, we mark its global so that
+     * JSContext::global() remains valid.
+     */
+    if (enterCompartmentDepth && global_)
+        MarkObjectRoot(trc, global_.unsafeGet(), "on-stack compartment global");
 }
 
 void
@@ -621,7 +644,7 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         sweepNewTypeObjectTable(lazyTypeObjects);
         sweepBreakpoints(fop);
 
-        if (global_ && IsObjectAboutToBeFinalized(&global_))
+        if (global_ && IsObjectAboutToBeFinalized(global_.unsafeGet()))
             global_ = NULL;
 
 #ifdef JS_ION

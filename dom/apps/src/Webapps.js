@@ -105,6 +105,12 @@ WebappsRegistry.prototype = {
 
     xhr.addEventListener("load", (function() {
       if (xhr.status == 200) {
+        if (!AppsUtils.checkManifestContentType(installOrigin, this._getOrigin(aURL),
+                                                xhr.getResponseHeader("content-type"))) {
+          Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
+          return;
+        }
+
         let manifest;
         try {
           manifest = JSON.parse(xhr.responseText, installOrigin);
@@ -214,6 +220,12 @@ WebappsRegistry.prototype = {
 
     xhr.addEventListener("load", (function() {
       if (xhr.status == 200) {
+        if (!AppsUtils.checkManifestContentType(installOrigin, this._getOrigin(aURL),
+                                                xhr.getResponseHeader("content-type"))) {
+          Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
+          return;
+        }
+
         let manifest;
         try {
           manifest = JSON.parse(xhr.responseText, installOrigin);
@@ -465,10 +477,20 @@ WebappsApplication.prototype = {
 
   checkForUpdate: function() {
     let request = this.createRequest();
-    cpmm.sendAsyncMessage("Webapps:CheckForUpdate",
-                          { manifestURL: this.manifestURL,
-                            oid: this._id,
-                            requestID: this.getRequestId(request) });
+
+    // We can't update apps that are not removable.
+    if (!this.removable) {
+      Services.tm.currentThread.dispatch({
+        run: function checkUpdateFail() {
+          Services.DOMRequest.fireError(request, "NOT_UPDATABLE");
+        }
+      }, Ci.nsIEventTarget.DISPATCH_NORMAL)
+    } else {
+      cpmm.sendAsyncMessage("Webapps:CheckForUpdate",
+                            { manifestURL: this.manifestURL,
+                              oid: this._id,
+                              requestID: this.getRequestId(request) });
+    }
     return request;
   },
 
@@ -734,8 +756,12 @@ WebappsApplicationMgmt.prototype = {
         break;
       case "Webapps:Uninstall:Return:OK":
         if (this._onuninstall) {
+          let detail = {
+            manifestURL: msg.manifestURL,
+            origin: msg.origin
+          };
           let event = new this._window.MozApplicationEvent("applicationuninstall",
-                           { application : createApplicationObject(this._window, { origin: msg.origin }) });
+                           { application : createApplicationObject(this._window, detail) });
           this._onuninstall.handleEvent(event);
         }
         break;

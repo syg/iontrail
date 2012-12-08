@@ -340,10 +340,6 @@ DOMCI_CLASS(StorageObsolete)
 DOMCI_CLASS(Storage)
 DOMCI_CLASS(StorageItem)
 
-// DOMParser, XMLSerializer
-DOMCI_CLASS(DOMParser)
-DOMCI_CLASS(XMLSerializer)
-
 // XMLHttpRequest
 DOMCI_CLASS(XMLHttpProgressEvent)
 DOMCI_CLASS(XMLHttpRequest)
@@ -402,6 +398,7 @@ DOMCI_CLASS(MozSmsCursor)
 DOMCI_CLASS(MozConnection)
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozMobileConnection)
+DOMCI_CLASS(MozCellBroadcast)
 #endif
 
 DOMCI_CLASS(USSDReceivedEvent)
