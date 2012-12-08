@@ -333,7 +333,8 @@ struct PerThreadDataFriendFields
 
     static inline PerThreadDataFriendFields *get(js::PerThreadData *pt);
     static inline PerThreadDataFriendFields *getMainThread(JSRuntime *rt);
-    static inline const PerThreadDataFriendFields *getMainThread(const JSRuntime *rt);};
+    static inline const PerThreadDataFriendFields *getMainThread(const JSRuntime *rt);
+};
 
 // Note: this type only exists to permit us to derive the offset of
 // the perThread data within the real JSRuntime* type in a portable

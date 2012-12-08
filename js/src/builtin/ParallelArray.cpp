@@ -511,7 +511,6 @@ BuildArray1(JSContext *cx, CallArgs &args)
 // ParallelArrayObject
 //
 
-const uint32_t ParallelArrayObject::NumCtors;
 FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[NumCtors];
 FixedHeapPtr<PropertyName> ParallelArrayObject::propNames[NumFixedSlots];
 
