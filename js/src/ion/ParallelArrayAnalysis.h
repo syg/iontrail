@@ -69,8 +69,6 @@ private:
 
     bool canCompile(MIRGraph *graph);
 
-    MethodStatus compileFunction1(HandleFunction fun);
-
 public:
     ParallelCompileContext(JSContext *cx);
 
@@ -83,7 +81,7 @@ public:
     MethodStatus compileKernelAndInvokedFunctions(HandleFunction kernel);
 
     // defined in Ion.cpp, so that they can make use of static fns defined there
-    MethodStatus compileFunction(HandleFunction fun, bool isKernel);
+    MethodStatus compileFunction(HandleFunction fun);
     bool compile(IonBuilder *builder, MIRGraph *graph, AutoDestroyAllocator &autoDestroy);
 };
 

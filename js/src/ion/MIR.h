@@ -3697,11 +3697,13 @@ class MStoreElementCommon
 {
     bool needsBarrier_;
     MIRType elementType_;
+    bool racy_; // if true, exempted from normal data race req. during par. exec.
 
   protected:
     MStoreElementCommon()
       : needsBarrier_(false),
-        elementType_(MIRType_Value)
+        elementType_(MIRType_Value),
+        racy_(false)
     { }
 
   public:
@@ -3717,6 +3719,12 @@ class MStoreElementCommon
     }
     void setNeedsBarrier() {
         needsBarrier_ = true;
+    }
+    bool racy() const {
+        return racy_;
+    }
+    void setRacy() {
+        racy_ = true;
     }
 };
 

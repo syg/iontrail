@@ -586,50 +586,67 @@ intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_EnsureDenseArrayElements(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %EnsureDenseResultArrayElements(arr, length)
+    // Usage: %DenseArray(length)
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    // Check that array is a dense array
-    if (!args[0].isObject() || !args[0].toObject().isDenseArray()) {
-        JS_ReportError(cx, "Expected dense array as first argument");
-        return false;
-    }
-    RootedObject arrobj(cx, &args[0].toObject());
-
     // Check that index is an int32
-    if (!args[1].isInt32()) {
+    if (!args[0].isInt32()) {
         JS_ReportError(cx, "Expected int32 as second argument");
         return false;
     }
-    uint32_t idx = args[1].toInt32();
+    uint32_t length = args[0].toInt32();
 
-    JSObject::EnsureDenseResult edr = arrobj->ensureDenseArrayElements(cx, idx, 0);
-    return edr == JSObject::ED_OK;
+    // Make a new buffer and initialize it up to length.
+    RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
+    if (!buffer)
+        return false;
+
+    types::TypeObject *newtype = types::GetTypeCallerInitObject(cx, JSProto_Array);
+    if (!newtype)
+        return false;
+    buffer->setType(newtype);
+
+    JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
+    switch (edr) {
+      case JSObject::ED_OK:
+        args.rval().setObject(*buffer);
+        return true;
+
+      case JSObject::ED_SPARSE: // shouldn't happen!
+        JS_ASSERT(!"%EnsureDenseArrayElements() would yield sparse array");
+        JS_ReportError(cx, "%EnsureDenseArrayElements() would yield sparse array");
+        break;
+
+      case JSObject::ED_FAILED:
+        break;
+    }
+    return false;
 }
 
-static JSBool
-intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp)
+JSBool
+js::intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp)
 {
     // Usage: %UnsafeSetDenseArrayElement(arr, idx, elem)
+    //
+    // Updates element |idx| of the dense array |arr|.  |arr| must be
+    // a dense array and the index must be an int32 less than the
+    // initialized length of |arr|.  Use
+    // |%EnsureDenseResultArrayElements| to ensure that the
+    // initialized length is long enough.
+
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    // Check that array is a dense array
-    if (!args[0].isObject() || !args[0].toObject().isDenseArray()) {
-        JS_ReportError(cx, "Expected dense array as first argument");
-        return false;
-    }
-    RootedObject arrobj(cx, &args[0].toObject());
+    JS_ASSERT(args[0].isObject() && args[0].toObject().isDenseArray());
+    JS_ASSERT(args[1].isInt32());
+    JS_ASSERT(args[1].isInt32());
 
-    // Check that index is an int32
-    if (!args[1].isInt32()) {
-        JS_ReportError(cx, "Expected int32 as second argument");
-        return false;
-    }
+    RootedObject arrobj(cx, &args[0].toObject());
     uint32_t idx = args[1].toInt32();
 
-    // Do the actual assignment
+    JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
+
     JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[2]);
     return true;
 }
@@ -643,7 +660,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ParallelDo",         intrinsic_ParallelDo,           2,0),
     JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
     JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
-    JS_FN("EnsureDenseArrayElements",   intrinsic_EnsureDenseArrayElements,   2,0),
+    JS_FN("DenseArray",         intrinsic_DenseArray,           1,0),
     JS_FN("UnsafeSetDenseArrayElement", intrinsic_UnsafeSetDenseArrayElement, 3,0),
 
 #ifdef DEBUG

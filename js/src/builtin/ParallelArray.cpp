@@ -477,7 +477,7 @@ FixedHeapPtr<PropertyName> ParallelArrayObject::propNames[NumFixedSlots];
 JSFunctionSpec ParallelArrayObject::methods[] = {
     { "map",       JSOP_NULLWRAPPER, 2, 0, "ParallelArrayMap"       },
     { "reduce",    JSOP_NULLWRAPPER, 2, 0, "ParallelArrayReduce"    },
-    { "scan",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayScan"      },
+    { "scan",      JSOP_NULLWRAPPER, 2, 0, "ParallelArrayScan"      },
     { "scatter",   JSOP_NULLWRAPPER, 4, 0, "ParallelArrayScatter"   },
     { "filter",    JSOP_NULLWRAPPER, 2, 0, "ParallelArrayFilter"    },
     { "partition", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayPartition" },

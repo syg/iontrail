@@ -145,7 +145,7 @@ function ParallelArrayBuild(self, shape, f) {
 
   if (shape.length === 1) {
     var length = shape[0];
-    var buffer = EnsuredDenseArray([], length);
+    var buffer = %DenseArray(length);
     if (!%ParallelDo(fill1, null, xw)) {
       fill1(0, 1, false, xw);
     }
@@ -155,7 +155,7 @@ function ParallelArrayBuild(self, shape, f) {
     var xw = shape[0];
     var yw = shape[1];
     var length = xw * yw;
-    var buffer = EnsuredDenseArray([], length);
+    var buffer = %DenseArray(length);
     if (!%ParallelDo(fill2, null, xw, yw)) {
       fill2(0, 1, false, xw, yw);
     }
@@ -164,9 +164,9 @@ function ParallelArrayBuild(self, shape, f) {
   } else if (shape.length == 3) {
     var xw = shape[0];
     var yw = shape[1];
-    var zw = shape[1];
+    var zw = shape[2];
     var length = xw * yw * zw;
-    var buffer = EnsuredDenseArray([], length);
+    var buffer = %DenseArray(length);
     if (!%ParallelDo(fill3, null, xw, yw, zw)) {
       fill3(0, 1, false, xw, yw, zw);
     }
@@ -177,7 +177,7 @@ function ParallelArrayBuild(self, shape, f) {
     for (var i = 0; i < shape.length; i++) {
       length *= shape[i];
     }
-    var buffer = EnsuredDenseArray([], length);
+    var buffer = %DenseArray(length);
     if (!%ParallelDo(fillN, null)) {
       fillN(0, 1, false);
     }
@@ -246,7 +246,7 @@ function ParallelArrayMap(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel
 
-  var buffer = EnsuredDenseArray([], length);
+  var buffer = %DenseArray(length);
 
   if (TryParallel(m)) {
     if (%ParallelDo(fill, CheckParallel(m)))
@@ -287,7 +287,7 @@ function ParallelArrayReduce(f, m) {
       // Attempt parallel reduction, but only if there is at least one
       // element per thread.  Otherwise the various slices having to
       // reduce empty spans of the source array.
-      var subreductions = EnsuredDenseArray([], slices);
+      var subreductions = %DenseArray(slices);
       if (%ParallelDo(fill, CheckParallel(m))) {
         // can't use reduce because subreductions is an array, not a
         // parallel array:
@@ -340,7 +340,7 @@ function ParallelArrayScan(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
 
-  var buffer = EnsuredDenseArray([], length);
+  var buffer = %DenseArray(length);
 
   if (TryParallel(m)) {
     var slices = %ParallelSlices();
@@ -509,10 +509,11 @@ function ParallelArrayFilter(filters, m) {
 
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
+
   if (TryParallel(m)) {
     var slices = %ParallelSlices();
     if (length > slices) {
-      var keepers = EnsuredDenseArray([], slices);
+      var keepers = %DenseArray(slices);
       if (%ParallelDo(count_keepers, CheckParallel(m))) {
         var total = 0;
         for (var i = 0; i < keepers.length; i++)
@@ -521,9 +522,10 @@ function ParallelArrayFilter(filters, m) {
         if (total == 0)
           return %NewParallelArray([0], [], 0);
 
-        var buffer = EnsuredDenseArray(total);
-        if (%ParallelDo(copy_keepers, CheckParallel(m)))
+        var buffer = %DenseArray(total);
+        if (SequentialDo(copy_keepers, CheckParallel(m))) {
           return %NewParallelArray([total], buffer, 0);
+        }
       }
     }
   }
@@ -718,9 +720,15 @@ function CheckParallel(m) {
   };
 }
 
-function EnsuredDenseArray(array, length) {
-  %EnsureDenseArrayElements(array, length);
-  return array;
+function SequentialDo(func, notify) {
+  var slices = %ParallelSlices();
+  for (var i = 0; i < slices; i++) {
+    func(i, slices, true);
+  }
+  for (var i = 0; i < slices; i++) {
+    func(i, slices, false);
+  }
+  return true;
 }
 
 // Mark the main operations as clone-at-callsite for better precision.
