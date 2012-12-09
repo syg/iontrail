@@ -841,28 +841,11 @@ IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing)
     // in intrinsic_UnsafeSetDenseArrayElement():
     // - arr is a dense array
     // - idx < initialized length
+    // Furthermore, note that inference should be propagating
+    // the type of the value to the JSID_VOID property of the array.
 
     types::StackTypeSet *arrTypes = getInlineArgTypeSet(argc, 1);
     JS_ASSERT(!arrTypes->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY));
-
-    // Inference doesn't model the constraints here properly, so check
-    // that the type information already reflects possible side
-    // effects of this call.  Perhaps it would be better to add this
-    // intrinsic to inference, however?  I cribbed this code from the
-    // concat() call; hopefully it's complete. - nmatsakis
-    /*
-    if (arrTypes->getObjectCount() != 1)
-        return InliningStatus_NotInlined;
-    types::TypeObject *arrType = arrTypes->getTypeObject(0);
-    if (!arrType)
-        return InliningStatus_NotInlined;
-    types::HeapTypeSet *arrElemTypes = arrType->getProperty(cx, JSID_VOID, false);
-    if (!arrElemTypes)
-        return InliningStatus_Error;
-    types::StackTypeSet *valueTypes = getInlineArgTypeSet(argc, 3);
-    if (!valueTypes->knownSubset(cx, arrElemTypes))
-        return InliningStatus_NotInlined;
-    */
 
     MDefinitionVector argv;
     if (!discardCall(argc, argv, current))

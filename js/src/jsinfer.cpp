@@ -1350,6 +1350,12 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
                 callsite->returnTypes->addType(cx, Type::ObjectType(res));
             }
 
+            if (native == js::intrinsic_UnsafeSetDenseArrayElement) {
+                callsite->argumentTypes[0]->addSetProperty(
+                    cx, script, pc,
+                    callsite->argumentTypes[2], JSID_VOID);
+            }
+
             return;
         }
 
