@@ -2,6 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+function build(n, f) {
+  var result = [];
+  for (var i = 0; i < n; i++)
+    result.push(f(i));
+  return result;
+}
+
 function range(n, m) {
   // Returns an array with [n..m] (include on n, exclusive on m)
 

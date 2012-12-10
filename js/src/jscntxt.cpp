@@ -648,8 +648,21 @@ js::intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp
     JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
 
     JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[2]);
+    args.rval().setUndefined();
     return true;
 }
+
+JSBool
+js::intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %InParallelSection()
+    //
+    // Returns true if the code is executing in a parallel section.
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(InParallelSection());
+    return true;
+}
+
 
 JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",           intrinsic_ToObject,             1,0),
@@ -662,6 +675,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
     JS_FN("DenseArray",         intrinsic_DenseArray,           1,0),
     JS_FN("UnsafeSetDenseArrayElement", intrinsic_UnsafeSetDenseArrayElement, 3,0),
+    JS_FN("InParallelSection",  intrinsic_InParallelSection,    0,0),
 
 #ifdef DEBUG
     JS_FN("Dump",               intrinsic_Dump,                 1,0),

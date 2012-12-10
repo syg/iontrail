@@ -248,7 +248,7 @@ function ParallelArrayMap(f, m) {
 
   var buffer = %DenseArray(length);
 
-  if (TryParallel(m)) {
+  if (!%InParallelSection() && TryParallel(m)) {
     if (%ParallelDo(fill, CheckParallel(m)))
       return %NewParallelArray([length], buffer, 0);
   }
@@ -281,7 +281,7 @@ function ParallelArrayReduce(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel Version
 
-  if (TryParallel(m)) {
+  if (!%InParallelSection() && TryParallel(m)) {
     var slices = %ParallelSlices();
     if (length > slices) {
       // Attempt parallel reduction, but only if there is at least one
@@ -342,7 +342,7 @@ function ParallelArrayScan(f, m) {
 
   var buffer = %DenseArray(length);
 
-  if (TryParallel(m)) {
+  if (!%InParallelSection() && TryParallel(m)) {
     var slices = %ParallelSlices();
     if (length > slices) { // Each worker thread will have something to do.
       // compute scan of each slice: see comment on phase1() below
@@ -510,7 +510,7 @@ function ParallelArrayFilter(filters, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
 
-  if (TryParallel(m)) {
+  if (!%InParallelSection() && TryParallel(m)) {
     var slices = %ParallelSlices();
     if (length > slices) {
       var keepers = %DenseArray(slices);

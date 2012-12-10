@@ -438,6 +438,7 @@ class IonBuilder : public MIRGenerator
 
     // Parallel Array.
     InliningStatus inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing);
+    InliningStatus inlineInParallelSection(uint32_t argc, bool constructing);
 
     InliningStatus inlineNativeCall(JSNative native, uint32_t argc, bool constructing);
 

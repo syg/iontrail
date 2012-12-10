@@ -77,6 +77,8 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     // Parallel Array
     if (native == intrinsic_UnsafeSetDenseArrayElement)
         return inlineUnsafeSetDenseArrayElement(argc, constructing);
+    if (native == intrinsic_InParallelSection)
+        return inlineInParallelSection(argc, constructing);
 
     return InliningStatus_NotInlined;
 }
@@ -864,6 +866,30 @@ IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing)
 
     if (!resumeAfter(store))
         return InliningStatus_Error;
+
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineInParallelSection(uint32_t argc, bool constructing)
+{
+    if (constructing)
+        return InliningStatus_NotInlined;
+
+    MDefinitionVector argv;
+    if (!discardCall(argc, argv, current))
+        return InliningStatus_Error;
+
+    ExecutionMode executionMode = info().executionMode();
+    bool willBeInParallelSection = false;
+    switch (executionMode) {
+      case SequentialExecution: break;
+      case ParallelExecution: willBeInParallelSection = true; break;
+    }
+
+    MConstant *ins = MConstant::New(BooleanValue(willBeInParallelSection));
+    current->add(ins);
+    current->push(ins);
 
     return InliningStatus_Inlined;
 }

@@ -2221,8 +2221,8 @@ class ContextAllocPolicy
     void reportAllocOverflow() const { js_ReportAllocationOverflow(cx); }
 };
 
-JSBool intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc,
-                                            Value *vp);
+JSBool intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp);
 
 } /* namespace js */
 
