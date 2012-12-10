@@ -522,40 +522,62 @@ ParallelArrayObject::initProps(JSContext *cx, HandleObject obj)
     return true;
 }
 
-/*static*/ JSBool
-ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
+/*static*/ HandlePropertyName
+ParallelArrayObject::newParallelArrayCtorName()
 {
-    CallArgs args0 = CallArgsFromVp(argc, vp);
+    return ctorNames[NumCtors - 1];
+}
 
+/*static*/ HandlePropertyName
+ParallelArrayObject::parallelArrayCtorName(unsigned argc)
+{
     // See comment in ParallelArray.js about splitting constructors.
     // Note that the final constructor (NumCtors - 1) is only
     // accessible via the %NewParallelArray() intrinsic, as it's for
     // internal use only.
-    uint32_t whichCtor = js::Min(args0.length(), NumCtors - 2);
-    return construct(cx, whichCtor, args0);
+    uint32_t whichCtor = js::Min(argc, NumCtors - 2);
+    return ctorNames[whichCtor];
+}
+
+/*static*/ JSBool
+ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return constructHelper(cx, parallelArrayCtorName(args.length()), args);
 }
 
 /*static*/ JSBool
 ParallelArrayObject::intrinsicNewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return construct(cx, NumCtors - 1, args);
+    return constructHelper(cx, newParallelArrayCtorName(), args);
 }
 
-/*static*/ JSBool
-ParallelArrayObject::construct(JSContext *cx, uint32_t whichCtor, CallArgs &args0)
+/*static*/ JSObject *
+ParallelArrayObject::newInstance(JSContext *cx)
 {
     gc::AllocKind kind = gc::GetGCObjectKind(NumFixedSlots);
     RootedObject result(cx, NewBuiltinClassInstance(cx, &class_, kind));
     if (!result)
-        return false;
+        return NULL;
 
     // Add in the basic PA properties now with default values:
     if (!initProps(cx, result))
+        return NULL;
+
+    return result;
+}
+
+/*static*/ JSBool
+ParallelArrayObject::constructHelper(JSContext *cx, HandlePropertyName ctorName,
+                                     CallArgs &args0)
+{
+    RootedObject result(cx, newInstance(cx));
+    if (!result)
         return false;
 
     RootedValue ctorValue(cx);
-    if (!cx->global()->getIntrinsicValue(cx, ctorNames[whichCtor], &ctorValue))
+    if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
         return false;
     RootedFunction ctor(cx, ctorValue.toObject().toFunction());
 

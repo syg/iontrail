@@ -2223,6 +2223,7 @@ class ContextAllocPolicy
 
 JSBool intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 
 } /* namespace js */
 

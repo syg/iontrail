@@ -4152,28 +4152,8 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32_t argc, bool constructi
     if (!call)
         return NULL;
 
-    // Explicitly pad any missing arguments with |undefined|.
-    // This permits skipping the argumentsRectifier.
-    for (int i = targetArgs; i > (int)argc; i--) {
-        JS_ASSERT_IF(target, !target->isNative());
-        MConstant *undef = MConstant::New(UndefinedValue());
-        current->add(undef);
-        MPassArg *pass = MPassArg::New(undef);
-        current->add(pass);
-        call->addArg(i, pass);
-    }
-
-    // Add explicit arguments.
-    // Bytecode order: Function, This, Arg0, Arg1, ..., ArgN, Call.
-    for (int32_t i = argc; i > 0; i--)
-        call->addArg(i, current->pop()->toPassArg());
-
-    // Place an MPrepareCall before the first passed argument, before we
-    // potentially perform rearrangement.
-    MPrepareCall *start = new MPrepareCall;
-    MPassArg *firstArg = current->peek(-1)->toPassArg();
-    firstArg->block()->insertBefore(firstArg, start);
-    call->initPrepareCall(start);
+    if (!popAndAddNonThisArgumentsAndPrepareCall(call, targetArgs, argc))
+        return NULL;
 
     MPassArg *thisArg = current->pop()->toPassArg();
 
@@ -4208,6 +4188,35 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32_t argc, bool constructi
 
     current->add(call);
     return call;
+}
+
+bool
+IonBuilder::popAndAddNonThisArgumentsAndPrepareCall(MCall *call, uint32_t targetArgs, uint32_t argc)
+{
+    // Explicitly pad any missing arguments with |undefined|.
+    // This permits skipping the argumentsRectifier.
+    for (int i = targetArgs; i > (int)argc; i--) {
+        JS_ASSERT_IF(call->getSingleTarget(), !call->getSingleTarget()->isNative());
+        MConstant *undef = MConstant::New(UndefinedValue());
+        current->add(undef);
+        MPassArg *pass = MPassArg::New(undef);
+        current->add(pass);
+        call->addArg(i, pass);
+    }
+
+    // Add explicit arguments.
+    // Bytecode order: Function, This, Arg0, Arg1, ..., ArgN, Call.
+    for (int32_t i = argc; i > 0; i--)
+        call->addArg(i, current->pop()->toPassArg());
+
+    // Place an MPrepareCall before the first passed argument, before we
+    // potentially perform rearrangement.
+    MPrepareCall *start = new MPrepareCall;
+    MPassArg *firstArg = current->peek(-1)->toPassArg();
+    firstArg->block()->insertBefore(firstArg, start);
+    call->initPrepareCall(start);
+
+    return true;
 }
 
 bool

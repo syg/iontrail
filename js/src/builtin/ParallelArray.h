@@ -51,13 +51,33 @@ class ParallelArrayObject : public JSObject
     static FixedHeapPtr<PropertyName> ctorNames[NumCtors];
     static FixedHeapPtr<PropertyName> propNames[NumFixedSlots];
 
-    static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
-    static JSBool construct(JSContext *cx, uint32_t whichCtor, CallArgs &args);
+    static JSBool constructHelper(JSContext *cx, HandlePropertyName ctorName,
+                                  CallArgs &args);
 
     static bool initProps(JSContext *cx, HandleObject obj);
 
   public:
     static Class class_;
+
+    static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
+
+    // Creates a new ParallelArray instance with the correct number of slots
+    // and so forth.
+    //
+    // NOTE: This object will NOT have the correct type object!  It is
+    // up to you the caller to adjust the type object appropriately
+    // before releasing the object into the wild.
+    static JSObject *newInstance(JSContext *cx);
+
+    // Given a call "new ParallelArray(...)", returns the appropriate
+    // function in the self-hosted code to handle this call.  The
+    // correct function will depend on the number of arguments
+    // supplied.
+    static HandlePropertyName parallelArrayCtorName(unsigned argc);
+
+    // Given a call "%NewParallelArray(...)", returns the function in
+    // the self-hosted code that handle this call.
+    static HandlePropertyName newParallelArrayCtorName();
 
     static JSBool intrinsicNewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 
