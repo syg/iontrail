@@ -297,16 +297,6 @@ js::RunScript(JSContext *cx, HandleScript script, StackFrame *fp)
 
 #ifdef JS_ION
     if (ion::IsEnabled(cx)) {
-#ifdef JS_THREADSAFE
-        if (ion::js_IonOptions.parallelWarmupContext) {
-            // During parallel warmup we want to stay in the interpreter and
-            // never go to compiled sequential code, or we might not record
-            // all the calls.
-            if (!ion::js_IonOptions.parallelWarmupContext->addInvocation(fp))
-                return false;
-            return Interpret(cx, fp) != Interpret_Error;
-        }
-#endif
         ion::MethodStatus status = ion::CanEnter(cx, script, fp, false);
         if (status == ion::Method_Error)
             return false;
@@ -1368,12 +1358,6 @@ check_backedge:
     if (op != JSOP_LOOPHEAD)
         DO_OP();
 
-#ifdef JS_THREADSAFE
-    if (ion::js_IonOptions.parallelWarmupContext) {
-        DO_OP();
-    }
-#endif
-
 #ifdef JS_METHODJIT
     // Attempt on-stack replacement with JaegerMonkey code, which is keyed to
     // the interpreter state at the JSOP_LOOPHEAD at the start of the loop.
@@ -2377,33 +2361,20 @@ BEGIN_CASE(JSOP_FUNCALL)
 #endif
 
 #ifdef JS_ION
-    if (ion::IsEnabled(cx)) {
-#ifdef JS_THREADSAFE
-        if (ion::js_IonOptions.parallelWarmupContext) {
-            // During parallel warmup we want to stay in the interpreter and
-            // never go to compiled sequential code, or we might not record
-            // all the calls.
-            if (!ion::js_IonOptions.parallelWarmupContext->addInvocation(regs.fp()))
-                goto error;
-            goto interpret_call;
-        }
-#endif
-
-        if (!newType) {
-            ion::MethodStatus status = ion::CanEnter(cx, script, regs.fp(), newType);
-            if (status == ion::Method_Error)
-                goto error;
-            if (status == ion::Method_Compiled) {
-                ion::IonExecStatus exec = ion::Cannon(cx, regs.fp());
-                CHECK_BRANCH();
-                if (exec == ion::IonExec_Bailout) {
-                    SET_SCRIPT(regs.fp()->script());
-                    op = JSOp(*regs.pc);
-                    DO_OP();
-                }
-                interpReturnOK = !IsErrorStatus(exec);
-                goto jit_return;
+    if (!newType && ion::IsEnabled(cx)) {
+        ion::MethodStatus status = ion::CanEnter(cx, script, regs.fp(), newType);
+        if (status == ion::Method_Error)
+            goto error;
+        if (status == ion::Method_Compiled) {
+            ion::IonExecStatus exec = ion::Cannon(cx, regs.fp());
+            CHECK_BRANCH();
+            if (exec == ion::IonExec_Bailout) {
+                SET_SCRIPT(regs.fp()->script());
+                op = JSOp(*regs.pc);
+                DO_OP();
             }
+            interpReturnOK = !IsErrorStatus(exec);
+            goto jit_return;
         }
     }
 #endif
@@ -2424,10 +2395,6 @@ BEGIN_CASE(JSOP_FUNCALL)
             goto jit_return;
         }
     }
-#endif
-
-#ifdef JS_THREADSAFE
-    interpret_call:
 #endif
 
     if (!regs.fp()->prologue(cx, newType))

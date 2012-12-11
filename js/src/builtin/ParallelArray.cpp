@@ -238,24 +238,10 @@ class FastestIonInvoke
     }
 };
 
-struct AutoEnterParallelWarmup
-{
-    AutoEnterParallelWarmup(ParallelCompileContext *compileContext) {
-        ion::js_IonOptions.startParallelWarmup(compileContext);
-    }
-    ~AutoEnterParallelWarmup() {
-        ion::js_IonOptions.finishParallelWarmup();
-    }
-};
-
-static inline bool
-InWarmup() {
-    return ion::js_IonOptions.parallelWarmupContext != NULL;
-}
-
 class ParallelDo : public ForkJoinOp
 {
-    static const uint32_t baseArgc = 3;
+    // The first 2 arguments: slice id, and number of slices.
+    static const uint32_t baseArgc = 2;
 
     JSContext *cx_;
     HeapPtrObject fun_;
@@ -302,60 +288,16 @@ class ParallelDo : public ForkJoinOp
         if (!callee->isInterpreted() || !callee->isSelfHostedBuiltin())
             return Method_Skipped;
 
-        // Ensure that the function is analyzed by TI.
-        bool hasIonScript;
-        {
-            AutoAssertNoGC nogc;
-            hasIonScript = callee->getOrCreateScript(cx_)->hasParallelIonScript();
-        }
+        if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx_))
+            return Method_Error;
 
-        if (!hasIonScript) {
-            // If the script has not been compiled in parallel, then type
-            // inference will have no particular information.  In that case,
-            // we need to do a few "warm-up" iterations to give type inference
-            // some data to work with and to record all functions called.
-            ParallelCompileContext compileContext(cx_);
-            {
-                AutoEnterParallelWarmup enter(&compileContext);
-                if (!warmup())
-                    return Method_Error;
-            }
+        Spew(cx_, SpewOps, "ParallelDo: compilation");
 
-            // After warming up, compile the outer kernel as a special
-            // self-hosted kernel that can unsafely write to the buffer.
-            Spew(cx_, SpewOps, "ParallelDo: compilation");
-            return compileContext.compileKernelAndInvokedFunctions(callee);
-        }
+        ParallelCompileContext compileContext(cx_);
+        if (!compileContext.appendToWorklist(callee))
+            return Method_Error;
 
-        return Method_Compiled;
-    }
-
-    bool warmup() {
-        JS_ASSERT(InWarmup());
-
-        uint32_t slices = ForkJoinSlices(cx_);
-        for (uint32_t id = 0; id < slices; id++) {
-            Spew(cx_, SpewOps, "ParallelDo: warmup %u/%u", id, slices);
-
-            InvokeArgsGuard args;
-            if (!cx_->stack.pushInvokeArgs(cx_, baseArgc + funArgc_, &args))
-                return false;
-
-            args.setCallee(ObjectValue(*fun_));
-            args.setThis(UndefinedValue());
-
-            // run the warmup with each of the ids
-            args[0].setInt32(id);
-            args[1].setInt32(slices);
-            args[2].setBoolean(true); // warmup
-            for (uint32_t i = 0; i < funArgc_; i++)
-                args[baseArgc + i] = funArgs_[i];
-
-            if (!Invoke(cx_, args))
-                return false;
-        }
-
-        return true;
+        return compileContext.compileTransitively();
     }
 
     virtual bool parallel(ForkJoinSlice &slice) {
@@ -366,10 +308,8 @@ class ParallelDo : public ForkJoinOp
         RootedObject fun(pt, fun_);
         FastestIonInvoke<10> fii(cx_, fun, funArgc_ + baseArgc);
 
-        // The first 3 arguments: buffer, thread id, and number of threads.
         fii.args[0] = Int32Value(slice.sliceId);
         fii.args[1] = Int32Value(slice.numSlices);
-        fii.args[2] = BooleanValue(false); // warmup
         for (uint32_t i = 0; i < funArgc_; i++)
             fii.args[baseArgc + i] = funArgs_[i];
 
@@ -429,12 +369,6 @@ Do1(JSContext *cx, CallArgs &args)
 {
     JS_ASSERT(args[0].isObject());
     JS_ASSERT(args[0].toObject().isFunction());
-
-    // Nesting is not allowed.
-    if (InWarmup()) {
-        args.rval().setBoolean(false);
-        return ExecutionDisqualified;
-    }
 
     RootedObject fun(cx, &args[0].toObject());
     ParallelDo op(cx, fun, args.array() + 2, args.length() - 2);

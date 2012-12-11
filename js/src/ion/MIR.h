@@ -1224,7 +1224,8 @@ class MCall
           types::StackTypeSet *calleeTypes)
       : construct_(construct),
         target_(target),
-        numActualArgs_(numActualArgs)
+        numActualArgs_(numActualArgs),
+        calleeTypes_(calleeTypes)
     {
         setResultType(MIRType_Value);
     }

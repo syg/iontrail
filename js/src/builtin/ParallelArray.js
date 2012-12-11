@@ -282,14 +282,19 @@ function ParallelArrayMap(f, m) {
 
   var buffer = %DenseArray(length);
 
+  // FIXME: Just throw away some work for now to warmup.
+  fill(0, 1, true);
+
   // Note: at the moment, writing "if (%InParallelSection() &&
   // TryParallel(m))" is not fully optimized away.  This would require
   // repeated loops to get it right, or else perhaps integrating UCE
   // and GVN.
-  if (!%InParallelSection())
-    if (TryParallel(m))
-      if (%ParallelDo(fill, CheckParallel(m)))
+  if (!%InParallelSection()) {
+    if (TryParallel(m)) {
+      if (%ParallelDo(fill, CheckParallel(m), false))
         return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
+    }
+  }
 
   ///////////////////////////////////////////////////////////////////////////
   // Sequential

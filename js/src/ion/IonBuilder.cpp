@@ -167,6 +167,8 @@ bool
 IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
                                 bool *isClone)
 {
+    JS_ASSERT(calleeTypes);
+
     target.set(NULL);
     if (isClone)
         *isClone = false;

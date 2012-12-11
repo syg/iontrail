@@ -279,12 +279,12 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 
     Table::AddPtr p = table.lookupForAdd(key);
     if (p) {
-#ifdef DEBUG
-    fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) already cloned %p to %p\n",
-            fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-            script->filename, PCToLineNumber(script, pc), script->function(),
-            fun.get(), p->value.get());
-#endif
+// #ifdef DEBUG
+//     fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) already cloned %p to %p\n",
+//             fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+//             script->filename, PCToLineNumber(script, pc), script->function(),
+//             fun.get(), p->value.get());
+// #endif
         return p->value;
     }
 
@@ -299,12 +299,12 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     if (!table.add(p, key, clone.get()))
         return NULL;
 
-#ifdef DEBUG
-    fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) from %p to %p\n",
-            fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-            script->filename, PCToLineNumber(script, pc), script->function(),
-            fun.get(), clone.get());
-#endif
+// #ifdef DEBUG
+//     fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) from %p to %p\n",
+//             fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+//             script->filename, PCToLineNumber(script, pc), script->function(),
+//             fun.get(), clone.get());
+// #endif
 
     return clone;
 }

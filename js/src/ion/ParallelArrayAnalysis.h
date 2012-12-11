@@ -57,31 +57,30 @@ class AutoDestroyAllocator;
 
 class ParallelCompileContext
 {
-private:
+  private:
     JSContext *cx_;
 
-    // Recorded invocations during parallel warmup.
-    AutoObjectVector invokedFunctions_;
+    // Compilation is transitive from some set of root(s).
+    AutoObjectVector worklist_;
 
-    // Are we current compiling a kernel that can unsafely write to the
-    // buffer?
-    bool compilingKernel_;
+    // Is a function compilable for parallel execution?
+    bool analyzeAndGrowWorklist(IonBuilder *builder, MIRGraph *graph);
 
-    bool canCompile(MIRGraph *graph);
+  public:
+    ParallelCompileContext(JSContext *cx)
+      : cx_(cx),
+        worklist_(cx)
+    { }
 
-public:
-    ParallelCompileContext(JSContext *cx);
+    // Should we append a function to the worklist?
+    bool appendToWorklist(HandleFunction fun);
 
     ExecutionMode executionMode() {
         return ParallelExecution;
     }
 
-    bool canUnsafelyWrite(MInstruction *write, MDefinition *obj);
-    bool addInvocation(StackFrame *fp);
-    MethodStatus compileKernelAndInvokedFunctions(HandleFunction kernel);
-
-    // defined in Ion.cpp, so that they can make use of static fns defined there
-    MethodStatus compileFunction(HandleFunction fun);
+    // Defined in Ion.cpp, so that they can make use of static fns defined there
+    MethodStatus compileTransitively();
     bool compile(IonBuilder *builder, MIRGraph *graph, AutoDestroyAllocator &autoDestroy);
 };
 
