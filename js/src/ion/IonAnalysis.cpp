@@ -299,6 +299,188 @@ ion::EliminatePhis(MIRGenerator *mir, MIRGraph &graph)
     return true;
 }
 
+static bool
+PrunePointlessBranchesAndMarkReachableBlocks(MIRGraph &graph, uint32_t *marked)
+{
+    Vector<MBasicBlock *, 16, SystemAllocPolicy> worklist;
+
+    // Seed with the two entry points:
+    MBasicBlock *entries[] = { graph.entryBlock(), graph.osrBlock() };
+    for (uint i = 0; i < sizeof(entries) / sizeof(entries[0]); i++) {
+        if (entries[i]) {
+            entries[i]->mark();
+            (*marked)++;
+            if (!worklist.append(entries[i]))
+                return false;
+        }
+    }
+
+    // Process everything reachable from there:
+    while (!worklist.empty()) {
+        MBasicBlock *block = worklist.popCopy();
+        MControlInstruction *ins = block->lastIns();
+
+        // Rewrite test false or test true to goto:
+        if (ins->isTest()) {
+            MTest *testIns = ins->toTest();
+            MDefinition *v = testIns->getOperand(0);
+            if (v->isConstant()) {
+                const Value &val = v->toConstant()->value();
+                if (val.isBoolean()) {
+                    BranchDirection bdir = (val.isTrue() ? TRUE_BRANCH : FALSE_BRANCH);
+                    MBasicBlock *succ = testIns->branchSuccessor(bdir);
+                    MGoto *gotoIns = MGoto::New(succ);
+                    block->discardLastIns();
+                    block->end(gotoIns);
+                    MBasicBlock *successorWithPhis = block->successorWithPhis();
+                    if (successorWithPhis && successorWithPhis != succ)
+                        block->setSuccessorWithPhis(NULL, 0);
+                }
+            }
+        }
+
+        for (size_t i = 0; i < block->numSuccessors(); i++) {
+            MBasicBlock *succ = block->getSuccessor(i);
+            if (!succ->isMarked()) {
+                succ->mark();
+                (*marked)++;
+                if (!worklist.append(succ))
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
+static void
+RemoveUsesFromUnmarkedBlocks(MDefinition *instr) {
+    for (MUseIterator iter(instr->usesBegin()); iter != instr->usesEnd(); ) {
+        if (!iter->node()->block()->isMarked())
+            iter = instr->removeUse(iter);
+        else
+            iter++;
+    }
+}
+
+static bool
+RemoveUnmarkedBlocksAndClearDominators(MIRGraph &graph,
+                                       size_t marked,
+                                       bool *redundantPhis)
+{
+    // Removes blocks that are not marked from the graph.  For blocks
+    // that *are* marked, clears the mark and adjusts the id to its
+    // new value.  Also adds blocks that are immediately reachable
+    // from an unmarked block to the frontier.
+
+    size_t id = marked;
+    for (PostorderIterator iter(graph.poBegin()); iter != graph.poEnd();) {
+        MBasicBlock *block = *iter;
+        iter++;
+
+        // Unconditionally clear the dominators.  It's somewhat complex to
+        // adjust the values and relatively fast to just recompute.
+        block->clearDominatorInfo();
+
+        if (block->isMarked()) {
+            block->setId(--id);
+            for (MPhiIterator iter(block->phisBegin()); iter != block->phisEnd(); iter++)
+                RemoveUsesFromUnmarkedBlocks(*iter);
+            for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++)
+                RemoveUsesFromUnmarkedBlocks(*iter);
+        } else {
+            if (block->numPredecessors() > 1) {
+                // If this block had phis, then any reachable
+                // predecessors need to have the successorWithPhis
+                // flag cleared.
+                for (size_t i = 0; i < block->numPredecessors(); i++)
+                    block->getPredecessor(i)->setSuccessorWithPhis(NULL, 0);
+            }
+
+            if (block->isLoopBackedge()) {
+                // NB. We have to update the loop header if we
+                // eliminate the backedge. At first I thought this
+                // check would be insufficient, because it would be
+                // possible to have code like this:
+                //
+                //    while (true) {
+                //       ...;
+                //       if (1 == 1) break;
+                //    }
+                //
+                // in which the backedge is removed as part of
+                // rewriting the condition, but no actual blocks are
+                // removed.  However, in all such cases, the backedge
+                // would be a critical edge and hence the critical
+                // edge block is being removed.
+                block->loopHeaderOfBackedge()->clearLoopHeader();
+            }
+
+            for (size_t i = 0, c = block->numSuccessors(); i < c; i++) {
+                MBasicBlock *succ = block->getSuccessor(i);
+                if (succ->isMarked()) {
+                    // succ is on the frontier of blocks to be removed:
+                    succ->removePredecessor(block);
+
+                    if (!*redundantPhis) {
+                        for (MPhiIterator iter(succ->phisBegin()); iter != succ->phisEnd(); iter++) {
+                            if (IsPhiRedundant(*iter)) {
+                                *redundantPhis = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            graph.removeBlock(block);
+        }
+    }
+
+    return true;
+}
+
+bool
+ion::EliminateUnreachableCode(MIRGenerator *mir, MIRGraph &graph)
+{
+    // The goal of this routine is to eliminate code that is
+    // unreachable, either because there is no path from the entry
+    // block to the code, or because the path traverses a conditional
+    // branch where the condition is a constant (e.g., "if (false) {
+    // ... }").  The latter can either appear in the source form or
+    // arise due to optimizations.
+    //
+    // The stategy is straightforward.  The pass begins with a
+    // depth-first search.  We set a bit on each basic block that
+    // is visited.  If a block terminates in a conditional branch
+    // predicated on a constant, we rewrite the block to an unconditional
+    // jump and do not visit the now irrelevant basic block.
+    //
+    // Once the initial DFS is complete, we do a second pass over the
+    // blocks to find those that were not reached.  Those blocks are
+    // simply removed wholesale.  We must also correct any phis that
+    // may be affected..
+
+    // Pass 1: Identify unreachable blocks (if any).
+    uint32_t marked = 0;
+    if (!PrunePointlessBranchesAndMarkReachableBlocks(graph, &marked))
+        return false;
+    if (marked == graph.numBlocks()) {
+        // Everything is reachable.
+        graph.unmarkBlocks();
+        return true;
+    }
+
+    // Pass 2: Remove unmarked blocks.
+    bool redundantPhis = false;
+    if (!RemoveUnmarkedBlocksAndClearDominators(graph, marked, &redundantPhis))
+        return false;
+    graph.unmarkBlocks();
+
+    // Pass 3: Recompute dominators and tweak phis.
+    BuildDominatorTree(graph);
+    return !redundantPhis || EliminatePhis(mir, graph);
+}
+
 // The type analysis algorithm inserts conversions and box/unbox instructions
 // to make the IR graph well-typed for future passes.
 //
@@ -871,7 +1053,10 @@ ion::AssertGraphCoherency(MIRGraph &graph)
 {
 #ifdef DEBUG
     // Assert successor and predecessor list coherency.
+    uint32_t count = 0;
     for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
+        count++;
+
         for (size_t i = 0; i < block->numSuccessors(); i++)
             JS_ASSERT(CheckSuccessorImpliesPredecessor(*block, block->getSuccessor(i)));
 
@@ -884,7 +1069,64 @@ ion::AssertGraphCoherency(MIRGraph &graph)
         }
     }
 
+    JS_ASSERT(graph.numBlocks() == count);
+
     AssertReversePostOrder(graph);
+#endif
+}
+
+void
+ion::AssertExtendedGraphCoherency(MIRGraph &graph)
+{
+    // Checks the basic GraphCoherency but also other conditions that
+    // do not hold immediately (such as the fact that critical edges
+    // are split)
+
+#ifdef DEBUG
+    AssertGraphCoherency(graph);
+
+    uint32_t idx = 0;
+    for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
+        JS_ASSERT(block->id() == idx++);
+
+        // No critical edges:
+        if (block->numSuccessors() > 1) {
+            for (size_t i = 0; i < block->numSuccessors(); i++) {
+                JS_ASSERT(block->getSuccessor(i)->numPredecessors() == 1);
+            }
+        }
+
+        if (block->isLoopHeader()) {
+            JS_ASSERT(block->numPredecessors() == 2);
+            MBasicBlock *backedge = block->getPredecessor(1);
+            JS_ASSERT(backedge->id() >= block->id());
+            JS_ASSERT(backedge->numSuccessors() == 1);
+            JS_ASSERT(backedge->getSuccessor(0) == *block);
+        }
+
+        if (!block->phisEmpty()) {
+            for (size_t i = 0; i < block->numPredecessors(); i++) {
+                MBasicBlock *pred = block->getPredecessor(i);
+                JS_ASSERT(pred->successorWithPhis() == *block);
+                JS_ASSERT(pred->positionInPhiSuccessor() == i);
+            }
+        }
+
+        uint32_t successorWithPhis = 0;
+        for (size_t i = 0; i < block->numSuccessors(); i++) {
+            if (!block->getSuccessor(i)->phisEmpty()) {
+                successorWithPhis++;
+            }
+        }
+        JS_ASSERT(successorWithPhis <= 1);
+        JS_ASSERT_IF(successorWithPhis, block->successorWithPhis() != NULL);
+
+        // I'd like to assert this, but it's not necc. true.  Sometimes we set this
+        // flag to non-NULL just because a successor has multiple preds, even if it
+        // does not actually have any phis.
+        //
+        // JS_ASSERT_IF(!successorWithPhis, block->successorWithPhis() == NULL);
+    }
 #endif
 }
 

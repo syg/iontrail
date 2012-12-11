@@ -32,6 +32,9 @@ bool
 EliminateDeadCode(MIRGenerator *mir, MIRGraph &graph);
 
 bool
+EliminateUnreachableCode(MIRGenerator *mir, MIRGraph &graph);
+
+bool
 ApplyTypeInformation(MIRGenerator *mir, MIRGraph &graph);
 
 bool
@@ -45,6 +48,9 @@ BuildPhiReverseMapping(MIRGraph &graph);
 
 void
 AssertGraphCoherency(MIRGraph &graph);
+
+void
+AssertExtendedGraphCoherency(MIRGraph &graph);
 
 bool
 EliminateRedundantBoundsChecks(MIRGraph &graph);
