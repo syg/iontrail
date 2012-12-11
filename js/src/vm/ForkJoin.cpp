@@ -236,6 +236,12 @@ ForkJoinShared::~ForkJoinShared()
 ParallelResult
 ForkJoinShared::execute()
 {
+    // Sometimes a GC request occurs *just before* we enter into the
+    // parallel section.  Rather than enter into the parallel section
+    // and then abort, we just check here and abort early.
+    if (cx_->runtime->interrupt)
+        return TP_RETRY_SEQUENTIALLY;
+
     AutoLockMonitor lock(*this);
 
     // Notify workers to start and execute one portion on this thread.
@@ -339,6 +345,11 @@ ForkJoinShared::check(ForkJoinSlice &slice)
 
     if (slice.isMainThread()) {
         if (cx_->runtime->interrupt) {
+            // The GC Needed flag should not be set during parallel
+            // execution.  Instead, one of the requestGC() or
+            // requestCompartmentGC() methods should be invoked.
+            JS_ASSERT(!cx_->runtime->gcIsNeeded);
+
             // If interrupt is requested, bring worker threads to a halt,
             // service the interrupt, then let them start back up again.
             AutoRendezvous autoRendezvous(slice);
