@@ -69,38 +69,33 @@ ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 #ifdef DEBUG
     static enum { NotSet, All, Bailouts } traceMode;
 
-    /*
-       If you set IONFLAGS=trace, this function will be invoked before every LIR.
-
-       You can either modify it to do whatever you like, or use gdb scripting.
-       For example:
-
-       break ParTrace
-       commands
-       continue
-       exit
-     */
+    // If you set IONFLAGS=trace, this function will be invoked before every LIR.
+    //
+    // You can either modify it to do whatever you like, or use gdb scripting.
+    // For example:
+    //
+    // break ParTrace
+    // commands
+    // continue
+    // exit
 
     if (traceMode == NotSet) {
         // Racy, but that's ok.
         const char *env = getenv("IONFLAGS");
-        if (strstr(env, "trace-all")) {
+        if (strstr(env, "trace-all"))
             traceMode = All;
-        } else {
+        else
             traceMode = Bailouts;
-        }
     }
 
     IonTraceData *cached;
-    if (execModeInt == 0) {
+    if (execModeInt == 0)
         cached = &seqTraceData;
-    } else {
+    else
         cached = &ForkJoinSlice::current()->traceData;
-    }
 
-    if (bblock == 0xDEADBEEF) {
+    if (bblock == 0xDEADBEEF)
         printTrace("BAILOUT", cached);
-    }
 
     cached->bblock = bblock;
     cached->lir = lir;
@@ -123,11 +118,9 @@ ion::ParCheckOverRecursed(ForkJoinSlice *slice)
     // and, if not, check whether an interrupt is needed.
     if (slice->isMainThread()) {
         int stackDummy_;
-        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(slice->runtime()), &stackDummy_)) {
+        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(slice->runtime()), &stackDummy_))
             return false;
-        } else {
-            return ParCheckInterrupt(slice);
-        }
+        return ParCheckInterrupt(slice);
     } else {
         // FIXME---we don't ovewrite the stack limit for worker
         // threads, which means that technically they can recurse
@@ -143,9 +136,8 @@ ion::ParCheckInterrupt(ForkJoinSlice *slice)
 {
     JS_ASSERT(ForkJoinSlice::current() == slice);
     bool result = slice->check();
-    if (!result) {
+    if (!result)
         return false;
-    }
     return true;
 }
 
