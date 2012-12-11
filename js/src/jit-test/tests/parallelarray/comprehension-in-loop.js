@@ -14,5 +14,4 @@ function buildComprehension() {
   }
 }
 
-// FIXME--call-site cloning failure that occurs after GC
-// buildComprehension();
+buildComprehension();
