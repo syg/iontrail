@@ -331,6 +331,10 @@ class IonBuilder : public MIRGenerator
                                types::StackTypeSet *barrier, types::StackTypeSet *types,
                                TypeOracle::Unary unary, TypeOracle::UnaryTypes unaryTypes);
 
+    // Typed array helpers.
+    MInstruction *getTypedArrayLength(MDefinition *obj);
+    MInstruction *getTypedArrayElements(MDefinition *obj);
+
     bool jsop_add(MDefinition *left, MDefinition *right);
     bool jsop_bitnot();
     bool jsop_bitop(JSOp op);
@@ -437,7 +441,9 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineRegExpTest(uint32_t argc, bool constructing);
 
     // Parallel Array.
-    InliningStatus inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing);
+    InliningStatus inlineUnsafeSetElement(uint32_t argc, bool constructing);
+    InliningStatus inlineUnsafeSetDenseArrayElement(uint32_t argc);
+    InliningStatus inlineUnsafeSetTypedArrayElement(uint32_t argc, int arrayType);
     InliningStatus inlineInParallelSection(uint32_t argc, bool constructing);
     InliningStatus inlineNewParallelArray(uint32_t argc, bool constructing);
     InliningStatus inlineParallelArrayCtor(uint32_t argc, bool constructing);

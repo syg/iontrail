@@ -182,7 +182,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(ArrayPush)
     SAFE_OP(LoadTypedArrayElement)
     SAFE_OP(LoadTypedArrayElementHole)
-    UNSAFE_OP(StoreTypedArrayElement)
+    MAYBE_WRITE_GUARDED_OP(StoreTypedArrayElement, elements)
     UNSAFE_OP(ClampToUint8)
     SAFE_OP(LoadFixedSlot)
     WRITE_GUARDED_OP(StoreFixedSlot, object)

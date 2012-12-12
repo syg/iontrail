@@ -76,8 +76,8 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
         return inlineRegExpTest(argc, constructing);
 
     // Parallel Array
-    if (native == intrinsic_UnsafeSetDenseArrayElement)
-        return inlineUnsafeSetDenseArrayElement(argc, constructing);
+    if (native == intrinsic_UnsafeSetElement)
+        return inlineUnsafeSetElement(argc, constructing);
     if (native == intrinsic_InParallelSection)
         return inlineInParallelSection(argc, constructing);
     if (native == intrinsic_NewParallelArray)
@@ -833,26 +833,33 @@ IonBuilder::inlineRegExpTest(uint32_t argc, bool constructing)
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing)
+IonBuilder::inlineUnsafeSetElement(uint32_t argc, bool constructing)
 {
     if (argc != 3 || constructing)
         return InliningStatus_NotInlined;
 
-    if (getInlineArgType(argc, 1) != MIRType_Object)
-        return InliningStatus_NotInlined;
+    types::StackTypeSet *obj = getInlineArgTypeSet(argc, 1);
+    types::StackTypeSet *id = getInlineArgTypeSet(argc, 2);
 
-    if (getInlineArgType(argc, 2) != MIRType_Int32)
-        return InliningStatus_NotInlined;
+    if (oracle->elementAccessIsDenseArray(obj, id))
+        return inlineUnsafeSetDenseArrayElement(argc);
 
+    int arrayType;
+    if (oracle->elementAccessIsTypedArray(obj, id, &arrayType))
+        return inlineUnsafeSetTypedArrayElement(argc, arrayType);
+
+    return InliningStatus_NotInlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc)
+{
     // Note: we do not check the conditions that are asserted as true
-    // in intrinsic_UnsafeSetDenseArrayElement():
+    // in intrinsic_UnsafeSetElement():
     // - arr is a dense array
     // - idx < initialized length
     // Furthermore, note that inference should be propagating
     // the type of the value to the JSID_VOID property of the array.
-
-    types::StackTypeSet *arrTypes = getInlineArgTypeSet(argc, 1);
-    JS_ASSERT(!arrTypes->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY));
 
     MDefinitionVector argv;
     if (!discardCall(argc, argv, current))
@@ -861,13 +868,51 @@ IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc, bool constructing)
     MElements *elements = MElements::New(argv[1]);
     current->add(elements);
 
-    MToInt32 *toInt32 = MToInt32::New(argv[2]);
-    current->add(toInt32);
+    MToInt32 *id = MToInt32::New(argv[2]);
+    current->add(id);
 
-    MStoreElement *store = MStoreElement::New(elements, toInt32, argv[3]);
+    MStoreElement *store = MStoreElement::New(elements, id, argv[3]);
     store->setRacy();
+
     current->add(store);
-    current->push(store);
+    current->push(argv[3]);
+
+    if (!resumeAfter(store))
+        return InliningStatus_Error;
+
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineUnsafeSetTypedArrayElement(uint32_t argc, int arrayType)
+{
+    // Note: we do not check the conditions that are asserted as true
+    // in intrinsic_UnsafeSetElement():
+    // - arr is a typed array
+    // - idx < length
+
+    MDefinitionVector argv;
+    if (!discardCall(argc, argv, current))
+        return InliningStatus_Error;
+
+    MInstruction *elements = getTypedArrayElements(argv[1]);
+    current->add(elements);
+
+    MToInt32 *id = MToInt32::New(argv[2]);
+    current->add(id);
+
+    MDefinition *value = argv[3];
+    MDefinition *unclampedValue = value;
+    if (arrayType == TypedArray::TYPE_UINT8_CLAMPED) {
+        value = MClampToUint8::New(value);
+        current->add(value->toInstruction());
+    }
+
+    MStoreTypedArrayElement *store = MStoreTypedArrayElement::New(elements, id, value, arrayType);
+    store->setRacy();
+
+    current->add(store);
+    current->push(unclampedValue);
 
     if (!resumeAfter(store))
         return InliningStatus_Error;

@@ -626,28 +626,37 @@ intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
 }
 
 JSBool
-js::intrinsic_UnsafeSetDenseArrayElement(JSContext *cx, unsigned argc, Value *vp)
+js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %UnsafeSetDenseArrayElement(arr, idx, elem)
+    // Usage: %UnsafeSetElement(arr, idx, elem)
     //
-    // Updates element |idx| of the dense array |arr|.  |arr| must be
-    // a dense array and the index must be an int32 less than the
-    // initialized length of |arr|.  Use
-    // |%EnsureDenseResultArrayElements| to ensure that the
-    // initialized length is long enough.
-
+    // Updates element |idx| of the dense array |arr|.
+    //
+    // If |arr| is a dense array, the index must be an int32 less than the
+    // initialized length of |arr|. Use |%EnsureDenseResultArrayElements| to
+    // ensure that the initialized length is long enough.
+    //
+    // If |arr| is a typed array, the index must be an int32 less than the
+    // length of |arr|.
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    JS_ASSERT(args[0].isObject() && args[0].toObject().isDenseArray());
-    JS_ASSERT(args[1].isInt32());
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().isDenseArray() || args[0].toObject().isTypedArray());
     JS_ASSERT(args[1].isInt32());
 
     RootedObject arrobj(cx, &args[0].toObject());
     uint32_t idx = args[1].toInt32();
 
-    JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
+    if (arrobj->isDenseArray()) {
+        JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
+        JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[2]);
+    } else {
+        JS_ASSERT(idx < TypedArray::length(arrobj));
+        RootedValue tmp(cx, args[2]);
+        // XXX: Always non-strict.
+        JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false);
+    }
 
-    JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[2]);
     args.rval().setUndefined();
     return true;
 }
@@ -674,7 +683,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
     JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
     JS_FN("DenseArray",         intrinsic_DenseArray,           1,0),
-    JS_FN("UnsafeSetDenseArrayElement", intrinsic_UnsafeSetDenseArrayElement, 3,0),
+    JS_FN("UnsafeSetElement",   intrinsic_UnsafeSetElement,     3,0),
     JS_FN("InParallelSection",  intrinsic_InParallelSection,    0,0),
 
 #ifdef DEBUG

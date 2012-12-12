@@ -4023,9 +4023,12 @@ class MStoreTypedArrayElement
 {
     int arrayType_;
 
+    // See note in MStoreElementCommon.
+    bool racy_;
+
     MStoreTypedArrayElement(MDefinition *elements, MDefinition *index, MDefinition *value,
                             int arrayType)
-      : MTernaryInstruction(elements, index, value), arrayType_(arrayType)
+      : MTernaryInstruction(elements, index, value), arrayType_(arrayType), racy_(false)
     {
         setResultType(MIRType_Value);
         setMovable();
@@ -4068,6 +4071,12 @@ class MStoreTypedArrayElement
     }
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::TypedArrayElement);
+    }
+    bool racy() const {
+        return racy_;
+    }
+    void setRacy() {
+        racy_ = true;
     }
 };
 

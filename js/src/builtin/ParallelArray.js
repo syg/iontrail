@@ -189,7 +189,7 @@ function ParallelArrayBuild(self, shape, f) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++)
-      %UnsafeSetDenseArrayElement(buffer, i, f(i));
+      %UnsafeSetElement(buffer, i, f(i));
   }
 
   function fill2(id, n, warmup, xw, yw) {
@@ -198,7 +198,7 @@ function ParallelArrayBuild(self, shape, f) {
     var x = (start / yw) | 0;
     var y = start - x*yw;
     for (var i = start; i < end; i++) {
-      %UnsafeSetDenseArrayElement(buffer, i, f(x, y));
+      %UnsafeSetElement(buffer, i, f(x, y));
       if (++y == yw) {
         y = 0;
         ++x;
@@ -214,7 +214,7 @@ function ParallelArrayBuild(self, shape, f) {
     var y = (r / zw) | 0;
     var z = r - y*zw;
     for (var i = start; i < end; i++) {
-      %UnsafeSetDenseArrayElement(buffer, i, f(x, y, z));
+      %UnsafeSetElement(buffer, i, f(x, y, z));
       if (++z == zw) {
         z = 0;
         if (++y == yw) {
@@ -233,7 +233,7 @@ function ParallelArrayBuild(self, shape, f) {
     if (warmup) { end = TruncateEnd(start, end); }
     var indices = ComputeIndices(shape, start);
     for (var i = start; i < end; i++) {
-      %UnsafeSetDenseArrayElement(buffer, i, f.apply(null, indices));
+      %UnsafeSetElement(buffer, i, f.apply(null, indices));
       StepIndices(shape, indices);
     }
   }
@@ -267,7 +267,7 @@ function ParallelArrayMap(f, m) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++)
-      %UnsafeSetDenseArrayElement(buffer, i, f(self.get(i), i, self));
+      %UnsafeSetElement(buffer, i, f(self.get(i), i, self));
   }
 }
 
@@ -326,7 +326,7 @@ function ParallelArrayReduce(f, m) {
   function fill(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
-    %UnsafeSetDenseArrayElement(subreductions, id, reduce(start, end));
+    %UnsafeSetElement(subreductions, id, reduce(start, end));
   }
 }
 
@@ -383,7 +383,7 @@ function ParallelArrayScan(f, m) {
     buffer[start] = acc;
     for (var i = start + 1; i < end; i++) {
       acc = f(acc, self.get(i));
-      %UnsafeSetDenseArrayElement(buffer, i, acc);
+      %UnsafeSetElement(buffer, i, acc);
     }
   }
 
@@ -444,7 +444,7 @@ function ParallelArrayScan(f, m) {
       if (warmup) { end = TruncateEnd(start, end); }
       var intermediate = intermediates[id - 1];
       for (var i = start; i < end; i++)
-        %UnsafeSetDenseArrayElement(buffer, i, f(intermediate, buffer[i]));
+        %UnsafeSetElement(buffer, i, f(intermediate, buffer[i]));
     }
   }
 }
@@ -549,7 +549,7 @@ function ParallelArrayFilter(filters, m) {
       if (filters[i])
         count++;
     }
-    %UnsafeSetDenseArrayElement(keepers, id, count);
+    %UnsafeSetElement(keepers, id, count);
   }
 
   function copy_keepers(id, n, warmup) {
@@ -564,7 +564,7 @@ function ParallelArrayFilter(filters, m) {
 
     for (var i = start; i < end; i++) {
       if (filters[i])
-        %UnsafeSetDenseArrayElement(buffer, pos++, self.get(i));
+        %UnsafeSetElement(buffer, pos++, self.get(i));
     }
   }
 }
