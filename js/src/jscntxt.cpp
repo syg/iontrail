@@ -64,6 +64,7 @@
 #include "jscompartment.h"
 #include "jsobjinlines.h"
 #include "jsinferinlines.h"
+#include "jstypedarrayinlines.h"
 #include "vm/ForkJoin-inl.h"
 
 #include "selfhosted.out.h"
