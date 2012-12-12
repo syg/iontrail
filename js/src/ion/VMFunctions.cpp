@@ -48,8 +48,6 @@ ShouldMonitorReturnType(JSFunction *fun)
 bool
 InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value *rval)
 {
-    Value fval = ObjectValue(*fun);
-
     // In order to prevent massive bouncing between Ion and JM, see if we keep
     // hitting functions that are uncompilable.
     if (fun->isInterpreted()) {
@@ -97,6 +95,7 @@ InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value
     Value *argvWithoutThis = argv + 1;
 
     // Run the function in the interpreter.
+    Value fval = ObjectValue(*fun);
     bool ok = Invoke(cx, thisv, fval, argc, argvWithoutThis, rval);
     if (ok && needsMonitor)
         types::TypeScript::Monitor(cx, *rval);
@@ -107,8 +106,6 @@ InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value
 bool
 InvokeConstructor(JSContext *cx, JSObject *obj, uint32_t argc, Value *argv, Value *rval)
 {
-    Value fval = ObjectValue(*obj);
-
     // See the comment in InvokeFunction.
     bool needsMonitor;
 
@@ -118,6 +115,17 @@ InvokeConstructor(JSContext *cx, JSObject *obj, uint32_t argc, Value *argv, Valu
         {
             return false;
         }
+
+        if (obj->toFunction()->isCloneAtCallsite()) {
+            RootedFunction original(cx, obj->toFunction());
+            RootedScript script(cx);
+            jsbytecode *pc;
+            types::TypeScript::GetPcScript(cx, &script, &pc);
+            obj = CloneFunctionAtCallsite(cx, original, script, pc);
+            if (!obj)
+                return false;
+        }
+
         needsMonitor = ShouldMonitorReturnType(obj->toFunction());
     } else {
         needsMonitor = true;
@@ -126,6 +134,7 @@ InvokeConstructor(JSContext *cx, JSObject *obj, uint32_t argc, Value *argv, Valu
     // Data in the argument vector is arranged for a JIT -> JIT call.
     Value *argvWithoutThis = argv + 1;
 
+    Value fval = ObjectValue(*obj);
     bool ok = js::InvokeConstructor(cx, fval, argc, argvWithoutThis, rval);
     if (ok && needsMonitor)
         types::TypeScript::Monitor(cx, *rval);

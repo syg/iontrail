@@ -277,8 +277,15 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     key.original = fun;
 
     Table::AddPtr p = table.lookupForAdd(key);
-    if (p)
+    if (p) {
+#ifdef DEBUG
+    fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) already cloned %p to %p\n",
+            fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+            script->filename, PCToLineNumber(script, pc), script->function(),
+            fun.get(), p->value.get());
+#endif
         return p->value;
+    }
 
     RootedObject parent(cx, fun->environment());
     RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
