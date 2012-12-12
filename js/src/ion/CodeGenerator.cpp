@@ -1909,9 +1909,6 @@ CodeGenerator::visitNewArray(LNewArray *lir)
 
     JS_ASSERT(count < JSObject::NELEMENTS_LIMIT);
 
-    size_t maxArraySlots =
-        gc::GetGCKindSlots(gc::FINALIZE_OBJECT_LAST) - ObjectElements::VALUES_PER_HEADER;
-
     if (lir->mir()->shouldUseVM())
         return visitNewArrayCallVM(lir);
 
