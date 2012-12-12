@@ -2,10 +2,8 @@
 // FIXME: Must be able to call native intrinsics in parallel with a JSContext,
 //        or have native intrinsics provide both a sequential and a parallel
 //        version.
-// TODO: Multi-dimensional.
 // TODO: Use let over var when Ion compiles let.
 // TODO: Private names.
-// XXX: Experiment with cloning the whole op.
 // XXX: Hide buffer and other fields?
 
 function ComputeTileBounds(len, id, n) {
@@ -95,9 +93,8 @@ function ParallelArrayConstruct1(buffer) {
     %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
 
   var buffer1 = [];
-  for (var i = 0; i < length; i++) {
+  for (var i = 0; i < length; i++)
     buffer1[i] = buffer[i];
-  }
 
   this.buffer = buffer1;
   this.offset = 0;
@@ -130,13 +127,12 @@ function ParallelArrayConstruct3(shape, buffer, offset) {
   this.offset = offset;
   this.get = ParallelArrayGetN;
 
-  if (shape.length == 1) {
+  if (shape.length == 1)
     this.get = ParallelArrayGet1;
-  } else if (shape.length == 2) {
+  else if (shape.length == 2)
     this.get = ParallelArrayGet2;
-  } else if (shape.length == 3) {
+  else if (shape.length == 3)
     this.get = ParallelArrayGet3;
-  }
 }
 
 function ParallelArrayBuild(self, shape, f) {
@@ -146,9 +142,8 @@ function ParallelArrayBuild(self, shape, f) {
   if (shape.length === 1) {
     var length = shape[0];
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill1, null)) {
+    if (!%ParallelDo(fill1, null))
       fill1(0, 1, false);
-    }
     self.get = ParallelArrayGet1;
     self.buffer = buffer;
   } else if (shape.length === 2) {
@@ -156,9 +151,8 @@ function ParallelArrayBuild(self, shape, f) {
     var yw = shape[1];
     var length = xw * yw;
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill2, null, yw)) {
+    if (!%ParallelDo(fill2, null, yw))
       fill2(0, 1, false, yw);
-    }
     self.get = ParallelArrayGet2;
     self.buffer = buffer;
   } else if (shape.length == 3) {
@@ -167,34 +161,33 @@ function ParallelArrayBuild(self, shape, f) {
     var zw = shape[2];
     var length = xw * yw * zw;
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill3, null, yw, zw)) {
+    if (!%ParallelDo(fill3, null, yw, zw))
       fill3(0, 1, false, yw, zw);
-    }
     self.get = ParallelArrayGet3;
     self.buffer = buffer;
   } else {
     var length = 1;
-    for (var i = 0; i < shape.length; i++) {
+    for (var i = 0; i < shape.length; i++)
       length *= shape[i];
-    }
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fillN, null)) {
+    if (!%ParallelDo(fillN, null))
       fillN(0, 1, false);
-    }
     self.get = ParallelArrayGetN;
     self.buffer = buffer;
   }
 
   function fill1(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     for (var i = start; i < end; i++)
       %UnsafeSetElement(buffer, i, f(i));
   }
 
   function fill2(id, n, warmup, yw) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     var x = (start / yw) | 0;
     var y = start - x*yw;
     for (var i = start; i < end; i++) {
@@ -208,7 +201,8 @@ function ParallelArrayBuild(self, shape, f) {
 
   function fill3(id, n, warmup, yw, zw) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     var x = (start / (yw*zw)) | 0;
     var r = start - x*yw*zw;
     var y = (r / zw) | 0;
@@ -230,7 +224,8 @@ function ParallelArrayBuild(self, shape, f) {
     // use of `f.apply()`.  But it's written as if it could be.  A guy
     // can dream, can't he?
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     var indices = ComputeIndices(shape, start);
     for (var i = start; i < end; i++) {
       %UnsafeSetElement(buffer, i, f.apply(null, indices));
@@ -265,7 +260,8 @@ function ParallelArrayMap(f, m) {
 
   function fill(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     for (var i = start; i < end; i++)
       %UnsafeSetElement(buffer, i, f(self.get(i), i, self));
   }
@@ -325,7 +321,8 @@ function ParallelArrayReduce(f, m) {
 
   function fill(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     %UnsafeSetElement(subreductions, id, reduce(start, end));
   }
 }
@@ -402,7 +399,8 @@ function ParallelArrayScan(f, m) {
     //
     // Read on in phase2 to see what we do next!
     var [start, end] = ComputeTileBounds(self.shape[0], id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     scan(start, end);
   }
 
@@ -514,7 +512,7 @@ function ParallelArrayFilter(filters, m) {
     var slices = %ParallelSlices();
     if (length > slices) {
       var keepers = %DenseArray(slices);
-      if (%ParallelDo(count_keepers, CheckParallel(m))) {
+      if (%ParallelDo(countKeepers, CheckParallel(m))) {
         var total = 0;
         for (var i = 0; i < keepers.length; i++)
           total += keepers[i];
@@ -523,9 +521,8 @@ function ParallelArrayFilter(filters, m) {
           return %NewParallelArray([0], [], 0);
 
         var buffer = %DenseArray(total);
-        if (%ParallelDo(copy_keepers, CheckParallel(m))) {
+        if (%ParallelDo(copyKeepers, CheckParallel(m)))
           return %NewParallelArray([total], buffer, 0);
-        }
       }
     }
   }
@@ -541,9 +538,10 @@ function ParallelArrayFilter(filters, m) {
   }
   return %NewParallelArray([buffer.length], buffer, 0);
 
-  function count_keepers(id, n, warmup) {
+  function countKeepers(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
     var count = 0;
     for (var i = start; i < end; i++) {
       if (filters[i])
@@ -552,9 +550,10 @@ function ParallelArrayFilter(filters, m) {
     %UnsafeSetElement(keepers, id, count);
   }
 
-  function copy_keepers(id, n, warmup) {
+  function copyKeepers(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
-    if (warmup) { end = TruncateEnd(start, end); }
+    if (warmup)
+      end = TruncateEnd(start, end);
 
     var pos = 0;
     if (id > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
@@ -600,57 +599,48 @@ function ParallelArrayFlatten() {
 //
 
 function ParallelArrayGet1(i) {
-  var udef; // For some reason `undefined` doesn't work
-  if (i === udef) {
+  if (i === undefined)
     return this;
-  } else {
-    return this.buffer[this.offset + i];
-  }
+  return this.buffer[this.offset + i];
 }
 
 function ParallelArrayGet2(x, y) {
-  var udef; // For some reason `undefined` doesn't work
   var xw = this.shape[0];
   var yw = this.shape[1];
-  if (x === udef) {
+  if (x === undefined)
     return this;
-  } else if (x >= xw) {
-    return udef;
-  } else if (y === udef) {
+  if (x >= xw)
+    return undefined;
+  if (y === undefined)
     return %NewParallelArray([yw], this.buffer, this.offset + x*yw);
-  } else if (y >= yw) {
-    return udef;
-  } else {
-    var offset = y + x*yw;
-    return this.buffer[this.offset + offset];
-  }
+  if (y >= yw)
+    return undefined;
+  var offset = y + x*yw;
+  return this.buffer[this.offset + offset];
 }
 
 function ParallelArrayGet3(x, y, z) {
-  var udef; // For some reason `undefined` doesn't work
   var xw = this.shape[0];
   var yw = this.shape[1];
   var zw = this.shape[2];
-  if (x === udef) {
+  if (x === undefined)
     return this;
-  } else if (x >= xw) {
-    return udef;
-  } else if (y === udef) {
+  if (x >= xw)
+    return undefined;
+  if (y === undefined)
     return %NewParallelArray([yw, zw], this.buffer, this.offset + x*yw*zw);
-  } else if (y >= yw) {
-    return udef;
-  } else if (z === udef) {
+  if (y >= yw)
+    return undefined;
+  if (z === undefined)
     return %NewParallelArray([zw], this.buffer, this.offset + y*zw + x*yw*zw);
-  } else if (z >= zw) {
-    return udef;
-  } else {
-    var offset = z + y*zw + x*yw*zw;
-    return this.buffer[this.offset + offset];
-  }
+  if (z >= zw)
+    return undefined;
+  var offset = z + y*zw + x*yw*zw;
+  return this.buffer[this.offset + offset];
 }
 
 function ParallelArrayGetN(...coords) {
-  var udef; // For some reason `undefined` doesn't work
+  var undefined; // For some reason `undefined` doesn't work
   if (coords.length == 0)
     return this;
 
@@ -665,16 +655,15 @@ function ParallelArrayGetN(...coords) {
   var cdimensionality = coords.length;
   for (var i = 0; i < cdimensionality; i++) {
     if (coords[i] >= this.shape[i])
-      return udef;
+      return undefined;
     offset += coords[i] * products[sdimensionality - i - 1];
   }
 
   if (cdimensionality < sdimensionality) {
     var shape = this.shape.slice(cdimensionality);
     return %NewParallelArray(shape, this.buffer, offset);
-  } else {
-    return this.buffer[offset];
   }
+  return this.buffer[offset];
 }
 
 function ParallelArrayLength() {
@@ -722,12 +711,10 @@ function CheckParallel(m) {
 
 function SequentialDo(func, notify) {
   var slices = %ParallelSlices();
-  for (var i = 0; i < slices; i++) {
+  for (var i = 0; i < slices; i++)
     func(i, slices, true);
-  }
-  for (var i = 0; i < slices; i++) {
+  for (var i = 0; i < slices; i++)
     func(i, slices, false);
-  }
   return true;
 }
 
