@@ -757,12 +757,10 @@ MBasicBlock::removePredecessor(MBasicBlock *pred)
         if (!phisEmpty()) {
             JS_ASSERT(pred->successorWithPhis());
             JS_ASSERT(pred->positionInPhiSuccessor() == i);
-            for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++) {
+            for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++)
                 iter->removeOperand(i);
-            }
-            for (size_t j = i+1; j < numPredecessors(); j++) {
+            for (size_t j = i+1; j < numPredecessors(); j++)
                 getPredecessor(j)->setSuccessorWithPhis(this, j - 1);
-            }
         }
 
         // Remove from pred list.

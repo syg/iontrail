@@ -1,6 +1,6 @@
 // Test for one annoying case of the EliminateUnreachableCode
-// optimization.  Here the dominator of print("Goodbye") changes to be
-// the print("Hello") after optimization.
+// optimization.  Here the dominators change and also phis are
+// eliminated.
 
 function test1(v) {
   var i = 0;
@@ -28,5 +28,5 @@ function test() {
   assertEq(test1(false), 1110000);
 }
 
-for (var i = 0; i < 100000; i++)
+for (var i = 0; i < 100; i++)
   test();

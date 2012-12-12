@@ -5,18 +5,18 @@
 function test1(v) {
   if (v) {
     if (v) {
-      print("hi");
+      assertEq(v, v);
     } else {
-      print("ho");
+      assertEq(0, 1);
     }
   } else {
     if (v) {
-      print("hum");
+      assertEq(0, 1);
     } else {
-      print("hee");
+      assertEq(v, v);
     }
   }
-  print("goodbye");
+  assertEq(v, v);
 }
 
 function test() {
@@ -24,5 +24,5 @@ function test() {
   test1(false);
 }
 
-for (var i = 0; i < 100000; i++)
+for (var i = 0; i < 100; i++)
   test();

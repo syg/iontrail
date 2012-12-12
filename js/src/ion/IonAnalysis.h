@@ -32,9 +32,6 @@ bool
 EliminateDeadCode(MIRGenerator *mir, MIRGraph &graph);
 
 bool
-EliminateUnreachableCode(MIRGenerator *mir, MIRGraph &graph);
-
-bool
 ApplyTypeInformation(MIRGenerator *mir, MIRGraph &graph);
 
 bool

@@ -311,6 +311,7 @@ CPPSRCS +=	MIR.cpp \
 		ParFunctions.cpp \
 		AliasAnalysis.cpp \
 		ParallelArrayAnalysis.cpp \
+		UnreachableCodeElimination.cpp \
 		$(NULL)
 endif #ENABLE_ION
 ifeq (86, $(findstring 86,$(TARGET_CPU)))

@@ -25,6 +25,7 @@
 #include "CodeGenerator.h"
 #include "jsworkers.h"
 #include "StupidAllocator.h"
+#include "UnreachableCodeElimination.h"
 
 #if defined(JS_CPU_X86)
 # include "x86/Lowering-x86.h"
@@ -892,10 +893,13 @@ OptimizeMIR(MIRGenerator *mir)
             return NULL;
     }
 
-    if (!EliminateUnreachableCode(mir, graph))
-        return NULL;
-    IonSpewPass("UCE");
-    AssertExtendedGraphCoherency(graph);
+    if (js_IonOptions.uce) {
+        UnreachableCodeElimination uce(mir, graph);
+        if (!uce.analyze())
+            return NULL;
+        IonSpewPass("UCE");
+        AssertExtendedGraphCoherency(graph);
+    }
 
     if (mir->shouldCancel("UCE"))
         return NULL;

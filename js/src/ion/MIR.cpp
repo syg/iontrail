@@ -444,9 +444,8 @@ MPhi::removeOperand(size_t index)
     // on removing a, then first shift downward so that we have
     // phi(..., b, c, d, ..., z, z):
     size_t length = inputs_.length();
-    for (size_t i = index + 1; i < length; i++) {
+    for (size_t i = index + 1; i < length; i++)
         replaceOperand(i - 1, getOperand(i));
-    }
 
     // remove the final operand that now appears twice:
     replaceOperand(length - 1, NULL);
