@@ -1406,14 +1406,34 @@ ArenaLists::queueIonCodeForSweep(FreeOp *fop)
     finalizeNow(fop, FINALIZE_IONCODE);
 }
 
-static void
-RunLastDitchGC(JSContext *cx, gcreason::Reason reason)
+static void*
+RunLastDitchGC(JSContext *cx, JSCompartment *comp, AllocKind thingKind)
 {
+    // Note: we do not attempt the last ditch GC in a parallel
+    // section.  Of course we could modify the `runGC` flag below but
+    // since that path is quite hot is was deemed better to offload
+    // the access to thread-local data into this function.
+    if (InParallelSection())
+        return NULL;
+
+    PrepareCompartmentForGC(comp);
+
     JSRuntime *rt = cx->runtime;
 
     /* The last ditch GC preserves all atoms. */
     AutoKeepAtoms keep(rt);
-    GC(rt, GC_NORMAL, reason);
+    GC(rt, GC_NORMAL, gcreason::LAST_DITCH);
+
+    /*
+     * The JSGC_END callback can legitimately allocate new GC
+     * things and populate the free list. If that happens, just
+     * return that list head.
+     */
+    size_t thingSize = Arena::thingSize(thingKind);
+    if (void *thing = comp->allocator.arenas.allocateFromFreeList(thingKind, thingSize))
+        return thing;
+
+    return NULL;
 }
 
 /* static */ void *
@@ -1428,16 +1448,7 @@ ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
     bool runGC = rt->gcIncrementalState != NO_INCREMENTAL && comp->gcBytes > comp->gcTriggerBytes;
     for (;;) {
         if (JS_UNLIKELY(runGC)) {
-            PrepareCompartmentForGC(comp);
-            RunLastDitchGC(cx, gcreason::LAST_DITCH);
-
-            /*
-             * The JSGC_END callback can legitimately allocate new GC
-             * things and populate the free list. If that happens, just
-             * return that list head.
-             */
-            size_t thingSize = Arena::thingSize(thingKind);
-            if (void *thing = comp->allocator.arenas.allocateFromFreeList(thingKind, thingSize))
+            if (void *thing = RunLastDitchGC(cx, comp, thingKind))
                 return thing;
         }
 
