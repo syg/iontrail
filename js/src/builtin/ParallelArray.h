@@ -37,19 +37,11 @@ ExecutionStatus Do(JSContext *cx, CallArgs &args);
 
 class ParallelArrayObject : public JSObject
 {
-    enum FixedSlots {
-        Barrier,
-        Offset,
-        Shape,
-        Get,
-        NumFixedSlots
-    };
-
     static Class protoClass;
     static JSFunctionSpec methods[];
+    static const uint32_t NumFixedSlots = 4;
     static const uint32_t NumCtors = 4;
     static FixedHeapPtr<PropertyName> ctorNames[NumCtors];
-    static FixedHeapPtr<PropertyName> propNames[NumFixedSlots];
 
     static JSBool constructHelper(JSContext *cx, HandlePropertyName ctorName,
                                   CallArgs &args);

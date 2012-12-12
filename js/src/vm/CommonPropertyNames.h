@@ -110,6 +110,7 @@
     macro(objectNull, objectNull, "[object Null]") \
     macro(objectUndefined, objectUndefined, "[object Undefined]") \
     macro(of, of, "of") \
+    macro(offset, offset, "offset") \
     macro(parseFloat, parseFloat, "parseFloat") \
     macro(parseInt, parseInt, "parseInt") \
     macro(propertyIsEnumerable, propertyIsEnumerable, "propertyIsEnumerable") \

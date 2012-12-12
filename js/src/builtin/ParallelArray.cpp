@@ -471,7 +471,6 @@ Do1(JSContext *cx, CallArgs &args)
 //
 
 FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[NumCtors];
-FixedHeapPtr<PropertyName> ParallelArrayObject::propNames[NumFixedSlots];
 
 // TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
@@ -514,11 +513,18 @@ Class ParallelArrayObject::class_ = {
 /*static*/ bool
 ParallelArrayObject::initProps(JSContext *cx, HandleObject obj)
 {
-    for (uint32_t slot = 0; slot < NumFixedSlots; slot++) {
-        RootedValue val(cx, (slot == Offset ? JSVAL_ZERO : JSVAL_NULL));
-        if (!JSObject::setProperty(cx, obj, obj, propNames[slot], &val, true))
-            return false;
-    }
+    RootedValue undef(cx, UndefinedValue());
+    RootedValue zero(cx, Int32Value(0));
+
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().buffer, &undef, true))
+        return false;
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().offset, &zero, true))
+        return false;
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().shape, &undef, true))
+        return false;
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().get, &undef, true))
+        return false;
+
     return true;
 }
 
@@ -643,20 +649,6 @@ ParallelArrayObject::initClass(JSContext *cx, HandleObject obj)
             if (!atom)
                 return NULL;
             ctorNames[i].init(atom->asPropertyName());
-        }
-    }
-
-    // Cache property names.
-    {
-        const char *propStrs[NumFixedSlots] = { "buffer",
-                                                "offset",
-                                                "shape",
-                                                "get" };
-        for (uint32_t i = 0; i < NumFixedSlots; i++) {
-            JSAtom *atom = Atomize(cx, propStrs[i], strlen(propStrs[i]), InternAtom);
-            if (!atom)
-                return NULL;
-            propNames[i].init(atom->asPropertyName());
         }
     }
 
