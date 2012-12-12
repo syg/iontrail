@@ -110,6 +110,12 @@ class TypeOracle
     virtual bool elementWriteIsPacked(JSScript *script, jsbytecode *pc) {
         return false;
     }
+    virtual bool elementAccessIsDenseArray(types::StackTypeSet *obj, types::StackTypeSet *id) {
+        return false;
+    }
+    virtual bool elementAccessIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType) {
+        return false;
+    }
     virtual bool propertyWriteCanSpecialize(JSScript *script, jsbytecode *pc) {
         return true;
     }
@@ -236,6 +242,8 @@ class TypeInferenceOracle : public TypeOracle
     bool elementWriteIsDenseArray(JSScript *script, jsbytecode *pc);
     bool elementWriteIsTypedArray(JSScript *script, jsbytecode *pc, int *arrayType);
     bool elementWriteIsPacked(JSScript *script, jsbytecode *pc);
+    bool elementAccessIsDenseArray(types::StackTypeSet *obj, types::StackTypeSet *id);
+    bool elementAccessIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType);
     bool setElementHasWrittenHoles(JSScript *script, jsbytecode *pc);
     bool propertyWriteCanSpecialize(JSScript *script, jsbytecode *pc);
     bool propertyWriteNeedsBarrier(JSScript *script, jsbytecode *pc, jsid id);

@@ -290,42 +290,19 @@ TypeInferenceOracle::inArrayIsPacked(JSScript *script, jsbytecode *pc)
 bool
 TypeInferenceOracle::elementReadIsDenseArray(JSScript *script, jsbytecode *pc)
 {
-    // Check whether the object is a dense array and index is int32 or double.
-    StackTypeSet *obj = script->analysis()->poppedTypes(pc, 1);
-    StackTypeSet *id = script->analysis()->poppedTypes(pc, 0);
-
-    JSValueType objType = obj->getKnownTypeTag();
-    if (objType != JSVAL_TYPE_OBJECT)
-        return false;
-
-    JSValueType idType = id->getKnownTypeTag();
-    if (idType != JSVAL_TYPE_INT32 && idType != JSVAL_TYPE_DOUBLE)
-        return false;
-
-    return !obj->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY);
+    return elementAccessIsDenseArray(script->analysis()->poppedTypes(pc, 1),
+                                     script->analysis()->poppedTypes(pc, 0));
 }
 
 bool
 TypeInferenceOracle::elementReadIsTypedArray(JSScript *script, jsbytecode *pc, int *arrayType)
 {
-    // Check whether the object is a typed array and index is int32 or double.
-    StackTypeSet *obj = script->analysis()->poppedTypes(pc, 1);
-    StackTypeSet *id = script->analysis()->poppedTypes(pc, 0);
-
-    JSValueType objType = obj->getKnownTypeTag();
-    if (objType != JSVAL_TYPE_OBJECT)
+    if (!elementAccessIsTypedArray(script->analysis()->poppedTypes(pc, 1),
+                                   script->analysis()->poppedTypes(pc, 0),
+                                   arrayType))
+    {
         return false;
-
-    JSValueType idType = id->getKnownTypeTag();
-    if (idType != JSVAL_TYPE_INT32 && idType != JSVAL_TYPE_DOUBLE)
-        return false;
-
-    if (obj->hasObjectFlags(cx, types::OBJECT_FLAG_NON_TYPED_ARRAY))
-        return false;
-
-    *arrayType = obj->getTypedArrayType();
-    if (*arrayType == TypedArray::TYPE_MAX)
-        return false;
+    }
 
     JS_ASSERT(*arrayType >= 0 && *arrayType < TypedArray::TYPE_MAX);
 
@@ -398,10 +375,14 @@ TypeInferenceOracle::elementReadGeneric(JSScript *script, jsbytecode *pc, bool *
 bool
 TypeInferenceOracle::elementWriteIsDenseArray(JSScript *script, jsbytecode *pc)
 {
-    // Check whether the object is a dense array and index is int32 or double.
-    StackTypeSet *obj = script->analysis()->poppedTypes(pc, 2);
-    StackTypeSet *id = script->analysis()->poppedTypes(pc, 1);
+    return elementAccessIsDenseArray(script->analysis()->poppedTypes(pc, 2),
+                                     script->analysis()->poppedTypes(pc, 1));
+}
 
+bool
+TypeInferenceOracle::elementAccessIsDenseArray(StackTypeSet *obj, StackTypeSet *id)
+{
+    // Check whether the object is a dense array and index is int32 or double.
     JSValueType objType = obj->getKnownTypeTag();
     if (objType != JSVAL_TYPE_OBJECT)
         return false;
@@ -416,10 +397,15 @@ TypeInferenceOracle::elementWriteIsDenseArray(JSScript *script, jsbytecode *pc)
 bool
 TypeInferenceOracle::elementWriteIsTypedArray(JSScript *script, jsbytecode *pc, int *arrayType)
 {
-    // Check whether the object is a dense array and index is int32 or double.
-    StackTypeSet *obj = script->analysis()->poppedTypes(pc, 2);
-    StackTypeSet *id = script->analysis()->poppedTypes(pc, 1);
+    return elementAccessIsTypedArray(script->analysis()->poppedTypes(pc, 2),
+                                     script->analysis()->poppedTypes(pc, 1),
+                                     arrayType);
+}
 
+bool
+TypeInferenceOracle::elementAccessIsTypedArray(StackTypeSet *obj, StackTypeSet *id, int *arrayType)
+{
+    // Check whether the object is a typed array and index is int32 or double.
     JSValueType objType = obj->getKnownTypeTag();
     if (objType != JSVAL_TYPE_OBJECT)
         return false;
