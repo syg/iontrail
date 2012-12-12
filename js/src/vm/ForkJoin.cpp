@@ -344,6 +344,8 @@ ForkJoinShared::check(ForkJoinSlice &slice)
         return false;
 
     if (slice.isMainThread()) {
+        JS_ASSERT(!cx_->runtime->gcIsNeeded);
+
         if (cx_->runtime->interrupt) {
             // The GC Needed flag should not be set during parallel
             // execution.  Instead, one of the requestGC() or
@@ -352,9 +354,11 @@ ForkJoinShared::check(ForkJoinSlice &slice)
 
             // If interrupt is requested, bring worker threads to a halt,
             // service the interrupt, then let them start back up again.
-            AutoRendezvous autoRendezvous(slice);
-            if (!js_HandleExecutionInterrupt(cx_))
-                return setFatal();
+            // AutoRendezvous autoRendezvous(slice);
+            // if (!js_HandleExecutionInterrupt(cx_))
+            //     return setFatal();
+            abort();
+            return false;
         }
     } else if (rendezvous_) {
         joinRendezvous(slice);
