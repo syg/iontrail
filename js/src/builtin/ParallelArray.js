@@ -110,7 +110,7 @@ function ParallelArrayConstruct2(shape, f) {
     var length = shape >>> 0;
     if (length !== shape)
       %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-    return ParallelArrayBuild(this, [length], f);
+    ParallelArrayBuild(this, [length], f);
   } else {
     var shape1 = [];
     for (var i = 0, l = shape.length; i < l; i++) {
@@ -120,7 +120,7 @@ function ParallelArrayConstruct2(shape, f) {
         %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
       shape1[i] = s1;
     }
-    return ParallelArrayBuild(this, shape1, f);
+    ParallelArrayBuild(this, shape1, f);
   }
 }
 
@@ -146,8 +146,8 @@ function ParallelArrayBuild(self, shape, f) {
   if (shape.length === 1) {
     var length = shape[0];
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill1, null, xw)) {
-      fill1(0, 1, false, xw);
+    if (!%ParallelDo(fill1, null)) {
+      fill1(0, 1, false);
     }
     self.get = ParallelArrayGet1;
     self.buffer = buffer;
@@ -156,8 +156,8 @@ function ParallelArrayBuild(self, shape, f) {
     var yw = shape[1];
     var length = xw * yw;
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill2, null, xw, yw)) {
-      fill2(0, 1, false, xw, yw);
+    if (!%ParallelDo(fill2, null, yw)) {
+      fill2(0, 1, false, yw);
     }
     self.get = ParallelArrayGet2;
     self.buffer = buffer;
@@ -167,8 +167,8 @@ function ParallelArrayBuild(self, shape, f) {
     var zw = shape[2];
     var length = xw * yw * zw;
     var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill3, null, xw, yw, zw)) {
-      fill3(0, 1, false, xw, yw, zw);
+    if (!%ParallelDo(fill3, null, yw, zw)) {
+      fill3(0, 1, false, yw, zw);
     }
     self.get = ParallelArrayGet3;
     self.buffer = buffer;
@@ -185,14 +185,14 @@ function ParallelArrayBuild(self, shape, f) {
     self.buffer = buffer;
   }
 
-  function fill1(id, n, warmup, xw) {
+  function fill1(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     for (var i = start; i < end; i++)
       %UnsafeSetElement(buffer, i, f(i));
   }
 
-  function fill2(id, n, warmup, xw, yw) {
+  function fill2(id, n, warmup, yw) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     var x = (start / yw) | 0;
@@ -206,7 +206,7 @@ function ParallelArrayBuild(self, shape, f) {
     }
   }
 
-  function fill3(id, n, warmup, xw, yw, zw) {
+  function fill3(id, n, warmup, yw, zw) {
     var [start, end] = ComputeTileBounds(length, id, n);
     if (warmup) { end = TruncateEnd(start, end); }
     var x = (start / (yw*zw)) | 0;

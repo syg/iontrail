@@ -1026,7 +1026,7 @@ IonBuilder::inlineParallelArrayCtorCommon(uint32_t argc, HandlePropertyName ctor
     call->initFunction(callee);
 
     current->add(call);
-    current->push(call);
+    current->push(newObject);
 
     if (!resumeAfter(call))
         return InliningStatus_Error;
