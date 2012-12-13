@@ -85,6 +85,10 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     if (native == ParallelArrayObject::construct)
         return inlineParallelArray(argc, constructing);
 
+    // Self-hosting
+    if (native == intrinsic_ThrowError)
+        return inlineThrowError(argc, constructing);
+
     return InliningStatus_NotInlined;
 }
 
@@ -1053,6 +1057,38 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     current->push(newObject);
     if (!resumeAfter(call))
         return InliningStatus_Error;
+
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineThrowError(uint32_t argc, bool constructing)
+{
+    // In Parallel Execution, convert %ThrowError() into a bailout.
+
+    if (constructing)
+        return InliningStatus_NotInlined;
+
+    ExecutionMode executionMode = info().executionMode();
+    switch (executionMode) {
+      case SequentialExecution:
+        return InliningStatus_NotInlined;
+      case ParallelExecution:
+        break;
+    }
+
+    MParBailout *bailout = new MParBailout();
+    if (!bailout)
+        return InliningStatus_Error;
+    current->end(bailout);
+
+    current = newBlock(pc);
+    if (!current)
+        return InliningStatus_Error;
+
+    MConstant *udef = MConstant::New(UndefinedValue());
+    current->add(udef);
+    current->push(udef);
 
     return InliningStatus_Inlined;
 }

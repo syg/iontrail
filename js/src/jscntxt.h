@@ -2221,6 +2221,7 @@ class ContextAllocPolicy
     void reportAllocOverflow() const { js_ReportAllocationOverflow(cx); }
 };
 
+JSBool intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
