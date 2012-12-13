@@ -13,6 +13,8 @@
 
 #include "vm/StringObject-inl.h"
 
+#include "builtin/ParallelArray.h"
+
 #include "jsinterpinlines.h"
 
 using namespace js;
@@ -292,6 +294,21 @@ IteratorMore(JSContext *cx, HandleObject obj, JSBool *res)
 
     *res = tmp.toBoolean();
     return true;
+}
+
+JSObject *
+NewInitParallelArray(JSContext *cx, HandleObject templateObject)
+{
+    JS_ASSERT(templateObject->getClass() == &ParallelArrayObject::class_);
+    JS_ASSERT(!templateObject->hasSingletonType());
+
+    RootedObject obj(cx, ParallelArrayObject::newInstance(cx));
+    if (!obj)
+        return NULL;
+
+    obj->setType(templateObject->type());
+
+    return obj;
 }
 
 JSObject*

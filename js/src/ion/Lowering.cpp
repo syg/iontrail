@@ -158,6 +158,13 @@ LIRGenerator::visitNewSlots(MNewSlots *ins)
 }
 
 bool
+LIRGenerator::visitNewParallelArray(MNewParallelArray *ins)
+{
+    LNewParallelArray *lir = new LNewParallelArray();
+    return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitNewArray(MNewArray *ins)
 {
     LNewArray *lir = new LNewArray();

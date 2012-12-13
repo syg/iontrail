@@ -83,7 +83,7 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     if (native == intrinsic_NewParallelArray)
         return inlineNewParallelArray(argc, constructing);
     if (native == ParallelArrayObject::construct)
-        return inlineParallelArrayCtor(argc, constructing);
+        return inlineParallelArray(argc, constructing);
 
     return InliningStatus_NotInlined;
 }
@@ -947,32 +947,56 @@ IonBuilder::inlineInParallelSection(uint32_t argc, bool constructing)
 IonBuilder::InliningStatus
 IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
 {
-    if (argc != 3 || constructing)
+    if (argc < 1 || constructing)
         return InliningStatus_NotInlined;
 
-    HandlePropertyName ctorName(ParallelArrayObject::newParallelArrayCtorName());
-    return inlineParallelArrayCtorCommon(argc, ctorName);
+    types::StackTypeSet *ctorTypes = getInlineArgTypeSet(argc, 1);
+    RootedFunction target(cx);
+    if (!getSingleCallTarget(ctorTypes, &target))
+        return InliningStatus_Error;
+
+    MDefinition *ctor = current->peek(-(argc + 1))->toPassArg()->getArgument();
+    if (allFunctionsAreCallsiteClone(ctorTypes))
+        ctor = makeCallsiteClone(target, ctor);
+
+    // Discard 2 arguments: the old 'this' and the init function.
+    return inlineParallelArrayTail(argc, target, ctor, 2);
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineParallelArrayCtor(uint32_t argc, bool constructing)
+IonBuilder::inlineParallelArray(uint32_t argc, bool constructing)
 {
     if (!constructing)
         return InliningStatus_NotInlined;
-    HandlePropertyName ctorName(ParallelArrayObject::parallelArrayCtorName(argc));
-    return inlineParallelArrayCtorCommon(argc, ctorName);
+
+    RootedFunction target(cx, ParallelArrayObject::getConstructor(cx, argc));
+    if (!target)
+        return InliningStatus_Error;
+
+    JS_ASSERT(target->isCloneAtCallsite());
+    RootedScript script(cx, script_);
+    target = CloneFunctionAtCallsite(cx, target, script, pc);
+    if (!target)
+        return InliningStatus_Error;
+
+    MConstant *ctor = MConstant::New(ObjectValue(*target));
+    current->add(ctor);
+
+    // Discard 1 argument: the old 'this'.
+    return inlineParallelArrayTail(argc, target, ctor, 1);
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineParallelArrayCtorCommon(uint32_t argc, HandlePropertyName ctorName)
+IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefinition *ctor,
+                                    int32_t discards)
 {
-    // Rewrites either %NewParallelArray(...) or new
-    // ParallelArray(...)  from a call to a native ctor into a call to
-    // the relevant function in the self-hosted code.
+    // Rewrites either %NewParallelArray(...) or new ParallelArray(...) from a
+    // call to a native ctor into a call to the relevant function in the
+    // self-hosted code.
 
-    // Create the new parallel array object.  Parallel arrays have
-    // specially constructed type objects, so we can only perform the
-    // inlining if we already have one of these type objects.
+    // Create the new parallel array object.  Parallel arrays have specially
+    // constructed type objects, so we can only perform the inlining if we
+    // already have one of these type objects.
     types::StackTypeSet *returnTypes = getInlineReturnTypeSet();
     if (returnTypes->getKnownTypeTag() != JSVAL_TYPE_OBJECT)
         return InliningStatus_NotInlined;
@@ -980,37 +1004,38 @@ IonBuilder::inlineParallelArrayCtorCommon(uint32_t argc, HandlePropertyName ctor
         return InliningStatus_NotInlined;
     types::TypeObject *typeObject = returnTypes->getTypeObject(0);
 
-    // Lookup the constructor function in the self-hosted code
-    RootedValue ctorValue(cx);
-    if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
-        return InliningStatus_Error;
-    RootedFunction ctorFunc(cx, ctorValue.toObject().toFunction());
-    JS_ASSERT(ctorFunc && !ctorFunc->isNative());
+    // Adjust argc according to discards. The 'this' value is included in argc,
+    // thus the - 1.
+    argc -= discards - 1;
 
     // Create the call and add in the non-this arguments.
-    uint32_t targetArgs = Max<uint32_t>(ctorFunc->nargs, argc);
-    MCall *call = MCall::New(ctorFunc, targetArgs+1, argc, false);
+    uint32_t targetArgs = argc;
+    if (target && !target->isNative())
+        targetArgs = Max<uint32_t>(target->nargs, argc);
+
+    MCall *call = MCall::New(target, targetArgs + 1, argc, false);
     if (!call)
         return InliningStatus_Error;
+
     if (!popAndAddNonThisArgumentsAndPrepareCall(call, targetArgs, argc))
         return InliningStatus_Error;
 
-    // Discard the this argument that we were using.  It won't be relevant.
-    {
-        MPassArg *oldThisArg = current->pop()->toPassArg();
-        MBasicBlock *block = oldThisArg->block();
-        MDefinition *wrapped = oldThisArg->getArgument();
-        oldThisArg->replaceAllUsesWith(wrapped); // Not necc., I imagine.
-        block->discard(oldThisArg);
+    // Discard the pass args that we won't be using.
+    for (int32_t i = discards; i > 0; i--) {
+        MPassArg *passArg = current->pop()->toPassArg();
+        MBasicBlock *block = passArg->block();
+        MDefinition *wrapped = passArg->getArgument();
+        passArg->replaceAllUsesWith(wrapped);
+        block->discard(passArg);
     }
 
-    // Create the MIR to allocate the new parallel array.  Take the
-    // type object is taken from the prediction set.
+    // Create the MIR to allocate the new parallel array.  Take the type
+    // object is taken from the prediction set.
     RootedObject templateObject(cx, ParallelArrayObject::newInstance(cx));
     if (!templateObject)
         return InliningStatus_Error;
     templateObject->setType(typeObject);
-    MNewObject *newObject = MNewObject::New(templateObject);
+    MNewParallelArray *newObject = MNewParallelArray::New(templateObject);
     current->add(newObject);
     if (!resumeAfter(newObject))
         return InliningStatus_Error;
@@ -1018,16 +1043,14 @@ IonBuilder::inlineParallelArrayCtorCommon(uint32_t argc, HandlePropertyName ctor
     current->add(newThis);
     call->addArg(0, newThis);
 
-    // Create the callee, which is one of the function
-    // ParallelArrayConstructN functions in ParallelArrary.js.
-    current->pop(); // discard current callee
-    MConstant *callee = MConstant::New(ctorValue);
-    current->add(callee);
-    call->initFunction(callee);
+    // Set the new callee.
+    call->initFunction(ctor);
+
+    // Pop the old callee.
+    current->pop();
 
     current->add(call);
     current->push(newObject);
-
     if (!resumeAfter(call))
         return InliningStatus_Error;
 

@@ -21,6 +21,7 @@
 namespace js {
 namespace ion {
 
+class OutOfLineNewParallelArray;
 class OutOfLineNewArray;
 class OutOfLineNewObject;
 class CheckOverRecursedFailure;
@@ -89,6 +90,9 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitApplyArgsGeneric(LApplyArgsGeneric *apply);
     bool visitDoubleToInt32(LDoubleToInt32 *lir);
     bool visitNewSlots(LNewSlots *lir);
+    bool visitNewParallelArrayVMCall(LNewParallelArray *lir);
+    bool visitNewParallelArray(LNewParallelArray *lir);
+    bool visitOutOfLineNewParallelArray(OutOfLineNewParallelArray *ool);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);
     bool visitOutOfLineNewArray(OutOfLineNewArray *ool);

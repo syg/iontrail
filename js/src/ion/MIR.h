@@ -977,6 +977,28 @@ class MThrow
     }
 };
 
+class MNewParallelArray : public MNullaryInstruction
+{
+    CompilerRootObject templateObject_;
+
+    MNewParallelArray(JSObject *templateObject)
+      : templateObject_(templateObject)
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(NewParallelArray);
+
+    static MNewParallelArray *New(JSObject *templateObject) {
+        return new MNewParallelArray(templateObject);
+    }
+
+    JSObject *templateObject() const {
+        return templateObject_;
+    }
+};
+
 class MNewArray : public MNullaryInstruction
 {
   public:

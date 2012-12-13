@@ -79,6 +79,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitGoto(MGoto *ins);
     bool visitTableSwitch(MTableSwitch *tableswitch);
     bool visitNewSlots(MNewSlots *ins);
+    bool visitNewParallelArray(MNewParallelArray *ins);
     bool visitNewArray(MNewArray *ins);
     bool visitNewObject(MNewObject *ins);
     bool visitNewCallObject(MNewCallObject *ins);

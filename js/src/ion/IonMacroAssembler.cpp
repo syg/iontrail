@@ -371,7 +371,6 @@ MacroAssembler::newGCThing(const Register &result,
     gc::FreeSpan *list = const_cast<gc::FreeSpan *>
                          (compartment->allocator.arenas.getFreeList(allocKind));
     loadPtr(AbsoluteAddress(&list->first), result);
-
     branchPtr(Assembler::BelowOrEqual, AbsoluteAddress(&list->last), result, fail);
 
     addPtr(Imm32(thingSize), result);

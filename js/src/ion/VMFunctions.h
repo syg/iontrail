@@ -436,7 +436,8 @@ bool ValueToBooleanComplement(JSContext *cx, const Value &input, JSBool *output)
 
 bool IteratorMore(JSContext *cx, HandleObject obj, JSBool *res);
 
-// Allocation functions for JSOP_NEWARRAY and JSOP_NEWOBJECT
+// Allocation functions for JSOP_NEWARRAY and JSOP_NEWOBJECT and parallel array inlining
+JSObject *NewInitParallelArray(JSContext *cx, HandleObject templateObj);
 JSObject *NewInitArray(JSContext *cx, uint32_t count, types::TypeObject *type);
 JSObject *NewInitObject(JSContext *cx, HandleObject templateObject);
 

@@ -446,8 +446,9 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineUnsafeSetTypedArrayElement(uint32_t argc, int arrayType);
     InliningStatus inlineInParallelSection(uint32_t argc, bool constructing);
     InliningStatus inlineNewParallelArray(uint32_t argc, bool constructing);
-    InliningStatus inlineParallelArrayCtor(uint32_t argc, bool constructing);
-    InliningStatus inlineParallelArrayCtorCommon(uint32_t argc, HandlePropertyName ctorName);
+    InliningStatus inlineParallelArray(uint32_t argc, bool constructing);
+    InliningStatus inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefinition *ctor,
+                                           int32_t discards);
 
     InliningStatus inlineNativeCall(JSNative native, uint32_t argc, bool constructing);
 
@@ -458,6 +459,7 @@ class IonBuilder : public MIRGenerator
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
     bool makeInliningDecision(AutoObjectVector &targets, uint32_t argc);
 
+    bool allFunctionsAreCallsiteClone(types::TypeSet *funTypes);
     MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);
     MCall *makeCallHelper(HandleFunction target, uint32_t argc,
                           bool constructing, bool callsiteClone);

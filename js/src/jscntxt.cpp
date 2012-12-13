@@ -586,11 +586,21 @@ intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %NewParallelArray(shape, buffer, offset)
+    // Usage: %NewParallelArray(init, ...args)
     //
-    // Creates a new parallel array using the internal constructor.
+    // Creates a new parallel array using an initialization function init. All
+    // subsequent arguments are passed to init. The new instance will be
+    // passed as the 'this' value.
+    CallArgs args = CallArgsFromVp(argc, vp);
 
-    return js::ParallelArrayObject::intrinsicNewParallelArray(cx, argc, vp);
+    JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());
+
+    RootedFunction init(cx, args[0].toObject().toFunction());
+    CallArgs args0 = CallArgsFromVp(argc - 1, vp + 1);
+    if (!js::ParallelArrayObject::constructHelper(cx, &init, args0))
+        return false;
+    args.rval().set(args0.rval());
+    return true;
 }
 
 static JSBool

@@ -528,35 +528,25 @@ ParallelArrayObject::initProps(JSContext *cx, HandleObject obj)
     return true;
 }
 
-/*static*/ HandlePropertyName
-ParallelArrayObject::newParallelArrayCtorName()
-{
-    return ctorNames[NumCtors - 1];
-}
-
-/*static*/ HandlePropertyName
-ParallelArrayObject::parallelArrayCtorName(unsigned argc)
-{
-    // See comment in ParallelArray.js about splitting constructors.
-    // Note that the final constructor (NumCtors - 1) is only
-    // accessible via the %NewParallelArray() intrinsic, as it's for
-    // internal use only.
-    uint32_t whichCtor = js::Min(argc, NumCtors - 2);
-    return ctorNames[whichCtor];
-}
-
 /*static*/ JSBool
 ParallelArrayObject::construct(JSContext *cx, unsigned argc, Value *vp)
 {
+    RootedFunction ctor(cx, getConstructor(cx, argc));
+    if (!ctor)
+        return false;
     CallArgs args = CallArgsFromVp(argc, vp);
-    return constructHelper(cx, parallelArrayCtorName(args.length()), args);
+    return constructHelper(cx, &ctor, args);
 }
 
-/*static*/ JSBool
-ParallelArrayObject::intrinsicNewParallelArray(JSContext *cx, unsigned argc, Value *vp)
+
+/* static */ JSFunction *
+ParallelArrayObject::getConstructor(JSContext *cx, unsigned argc)
 {
-    CallArgs args = CallArgsFromVp(argc, vp);
-    return constructHelper(cx, newParallelArrayCtorName(), args);
+    RootedPropertyName ctorName(cx, ctorNames[js::Min(argc, NumCtors - 1)]);
+    RootedValue ctorValue(cx);
+    if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
+        return NULL;
+    return ctorValue.toObject().toFunction();
 }
 
 /*static*/ JSObject *
@@ -575,24 +565,18 @@ ParallelArrayObject::newInstance(JSContext *cx)
 }
 
 /*static*/ JSBool
-ParallelArrayObject::constructHelper(JSContext *cx, HandlePropertyName ctorName,
-                                     CallArgs &args0)
+ParallelArrayObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, CallArgs &args0)
 {
     RootedObject result(cx, newInstance(cx));
     if (!result)
         return false;
-
-    RootedValue ctorValue(cx);
-    if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
-        return false;
-    RootedFunction ctor(cx, ctorValue.toObject().toFunction());
 
     if (cx->typeInferenceEnabled()) {
         jsbytecode *pc;
         RootedScript script(cx, cx->stack.currentScript(&pc));
         if (script) {
             if (ctor->isCloneAtCallsite()) {
-                ctor = CloneFunctionAtCallsite(cx, ctor, script, pc);
+                ctor.set(CloneFunctionAtCallsite(cx, ctor, script, pc));
                 if (!ctor)
                     return false;
             }

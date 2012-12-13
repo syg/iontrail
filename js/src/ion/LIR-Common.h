@@ -249,6 +249,16 @@ class LNewSlots : public LCallInstructionHelper<1, 0, 3>
     }
 };
 
+class LNewParallelArray : public LInstructionHelper<1, 0, 0>
+{
+  public:
+    LIR_HEADER(NewParallelArray);
+
+    MNewParallelArray *mir() const {
+        return mir_->toNewParallelArray();
+    }
+};
+
 class LNewArray : public LInstructionHelper<1, 0, 0>
 {
   public:

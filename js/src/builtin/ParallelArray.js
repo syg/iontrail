@@ -76,8 +76,7 @@ function IsInteger(v) {
 
 // Constructor
 //
-// We split the 3 construction cases so that we don't case on arguments, which
-// deoptimizes.
+// We split the 3 construction cases so that we don't case on arguments.
 
 function ParallelArrayConstruct0() {
   this.buffer = [];
@@ -121,60 +120,124 @@ function ParallelArrayConstruct2(shape, f) {
   }
 }
 
-function ParallelArrayConstruct3(shape, buffer, offset) {
+// We duplicate code here to avoid extra cloning.
+function ParallelArrayConstruct3(shape, f, m) {
+  if (typeof shape === "number") {
+    var length = shape >>> 0;
+    if (length !== shape)
+      %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+    ParallelArrayBuild(this, [length], f, m);
+  } else {
+    var shape1 = [];
+    for (var i = 0, l = shape.length; i < l; i++) {
+      var s0 = shape[i];
+      var s1 = s0 >>> 0;
+      if (s1 !== s0)
+        %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+      shape1[i] = s1;
+    }
+    ParallelArrayBuild(this, shape1, f, m);
+  }
+}
+
+function ParallelArrayView(shape, buffer, offset) {
   this.shape = shape;
   this.buffer = buffer;
   this.offset = offset;
-  this.get = ParallelArrayGetN;
 
-  if (shape.length == 1)
+  if (shape.length === 1)
     this.get = ParallelArrayGet1;
-  else if (shape.length == 2)
+  else if (shape.length === 2)
     this.get = ParallelArrayGet2;
-  else if (shape.length == 3)
+  else if (shape.length === 3)
     this.get = ParallelArrayGet3;
+  else
+    this.get = ParallelArrayGetN;
 }
 
-function ParallelArrayBuild(self, shape, f) {
-  self.shape = shape;
+function ParallelArrayBuild(self, shape, f, m) {
   self.offset = 0;
 
-  if (shape.length === 1) {
-    var length = shape[0];
-    var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill1, null))
-      fill1(0, 1, false);
+  var length;
+  var xw, yw, zw;
+  var fill;
+
+  switch (shape.length) {
+  case 1:
+    length = shape[0];
     self.get = ParallelArrayGet1;
-    self.buffer = buffer;
-  } else if (shape.length === 2) {
-    var xw = shape[0];
-    var yw = shape[1];
-    var length = xw * yw;
-    var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill2, null, yw))
-      fill2(0, 1, false, yw);
+    fill = fill1;
+    break;
+  case 2:
+    xw = shape[0];
+    yw = shape[1];
+    length = xw * yw;
     self.get = ParallelArrayGet2;
-    self.buffer = buffer;
-  } else if (shape.length == 3) {
-    var xw = shape[0];
-    var yw = shape[1];
-    var zw = shape[2];
-    var length = xw * yw * zw;
-    var buffer = %DenseArray(length);
-    if (!%ParallelDo(fill3, null, yw, zw))
-      fill3(0, 1, false, yw, zw);
+    fill = fill2;
+    break;
+  case 3:
+    xw = shape[0];
+    yw = shape[1];
+    zw = shape[2];
+    length = xw * yw * zw;
     self.get = ParallelArrayGet3;
-    self.buffer = buffer;
-  } else {
-    var length = 1;
+    fill = fill3;
+    break;
+  default:
+    length = 1;
     for (var i = 0; i < shape.length; i++)
       length *= shape[i];
-    var buffer = %DenseArray(length);
-    if (!%ParallelDo(fillN, null))
-      fillN(0, 1, false);
     self.get = ParallelArrayGetN;
-    self.buffer = buffer;
+    fill = fillN;
+    break;
   }
+
+  var buffer = %DenseArray(length);
+
+  if (!%InParallelSection() && TryParallel(m)) {
+    var ok;
+    switch (shape.length) {
+    case 2:
+      ok = %ParallelDo(fill, CheckParallel(m), yw);
+      break;
+    case 3:
+      ok = %ParallelDo(fill, CheckParallel(m), yw, zw);
+      break;
+    default:
+      ok = %ParallelDo(fill, CheckParallel(m));
+      break;
+    }
+    if (ok) {
+      self.shape = shape;
+      self.buffer = buffer;
+      return;
+    }
+  }
+
+  if (TrySequential(m)) {
+    switch (shape.length) {
+    case 2:
+      fill(0, 1, false, yw);
+      break;
+    case 3:
+      fill(0, 1, false, yw, zw);
+      break;
+    default:
+      fill(0, 1, false);
+      break;
+    }
+
+    self.shape = shape;
+    self.buffer = buffer;
+    return;
+  }
+
+  var emptyShape = [];
+  for (var i = 0; i < shape.length; i++)
+    emptyShape[i] = 0;
+
+  self.shape = emptyShape;
+  self.buffer = [];
 
   function fill1(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
@@ -245,7 +308,7 @@ function ParallelArrayMap(f, m) {
 
   if (!%InParallelSection() && TryParallel(m)) {
     if (%ParallelDo(fill, CheckParallel(m)))
-      return %NewParallelArray([length], buffer, 0);
+      return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -253,10 +316,10 @@ function ParallelArrayMap(f, m) {
 
   if (TrySequential(m)) {
     fill(0, 1, false);
-    return %NewParallelArray([length], buffer, 0);
+    return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
-  return %NewParallelArray([0], [], 0);
+  return %NewParallelArray(ParallelArrayView, [0], [], 0);
 
   function fill(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
@@ -357,7 +420,7 @@ function ParallelArrayScan(f, m) {
 
         // compute phase1 scan results with intermediates
         if (%ParallelDo(phase2, CheckParallel(m)))
-          return %NewParallelArray([length], buffer, 0);
+          return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
       }
     }
   }
@@ -367,10 +430,10 @@ function ParallelArrayScan(f, m) {
 
   if (TrySequential(m)) {
     scan(0, length);
-    return %NewParallelArray([length], buffer, 0);
+    return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
-  return %NewParallelArray([0], [], 0);
+  return %NewParallelArray(ParallelArrayView, [0], [], 0);
 
   ///////////////////////////////////////////////////////////////////////////
   // Helpers
@@ -495,7 +558,7 @@ function ParallelArrayScatter(targets, zero, f, length) {
   buffer.length = length || source.length;
   fill(buffer, 0, 1, targets, zero, f, source);
 
-  return %NewParallelArray([buffer.length], buffer, 0);
+  return %NewParallelArray(ParallelArrayView, [buffer.length], buffer, 0);
 }
 
 function ParallelArrayFilter(filters, m) {
@@ -518,11 +581,11 @@ function ParallelArrayFilter(filters, m) {
           total += keepers[i];
 
         if (total == 0)
-          return %NewParallelArray([0], [], 0);
+          return %NewParallelArray(ParallelArrayView, [0], [], 0);
 
         var buffer = %DenseArray(total);
         if (%ParallelDo(copyKeepers, CheckParallel(m)))
-          return %NewParallelArray([total], buffer, 0);
+          return %NewParallelArray(ParallelArrayView, [total], buffer, 0);
       }
     }
   }
@@ -536,7 +599,7 @@ function ParallelArrayFilter(filters, m) {
         buffer[pos++] = self.get(i);
     }
   }
-  return %NewParallelArray([buffer.length], buffer, 0);
+  return %NewParallelArray(ParallelArrayView, [buffer.length], buffer, 0);
 
   function countKeepers(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
@@ -581,7 +644,7 @@ function ParallelArrayPartition(amount) {
   var shape = [partitions, amount];
   for (var i = 1; i < this.shape.length; i++)
     shape.push(this.shape[i]);
-  return %NewParallelArray(shape, this.buffer, this.offset);
+  return %NewParallelArray(ParallelArrayView, shape, this.buffer, this.offset);
 }
 
 function ParallelArrayFlatten() {
@@ -591,7 +654,7 @@ function ParallelArrayFlatten() {
   var shape = [this.shape[0] * this.shape[1]];
   for (var i = 2; i < this.shape.length; i++)
     shape.push(this.shape[i]);
-  return %NewParallelArray(shape, this.buffer, this.offset);
+  return %NewParallelArray(ParallelArrayView, shape, this.buffer, this.offset);
 }
 
 //
@@ -612,7 +675,7 @@ function ParallelArrayGet2(x, y) {
   if (x >= xw)
     return undefined;
   if (y === undefined)
-    return %NewParallelArray([yw], this.buffer, this.offset + x*yw);
+    return %NewParallelArray(ParallelArrayView, [yw], this.buffer, this.offset + x*yw);
   if (y >= yw)
     return undefined;
   var offset = y + x*yw;
@@ -628,11 +691,11 @@ function ParallelArrayGet3(x, y, z) {
   if (x >= xw)
     return undefined;
   if (y === undefined)
-    return %NewParallelArray([yw, zw], this.buffer, this.offset + x*yw*zw);
+    return %NewParallelArray(ParallelArrayView, [yw, zw], this.buffer, this.offset + x*yw*zw);
   if (y >= yw)
     return undefined;
   if (z === undefined)
-    return %NewParallelArray([zw], this.buffer, this.offset + y*zw + x*yw*zw);
+    return %NewParallelArray(ParallelArrayView, [zw], this.buffer, this.offset + y*zw + x*yw*zw);
   if (z >= zw)
     return undefined;
   var offset = z + y*zw + x*yw*zw;
@@ -640,7 +703,6 @@ function ParallelArrayGet3(x, y, z) {
 }
 
 function ParallelArrayGetN(...coords) {
-  var undefined; // For some reason `undefined` doesn't work
   if (coords.length == 0)
     return this;
 
@@ -661,7 +723,7 @@ function ParallelArrayGetN(...coords) {
 
   if (cdimensionality < sdimensionality) {
     var shape = this.shape.slice(cdimensionality);
-    return %NewParallelArray(shape, this.buffer, offset);
+    return %NewParallelArray(ParallelArrayView, shape, this.buffer, offset);
   }
   return this.buffer[offset];
 }
@@ -723,6 +785,7 @@ function SequentialDo(func, notify) {
 %_SetFunctionFlags(ParallelArrayConstruct1, { cloneAtCallsite: true });
 %_SetFunctionFlags(ParallelArrayConstruct2, { cloneAtCallsite: true });
 %_SetFunctionFlags(ParallelArrayConstruct3, { cloneAtCallsite: true });
+%_SetFunctionFlags(ParallelArrayView,       { cloneAtCallsite: true });
 %_SetFunctionFlags(ParallelArrayBuild,      { cloneAtCallsite: true });
 %_SetFunctionFlags(ParallelArrayMap,        { cloneAtCallsite: true });
 %_SetFunctionFlags(ParallelArrayReduce,     { cloneAtCallsite: true });

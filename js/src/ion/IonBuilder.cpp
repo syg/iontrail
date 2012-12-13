@@ -3930,8 +3930,8 @@ IonBuilder::createThis(HandleFunction target, MDefinition *callee)
     return createThis;
 }
 
-static bool
-AllFunctionsAreCallsiteClone(types::TypeSet *funTypes)
+bool
+IonBuilder::allFunctionsAreCallsiteClone(types::TypeSet *funTypes)
 {
     uint32_t count = funTypes->getObjectCount();
     if (count < 1)
@@ -3996,7 +3996,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
     }
 
     // Call without inlining.
-    return makeCall(target, argc, false, AllFunctionsAreCallsiteClone(funTypes));
+    return makeCall(target, argc, false, allFunctionsAreCallsiteClone(funTypes));
 }
 
 bool
@@ -4054,7 +4054,7 @@ IonBuilder::jsop_funapply(uint32_t argc)
     MDefinition *argFunc = passFunc->getArgument();
     passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
-    if (AllFunctionsAreCallsiteClone(funTypes))
+    if (allFunctionsAreCallsiteClone(funTypes))
         argFunc = makeCallsiteClone(target, argFunc);
 
     // Pop apply function.
