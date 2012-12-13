@@ -1,3 +1,5 @@
+// |jit-test| slow;
+
 load(libdir + "parallelarray-helpers.js")
 
 function buildComprehension() {
