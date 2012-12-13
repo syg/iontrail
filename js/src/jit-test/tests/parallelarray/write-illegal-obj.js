@@ -9,7 +9,7 @@ function buildSimple() {
         obj.y += 1;
         obj.z += 1;
         return obj;
-    }, {mode: "par", expect: "bail"});
+    }, {mode: "par", expect: "bailout"});
 
     // new ParallelArray(256, function(i) {
     //     var o;
