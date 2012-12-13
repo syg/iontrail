@@ -192,41 +192,18 @@ function ParallelArrayBuild(self, shape, f, m) {
     break;
   }
 
+  var done = false;
   var buffer = %DenseArray(length);
 
-  if (!%InParallelSection() && TryParallel(m)) {
-    var ok;
-    switch (shape.length) {
-    case 2:
-      ok = %ParallelDo(fill, CheckParallel(m), yw);
-      break;
-    case 3:
-      ok = %ParallelDo(fill, CheckParallel(m), yw, zw);
-      break;
-    default:
-      ok = %ParallelDo(fill, CheckParallel(m));
-      break;
-    }
-    if (ok) {
-      self.shape = shape;
-      self.buffer = buffer;
-      return;
-    }
+  if (!%InParallelSection() && TryParallel(m))
+    done = %ParallelDo(fill, CheckParallel(m), yw, zw);
+
+  if (!done && TrySequential(m)) {
+    fill(0, 1, false, yw, zw);
+    done = true;
   }
 
-  if (TrySequential(m)) {
-    switch (shape.length) {
-    case 2:
-      fill(0, 1, false, yw);
-      break;
-    case 3:
-      fill(0, 1, false, yw, zw);
-      break;
-    default:
-      fill(0, 1, false);
-      break;
-    }
-
+  if (done) {
     self.shape = shape;
     self.buffer = buffer;
     return;
@@ -235,7 +212,6 @@ function ParallelArrayBuild(self, shape, f, m) {
   var emptyShape = [];
   for (var i = 0; i < shape.length; i++)
     emptyShape[i] = 0;
-
   self.shape = emptyShape;
   self.buffer = [];
 
