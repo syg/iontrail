@@ -414,6 +414,12 @@ class LNewStringObject : public LInstructionHelper<1, 1, 1>
     }
 };
 
+class LParBailout : public LInstructionHelper<0, 0, 0>
+{
+  public:
+    LIR_HEADER(ParBailout);
+};
+
 // Takes in an Object and a Value.
 class LInitProp : public LCallInstructionHelper<0, 1 + BOX_PIECES, 0>
 {

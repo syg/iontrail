@@ -226,6 +226,13 @@ LIRGenerator::visitNewStringObject(MNewStringObject *ins)
 }
 
 bool
+LIRGenerator::visitParBailout(MParBailout *ins)
+{
+    LParBailout *lir = new LParBailout();
+    return add(lir, ins);
+}
+
+bool
 LIRGenerator::visitInitProp(MInitProp *ins)
 {
     LInitProp *lir = new LInitProp(useRegisterAtStart(ins->getObject()));

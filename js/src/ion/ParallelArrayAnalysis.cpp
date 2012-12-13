@@ -134,7 +134,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(CharCodeAt)
     UNSAFE_OP(FromCharCode)
     SAFE_OP(Return)
-    UNSAFE_OP(Throw)
+    COND_SAFE_OP(Throw)
     SAFE_OP(Box)     // Boxing just creates a JSVal, doesn't alloc.
     SAFE_OP(Unbox)
     UNSAFE_OP(GuardObject)
@@ -599,6 +599,22 @@ ParallelArrayVisitor::visitSpecializedInstruction(MIRType spec)
         IonSpew(IonSpew_ParallelArray, "Instr. not specialized to int or double");
         return false;
     }
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Throw
+
+bool
+ParallelArrayVisitor::visitThrow(MThrow *thr)
+{
+    MBasicBlock *block = thr->block();
+    JS_ASSERT(block->lastIns() == thr);
+    block->discardLastIns();
+    MParBailout *bailout = new MParBailout();
+    if (!bailout)
+        return false;
+    block->end(bailout);
+    return true;
 }
 
 }

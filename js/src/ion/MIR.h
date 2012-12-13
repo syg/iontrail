@@ -1104,6 +1104,20 @@ class MParNew : public MUnaryInstruction
     }
 };
 
+// Could be allocating either a new array or a new object.
+class MParBailout : public MAryControlInstruction<0, 0>
+{
+  public:
+    INSTRUCTION_HEADER(ParBailout);
+
+    MParBailout()
+      : MAryControlInstruction()
+    {
+        setResultType(MIRType_Undefined);
+        setGuard();
+    }
+};
+
 
 // Slow path for adding a property to an object without a known base.
 class MInitProp

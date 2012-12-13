@@ -77,6 +77,7 @@ namespace ion {
     _(ParNewCallObject)                                                     \
     _(NewStringObject)                                                      \
     _(ParNew)                                                               \
+    _(ParBailout)                                                           \
     _(InitProp)                                                             \
     _(Start)                                                                \
     _(OsrEntry)                                                             \

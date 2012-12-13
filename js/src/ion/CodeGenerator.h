@@ -103,6 +103,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitParNewCallObject(LParNewCallObject *lir);
     bool visitNewStringObject(LNewStringObject *lir);
     bool visitParNew(LParNew *lir);
+    bool visitParBailout(LParBailout *lir);
     bool visitInitProp(LInitProp *lir);
     bool visitCreateThis(LCreateThis *lir);
     bool visitCreateThisVM(LCreateThisVM *lir);

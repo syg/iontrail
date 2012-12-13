@@ -30,6 +30,7 @@
     _(NewStringObject)              \
     _(ParNew)                       \
     _(ParNewCallObject)             \
+    _(ParBailout)                   \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
     _(ParCheckOverRecursed)         \
