@@ -552,7 +552,7 @@ intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
     //
     // Note: Parallel execution is never guaranteed.  It can fail for
     // any number of reasons, only some of which are in your control:
-    // in case of such a failure, %ParallelBuildArray will return
+    // in case of such a failure, |%ParallelDo()| will return
     // undefined.
     //
     // func() should expect the following arguments:
@@ -561,7 +561,7 @@ intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
     //
     // Here, |id| is the slice id. |n| is the total number of slices;
     // |warmup| is true if this is the warmup phase; and |args| are
-    // the additional arguments passed to |%ParallelBuildArray()|.
+    // the additional arguments passed to |%ParallelDo()|.
     // Typically, if |warmup| is true, you will want to do less work.
     //
     // See ParallelArray.js for examples.
@@ -576,7 +576,7 @@ intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
     // Usage: %ParallelSlices()
     //
     // Returns the number of parallel slices that will be created
-    // by %ParallelBuildArray().
+    // by |%ParallelDo()|.
 
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setInt32(ForkJoinSlices(cx));
