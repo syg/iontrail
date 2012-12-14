@@ -284,10 +284,10 @@ class LParNew : public LInstructionHelper<1, 1, 2>
   public:
     LIR_HEADER(ParNew);
 
-    LParNew(const LAllocation &parThreadContext,
+    LParNew(const LAllocation &parSlice,
             const LDefinition &temp1,
             const LDefinition &temp2) {
-        setOperand(0, parThreadContext);
+        setOperand(0, parSlice);
         setTemp(0, temp1);
         setTemp(1, temp2);
     }
@@ -296,7 +296,7 @@ class LParNew : public LInstructionHelper<1, 1, 2>
         return mir_->toParNew();
     }
 
-    const LAllocation *threadContext() {
+    const LAllocation *parSlice() {
         return getOperand(0);
     }
 
@@ -306,6 +306,48 @@ class LParNew : public LInstructionHelper<1, 1, 2>
 
     const LAllocation *getTemp1() {
         return getTemp(1)->output();
+    }
+};
+
+class LParNewDenseArray : public LCallInstructionHelper<1, 2, 3>
+{
+  public:
+    LIR_HEADER(ParNewDenseArray);
+
+    LParNewDenseArray(const LAllocation &parSlice,
+                      const LAllocation &length,
+                      const LDefinition &temp1,
+                      const LDefinition &temp2,
+                      const LDefinition &temp3) {
+        setOperand(0, parSlice);
+        setOperand(1, length);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+        setTemp(2, temp3);
+    }
+
+    MParNewDenseArray *mir() const {
+        return mir_->toParNewDenseArray();
+    }
+
+    const LAllocation *parSlice() {
+        return getOperand(0);
+    }
+
+    const LAllocation *length() {
+        return getOperand(1);
+    }
+
+    const LAllocation *getTemp0() {
+        return getTemp(0)->output();
+    }
+
+    const LAllocation *getTemp1() {
+        return getTemp(1)->output();
+    }
+
+    const LAllocation *getTemp2() {
+        return getTemp(2)->output();
     }
 };
 
@@ -337,11 +379,11 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
 
 class LParNewCallObject : public LInstructionHelper<1, 2, 2>
 {
-    LParNewCallObject(const LAllocation &parThreadContext,
+    LParNewCallObject(const LAllocation &parSlice,
                       const LAllocation &slots,
                       const LDefinition &temp1,
                       const LDefinition &temp2) {
-        setOperand(0, parThreadContext);
+        setOperand(0, parSlice);
         setOperand(1, slots);
         setTemp(0, temp1);
         setTemp(1, temp2);
@@ -350,21 +392,21 @@ class LParNewCallObject : public LInstructionHelper<1, 2, 2>
 public:
     LIR_HEADER(ParNewCallObject);
 
-    static LParNewCallObject *NewWithSlots(const LAllocation &parThreadContext,
+    static LParNewCallObject *NewWithSlots(const LAllocation &parSlice,
                                            const LAllocation &slots,
                                            const LDefinition &temp1,
                                            const LDefinition &temp2) {
-        return new LParNewCallObject(parThreadContext, slots, temp1, temp2);
+        return new LParNewCallObject(parSlice, slots, temp1, temp2);
     }
 
-    static LParNewCallObject *NewSansSlots(const LAllocation &parThreadContext,
+    static LParNewCallObject *NewSansSlots(const LAllocation &parSlice,
                                            const LDefinition &temp1,
                                            const LDefinition &temp2) {
         LAllocation slots = LConstantIndex::Bogus();
-        return new LParNewCallObject(parThreadContext, slots, temp1, temp2);
+        return new LParNewCallObject(parSlice, slots, temp1, temp2);
     }
 
-    const LAllocation *threadContext() {
+    const LAllocation *parSlice() {
         return getOperand(0);
     }
 
@@ -464,14 +506,14 @@ class LParCheckOverRecursed : public LInstructionHelper<0, 1, 1>
   public:
     LIR_HEADER(ParCheckOverRecursed);
 
-    LParCheckOverRecursed(const LAllocation &parThreadContext,
+    LParCheckOverRecursed(const LAllocation &parSlice,
                           const LDefinition &tempReg)
     {
-        setOperand(0, parThreadContext);
+        setOperand(0, parSlice);
         setTemp(0, tempReg);
     }
 
-    const LAllocation *threadContext() {
+    const LAllocation *parSlice() {
         return getOperand(0);
     }
 
@@ -485,14 +527,14 @@ class LParCheckInterrupt : public LCallInstructionHelper<0, 1, 1>
   public:
     LIR_HEADER(ParCheckInterrupt);
 
-    LParCheckInterrupt(const LAllocation &parThreadContext,
+    LParCheckInterrupt(const LAllocation &parSlice,
                        const LDefinition &tempReg)
     {
-        setOperand(0, parThreadContext);
+        setOperand(0, parSlice);
         setTemp(0, tempReg);
     }
 
-    const LAllocation *threadContext() {
+    const LAllocation *parSlice() {
         return getOperand(0);
     }
 
@@ -1995,16 +2037,16 @@ class LParLambda : public LInstructionHelper<1, 2, 2>
   public:
     LIR_HEADER(ParLambda);
 
-    LParLambda(const LAllocation &parThreadContext,
+    LParLambda(const LAllocation &parSlice,
                const LAllocation &scopeChain,
                const LDefinition &temp1,
                const LDefinition &temp2) {
-        setOperand(0, parThreadContext);
+        setOperand(0, parSlice);
         setOperand(1, scopeChain);
         setTemp(0, temp1);
         setTemp(1, temp2);
     }
-    const LAllocation *threadContext() {
+    const LAllocation *parSlice() {
         return getOperand(0);
     }
     const LAllocation *scopeChain() {
@@ -2984,12 +3026,12 @@ class LFunctionEnvironment : public LInstructionHelper<1, 1, 0>
     }
 };
 
-class LParThreadContext : public LCallInstructionHelper<1, 0, 1>
+class LParSlice : public LCallInstructionHelper<1, 0, 1>
 {
   public:
-    LIR_HEADER(ParThreadContext);
+    LIR_HEADER(ParSlice);
 
-    LParThreadContext(const LDefinition &temp1) {
+    LParSlice(const LDefinition &temp1) {
         setTemp(0, temp1);
     }
 
@@ -3248,10 +3290,10 @@ class LParWriteGuard : public LCallInstructionHelper<0, 2, 1>
   public:
     LIR_HEADER(ParWriteGuard);
 
-    LParWriteGuard(const LAllocation &parThreadContext,
+    LParWriteGuard(const LAllocation &parSlice,
                    const LAllocation &object,
                    const LDefinition &temp1) {
-        setOperand(0, parThreadContext);
+        setOperand(0, parSlice);
         setOperand(1, object);
         setTemp(0, temp1);
     }
@@ -3260,7 +3302,7 @@ class LParWriteGuard : public LCallInstructionHelper<0, 2, 1>
         return true;
     }
 
-    const LAllocation *threadContext() {
+    const LAllocation *parSlice() {
         return getOperand(0);
     }
 

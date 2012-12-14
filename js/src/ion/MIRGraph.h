@@ -466,6 +466,7 @@ class MIRGraph
     uint32_t idGen_;
     MBasicBlock *osrBlock_;
     MStart *osrStart_;
+    MInstruction *parSlice_;
 
     // List of compiled/inlined scripts.
     Vector<JSScript *, 4, IonAllocPolicy> scripts_;
@@ -480,6 +481,7 @@ class MIRGraph
         idGen_(0),
         osrBlock_(NULL),
         osrStart_(NULL),
+        parSlice_(NULL),
         numBlocks_(0)
     { }
 
@@ -601,6 +603,14 @@ class MIRGraph
     JSScript **scripts() {
         return scripts_.begin();
     }
+
+    // The ParSlice is an instance of ForkJoinSlice*, it carries
+    // "per-helper-thread" information.  So as not to modify the
+    // calling convention for parallel code, we obtain the current
+    // slice from thread-local storage.  This helper method will
+    // lazilly insert an MParSlice instruction in the entry block and
+    // return the definition.
+    MDefinition *parSlice();
 };
 
 class MDefinitionIterator

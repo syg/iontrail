@@ -603,8 +603,8 @@ js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-static JSBool
-intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
+JSBool
+js::intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
 {
     // Usage: %DenseArray(length)
     CallArgs args = CallArgsFromVp(argc, vp);

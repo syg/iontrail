@@ -77,6 +77,7 @@ namespace ion {
     _(ParNewCallObject)                                                     \
     _(NewStringObject)                                                      \
     _(ParNew)                                                               \
+    _(ParNewDenseArray)                                                     \
     _(ParBailout)                                                           \
     _(InitProp)                                                             \
     _(Start)                                                                \
@@ -93,7 +94,7 @@ namespace ion {
     _(LoadSlot)                                                             \
     _(StoreSlot)                                                            \
     _(FunctionEnvironment)                                                  \
-    _(ParThreadContext)                                                     \
+    _(ParSlice)                                                             \
     _(ParWriteGuard)                                                        \
     _(TypeBarrier)                                                          \
     _(MonitorTypes)                                                         \

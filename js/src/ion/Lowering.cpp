@@ -123,7 +123,7 @@ bool
 LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
 {
     LParCheckOverRecursed *lir = new LParCheckOverRecursed(
-        useRegister(ins->threadContext()),
+        useRegister(ins->parSlice()),
         temp());
     if (!add(lir))
         return false;
@@ -200,7 +200,7 @@ LIRGenerator::visitNewCallObject(MNewCallObject *ins)
 bool
 LIRGenerator::visitParNewCallObject(MParNewCallObject *ins)
 {
-    const LAllocation &parThreadContext = useRegister(ins->threadContext());
+    const LAllocation &parThreadContext = useRegister(ins->parSlice());
     const LDefinition &temp1 = temp();
     const LDefinition &temp2 = temp();
 
@@ -1294,7 +1294,7 @@ LIRGenerator::visitParLambda(MParLambda *ins)
 {
     JS_ASSERT(!ins->fun()->hasSingletonType());
     JS_ASSERT(!types::UseNewTypeForClone(ins->fun()));
-    LParLambda *lir = new LParLambda(useRegister(ins->threadContext()),
+    LParLambda *lir = new LParLambda(useRegister(ins->parSlice()),
                                      useRegister(ins->scopeChain()),
                                      temp(), temp());
     return define(lir, ins);
@@ -1351,16 +1351,16 @@ LIRGenerator::visitFunctionEnvironment(MFunctionEnvironment *ins)
 }
 
 bool
-LIRGenerator::visitParThreadContext(MParThreadContext *ins)
+LIRGenerator::visitParSlice(MParSlice *ins)
 {
-    LParThreadContext *lir = new LParThreadContext(tempFixed(CallTempReg0));
+    LParSlice *lir = new LParSlice(tempFixed(CallTempReg0));
     return defineReturn(lir, ins);
 }
 
 bool
 LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
 {
-    return add(new LParWriteGuard(useFixed(ins->threadContext(), CallTempReg0),
+    return add(new LParWriteGuard(useFixed(ins->parSlice(), CallTempReg0),
                                   useFixed(ins->object(), CallTempReg1),
                                   tempFixed(CallTempReg2)));
 }
@@ -1368,16 +1368,28 @@ LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
 bool
 LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 {
-    return add(new LParCheckInterrupt(useFixed(ins->threadContext(), CallTempReg0),
+    return add(new LParCheckInterrupt(useFixed(ins->parSlice(), CallTempReg0),
                                       tempFixed(CallTempReg1)));
 }
 
 bool
 LIRGenerator::visitParNew(MParNew *ins)
 {
-    LParNew *lir = new LParNew(useRegister(ins->threadContext()),
+    LParNew *lir = new LParNew(useRegister(ins->parSlice()),
                                temp(), temp());
     return define(lir, ins);
+}
+
+bool
+LIRGenerator::visitParNewDenseArray(MParNewDenseArray *ins)
+{
+    LParNewDenseArray *lir = new LParNewDenseArray(
+        useFixed(ins->parSlice(), CallTempReg0),
+        useFixed(ins->length(), CallTempReg1),
+        tempFixed(CallTempReg2),
+        tempFixed(CallTempReg3),
+        tempFixed(CallTempReg4));
+    return defineReturn(lir, ins);
 }
 
 bool

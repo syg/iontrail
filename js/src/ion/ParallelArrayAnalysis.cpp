@@ -28,7 +28,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 #define SAFE_OP(op)                             \
     virtual bool visit##op(M##op *prop) { return true; }
 
-#define COND_SAFE_OP(op)                        \
+#define CUSTOM_OP(op)                        \
     virtual bool visit##op(M##op *prop);
 
 #define DROP_OP(op)                             \
@@ -40,7 +40,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 
 #define SPECIALIZED_OP(op)                                                    \
     virtual bool visit##op(M##op *ins) {                                      \
-        return visitSpecializedInstruction(ins->specialization());            \
+        return visitSpecializedInstruction(ins, ins->specialization());       \
     }
 
 #define UNSAFE_OP(op)                                               \
@@ -64,10 +64,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 class ParallelArrayVisitor : public MInstructionVisitor
 {
     ParallelCompileContext &compileContext_;
-    MBasicBlock *entryBlock_;
-    MInstruction *threadContext_;
-
-    MInstruction *threadContext();
+    MIRGraph &graph_;
 
     bool insertWriteGuard(MInstruction *writeInstruction,
                           MDefinition *valueBeingWritten);
@@ -78,16 +75,17 @@ class ParallelArrayVisitor : public MInstructionVisitor
     bool replace(MInstruction *oldInstruction,
                  MInstruction *replacementInstruction);
 
-    bool visitSpecializedInstruction(MIRType spec);
+    bool visitSpecializedInstruction(MInstruction *ins, MIRType spec);
 
   public:
     ParallelArrayVisitor(ParallelCompileContext &compileContext,
-                         MBasicBlock *entryBlock)
+                         MIRGraph &graph)
         : compileContext_(compileContext),
-          entryBlock_(entryBlock),
-          threadContext_(new MParThreadContext())
+          graph_(graph)
     {
     }
+
+    MDefinition *parSlice() { return graph_.parSlice(); }
 
     // I am taking the policy of blacklisting everything that's not
     // obviously safe for now.  We can loosen as we need.
@@ -97,20 +95,20 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(Callee)
     SAFE_OP(TableSwitch)
     SAFE_OP(Goto)
-    COND_SAFE_OP(Test)
+    CUSTOM_OP(Test)
     SPECIALIZED_OP(Compare)
     SAFE_OP(Phi)
     SAFE_OP(Beta)
     UNSAFE_OP(OsrValue)
     UNSAFE_OP(OsrScopeChain)
     UNSAFE_OP(ReturnFromCtor)
-    COND_SAFE_OP(CheckOverRecursed)
+    CUSTOM_OP(CheckOverRecursed)
     DROP_OP(RecompileCheck)
     UNSAFE_OP(DefVar)
     UNSAFE_OP(CreateThis)
     SAFE_OP(PrepareCall)
     SAFE_OP(PassArg)
-    COND_SAFE_OP(Call)
+    CUSTOM_OP(Call)
     UNSAFE_OP(ApplyArgs)
     SAFE_OP(BitNot)
     UNSAFE_OP(TypeOf)
@@ -134,25 +132,25 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(CharCodeAt)
     UNSAFE_OP(FromCharCode)
     SAFE_OP(Return)
-    COND_SAFE_OP(Throw)
+    CUSTOM_OP(Throw)
     SAFE_OP(Box)     // Boxing just creates a JSVal, doesn't alloc.
     SAFE_OP(Unbox)
-    UNSAFE_OP(GuardObject)
+    SAFE_OP(GuardObject)
     SAFE_OP(ToDouble)
     SAFE_OP(ToInt32)
     SAFE_OP(TruncateToInt32)
     UNSAFE_OP(ToString)
     SAFE_OP(NewSlots)
-    COND_SAFE_OP(NewArray)
-    COND_SAFE_OP(NewObject)
-    COND_SAFE_OP(NewCallObject)
-    COND_SAFE_OP(NewParallelArray)
+    CUSTOM_OP(NewArray)
+    CUSTOM_OP(NewObject)
+    CUSTOM_OP(NewCallObject)
+    CUSTOM_OP(NewParallelArray)
     UNSAFE_OP(InitProp)
-    COND_SAFE_OP(Start)
+    SAFE_OP(Start)
     UNSAFE_OP(OsrEntry)
     SAFE_OP(Nop)
     UNSAFE_OP(RegExp)
-    COND_SAFE_OP(Lambda)
+    CUSTOM_OP(Lambda)
     UNSAFE_OP(ImplicitThis)
     SAFE_OP(Slots)
     SAFE_OP(Elements)
@@ -205,7 +203,12 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(Floor)
     SAFE_OP(Round)
     UNSAFE_OP(InstanceOf)
-    COND_SAFE_OP(InterruptCheck) // FIXME---replace this with a version that bails
+    CUSTOM_OP(InterruptCheck)
+    SAFE_OP(ParSlice)
+    SAFE_OP(ParNew)
+    SAFE_OP(ParNewDenseArray)
+    SAFE_OP(ParNewCallObject)
+    SAFE_OP(ParLambda)
 };
 
 ParallelCompileContext::ParallelCompileContext(JSContext *cx)
@@ -300,7 +303,7 @@ bool
 ParallelCompileContext::canCompile(MIRGraph *graph)
 {
     // Scan the IR and validate the instructions used in a peephole fashion
-    ParallelArrayVisitor visitor(*this, graph->entryBlock());
+    ParallelArrayVisitor visitor(*this, *graph);
     for (MBasicBlockIterator block(graph->begin()); block != graph->end(); block++) {
         for (MInstructionIterator ins(block->begin()); ins != block->end();) {
             // we may be removing or replcae the current instruction,
@@ -328,28 +331,6 @@ ParallelArrayVisitor::visitTest(MTest *) {
 }
 
 /////////////////////////////////////////////////////////////////////////////
-// Thread Context
-//
-// The Thread Context carries "per-helper-thread" information.
-// Whenever necessary, we load it once in the beginning of the
-// function from the thread-local storage.  The pointer is then
-// supplied to the various Par MIR instructions that require access to
-// the per-helper-thread data.
-
-MInstruction *
-ParallelArrayVisitor::threadContext()
-{
-    return threadContext_;
-}
-
-bool
-ParallelArrayVisitor::visitStart(MStart *ins) {
-    MBasicBlock *block = ins->block();
-    block->insertAfter(ins, threadContext_);
-    return true;
-}
-
-/////////////////////////////////////////////////////////////////////////////
 // Memory allocation
 //
 // Simple memory allocation opcodes---those which ultimately compile
@@ -359,7 +340,7 @@ ParallelArrayVisitor::visitStart(MStart *ins) {
 
 bool
 ParallelArrayVisitor::visitNewParallelArray(MNewParallelArray *ins) {
-    MParNew *parNew = new MParNew(threadContext(), ins->templateObject());
+    MParNew *parNew = new MParNew(parSlice(), ins->templateObject());
     replace(ins, parNew);
     return true;
 }
@@ -367,10 +348,8 @@ ParallelArrayVisitor::visitNewParallelArray(MNewParallelArray *ins) {
 bool
 ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins) {
     // fast path: replace with ParNewCallObject op
-    MDefinition *threadContext = this->threadContext();
-
     MParNewCallObject *parNewCallObjectInstruction =
-        MParNewCallObject::New(threadContext, ins);
+        MParNewCallObject::New(parSlice(), ins);
     replace(ins, parNewCallObjectInstruction);
     return true;
 }
@@ -384,8 +363,7 @@ ParallelArrayVisitor::visitLambda(MLambda *ins) {
     }
 
     // fast path: replace with ParLambda op
-    MDefinition *threadContext = this->threadContext();
-    MParLambda *parLambdaInstruction = MParLambda::New(threadContext, ins);
+    MParLambda *parLambdaInstruction = MParLambda::New(parSlice(), ins);
     replace(ins, parLambdaInstruction);
     return true;
 }
@@ -415,8 +393,7 @@ ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction) {
 bool
 ParallelArrayVisitor::replaceWithParNew(MInstruction *newInstruction,
                                         JSObject *templateObject) {
-    MDefinition *threadContext = this->threadContext();
-    MParNew *parNewInstruction = new MParNew(threadContext, templateObject);
+    MParNew *parNewInstruction = new MParNew(parSlice(), templateObject);
     replace(newInstruction, parNewInstruction);
     return true;
 }
@@ -512,9 +489,8 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
         break;
     }
 
-    MDefinition *threadContext = this->threadContext();
     MBasicBlock *block = writeInstruction->block();
-    MParWriteGuard *writeGuard = MParWriteGuard::New(threadContext, object);
+    MParWriteGuard *writeGuard = MParWriteGuard::New(parSlice(), object);
     block->insertBefore(writeInstruction, writeGuard);
     writeGuard->adjustInputs(writeGuard);
     return true;
@@ -565,16 +541,14 @@ ParallelArrayVisitor::visitCall(MCall *ins)
 bool
 ParallelArrayVisitor::visitCheckOverRecursed(MCheckOverRecursed *ins)
 {
-    MDefinition *threadContext = this->threadContext();
-    MParCheckOverRecursed *replacement = new MParCheckOverRecursed(threadContext);
+    MParCheckOverRecursed *replacement = new MParCheckOverRecursed(parSlice());
     return replace(ins, replacement);
 }
 
 bool
 ParallelArrayVisitor::visitInterruptCheck(MInterruptCheck *ins)
 {
-    MDefinition *threadContext = this->threadContext();
-    MParCheckInterrupt *replacement = new MParCheckInterrupt(threadContext);
+    MParCheckInterrupt *replacement = new MParCheckInterrupt(parSlice());
     return replace(ins, replacement);
 }
 
@@ -588,7 +562,7 @@ ParallelArrayVisitor::visitInterruptCheck(MInterruptCheck *ins)
 // if the operands are not both integers/floats.
 
 bool
-ParallelArrayVisitor::visitSpecializedInstruction(MIRType spec)
+ParallelArrayVisitor::visitSpecializedInstruction(MInstruction *ins, MIRType spec)
 {
     switch (spec) {
       case MIRType_Int32:
@@ -596,7 +570,8 @@ ParallelArrayVisitor::visitSpecializedInstruction(MIRType spec)
         return true;
 
       default:
-        IonSpew(IonSpew_ParallelArray, "Instr. not specialized to int or double");
+        IonSpew(IonSpew_ParallelArray, "Instr. %s not specialized to int or double",
+                ins->opName());
         return false;
     }
 }

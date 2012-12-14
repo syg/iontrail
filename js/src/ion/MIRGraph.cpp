@@ -67,6 +67,24 @@ MIRGraph::unmarkBlocks() {
         i->unmark();
 }
 
+MDefinition *
+MIRGraph::parSlice() {
+    if (parSlice_ != NULL)
+        return parSlice_;
+
+    parSlice_ = new MParSlice();
+    MBasicBlock *entry = entryBlock();
+    JS_ASSERT(entry->info().executionMode() == ParallelExecution);
+    for (MInstructionIterator ins(entry->begin()); ins != entry->end(); ins++) {
+        if (ins->isStart()) {
+            entry->insertAfter(*ins, parSlice_);
+            return parSlice_;
+        }
+    }
+
+    JS_NOT_REACHED("No start block in entry block");
+}
+
 MBasicBlock *
 MBasicBlock::New(MIRGraph &graph, CompileInfo &info,
                  MBasicBlock *pred, jsbytecode *entryPc, Kind kind)

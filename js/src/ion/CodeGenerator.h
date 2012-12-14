@@ -103,6 +103,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitParNewCallObject(LParNewCallObject *lir);
     bool visitNewStringObject(LNewStringObject *lir);
     bool visitParNew(LParNew *lir);
+    bool visitParNewDenseArray(LParNewDenseArray *lir);
     bool visitParBailout(LParBailout *lir);
     bool visitInitProp(LInitProp *lir);
     bool visitCreateThis(LCreateThis *lir);
@@ -138,7 +139,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCharCodeAt(LCharCodeAt *lir);
     bool visitFromCharCode(LFromCharCode *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
-    bool visitParThreadContext(LParThreadContext *lir);
+    bool visitParSlice(LParSlice *lir);
     bool visitParWriteGuard(LParWriteGuard *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);

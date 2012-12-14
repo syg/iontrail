@@ -29,6 +29,7 @@
     _(NewCallObject)                \
     _(NewStringObject)              \
     _(ParNew)                       \
+    _(ParNewDenseArray)             \
     _(ParNewCallObject)             \
     _(ParBailout)                   \
     _(InitProp)                     \
@@ -146,7 +147,7 @@
     _(StoreFixedSlotV)              \
     _(StoreFixedSlotT)              \
     _(FunctionEnvironment)          \
-    _(ParThreadContext)             \
+    _(ParSlice)                     \
     _(GetPropertyCacheV)            \
     _(GetPropertyCacheT)            \
     _(GetElementCacheV)             \

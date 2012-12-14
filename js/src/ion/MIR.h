@@ -279,6 +279,7 @@ class MDefinition : public MNode
     { }
 
     virtual Opcode op() const = 0;
+    virtual const char *opName() const = 0;
     void printName(FILE *fp);
     static void PrintOpcodeName(FILE *fp, Opcode op);
     virtual void printOpcode(FILE *fp);
@@ -527,6 +528,9 @@ class MInstruction
 #define INSTRUCTION_HEADER(opcode)                                          \
     Opcode op() const {                                                     \
         return MDefinition::Op_##opcode;                                    \
+    }                                                                       \
+    const char *opName() const {                                            \
+        return #opcode;                                                     \
     }                                                                       \
     bool accept(MInstructionVisitor *visitor) {                             \
         return visitor->visit##opcode(this);                                \
@@ -1087,15 +1091,15 @@ class MParNew : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(ParNew);
 
-    MParNew(MDefinition *threadContext,
+    MParNew(MDefinition *parSlice,
             JSObject *templateObject)
-      : MUnaryInstruction(threadContext),
+      : MUnaryInstruction(parSlice),
         templateObject_(templateObject)
     {
         setResultType(MIRType_Object);
     }
 
-    MDefinition *threadContext() const {
+    MDefinition *parSlice() const {
         return getOperand(0);
     }
 
@@ -1117,7 +1121,6 @@ class MParBailout : public MAryControlInstruction<0, 0>
         setGuard();
     }
 };
-
 
 // Slow path for adding a property to an object without a known base.
 class MInitProp
@@ -2989,7 +2992,7 @@ class MParCheckOverRecursed : public MUnaryInstruction
         setMovable();
     }
 
-    MDefinition *threadContext() const {
+    MDefinition *parSlice() const {
         return getOperand(0);
     }
 };
@@ -3008,7 +3011,7 @@ class MParCheckInterrupt : public MUnaryInstruction
         setMovable();
     }
 
-    MDefinition *threadContext() const {
+    MDefinition *parSlice() const {
         return getOperand(0);
     }
 };
@@ -3207,9 +3210,9 @@ class MParLambda
 {
     CompilerRootFunction fun_;
 
-    MParLambda(MDefinition *threadContext,
+    MParLambda(MDefinition *parSlice,
                MDefinition *scopeChain, JSFunction *fun)
-      : MBinaryInstruction(threadContext, scopeChain), fun_(fun)
+      : MBinaryInstruction(parSlice, scopeChain), fun_(fun)
     {
         setResultType(MIRType_Object);
     }
@@ -3217,19 +3220,19 @@ class MParLambda
   public:
     INSTRUCTION_HEADER(ParLambda);
 
-    static MParLambda *New(MDefinition *threadContext,
+    static MParLambda *New(MDefinition *parSlice,
                            MDefinition *scopeChain, JSFunction *fun) {
-        return new MParLambda(threadContext, scopeChain, fun);
+        return new MParLambda(parSlice, scopeChain, fun);
     }
 
-    static MParLambda *New(MDefinition *threadContext,
+    static MParLambda *New(MDefinition *parSlice,
                            MLambda *originalInstruction) {
-        return New(threadContext,
+        return New(parSlice,
                    originalInstruction->scopeChain(),
                    originalInstruction->fun());
     }
 
-    MDefinition *threadContext() const {
+    MDefinition *parSlice() const {
         return getOperand(0);
     }
 
@@ -4810,17 +4813,17 @@ class MFunctionEnvironment
 
 // Load's the current js::ThreadContext*.
 // Only applicable in COMPILE_MODE_PAR.
-class MParThreadContext
+class MParSlice
   : public MNullaryInstruction
 {
   public:
-    MParThreadContext()
+    MParSlice()
         : MNullaryInstruction()
     {
         setResultType(MIRType_ThreadContext);
     }
 
-    INSTRUCTION_HEADER(ParThreadContext);
+    INSTRUCTION_HEADER(ParSlice);
 
     AliasSet getAliasSet() const {
         // Indicate that this instruction reads nothing, stores nothing.
@@ -5687,7 +5690,7 @@ class MParWriteGuard
     static MParWriteGuard *New(MDefinition *parThreadContext, MDefinition *obj) {
         return new MParWriteGuard(parThreadContext, obj);
     }
-    MDefinition *threadContext() const {
+    MDefinition *parSlice() const {
         return getOperand(0);
     }
     MDefinition *object() const {
@@ -5834,9 +5837,9 @@ class MParNewCallObject : public MBinaryInstruction
 {
     CompilerRootObject templateObj_;
 
-    MParNewCallObject(MDefinition *threadContext,
+    MParNewCallObject(MDefinition *parSlice,
                       JSObject *templateObj, MDefinition *slots)
-        : MBinaryInstruction(threadContext, slots),
+        : MBinaryInstruction(parSlice, slots),
           templateObj_(templateObj)
     {
         setResultType(MIRType_Object);
@@ -5845,20 +5848,20 @@ class MParNewCallObject : public MBinaryInstruction
   public:
     INSTRUCTION_HEADER(ParNewCallObject);
 
-    static MParNewCallObject *New(MDefinition *threadContext,
+    static MParNewCallObject *New(MDefinition *parSlice,
                                   JSObject *templateObj,
                                   MDefinition *slots) {
-        return new MParNewCallObject(threadContext, templateObj, slots);
+        return new MParNewCallObject(parSlice, templateObj, slots);
     }
 
-    static MParNewCallObject *New(MDefinition *threadContext,
+    static MParNewCallObject *New(MDefinition *parSlice,
                                   MNewCallObject *originalInstruction) {
-        return New(threadContext,
+        return New(parSlice,
                    originalInstruction->templateObject(),
                    originalInstruction->slots());
     }
 
-    MDefinition *threadContext() const {
+    MDefinition *parSlice() const {
         return getOperand(0);
     }
 
@@ -5977,6 +5980,38 @@ class MEnclosingScope : public MLoadFixedSlot
     AliasSet getAliasSet() const {
         // ScopeObject reserved slots are immutable.
         return AliasSet::None();
+    }
+};
+
+// Creates a dense array of the given length.
+//
+// Note: the template object should be an *empty* dense array!
+class MParNewDenseArray : public MBinaryInstruction
+{
+    CompilerRootObject templateObject_;
+
+  public:
+    INSTRUCTION_HEADER(ParNewDenseArray);
+
+    MParNewDenseArray(MDefinition *parSlice,
+                      MDefinition *length,
+                      JSObject *templateObject)
+      : MBinaryInstruction(parSlice, length),
+        templateObject_(templateObject)
+    {
+        setResultType(MIRType_Object);
+    }
+
+    MDefinition *parSlice() const {
+        return getOperand(0);
+    }
+
+    MDefinition *length() const {
+        return getOperand(1);
+    }
+
+    JSObject *templateObject() const {
+        return templateObject_;
     }
 };
 

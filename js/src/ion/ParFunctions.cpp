@@ -142,7 +142,7 @@ ion::ParCheckInterrupt(ForkJoinSlice *slice)
 }
 
 bool
-ion::ParExtendArray(ParExtendArrayArgs *args)
+ion::ParPush(ParPushArgs *args)
 {
     // It is awkward to have the MIR pass the current slice in, so
     // just fetch it from TLS.  Extending the array is kind of the
@@ -150,6 +150,14 @@ ion::ParExtendArray(ParExtendArrayArgs *args)
     ForkJoinSlice *slice = js::ForkJoinSlice::current();
     return (args->object->parExtendDenseArray(slice->allocator,
                                               &args->value, 1) == JSObject::ED_OK);
+}
+
+JSObject *
+ion::ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length)
+{
+    if (array->parExtendDenseArray(slice->allocator, NULL, length) != JSObject::ED_OK)
+        return NULL;
+    return array;
 }
 
 void

@@ -611,18 +611,17 @@ struct JSObject : public js::ObjectImpl
      * appending values to |this|, so long as the following conditions
      * hold:
      *
-     * - the new values are to be written at index |i| where |i| is
-     *   the initialized length;
-     * - the initialized length is equal to the capacity, and hence
-     *   the array must be reallocated;
+     * - the new values are to be written starting at
+     *   index |i| where |i| is the initialized length;
      * - we are in parallel execution mode, and hence no GC is possible.
      *
      * The number of values to be appended is |extra| and the values
-     * can be found in the array |v|.  Unlike
+     * can be found in the array |v|.  If the array |v| is NULL,
+     * then the initial values are set to holes. Unlike
      * |ensureDenseArrayElements()|, there is no |index| argument
      * because its value is implied to be the initialized length of
      * |this|.  If the result of |parExtendDenseArray()| is |ED_OK|,
-     * then the capacity of |this| will have been grown and the new
+     * then the capacity of |this| will have been grown (if needed) and the new
      * entries will be filled in with |extra| new values from |v|.
      * Any other result indicates no changes have been made.
      */
