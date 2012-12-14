@@ -643,7 +643,7 @@ function ParallelArrayFlatten() {
 
 function ParallelArrayGet1(i) {
   if (i === undefined)
-    return this;
+    return undefined;
   return this.buffer[this.offset + i];
 }
 
@@ -651,7 +651,7 @@ function ParallelArrayGet2(x, y) {
   var xw = this.shape[0];
   var yw = this.shape[1];
   if (x === undefined)
-    return this;
+    return undefined;
   if (x >= xw)
     return undefined;
   if (y === undefined)
@@ -667,7 +667,7 @@ function ParallelArrayGet3(x, y, z) {
   var yw = this.shape[1];
   var zw = this.shape[2];
   if (x === undefined)
-    return this;
+    return undefined;
   if (x >= xw)
     return undefined;
   if (y === undefined)
@@ -684,7 +684,7 @@ function ParallelArrayGet3(x, y, z) {
 
 function ParallelArrayGetN(...coords) {
   if (coords.length == 0)
-    return this;
+    return undefined;
 
   var products = ComputeProducts(this.shape);
 
