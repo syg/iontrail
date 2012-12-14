@@ -1077,6 +1077,10 @@ IonBuilder::inlineThrowError(uint32_t argc, bool constructing)
         break;
     }
 
+    MDefinitionVector argv;
+    if (!discardCall(argc, argv, current))
+        return InliningStatus_Error;
+
     MParBailout *bailout = new MParBailout();
     if (!bailout)
         return InliningStatus_Error;
