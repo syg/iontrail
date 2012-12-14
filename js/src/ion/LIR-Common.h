@@ -1146,6 +1146,27 @@ class LCompareS : public LInstructionHelper<1, 2, 1>
     }
 };
 
+class LParCompareS : public LCallInstructionHelper<1, 2, 0>
+{
+  public:
+    LIR_HEADER(ParCompareS);
+
+    LParCompareS(const LAllocation &left, const LAllocation &right) {
+        setOperand(0, left);
+        setOperand(1, right);
+    }
+
+    const LAllocation *left() {
+        return getOperand(0);
+    }
+    const LAllocation *right() {
+        return getOperand(1);
+    }
+    MCompare *mir() {
+        return mir_->toCompare();
+    }
+};
+
 class LCompareV : public LCallInstructionHelper<1, 2 * BOX_PIECES, 0>
 {
   public:

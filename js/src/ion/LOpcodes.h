@@ -63,6 +63,7 @@
     _(Compare)                      \
     _(CompareD)                     \
     _(CompareS)                     \
+    _(ParCompareS)                  \
     _(CompareV)                     \
     _(CompareAndBranch)             \
     _(CompareDAndBranch)            \

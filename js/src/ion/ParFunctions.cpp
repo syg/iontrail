@@ -168,6 +168,22 @@ ion::ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length)
     return array;
 }
 
+ParCompareResult
+ion::ParCompareStrings(JSString *str1, JSString *str2)
+{
+    // NYI---the rope case
+    if (!str1->isLinear())
+        return ParCompareUnknown;
+    if (!str2->isLinear())
+        return ParCompareUnknown;
+
+    JSLinearString &linearStr1 = str1->asLinear();
+    JSLinearString &linearStr2 = str2->asLinear();
+    if (EqualStrings(&linearStr1, &linearStr2))
+        return ParCompareEq;
+    return ParCompareNe;
+}
+
 void
 ion::ParallelAbort(JSScript *script)
 {

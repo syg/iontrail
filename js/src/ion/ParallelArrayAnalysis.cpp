@@ -38,9 +38,13 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
         return true;                            \
     }
 
-#define SPECIALIZED_OP(op)                                                    \
-    virtual bool visit##op(M##op *ins) {                                      \
-        return visitSpecializedInstruction(ins, ins->specialization());       \
+#define PERMIT(T) (1 << T)
+
+#define PERMIT_NUMERIC (PERMIT(MIRType_Int32) | PERMIT(MIRType_Double))
+
+#define SPECIALIZED_OP(op, flags)                                               \
+    virtual bool visit##op(M##op *ins) {                                        \
+        return visitSpecializedInstruction(ins, ins->specialization(), flags);  \
     }
 
 #define UNSAFE_OP(op)                                               \
@@ -75,7 +79,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     bool replace(MInstruction *oldInstruction,
                  MInstruction *replacementInstruction);
 
-    bool visitSpecializedInstruction(MInstruction *ins, MIRType spec);
+    bool visitSpecializedInstruction(MInstruction *ins, MIRType spec, uint32_t flags);
 
   public:
     ParallelArrayVisitor(ParallelCompileContext &compileContext,
@@ -96,7 +100,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(TableSwitch)
     SAFE_OP(Goto)
     CUSTOM_OP(Test)
-    SPECIALIZED_OP(Compare)
+    SPECIALIZED_OP(Compare, PERMIT_NUMERIC | PERMIT(MIRType_String))
     SAFE_OP(Phi)
     SAFE_OP(Beta)
     UNSAFE_OP(OsrValue)
@@ -118,16 +122,16 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(BitXor)
     SAFE_OP(Lsh)
     SAFE_OP(Rsh)
-    SPECIALIZED_OP(Ursh)
-    SPECIALIZED_OP(MinMax)
+    SPECIALIZED_OP(Ursh, PERMIT_NUMERIC)
+    SPECIALIZED_OP(MinMax, PERMIT_NUMERIC)
     SAFE_OP(Abs)
     SAFE_OP(Sqrt)
     SAFE_OP(MathFunction)
-    SPECIALIZED_OP(Add)
-    SPECIALIZED_OP(Sub)
-    SPECIALIZED_OP(Mul)
-    SPECIALIZED_OP(Div)
-    SPECIALIZED_OP(Mod)
+    SPECIALIZED_OP(Add, PERMIT_NUMERIC)
+    SPECIALIZED_OP(Sub, PERMIT_NUMERIC)
+    SPECIALIZED_OP(Mul, PERMIT_NUMERIC)
+    SPECIALIZED_OP(Div, PERMIT_NUMERIC)
+    SPECIALIZED_OP(Mod, PERMIT_NUMERIC)
     UNSAFE_OP(Concat)
     UNSAFE_OP(CharCodeAt)
     UNSAFE_OP(FromCharCode)
@@ -562,18 +566,16 @@ ParallelArrayVisitor::visitInterruptCheck(MInterruptCheck *ins)
 // if the operands are not both integers/floats.
 
 bool
-ParallelArrayVisitor::visitSpecializedInstruction(MInstruction *ins, MIRType spec)
+ParallelArrayVisitor::visitSpecializedInstruction(MInstruction *ins, MIRType spec,
+                                                  uint32_t flags)
 {
-    switch (spec) {
-      case MIRType_Int32:
-      case MIRType_Double:
+    uint32_t flag = 1 << spec;
+    if (flags & flag)
         return true;
 
-      default:
-        IonSpew(IonSpew_ParallelArray, "Instr. %s not specialized to int or double",
-                ins->opName());
-        return false;
-    }
+    IonSpew(IonSpew_ParallelArray, "Instr. %s specialized to unacceptable type %d",
+            ins->opName(), spec);
+    return false;
 }
 
 /////////////////////////////////////////////////////////////////////////////

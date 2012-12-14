@@ -539,10 +539,24 @@ LIRGenerator::visitCompare(MCompare *comp)
         // LCompareSAndBranch. Doing this now wouldn't be wrong, but doesn't
         // make sense and avoids confusion.
         if (comp->specialization() == MIRType_String) {
-            LCompareS *lir = new LCompareS(useRegister(left), useRegister(right), temp());
-            if (!define(lir, comp))
-                return false;
-            return assignSafepoint(lir, comp);
+            switch (comp->block()->info().executionMode()) {
+              case SequentialExecution:
+              {
+                LCompareS *lir = new LCompareS(useRegister(left), useRegister(right), temp());
+                if (!define(lir, comp))
+                    return false;
+                return assignSafepoint(lir, comp);
+              }
+
+              case ParallelExecution:
+              {
+                LParCompareS *lir = new LParCompareS(useFixed(left, CallTempReg0),
+                                                     useFixed(right, CallTempReg1));
+                return defineReturn(lir, comp);
+              }
+            }
+
+            JS_NOT_REACHED("Unexpected execution mode");
         }
 
         // Sniff out if the output of this compare is used only for a branching.

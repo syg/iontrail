@@ -2645,6 +2645,34 @@ CodeGenerator::visitBinaryV(LBinaryV *lir)
     }
 }
 
+bool
+CodeGenerator::visitParCompareS(LParCompareS *lir)
+{
+    JSOp op = lir->mir()->jsop();
+    Register left = ToRegister(lir->left());
+    Register right = ToRegister(lir->right());
+
+    JS_ASSERT((op == JSOP_EQ || op == JSOP_STRICTEQ) ||
+              (op == JSOP_NE || op == JSOP_STRICTNE));
+
+    masm.setupUnalignedABICall(2, CallTempReg2);
+    masm.passABIArg(left);
+    masm.passABIArg(right);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCompareStrings));
+
+    // Check for cases that we do not currently handle in par exec
+    Label *bail;
+    if (!ensureOutOfLineParallelAbort(&bail))
+        return false;
+    masm.branch32(Assembler::Equal, ReturnReg, Imm32(ParCompareUnknown), bail);
+
+    if (op == JSOP_NE || op == JSOP_STRICTNE) {
+        masm.xor32(Imm32(1), ReturnReg);
+    }
+
+    return true;
+}
+
 typedef bool (*StringCompareFn)(JSContext *, HandleString, HandleString, JSBool *);
 static const VMFunction stringsEqualInfo =
     FunctionInfo<StringCompareFn>(ion::StringsEqual<true>);

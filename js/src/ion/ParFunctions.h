@@ -32,7 +32,11 @@ struct ParPushArgs {
     Value value;
 };
 bool ParPush(ParPushArgs *args);
+
 JSObject *ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length);
+
+enum ParCompareResult { ParCompareNe = false, ParCompareEq = true, ParCompareUnknown = 2 };
+ParCompareResult ParCompareStrings(JSString *str1, JSString *str2);
 
 void ParallelAbort(JSScript *script);
 
