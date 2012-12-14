@@ -141,6 +141,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
     bool visitParSlice(LParSlice *lir);
     bool visitParWriteGuard(LParWriteGuard *lir);
+    bool visitParDump(LParDump *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);
     bool visitCallSetElement(LCallSetElement *lir);

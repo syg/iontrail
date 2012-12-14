@@ -148,6 +148,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitParSlice(MParSlice *ins);
     bool visitParWriteGuard(MParWriteGuard *ins);
     bool visitParCheckInterrupt(MParCheckInterrupt *ins);
+    bool visitParDump(MParDump *ins);
     bool visitStoreSlot(MStoreSlot *ins);
     bool visitTypeBarrier(MTypeBarrier *ins);
     bool visitMonitorTypes(MMonitorTypes *ins);

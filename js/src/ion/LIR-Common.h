@@ -3315,6 +3315,20 @@ class LParWriteGuard : public LCallInstructionHelper<0, 2, 1>
     }
 };
 
+class LParDump : public LCallInstructionHelper<0, BOX_PIECES, 0>
+{
+  public:
+    LIR_HEADER(ParDump);
+
+    LParDump(const LAllocation &value) {
+        setOperand(0, value);
+    }
+
+    const LAllocation *value() {
+        return getOperand(0);
+    }
+};
+
 // Guard that a value is in a TypeSet.
 class LTypeBarrier : public LInstructionHelper<BOX_PIECES, BOX_PIECES, 1>
 {

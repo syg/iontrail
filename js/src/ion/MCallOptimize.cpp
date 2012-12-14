@@ -90,6 +90,10 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     // Self-hosting
     if (native == intrinsic_ThrowError)
         return inlineThrowError(argc, constructing);
+#ifdef DEBUG
+    if (native == intrinsic_Dump)
+        return inlineDump(argc, constructing);
+#endif
 
     return InliningStatus_NotInlined;
 }
@@ -1146,6 +1150,37 @@ IonBuilder::inlineThrowError(uint32_t argc, bool constructing)
     current = newBlock(pc);
     if (!current)
         return InliningStatus_Error;
+
+    MConstant *udef = MConstant::New(UndefinedValue());
+    current->add(udef);
+    current->push(udef);
+
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineDump(uint32_t argc, bool constructing)
+{
+    // In Parallel Execution, call ParDump.  We just need a debugging
+    // aid!
+
+    if (constructing)
+        return InliningStatus_NotInlined;
+
+    ExecutionMode executionMode = info().executionMode();
+    switch (executionMode) {
+      case SequentialExecution:
+        return InliningStatus_NotInlined;
+      case ParallelExecution:
+        break;
+    }
+
+    MDefinitionVector argv;
+    if (!discardCall(argc, argv, current))
+        return InliningStatus_Error;
+
+    MParDump *dump = new MParDump(argv[1]);
+    current->add(dump);
 
     MConstant *udef = MConstant::New(UndefinedValue());
     current->add(udef);

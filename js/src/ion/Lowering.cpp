@@ -1373,6 +1373,12 @@ LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 }
 
 bool
+LIRGenerator::visitParDump(MParDump *ins)
+{
+    return add(new LParDump(useFixed(ins->value(), CallTempReg0)));
+}
+
+bool
 LIRGenerator::visitParNew(MParNew *ins)
 {
     LParNew *lir = new LParNew(useRegister(ins->parSlice()),

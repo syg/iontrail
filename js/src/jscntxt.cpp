@@ -442,20 +442,13 @@ intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
 }
 
 #ifdef DEBUG
-static JSBool
-intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
+JSBool
+js::intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-
-    void dumpValue(const Value &v); // in jsobj.cpp
     RootedValue val(cx, args[0]);
-    if (val.isObject()) {
-        val.toObject().dump();
-    } else {
-        dumpValue(val);
-    }
+    js_DumpValue(val);
     fprintf(stderr, "\n");
-
     args.rval().setUndefined();
     return true;
 }

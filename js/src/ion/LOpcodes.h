@@ -117,6 +117,7 @@
     _(GuardShape)                   \
     _(GuardClass)                   \
     _(ParWriteGuard)                \
+    _(ParDump)                      \
     _(TypeBarrier)                  \
     _(MonitorTypes)                 \
     _(InitializedLength)            \

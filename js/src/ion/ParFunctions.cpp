@@ -141,6 +141,14 @@ ion::ParCheckInterrupt(ForkJoinSlice *slice)
     return true;
 }
 
+void
+ion::ParDumpValue(Value *v)
+{
+#ifdef DEBUG
+    js_DumpValue(*v);
+#endif
+}
+
 bool
 ion::ParPush(ParPushArgs *args)
 {

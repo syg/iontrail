@@ -620,6 +620,20 @@ CodeGenerator::visitParWriteGuard(LParWriteGuard *lir)
 }
 
 bool
+CodeGenerator::visitParDump(LParDump *lir)
+{
+    ValueOperand value = ToValue(lir, 0);
+    masm.reserveStack(sizeof(Value));
+    masm.movePtr(StackPointer, CallTempReg0);
+    masm.storeValue(value, Address(CallTempReg0, 0));
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.passABIArg(CallTempReg0);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParPush));
+    masm.freeStack(sizeof(Value));
+    return true;
+}
+
+bool
 CodeGenerator::visitTypeBarrier(LTypeBarrier *lir)
 {
     ValueOperand operand = ToValue(lir, LTypeBarrier::Input);

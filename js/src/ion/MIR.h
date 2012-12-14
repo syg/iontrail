@@ -5704,6 +5704,28 @@ class MParWriteGuard
     }
 };
 
+class MParDump
+  : public MUnaryInstruction,
+    public BoxPolicy<0>
+{
+  public:
+    INSTRUCTION_HEADER(ParDump);
+
+    MParDump(MDefinition *v)
+      : MUnaryInstruction(v)
+    {
+        setResultType(MIRType_None);
+    }
+
+    MDefinition *value() const {
+        return getOperand(0);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+};
+
 
 // Given a value, guard that the value is in a particular TypeSet, then returns
 // that value.

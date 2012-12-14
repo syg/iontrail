@@ -96,6 +96,7 @@ namespace ion {
     _(FunctionEnvironment)                                                  \
     _(ParSlice)                                                             \
     _(ParWriteGuard)                                                        \
+    _(ParDump)                                                              \
     _(TypeBarrier)                                                          \
     _(MonitorTypes)                                                         \
     _(GetPropertyCache)                                                     \
