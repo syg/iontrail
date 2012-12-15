@@ -229,6 +229,8 @@ IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVecto
     RootedScript script(cx, script_);
     for(unsigned i = 0; i < objCount; i++) {
         fun = calleeTypes->getFunction(i);
+        if (!fun)
+            return true;
         if (fun->isCloneAtCallsite()) {
             if (hasClones)
                 *hasClones = true;
@@ -236,7 +238,8 @@ IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVecto
             if (!fun)
                 return false;
         }
-        targets.append(fun);
+        if (!targets.append(fun))
+            return false;
     }
 
     return true;
