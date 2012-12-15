@@ -208,7 +208,9 @@ class IonBuilder : public MIRGenerator
     bool getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
                              bool *isClone = NULL);
     bool getPolyCallTargets(uint32_t argc, jsbytecode *pc, AutoObjectVector &targets,
-                            bool *hasClones, uint32_t maxTargets);
+                            uint32_t maxTargets, bool *hasClones = NULL);
+    bool getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVector &targets,
+                            uint32_t maxTargets, bool *hasClones = NULL);
     bool canInlineTarget(JSFunction *target);
 
     void popCfgStack();
@@ -448,7 +450,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineNewParallelArray(uint32_t argc, bool constructing);
     InliningStatus inlineParallelArray(uint32_t argc, bool constructing);
     InliningStatus inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefinition *ctor,
-                                           int32_t discards);
+                                           types::StackTypeSet *ctorTypes, int32_t discards);
     InliningStatus inlineThrowError(uint32_t argc, bool constructing);
 
     InliningStatus inlineNativeCall(JSNative native, uint32_t argc, bool constructing);
@@ -460,7 +462,7 @@ class IonBuilder : public MIRGenerator
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
     bool makeInliningDecision(AutoObjectVector &targets, uint32_t argc);
 
-    bool allFunctionsAreCallsiteClone(types::TypeSet *funTypes);
+    bool allFunctionsAreCallsiteClone(types::StackTypeSet *funTypes);
     MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);
     MCall *makeCallHelper(HandleFunction target, uint32_t argc,
                           bool constructing, bool callsiteClone);

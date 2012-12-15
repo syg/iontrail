@@ -1217,8 +1217,11 @@ class MCall
     CompilerRootFunction target_;
     // Original value of argc from the bytecode.
     uint32_t numActualArgs_;
+    // The typeset of the callee, could be NULL.
+    types::StackTypeSet *calleeTypes_;
 
-    MCall(JSFunction *target, uint32_t numActualArgs, bool construct)
+    MCall(JSFunction *target, uint32_t numActualArgs, bool construct,
+          types::StackTypeSet *calleeTypes)
       : construct_(construct),
         target_(target),
         numActualArgs_(numActualArgs)
@@ -1228,7 +1231,8 @@ class MCall
 
   public:
     INSTRUCTION_HEADER(Call);
-    static MCall *New(JSFunction *target, size_t maxArgc, size_t numActualArgs, bool construct);
+    static MCall *New(JSFunction *target, size_t maxArgc, size_t numActualArgs, bool construct,
+                      types::StackTypeSet *calleeTypes);
 
     void initPrepareCall(MDefinition *start) {
         JS_ASSERT(start->isPrepareCall());
@@ -1259,6 +1263,9 @@ class MCall
 
     bool isConstructing() const {
         return construct_;
+    }
+    types::StackTypeSet *calleeTypes() const {
+        return calleeTypes_;
     }
 
     // The number of stack arguments is the max between the number of formal
