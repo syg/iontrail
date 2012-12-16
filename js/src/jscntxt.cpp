@@ -259,7 +259,38 @@ JSCompartment::sweepCallsiteClones()
     }
 }
 
-JSFunction *
+#ifdef DEBUG
+
+enum CloneSpewChannel {
+    CloneSpewNew,
+    CloneSpewOld,
+    NumCloneSpewChannels
+};
+
+static bool
+IsCloneSpewActive(CloneSpewChannel channel)
+{
+    static bool active[NumCloneSpewChannels];
+    static bool checked = false;
+    if (!checked) {
+        checked = true;
+        PodArrayZero(active);
+        const char *env = getenv("CLONEFLAGS");
+        if (!env)
+            return false;
+        if (strstr(env, "new"))
+            active[CloneSpewNew] = true;
+        if (strstr(env, "full")) {
+            for (uint32_t i = 0; i < NumCloneSpewChannels; i++)
+                active[i] = true;
+        }
+    }
+    return active[channel];
+}
+
+#endif // DEBUG
+
+RawFunction
 js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
     JS_ASSERT(types::UseNewTypeForClone(fun));
@@ -280,10 +311,12 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     Table::AddPtr p = table.lookupForAdd(key);
     if (p) {
 #ifdef DEBUG
-    fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) already cloned %p to %p\n",
-            fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-            script->filename, PCToLineNumber(script, pc), script->function(),
-            fun.get(), p->value.get());
+        if (IsCloneSpewActive(CloneSpewOld)) {
+            fprintf(stderr, "[CallsiteClone] %p:%s:%d at callsite %p:%s:%d already cloned to %p\n",
+                    fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+                    script->function(), script->filename, PCToLineNumber(script, pc),
+                    p->value.get());
+        }
 #endif
         return p->value;
     }
@@ -300,10 +333,12 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
         return NULL;
 
 #ifdef DEBUG
-    fprintf(stderr, "[CallsiteClone] %s:%d at callsite %s:%d (%p) from %p to %p\n",
-            fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-            script->filename, PCToLineNumber(script, pc), script->function(),
-            fun.get(), clone.get());
+    if (IsCloneSpewActive(CloneSpewNew)) {
+        fprintf(stderr, "[CallsiteClone] %p:%s:%d at callsite %p:%s:%d cloned to %p\n",
+                fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+                script->function(), script->filename, PCToLineNumber(script, pc),
+                clone.get());
+    }
 #endif
 
     return clone;

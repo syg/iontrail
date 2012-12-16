@@ -85,7 +85,7 @@ typedef HashMap<CallsiteCloneKey,
                 CallsiteCloneKey,
                 SystemAllocPolicy> CallsiteCloneTable;
 
-JSFunction *
+RawFunction
 CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc);
 
 /* Detects cycles when traversing an object graph. */
