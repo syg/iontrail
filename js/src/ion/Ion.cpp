@@ -1553,8 +1553,7 @@ ParallelCompileContext::compile(IonBuilder *builder,
     if (!OptimizeMIR(builder))
         return false;
 
-    RootedScript script(cx_, builder->script());
-    if (!analyzeAndGrowWorklist(builder, graph))
+    if (!analyzeAndGrowWorklist(graph))
         return false;
 
     CodeGenerator *codegen = GenerateLIR(builder);
@@ -2131,7 +2130,7 @@ ion::ForbidCompilation(JSContext *cx, JSScript *script, ExecutionMode mode)
         }
 
         script->ion = ION_DISABLED_SCRIPT;
-        break;
+        return;
 
       case ParallelExecution:
         if (script->hasParallelIonScript()) {
@@ -2140,7 +2139,7 @@ ion::ForbidCompilation(JSContext *cx, JSScript *script, ExecutionMode mode)
         }
 
         script->parallelIon = ION_DISABLED_SCRIPT;
-        break;
+        return;
     }
 
     JS_NOT_REACHED("No such execution mode");
