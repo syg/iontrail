@@ -490,7 +490,6 @@ class TypeSet
     inline TypeObjectKey *getObject(unsigned i) const;
     inline RawObject getSingleObject(unsigned i) const;
     inline TypeObject *getTypeObject(unsigned i) const;
-    inline RawFunction getFunction(unsigned i) const;
 
     void setOwnProperty(bool configurable) {
         flags |= TYPE_FLAG_OWN_PROPERTY;

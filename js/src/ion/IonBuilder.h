@@ -21,8 +21,6 @@ class CodeGenerator;
 
 class IonBuilder : public MIRGenerator
 {
-    friend class ParallelArrayVisitor;
-
     enum ControlStatus {
         ControlStatus_Error,
         ControlStatus_Ended,        // There is no continuation/join point.

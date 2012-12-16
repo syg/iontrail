@@ -1468,20 +1468,6 @@ TypeSet::getTypeObject(unsigned i) const
     return (key && !(uintptr_t(key) & 1)) ? (TypeObject *) key : NULL;
 }
 
-inline RawFunction
-TypeSet::getFunction(unsigned i) const
-{
-    RawObject obj = getSingleObject(i);
-    if (obj && obj->isFunction())
-        return obj->toFunction();
-
-    TypeObject *typeObj = getTypeObject(i);
-    if (typeObj)
-        return typeObj->interpretedFunction;
-
-    return NULL;
-}
-
 /////////////////////////////////////////////////////////////////////
 // TypeCallsite
 /////////////////////////////////////////////////////////////////////

@@ -1017,7 +1017,7 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs, argc);
 
-    MCall *call = MCall::New(target, targetArgs + 1, argc, false, ctorTypes);
+    MCall *call = MCall::New(target, targetArgs + 1, argc, false, script_, pc, ctorTypes);
     if (!call)
         return InliningStatus_Error;
 

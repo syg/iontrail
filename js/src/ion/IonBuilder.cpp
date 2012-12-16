@@ -176,19 +176,20 @@ IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleF
     if (calleeTypes->baseFlags() != 0 || calleeTypes->getObjectCount() != 1)
         return true;
 
-    RootedFunction fun(cx, calleeTypes->getFunction(0));
-    if (!fun)
+    RawObject obj = calleeTypes->getSingleton();
+    if (!obj || !obj->isFunction())
         return true;
 
-    if (fun->isCloneAtCallsite()) {
+    if (obj->toFunction()->isCloneAtCallsite()) {
         if (isClone)
             *isClone = true;
+        RootedFunction fun(cx, obj->toFunction());
         RootedScript script(cx, script_);
         target.set(CloneFunctionAtCallsite(cx, fun, script, pc));
         if (!target)
             return false;
     } else {
-        target.set(fun);
+        target.set(obj->toFunction());
     }
 
     return true;
@@ -228,9 +229,10 @@ IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVecto
     RootedFunction fun(cx);
     RootedScript script(cx, script_);
     for(unsigned i = 0; i < objCount; i++) {
-        fun = calleeTypes->getFunction(i);
-        if (!fun)
+        RawObject obj = calleeTypes->getSingleObject(i);
+        if (!obj || !obj->isFunction())
             return true;
+        fun = obj->toFunction();
         if (fun->isCloneAtCallsite()) {
             if (hasClones)
                 *hasClones = true;
@@ -3496,7 +3498,7 @@ IonBuilder::makePolyInlineDispatch(JSContext *cx, AutoObjectVector &targets, int
     fallbackBlock->end(MGoto::New(fallbackEndBlock));
 
     // Create Call
-    MCall *call = MCall::New(NULL, argc + 1, argc, false,
+    MCall *call = MCall::New(NULL, argc + 1, argc, false, script_, pc,
                              oracle->getCallTarget(script_, argc, pc));
     if (!call)
         return NULL;
@@ -4167,7 +4169,7 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32_t argc, bool constructi
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs, argc);
 
-    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing,
+    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing, script_, pc,
                              target ? NULL : oracle->getCallTarget(script_, argc, pc));
     if (!call)
         return NULL;

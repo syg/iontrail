@@ -1,7 +1,6 @@
 #include <stdio.h>
 
 #include "Ion.h"
-#include "IonBuilder.h"
 #include "MIR.h"
 #include "MIRGraph.h"
 #include "ParallelArrayAnalysis.h"
@@ -66,7 +65,6 @@ class ParallelArrayVisitor : public MInstructionVisitor
 {
     JSContext *cx_;
     ParallelCompileContext &compileContext_;
-    IonBuilder *builder_;
     MBasicBlock *entryBlock_;
     MInstruction *threadContext_;
 
@@ -87,10 +85,9 @@ class ParallelArrayVisitor : public MInstructionVisitor
     AutoObjectVector callTargets;
 
     ParallelArrayVisitor(JSContext *cx, ParallelCompileContext &compileContext,
-                         IonBuilder *builder, MBasicBlock *entryBlock)
+                         MBasicBlock *entryBlock)
       : cx_(cx),
         compileContext_(compileContext),
-        builder_(builder),
         entryBlock_(entryBlock),
         threadContext_(new MParThreadContext()),
         callTargets(cx)
@@ -255,10 +252,10 @@ ParallelCompileContext::appendToWorklist(HandleFunction fun)
 }
 
 bool
-ParallelCompileContext::analyzeAndGrowWorklist(IonBuilder *builder, MIRGraph *graph)
+ParallelCompileContext::analyzeAndGrowWorklist(MIRGraph *graph)
 {
     // Scan the IR and validate the instructions used in a peephole fashion.
-    ParallelArrayVisitor visitor(cx_, *this, builder, graph->entryBlock());
+    ParallelArrayVisitor visitor(cx_, *this, graph->entryBlock());
     for (MBasicBlockIterator block(graph->begin()); block != graph->end(); block++) {
         for (MInstructionIterator ins(block->begin()); ins != block->end();) {
             // We may be removing or replacing the current instruction,
@@ -491,6 +488,47 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
 // Ion compiled. If a function has no IonScript, we bail out. The compilation
 // is done during warmup of the parallel kernel, see js::RunScript.
 
+static bool
+GetPossibleCallees(JSContext *cx, HandleScript script, jsbytecode *pc,
+                   types::StackTypeSet *calleeTypes, AutoObjectVector &targets)
+{
+    JS_ASSERT(calleeTypes);
+
+    if (calleeTypes->baseFlags() != 0)
+        return true;
+
+    unsigned objCount = calleeTypes->getObjectCount();
+
+    if (objCount == 0)
+        return true;
+
+    RootedFunction fun(cx);
+    for (unsigned i = 0; i < objCount; i++) {
+        RawObject obj = calleeTypes->getSingleObject(i);
+        if (obj && obj->isFunction()) {
+            fun = obj->toFunction();
+        } else {
+            types::TypeObject *typeObj = calleeTypes->getTypeObject(i);
+            if (!typeObj)
+                continue;
+            fun = typeObj->interpretedFunction;
+            if (!fun)
+                continue;
+        }
+
+        if (fun->isCloneAtCallsite()) {
+            fun = CloneFunctionAtCallsite(cx, fun, script, pc);
+            if (!fun)
+                return false;
+        }
+
+        if (!targets.append(fun))
+            return false;
+    }
+
+    return true;
+}
+
 bool
 ParallelArrayVisitor::visitCall(MCall *ins)
 {
@@ -517,10 +555,8 @@ ParallelArrayVisitor::visitCall(MCall *ins)
         return false;
     }
 
-    // XXX: Pass an extremely high maxTargets so we add every target.
-    bool s = builder_->getPolyCallTargets(ins->calleeTypes(), callTargets, 1024);
-
-    return s;
+    RootedScript script(cx_, ins->script());
+    return GetPossibleCallees(cx_, script, ins->pc(), ins->calleeTypes(), callTargets);
 }
 
 /////////////////////////////////////////////////////////////////////////////
