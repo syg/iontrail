@@ -1501,11 +1501,6 @@ ParallelCompileContext::compileTransitively()
         script = fun->nonLazyScript();
         worklist_.popBack();
 
-        if (script->hasParallelIonScript()) {
-            worklist_.popBack();
-            continue;
-        }
-
         IonSpew(IonSpew_ParallelArray, "Compiling %p:%s:%u",
                 fun.get(), script->filename, script->lineno);
 
