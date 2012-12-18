@@ -21,6 +21,8 @@
 #include "vm/ForkJoin-inl.h"
 
 #include "ion/Ion.h"
+#include "ion/MIR.h"
+#include "ion/MIRGraph.h"
 #include "ion/IonCompartment.h"
 #include "ion/ParallelArrayAnalysis.h"
 
@@ -83,6 +85,7 @@ class ParallelSpewer
     const char *red() { return color("\x1b[31m"); }
     const char *green() { return color("\x1b[32m"); }
     const char *yellow() { return color("\x1b[33m"); }
+    const char *cyan() { return color("\x1b[36m"); }
 
   public:
     ParallelSpewer()
@@ -230,6 +233,20 @@ class ParallelSpewer
 
         spew(SpewCompile, "END %s%s%s", statusColor, MethodStatusToString(status), reset());
     }
+
+    void spewMIR(MDefinition *mir, const char *fmt, va_list ap) {
+        if (!active[SpewCompile])
+            return;
+
+        const size_t BufferSize = 4096;
+        char buf[BufferSize];
+        vsnprintf(buf, BufferSize, fmt, ap);
+
+        JSScript *script = mir->block()->info().script();
+        spew(SpewCompile, "%s%s%s: %s (%s:%u)",
+             cyan(), mir->opName(), reset(), buf,
+             script->filename, PCToLineNumber(script, mir->trackedPc()));
+    }
 };
 
 // Singleton instance of the spewer.
@@ -268,6 +285,15 @@ parallel::SpewEndCompile(MethodStatus status)
 {
     spewer.endCompile(status);
     return status;
+}
+
+void
+parallel::SpewMIR(MDefinition *mir, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    spewer.spewMIR(mir, fmt, ap);
+    va_end(ap);
 }
 
 #endif // DEBUG

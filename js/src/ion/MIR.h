@@ -279,6 +279,7 @@ class MDefinition : public MNode
     { }
 
     virtual Opcode op() const = 0;
+    virtual const char *opName() const = 0;
     void printName(FILE *fp);
     static void PrintOpcodeName(FILE *fp, Opcode op);
     virtual void printOpcode(FILE *fp);
@@ -527,6 +528,9 @@ class MInstruction
 #define INSTRUCTION_HEADER(opcode)                                          \
     Opcode op() const {                                                     \
         return MDefinition::Op_##opcode;                                    \
+    }                                                                       \
+    const char *opName() const {                                            \
+        return #opcode;                                                     \
     }                                                                       \
     bool accept(MInstructionVisitor *visitor) {                             \
         return visitor->visit##opcode(this);                                \
