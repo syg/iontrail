@@ -192,7 +192,7 @@ class ParallelSpewer
         if (!active[SpewCompile])
             return;
 
-        spew(SpewCompile, "COMPILE %p:%s:%u", bold(), reset(),
+        spew(SpewCompile, "COMPILE %p:%s:%u",
              fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
         depth++;
     }
