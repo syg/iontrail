@@ -5,7 +5,7 @@ function test() {
   var a = [1,2];
   var p = new ParallelArray(a);
   var makeadd1 = function (v) { return [v]; }
-  p.map(makeadd1, {mode: "par", expect: "disqualified"});
+  p.map(makeadd1, {mode: "par", expect: "success"});
 }
 
 test();
