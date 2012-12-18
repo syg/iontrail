@@ -50,8 +50,6 @@ namespace ion {
     _(Safepoints)                           \
     /* Debug info about Pools*/             \
     _(Pools)                                \
-    /* Debug info about ParallelArray*/     \
-    _(ParallelArray)                        \
     /* Calls to js::ion::Trace() */         \
     _(Trace)                                \
     /* Debug info about the I$ */           \

@@ -32,12 +32,6 @@ using namespace js::ion;
 // Debug spew
 //
 
-enum SpewChannel {
-    SpewOps,
-    SpewTypes,
-    NumSpewChannels
-};
-
 static const char *
 ExecutionStatusToString(ExecutionStatus status)
 {
@@ -56,125 +50,223 @@ ExecutionStatusToString(ExecutionStatus status)
 
 #ifdef DEBUG
 
-static bool
-SpewColorable()
+static const char *
+MethodStatusToString(MethodStatus status)
 {
-    // Only spew colors on xterm-color to not screw up emacs.
-    static bool colorable = false;
-    static bool checked = false;
-    if (!checked) {
-        checked = true;
-        const char *env = getenv("TERM");
-        if (!env)
-            return false;
-        if (strcmp(env, "xterm-color") == 0 || strcmp(env, "xterm-256color") == 0)
-            colorable = true;
+    switch (status) {
+      case Method_Error:
+        return "error";
+      case Method_CantCompile:
+        return "can't compile";
+      case Method_Skipped:
+        return "skipped";
+      case Method_Compiled:
+        return "compiled";
     }
-    return colorable;
+    return "(unknown status)";
 }
 
-static inline const char *
-SpewColorReset()
+class ParallelSpewer
 {
-    if (!SpewColorable())
-        return "";
-    return "\x1b[0m";
-}
+    uint32_t depth;
+    bool colorable;
+    bool active[NumSpewChannels];
 
-static inline const char *
-SpewColorRaw(const char *colorCode) {
-    if (!SpewColorable())
-        return "";
-    return colorCode;
-}
+    const char *color(const char *colorCode) {
+        if (!colorable)
+            return "";
+        return colorCode;
+    }
 
-static inline const char *
-SpewColorRed() { return SpewColorRaw("\x1b[31m"); }
-static inline const char *
-SpewColorGreen() { return SpewColorRaw("\x1b[32m"); }
-static inline const char *
-SpewColorYellow() { return SpewColorRaw("\x1b[33m"); }
+    const char *reset() { return color("\x1b[0m"); }
+    const char *bold() { return color("\x1b[1m"); }
+    const char *red() { return color("\x1b[31m"); }
+    const char *green() { return color("\x1b[32m"); }
+    const char *yellow() { return color("\x1b[33m"); }
 
-static bool
-IsSpewActive(SpewChannel channel)
-{
-    // Note: in addition, setting PAFLAGS=trace will cause
-    // special instructions to be written into the generated
-    // code that look like:
-    //
-    // mov 0xDEADBEEF, eax
-    // mov N, eax
+  public:
+    ParallelSpewer()
+      : depth(0)
+    {
+        const char *env;
 
-    static bool active[NumSpewChannels];
-    static bool checked = false;
-    if (!checked) {
-        checked = true;
         PodArrayZero(active);
-        const char *env = getenv("PAFLAGS");
-        if (!env)
-            return false;
-        if (strstr(env, "ops"))
-            active[SpewOps] = true;
-        if (strstr(env, "types"))
-            active[SpewTypes] = true;
-        if (strstr(env, "full")) {
-            for (uint32_t i = 0; i < NumSpewChannels; i++)
-                active[i] = true;
+        env = getenv("PAFLAGS");
+        if (env) {
+            if (strstr(env, "ops"))
+                active[SpewOps] = true;
+            if (strstr(env, "compile"))
+                active[SpewCompile] = true;
+            if (strstr(env, "full")) {
+                for (uint32_t i = 0; i < NumSpewChannels; i++)
+                    active[i] = true;
+            }
+        }
+
+        env = getenv("TERM");
+        if (env) {
+            if (strcmp(env, "xterm-color") == 0 || strcmp(env, "xterm-256color") == 0)
+                colorable = true;
         }
     }
-    return active[channel];
-}
 
-static void
-Spew(JSContext *cx, SpewChannel channel, const char *fmt, ...)
+    void spewVA(SpewChannel channel, const char *fmt, va_list ap) {
+        if (!active[channel])
+            return;
+
+        // Print into a buffer first so we use one fprintf, which usually
+        // doesn't get interrupted when running with multiple threads.
+        static const size_t BufferSize = 4096;
+        char buf[BufferSize];
+
+        if (ForkJoinSlice *slice = ForkJoinSlice::current())
+            snprintf(buf, BufferSize, "[Parallel:%u] ", slice->sliceId);
+        else
+            snprintf(buf, BufferSize, "[Parallel:M] ");
+
+        for (uint32_t i = 0; i < depth; i++)
+            snprintf(buf + strlen(buf), BufferSize, "  ");
+
+        vsnprintf(buf + strlen(buf), BufferSize, fmt, ap);
+        snprintf(buf + strlen(buf), BufferSize, "\n");
+
+        fprintf(stderr, "%s", buf);
+    }
+
+    void spew(SpewChannel channel, const char *fmt, ...) {
+        va_list ap;
+        va_start(ap, fmt);
+        spewVA(channel, fmt, ap);
+        va_end(ap);
+    }
+
+    void beginOp(JSContext *cx, const char *name) {
+        if (!active[SpewOps])
+            return;
+
+        if (cx) {
+            jsbytecode *pc;
+            JSScript *script = cx->stack.currentScript(&pc);
+            if (script && pc)
+                spew(SpewOps, "%sBEGIN %s (%s:%u)%s", bold(),
+                     name, script->filename, PCToLineNumber(script, pc), reset());
+            else
+                spew(SpewOps, "%sBEGIN %s%s", bold(), name, reset());
+
+        } else {
+            spew(SpewOps, "%sBEGIN %s%s", bold(), name, reset());
+        }
+
+        depth++;
+    }
+
+    void endOp(ExecutionStatus status) {
+        if (!active[SpewOps])
+            return;
+
+        JS_ASSERT(depth > 0);
+        depth--;
+
+        const char *statusColor;
+        switch (status) {
+          case ExecutionDisqualified:
+          case ExecutionFatal:
+            statusColor = red();
+            break;
+          case ExecutionBailout:
+            statusColor = yellow();
+            break;
+          case ExecutionSucceeded:
+            statusColor = green();
+            break;
+          default:
+            statusColor = reset();
+            break;
+        }
+
+        spew(SpewOps, "%sEND %s%s%s", bold(),
+             statusColor, ExecutionStatusToString(status), reset());
+    }
+
+    void beginCompile(HandleFunction fun) {
+        if (!active[SpewCompile])
+            return;
+
+        spew(SpewCompile, "COMPILE %p:%s:%u", bold(), reset(),
+             fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
+        depth++;
+    }
+
+    void endCompile(MethodStatus status) {
+        if (!active[SpewCompile])
+            return;
+
+        JS_ASSERT(depth > 0);
+        depth--;
+
+        const char *statusColor;
+        switch (status) {
+          case Method_Error:
+          case Method_CantCompile:
+            statusColor = red();
+            break;
+          case Method_Skipped:
+            statusColor = yellow();
+            break;
+          case Method_Compiled:
+            statusColor = green();
+            break;
+          default:
+            statusColor = reset();
+            break;
+        }
+
+        spew(SpewCompile, "END %s%s%s", statusColor, MethodStatusToString(status), reset());
+    }
+};
+
+// Singleton instance of the spewer.
+static ParallelSpewer spewer;
+
+void
+parallel::Spew(SpewChannel channel, const char *fmt, ...)
 {
-    if (!IsSpewActive(channel))
-        return;
-
-    jsbytecode *pc;
-    JSScript *script = cx->stack.currentScript(&pc);
-    if (!script || !pc)
-        return;
-
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "[ParallelArray] %s:%u: ", script->filename, PCToLineNumber(script, pc));
-    vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
+    spewer.spewVA(channel, fmt, ap);
     va_end(ap);
 }
 
-static void
-SpewExecution(JSContext *cx, const char *op, ExecutionStatus status)
+void
+parallel::SpewBeginOp(JSContext *cx, const char *name)
 {
-    const char *statusColor;
-    switch (status) {
-      case ExecutionDisqualified:
-      case ExecutionFatal:
-        statusColor = SpewColorRed();
-        break;
-      case ExecutionBailout:
-        statusColor = SpewColorYellow();
-        break;
-      case ExecutionSucceeded:
-        statusColor = SpewColorGreen();
-        break;
-    }
-    Spew(cx, SpewOps, "%s: %s%s%s", op, statusColor,
-         ExecutionStatusToString(status), SpewColorReset());
+    spewer.beginOp(cx, name);
 }
 
-#else
+ExecutionStatus
+parallel::SpewEndOp(ExecutionStatus status)
+{
+    spewer.endOp(status);
+    return status;
+}
 
-static bool IsSpewActive(SpewChannel channel) { return false; }
-static void Spew(JSContext *cx, SpewChannel channel, const char *fmt, ...) {}
-static void SpewExecution(JSContext *cx, const char *op, const ExecutionMode &mode,
-                          ExecutionStatus status) {}
+void
+parallel::SpewBeginCompile(HandleFunction fun)
+{
+    spewer.beginCompile(fun);
+}
 
-#endif
+MethodStatus
+parallel::SpewEndCompile(MethodStatus status)
+{
+    spewer.endCompile(status);
+    return status;
+}
+
+#endif // DEBUG
 
 static ExecutionStatus
-ToExecutionStatus(JSContext *cx, const char *opName, ParallelResult pr)
+ToExecutionStatus(ParallelResult pr)
 {
     ExecutionStatus status;
     switch (pr) {
@@ -190,10 +282,6 @@ ToExecutionStatus(JSContext *cx, const char *opName, ParallelResult pr)
         status = ExecutionFatal;
         break;
     }
-
-#ifdef DEBUG
-    SpewExecution(cx, opName, status);
-#endif
 
     return status;
 }
@@ -260,22 +348,22 @@ class ParallelDo : public ForkJoinOp
     { }
 
     ExecutionStatus apply() {
-        Spew(cx_, SpewOps, "ParallelDo: attempting parallel compilation");
+        SpewBeginOp(cx_, "ParallelDo");
+
         if (!ion::IsEnabled(cx_))
-            return ExecutionDisqualified;
+            return SpewEndOp(ExecutionDisqualified);
 
         if (!pendingInvalidations.resize(ForkJoinSlices(cx_)))
-            return ExecutionFatal;
+            return SpewEndOp(ExecutionFatal);
 
         MethodStatus status = compileForParallelExecution();
         if (status == Method_Error)
-            return ExecutionFatal;
+            return SpewEndOp(ExecutionFatal);
         if (status != Method_Compiled)
-            return ExecutionDisqualified;
+            return SpewEndOp(ExecutionDisqualified);
 
-        Spew(cx_, SpewOps, "ParallelDo: entering parallel section");
-        ParallelResult pr = js::ExecuteForkJoinOp(cx_, *this);
-        return ToExecutionStatus(cx_, "ParallelDo", pr);
+        Spew(SpewOps, "Executing parallel section");
+        return SpewEndOp(ToExecutionStatus(js::ExecuteForkJoinOp(cx_, *this)));
     }
 
     MethodStatus compileForParallelExecution() {
@@ -291,7 +379,7 @@ class ParallelDo : public ForkJoinOp
         if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx_))
             return Method_Error;
 
-        Spew(cx_, SpewOps, "ParallelDo: compilation");
+        Spew(SpewOps, "Compiling all reachable functions");
 
         ParallelCompileContext compileContext(cx_);
         if (!compileContext.appendToWorklist(callee))

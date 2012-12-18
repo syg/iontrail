@@ -17,6 +17,7 @@
 #include "EdgeCaseAnalysis.h"
 #include "RangeAnalysis.h"
 #include "LinearScan.h"
+#include "builtin/ParallelArray.h"
 #include "ParallelArrayAnalysis.h"
 #include "jscompartment.h"
 #include "vm/ThreadPool.h"
@@ -1491,6 +1492,9 @@ ion::CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType)
 MethodStatus
 ParallelCompileContext::compileTransitively()
 {
+    using parallel::SpewBeginCompile;
+    using parallel::SpewEndCompile;
+
     if (worklist_.empty())
         return Method_Skipped;
 
@@ -1501,30 +1505,32 @@ ParallelCompileContext::compileTransitively()
         script = fun->nonLazyScript();
         worklist_.popBack();
 
-        IonSpew(IonSpew_ParallelArray, "Compiling %p:%s:%u",
-                fun.get(), script->filename, script->lineno);
+        SpewBeginCompile(fun);
 
         // Attempt compilation. Returns Method_Compiled if already compiled.
         MethodStatus status = Compile(cx_, script, fun, NULL, false, *this);
         if (status != Method_Compiled) {
             if (status == Method_CantCompile)
                 ForbidCompilation(cx_, script, ParallelExecution);
-            return status;
+            return SpewEndCompile(status);
         }
 
         // This can GC, so afterward, script->parallelIon is not guaranteed to be valid.
         if (!cx_->compartment->ionCompartment()->enterJIT())
-            return Method_Error;
+            return SpewEndCompile(Method_Error);
 
         // Subtle: it is possible for GC to occur during compilation of
         // one of the invoked functions, which would cause the earlier
         // functions (such as the kernel itself) to be collected.  In this
         // event, we give up and fallback to sequential for now.
         if (!script->hasParallelIonScript()) {
-            IonSpew(IonSpew_ParallelArray, "Function %p:%s:%u was garbage-collected or invalidated",
-                    fun.get(), script->filename, script->lineno);
-            return Method_Skipped;
+            parallel::Spew(parallel::SpewCompile,
+                           "Function %p:%s:%u was garbage-collected or invalidated",
+                           fun.get(), script->filename, script->lineno);
+            return SpewEndCompile(Method_Skipped);
         }
+
+        SpewEndCompile(Method_Compiled);
     }
 
     return Method_Compiled;

@@ -6,10 +6,15 @@
 #include "ParallelArrayAnalysis.h"
 #include "IonSpewer.h"
 
+#include "builtin/ParallelArray.h"
+
 #include "vm/Stack.h"
 
 namespace js {
 namespace ion {
+
+using parallel::Spew;
+using parallel::SpewCompile;
 
 typedef uint32_t typeset_t;
 
@@ -45,7 +50,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 
 #define UNSAFE_OP(op)                                               \
     virtual bool visit##op(M##op *prop) {                           \
-        IonSpew(IonSpew_ParallelArray, "Unsafe op %s found", #op);  \
+        Spew(SpewCompile, "Unsafe op %s found", #op);  \
         return false;                                               \
     }
 
@@ -262,10 +267,8 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGraph *graph)
             // so advance `ins` now.
             MInstruction *instr = *ins++;
 
-            if (!instr->accept(&visitor)) {
-                IonSpew(IonSpew_ParallelArray, "Function uses unsafe instruction!");
+            if (!instr->accept(&visitor))
                 return false;
-            }
         }
     }
 
@@ -276,7 +279,7 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGraph *graph)
         appendToWorklist(target);
     }
 
-    IonSpew(IonSpew_ParallelArray, "Invoked with safe function.");
+    Spew(SpewCompile, "Safe");
 
     IonSpewPass("Parallel Array Analysis");
 
@@ -354,7 +357,7 @@ ParallelArrayVisitor::visitLambda(MLambda *ins) {
 bool
 ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
     if (newInstruction->shouldUseVM()) {
-        IonSpew(IonSpew_ParallelArray, "New object which SHOULD USE VM");
+        Spew(SpewCompile, "New object which SHOULD USE VM");
         return false;
     }
 
@@ -365,7 +368,7 @@ ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
 bool
 ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction) {
     if (newInstruction->shouldUseVM()) {
-        IonSpew(IonSpew_ParallelArray, "New array which SHOULD USE VM");
+        Spew(SpewCompile, "New array which SHOULD USE VM");
         return false;
     }
 
@@ -428,8 +431,8 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
             return true;
 
           default:
-            IonSpew(IonSpew_ParallelArray, "Cannot insert write guard for MIR opcode %d",
-                    valueBeingWritten->op());
+            Spew(SpewCompile, "Cannot insert write guard for MIR opcode %d",
+                 valueBeingWritten->op());
             return false;
         }
         break;
@@ -445,19 +448,19 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
             break;
 
           case MDefinition::Op_ConstantElements:
-            IonSpew(IonSpew_ParallelArray, "write to constant elements");
+            Spew(SpewCompile, "write to constant elements");
             return false; // this can't be thread-safe
 
           default:
-            IonSpew(IonSpew_ParallelArray, "Cannot insert write guard for MIR opcode %d",
-                    valueBeingWritten->op());
+            Spew(SpewCompile, "Cannot insert write guard for MIR opcode %d",
+                 valueBeingWritten->op());
             return false;
         }
         break;
 
       default:
-        IonSpew(IonSpew_ParallelArray, "Cannot insert write guard for MIR Type %d",
-                valueBeingWritten->type());
+        Spew(SpewCompile, "Cannot insert write guard for MIR Type %d",
+             valueBeingWritten->type());
         return false;
     }
 
@@ -467,7 +470,7 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
     switch (object->op()) {
       case MDefinition::Op_ParNew:
         // MParNew will always be creating something thread-local, omit the guard
-        IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
+        Spew(SpewCompile, "Write to par new prop does not require guard");
         return true;
       default:
         break;
@@ -536,7 +539,7 @@ ParallelArrayVisitor::visitCall(MCall *ins)
 
     // DOM? Scary.
     if (ins->isDOMFunction()) {
-        IonSpew(IonSpew_ParallelArray, "call to dom function");
+        Spew(SpewCompile, "call to dom function");
         return false;
     }
 
@@ -544,14 +547,14 @@ ParallelArrayVisitor::visitCall(MCall *ins)
     if (target) {
         // Native? Scary.
         if (target->isNative()) {
-            IonSpew(IonSpew_ParallelArray, "call to native function");
+            Spew(SpewCompile, "call to native function");
             return false;
         }
         return callTargets.append(target);
     }
 
     if (ins->isConstructing()) {
-        IonSpew(IonSpew_ParallelArray, "call to unknown constructor");
+        Spew(SpewCompile, "call to unknown constructor");
         return false;
     }
 
@@ -601,7 +604,7 @@ ParallelArrayVisitor::visitSpecializedInstruction(MIRType spec)
         return true;
 
       default:
-        IonSpew(IonSpew_ParallelArray, "Instr. not specialized to int or double");
+        Spew(SpewCompile, "Instr. not specialized to int or double");
         return false;
     }
 }
