@@ -3643,6 +3643,8 @@ TypeObject::print()
             printf(" specialEquality");
         if (hasAnyFlags(OBJECT_FLAG_ITERATED))
             printf(" iterated");
+        if (interpretedFunction)
+            printf(" ifun");
     }
 
     unsigned count = getPropertyCount();

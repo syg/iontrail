@@ -6,10 +6,16 @@
 #include "ParallelArrayAnalysis.h"
 #include "IonSpewer.h"
 
+#include "builtin/ParallelArray.h"
+
 #include "vm/Stack.h"
 
 namespace js {
 namespace ion {
+
+using parallel::Spew;
+using parallel::SpewMIR;
+using parallel::SpewCompile;
 
 typedef uint32_t typeset_t;
 
@@ -48,8 +54,8 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
     }
 
 #define UNSAFE_OP(op)                                               \
-    virtual bool visit##op(M##op *prop) {                           \
-        IonSpew(IonSpew_ParallelArray, "Unsafe op %s found", #op);  \
+    virtual bool visit##op(M##op *ins) {                            \
+        SpewMIR(ins, "Unsafe");                                     \
         return false;                                               \
     }
 
@@ -67,6 +73,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 
 class ParallelArrayVisitor : public MInstructionVisitor
 {
+    JSContext *cx_;
     ParallelCompileContext &compileContext_;
     MIRGraph &graph_;
 
@@ -82,12 +89,15 @@ class ParallelArrayVisitor : public MInstructionVisitor
     bool visitSpecializedInstruction(MInstruction *ins, MIRType spec, uint32_t flags);
 
   public:
-    ParallelArrayVisitor(ParallelCompileContext &compileContext,
+    AutoObjectVector callTargets;
+
+    ParallelArrayVisitor(JSContext *cx, ParallelCompileContext &compileContext,
                          MIRGraph &graph)
-        : compileContext_(compileContext),
-          graph_(graph)
-    {
-    }
+      : cx_(cx),
+        compileContext_(compileContext),
+        graph_(graph),
+        callTargets(cx)
+    { }
 
     MDefinition *parSlice() { return graph_.parSlice(); }
 
@@ -215,114 +225,69 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParLambda)
 };
 
-ParallelCompileContext::ParallelCompileContext(JSContext *cx)
-    : cx_(cx),
-      invokedFunctions_(cx)
+bool
+ParallelCompileContext::appendToWorklist(HandleFunction fun)
 {
+    if (!fun->isInterpreted())
+        return true;
+
+    RootedScript script(cx_, fun->nonLazyScript());
+
+    // Skip if we're disabled.
+    if (!script->canParallelIonCompile())
+        return true;
+
+    // Skip if we're compiling off thread.
+    if (script->parallelIon == ION_COMPILING_SCRIPT)
+        return true;
+
+    // Skip if the code is expected to result in a bailout.
+    if (script->parallelIon && script->parallelIon->bailoutExpected())
+        return true;
+
+    // Skip if we haven't warmed up to get some type info. We're betting
+    // that the parallel kernel will be non-branchy for the most part, so
+    // this threshold is usually very low (1).
+    if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel)
+        return true;
+
+    // TODO: Have worklist use an auto hash set or something.
+    for (uint32_t i = 0; i < worklist_.length(); i++) {
+        if (worklist_[i]->toFunction() == fun)
+            return true;
+    }
+
+    // Note that we add all possibly compilable functions to the worklist,
+    // even if they're already compiled. This is so that we can return
+    // Method_Compiled and not Method_Skipped if we have a worklist full of
+    // already-compiled functions.
+    return worklist_.append(fun);
 }
 
 bool
-ParallelCompileContext::addInvocation(StackFrame *fp)
-{
-    AutoAssertNoGC nogc;
-
-    // Stop warmup mode if we invoked a frame that we can't enter from
-    // parallel code.
-    if (!fp->isFunctionFrame() || !fp->fun()->isInterpreted()) {
-        IonSpew(IonSpew_ParallelArray, "invoked unsafe fn during warmup");
-        js_IonOptions.finishParallelWarmup();
-        return true;
-    }
-
-    JSFunction *fun = fp->fun();
-
-    // We don't go through normal Ion or JM paths that bump the use count, so
-    // do it here so we can get inlining of hot functions.
-    fun->nonLazyScript()->incUseCount();
-
-    // Already compiled for parallel execution? Our work is done.
-    if (fun->nonLazyScript()->hasParallelIonScript())
-        return true;
-
-    if (!invokedFunctions_.append(fun)) {
-        IonSpew(IonSpew_ParallelArray, "failed to append!");
-        return false;
-    }
-
-    return true;
-}
-
-MethodStatus
-ParallelCompileContext::compileKernelAndInvokedFunctions(HandleFunction kernel)
-{
-    // Compile the kernel first as it can unsafely write to a buffer argument.
-    if (!kernel->nonLazyScript()->hasParallelIonScript()) {
-        IonSpew(IonSpew_ParallelArray, "Compiling kernel %p:%s:%u",
-                kernel.get(), kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
-        MethodStatus status = compileFunction(kernel);
-        if (status != Method_Compiled) {
-            return status;
-        }
-    }
-
-    for (size_t i = 0; i < invokedFunctions_.length(); i++) {
-        RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
-
-        IonSpew(IonSpew_ParallelArray, "Compiling invoked fn %p:%s:%u",
-                fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
-
-        if (fun->nonLazyScript()->hasParallelIonScript()) {
-            IonSpew(IonSpew_ParallelArray, "Already compiled");
-            continue;
-        }
-
-        MethodStatus status = compileFunction(fun);
-        if (status != Method_Compiled)
-            return status;
-    }
-
-    // Subtle: it is possible for GC to occur during compilation of
-    // one of the invoked functions, which would cause the earlier
-    // functions (such as the kernel itself) to be collected.  In this
-    // event, we give up and fallback to sequential for now.
-    if (!kernel->nonLazyScript()->hasParallelIonScript()) {
-        IonSpew(IonSpew_ParallelArray, "Kernel script %p:%s:%u was garbage-collected or invalidated",
-                kernel.get(), kernel->nonLazyScript()->filename, kernel->nonLazyScript()->lineno);
-        return Method_Skipped;
-    }
-    for (size_t i = 0; i < invokedFunctions_.length(); i++) {
-        RootedFunction fun(cx_, invokedFunctions_[i]->toFunction());
-        if (!fun->nonLazyScript()->hasParallelIonScript()) {
-            IonSpew(IonSpew_ParallelArray, "Invoked script %p:%s:%u was garbage-collected or invalidated",
-                    fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
-            return Method_Skipped;
-        }
-    }
-
-
-    return Method_Compiled;
-}
-
-bool
-ParallelCompileContext::canCompile(MIRGraph *graph)
+ParallelCompileContext::analyzeAndGrowWorklist(MIRGraph *graph)
 {
     // Scan the IR and validate the instructions used in a peephole fashion
-    ParallelArrayVisitor visitor(*this, *graph);
+    ParallelArrayVisitor visitor(cx_, *this, *graph);
     for (MBasicBlockIterator block(graph->begin()); block != graph->end(); block++) {
         for (MInstructionIterator ins(block->begin()); ins != block->end();) {
-            // we may be removing or replcae the current instruction,
+            // We may be removing or replacing the current instruction,
             // so advance `ins` now.
             MInstruction *instr = *ins++;
 
-            if (!instr->accept(&visitor)) {
-                IonSpew(IonSpew_ParallelArray,
-                        "ParallelArray fn uses unsafe instructions!\n");
+            if (!instr->accept(&visitor))
                 return false;
-            }
         }
     }
 
-    IonSpew(IonSpew_ParallelArray, "ParallelArray invoked with safe fn\n");
+    // Append newly discovered outgoing callgraph edges to the worklist.
+    RootedFunction target(cx_);
+    for (uint32_t i = 0; i < visitor.callTargets.length(); i++) {
+        target = visitor.callTargets[i]->toFunction();
+        appendToWorklist(target);
+    }
+
+    Spew(SpewCompile, "Safe");
 
     IonSpewPass("Parallel Array Analysis");
 
@@ -375,7 +340,7 @@ ParallelArrayVisitor::visitLambda(MLambda *ins) {
 bool
 ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
     if (newInstruction->shouldUseVM()) {
-        IonSpew(IonSpew_ParallelArray, "New object which SHOULD USE VM");
+        SpewMIR(newInstruction, "should use VM");
         return false;
     }
 
@@ -386,7 +351,7 @@ ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
 bool
 ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction) {
     if (newInstruction->shouldUseVM()) {
-        IonSpew(IonSpew_ParallelArray, "New array which SHOULD USE VM");
+        SpewMIR(newInstruction, "should use VM");
         return false;
     }
 
@@ -448,8 +413,8 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
             return true;
 
           default:
-            IonSpew(IonSpew_ParallelArray, "Cannot insert write guard for MIR opcode %d",
-                    valueBeingWritten->op());
+            SpewMIR(writeInstruction, "cannot insert write guard for %s",
+                    valueBeingWritten->opName());
             return false;
         }
         break;
@@ -464,19 +429,15 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
             object = valueBeingWritten->toTypedArrayElements()->object();
             break;
 
-          case MDefinition::Op_ConstantElements:
-            IonSpew(IonSpew_ParallelArray, "write to constant elements");
-            return false; // this can't be thread-safe
-
           default:
-            IonSpew(IonSpew_ParallelArray, "Cannot insert write guard for MIR opcode %d",
-                    valueBeingWritten->op());
+            SpewMIR(writeInstruction, "cannot insert write guard for %s",
+                    valueBeingWritten->opName());
             return false;
         }
         break;
 
       default:
-        IonSpew(IonSpew_ParallelArray, "Cannot insert write guard for MIR Type %d",
+        SpewMIR(writeInstruction, "cannot insert write guard for MIR Type %d",
                 valueBeingWritten->type());
         return false;
     }
@@ -487,7 +448,7 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
     switch (object->op()) {
       case MDefinition::Op_ParNew:
         // MParNew will always be creating something thread-local, omit the guard
-        IonSpew(IonSpew_ParallelArray, "Write to par new prop does not require guard");
+        SpewMIR(writeInstruction, "write to ParNew prop does not require guard");
         return true;
       default:
         break;
@@ -507,31 +468,75 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
 // Ion compiled. If a function has no IonScript, we bail out. The compilation
 // is done during warmup of the parallel kernel, see js::RunScript.
 
-bool
-ParallelArrayVisitor::visitCall(MCall *ins)
+static bool
+GetPossibleCallees(JSContext *cx, HandleScript script, jsbytecode *pc,
+                   types::StackTypeSet *calleeTypes, AutoObjectVector &targets)
 {
-    // DOM? Scary.
-    if (ins->isDOMFunction()) {
-        IonSpew(IonSpew_ParallelArray, "call to dom function");
-        return false;
-    }
+    JS_ASSERT(calleeTypes);
 
-    JSFunction *target = ins->getSingleTarget();
-    if (target) {
-        // Native? Scary.
-        if (target->isNative()) {
-            IonSpew(IonSpew_ParallelArray, "call to native function");
-            return false;
-        }
+    if (calleeTypes->baseFlags() != 0)
         return true;
-    }
 
-    if (ins->isConstructing()) {
-        IonSpew(IonSpew_ParallelArray, "call to unknown constructor");
-        return false;
+    unsigned objCount = calleeTypes->getObjectCount();
+
+    if (objCount == 0)
+        return true;
+
+    RootedFunction fun(cx);
+    for (unsigned i = 0; i < objCount; i++) {
+        RawObject obj = calleeTypes->getSingleObject(i);
+        if (obj && obj->isFunction()) {
+            fun = obj->toFunction();
+        } else {
+            types::TypeObject *typeObj = calleeTypes->getTypeObject(i);
+            if (!typeObj)
+                continue;
+            fun = typeObj->interpretedFunction;
+            if (!fun)
+                continue;
+        }
+
+        if (fun->isCloneAtCallsite()) {
+            fun = CloneFunctionAtCallsite(cx, fun, script, pc);
+            if (!fun)
+                return false;
+        }
+
+        if (!targets.append(fun))
+            return false;
     }
 
     return true;
+}
+
+bool
+ParallelArrayVisitor::visitCall(MCall *ins)
+{
+    JS_ASSERT(ins->getSingleTarget() || ins->calleeTypes());
+
+    // DOM? Scary.
+    if (ins->isDOMFunction()) {
+        SpewMIR(ins, "call to dom function");
+        return false;
+    }
+
+    RootedFunction target(cx_, ins->getSingleTarget());
+    if (target) {
+        // Native? Scary.
+        if (target->isNative()) {
+            SpewMIR(ins, "call to native function");
+            return false;
+        }
+        return callTargets.append(target);
+    }
+
+    if (ins->isConstructing()) {
+        SpewMIR(ins, "call to unknown constructor");
+        return false;
+    }
+
+    RootedScript script(cx_, ins->block()->info().script());
+    return GetPossibleCallees(cx_, script, ins->pc(), ins->calleeTypes(), callTargets);
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -573,8 +578,7 @@ ParallelArrayVisitor::visitSpecializedInstruction(MInstruction *ins, MIRType spe
     if (flags & flag)
         return true;
 
-    IonSpew(IonSpew_ParallelArray, "Instr. %s specialized to unacceptable type %d",
-            ins->opName(), spec);
+    SpewMIR(ins, "specialized to unacceptable type %d", spec);
     return false;
 }
 

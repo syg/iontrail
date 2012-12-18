@@ -340,7 +340,6 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
                 clone.get());
     }
 #endif
-
     return clone;
 }
 

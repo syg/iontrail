@@ -13,6 +13,7 @@
 #include "jsobj.h"
 #include "vm/ThreadPool.h"
 #include "vm/ForkJoin.h"
+#include "ion/Ion.h"
 
 namespace js {
 namespace parallel {
@@ -32,6 +33,32 @@ enum ExecutionStatus {
 };
 
 ExecutionStatus Do(JSContext *cx, CallArgs &args);
+
+enum SpewChannel {
+    SpewOps,
+    SpewCompile,
+    NumSpewChannels
+};
+
+#ifdef DEBUG
+
+void Spew(SpewChannel channel, const char *fmt, ...);
+void SpewBeginOp(JSContext *cx, const char *name);
+ExecutionStatus SpewEndOp(ExecutionStatus status);
+void SpewBeginCompile(HandleFunction fun);
+ion::MethodStatus SpewEndCompile(ion::MethodStatus status);
+void SpewMIR(ion::MDefinition *mir, const char *fmt, ...);
+
+#else
+
+static inline void Spew(SpewChannel channel, const char *fmt, ...) { }
+static inline void SpewBeginOp(JSContext *cx, const char *name) { }
+static inline ExecutionStatus SpewEndOp(ExecutionStatus status) { return status; }
+static inline void SpewBeginCompile(HandleFunction fun) { }
+static inline ion::MethodStatus SpewEndCompile(ion::MethodStatus status) { return status; }
+static inline void SpewMIR(ion::MDefinition *mir, const char *fmt, ...) { }
+
+#endif // DEBUG
 
 } // namespace parallel
 
@@ -70,6 +97,5 @@ class ParallelArrayObject : public JSObject
 
 extern JSObject *
 js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj);
-
 
 #endif // ParallelArray_h__

@@ -236,8 +236,6 @@ ion::CheckLogging()
         EnableChannel(IonSpew_CacheFlush);
     if (ContainsFlag(env, "logs"))
         EnableIonDebugLogging();
-    if (ContainsFlag(env, "pararr"))
-        EnableChannel(IonSpew_ParallelArray);
     if (ContainsFlag(env, "trace"))
         EnableChannel(IonSpew_Trace);
     if (ContainsFlag(env, "all"))

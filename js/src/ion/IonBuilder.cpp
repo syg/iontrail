@@ -167,9 +167,14 @@ bool
 IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
                                 bool *isClone)
 {
+    JS_ASSERT(calleeTypes);
+
     target.set(NULL);
     if (isClone)
         *isClone = false;
+
+    if (calleeTypes->baseFlags() != 0 || calleeTypes->getObjectCount() != 1)
+        return true;
 
     RawObject obj = calleeTypes->getSingleton();
     if (!obj || !obj->isFunction())
@@ -192,13 +197,26 @@ IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleF
 
 bool
 IonBuilder::getPolyCallTargets(uint32_t argc, jsbytecode *pc, AutoObjectVector &targets,
-                               bool *hasClones, uint32_t maxTargets)
+                               uint32_t maxTargets, bool *hasClones)
 {
-    *hasClones = false;
-
-    types::TypeSet *calleeTypes = oracle->getCallTarget(script_, argc, pc);
-    if (!calleeTypes)
+    types::StackTypeSet *calleeTypes = oracle->getCallTarget(script_, argc, pc);
+    if (!calleeTypes) {
+        if (hasClones)
+            *hasClones = false;
         return true;
+    }
+
+    return getPolyCallTargets(calleeTypes, targets, maxTargets, hasClones);
+}
+
+bool
+IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVector &targets,
+                               uint32_t maxTargets, bool *hasClones)
+{
+    JS_ASSERT(calleeTypes);
+
+    if (hasClones)
+        *hasClones = false;
 
     if (calleeTypes->baseFlags() != 0)
         return true;
@@ -211,17 +229,19 @@ IonBuilder::getPolyCallTargets(uint32_t argc, jsbytecode *pc, AutoObjectVector &
     RootedFunction fun(cx);
     RootedScript script(cx, script_);
     for(unsigned i = 0; i < objCount; i++) {
-        JSObject *obj = calleeTypes->getSingleObject(i);
+        RawObject obj = calleeTypes->getSingleObject(i);
         if (!obj || !obj->isFunction())
             return true;
-        if (obj->toFunction()->isCloneAtCallsite()) {
-            *hasClones = true;
-            fun = obj->toFunction();
-            obj = CloneFunctionAtCallsite(cx, fun, script, pc);
-            if (!obj)
+        fun = obj->toFunction();
+        if (fun->isCloneAtCallsite()) {
+            if (hasClones)
+                *hasClones = true;
+            fun = CloneFunctionAtCallsite(cx, fun, script, pc);
+            if (!fun)
                 return false;
         }
-        targets.append(obj);
+        if (!targets.append(fun))
+            return false;
     }
 
     return true;
@@ -3478,7 +3498,8 @@ IonBuilder::makePolyInlineDispatch(JSContext *cx, AutoObjectVector &targets, int
     fallbackBlock->end(MGoto::New(fallbackEndBlock));
 
     // Create Call
-    MCall *call = MCall::New(NULL, argc + 1, argc, false);
+    MCall *call = MCall::New(NULL, argc + 1, argc, false, pc,
+                             oracle->getCallTarget(script_, argc, pc));
     if (!call)
         return NULL;
 
@@ -3931,7 +3952,7 @@ IonBuilder::createThis(HandleFunction target, MDefinition *callee)
 }
 
 bool
-IonBuilder::allFunctionsAreCallsiteClone(types::TypeSet *funTypes)
+IonBuilder::allFunctionsAreCallsiteClone(types::StackTypeSet *funTypes)
 {
     uint32_t count = funTypes->getObjectCount();
     if (count < 1)
@@ -4082,7 +4103,7 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     // Acquire known call target if existent.
     AutoObjectVector targets(cx);
     bool hasClones;
-    if (!getPolyCallTargets(argc, pc, targets, &hasClones, 4))
+    if (!getPolyCallTargets(argc, pc, targets, 4, &hasClones))
         return false;
     uint32_t numTargets = targets.length();
     types::StackTypeSet *barrier;
@@ -4129,7 +4150,7 @@ IonBuilder::makeCallsiteClone(HandleFunction target, MDefinition *fun)
     // Add a callsite clone IC if we have multiple targets. Note that we
     // should have checked already if all targets are marked as
     // should-clone-at-callsite.
-    MCallsiteCloneCache *clone = MCallsiteCloneCache::New(fun, script_, pc);
+    MCallsiteCloneCache *clone = MCallsiteCloneCache::New(fun, pc);
     current->add(clone);
     return clone;
 }
@@ -4148,7 +4169,8 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32_t argc, bool constructi
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs, argc);
 
-    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing);
+    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing, pc,
+                             target ? NULL : oracle->getCallTarget(script_, argc, pc));
     if (!call)
         return NULL;
 

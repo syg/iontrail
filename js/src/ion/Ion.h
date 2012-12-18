@@ -164,11 +164,10 @@ struct IonOptions
     // Default: 5
     uint32_t slowCallIncUseCount;
 
-    // Whether we are in parallel warmup mode. This is mutated during runtime
-    // from within the parallel intrinsics.
+    // How many uses of a parallel kernel before we attempt compilation.
     //
-    // Default: NULL
-    ParallelCompileContext *parallelWarmupContext;
+    // Default: 1
+    uint32_t usesBeforeCompileParallel;
 
     void setEagerCompilation() {
         eagerCompilation = true;
@@ -179,17 +178,6 @@ struct IonOptions
         smallFunctionUsesBeforeInlining = 0;
 
         parallelCompilation = false;
-    }
-
-    void startParallelWarmup(ParallelCompileContext *compileContext) {
-        JS_ASSERT(compileContext);
-        JS_ASSERT(!parallelWarmupContext);
-        parallelWarmupContext = compileContext;
-    }
-
-    void finishParallelWarmup() {
-        JS_ASSERT(parallelWarmupContext);
-        parallelWarmupContext = NULL;
     }
 
     IonOptions()
@@ -217,7 +205,7 @@ struct IonOptions
         eagerCompilation(false),
         slowCallLimit(512),
         slowCallIncUseCount(5),
-        parallelWarmupContext(NULL)
+        usesBeforeCompileParallel(1)
     {
     }
 };
@@ -324,6 +312,7 @@ static inline bool IsEnabled(JSContext *cx)
 }
 
 void ForbidCompilation(JSContext *cx, JSScript *script);
+void ForbidCompilation(JSContext *cx, JSScript *script, ExecutionMode mode);
 uint32_t UsesBeforeIonRecompile(JSScript *script, jsbytecode *pc);
 
 void PurgeCaches(JSScript *script, JSCompartment *c);

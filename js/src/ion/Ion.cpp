@@ -17,6 +17,7 @@
 #include "EdgeCaseAnalysis.h"
 #include "RangeAnalysis.h"
 #include "LinearScan.h"
+#include "builtin/ParallelArray.h"
 #include "ParallelArrayAnalysis.h"
 #include "jscompartment.h"
 #include "vm/ThreadPool.h"
@@ -1489,35 +1490,48 @@ ion::CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType)
 }
 
 MethodStatus
-ParallelCompileContext::compileFunction(HandleFunction fun)
+ParallelCompileContext::compileTransitively()
 {
-    JS_ASSERT(ion::IsEnabled(cx_));
-    JS_ASSERT(fun->isInterpreted());
+    using parallel::SpewBeginCompile;
+    using parallel::SpewEndCompile;
 
-    RootedScript script(cx_, fun->nonLazyScript());
-
-    // Skip if the script has been disabled.
-    if (script->parallelIon == ION_DISABLED_SCRIPT)
+    if (worklist_.empty())
         return Method_Skipped;
 
-    // Skip if the code is expected to result in a bailout.
-    if (script->parallelIon && script->parallelIon->bailoutExpected())
-        return Method_Skipped;
+    RootedFunction fun(cx_);
+    RootedScript script(cx_);
+    while (!worklist_.empty()) {
+        fun = worklist_.back()->toFunction();
+        script = fun->nonLazyScript();
+        worklist_.popBack();
 
-    // Attempt compilation. Returns Method_Compiled if already compiled.
-    MethodStatus status = Compile(cx_, script, fun, NULL, false, *this);
-    if (status != Method_Compiled) {
-        if (status == Method_CantCompile)
-            ForbidCompilation(cx_, script);
-        return status;
+        SpewBeginCompile(fun);
+
+        // Attempt compilation. Returns Method_Compiled if already compiled.
+        MethodStatus status = Compile(cx_, script, fun, NULL, false, *this);
+        if (status != Method_Compiled) {
+            if (status == Method_CantCompile)
+                ForbidCompilation(cx_, script, ParallelExecution);
+            return SpewEndCompile(status);
+        }
+
+        // This can GC, so afterward, script->parallelIon is not guaranteed to be valid.
+        if (!cx_->compartment->ionCompartment()->enterJIT())
+            return SpewEndCompile(Method_Error);
+
+        // Subtle: it is possible for GC to occur during compilation of
+        // one of the invoked functions, which would cause the earlier
+        // functions (such as the kernel itself) to be collected.  In this
+        // event, we give up and fallback to sequential for now.
+        if (!script->hasParallelIonScript()) {
+            parallel::Spew(parallel::SpewCompile,
+                           "Function %p:%s:%u was garbage-collected or invalidated",
+                           fun.get(), script->filename, script->lineno);
+            return SpewEndCompile(Method_Skipped);
+        }
+
+        SpewEndCompile(Method_Compiled);
     }
-
-    // This can GC, so afterward, script->parallelIon is not guaranteed to be valid.
-    if (!cx_->compartment->ionCompartment()->enterJIT())
-        return Method_Error;
-
-    if (!script->parallelIon)
-        return Method_Skipped;
 
     return Method_Compiled;
 }
@@ -1540,7 +1554,7 @@ ParallelCompileContext::compile(IonBuilder *builder,
     if (!OptimizeMIR(builder))
         return false;
 
-    if (!canCompile(graph))
+    if (!analyzeAndGrowWorklist(graph))
         return false;
 
     CodeGenerator *codegen = GenerateLIR(builder);
@@ -2083,22 +2097,53 @@ ion::MarkShapeFromIon(JSRuntime *rt, Shape **shapep)
 void
 ion::ForbidCompilation(JSContext *cx, JSScript *script)
 {
-    IonSpew(IonSpew_Abort, "Disabling Ion compilation of script %s:%d",
-            script->filename, script->lineno);
+    ForbidCompilation(cx, script, SequentialExecution);
 
     CancelOffThreadIonCompile(cx->compartment, script);
 
     if (script->hasIonScript()) {
-        // It is only safe to modify script->ion if the script is not currently
-        // running, because IonFrameIterator needs to tell what ionScript to
-        // use (either the one on the JSScript, or the one hidden in the
-        // breadcrumbs Invalidation() leaves). Therefore, if invalidation
-        // fails, we cannot disable the script.
+
         if (!Invalidate(cx, script, false))
             return;
     }
 
     script->ion = ION_DISABLED_SCRIPT;
+}
+
+void
+ion::ForbidCompilation(JSContext *cx, JSScript *script, ExecutionMode mode)
+{
+    IonSpew(IonSpew_Abort, "Disabling Ion mode %d compilation of script %s:%d",
+            mode, script->filename, script->lineno);
+
+    CancelOffThreadIonCompile(cx->compartment, script);
+
+    switch (mode) {
+      case SequentialExecution:
+        if (script->hasIonScript()) {
+            // It is only safe to modify script->ion if the script is not currently
+            // running, because IonFrameIterator needs to tell what ionScript to
+            // use (either the one on the JSScript, or the one hidden in the
+            // breadcrumbs Invalidation() leaves). Therefore, if invalidation
+            // fails, we cannot disable the script.
+            if (!Invalidate(cx, script, mode, false))
+                return;
+        }
+
+        script->ion = ION_DISABLED_SCRIPT;
+        return;
+
+      case ParallelExecution:
+        if (script->hasParallelIonScript()) {
+            if (!Invalidate(cx, script, mode, false))
+                return;
+        }
+
+        script->parallelIon = ION_DISABLED_SCRIPT;
+        return;
+    }
+
+    JS_NOT_REACHED("No such execution mode");
 }
 
 uint32_t

@@ -4097,7 +4097,7 @@ CodeGenerator::visitOutOfLineCallsiteCloneCache(OutOfLineCache *ool)
 
     IonCacheCallsiteClone cache(ool->getInlineJump(), ool->getInlineLabel(),
                                 masm.labelForPatch(), liveRegs,
-                                callee, mir->callScript(), mir->callPc(), output);
+                                callee, mir->block()->info().script(), mir->callPc(), output);
 
     JS_ASSERT(!mir->resumePoint());
     cache.setIdempotent();

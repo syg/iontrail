@@ -970,7 +970,7 @@ IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
         ctor = makeCallsiteClone(target, ctor);
 
     // Discard 2 arguments: the old 'this' and the init function.
-    return inlineParallelArrayTail(argc, target, ctor, 2);
+    return inlineParallelArrayTail(argc, target, ctor, target ? NULL : ctorTypes, 2);
 }
 
 IonBuilder::InliningStatus
@@ -993,12 +993,12 @@ IonBuilder::inlineParallelArray(uint32_t argc, bool constructing)
     current->add(ctor);
 
     // Discard 1 argument: the old 'this'.
-    return inlineParallelArrayTail(argc, target, ctor, 1);
+    return inlineParallelArrayTail(argc, target, ctor, NULL, 1);
 }
 
 IonBuilder::InliningStatus
 IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefinition *ctor,
-                                    int32_t discards)
+                                    types::StackTypeSet *ctorTypes, int32_t discards)
 {
     // Rewrites either %NewParallelArray(...) or new ParallelArray(...) from a
     // call to a native ctor into a call to the relevant function in the
@@ -1023,7 +1023,7 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs, argc);
 
-    MCall *call = MCall::New(target, targetArgs + 1, argc, false);
+    MCall *call = MCall::New(target, targetArgs + 1, argc, false, pc, ctorTypes);
     if (!call)
         return InliningStatus_Error;
 
