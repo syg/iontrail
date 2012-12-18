@@ -281,7 +281,6 @@ function ParallelArrayMap(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel
 
-  var done = false;
   var buffer = %DenseArray(length);
 
   // Note: at the moment, writing "if (%InParallelSection() &&
@@ -292,27 +291,21 @@ function ParallelArrayMap(f, m) {
     if (TryParallel(m)) {
       // FIXME: Just throw away some work for now to warmup every time.
       fill(0, 1, true);
-      done = %ParallelDo(fill, CheckParallel(m), false);
+
+      if (%ParallelDo(fill, CheckParallel(m), false))
+        return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
     }
   }
 
   ///////////////////////////////////////////////////////////////////////////
   // Sequential
 
-  // FIXME: Manually inline TrySequential just in case we don't go down this
-  // path before compiling a nested map, as to avoid a CallGetIntrinsicValue,
-  // which will bail.
-  if (!done && (!m || m.mode === "seq")) {
+  if (TrySequential(m)) {
     fill(0, 1, false);
-    done = true;
+    return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
-  if (!done) {
-    length = 0;
-    buffer = [];
-  }
-
-  return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
+  return %NewParallelArray(ParallelArrayView, [0], [], 0);
 
   function fill(id, n, warmup) {
     var [start, end] = ComputeTileBounds(length, id, n);
