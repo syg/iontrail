@@ -1218,17 +1218,15 @@ class MCall
     // Original value of argc from the bytecode.
     uint32_t numActualArgs_;
     // The location of the call.
-    CompilerRootScript script_;
     jsbytecode *pc_;
     // The typeset of the callee, could be NULL.
     types::StackTypeSet *calleeTypes_;
 
     MCall(JSFunction *target, uint32_t numActualArgs, bool construct,
-          JSScript *script, jsbytecode *pc, types::StackTypeSet *calleeTypes)
+          jsbytecode *pc, types::StackTypeSet *calleeTypes)
       : construct_(construct),
         target_(target),
         numActualArgs_(numActualArgs),
-        script_(script),
         pc_(pc),
         calleeTypes_(calleeTypes)
     {
@@ -1238,7 +1236,7 @@ class MCall
   public:
     INSTRUCTION_HEADER(Call);
     static MCall *New(JSFunction *target, size_t maxArgc, size_t numActualArgs, bool construct,
-                      JSScript *script, jsbytecode *pc, types::StackTypeSet *calleeTypes);
+                      jsbytecode *pc, types::StackTypeSet *calleeTypes);
 
     void initPrepareCall(MDefinition *start) {
         JS_ASSERT(start->isPrepareCall());
@@ -1269,9 +1267,6 @@ class MCall
 
     bool isConstructing() const {
         return construct_;
-    }
-    JSScript *script() const {
-        return script_;
     }
     jsbytecode *pc() const {
         return pc_;
@@ -4973,12 +4968,10 @@ class MCallsiteCloneCache
   : public MUnaryInstruction,
     public SingleObjectPolicy
 {
-    CompilerRootScript callScript_;
     jsbytecode *callPc_;
 
-    MCallsiteCloneCache(MDefinition *callee, JSScript *callScript, jsbytecode *callPc)
+    MCallsiteCloneCache(MDefinition *callee, jsbytecode *callPc)
       : MUnaryInstruction(callee),
-        callScript_(callScript),
         callPc_(callPc)
     {
         setResultType(MIRType_Object);
@@ -4987,17 +4980,14 @@ class MCallsiteCloneCache
   public:
     INSTRUCTION_HEADER(CallsiteCloneCache);
 
-    static MCallsiteCloneCache *New(MDefinition *callee, JSScript *callScript, jsbytecode *callPc) {
-        return new MCallsiteCloneCache(callee, callScript, callPc);
+    static MCallsiteCloneCache *New(MDefinition *callee, jsbytecode *callPc) {
+        return new MCallsiteCloneCache(callee, callPc);
     }
     TypePolicy *typePolicy() {
         return this;
     }
     MDefinition *callee() const {
         return getOperand(0);
-    }
-    JSScript *callScript() const {
-        return callScript_;
     }
     jsbytecode *callPc() const {
         return callPc_;

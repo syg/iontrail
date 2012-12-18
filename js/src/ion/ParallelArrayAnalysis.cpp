@@ -558,7 +558,7 @@ ParallelArrayVisitor::visitCall(MCall *ins)
         return false;
     }
 
-    RootedScript script(cx_, ins->script());
+    RootedScript script(cx_, ins->block()->info().script());
     return GetPossibleCallees(cx_, script, ins->pc(), ins->calleeTypes(), callTargets);
 }
 

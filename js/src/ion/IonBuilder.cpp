@@ -3498,7 +3498,7 @@ IonBuilder::makePolyInlineDispatch(JSContext *cx, AutoObjectVector &targets, int
     fallbackBlock->end(MGoto::New(fallbackEndBlock));
 
     // Create Call
-    MCall *call = MCall::New(NULL, argc + 1, argc, false, script_, pc,
+    MCall *call = MCall::New(NULL, argc + 1, argc, false, pc,
                              oracle->getCallTarget(script_, argc, pc));
     if (!call)
         return NULL;
@@ -4150,7 +4150,7 @@ IonBuilder::makeCallsiteClone(HandleFunction target, MDefinition *fun)
     // Add a callsite clone IC if we have multiple targets. Note that we
     // should have checked already if all targets are marked as
     // should-clone-at-callsite.
-    MCallsiteCloneCache *clone = MCallsiteCloneCache::New(fun, script_, pc);
+    MCallsiteCloneCache *clone = MCallsiteCloneCache::New(fun, pc);
     current->add(clone);
     return clone;
 }
@@ -4169,7 +4169,7 @@ IonBuilder::makeCallHelper(HandleFunction target, uint32_t argc, bool constructi
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs, argc);
 
-    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing, script_, pc,
+    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing, pc,
                              target ? NULL : oracle->getCallTarget(script_, argc, pc));
     if (!call)
         return NULL;
