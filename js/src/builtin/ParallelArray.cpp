@@ -153,10 +153,10 @@ class ParallelSpewer
             if (script && pc) {
                 NonBuiltinScriptFrameIter iter(cx);
                 if (iter.done()) {
-                    spew(SpewOps, "%sBEGIN %s%s (%s:%u)%s", bold(), name, reset(),
+                    spew(SpewOps, "%sBEGIN %s%s (%s:%u)", bold(), name, reset(),
                          script->filename, PCToLineNumber(script, pc));
                 } else {
-                    spew(SpewOps, "%sBEGIN %s%s (%s:%u -> %s:%u)%s", bold(), name, reset(),
+                    spew(SpewOps, "%sBEGIN %s%s (%s:%u -> %s:%u)", bold(), name, reset(),
                          iter.script()->filename, PCToLineNumber(iter.script(), iter.pc()),
                          script->filename, PCToLineNumber(script, pc));
                 }
