@@ -147,12 +147,19 @@ class ParallelSpewer
         if (cx) {
             jsbytecode *pc;
             JSScript *script = cx->stack.currentScript(&pc);
-            if (script && pc)
-                spew(SpewOps, "%sBEGIN %s (%s:%u)%s", bold(),
-                     name, script->filename, PCToLineNumber(script, pc), reset());
-            else
+            if (script && pc) {
+                NonBuiltinScriptFrameIter iter(cx);
+                if (iter.done()) {
+                    spew(SpewOps, "%sBEGIN %s%s (%s:%u)%s", bold(), name, reset(),
+                         script->filename, PCToLineNumber(script, pc));
+                } else {
+                    spew(SpewOps, "%sBEGIN %s%s (%s:%u -> %s:%u)%s", bold(), name, reset(),
+                         iter.script()->filename, PCToLineNumber(iter.script(), iter.pc()),
+                         script->filename, PCToLineNumber(script, pc));
+                }
+            } else {
                 spew(SpewOps, "%sBEGIN %s%s", bold(), name, reset());
-
+            }
         } else {
             spew(SpewOps, "%sBEGIN %s%s", bold(), name, reset());
         }
