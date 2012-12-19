@@ -1,3 +1,5 @@
+// |jit-test| error: expected success but found bailout
+
 function kernel(n) {
   if (n > 10)
     // Note: no base case :)
@@ -10,9 +12,11 @@ function testMap() {
   // after warmup iters have completed!
   var r = [];
   for (var i = 0; i < 1024; i++) r[i] = i % 9;
-  r[22] = 22;
+  r[33] = 22;
   var p = new ParallelArray(r);
-  p.map(kernel, { mode: "par", expect: "bailout" });
+
+  // Note: in fact, a bailout occurs due to infinite recursion.
+  p.map(kernel, { mode: "par", expect: "success" });
 }
 
 testMap();

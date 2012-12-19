@@ -740,6 +740,25 @@ intrinsic_LeaveParallelSection(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static JSBool
+intrinsic_CompiledForParallelSection(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %CompiledForParallelExecution(func)
+    //
+    // Returns true if `func` has been compiled for parallel execution.
+    //
+    // Asserts if:
+    // - func is not a function
+    // - func is a lazily cloned intrinsic
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().isFunction());
+    RootedFunction func(cx, args[0].toObject().toFunction());
+    RootedScript script(cx, func->nonLazyScript());
+    args.rval().setBoolean(script->hasParallelIonScript());
+    return true;
+}
+
 
 JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",             intrinsic_ToObject,             1,0),
@@ -755,6 +774,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("InParallelSection",    intrinsic_InParallelSection,    0,0),
     JS_FN("EnterParallelSection", intrinsic_EnterParallelSection, 0,0),
     JS_FN("LeaveParallelSection", intrinsic_LeaveParallelSection, 0,0),
+    JS_FN("CompiledForParallelExecution", intrinsic_CompiledForParallelSection, 1,0),
 
 #ifdef DEBUG
     JS_FN("Dump",                  intrinsic_Dump,                1,0),

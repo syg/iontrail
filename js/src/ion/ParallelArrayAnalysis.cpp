@@ -235,16 +235,25 @@ ParallelCompileContext::appendToWorklist(HandleFunction fun)
     RootedScript script(cx_, fun->nonLazyScript());
 
     // Skip if we're disabled.
-    if (!script->canParallelIonCompile())
+    if (!script->canParallelIonCompile()) {
+        Spew(SpewCompile, "Skipping %p:%s:%u, canParallelIonCompile() is false",
+             fun.get(), script->filename, script->lineno);
         return true;
+    }
 
     // Skip if we're compiling off thread.
-    if (script->parallelIon == ION_COMPILING_SCRIPT)
+    if (script->parallelIon == ION_COMPILING_SCRIPT) {
+        Spew(SpewCompile, "Skipping %p:%s:%u, off-main-thread compilation in progress",
+             fun.get(), script->filename, script->lineno);
         return true;
+    }
 
     // Skip if the code is expected to result in a bailout.
-    if (script->parallelIon && script->parallelIon->bailoutExpected())
+    if (script->parallelIon && script->parallelIon->bailoutExpected()) {
+        Spew(SpewCompile, "Skipping %p:%s:%u, bailout expected",
+             fun.get(), script->filename, script->lineno);
         return true;
+    }
 
     // Skip if we haven't warmed up to get some type info. We're betting
     // that the parallel kernel will be non-branchy for the most part, so

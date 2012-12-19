@@ -218,6 +218,16 @@ macro OVERRIDE_CAPTURE(override, index) = ((override)[(index)]);
 macro TRY_PARALLEL(m) = ((!m || m.mode === "par"));
 macro TRY_SEQUENTIAL(m) = ((!m || m.mode === "seq"));
 
+# How many items at a time do we do recomp. for
+const CHUNK_SHIFT = 5;
+const CHUNK_SIZE = 32;
+
+# Tile array
+macro TILE_INFO(start, end) = start, end, start, 0;
+macro TILE_START(id) = ((id << 2) + 0);
+macro TILE_END(id) =   ((id << 2) + 1);
+macro TILE_POS(id) =   ((id << 2) + 2);
+
 # PropertyDescriptor return value indices - must match
 # PropertyDescriptorIndices in runtime.cc.
 const IS_ACCESSOR_INDEX = 0;
