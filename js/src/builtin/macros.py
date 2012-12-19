@@ -214,6 +214,10 @@ macro OVERRIDE_SUBJECT(override) = ((override)[(override).length - 1]);
 # 1-based so index of 1 returns the first capture
 macro OVERRIDE_CAPTURE(override, index) = ((override)[(index)]);
 
+# The mode asserts options object for ParallelArray
+macro TRY_PARALLEL(m) = ((!m || m.mode === "par"));
+macro TRY_SEQUENTIAL(m) = ((!m || m.mode === "seq"));
+
 # PropertyDescriptor return value indices - must match
 # PropertyDescriptorIndices in runtime.cc.
 const IS_ACCESSOR_INDEX = 0;

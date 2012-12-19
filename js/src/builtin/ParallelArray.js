@@ -193,14 +193,14 @@ function ParallelArrayBuild(self, shape, f, m) {
   var done = false;
   var buffer = %DenseArray(length);
 
-  if (TryParallel(m) && %EnterParallelSection()) {
+  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
     // FIXME: Just throw away some work for now to warmup every time.
     fill(0, 1, true, yw, zw);
     done = %ParallelDo(fill, CheckParallel(m), false, yw, zw);
     %LeaveParallelSection();
   }
 
-  if (!done && TrySequential(m)) {
+  if (!done && TRY_SEQUENTIAL(m)) {
     fill(0, 1, false, yw, zw);
     done = true;
   }
@@ -285,10 +285,10 @@ function ParallelArrayMap(f, m) {
   var buffer = %DenseArray(length);
 
   // Note: at the moment, writing "if (%InParallelSection() &&
-  // TryParallel(m))" is not fully optimized away.  This would require
+  // TRY_PARALLEL(m))" is not fully optimized away.  This would require
   // repeated loops to get it right, or else perhaps integrating UCE
   // and GVN.
-  if (TryParallel(m)) {
+  if (TRY_PARALLEL(m)) {
     if (%EnterParallelSection()) {
       // FIXME: Just throw away some work for now to warmup every time.
       fill(0, 1, true);
@@ -305,7 +305,7 @@ function ParallelArrayMap(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential
 
-  if (TrySequential(m)) {
+  if (TRY_SEQUENTIAL(m)) {
     fill(0, 1, false);
     return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
@@ -331,7 +331,7 @@ function ParallelArrayReduce(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel Version
 
-  if (TryParallel(m) && %EnterParallelSection()) {
+  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
     var slices = %ParallelSlices();
     if (length > slices) {
       // Attempt parallel reduction, but only if there is at least one
@@ -358,7 +358,7 @@ function ParallelArrayReduce(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential Version
 
-  if (TrySequential(m)) {
+  if (TRY_SEQUENTIAL(m)) {
     return reduce(0, length);
   }
 
@@ -399,7 +399,7 @@ function ParallelArrayScan(f, m) {
 
   var buffer = %DenseArray(length);
 
-  if (TryParallel(m) && %EnterParallelSection()) {
+  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
     var slices = %ParallelSlices();
     if (length > slices) { // Each worker thread will have something to do.
       // FIXME: Just throw away some work for now to warmup every time.
@@ -435,7 +435,7 @@ function ParallelArrayScan(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential version
 
-  if (TrySequential(m)) {
+  if (TRY_SEQUENTIAL(m)) {
     scan(0, length);
     return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
@@ -578,7 +578,7 @@ function ParallelArrayFilter(filters, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
 
-  if (TryParallel(m) && %EnterParallelSection()) {
+  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
     var slices = %ParallelSlices();
     if (length > slices) {
       var keepers = %DenseArray(slices);
@@ -615,7 +615,7 @@ function ParallelArrayFilter(filters, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Sequential version
   var buffer = [];
-  if (TrySequential(m)) {
+  if (TRY_SEQUENTIAL(m)) {
     for (var i = 0, pos = 0; i < length; i++) {
       if (filters[i])
         buffer[pos++] = self.get(i);
@@ -773,14 +773,6 @@ function ParallelArrayToString() {
   }
   result += open + this.get(l-1).toString() + close;
   return result;
-}
-
-function TryParallel(m) {
-  return !m || m.mode === "par";
-}
-
-function TrySequential(m) {
-  return !m || m.mode === "seq";
 }
 
 function CheckParallel(m) {
