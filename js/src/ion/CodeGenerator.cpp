@@ -624,11 +624,11 @@ CodeGenerator::visitParDump(LParDump *lir)
 {
     ValueOperand value = ToValue(lir, 0);
     masm.reserveStack(sizeof(Value));
+    masm.storeValue(value, Address(StackPointer, 0));
     masm.movePtr(StackPointer, CallTempReg0);
-    masm.storeValue(value, Address(CallTempReg0, 0));
     masm.setupUnalignedABICall(1, CallTempReg1);
     masm.passABIArg(CallTempReg0);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParPush));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParDumpValue));
     masm.freeStack(sizeof(Value));
     return true;
 }

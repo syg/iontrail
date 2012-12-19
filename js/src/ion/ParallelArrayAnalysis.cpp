@@ -223,6 +223,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParNewDenseArray)
     SAFE_OP(ParNewCallObject)
     SAFE_OP(ParLambda)
+    SAFE_OP(ParDump)
 };
 
 bool
