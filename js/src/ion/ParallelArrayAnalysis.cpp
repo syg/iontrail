@@ -248,8 +248,12 @@ ParallelCompileContext::appendToWorklist(HandleFunction fun)
     // Skip if we haven't warmed up to get some type info. We're betting
     // that the parallel kernel will be non-branchy for the most part, so
     // this threshold is usually very low (1).
-    if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel)
+    if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel) {
+        Spew(SpewCompile, "Skipping %p:%s:%u, use count %u < %u",
+             fun.get(), script->filename, script->lineno,
+             script->getUseCount(), js_IonOptions.usesBeforeCompileParallel);
         return true;
+    }
 
     // TODO: Have worklist use an auto hash set or something.
     for (uint32_t i = 0; i < worklist_.length(); i++) {
