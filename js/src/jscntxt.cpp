@@ -713,31 +713,56 @@ js::intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp)
     //
     // Returns true if the code is executing in a parallel section.
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(InParallelSection());
+    args.rval().setBoolean(ForkJoinSlice::InParallelSection());
+    return true;
+}
+
+JSBool
+js::intrinsic_EnterParallelSection(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %EnterParallelSection()
+    //
+    // Returns bool if successfully entered.
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(ForkJoinSlice::EnterParallelSection());
+    return true;
+}
+
+static JSBool
+intrinsic_LeaveParallelSection(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: %LeaveParallelSection()
+    //
+    // Returns nothing. Asserts if not in parallel section.
+    ForkJoinSlice::LeaveParallelSection();
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setUndefined();
     return true;
 }
 
 
 JSFunctionSpec intrinsic_functions[] = {
-    JS_FN("ToObject",           intrinsic_ToObject,             1,0),
-    JS_FN("ToInteger",          intrinsic_ToInteger,            1,0),
-    JS_FN("IsCallable",         intrinsic_IsCallable,           1,0),
-    JS_FN("ThrowError",         intrinsic_ThrowError,           4,0),
+    JS_FN("ToObject",             intrinsic_ToObject,             1,0),
+    JS_FN("ToInteger",            intrinsic_ToInteger,            1,0),
+    JS_FN("IsCallable",           intrinsic_IsCallable,           1,0),
+    JS_FN("ThrowError",           intrinsic_ThrowError,           4,0),
 
-    JS_FN("ParallelDo",         intrinsic_ParallelDo,           2,0),
-    JS_FN("ParallelSlices",     intrinsic_ParallelSlices,       0,0),
-    JS_FN("NewParallelArray",   intrinsic_NewParallelArray,     3,0),
-    JS_FN("DenseArray",         intrinsic_DenseArray,           1,0),
-    JS_FN("UnsafeSetElement",   intrinsic_UnsafeSetElement,     3,0),
-    JS_FN("InParallelSection",  intrinsic_InParallelSection,    0,0),
+    JS_FN("ParallelDo",           intrinsic_ParallelDo,           2,0),
+    JS_FN("ParallelSlices",       intrinsic_ParallelSlices,       0,0),
+    JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
+    JS_FN("DenseArray",           intrinsic_DenseArray,           1,0),
+    JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
+    JS_FN("InParallelSection",    intrinsic_InParallelSection,    0,0),
+    JS_FN("EnterParallelSection", intrinsic_EnterParallelSection, 0,0),
+    JS_FN("LeaveParallelSection", intrinsic_LeaveParallelSection, 0,0),
 
 #ifdef DEBUG
-    JS_FN("Dump",               intrinsic_Dump,                 1,0),
+    JS_FN("Dump",                  intrinsic_Dump,                1,0),
 #endif
 
-    JS_FN("_DecompileArg",      intrinsic_DecompileArg,         2,0),
-    JS_FN("_SetFunctionFlags",  intrinsic_SetFunctionFlags,     2,0),
-    JS_FN("_GetThreadPoolInfo", intrinsic_GetThreadPoolInfo,    1,0),
+    JS_FN("_DecompileArg",         intrinsic_DecompileArg,        2,0),
+    JS_FN("_SetFunctionFlags",     intrinsic_SetFunctionFlags,    2,0),
+    JS_FN("_GetThreadPoolInfo",    intrinsic_GetThreadPoolInfo,   1,0),
     JS_FN("_SetNonBuiltinCallerInitObjectType", intrinsic_SetNonBuiltinCallerInitObjectType, 1,0),
     JS_FS_END
 };

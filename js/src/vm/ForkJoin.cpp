@@ -153,6 +153,7 @@ class js::AutoRendezvous
 };
 
 PRUintn ForkJoinSlice::ThreadPrivateIndex;
+bool ForkJoinSlice::InParallelSection_;
 
 class js::AutoSetForkJoinSlice
 {
@@ -545,6 +546,7 @@ bool
 ForkJoinSlice::Initialize()
 {
 #ifdef JS_THREADSAFE
+    InParallelSection_ = false;
     PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
     return status == PR_SUCCESS;
 #else
@@ -635,8 +637,10 @@ ParallelResult
 js::ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
 {
 #ifdef JS_THREADSAFE
-    // Recursive use of the ThreadPool is not supported.
-    JS_ASSERT(!InParallelSection());
+    // Recursive use of the ThreadPool is not supported, but we must have
+    // already entered into a parallel section.
+    JS_ASSERT(ForkJoinSlice::InParallelSection());
+    JS_ASSERT(!ForkJoinSlice::Executing());
 
     AutoEnterParallelSection enter(cx);
 

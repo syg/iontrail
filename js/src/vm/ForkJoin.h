@@ -191,7 +191,14 @@ struct ForkJoinSlice
     // Be wary, the runtime is shared between all threads!
     JSRuntime *runtime();
 
-    static inline ForkJoinSlice *current();
+    // Check the current state of parallel execution.
+    // Executing() implies InParallelSection(), but not vice versa.
+    static inline ForkJoinSlice *Current();
+    static inline bool Executing();
+    static inline bool InParallelSection();
+    static inline bool EnterParallelSection();
+    static inline void LeaveParallelSection();
+
     static bool Initialize();
 
   private:
@@ -201,6 +208,17 @@ struct ForkJoinSlice
 #ifdef JS_THREADSAFE
     // Initialized by Initialize()
     static PRUintn ThreadPrivateIndex;
+
+    // Are we in a parallel section of code?
+    //
+    // This does not imply that we are currently in multithreaded code, but
+    // being in multithreaded implies that we are in a parallel section. This
+    // is a separate flag as to allow the self-hosted signal when take the
+    // sequential path, even when the parallel path may succeed, such as in
+    // nested operations. Without such a mechanism, we may fail to properly
+    // warm up the sequential path and fail to compile / bail out when
+    // attempting to compile a nested parallel operation.
+    static bool InParallelSection_;
 #endif
 
     // Sets the abort flag and adjusts ionStackLimit so as to cause
@@ -222,8 +240,6 @@ struct ForkJoinOp
     // Returns true on success, false to halt parallel execution.
     virtual bool parallel(ForkJoinSlice &slice) = 0;
 };
-
-inline bool InParallelSection();
 
 } // namespace js
 

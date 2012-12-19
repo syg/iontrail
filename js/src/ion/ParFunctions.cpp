@@ -22,7 +22,7 @@ using namespace ion;
 ForkJoinSlice *
 ion::ParForkJoinSlice()
 {
-    return ForkJoinSlice::current();
+    return ForkJoinSlice::Current();
 }
 
 // ParNewGCThing() is called in place of NewGCThing() when executing
@@ -31,7 +31,7 @@ ion::ParForkJoinSlice()
 JSObject *
 ion::ParNewGCThing(gc::AllocKind allocKind)
 {
-    ForkJoinSlice *slice = ForkJoinSlice::current();
+    ForkJoinSlice *slice = ForkJoinSlice::Current();
     uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
     void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
     return static_cast<JSObject *>(t);
@@ -42,7 +42,7 @@ ion::ParNewGCThing(gc::AllocKind allocKind)
 bool
 ion::ParWriteGuard(ForkJoinSlice *slice, JSObject *object)
 {
-    JS_ASSERT(ForkJoinSlice::current() == slice);
+    JS_ASSERT(ForkJoinSlice::Current() == slice);
     return slice->allocator->arenas.containsArena(slice->runtime(),
                                                   object->arenaHeader());
 }
@@ -92,7 +92,7 @@ ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
     if (execModeInt == 0)
         cached = &seqTraceData;
     else
-        cached = &ForkJoinSlice::current()->traceData;
+        cached = &ForkJoinSlice::Current()->traceData;
 
     if (bblock == 0xDEADBEEF)
         printTrace("BAILOUT", cached);
@@ -110,7 +110,7 @@ ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 bool
 ion::ParCheckOverRecursed(ForkJoinSlice *slice)
 {
-    JS_ASSERT(ForkJoinSlice::current() == slice);
+    JS_ASSERT(ForkJoinSlice::Current() == slice);
 
     // When an interrupt is triggered, we currently overwrite the
     // stack limit with a sentinel value that brings us here.
@@ -134,7 +134,7 @@ ion::ParCheckOverRecursed(ForkJoinSlice *slice)
 bool
 ion::ParCheckInterrupt(ForkJoinSlice *slice)
 {
-    JS_ASSERT(ForkJoinSlice::current() == slice);
+    JS_ASSERT(ForkJoinSlice::Current() == slice);
     bool result = slice->check();
     if (!result)
         return false;
@@ -155,7 +155,7 @@ ion::ParPush(ParPushArgs *args)
     // It is awkward to have the MIR pass the current slice in, so
     // just fetch it from TLS.  Extending the array is kind of the
     // slow path anyhow as it reallocates the elements vector.
-    ForkJoinSlice *slice = js::ForkJoinSlice::current();
+    ForkJoinSlice *slice = js::ForkJoinSlice::Current();
     return (args->object->parExtendDenseArray(slice->allocator,
                                               &args->value, 1) == JSObject::ED_OK);
 }
@@ -187,9 +187,9 @@ ion::ParCompareStrings(JSString *str1, JSString *str2)
 void
 ion::ParallelAbort(JSScript *script)
 {
-    JS_ASSERT(InParallelSection());
+    JS_ASSERT(ForkJoinSlice::Executing());
 
-    ForkJoinSlice *slice = ForkJoinSlice::current();
+    ForkJoinSlice *slice = ForkJoinSlice::Current();
 
 #ifdef DEBUG
     fprintf(stderr, "[ParallelBailout] Took parallel abort from %s:%d (%p)\n",
@@ -203,7 +203,7 @@ ion::ParallelAbort(JSScript *script)
 void
 ion::ParCallToUncompiledScript(JSFunction *func)
 {
-    JS_ASSERT(InParallelSection());
+    JS_ASSERT(ForkJoinSlice::Executing());
 
 #ifdef DEBUG
     RawScript script = func->nonLazyScript();

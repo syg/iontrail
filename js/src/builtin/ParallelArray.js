@@ -193,10 +193,11 @@ function ParallelArrayBuild(self, shape, f, m) {
   var done = false;
   var buffer = %DenseArray(length);
 
-  if (!%InParallelSection() && TryParallel(m)) {
+  if (TryParallel(m) && %EnterParallelSection()) {
     // FIXME: Just throw away some work for now to warmup every time.
     fill(0, 1, true, yw, zw);
     done = %ParallelDo(fill, CheckParallel(m), false, yw, zw);
+    %LeaveParallelSection();
   }
 
   if (!done && TrySequential(m)) {
@@ -287,13 +288,17 @@ function ParallelArrayMap(f, m) {
   // TryParallel(m))" is not fully optimized away.  This would require
   // repeated loops to get it right, or else perhaps integrating UCE
   // and GVN.
-  if (!%InParallelSection()) {
-    if (TryParallel(m)) {
+  if (TryParallel(m)) {
+    if (%EnterParallelSection()) {
       // FIXME: Just throw away some work for now to warmup every time.
       fill(0, 1, true);
 
-      if (%ParallelDo(fill, CheckParallel(m), false))
+      if (%ParallelDo(fill, CheckParallel(m), false)) {
+        %LeaveParallelSection();
         return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
+      }
+
+      %LeaveParallelSection();
     }
   }
 
@@ -326,7 +331,7 @@ function ParallelArrayReduce(f, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel Version
 
-  if (!%InParallelSection() && TryParallel(m)) {
+  if (TryParallel(m) && %EnterParallelSection()) {
     var slices = %ParallelSlices();
     if (length > slices) {
       // Attempt parallel reduction, but only if there is at least one
@@ -343,9 +348,11 @@ function ParallelArrayReduce(f, m) {
         var a = subreductions[0];
         for (var i = 1; i < subreductions.length; i++)
           a = f(a, subreductions[i]);
+        %LeaveParallelSection();
         return a;
       }
     }
+    %LeaveParallelSection();
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -392,7 +399,7 @@ function ParallelArrayScan(f, m) {
 
   var buffer = %DenseArray(length);
 
-  if (!%InParallelSection() && TryParallel(m)) {
+  if (TryParallel(m) && %EnterParallelSection()) {
     var slices = %ParallelSlices();
     if (length > slices) { // Each worker thread will have something to do.
       // FIXME: Just throw away some work for now to warmup every time.
@@ -415,10 +422,14 @@ function ParallelArrayScan(f, m) {
         phase2(0, 1, true);
 
         // compute phase1 scan results with intermediates
-        if (%ParallelDo(phase2, CheckParallel(m), false))
+        if (%ParallelDo(phase2, CheckParallel(m), false)) {
+          %LeaveParallelSection();
           return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
+        }
       }
     }
+
+    %LeaveParallelSection();
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -567,7 +578,7 @@ function ParallelArrayFilter(filters, m) {
   ///////////////////////////////////////////////////////////////////////////
   // Parallel version
 
-  if (!%InParallelSection() && TryParallel(m)) {
+  if (TryParallel(m) && %EnterParallelSection()) {
     var slices = %ParallelSlices();
     if (length > slices) {
       var keepers = %DenseArray(slices);
@@ -580,8 +591,10 @@ function ParallelArrayFilter(filters, m) {
         for (var i = 0; i < keepers.length; i++)
           total += keepers[i];
 
-        if (total == 0)
+        if (total == 0) {
+          %LeaveParallelSection();
           return %NewParallelArray(ParallelArrayView, [0], [], 0);
+        }
 
         var buffer = %DenseArray(total);
 
@@ -589,10 +602,14 @@ function ParallelArrayFilter(filters, m) {
         for (var slice = 0; slice < slices; slice++)
           copyKeepers(slice, slices, true);
 
-        if (%ParallelDo(copyKeepers, CheckParallel(m), false))
+        if (%ParallelDo(copyKeepers, CheckParallel(m), false)) {
+          %LeaveParallelSection();
           return %NewParallelArray(ParallelArrayView, [total], buffer, 0);
+        }
       }
     }
+
+    %LeaveParallelSection();
   }
 
   ///////////////////////////////////////////////////////////////////////////

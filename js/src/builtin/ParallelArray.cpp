@@ -122,7 +122,7 @@ class ParallelSpewer
         static const size_t BufferSize = 4096;
         char buf[BufferSize];
 
-        if (ForkJoinSlice *slice = ForkJoinSlice::current())
+        if (ForkJoinSlice *slice = ForkJoinSlice::Current())
             snprintf(buf, BufferSize, "[Parallel:%u] ", slice->sliceId);
         else
             snprintf(buf, BufferSize, "[Parallel:M] ");

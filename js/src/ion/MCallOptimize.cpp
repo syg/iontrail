@@ -79,7 +79,9 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     if (native == intrinsic_UnsafeSetElement)
         return inlineUnsafeSetElement(argc, constructing);
     if (native == intrinsic_InParallelSection)
-        return inlineInParallelSection(argc, constructing);
+        return inlineInOrEnterParallelSection(argc, constructing, false);
+    if (native == intrinsic_EnterParallelSection)
+        return inlineInOrEnterParallelSection(argc, constructing, true);
     if (native == intrinsic_NewParallelArray)
         return inlineNewParallelArray(argc, constructing);
     if (native == ParallelArrayObject::construct)
@@ -931,7 +933,7 @@ IonBuilder::inlineUnsafeSetTypedArrayElement(uint32_t argc, int arrayType)
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineInParallelSection(uint32_t argc, bool constructing)
+IonBuilder::inlineInOrEnterParallelSection(uint32_t argc, bool constructing, bool enter)
 {
     if (constructing)
         return InliningStatus_NotInlined;
@@ -947,7 +949,8 @@ IonBuilder::inlineInParallelSection(uint32_t argc, bool constructing)
       case ParallelExecution: willBeInParallelSection = true; break;
     }
 
-    MConstant *ins = MConstant::New(BooleanValue(willBeInParallelSection));
+    MConstant *ins = MConstant::New(BooleanValue(enter ? !willBeInParallelSection
+                                                       : willBeInParallelSection));
     current->add(ins);
     current->push(ins);
 
