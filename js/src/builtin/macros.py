@@ -218,7 +218,7 @@ macro OVERRIDE_CAPTURE(override, index) = ((override)[(index)]);
 macro TRY_PARALLEL(m) = ((!m || m.mode === "par"));
 macro TRY_SEQUENTIAL(m) = ((!m || m.mode === "seq"));
 
-# How many items at a time do we do recomp. for
+# How many items at a time do we do recomp. for parallel execution
 const CHUNK_SHIFT = 5;
 const CHUNK_SIZE = 32;
 

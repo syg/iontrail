@@ -106,7 +106,8 @@ function IsInteger(v) {
 function Do(numSlices, fillfunc, callbackfunc) {
   if (%EnterParallelSection()) {
     if (!%CompiledForParallelExecution(fillfunc)) {
-      fillfunc(0, numSlices, true);
+      for (var i = 0; i < numSlices; i++)
+        fillfunc(i, numSlices, true);
     }
 
     for (var attempts = 0; attempts < 3; attempts++) {
@@ -361,6 +362,7 @@ function ParallelArrayMap(f, m) {
     return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
+  // Sequential fallback:
   for (var i = 0; i < length; i++)
     buffer[i] = f(self.get(i), i, self);
   return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
@@ -393,7 +395,7 @@ function ParallelArrayReduce(f, m) {
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  parallel: for (;;) {
+  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
     if (%InParallelSection())
       break parallel;
     if (!TRY_PARALLEL(m))
@@ -401,7 +403,7 @@ function ParallelArrayReduce(f, m) {
 
     var chunks = ComputeNumChunks(length);
     var numSlices = %ParallelSlices();
-    if (chunks < numSlices * 2)
+    if (chunks < numSlices)
       break parallel;
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
@@ -413,6 +415,7 @@ function ParallelArrayReduce(f, m) {
     return acc;
   }
 
+  // Sequential fallback:
   var acc = self.get(0);
   for (var i = 1; i < length; i++)
     acc = f(acc, self.get(i));
@@ -450,7 +453,6 @@ function ParallelArrayReduce(f, m) {
       %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
     }
     %UnsafeSetElement(subreductions, id, acc);
-    return all;
   }
 
   function reduce_chunk(acc, from, to) {
@@ -965,88 +967,113 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
   }
 }
 
-function ParallelArrayFilter(filters, m) {
+function ParallelArrayFilter(func, m) {
   var self = this;
   var length = self.shape[0];
 
-  if (filters.length >>> 0 !== length)
-    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
+  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+    if (%InParallelSection())
+      break parallel;
+    if (!TRY_PARALLEL(m))
+      break parallel;
 
-  ///////////////////////////////////////////////////////////////////////////
-  // Parallel version
-
-  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
+    var chunks = ComputeNumChunks(length);
     var numSlices = %ParallelSlices();
-    if (length > numSlices) {
-      var keepers = %DenseArray(numSlices);
+    if (chunks < numSlices * 2)
+      break parallel;
 
-      // FIXME: Just throw away some work for now to warmup every time.
-      countKeepers(0, 1, true);
+    var info = ComputeAllSliceBounds(chunks, numSlices);
 
-      if (%ParallelDo(countKeepers, CheckParallel(m), false)) {
-        var total = 0;
-        for (var i = 0; i < keepers.length; i++)
-          total += keepers[i];
+    // Step 1.  Compute which items from each slice of the result
+    // buffer should be preserved.  When we're done, we have one
+    // parallel byte array |survivors| containing a 1 for each item to
+    // keep.  We also keep an array |counts| containing the total
+    // number of items that are being preserved from within one slice.
+    var counts = %DenseArray(numSlices);
+    for (var i = 0; i < numSlices; i++)
+      counts[i] = 0;
+    var survivors = %DenseArray(length);
+    Do(numSlices, findSurvivorsInSlice, CheckParallel(m));
 
-        if (total == 0) {
-          %LeaveParallelSection();
-          return %NewParallelArray(ParallelArrayView, [0], [], 0);
-        }
-
-        var buffer = %DenseArray(total);
-
-        // FIXME: Just throw away some work for now to warmup every time.
-        for (var slice = 0; slice < numSlices; slice++)
-          copyKeepers(slice, numSlices, true);
-
-        if (%ParallelDo(copyKeepers, CheckParallel(m), false)) {
-          %LeaveParallelSection();
-          return %NewParallelArray(ParallelArrayView, [total], buffer, 0);
-        }
-      }
-    }
-
-    %LeaveParallelSection();
-  }
-
-  ///////////////////////////////////////////////////////////////////////////
-  // Sequential version
-  var buffer = [];
-  if (TRY_SEQUENTIAL(m)) {
-    for (var i = 0, pos = 0; i < length; i++) {
-      if (filters[i])
-        buffer[pos++] = self.get(i);
-    }
-  }
-  return %NewParallelArray(ParallelArrayView, [buffer.length], buffer, 0);
-
-  function countKeepers(id, n, warmup) {
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
+    // Step 2. Compress the slices into one continugous set.
     var count = 0;
-    for (var i = start; i < end; i++) {
-      if (filters[i])
-        count++;
-    }
-    %UnsafeSetElement(keepers, id, count);
+    for (var i = 0; i < numSlices; i++)
+      count += counts[i];
+    var buffer = %DenseArray(count);
+    if (count > 0)
+      Do(numSlices, copySurvivorsInSlice, CheckParallel(m));
+
+    return %NewParallelArray(ParallelArrayView, [count], buffer, 0);
   }
 
-  function copyKeepers(id, n, warmup) {
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
+  // Sequential fallback:
+  var buffer = [], count = 0;
+  for (var i = 0; i < length; i++) {
+    var elem = self.get(i);
+    if (func(elem, i, self))
+      buffer[count++] = elem;
+  }
+  return %NewParallelArray(ParallelArrayView, [count], buffer, 0);
 
-    var pos = 0;
+  function findSurvivorsInSlice(id, n, warmup) {
+    // As described above, our goal is to determine which items we
+    // will preserve from a given slice.  We do this one chunk at a
+    // time. When we finish a chunk, we record our current count and
+    // the next chunk id, lest we should bail.
+
+    var chunk_pos = info[SLICE_POS(id)];
+    var chunk_end = info[SLICE_END(id)];
+
+    if (warmup && chunk_end > chunk_pos)
+      chunk_end = chunk_pos + 1;
+
+    var count = counts[id];
+    while (chunk_pos < chunk_end) {
+      var index_pos = chunk_pos << CHUNK_SHIFT;
+      count = findSurvivorsInChunk(count, index_pos, index_pos + CHUNK_SIZE);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
+      %UnsafeSetElement(counts, id, count);
+    }
+
+    function findSurvivorsInChunk(count, start, end) {
+      if (end > length)
+        end = length;
+
+      for (var i = start; i < end; i++) {
+        var keep = !!func(self.get(i), i, self);
+        %UnsafeSetElement(survivors, i, keep);
+        count += keep;
+      }
+
+      return count;
+    }
+  }
+
+  function copySurvivorsInSlice(id, n, warmup) {
+    // Copies the survivors from this slice into the correct position.
+    // Note that this is an idempotent operation that does not invoke
+    // user code.  Therefore, we don't expect bailouts and make an
+    // effort to proceed chunk by chunk or avoid duplicating work.
+
+    // During warmup, we only execute with id 0.  This would fail to
+    // execute the loop below.  Therefore, during warmup, we
+    // substitute 1 for the id.
+    if (warmup && id == 0 && n != 1)
+      id = 1;
+
+    // Total up the items preserved by previous slices:
+    var count = 0;
     if (id > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
       for (var i = 0; i < id; i++)
-        pos += keepers[i];
+        count += counts[i];
     }
 
-    for (var i = start; i < end; i++) {
-      if (filters[i])
-        %UnsafeSetElement(buffer, pos++, self.get(i));
-    }
+    // Move any items that we preserved to the beginning:
+    var total = count + counts[id];
+    var index_start = info[SLICE_START(id)] << CHUNK_SHIFT;
+    for (var i = index_start; count < total; i++)
+      if (survivors[i])
+        %UnsafeSetElement(buffer, count++, self.get(i));
   }
 }
 

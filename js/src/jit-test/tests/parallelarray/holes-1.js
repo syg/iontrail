@@ -19,7 +19,7 @@ function testHoles() {
   var k = p.scatter([1,0]);
   assertEq(k.get(0), 1);
   assertEq(k[1] * 42, NaN);
-  var l = p.filter([1,0]);
+  var l = p.filter(function (e, i) { return i == 0; });
   assertEq(l.get(0) * 42, NaN);
   var p2 = p.partition(1);
   assertEq(p2.get(0).get(0) * 42, NaN);

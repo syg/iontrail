@@ -153,15 +153,17 @@ function compareAgainstArray(jsarray, opname, func, cmpFunction) {
 }
 
 function testFilter(jsarray, func, cmpFunction) {
-  var expected = jsarray.filter(func);
-  var filters = jsarray.map(func);
-  var parray = new ParallelArray(jsarray);
+  compareAgainstArray(jsarray, "filter", func, cmpFunction);
 
-  // Unfortunately, it sometimes happens that running 'par' twice in a
-  // row causes bailouts and other unfortunate things!
-
-  assertParallelArrayModesEq(["seq", "par", "par"], expected, function(m) {
-    print(m.mode + " " + m.expect);
-    return parray.filter(filters, m);
-  }, cmpFunction);
+  // var expected = jsarray.filter(func);
+  // var filters = jsarray.map(func);
+  // var parray = new ParallelArray(jsarray);
+  //
+  // // Unfortunately, it sometimes happens that running 'par' twice in a
+  // // row causes bailouts and other unfortunate things!
+  //
+  // assertParallelArrayModesEq(["seq", "par", "par"], expected, function(m) {
+  //   print(m.mode + " " + m.expect);
+  //   return parray.filter(filters, m);
+  // }, cmpFunction);
 }
