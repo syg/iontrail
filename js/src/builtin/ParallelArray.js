@@ -985,17 +985,18 @@ function ParallelArrayFilter(func, m) {
     var info = ComputeAllSliceBounds(chunks, numSlices);
 
     // Step 1.  Compute which items from each slice of the result
-    // buffer should be preserved.  When we're done, we have one
-    // parallel byte array |survivors| containing a 1 for each item to
-    // keep.  We also keep an array |counts| containing the total
-    // number of items that are being preserved from within one slice.
+    // buffer should be preserved.  When we're done, we have an array
+    // |survivors| containing a bitset for each chunk, indicating
+    // which members of the chunk survived.  We also keep an array
+    // |counts| containing the total number of items that are being
+    // preserved from within one slice.
     var counts = %DenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
       counts[i] = 0;
-    var survivors = %DenseArray(length);
+    var survivors = %DenseArray(chunks);
     Do(numSlices, findSurvivorsInSlice, CheckParallel(m));
 
-    // Step 2. Compress the slices into one continugous set.
+    // Step 2. Compress the slices into one contiguous set.
     var count = 0;
     for (var i = 0; i < numSlices; i++)
       count += counts[i];
@@ -1029,23 +1030,21 @@ function ParallelArrayFilter(func, m) {
 
     var count = counts[id];
     while (chunkPos < chunkEnd) {
-      var indexPos = chunkPos << CHUNK_SHIFT;
-      count = findSurvivorsInChunk(count, indexPos, indexPos + CHUNK_SIZE);
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
-      %UnsafeSetElement(counts, id, count);
-    }
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = indexStart + CHUNK_SIZE;
+      if (indexEnd > length)
+        indexEnd = length;
+      var chunkBits = 0, chunkCount = 0;
 
-    function findSurvivorsInChunk(count, start, end) {
-      if (end > length)
-        end = length;
-
-      for (var i = start; i < end; i++) {
+      for (var i = indexStart, j = 0; i < indexEnd; i++, j++) {
         var keep = !!func(self.get(i), i, self);
-        %UnsafeSetElement(survivors, i, keep);
+        chunkBits |= keep << j;
         count += keep;
       }
 
-      return count;
+      %UnsafeSetElement(survivors, chunkPos, chunkBits);
+      %UnsafeSetElement(counts, id, count);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
   }
 
@@ -1061,19 +1060,36 @@ function ParallelArrayFilter(func, m) {
     if (warmup && id == 0 && n != 1)
       id = 1;
 
-    // Total up the items preserved by previous slices:
+    // Total up the items preserved by previous slices.
     var count = 0;
     if (id > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
       for (var i = 0; i < id; i++)
         count += counts[i];
     }
 
-    // Move any items that we preserved to the beginning:
+    // Compute the final index we expect to write.
     var total = count + counts[id];
-    var indexStart = info[SLICE_START(id)] << CHUNK_SHIFT;
-    for (var i = indexStart; count < total; i++)
-      if (survivors[i])
-        %UnsafeSetElement(buffer, count++, self.get(i));
+    if (count == total)
+      return;
+
+    // Iterate over the chunks assigned to us. Read the bitset for
+    // each chunk.  Copy values where a 1 appears until we have
+    // written all the values that we expect to.  We can just iterate
+    // from 0...CHUNK_SIZE without fear of a truncated final chunk
+    // because we are already checking for when count==total.
+    var chunkStart = info[SLICE_START(id)];
+    var chunkEnd = info[SLICE_END(id)];
+    for (var chunk = chunkStart; chunk < chunkEnd; chunk++) {
+      var chunkBits = survivors[chunk];
+      var indexStart = chunk << CHUNK_SHIFT;
+      for (var i = 0; i < CHUNK_SIZE; i++) {
+        if (chunkBits & (1 << i)) {
+          %UnsafeSetElement(buffer, count++, self.get(indexStart + i));
+          if (count == total)
+            break;
+        }
+      }
+    }
   }
 }
 
