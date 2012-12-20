@@ -358,7 +358,7 @@ function ParallelArrayMap(f, m) {
       break parallel;
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
-    Do(numSlices, fill, CheckParallel(m));
+    Do(numSlices, mapSlice, CheckParallel(m));
     return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
@@ -367,23 +367,23 @@ function ParallelArrayMap(f, m) {
     buffer[i] = f(self.get(i), i, self);
   return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
-  function fill(id, n, warmup) {
-    var chunk_pos = info[SLICE_POS(id)];
-    var chunk_end = info[SLICE_END(id)];
+  function mapSlice(id, n, warmup) {
+    var chunkPos = info[SLICE_POS(id)];
+    var chunkEnd = info[SLICE_END(id)];
 
-    if (warmup && chunk_end > chunk_pos)
-      chunk_end = chunk_pos + 1;
+    if (warmup && chunkEnd > chunkPos)
+      chunkEnd = chunkPos + 1;
 
-    while (chunk_pos < chunk_end) {
-      var index_start = chunk_pos << CHUNK_SHIFT;
-      var index_end = index_start + CHUNK_SIZE;
-      if (index_end > length)
-        index_end = length;
+    while (chunkPos < chunkEnd) {
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = indexStart + CHUNK_SIZE;
+      if (indexEnd > length)
+        indexEnd = length;
 
-      for (var i = index_start; i < index_end; i++)
+      for (var i = indexStart; i < indexEnd; i++)
         %UnsafeSetElement(buffer, i, f(self.get(i), i, self));
 
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
   }
 }
@@ -408,7 +408,7 @@ function ParallelArrayReduce(f, m) {
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
     var subreductions = %DenseArray(numSlices);
-    Do(numSlices, fill, CheckParallel(m));
+    Do(numSlices, reduceSlice, CheckParallel(m));
     var acc = subreductions[0];
     for (var i = 1; i < numSlices; i++)
       acc = f(acc, subreductions[i]);
@@ -421,41 +421,41 @@ function ParallelArrayReduce(f, m) {
     acc = f(acc, self.get(i));
   return acc;
 
-  function fill(id, n, warmup) {
-    var chunk_start = info[SLICE_START(id)];
-    var chunk_pos = info[SLICE_POS(id)];
-    var chunk_end = info[SLICE_END(id)];
+  function reduceSlice(id, n, warmup) {
+    var chunkStart = info[SLICE_START(id)];
+    var chunkPos = info[SLICE_POS(id)];
+    var chunkEnd = info[SLICE_END(id)];
 
     // (*) This function is carefully designed so that the warmup
-    // (which executes with chunk_start === chunk_pos) will execute
+    // (which executes with chunkStart === chunkPos) will execute
     // all potential loads and stores. In particular, the warmup run
     // processes two chunks rather than one.  Moreover, it stores acc
     // into subreductions and then loads it again ensure that the load
     // is executed during the warmup, as it will certainly be run
     // during subsequent runs.
 
-    if (warmup && chunk_end > chunk_pos + 2)
-      chunk_end = chunk_pos + 2;
+    if (warmup && chunkEnd > chunkPos + 2)
+      chunkEnd = chunkPos + 2;
 
-    if (chunk_start === chunk_pos) {
-      var index_pos = chunk_start << CHUNK_SHIFT;
-      var acc = reduce_chunk(self.get(index_pos), index_pos + 1, index_pos + CHUNK_SIZE);
+    if (chunkStart === chunkPos) {
+      var indexPos = chunkStart << CHUNK_SHIFT;
+      var acc = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
 
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
       %UnsafeSetElement(subreductions, id, acc); // see (*) above
     }
 
     var acc = subreductions[id]; // see (*) above
 
-    while (chunk_pos < chunk_end) {
-      var index_pos = chunk_pos << CHUNK_SHIFT;
-      acc = reduce_chunk(acc, index_pos, index_pos + CHUNK_SIZE);
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
+    while (chunkPos < chunkEnd) {
+      var indexPos = chunkPos << CHUNK_SHIFT;
+      acc = reduceChunk(acc, indexPos, indexPos + CHUNK_SIZE);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
     %UnsafeSetElement(subreductions, id, acc);
   }
 
-  function reduce_chunk(acc, from, to) {
+  function reduceChunk(acc, from, to) {
     if (to > length)
       to = length;
     for (var i = from; i < to; i++)
@@ -1021,17 +1021,17 @@ function ParallelArrayFilter(func, m) {
     // time. When we finish a chunk, we record our current count and
     // the next chunk id, lest we should bail.
 
-    var chunk_pos = info[SLICE_POS(id)];
-    var chunk_end = info[SLICE_END(id)];
+    var chunkPos = info[SLICE_POS(id)];
+    var chunkEnd = info[SLICE_END(id)];
 
-    if (warmup && chunk_end > chunk_pos)
-      chunk_end = chunk_pos + 1;
+    if (warmup && chunkEnd > chunkPos)
+      chunkEnd = chunkPos + 1;
 
     var count = counts[id];
-    while (chunk_pos < chunk_end) {
-      var index_pos = chunk_pos << CHUNK_SHIFT;
-      count = findSurvivorsInChunk(count, index_pos, index_pos + CHUNK_SIZE);
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
+    while (chunkPos < chunkEnd) {
+      var indexPos = chunkPos << CHUNK_SHIFT;
+      count = findSurvivorsInChunk(count, indexPos, indexPos + CHUNK_SIZE);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
       %UnsafeSetElement(counts, id, count);
     }
 
@@ -1070,8 +1070,8 @@ function ParallelArrayFilter(func, m) {
 
     // Move any items that we preserved to the beginning:
     var total = count + counts[id];
-    var index_start = info[SLICE_START(id)] << CHUNK_SHIFT;
-    for (var i = index_start; count < total; i++)
+    var indexStart = info[SLICE_START(id)] << CHUNK_SHIFT;
+    for (var i = indexStart; count < total; i++)
       if (survivors[i])
         %UnsafeSetElement(buffer, count++, self.get(i));
   }
