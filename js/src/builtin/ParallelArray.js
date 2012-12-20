@@ -606,8 +606,7 @@ function ParallelArrayScatter(targets, zero, f, length) {
       conflict[i] = false;
     }
 
-    var limit = length < targets.length ? length : targets.length;
-    var [start, end] = ComputeSliceBounds(limit, id, n);
+    var [start, end] = ComputeSliceBounds(targets.length, id, n);
 
     for (var i = start; i < end; i++) {
       var t = targets[i];
