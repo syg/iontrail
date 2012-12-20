@@ -222,11 +222,11 @@ macro TRY_SEQUENTIAL(m) = ((!m || m.mode === "seq"));
 const CHUNK_SHIFT = 5;
 const CHUNK_SIZE = 32;
 
-# Tile array
-macro TILE_INFO(start, end) = start, end, start, 0;
-macro TILE_START(id) = ((id << 2) + 0);
-macro TILE_END(id) =   ((id << 2) + 1);
-macro TILE_POS(id) =   ((id << 2) + 2);
+# Slice array: see ComputeAllSliceBounds() in ParallelArray.js
+macro SLICE_INFO(start, end) = start, end, start, 0;
+macro SLICE_START(id) = ((id << 2) + 0);
+macro SLICE_END(id) =   ((id << 2) + 1);
+macro SLICE_POS(id) =   ((id << 2) + 2);
 
 # PropertyDescriptor return value indices - must match
 # PropertyDescriptorIndices in runtime.cc.

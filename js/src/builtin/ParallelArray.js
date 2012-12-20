@@ -15,20 +15,31 @@ function ComputeNumChunks(length) {
   return chunks + 1;
 }
 
-function ComputeTileBounds(len, id, n) {
+function ComputeSliceBounds(len, id, n) {
+  // Computes the bounds for slice |id| of |len| items, assuming |n|
+  // total slices.  If len is not evenly divisible by n, then the
+  // final thread may have a bit of extra work.  It might be better to
+  // do the division more equitably.
   var slice = (len / n) | 0;
   var start = slice * id;
   var end = id === n - 1 ? len : slice * (id + 1);
   return [start, end];
 }
 
-function ComputeAllTileBounds(chunks, slices) {
-  var tiles = [];
-  for (var i = 0; i < slices; i++) {
-    var [tile_start, tile_end] = ComputeTileBounds(chunks, i, slices);
-    tiles.push(TILE_INFO(tile_start, tile_end));
+function ComputeAllSliceBounds(length, numSlices) {
+  // Computes the bounds for all slices of |length| items, assuming
+  // that there are |slices| items.  The result is an array containing
+  // multiple values per slice: the start index, end index, current
+  // position, and some padding.  The current position is initally the
+  // same as the start index.  To access the values for a particular
+  // slice, use the macros SLICE_START() and so forth.
+
+  var info = [];
+  for (var i = 0; i < numSlices; i++) {
+    var [start, end] = ComputeSliceBounds(length, i, numSlices);
+    info.push(SLICE_INFO(start, end));
   }
-  return tiles;
+  return info;
 }
 
 function TruncateEnd(start, end) {
@@ -92,10 +103,10 @@ function IsInteger(v) {
   return (v | 0) === v;
 }
 
-function Do(slices, fillfunc, callbackfunc) {
+function Do(numSlices, fillfunc, callbackfunc) {
   if (%EnterParallelSection()) {
     if (!%CompiledForParallelExecution(fillfunc)) {
-      fillfunc(0, slices, true);
+      fillfunc(0, numSlices, true);
     }
 
     for (var attempts = 0; attempts < 3; attempts++) {
@@ -104,15 +115,15 @@ function Do(slices, fillfunc, callbackfunc) {
         return;
       }
 
-      for (var i = 0; i < slices; i++)
-        fillfunc(i, slices, true);
+      for (var i = 0; i < numSlices; i++)
+        fillfunc(i, numSlices, true);
     }
 
     %LeaveParallelSection();
   }
 
-  for (var i = 0; i < slices; i++)
-    fillfunc(i, slices, false);
+  for (var i = 0; i < numSlices; i++)
+    fillfunc(i, numSlices, false);
 }
 
 // Constructor
@@ -259,7 +270,7 @@ function ParallelArrayBuild(self, shape, f, m) {
   self.buffer = [];
 
   function fill1(id, n, warmup) {
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     if (warmup)
       end = TruncateEnd(start, end);
     for (var i = start; i < end; i++)
@@ -267,7 +278,7 @@ function ParallelArrayBuild(self, shape, f, m) {
   }
 
   function fill2(id, n, warmup, yw) {
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     if (warmup)
       end = TruncateEnd(start, end);
     var x = (start / yw) | 0;
@@ -282,7 +293,7 @@ function ParallelArrayBuild(self, shape, f, m) {
   }
 
   function fill3(id, n, warmup, yw, zw) {
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     if (warmup)
       end = TruncateEnd(start, end);
     var x = (start / (yw*zw)) | 0;
@@ -305,7 +316,7 @@ function ParallelArrayBuild(self, shape, f, m) {
     // NB: In fact this will not currently be parallelized due to the
     // use of `f.apply()`.  But it's written as if it could be.  A guy
     // can dream, can't he?
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     if (warmup)
       end = TruncateEnd(start, end);
     var indices = ComputeIndices(shape, start);
@@ -336,17 +347,17 @@ function ParallelArrayMap(f, m) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var slices = %ParallelSlices();
+    var numSlices = %ParallelSlices();
 
     // At the moment, there must be at least one chunk per slice or
     // warmup sometimes fails, leading to the fill fn to be
     // permanently excluded from parallel compilation. This is really
     // a bug in our handling of failed compilation though.
-    if (chunks < slices)
+    if (chunks < numSlices)
       break parallel;
 
-    var tiles = ComputeAllTileBounds(chunks, slices);
-    Do(slices, fill, CheckParallel(m));
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    Do(numSlices, fill, CheckParallel(m));
     return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
@@ -355,8 +366,8 @@ function ParallelArrayMap(f, m) {
   return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
   function fill(id, n, warmup) {
-    var chunk_pos = tiles[TILE_POS(id)];
-    var chunk_end = tiles[TILE_END(id)];
+    var chunk_pos = info[SLICE_POS(id)];
+    var chunk_end = info[SLICE_END(id)];
 
     if (warmup && chunk_end > chunk_pos)
       chunk_end = chunk_pos + 1;
@@ -370,7 +381,7 @@ function ParallelArrayMap(f, m) {
       for (var i = index_start; i < index_end; i++)
         %UnsafeSetElement(buffer, i, f(self.get(i), i, self));
 
-      %UnsafeSetElement(tiles, TILE_POS(id), ++chunk_pos);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
     }
   }
 }
@@ -389,15 +400,15 @@ function ParallelArrayReduce(f, m) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var slices = %ParallelSlices();
-    if (chunks < slices * 2)
+    var numSlices = %ParallelSlices();
+    if (chunks < numSlices * 2)
       break parallel;
 
-    var tiles = ComputeAllTileBounds(chunks, slices);
-    var subreductions = %DenseArray(slices);
-    Do(slices, fill, CheckParallel(m));
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    var subreductions = %DenseArray(numSlices);
+    Do(numSlices, fill, CheckParallel(m));
     var acc = subreductions[0];
-    for (var i = 1; i < slices; i++)
+    for (var i = 1; i < numSlices; i++)
       acc = f(acc, subreductions[i]);
     return acc;
   }
@@ -408,9 +419,9 @@ function ParallelArrayReduce(f, m) {
   return acc;
 
   function fill(id, n, warmup) {
-    var chunk_start = tiles[TILE_START(id)];
-    var chunk_pos = tiles[TILE_POS(id)];
-    var chunk_end = tiles[TILE_END(id)];
+    var chunk_start = info[SLICE_START(id)];
+    var chunk_pos = info[SLICE_POS(id)];
+    var chunk_end = info[SLICE_END(id)];
 
     // (*) This function is carefully designed so that the warmup
     // (which executes with chunk_start === chunk_pos) will execute
@@ -427,7 +438,7 @@ function ParallelArrayReduce(f, m) {
       var index_pos = chunk_start << CHUNK_SHIFT;
       var acc = reduce_chunk(self.get(index_pos), index_pos + 1, index_pos + CHUNK_SIZE);
 
-      %UnsafeSetElement(tiles, TILE_POS(id), ++chunk_pos);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
       %UnsafeSetElement(subreductions, id, acc); // see (*) above
     }
 
@@ -436,7 +447,7 @@ function ParallelArrayReduce(f, m) {
     while (chunk_pos < chunk_end) {
       var index_pos = chunk_pos << CHUNK_SHIFT;
       acc = reduce_chunk(acc, index_pos, index_pos + CHUNK_SIZE);
-      %UnsafeSetElement(tiles, TILE_POS(id), ++chunk_pos);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunk_pos);
     }
     %UnsafeSetElement(subreductions, id, acc);
     return all;
@@ -464,8 +475,8 @@ function ParallelArrayScan(f, m) {
   var buffer = %DenseArray(length);
 
   if (TRY_PARALLEL(m) && %EnterParallelSection()) {
-    var slices = %ParallelSlices();
-    if (length > slices) { // Each worker thread will have something to do.
+    var numSlices = %ParallelSlices();
+    if (length > numSlices) { // Each worker thread will have something to do.
       // FIXME: Just throw away some work for now to warmup every time.
       phase1(0, 1, true);
 
@@ -473,11 +484,11 @@ function ParallelArrayScan(f, m) {
       if (%ParallelDo(phase1, CheckParallel(m), false)) {
         // build intermediate array: see comment on phase2() below
         var intermediates = [];
-        var [start, end] = ComputeTileBounds(length, 0, slices);
+        var [start, end] = ComputeSliceBounds(length, 0, numSlices);
         var acc = phase1buffer[end-1];
         intermediates[0] = acc;
-        for (var i = 1; i < slices - 1; i++) {
-          [start, end] = ComputeTileBounds(length, i, slices);
+        for (var i = 1; i < numSlices - 1; i++) {
+          [start, end] = ComputeSliceBounds(length, i, numSlices);
           acc = f(acc, phase1buffer[end-1]);
           intermediates[i] = acc;
         }
@@ -532,7 +543,7 @@ function ParallelArrayScan(f, m) {
     //      Slice 0        Slice 1        Slice 2
     //
     // Read on in phase2 to see what we do next!
-    var [start, end] = ComputeTileBounds(self.shape[0], id, n);
+    var [start, end] = ComputeSliceBounds(self.shape[0], id, n);
     if (warmup)
       end = TruncateEnd(start, end);
     scan(start, end);
@@ -572,7 +583,7 @@ function ParallelArrayScan(f, m) {
     // am using parentheses to clarify how these results were reduced.
 
     if (id > 0) { // The 0th worker has nothing to do.
-      var [start, end] = ComputeTileBounds(self.shape[0], id, n);
+      var [start, end] = ComputeSliceBounds(self.shape[0], id, n);
       if (warmup) { end = TruncateEnd(start, end); }
       var intermediate = intermediates[id - 1];
       for (var i = start; i < end; i++)
@@ -589,14 +600,14 @@ function ParallelArrayScatter(targets, zero, f, length) {
 
     // Initialize a conflict array and initialize the result to the zero value.
     var conflict = [];
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     for (var i = start; i < end; i++) {
       result[i] = zero;
       conflict[i] = false;
     }
 
     var limit = length < targets.length ? length : targets.length;
-    var [start, end] = ComputeTileBounds(limit, id, n);
+    var [start, end] = ComputeSliceBounds(limit, id, n);
 
     for (var i = start; i < end; i++) {
       var t = targets[i];
@@ -643,9 +654,9 @@ function ParallelArrayFilter(filters, m) {
   // Parallel version
 
   if (TRY_PARALLEL(m) && %EnterParallelSection()) {
-    var slices = %ParallelSlices();
-    if (length > slices) {
-      var keepers = %DenseArray(slices);
+    var numSlices = %ParallelSlices();
+    if (length > numSlices) {
+      var keepers = %DenseArray(numSlices);
 
       // FIXME: Just throw away some work for now to warmup every time.
       countKeepers(0, 1, true);
@@ -663,8 +674,8 @@ function ParallelArrayFilter(filters, m) {
         var buffer = %DenseArray(total);
 
         // FIXME: Just throw away some work for now to warmup every time.
-        for (var slice = 0; slice < slices; slice++)
-          copyKeepers(slice, slices, true);
+        for (var slice = 0; slice < numSlices; slice++)
+          copyKeepers(slice, numSlices, true);
 
         if (%ParallelDo(copyKeepers, CheckParallel(m), false)) {
           %LeaveParallelSection();
@@ -688,7 +699,7 @@ function ParallelArrayFilter(filters, m) {
   return %NewParallelArray(ParallelArrayView, [buffer.length], buffer, 0);
 
   function countKeepers(id, n, warmup) {
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     if (warmup)
       end = TruncateEnd(start, end);
     var count = 0;
@@ -700,7 +711,7 @@ function ParallelArrayFilter(filters, m) {
   }
 
   function copyKeepers(id, n, warmup) {
-    var [start, end] = ComputeTileBounds(length, id, n);
+    var [start, end] = ComputeSliceBounds(length, id, n);
     if (warmup)
       end = TruncateEnd(start, end);
 
