@@ -418,7 +418,18 @@ class ParallelDo : public ForkJoinOp
         if (!compileContext.appendToWorklist(callee))
             return Method_Error;
 
-        return compileContext.compileTransitively();
+        MethodStatus status = compileContext.compileTransitively();
+        if (status != Method_Compiled)
+            return status;
+
+        // it can happen that during transitive compilation, our
+        // callee's parallel ion script is invalidated or GC'd. So
+        // before we declare success, double check that it's still
+        // compiled!
+        if (!callee->nonLazyScript()->hasParallelIonScript())
+            return Method_Skipped;
+
+        return Method_Compiled;
     }
 
     virtual bool parallel(ForkJoinSlice &slice) {
