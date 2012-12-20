@@ -495,14 +495,16 @@ Do1(JSContext *cx, CallArgs &args)
     ParallelDo op(cx, fun, args.array() + 2, args.length() - 2);
     ExecutionStatus status = op.apply();
 
-    // If we bailed out, invalidate the kernel to be reanalyzed (all the way
-    // down) and recompiled.
+    // If we bailed out, invalidate the function that bailed.
     //
     // TODO: This is too coarse grained.
     if (status == ExecutionSucceeded) {
         args.rval().setBoolean(true);
     } else {
         if (status == ExecutionBailout) {
+            IonScript *ion = fun->toFunction()->nonLazyScript()->parallelIonScript();
+            JS_ASSERT(op.pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
+
             Vector<types::RecompileInfo> invalid(cx);
             for (uint32_t i = 0; i < op.pendingInvalidations.length(); i++) {
                 JSScript *script = op.pendingInvalidations[i];
@@ -510,6 +512,7 @@ Do1(JSContext *cx, CallArgs &args)
                     JS_ASSERT(script->hasParallelIonScript());
                     if (!invalid.append(script->parallelIonScript()->recompileInfo()))
                         return ExecutionFatal;
+                    ion->parallelInvalidatedScriptList()[i] = script;
                 }
             }
             Invalidate(cx, invalid);

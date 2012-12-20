@@ -203,6 +203,18 @@ struct IonScript
     uint32_t scriptList_;
     uint32_t scriptEntries_;
 
+    // In parallel mode, list of scripts that we call that were invalidated
+    // last time this script bailed out. These will be recompiled (or tried to
+    // be) upon next parallel entry of this script.
+    //
+    // For non-parallel IonScripts, this is NULL.
+    //
+    // For parallel IonScripts, there are as many entries as there are slices,
+    // since for any single parallel execution, we can only get a single
+    // invalidation per slice.
+    uint32_t parallelInvalidatedScriptList_;
+    uint32_t parallelInvalidatedScriptEntries_;
+
     // Number of references from invalidation records.
     size_t refcount_;
 
@@ -239,6 +251,16 @@ struct IonScript
     JSScript **scriptList() const {
         return (JSScript **)(reinterpret_cast<const uint8_t *>(this) + scriptList_);
     }
+    JSScript **parallelInvalidatedScriptList() const {
+        return (JSScript **)(reinterpret_cast<const uint8_t *>(this) +
+                             parallelInvalidatedScriptList_);
+    }
+    RawScript getAndZeroParallelInvalidatedScript(uint32_t i) {
+        JS_ASSERT(i < parallelInvalidatedScriptEntries_);
+        RawScript script = parallelInvalidatedScriptList()[i];
+        parallelInvalidatedScriptList()[i] = NULL;
+        return script;
+    }
 
   private:
     void trace(JSTracer *trc);
@@ -251,7 +273,7 @@ struct IonScript
                           size_t snapshotsSize, size_t snapshotEntries,
                           size_t constants, size_t safepointIndexEntries, size_t osiIndexEntries,
                           size_t cacheEntries, size_t prebarrierEntries, size_t safepointsSize,
-                          size_t scriptEntries);
+                          size_t scriptEntries, size_t parallelInvalidatedScriptEntries);
     static void Trace(JSTracer *trc, IonScript *script);
     static void Destroy(FreeOp *fop, IonScript *script);
 
@@ -335,6 +357,9 @@ struct IonScript
     size_t scriptEntries() const {
         return scriptEntries_;
     }
+    size_t parallelInvalidatedScriptEntries() const {
+        return parallelInvalidatedScriptEntries_;
+    }
     size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf) const {
         return mallocSizeOf(this);
     }
@@ -381,6 +406,7 @@ struct IonScript
     void copyPrebarrierEntries(const CodeOffsetLabel *barriers, MacroAssembler &masm);
     void copySafepoints(const SafepointWriter *writer);
     void copyScriptEntries(JSScript **scripts);
+    void zeroParallelInvalidatedScripts();
 
     bool invalidated() const {
         return refcount_ != 0;

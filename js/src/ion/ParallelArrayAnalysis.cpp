@@ -229,6 +229,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
 bool
 ParallelCompileContext::appendToWorklist(HandleFunction fun)
 {
+    JS_ASSERT(fun);
+
     if (!fun->isInterpreted())
         return true;
 
