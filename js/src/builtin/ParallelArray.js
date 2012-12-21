@@ -1036,10 +1036,20 @@ function ParallelArrayFilter(func, m) {
         indexEnd = length;
       var chunkBits = 0, chunkCount = 0;
 
-      for (var i = indexStart, j = 0; i < indexEnd; i++, j++) {
+      // XXX For reasons I completely fail to understand, in a non-DEBUG
+      // build, the following code works, whereas this for loop:
+      //   for (var i = indexStart, j = 0; i < indexEnd; i++, j++) {
+      // does not.  In fact, just changing to this combined variable
+      // declaration does not work:
+      //   var i = indexStart, j = 0;
+      // In those cases, the variables i and j become conflated!
+      var i = indexStart;
+      var j = 0;
+      while (i < indexEnd) {
         var keep = !!func(self.get(i), i, self);
         chunkBits |= keep << j;
         count += keep;
+        i++, j++;
       }
 
       %UnsafeSetElement(survivors, chunkPos, chunkBits);
