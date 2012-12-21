@@ -13,10 +13,16 @@
 #include "jscompartmentinlines.h"
 #include "jsarrayinlines.h"
 
+#include "builtin/ParallelArray.h"
+
 #include "vm/ForkJoin-inl.h"
 
 using namespace js;
 using namespace ion;
+
+using parallel::Spew;
+using parallel::SpewBailouts;
+using parallel::SpewBailoutIR;
 
 // Load the current thread context.
 ForkJoinSlice *
@@ -51,20 +57,18 @@ ion::ParWriteGuard(ForkJoinSlice *slice, JSObject *object)
 static void
 printTrace(const char *prefix, struct IonTraceData *cached)
 {
-    fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / Opcode %s\n",
+    fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / LIR %s",
             prefix,
-            cached->bblock, cached->lir,
-            cached->execModeInt, cached->opcode);
+            cached->bblock, cached->lir, cached->execModeInt, cached->lirOpName);
 }
-#endif
 
-#ifdef DEBUG
 struct IonTraceData seqTraceData;
 #endif
 
 void
 ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
-      const char *opcode)
+           const char *lirOpName, const char *mirOpName,
+           JSScript *script, jsbytecode *pc)
 {
 #ifdef DEBUG
     static enum { NotSet, All, Bailouts } traceMode;
@@ -94,13 +98,20 @@ ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
     else
         cached = &ForkJoinSlice::Current()->traceData;
 
-    if (bblock == 0xDEADBEEF)
-        printTrace("BAILOUT", cached);
+    if (bblock == 0xDEADBEEF) {
+        if (execModeInt == 0)
+            printTrace("BAILOUT", cached);
+        else
+            SpewBailoutIR(cached->lirOpName, cached->mirOpName, cached->script, cached->pc);
+    }
 
     cached->bblock = bblock;
     cached->lir = lir;
     cached->execModeInt = execModeInt;
-    cached->opcode = opcode;
+    cached->lirOpName = lirOpName;
+    cached->mirOpName = mirOpName;
+    cached->script = script;
+    cached->pc = pc;
 
     if (traceMode == All)
         printTrace("Exec", cached);
@@ -191,10 +202,7 @@ ion::ParallelAbort(JSScript *script)
 
     ForkJoinSlice *slice = ForkJoinSlice::Current();
 
-#ifdef DEBUG
-    fprintf(stderr, "[ParallelBailout] Took parallel abort from %s:%d (%p)\n",
-            script->filename, script->lineno, script);
-#endif
+    Spew(SpewBailouts, "Parallel abort in %p:%s:%d", script, script->filename, script->lineno);
 
     if (!slice->abortedScript)
         slice->abortedScript = script;
@@ -207,7 +215,6 @@ ion::ParCallToUncompiledScript(JSFunction *func)
 
 #ifdef DEBUG
     RawScript script = func->nonLazyScript();
-    fprintf(stderr, "[ParallelBailout] Call to uncompiled script: %p:%s:%d\n",
-            script, script->filename, script->lineno);
+    Spew(SpewBailouts, "Call to uncompiled script: %p:%s:%d", script, script->filename, script->lineno);
 #endif
 }

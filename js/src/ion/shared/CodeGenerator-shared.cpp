@@ -13,6 +13,7 @@
 #include "ion/IonSpewer.h"
 #include "ion/IonMacroAssembler.h"
 #include "ion/ParFunctions.h"
+#include "builtin/ParallelArray.h"
 
 using namespace js;
 using namespace js::ion;
@@ -520,34 +521,69 @@ CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 bool
 OutOfLineParallelAbort::generate(CodeGeneratorShared *codegen)
 {
-    codegen->maybeCallTrace(0xDEADBEEF, 0xDEADBEEF, "ParallelBailout");
+    codegen->maybeCallTrace(0xDEADBEEF, NULL, "ParallelBailout");
     return codegen->visitOutOfLineParallelAbort(this);
 }
 
 bool
-CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, uint32_t lirIndex,
-                                    const char *opName)
+CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, LInstruction *lir,
+                                    const char *bailoutName)
 {
+    JS_ASSERT_IF(!lir, bailoutName);
+
     uint32_t emi = (uint32_t) gen->info().executionMode();
 
     if (!IonSpewEnabled(IonSpew_Trace))
         return true;
     masm.PushRegsInMask(RegisterSet::All());
 
+    RegisterSet regSet(RegisterSet::All());
+
+    Register blockIndexReg = regSet.takeGeneral();
+    Register lirIndexReg = regSet.takeGeneral();
+    Register emiReg = regSet.takeGeneral();
+    Register lirOpNameReg = regSet.takeGeneral();
+    Register mirOpNameReg = regSet.takeGeneral();
+    Register scriptReg = regSet.takeGeneral();
+    Register pcReg = regSet.takeGeneral();
+
     // This first move is here so that when you scan the disassembly,
     // you can easily pick out where each instruction begins.  The
     // next few items indicate to you the Basic Block / LIR.
-    masm.move32(Imm32(0xDEADBEEF), CallTempReg0);
-    masm.move32(Imm32(blockIndex), CallTempReg0);
-    masm.move32(Imm32(lirIndex), CallTempReg1);
-    masm.move32(Imm32(emi), CallTempReg2);
-    masm.movePtr(ImmWord((const void*)opName), CallTempReg3);
+    masm.move32(Imm32(0xDEADBEEF), blockIndexReg);
 
-    masm.setupUnalignedABICall(4, CallTempReg4);
-    masm.passABIArg(CallTempReg0);
-    masm.passABIArg(CallTempReg1);
-    masm.passABIArg(CallTempReg2);
-    masm.passABIArg(CallTempReg3);
+    if (lir) {
+        masm.move32(Imm32(blockIndex), blockIndexReg);
+        masm.move32(Imm32(lir->id()), lirIndexReg);
+        masm.move32(Imm32(emi), emiReg);
+        masm.movePtr(ImmWord(lir->opName()), lirOpNameReg);
+        if (MDefinition *mir = lir->mirRaw()) {
+            masm.movePtr(ImmWord(mir->opName()), mirOpNameReg);
+            masm.movePtr(ImmWord((void *)mir->block()->info().script()), scriptReg);
+            masm.movePtr(ImmWord(mir->trackedPc()), pcReg);
+        } else {
+            masm.movePtr(ImmWord((void *)NULL), mirOpNameReg);
+            masm.movePtr(ImmWord((void *)NULL), scriptReg);
+            masm.movePtr(ImmWord((void *)NULL), pcReg);
+        }
+    } else {
+        masm.move32(Imm32(0xDEADBEEF), blockIndexReg);
+        masm.move32(Imm32(0xDEADBEEF), lirIndexReg);
+        masm.move32(Imm32(emi), emiReg);
+        masm.movePtr(ImmWord(bailoutName), lirOpNameReg);
+        masm.movePtr(ImmWord(bailoutName), mirOpNameReg);
+        masm.movePtr(ImmWord((void *)NULL), scriptReg);
+        masm.movePtr(ImmWord((void *)NULL), pcReg);
+    }
+
+    masm.setupUnalignedABICall(7, CallTempReg4);
+    masm.passABIArg(blockIndexReg);
+    masm.passABIArg(lirIndexReg);
+    masm.passABIArg(emiReg);
+    masm.passABIArg(lirOpNameReg);
+    masm.passABIArg(mirOpNameReg);
+    masm.passABIArg(scriptReg);
+    masm.passABIArg(pcReg);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
     masm.PopRegsInMask(RegisterSet::All());
     return true;

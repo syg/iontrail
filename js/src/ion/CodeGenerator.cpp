@@ -1826,7 +1826,7 @@ CodeGenerator::generateBody()
                     return false;
             }
 
-            if (!maybeCallTrace(i, iter->id(), iter->opName()))
+            if (!maybeCallTrace(i, *iter))
                 return false;
 
             if (!iter->accept(this))

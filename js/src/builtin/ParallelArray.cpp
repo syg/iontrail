@@ -68,6 +68,8 @@ MethodStatusToString(MethodStatus status)
     return "(unknown status)";
 }
 
+static const size_t BufferSize = 4096;
+
 class ParallelSpewer
 {
     uint32_t depth;
@@ -86,6 +88,17 @@ class ParallelSpewer
     const char *green() { return color("\x1b[32m"); }
     const char *yellow() { return color("\x1b[33m"); }
     const char *cyan() { return color("\x1b[36m"); }
+    const char *sliceColor(uint32_t id) {
+        static const char *colors[] = {
+            "\x1b[7m\x1b[31m", "\x1b[7m\x1b[32m", "\x1b[7m\x1b[33m",
+            "\x1b[7m\x1b[34m", "\x1b[7m\x1b[35m", "\x1b[7m\x1b[36m",
+            "\x1b[7m\x1b[37m",
+            "\x1b[31m", "\x1b[32m", "\x1b[33m",
+            "\x1b[34m", "\x1b[35m", "\x1b[36m",
+            "\x1b[37m"
+        };
+        return color(colors[id % 14]);
+    }
 
   public:
     ParallelSpewer()
@@ -100,6 +113,8 @@ class ParallelSpewer
                 active[SpewOps] = true;
             if (strstr(env, "compile"))
                 active[SpewCompile] = true;
+            if (strstr(env, "bailouts"))
+                active[SpewBailouts] = true;
             if (strstr(env, "full")) {
                 for (uint32_t i = 0; i < NumSpewChannels; i++)
                     active[i] = true;
@@ -113,19 +128,24 @@ class ParallelSpewer
         }
     }
 
+    bool isActive(SpewChannel channel) {
+        return active[channel];
+    }
+
     void spewVA(SpewChannel channel, const char *fmt, va_list ap) {
         if (!active[channel])
             return;
 
         // Print into a buffer first so we use one fprintf, which usually
         // doesn't get interrupted when running with multiple threads.
-        static const size_t BufferSize = 4096;
         char buf[BufferSize];
 
-        if (ForkJoinSlice *slice = ForkJoinSlice::Current())
-            snprintf(buf, BufferSize, "[Parallel:%u] ", slice->sliceId);
-        else
+        if (ForkJoinSlice *slice = ForkJoinSlice::Current()) {
+            snprintf(buf, BufferSize, "[%sParallel:%u%s] ",
+                     sliceColor(slice->sliceId), slice->sliceId, reset());
+        } else {
             snprintf(buf, BufferSize, "[Parallel:M] ");
+        }
 
         for (uint32_t i = 0; i < depth; i++)
             snprintf(buf + strlen(buf), BufferSize, "  ");
@@ -238,19 +258,36 @@ class ParallelSpewer
         if (!active[SpewCompile])
             return;
 
-        const size_t BufferSize = 4096;
         char buf[BufferSize];
         vsnprintf(buf, BufferSize, fmt, ap);
 
         JSScript *script = mir->block()->info().script();
-        spew(SpewCompile, "%s%s%s: %s (%s:%u)",
-             cyan(), mir->opName(), reset(), buf,
+        spew(SpewCompile, "%s%s%s: %s (%s:%u)", cyan(), mir->opName(), reset(), buf,
              script->filename, PCToLineNumber(script, mir->trackedPc()));
+    }
+
+    void spewBailoutIR(const char *lir, const char *mir, JSScript *script, jsbytecode *pc) {
+        if (!active[SpewBailouts])
+            return;
+
+        // If we didn't bail from a LIR/MIR but from a propagated parallel
+        // bailout, don't bother printing anything since we've printed it
+        // elsewhere.
+        if (mir && script) {
+            spew(SpewBailouts, "%sBailout%s: %s / %s%s%s (%s:%u)", yellow(), reset(),
+                 lir, cyan(), mir, reset(), script->filename, PCToLineNumber(script, pc));
+        }
     }
 };
 
 // Singleton instance of the spewer.
 static ParallelSpewer spewer;
+
+bool
+parallel::SpewEnabled(SpewChannel channel)
+{
+    return spewer.isActive(channel);
+}
 
 void
 parallel::Spew(SpewChannel channel, const char *fmt, ...)
@@ -294,6 +331,12 @@ parallel::SpewMIR(MDefinition *mir, const char *fmt, ...)
     va_start(ap, fmt);
     spewer.spewMIR(mir, fmt, ap);
     va_end(ap);
+}
+
+void
+parallel::SpewBailoutIR(const char *lir, const char *mir, JSScript *script, jsbytecode *pc)
+{
+    spewer.spewBailoutIR(lir, mir, script, pc);
 }
 
 #endif // DEBUG

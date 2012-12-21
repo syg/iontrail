@@ -127,7 +127,10 @@ struct IonTraceData {
     uint32_t bblock;
     uint32_t lir;
     uint32_t execModeInt;
-    const char *opcode;
+    const char *lirOpName;
+    const char *mirOpName;
+    JSScript *script;
+    jsbytecode *pc;
 };
 #endif
 
