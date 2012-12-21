@@ -614,7 +614,7 @@ CodeGenerator::visitParWriteGuard(LParWriteGuard *lir)
         return false;
 
     // branch to the OOL failure code if false is returned
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+    masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, bail);
 
     return true;
 }
@@ -1644,7 +1644,7 @@ CodeGenerator::visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool
     masm.setupUnalignedABICall(1, CallTempReg1);
     masm.passABIArg(CallTempReg0);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckOverRecursed));
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &abort);
+    masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, &abort);
     regs.restore();
     masm.jump(ool->rejoin());
 
@@ -1673,7 +1673,7 @@ CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
         return false;
 
     // branch to the OOL failure code if false is returned
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, bail);
+    masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, bail);
     return true;
 }
 
@@ -2659,6 +2659,7 @@ CodeGenerator::visitParCompareS(LParCompareS *lir)
     masm.passABIArg(left);
     masm.passABIArg(right);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCompareStrings));
+    masm.and32(Imm32(0xF), ReturnReg); // The C functions return an enum whose size is undef
 
     // Check for cases that we do not currently handle in par exec
     Label *bail;
@@ -3284,7 +3285,7 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.passABIArg(CallTempReg0);
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParPush));
         masm.freeStack(sizeof(ParPushArgs));
-        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &abort);
+        masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, &abort);
         regs.restore();
         masm.jump(ool->rejoin());
 
