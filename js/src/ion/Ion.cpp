@@ -1587,7 +1587,7 @@ ParallelCompileContext::compile(IonBuilder *builder,
     if (!OptimizeMIR(builder))
         return false;
 
-    if (!analyzeAndGrowWorklist(graph))
+    if (!analyzeAndGrowWorklist(builder, *graph))
         return false;
 
     CodeGenerator *codegen = GenerateLIR(builder);

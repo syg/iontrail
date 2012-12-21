@@ -5,6 +5,7 @@
 #include "MIRGraph.h"
 #include "ParallelArrayAnalysis.h"
 #include "IonSpewer.h"
+#include "UnreachableCodeElimination.h"
 
 #include "builtin/ParallelArray.h"
 
@@ -56,7 +57,7 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
 #define UNSAFE_OP(op)                                               \
     virtual bool visit##op(M##op *ins) {                            \
         SpewMIR(ins, "Unsafe");                                     \
-        return false;                                               \
+        return markUnsafe();                                        \
     }
 
 #define WRITE_GUARDED_OP(op, obj)                   \
@@ -76,6 +77,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     JSContext *cx_;
     ParallelCompileContext &compileContext_;
     MIRGraph &graph_;
+    bool unsafe_;
 
     bool insertWriteGuard(MInstruction *writeInstruction,
                           MDefinition *valueBeingWritten);
@@ -88,6 +90,15 @@ class ParallelArrayVisitor : public MInstructionVisitor
 
     bool visitSpecializedInstruction(MInstruction *ins, MIRType spec, uint32_t flags);
 
+    // Intended for use in a visitXyz() instruction like "return
+    // markUnsafe()".  Sets the unsafe flag and returns true (since
+    // this does not indicate an unrecoverable compilation failure).
+    bool markUnsafe() {
+        JS_ASSERT(!unsafe_);
+        unsafe_ = true;
+        return true;
+    }
+
   public:
     AutoObjectVector callTargets;
 
@@ -96,10 +107,15 @@ class ParallelArrayVisitor : public MInstructionVisitor
       : cx_(cx),
         compileContext_(compileContext),
         graph_(graph),
+        unsafe_(false),
         callTargets(cx)
     { }
 
+    void clearUnsafe() { unsafe_ = false; }
+    bool unsafe() { return unsafe_; }
     MDefinition *parSlice() { return graph_.parSlice(); }
+
+    bool convertToBailout(MBasicBlock *block, MInstruction *ins);
 
     // I am taking the policy of blacklisting everything that's not
     // obviously safe for now.  We can loosen as we need.
@@ -224,6 +240,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParNewCallObject)
     SAFE_OP(ParLambda)
     SAFE_OP(ParDump)
+    SAFE_OP(ParBailout)
 };
 
 bool
@@ -281,18 +298,68 @@ ParallelCompileContext::appendToWorklist(HandleFunction fun)
 }
 
 bool
-ParallelCompileContext::analyzeAndGrowWorklist(MIRGraph *graph)
+ParallelCompileContext::analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &graph)
 {
-    // Scan the IR and validate the instructions used in a peephole fashion
-    ParallelArrayVisitor visitor(cx_, *this, *graph);
-    for (MBasicBlockIterator block(graph->begin()); block != graph->end(); block++) {
-        for (MInstructionIterator ins(block->begin()); ins != block->end();) {
-            // We may be removing or replacing the current instruction,
-            // so advance `ins` now.
-            MInstruction *instr = *ins++;
+    // Walk the basic blocks in a DFS.  When we encounter a block with an
+    // unsafe instruction, then we know that this block will bailout when
+    // executed.  Therefore, we replace the block.
+    //
+    // We don't need a worklist, though, because the graph is sorted
+    // in RPO.  Therefore, we just use the marked flags to tell us
+    // when we visited some predecessor of the current block.
+    ParallelArrayVisitor visitor(cx_, *this, graph);
+    graph.entryBlock()->mark();  // Note: in par. exec., we never enter from OSR.
+    uint32_t marked = 0;
+    for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
+        if (mir->shouldCancel("ParallelArrayAnalysis"))
+            return false;
 
-            if (!instr->accept(&visitor))
-                return false;
+        if (block->isMarked()) {
+            // Iterate through and transform the instructions.  Stop
+            // if we encounter an inherently unsafe operation, in
+            // which case we will transform this block into a bailout
+            // block.
+            MInstruction *instr = NULL;
+            for (MInstructionIterator ins(block->begin());
+                 ins != block->end() && !visitor.unsafe();)
+            {
+                if (mir->shouldCancel("ParallelArrayAnalysis"))
+                    return false;
+
+                // We may be removing or replacing the current
+                // instruction, so advance `ins` now.  Remember the
+                // last instr. we looked at for use later if it should
+                // prove unsafe.
+                instr = *ins++;
+
+                if (!instr->accept(&visitor))
+                    return false;
+            }
+
+            if (!visitor.unsafe()) {
+                // Count the number of reachable blocks.
+                marked++;
+
+                // Block consists of only safe instructions.  Visit its successors.
+                for (uint32_t i = 0; i < block->numSuccessors(); i++) {
+                    block->getSuccessor(i)->mark();
+                }
+            } else {
+                // Block contains an unsafe instruction.  That means that once
+                // we enter this block, we are guaranteed to bailout.
+
+                // If this is the entry block, then there is no point
+                // in even trying to execute this function as it will
+                // always bailout.
+                if (*block == graph.entryBlock())
+                    return false;
+
+                // Otherwise, create a replacement that will.
+                if (!visitor.convertToBailout(*block, instr))
+                    return false;
+
+                JS_ASSERT(!block->isMarked());
+            }
         }
     }
 
@@ -304,14 +371,75 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGraph *graph)
     }
 
     Spew(SpewCompile, "Safe");
+    IonSpewPass("ParallelArrayAnalysis");
 
-    IonSpewPass("Parallel Array Analysis");
+    UnreachableCodeElimination uce(mir, graph);
+    uce.removeUnmarkedBlocks(marked);
+
+    IonSpewPass("UCEAfterParallelArrayAnalysis");
 
     return true;
 }
 
 bool
-ParallelArrayVisitor::visitTest(MTest *) {
+ParallelArrayVisitor::visitTest(MTest *)
+{
+    return true;
+}
+
+bool
+ParallelArrayVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
+{
+    JS_ASSERT(unsafe()); // `block` must have contained unsafe items
+    JS_ASSERT(block->isMarked()); // `block` must have been reachable to get here
+
+    // Clear the unsafe flag for subsequent blocks.
+    clearUnsafe();
+
+    // This block is no longer reachable.
+    block->unmark();
+
+    // Determine the best PC to use for the bailouts we'll be creating.
+    jsbytecode *pc = ins->trackedPc();
+    if (!pc)
+        pc = block->pc();
+
+    // Create a bailout block for each predecessor.  In principle, we
+    // only need one bailout block--in fact, only one per graph! But I
+    // found this approach easier to implement given the design of the
+    // MIR Graph construction routines.  Besides, most often `block`
+    // has only one predecessor.  Also, using multiple blocks helps to
+    // keep the PC information more accurate (though replacing `block`
+    // with exactly one bailout would be just as good).
+    for (size_t i = 0; i < block->numPredecessors(); i++) {
+        MBasicBlock *pred = block->getPredecessor(i);
+
+        // We only care about incoming edges from reachable predecessors.
+        if (!pred->isMarked())
+            continue;
+
+        // create bailout block to insert on this edge
+        MBasicBlock *bailBlock = MBasicBlock::NewParBailout(graph_, block->info(), pred, pc);
+        if (!bailBlock)
+            return false;
+
+        // if `block` had phis, we are replacing it with `bailBlock` which does not
+        if (pred->successorWithPhis() == block)
+            pred->setSuccessorWithPhis(NULL, 0);
+
+        // redirect the predecessor to the bailout block
+        uint32_t succIdx = pred->getSuccessorIndex(block);
+        pred->replaceSuccessor(succIdx, bailBlock);
+
+        // Insert the bailout block after `block` in the execution
+        // order.  This should satisfy the RPO requirements and
+        // moreover ensures that we will visit this block in our outer
+        // walk, thus allowing us to keep the count of marked blocks
+        // accurate.
+        graph_.insertBlockAfter(block, bailBlock);
+        bailBlock->mark();
+    }
+
     return true;
 }
 
@@ -344,7 +472,7 @@ ParallelArrayVisitor::visitLambda(MLambda *ins) {
     if (ins->fun()->hasSingletonType() ||
         types::UseNewTypeForClone(ins->fun())) {
         // slow path: bail on parallel execution.
-        return false;
+        return markUnsafe();
     }
 
     // fast path: replace with ParLambda op
@@ -357,7 +485,7 @@ bool
 ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
     if (newInstruction->shouldUseVM()) {
         SpewMIR(newInstruction, "should use VM");
-        return false;
+        return markUnsafe();
     }
 
     return replaceWithParNew(newInstruction,
@@ -368,7 +496,7 @@ bool
 ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction) {
     if (newInstruction->shouldUseVM()) {
         SpewMIR(newInstruction, "should use VM");
-        return false;
+        return markUnsafe();
     }
 
     return replaceWithParNew(newInstruction,
@@ -431,7 +559,7 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
           default:
             SpewMIR(writeInstruction, "cannot insert write guard for %s",
                     valueBeingWritten->opName());
-            return false;
+            return markUnsafe();
         }
         break;
 
@@ -448,14 +576,14 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
           default:
             SpewMIR(writeInstruction, "cannot insert write guard for %s",
                     valueBeingWritten->opName());
-            return false;
+            return markUnsafe();
         }
         break;
 
       default:
         SpewMIR(writeInstruction, "cannot insert write guard for MIR Type %d",
                 valueBeingWritten->type());
-        return false;
+        return markUnsafe();
     }
 
     if (object->isUnbox())
@@ -533,7 +661,7 @@ ParallelArrayVisitor::visitCall(MCall *ins)
     // DOM? Scary.
     if (ins->isDOMFunction()) {
         SpewMIR(ins, "call to dom function");
-        return false;
+        return markUnsafe();
     }
 
     RootedFunction target(cx_, ins->getSingleTarget());
@@ -541,14 +669,14 @@ ParallelArrayVisitor::visitCall(MCall *ins)
         // Native? Scary.
         if (target->isNative()) {
             SpewMIR(ins, "call to native function");
-            return false;
+            return markUnsafe();
         }
         return callTargets.append(target);
     }
 
     if (ins->isConstructing()) {
         SpewMIR(ins, "call to unknown constructor");
-        return false;
+        return markUnsafe();
     }
 
     RootedScript script(cx_, ins->block()->info().script());
@@ -595,7 +723,7 @@ ParallelArrayVisitor::visitSpecializedInstruction(MInstruction *ins, MIRType spe
         return true;
 
     SpewMIR(ins, "specialized to unacceptable type %d", spec);
-    return false;
+    return markUnsafe();
 }
 
 /////////////////////////////////////////////////////////////////////////////

@@ -64,7 +64,7 @@ class ParallelCompileContext
     AutoObjectVector worklist_;
 
     // Is a function compilable for parallel execution?
-    bool analyzeAndGrowWorklist(MIRGraph *graph);
+    bool analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &graph);
 
   public:
     ParallelCompileContext(JSContext *cx)

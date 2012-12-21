@@ -145,6 +145,21 @@ MBasicBlock::NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred)
     return MBasicBlock::New(graph, info, pred, pred->pc(), SPLIT_EDGE);
 }
 
+MBasicBlock *
+MBasicBlock::NewParBailout(MIRGraph &graph, CompileInfo &info,
+                           MBasicBlock *pred, jsbytecode *entryPc)
+{
+    MBasicBlock *block = MBasicBlock::New(graph, info, pred, entryPc, NORMAL);
+    if (block) {
+        MParBailout *bailout = new MParBailout();
+        if (!bailout)
+            return NULL;
+
+        block->end(bailout);
+    }
+    return block;
+}
+
 MBasicBlock::MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kind kind)
     : earlyAbort_(false),
     graph_(graph),
@@ -723,14 +738,26 @@ MBasicBlock::getSuccessor(size_t index) const
     return lastIns()->getSuccessor(index);
 }
 
+size_t
+MBasicBlock::getSuccessorIndex(MBasicBlock *block) const
+{
+    JS_ASSERT(lastIns());
+    for (size_t i = 0; i < numSuccessors(); i++)
+        if (getSuccessor(i) == block)
+            return i;
+    JS_NOT_REACHED("Invalid successor");
+}
+
 void
 MBasicBlock::replaceSuccessor(size_t pos, MBasicBlock *split)
 {
     JS_ASSERT(lastIns());
-    lastIns()->replaceSuccessor(pos, split);
 
-    // Note, successors-with-phis is not yet set.
-    JS_ASSERT(!successorWithPhis_);
+    // Note, during split-critical-edges, successors-with-phis is not yet set.
+    // During PAA, this case is handled before we enter.
+    JS_ASSERT_IF(successorWithPhis_, successorWithPhis_ != getSuccessor(pos));
+
+    lastIns()->replaceSuccessor(pos, split);
 }
 
 void
@@ -764,29 +791,36 @@ MBasicBlock::clearDominatorInfo()
 void
 MBasicBlock::removePredecessor(MBasicBlock *pred)
 {
-    JS_ASSERT(numPredecessors() >= 2);
-
     for (size_t i = 0; i < numPredecessors(); i++) {
         if (getPredecessor(i) != pred)
             continue;
 
-        // Adjust phis.  Note that this can leave redundant phis
-        // behind.
-        if (!phisEmpty()) {
-            JS_ASSERT(pred->successorWithPhis());
-            JS_ASSERT(pred->positionInPhiSuccessor() == i);
-            for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++)
-                iter->removeOperand(i);
-            for (size_t j = i+1; j < numPredecessors(); j++)
-                getPredecessor(j)->setSuccessorWithPhis(this, j - 1);
-        }
-
-        // Remove from pred list.
-        MBasicBlock **ptr = predecessors_.begin() + i;
-        predecessors_.erase(ptr);
+        removePredecessorAtIndex(i);
         return;
     }
+
     JS_NOT_REACHED("predecessor was not found");
+}
+
+void
+MBasicBlock::removePredecessorAtIndex(size_t predIndex)
+{
+    MBasicBlock *pred = predecessors_[predIndex];
+
+    // Adjust phis.  Note that this can leave redundant phis
+    // behind.
+    if (!phisEmpty()) {
+        JS_ASSERT(pred->successorWithPhis());
+        JS_ASSERT(pred->positionInPhiSuccessor() == predIndex);
+        for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++)
+            iter->removeOperand(predIndex);
+        for (size_t i = predIndex+1; i < numPredecessors(); i++)
+            getPredecessor(i)->setSuccessorWithPhis(this, i - 1);
+    }
+
+    // Remove from pred list.
+    MBasicBlock **ptr = predecessors_.begin() + predIndex;
+    predecessors_.erase(ptr);
 }
 
 void

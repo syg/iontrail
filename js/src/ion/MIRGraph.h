@@ -79,6 +79,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     static MBasicBlock *NewPendingLoopHeader(MIRGraph &graph, CompileInfo &info,
                                              MBasicBlock *pred, jsbytecode *entryPc);
     static MBasicBlock *NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred);
+    static MBasicBlock *NewParBailout(MIRGraph &graph, CompileInfo &info,
+                                      MBasicBlock *pred, jsbytecode *entryPc);
 
     bool dominates(MBasicBlock *other);
 
@@ -161,17 +163,20 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void inheritSlots(MBasicBlock *parent);
     bool initEntrySlots();
 
-    // Replaces an edge for a given block with a new block. This is used for
-    // critical edge splitting.
+    // Replaces an edge for a given block with a new block. This is
+    // used for critical edge splitting and also for inserting
+    // bailouts during ParallelArrayAnalysis.
+    //
+    // Note: If successorWithPhis is set, you must not be replacing it.
     void replacePredecessor(MBasicBlock *old, MBasicBlock *split);
     void replaceSuccessor(size_t pos, MBasicBlock *split);
 
-    // Removes `pred` from the predecessor list.  `pred` should not be
-    // the final predecessor. If this block defines phis, removes the
-    // entry for `pred` and updates the indices of later entries.
-    // This may introduce redundant phis if the new block has fewer
-    // than two predecessors.
+    // Removes `pred` from the predecessor list.  If this block
+    // defines phis, removes the entry for `pred` and updates the
+    // indices of later entries.  This may introduce redundant phis
+    // (or empty phis, if the block no longer has any preds at all).
     void removePredecessor(MBasicBlock *pred);
+    void removePredecessorAtIndex(size_t pos);
 
     // Resets all the dominator info so that it can be recomputed.
     void clearDominatorInfo();
@@ -387,6 +392,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
     size_t numSuccessors() const;
     MBasicBlock *getSuccessor(size_t index) const;
+    size_t getSuccessorIndex(MBasicBlock *) const;
 
     // Specifies the closest loop header dominating this block.
     void setLoopHeader(MBasicBlock *loop) {
