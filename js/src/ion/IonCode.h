@@ -251,15 +251,9 @@ struct IonScript
     JSScript **scriptList() const {
         return (JSScript **)(reinterpret_cast<const uint8_t *>(this) + scriptList_);
     }
-    JSScript **parallelInvalidatedScriptList() const {
+    JSScript **parallelInvalidatedScriptList() {
         return (JSScript **)(reinterpret_cast<const uint8_t *>(this) +
                              parallelInvalidatedScriptList_);
-    }
-    RawScript getAndZeroParallelInvalidatedScript(uint32_t i) {
-        JS_ASSERT(i < parallelInvalidatedScriptEntries_);
-        RawScript script = parallelInvalidatedScriptList()[i];
-        parallelInvalidatedScriptList()[i] = NULL;
-        return script;
     }
 
   private:
@@ -359,6 +353,12 @@ struct IonScript
     }
     size_t parallelInvalidatedScriptEntries() const {
         return parallelInvalidatedScriptEntries_;
+    }
+    RawScript getAndZeroParallelInvalidatedScript(uint32_t i) {
+        JS_ASSERT(i < parallelInvalidatedScriptEntries_);
+        RawScript script = parallelInvalidatedScriptList()[i];
+        parallelInvalidatedScriptList()[i] = NULL;
+        return script;
     }
     size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf) const {
         return mallocSizeOf(this);

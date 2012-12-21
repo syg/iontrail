@@ -456,6 +456,7 @@ IonScript::IonScript()
     safepointsSize_(0),
     scriptList_(0),
     scriptEntries_(0),
+    parallelInvalidatedScriptList_(0),
     refcount_(0),
     recompileInfo_(),
     slowCallCount(0)
@@ -610,8 +611,8 @@ IonScript::copyScriptEntries(JSScript **scripts)
 void
 IonScript::zeroParallelInvalidatedScripts()
 {
-    for (size_t i = 0; i < parallelInvalidatedScriptEntries_; i++)
-        parallelInvalidatedScriptList()[i] = NULL;
+    memset(parallelInvalidatedScriptList(), 0,
+           parallelInvalidatedScriptEntries_ * sizeof(JSScript *));
 }
 
 void
