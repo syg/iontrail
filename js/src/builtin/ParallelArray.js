@@ -1036,9 +1036,9 @@ function ParallelArrayFilter(func, m) {
         indexEnd = length;
       var chunkBits = 0, chunkCount = 0;
 
-      for (var i = indexStart, j = 0; i < indexEnd; i++, j++) {
-        var keep = !!func(self.get(i), i, self);
-        chunkBits |= keep << j;
+      for (var bit = 0; indexStart + bit < indexEnd; bit++) {
+        var keep = !!func(self.get(indexStart + bit), indexStart + bit, self);
+        chunkBits |= keep << bit;
         count += keep;
       }
 
