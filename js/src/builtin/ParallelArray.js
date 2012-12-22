@@ -103,6 +103,14 @@ function IsInteger(v) {
   return (v | 0) === v;
 }
 
+// I'd prefer to use Math.min, but we have no way to access a pristine
+// copy.  global.Math.min might be modified by the user.
+function IntMin(a, b) {
+  var a1 = a | 0;
+  var b1 = b | 0;
+  return (a1 < b1 ? a1 : b1);
+}
+
 function Do(numSlices, fillfunc, callbackfunc) {
   if (%EnterParallelSection()) {
     if (!%CompiledForParallelExecution(fillfunc)) {
@@ -376,9 +384,7 @@ function ParallelArrayMap(f, m) {
 
     while (chunkPos < chunkEnd) {
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = indexStart + CHUNK_SIZE;
-      if (indexEnd > length)
-        indexEnd = length;
+      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
 
       for (var i = indexStart; i < indexEnd; i++)
         %UnsafeSetElement(buffer, i, f(self.get(i), i, self));
@@ -456,8 +462,7 @@ function ParallelArrayReduce(f, m) {
   }
 
   function reduceChunk(acc, from, to) {
-    if (to > length)
-      to = length;
+    to = IntMin(to, length);
     for (var i = from; i < to; i++)
       acc = f(acc, self.get(i));
     return acc;
@@ -1031,10 +1036,8 @@ function ParallelArrayFilter(func, m) {
     var count = counts[id];
     while (chunkPos < chunkEnd) {
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = indexStart + CHUNK_SIZE;
-      if (indexEnd > length)
-        indexEnd = length;
-      var chunkBits = 0, chunkCount = 0;
+      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var chunkBits = 0;
 
       for (var bit = 0; indexStart + bit < indexEnd; bit++) {
         var keep = !!func(self.get(indexStart + bit), indexStart + bit, self);
