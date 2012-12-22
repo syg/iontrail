@@ -69,20 +69,33 @@ MIRGraph::unmarkBlocks() {
 
 MDefinition *
 MIRGraph::parSlice() {
-    if (parSlice_ != NULL)
-        return parSlice_;
+    // Search the entry block to find a par slice instruction.  If we do not
+    // find one, add one after the Start instruction.
+    //
+    // Note: the original design used a field in MIRGraph to cache the
+    // parSlice rather than searching for it again.  However, this
+    // could become out of date due to DCE.  Given that we do not
+    // generally have to search very far to find the par slice
+    // instruction if it exists, and that we don't look for it that
+    // often, I opted to simply eliminate the cache and search anew
+    // each time, so that it is that much easier to keep the IR
+    // coherent. - nmatsakis
 
-    parSlice_ = new MParSlice();
     MBasicBlock *entry = entryBlock();
     JS_ASSERT(entry->info().executionMode() == ParallelExecution);
-    for (MInstructionIterator ins(entry->begin()); ins != entry->end(); ins++) {
-        if (ins->isStart()) {
-            entry->insertAfter(*ins, parSlice_);
-            return parSlice_;
-        }
-    }
 
-    JS_NOT_REACHED("No start block in entry block");
+    MInstruction *start = NULL;
+    for (MInstructionIterator ins(entry->begin()); ins != entry->end(); ins++) {
+        if (ins->isParSlice())
+            return *ins;
+        else if (ins->isStart())
+            start = *ins;
+    }
+    JS_ASSERT(start);
+
+    MParSlice *parSlice = new MParSlice();
+    entry->insertAfter(start, parSlice);
+    return parSlice;
 }
 
 MBasicBlock *

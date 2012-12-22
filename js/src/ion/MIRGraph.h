@@ -472,7 +472,6 @@ class MIRGraph
     uint32_t idGen_;
     MBasicBlock *osrBlock_;
     MStart *osrStart_;
-    MInstruction *parSlice_;
 
     // List of compiled/inlined scripts.
     Vector<JSScript *, 4, IonAllocPolicy> scripts_;
@@ -487,7 +486,6 @@ class MIRGraph
         idGen_(0),
         osrBlock_(NULL),
         osrStart_(NULL),
-        parSlice_(NULL),
         numBlocks_(0)
     { }
 

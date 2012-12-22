@@ -78,6 +78,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     ParallelCompileContext &compileContext_;
     MIRGraph &graph_;
     bool unsafe_;
+    MDefinition *parSlice_;
 
     bool insertWriteGuard(MInstruction *writeInstruction,
                           MDefinition *valueBeingWritten);
@@ -108,12 +109,17 @@ class ParallelArrayVisitor : public MInstructionVisitor
         compileContext_(compileContext),
         graph_(graph),
         unsafe_(false),
+        parSlice_(NULL),
         callTargets(cx)
     { }
 
     void clearUnsafe() { unsafe_ = false; }
     bool unsafe() { return unsafe_; }
-    MDefinition *parSlice() { return graph_.parSlice(); }
+    MDefinition *parSlice() {
+        if (!parSlice_)
+            parSlice_ = graph_.parSlice();
+        return parSlice_;
+    }
 
     bool convertToBailout(MBasicBlock *block, MInstruction *ins);
 
