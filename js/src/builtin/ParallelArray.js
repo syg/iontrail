@@ -216,23 +216,24 @@ function ParallelArrayView(shape, buffer, offset) {
 
 function ParallelArrayBuild(self, shape, f, m) {
   self.offset = 0;
+  self.shape = shape;
 
   var length;
   var xw, yw, zw;
-  var fill;
+  var computefunc;
 
   switch (shape.length) {
   case 1:
     length = shape[0];
     self.get = ParallelArrayGet1;
-    fill = fill1;
+    computefunc = fill1;
     break;
   case 2:
     xw = shape[0];
     yw = shape[1];
     length = xw * yw;
     self.get = ParallelArrayGet2;
-    fill = fill2;
+    computefunc = fill2;
     break;
   case 3:
     xw = shape[0];
@@ -240,59 +241,63 @@ function ParallelArrayBuild(self, shape, f, m) {
     zw = shape[2];
     length = xw * yw * zw;
     self.get = ParallelArrayGet3;
-    fill = fill3;
+    computefunc = fill3;
     break;
   default:
     length = 1;
     for (var i = 0; i < shape.length; i++)
       length *= shape[i];
     self.get = ParallelArrayGetN;
-    fill = fillN;
+    computefunc = fillN;
     break;
   }
 
-  var done = false;
-  var buffer = %DenseArray(length);
+  var buffer = self.buffer = %DenseArray(length);
 
-  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
-    // FIXME: Just throw away some work for now to warmup every time.
-    fill(0, 1, true, yw, zw);
-    done = %ParallelDo(fill, CheckParallel(m), false, yw, zw);
-    %LeaveParallelSection();
-  }
+  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+    if (%InParallelSection())
+      break parallel;
+    if (!TRY_PARALLEL(m))
+      break parallel;
+    if (computefunc === fillN)
+      break parallel;
 
-  if (!done && TRY_SEQUENTIAL(m)) {
-    fill(0, 1, false, yw, zw);
-    done = true;
-  }
-
-  if (done) {
-    self.shape = shape;
-    self.buffer = buffer;
+    var chunks = ComputeNumChunks(length);
+    var numSlices = %ParallelSlices();
+    if (chunks < numSlices)
+      break parallel;
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    Do(numSlices, constructSlice, CheckParallel(m));
     return;
   }
 
-  var emptyShape = [];
-  for (var i = 0; i < shape.length; i++)
-    emptyShape[i] = 0;
-  self.shape = emptyShape;
-  self.buffer = [];
+  computefunc(0, length);
+  return;
 
-  function fill1(id, n, warmup) {
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
-    for (var i = start; i < end; i++)
+  function constructSlice(id, n, warmup) {
+    var chunkPos = info[SLICE_POS(id)];
+    var chunkEnd = info[SLICE_END(id)];
+
+    if (warmup && chunkEnd > chunkPos)
+      chunkEnd = chunkPos + 1;
+
+    while (chunkPos < chunkEnd) {
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      computefunc(indexStart, indexEnd);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+    }
+  }
+
+  function fill1(indexStart, indexEnd) {
+    for (var i = indexStart; i < indexEnd; i++)
       %UnsafeSetElement(buffer, i, f(i));
   }
 
-  function fill2(id, n, warmup, yw) {
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
-    var x = (start / yw) | 0;
-    var y = start - x*yw;
-    for (var i = start; i < end; i++) {
+  function fill2(indexStart, indexEnd) {
+    var x = (indexStart / yw) | 0;
+    var y = indexStart - x*yw;
+    for (var i = indexStart; i < indexEnd; i++) {
       %UnsafeSetElement(buffer, i, f(x, y));
       if (++y == yw) {
         y = 0;
@@ -301,15 +306,12 @@ function ParallelArrayBuild(self, shape, f, m) {
     }
   }
 
-  function fill3(id, n, warmup, yw, zw) {
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
-    var x = (start / (yw*zw)) | 0;
-    var r = start - x*yw*zw;
+  function fill3(indexStart, indexEnd) {
+    var x = (indexStart / (yw*zw)) | 0;
+    var r = indexStart - x*yw*zw;
     var y = (r / zw) | 0;
     var z = r - y*zw;
-    for (var i = start; i < end; i++) {
+    for (var i = indexStart; i < indexEnd; i++) {
       %UnsafeSetElement(buffer, i, f(x, y, z));
       if (++z == zw) {
         z = 0;
@@ -321,15 +323,9 @@ function ParallelArrayBuild(self, shape, f, m) {
     }
   }
 
-  function fillN(id, n, warmup) {
-    // NB: In fact this will not currently be parallelized due to the
-    // use of `f.apply()`.  But it's written as if it could be.  A guy
-    // can dream, can't he?
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
-    var indices = ComputeIndices(shape, start);
-    for (var i = start; i < end; i++) {
+  function fillN(indexStart, indexEnd) {
+    var indices = ComputeIndices(shape, indexStart);
+    for (var i = indexStart; i < indexEnd; i++) {
       %UnsafeSetElement(buffer, i, f.apply(null, indices));
       StepIndices(shape, indices);
     }
