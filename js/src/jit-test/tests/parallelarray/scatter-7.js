@@ -11,6 +11,5 @@ function testScatterIdentity() {
   }
 }
 
-// FIXME scatter on N-dim not implemented
-// testScatterIdentity();
+testScatterIdentity();
 
