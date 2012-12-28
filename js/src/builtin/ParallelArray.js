@@ -680,8 +680,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
   if (targets.length >>> 0 !== targets.length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  if (targets.length > self.length)
-    %ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
+  var targetsLength = IntMin(targets.length, self.length);
 
   if (length && length >>> 0 !== length)
     %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
@@ -696,7 +695,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
       return parDivideScatterVector();
     else if (forceDivideOutputRange())
       return parDivideOutputRange();
-    else if (f === undefined && targets.length < length)
+    else if (f === undefined && targetsLength < length)
       return parDivideOutputRange();
     return parDivideScatterVector();
   }
@@ -722,7 +721,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
 
 
   function parDivideOutputRange() {
-    var chunks = ComputeNumChunks(targets.length);
+    var chunks = ComputeNumChunks(targetsLength);
     var numSlices = %ParallelSlices();
     var checkpoints = %DenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
@@ -739,7 +738,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
 
     function fill(id, n, warmup) {
       var indexPos = checkpoints[id];
-      var indexEnd = targets.length;
+      var indexEnd = targetsLength;
       if (warmup)
         indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
 
@@ -768,7 +767,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
     // before.  Therefore, we must proceed not by chunks but rather by
     // individual indices,
     var numSlices = %ParallelSlices();
-    var info = ComputeAllSliceBounds(targets.length, numSlices);
+    var info = ComputeAllSliceBounds(targetsLength, numSlices);
 
     var localbuffers = %DenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
@@ -839,7 +838,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
     for (var i = 0; i < length; i++)
       buffer[i] = zero;
 
-    for (var i = 0; i < targets.length; i++) {
+    for (var i = 0; i < targetsLength; i++) {
       var x = self.get(i);
       var t = targets[i];
       checkTarget(t);
