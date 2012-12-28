@@ -313,9 +313,9 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 #ifdef DEBUG
         if (IsCloneSpewActive(CloneSpewOld)) {
             fprintf(stderr, "[CallsiteClone] %p:%s:%d at callsite %p:%s:%d already cloned to %p\n",
-                    fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-                    script->function(), script->filename, PCToLineNumber(script, pc),
-                    p->value.get());
+                    (void *) fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+                    (void *) script->function(), script->filename, PCToLineNumber(script, pc),
+                    (void *) p->value.get());
         }
 #endif
         return p->value;
@@ -335,9 +335,9 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 #ifdef DEBUG
     if (IsCloneSpewActive(CloneSpewNew)) {
         fprintf(stderr, "[CallsiteClone] %p:%s:%d at callsite %p:%s:%d cloned to %p\n",
-                fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-                script->function(), script->filename, PCToLineNumber(script, pc),
-                clone.get());
+                (void *) fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
+                (void *) script->function(), script->filename, PCToLineNumber(script, pc),
+                (void *) clone.get());
     }
 #endif
     return clone;
