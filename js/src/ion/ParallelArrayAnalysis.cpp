@@ -46,6 +46,11 @@ static inline typeset_t containsType(typeset_t set, MIRType type) {
         return true;                            \
     }
 
+#define IMPOSSIBLE_OP(op)                       \
+    virtual bool visit##op(M##op *ins) {        \
+        JS_NOT_REACHED("NYI: " #op);            \
+        return false;                           \
+    }
 #define PERMIT(T) (1 << T)
 
 #define PERMIT_NUMERIC (PERMIT(MIRType_Int32) | PERMIT(MIRType_Double))
@@ -249,6 +254,27 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParLambda)
     SAFE_OP(ParDump)
     SAFE_OP(ParBailout)
+    UNSAFE_OP(ArrayConcat)
+    UNSAFE_OP(GetDOMProperty)
+    UNSAFE_OP(SetDOMProperty)
+    UNSAFE_OP(NewStringObject)
+    UNSAFE_OP(Random)
+    UNSAFE_OP(Pow)
+    UNSAFE_OP(PowHalf)
+    UNSAFE_OP(RegExpTest)
+
+    IMPOSSIBLE_OP(CallInstanceOf)
+    IMPOSSIBLE_OP(FunctionBoundary)
+    IMPOSSIBLE_OP(GuardString)
+    IMPOSSIBLE_OP(CallsiteCloneCache)
+
+    IMPOSSIBLE_OP(In)
+    IMPOSSIBLE_OP(InArray)
+
+    SAFE_OP(ParWriteGuard)
+    SAFE_OP(ParCheckInterrupt)
+    SAFE_OP(ParCheckOverRecursed)
+    IMPOSSIBLE_OP(PolyInlineDispatch)
 };
 
 bool
