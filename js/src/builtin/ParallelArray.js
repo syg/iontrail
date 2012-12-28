@@ -1275,7 +1275,9 @@ function CheckParallel(m) {
     return null;
 
   return function(result) {
-    if (m.expect === "mixed") {
+    if (!("expect" in m) || m.expect === "any") {
+      return; // Ignore result when unspecified or unimportant.
+    } else if (m.expect === "mixed") {
       if (result !== "bailout" && result !== "success")
         %ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, m.expect, result);
     } else if (result !== m.expect) {
