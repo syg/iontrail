@@ -69,15 +69,25 @@ function assertEqParallelArrayArray(a, b) {
   assertEq(a.shape.length, 1);
   assertEq(a.length, b.length);
   for (var i = 0, l = a.length; i < l; i++) {
-    assertStructuralEq(a.get(i), b[i]);
+    try {
+      assertStructuralEq(a.get(i), b[i]);
+    } catch (e) {
+      print("...in index ", i, " of ", l);
+      throw e;
+    }
   }
 }
 
 function assertEqArray(a, b) {
-  assertEq(a.length, b.length);
-  for (var i = 0, l = a.length; i < l; i++) {
-    assertStructuralEq(a[i], b[i]);
-  }
+    assertEq(a.length, b.length);
+    for (var i = 0, l = a.length; i < l; i++) {
+      try {
+        assertStructuralEq(a[i], b[i]);
+      } catch (e) {
+        print("...in index ", i, " of ", l);
+        throw e;
+      }
+    }
 }
 
 function assertEqParallelArray(a, b) {
@@ -100,9 +110,14 @@ function assertEqParallelArray(a, b) {
 
   var iv = shape.map(function () { return 0; });
   do {
-    var e1 = a.get.apply(a, iv);
-    var e2 = b.get.apply(b, iv);
-    assertStructuralEq(e1, e2);
+    try {
+      var e1 = a.get.apply(a, iv);
+      var e2 = b.get.apply(b, iv);
+      assertStructuralEq(e1, e2);
+    } catch (e) {
+      print("...in indices ", iv, " of ", shape);
+      throw e;
+    }
   } while (bump(iv));
 }
 
