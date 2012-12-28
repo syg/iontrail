@@ -472,68 +472,56 @@ function ParallelArrayScan(f, m) {
   if (length === 0)
     %ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  ///////////////////////////////////////////////////////////////////////////
-  // Parallel version
-
   var buffer = %DenseArray(length);
 
-  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
+  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+    if (%InParallelSection())
+      break parallel;
+    if (!TRY_PARALLEL(m))
+      break parallel;
+
+    var chunks = ComputeNumChunks(length);
     var numSlices = %ParallelSlices();
-    if (length > numSlices) { // Each worker thread will have something to do.
-      // FIXME: Just throw away some work for now to warmup every time.
-      phase1(0, 1, true);
+    if (chunks < numSlices)
+      break parallel;
+    var info = ComputeAllSliceBounds(chunks, numSlices);
 
-      // compute scan of each slice: see comment on phase1() below
-      if (%ParallelDo(phase1, CheckParallel(m), false)) {
-        // build intermediate array: see comment on phase2() below
-        var intermediates = [];
-        var [start, end] = ComputeSliceBounds(length, 0, numSlices);
-        var acc = phase1buffer[end-1];
-        intermediates[0] = acc;
-        for (var i = 1; i < numSlices - 1; i++) {
-          [start, end] = ComputeSliceBounds(length, i, numSlices);
-          acc = f(acc, phase1buffer[end-1]);
-          intermediates[i] = acc;
-        }
+    // Scan slices individually (see comment on phase1()).
+    Do(numSlices, phase1, CheckParallel(m));
 
-        // FIXME: Just throw away some work for now to warmup every time.
-        phase2(0, 1, true);
-
-        // compute phase1 scan results with intermediates
-        if (%ParallelDo(phase2, CheckParallel(m), false)) {
-          %LeaveParallelSection();
-          return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-        }
+    // Compute intermediates array (see comment on phase2()).
+    var intermediates = [];
+    var acc = intermediates[0] = buffer[finalElement(0)];
+    info[SLICE_POS(0)] = 0; // reset current position for each slice.
+    if (numSlices > 1) {
+      for (var i = 1; i < numSlices - 1; i++) {
+        acc = intermediates[i] = f(acc, buffer[finalElement(i)]);
+        info[SLICE_POS(i)] = info[SLICE_START(i)];
       }
+      info[SLICE_POS(i)] = info[SLICE_START(i)];
     }
 
-    %LeaveParallelSection();
+    // Complete each slice using intermediates array (see comment on phase2()).
+    var phase2buffer = %DenseArray(length);
+    Do(numSlices, phase2, CheckParallel(m));
+    return %NewParallelArray(ParallelArrayView, [length], phase2buffer, 0);
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  // Sequential version
+  // Sequential fallback:
+  scan(self.get(0), 0, length);
+  return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
-  if (TRY_SEQUENTIAL(m)) {
-    scan(0, length);
-    return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-  }
-
-  return %NewParallelArray(ParallelArrayView, [0], [], 0);
-
-  ///////////////////////////////////////////////////////////////////////////
-  // Helpers
-
-  function scan(start, end) {
-    var acc = self.get(0);
-    buffer[start] = acc;
+  function scan(acc, start, end) {
+    %UnsafeSetElement(buffer, start, acc);
     for (var i = start + 1; i < end; i++) {
       acc = f(acc, self.get(i));
       %UnsafeSetElement(buffer, i, acc);
     }
+    return acc;
   }
 
   function phase1(id, n, warmup) {
-    // In phase 1, we divide the source array into n even slices and
+    // In phase 1, we divide the source array into n slices and
     // compute scan on each slice sequentially as it were the entire
     // array.  This function is responsible for computing one of those
     // slices.
@@ -546,10 +534,41 @@ function ParallelArrayScan(f, m) {
     //      Slice 0        Slice 1        Slice 2
     //
     // Read on in phase2 to see what we do next!
-    var [start, end] = ComputeSliceBounds(self.shape[0], id, n);
-    if (warmup)
-      end = TruncateEnd(start, end);
-    scan(start, end);
+    var chunkStart = info[SLICE_START(id)];
+    var chunkPos = info[SLICE_POS(id)];
+    var chunkEnd = info[SLICE_END(id)];
+
+    if (warmup && chunkEnd > chunkPos + 2)
+      chunkEnd = chunkPos + 2;
+
+    if (chunkPos == chunkStart) {
+      // For the first chunk, the accumulator begins as the value in
+      // the input at the start of the chunk.
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      scan(self.get(indexStart), indexStart, indexEnd);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+    }
+
+    while (chunkPos < chunkEnd) {
+      // For each subsequent chunk, the accumulator begins as the
+      // combination of the final value of prev chunk and the value in
+      // the input at the start of this chunk.  Note that this loop is
+      // written as simple as possible, at the cost of an extra read
+      // from the buffer per iteration.
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var acc = f(buffer[indexStart - 1], self.get(indexStart));
+      scan(acc, indexStart, indexEnd);
+      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+    }
+  }
+
+  function finalElement(id) {
+    // Computes the index of the final element computed by the slice |id|.
+    var chunkEnd = info[SLICE_END(id)]; // last chunk written by |id| is endChunk - 1
+    var indexStart = IntMin(chunkEnd << CHUNK_SHIFT, length);
+    return indexStart - 1;
   }
 
   function phase2(id, n, warmup) {
@@ -584,13 +603,50 @@ function ParallelArrayScan(f, m) {
     // |intermediates[1-1]|, which is |A+B+C|, so that the final
     // result is [(A+B+C)+D, (A+B+C)+(D+E), (A+B+C)+(D+E+F)].  Again I
     // am using parentheses to clarify how these results were reduced.
+    //
+    // SUBTLE: In an ideal world, we would mutate |buffer| in place,
+    // but we have to be very careful about bailouts!  If we were
+    // mutating |buffer| in place, we could never re-execute an index.
+    // Currently, though, the design of Do() is based around
+    // processing a chunk at a time and assumes it is safe to
+    // re-execute.  The design I would like to have is to process a
+    // chunk at a time but store the results into a temporary buffer.
+    // Then, at the end of each chunk, we would copy this temporary
+    // buffer into the final buffer atomically and increment indexPos,
+    // all as one action.  However, as we current lack any intrinsic
+    // that can atomically copy over data *and* increment the counter,
+    // I instead opted for writing the results of phase2 into a
+    // separate buffer, |phase2buffer|.  Another alternative would be
+    // to track each index as it completes, but this (a) requires two
+    // memory writes per operation and (b) still requires an intrisic
+    // that can both increment the "current index" counter and mutate
+    // buffer atomically.
 
-    if (id > 0) { // The 0th worker has nothing to do.
-      var [start, end] = ComputeSliceBounds(self.shape[0], id, n);
-      if (warmup) { end = TruncateEnd(start, end); }
+    var chunkStart = info[SLICE_START(id)];
+    var chunkPos = info[SLICE_POS(id)];
+    var chunkEnd = info[SLICE_END(id)];
+
+    if (warmup)
+      chunkEnd = IntMin(chunkEnd, chunkPos + 1);
+
+    if (id == 0) {
+      // For 0th slice, we only have to copy the data.  Don't bother
+      // with the full chunking and so forth as this is a side-effect
+      // free operation and we expect few if any bailouts.
+      var indexStart = chunkStart << CHUNK_SHIFT;
+      var indexEnd = IntMin(chunkEnd << CHUNK_SHIFT, length);
+      for (var i = indexStart; i < indexEnd; i++)
+        %UnsafeSetElement(phase2buffer, i, buffer[i]);
+      %UnsafeSetElement(info, SLICE_POS(id), chunkEnd);
+    } else {
       var intermediate = intermediates[id - 1];
-      for (var i = start; i < end; i++)
-        %UnsafeSetElement(buffer, i, f(intermediate, buffer[i]));
+      while (chunkPos < chunkEnd) {
+        var indexStart = chunkPos << CHUNK_SHIFT;
+        var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+        for (var i = indexStart; i < indexEnd; i++)
+          %UnsafeSetElement(phase2buffer, i, f(intermediate, buffer[i]));
+        %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      }
     }
   }
 }

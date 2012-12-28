@@ -182,3 +182,17 @@ function testFilter(jsarray, func, cmpFunction) {
   //   return parray.filter(filters, m);
   // }, cmpFunction);
 }
+
+function testScan(jsarray, func, cmpFunction) {
+  var expected = seq_scan(jsarray, func);
+  var parray = new ParallelArray(jsarray);
+
+  // Unfortunately, it sometimes happens that running 'par' twice in a
+  // row causes bailouts and other unfortunate things!
+
+  assertParallelArrayModesEq(["seq", "par", "par"], expected, function(m) {
+    print(m.mode + " " + m.expect);
+    var p = parray.scan(func, m);
+    return p;
+  }, cmpFunction);
+}

@@ -1,4 +1,3 @@
-
 function testScanOne() {
   function f(v, p) { throw "This should never be called."; }
   var p = new ParallelArray([1]);

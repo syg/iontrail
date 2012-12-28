@@ -1,4 +1,3 @@
-
 function testScan() {
   // Test reduce on higher dimensional
   // XXX Can we test this better?

@@ -1,3 +1,5 @@
+// |jit-test| slow;
+
 load(libdir + "parallelarray-helpers.js");
 
 function mergeSorted(l1, l2) {
@@ -21,14 +23,12 @@ function mergeSorted(l1, l2) {
 function test() {
   var elts = [];
   var ints = range(1, 5), c = 0;
-  for (var i = 0; i < 64; i++) {
-    entry = [];
-    for (var j = 0; j < 3; j++) {
-      entry[j] = ints[c++ % ints.length];
-    }
-    elts[i] = entry;
-  }
-  
+
+  // Using 2048 as the length of elts induces bailouts due to GC.
+  // This exposed various bugs.
+  for (var i = 0; i < 2048; i++)
+    elts[i] = ints;
+
   var scanned1 = seq_scan(elts, mergeSorted);
   var scanned2 = new ParallelArray(elts).scan(mergeSorted);
   assertStructuralEq(scanned1, scanned2);
