@@ -1975,11 +1975,15 @@ js::ion::CallsiteCloneCache(JSContext *cx, size_t cacheIndex, HandleObject calle
 {
     AutoFlushCache afc ("CallsiteCloneCache");
 
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
+    // Act as the identity for functions that are not clone-at-callsite, as we
+    // generate this cache as long as some callees are clone-at-callsite.
+    RootedFunction fun(cx, callee->toFunction());
+    if (!fun->isCloneAtCallsite())
+        return fun;
 
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
     IonCacheCallsiteClone &cache = ion->getCache(cacheIndex).toCallsiteClone();
 
-    RootedFunction fun(cx, callee->toFunction());
     RootedFunction clone(cx, CloneFunctionAtCallsite(cx, fun, cache.callScript(), cache.callPc()));
     if (!clone)
         return NULL;

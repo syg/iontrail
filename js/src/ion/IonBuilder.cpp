@@ -3952,20 +3952,18 @@ IonBuilder::createThis(HandleFunction target, MDefinition *callee)
 }
 
 bool
-IonBuilder::allFunctionsAreCallsiteClone(types::StackTypeSet *funTypes)
+IonBuilder::anyFunctionIsCallsiteClone(types::StackTypeSet *funTypes)
 {
     uint32_t count = funTypes->getObjectCount();
     if (count < 1)
         return false;
 
-    bool callsiteClone = true;
     for (uint32_t i = 0; i < count; i++) {
         JSObject *obj = funTypes->getSingleObject(i);
-        if (!obj || !obj->isFunction())
-            return false;
-        callsiteClone = callsiteClone && obj->toFunction()->isCloneAtCallsite();
+        if (obj->isFunction() && obj->toFunction()->isCloneAtCallsite())
+            return true;
     }
-    return callsiteClone;
+    return false;
 }
 
 bool
@@ -4017,7 +4015,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
     }
 
     // Call without inlining.
-    return makeCall(target, argc, false, allFunctionsAreCallsiteClone(funTypes));
+    return makeCall(target, argc, false, anyFunctionIsCallsiteClone(funTypes));
 }
 
 bool
@@ -4075,7 +4073,7 @@ IonBuilder::jsop_funapply(uint32_t argc)
     MDefinition *argFunc = passFunc->getArgument();
     passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
-    if (allFunctionsAreCallsiteClone(funTypes))
+    if (anyFunctionIsCallsiteClone(funTypes))
         argFunc = makeCallsiteClone(target, argFunc);
 
     // Pop apply function.
@@ -4148,7 +4146,7 @@ IonBuilder::makeCallsiteClone(HandleFunction target, MDefinition *fun)
     }
 
     // Add a callsite clone IC if we have multiple targets. Note that we
-    // should have checked already if all targets are marked as
+    // should have checked already that at least some targets are marked as
     // should-clone-at-callsite.
     MCallsiteCloneCache *clone = MCallsiteCloneCache::New(fun, pc);
     current->add(clone);
