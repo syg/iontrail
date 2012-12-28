@@ -492,19 +492,20 @@ function ParallelArrayScan(f, m) {
     // Compute intermediates array (see comment on phase2()).
     var intermediates = [];
     var acc = intermediates[0] = buffer[finalElement(0)];
-    info[SLICE_POS(0)] = 0; // reset current position for each slice.
-    if (numSlices > 1) {
-      for (var i = 1; i < numSlices - 1; i++) {
-        acc = intermediates[i] = f(acc, buffer[finalElement(i)]);
-        info[SLICE_POS(i)] = info[SLICE_START(i)];
-      }
-      info[SLICE_POS(i)] = info[SLICE_START(i)];
+    for (var i = 1; i < numSlices - 1; i++)
+      acc = intermediates[i] = f(acc, buffer[finalElement(i)]);
+
+    // Reset the current position information for each slice, but
+    // convert from chunks to indicies (see comment on phase2()).
+    for (var i = 0; i < numSlices; i++) {
+      info[SLICE_POS(i)] = info[SLICE_START(i)] << CHUNK_SHIFT;
+      info[SLICE_END(i)] = info[SLICE_END(i)] << CHUNK_SHIFT;
     }
+    info[SLICE_END(numSlices - 1)] = IntMin(info[SLICE_END(numSlices - 1)], length);
 
     // Complete each slice using intermediates array (see comment on phase2()).
-    var phase2buffer = %DenseArray(length);
     Do(numSlices, phase2, CheckParallel(m));
-    return %NewParallelArray(ParallelArrayView, [length], phase2buffer, 0);
+    return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
   // Sequential fallback:
@@ -604,50 +605,27 @@ function ParallelArrayScan(f, m) {
     // result is [(A+B+C)+D, (A+B+C)+(D+E), (A+B+C)+(D+E+F)].  Again I
     // am using parentheses to clarify how these results were reduced.
     //
-    // SUBTLE: In an ideal world, we would mutate |buffer| in place,
-    // but we have to be very careful about bailouts!  If we were
-    // mutating |buffer| in place, we could never re-execute an index.
-    // Currently, though, the design of Do() is based around
-    // processing a chunk at a time and assumes it is safe to
-    // re-execute.  The design I would like to have is to process a
-    // chunk at a time but store the results into a temporary buffer.
-    // Then, at the end of each chunk, we would copy this temporary
-    // buffer into the final buffer atomically and increment indexPos,
-    // all as one action.  However, as we current lack any intrinsic
-    // that can atomically copy over data *and* increment the counter,
-    // I instead opted for writing the results of phase2 into a
-    // separate buffer, |phase2buffer|.  Another alternative would be
-    // to track each index as it completes, but this (a) requires two
-    // memory writes per operation and (b) still requires an intrisic
-    // that can both increment the "current index" counter and mutate
-    // buffer atomically.
+    // SUBTLE: Because we are mutating |buffer| in place, we have to
+    // be very careful about bailouts!  We cannot checkpoint a chunk
+    // at a time as we do elsewhere because that assumes it is safe to
+    // replay the portion of a chunk which was already processed.
+    // Therefore, in this phase, we track the current position at an
+    // index granularity, although this requires two memory writes per
+    // index.
 
-    var chunkStart = info[SLICE_START(id)];
-    var chunkPos = info[SLICE_POS(id)];
-    var chunkEnd = info[SLICE_END(id)];
+    if (id == 0)
+      return; // No work to do for the 0th slice.
+
+    var indexPos = info[SLICE_POS(id)];
+    var indexEnd = info[SLICE_END(id)];
 
     if (warmup)
-      chunkEnd = IntMin(chunkEnd, chunkPos + 1);
+      indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
 
-    if (id == 0) {
-      // For 0th slice, we only have to copy the data.  Don't bother
-      // with the full chunking and so forth as this is a side-effect
-      // free operation and we expect few if any bailouts.
-      var indexStart = chunkStart << CHUNK_SHIFT;
-      var indexEnd = IntMin(chunkEnd << CHUNK_SHIFT, length);
-      for (var i = indexStart; i < indexEnd; i++)
-        %UnsafeSetElement(phase2buffer, i, buffer[i]);
-      %UnsafeSetElement(info, SLICE_POS(id), chunkEnd);
-    } else {
-      var intermediate = intermediates[id - 1];
-      while (chunkPos < chunkEnd) {
-        var indexStart = chunkPos << CHUNK_SHIFT;
-        var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
-        for (var i = indexStart; i < indexEnd; i++)
-          %UnsafeSetElement(phase2buffer, i, f(intermediate, buffer[i]));
-        %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
-      }
-    }
+    var intermediate = intermediates[id - 1];
+    for (; indexPos < indexEnd; indexPos++)
+      %UnsafeSetElement(buffer, indexPos, f(intermediate, buffer[indexPos]),
+                        info, SLICE_POS(id), indexPos + 1);
   }
 }
 
@@ -699,328 +677,188 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
   // |targets.length| approximately equals |length|, especially for
   // special cases like collision-free scatters and permutations.
 
-  var buffer = %DenseArray(length);
+  if (targets.length >>> 0 !== targets.length)
+    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  ///////////////////////////////////////////////////////////////////////////
-  // Parallel version(s)
+  if (targets.length > self.length)
+    %ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
 
-  if (TRY_PARALLEL(m) && %EnterParallelSection()) {
-    var slices = %ParallelSlices();
+  if (length && length >>> 0 !== length)
+    %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-    // If client explicitly requested a strategy, attempt it first.
-    if (ForceDivideOutputRange(m)) {
+  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+    if (%InParallelSection())
+      break parallel;
+    if (!TRY_PARALLEL(m))
+      break parallel;
 
-      if (ParDivideOutputRange(buffer, length))
-        %LeaveParallelSection();
-        return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-    } else if (ForceDivideScatterVector(m)) {
-      if (ParDivideScatterVector(buffer, length))
-        %LeaveParallelSection();
-        return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-    } else {
-      // If no explicit strategy request, employ heuristics
-
-      // If conditions are right, attempt Divide-Output-Range
-      if (f === undefined && targets.length < length) {
-        if (ParDivideOutputRange(buffer, length)) {
-          %LeaveParallelSection();
-          return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-        }
-      }
-
-      // Otherwise, attempt Divide-Scatter-Vector
-      if (ParDivideScatterVector(buffer, length)) {
-        %LeaveParallelSection();
-        return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-      }
-    }
-    %LeaveParallelSection();
+    if (forceDivideScatterVector())
+      return parDivideScatterVector();
+    else if (forceDivideOutputRange())
+      return parDivideOutputRange();
+    else if (f === undefined && targets.length < length)
+      return parDivideOutputRange();
+    return parDivideScatterVector();
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  // Sequential version
+  // Sequential fallback:
+  return seq();
 
-  if (TRY_SEQUENTIAL(m)) {
-    return ParallelArrayScatterSeq(targets, zero, f, length);
-  }
-
-  return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
-
-  function ForceDivideScatterVector(m) {
+  function forceDivideScatterVector() {
     return m && m.strategy && m.strategy == "divide-scatter-vector";
   }
 
-  function ForceDivideOutputRange(m) {
+  function forceDivideOutputRange() {
     return m && m.strategy && m.strategy == "divide-output-range";
+    return f(elem1, elem2);
   }
 
-  function ParDivideOutputRange(buffer, length) {
-    if (length <= slices)  // Ensure work for each worker thread.
-      return false;
+  function collide(elem1, elem2) {
+    if (f === undefined)
+      %ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
 
-    var writes = %DenseArray(length);
+    return f(elem1, elem2);
+  }
 
-    // FIXME: Just throw away some work for now to warmup every time
-    initialize(0, 1, true, writes);
 
-    // Warmup fillsubrange function before calling initialize so that
-    // initialize step clears side-effects of fillsubrange.
-    fillsubrange(0, 1, true);
+  function parDivideOutputRange() {
+    var chunks = ComputeNumChunks(targets.length);
+    var numSlices = %ParallelSlices();
+    var checkpoints = %DenseArray(numSlices);
+    for (var i = 0; i < numSlices; i++)
+      checkpoints[i] = 0;
 
-    if (!%ParallelDo(initialize, CheckParallel(m), false, writes))
-      return false;
+    var buffer = %DenseArray(length);
+    var conflicts = %DenseArray(length);
 
-    if (!%ParallelDo(fillsubrange, CheckParallel(m), false))
-      return false;
+    for (var i = 0; i < length; i++)
+      buffer[i] = zero;
 
-    // Note: In principle, it seems like one might be better off
-    // delaying zeroing the gaps of the buffer, since we might
-    // not need to zero any at all, i.e. via something like:
-    //
-    //   return ParFillScatterGaps(buffer, length, writes);
-    //
-    // Thus far Felix has not been able to get such code
-    // to reliably execute in parallel; it often bails out (perhaps
-    // because the writing of zero usually is the exceptional case).
-    // So instead he is just zeroing the whole buffer to zero
-    // at the outset in initialize.
+    Do(numSlices, fill, CheckParallel(m));
     return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
-    function initialize(id, n, warmup, array) {
-      var [start, end] = ComputeSliceBounds(length, id, n);
-      if (warmup) { end = TruncateEnd(start, end); }
-      for (var i = start; i < end; i++) {
-        %UnsafeSetElement(array, i, false);
-        %UnsafeSetElement(buffer, i, zero);
-      }
-    }
+    function fill(id, n, warmup) {
+      var indexPos = checkpoints[id];
+      var indexEnd = targets.length;
+      if (warmup)
+        indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
 
-    function fillsubrange(id, n, warmup) {
-      var [start, end] = ComputeSliceBounds(length, id, n);
-      if (warmup) { end = TruncateEnd(start, end); }
-      for (var i = 0; i < targets.length; i++) {
-        var idx = targets[i];
-        var value = self.get(i);
-        if (start <= idx && idx < end) {
+      // Range in the output for which we are responsible:
+      var [outputStart, outputEnd] = ComputeSliceBounds(length, id, numSlices);
 
-          // In principle this statement could/should be lowered into
-          // the then-clause below, but Felix has observed that doing
-          // so disqualifies this routine from parallel execution, and
-          // therefore Felix is leaving the statement here.
-          var x = buffer[idx];
-
-          if (writes[idx]) {
-              value = f(value, x);
-          }
-          %UnsafeSetElement(buffer, idx, value);
-
-          %UnsafeSetElement(writes, idx, true);
-        }
+      for (; indexPos < indexEnd; indexPos++) {
+        var x = self.get(indexPos);
+        var t = targets[indexPos];
+        checkTarget(t);
+        if (t < outputStart || t >= outputEnd)
+          continue;
+        if (conflicts[t])
+          x = collide(x, buffer[t]);
+        %UnsafeSetElement(buffer, t, x,
+                          conflicts, t, true,
+                          checkpoints, id, indexPos + 1);
       }
     }
   }
 
-  function ParDivideScatterVector(buffer, length) {
-    if (targets.length <= slices) // Ensure work for each worker thread.
-      return false;
+  function parDivideScatterVector() {
+    // Subtle: because we will be mutating the localbuffers and
+    // conflict arrays in place, we can never replay an entry in the
+    // target array for fear of inducing a conflict where none existed
+    // before.  Therefore, we must proceed not by chunks but rather by
+    // individual indices,
+    var numSlices = %ParallelSlices();
+    var info = ComputeAllSliceBounds(targets.length, numSlices);
 
-    var dieoncollide = (f === undefined);
-    var localbuffers = %DenseArray(slices);
-    localbuffers[0] = buffer;
-    for (var i = 1; i < slices; i++) {
+    var localbuffers = %DenseArray(numSlices);
+    for (var i = 0; i < numSlices; i++)
         localbuffers[i] = %DenseArray(length);
-    }
-    var localconflicts = %DenseArray(slices);
-    for (var i = 0; i < slices; i++) {
+    var localconflicts = %DenseArray(numSlices);
+    for (var i = 0; i < numSlices; i++)
         localconflicts[i] = %DenseArray(length);
+
+    // Initialize the 0th buffer, which will become the output.  For
+    // the other buffers, we track which parts have been written to
+    // using the conflict buffer so they do not need to be
+    // initialized.
+    var outputbuffer = localbuffers[0];
+    for (var i = 0; i < length; i++)
+      outputbuffer[i] = zero;
+
+    Do(numSlices, fill, CheckParallel(m));
+    mergeBuffers();
+    return %NewParallelArray(ParallelArrayView, [length], outputbuffer, 0);
+
+    function fill(id, n, warmup) {
+      var indexPos = info[SLICE_POS(id)];
+      var indexEnd = info[SLICE_END(id)];
+      if (warmup)
+        indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
+
+      var localbuffer = localbuffers[id];
+      var conflicts = localconflicts[id];
+      while (indexPos < indexEnd) {
+        var x = self.get(indexPos);
+        var t = targets[indexPos];
+        checkTarget(t);
+        if (conflicts[t])
+          x = collide(x, localbuffer[t]);
+        %UnsafeSetElement(localbuffer, t, x,
+                          conflicts, t, true,
+                          info, SLICE_POS(id), ++indexPos);
+      }
     }
 
-    var loglen = length; // ((length + 31) / 32) | 0;
-
-    for (var j = 0; j < slices; j++) {
-      var localbuffer = localbuffers[j];
-      for (var i = 0; i < length; i++) {
-        localbuffer[i] = zero;
-      }
-      var conflicts = localconflicts[j];
-      for (var i = 0; i < loglen; i++) {
-        conflicts[i] = 0;
-      }
-    }
-
-    if (!FillBuffers())
-      return false;
-
-    if (!MergeBuffers())
-      return false;
-
-    var conflicts = localconflicts[0];
-
-    return ParFillScatterGaps(buffer, length, conflicts);
-
-    function FillBuffers() {
-
-      if (dieoncollide) {
-        // FIXME: Just throw away some work for now to warmup every time
-        fill_dieoncollide(0, 2, true);
-        fill_dieoncollide(1, 2, true);
-        if (!%ParallelDo(fill_dieoncollide, CheckParallel(m), false))
-          return false;
-      } else {
-        // FIXME: Just throw away some work for now to warmup every time
-        fill_handlecollide(0, 2, true);
-        fill_handlecollide(1, 2, true);
-
-        // Cleanup the state that was "corrupted" by the above fill calls.
-        for (var j = 0; j < slices; j++) {
-          for (var i = 0; i < loglen; i++) {
-            localconflicts[j][i] = 0;
-          }
-        }
-
-        if (!%ParallelDo(fill_handlecollide, CheckParallel(m), false)) {
-          return false;
-        }
-      }
-      return true;
-    }
-
-    function MergeBuffers() {
-      // In principle, we could parallelize the merge work as well.
-      // But for this first cut, just do the merge sequentially.
-
-      // localbuffer[0] == buffer; merge the rest in.
-      var conflict = localconflicts[0];
-      for (var i = 1; i < slices; i++) {
+    function mergeBuffers() {
+      // Merge buffers 1..N into buffer 0.  In principle, we could
+      // parallelize the merge work as well.  But for this first cut,
+      // just do the merge sequentially.
+      var buffer = localbuffers[0];
+      var conflicts = localconflicts[0];
+      for (var i = 1; i < numSlices; i++) {
         var otherbuffer = localbuffers[i];
         var otherconflicts = localconflicts[i];
         for (var j = 0; j < length; j++) {
-          if (otherconflicts[j] != 0) {
-            if (conflict[j]) {
-              if (dieoncollide)
-                %ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
-              else
-                buffer[j] = f(otherbuffer[j], buffer[j]);
+          if (otherconflicts[j]) {
+            if (conflicts[j]) {
+              buffer[j] = collide(otherbuffer[j], buffer[j]);
             } else {
               buffer[j] = otherbuffer[j];
-              conflict[j] = true;
+              conflicts[j] = true;
             }
           }
         }
       }
-
-      return true;
-    }
-
-    function min(a,b) { return (a < b) ? a : b; }
-
-    function fill_dieoncollide(id, n, warmup) {
-      var localbuffer = localbuffers[id];
-      var conflicts = localconflicts[id];
-      for (var i = 0; i < loglen; i++) {
-        %UnsafeSetElement(conflicts, i, 0);
-      }
-
-      var len = min(targets.length, self.shape[0]);
-      var [start, end] = ComputeSliceBounds(len, id, n);
-      if (warmup) { end = TruncateEnd(start, end); }
-      for (var i = start; i < end; i++) {
-        var x = self.get(i);
-        var t = targets[i];
-        if (conflicts[t]) {
-          %ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
-        } else {
-          %UnsafeSetElement(localbuffer, t, x);
-          %UnsafeSetElement(conflicts, t, true);
-        }
-      }
-    }
-
-    function fill_handlecollide(id, n, warmup) {
-      var len = min(targets.length, self.shape[0]);
-      var [start, end] = ComputeSliceBounds(len, id, n);
-
-      var localbuffer = localbuffers[id];
-      var conflicts = localconflicts[id];
-
-      if (warmup) { end = TruncateEnd(start, end); }
-
-      for (var i = start; i < end; i++) {
-        var x = self.get(i);
-        var t = targets[i];
-        if (conflicts[t]) {
-          var u = localbuffer[t];
-          x = f(x, u);
-        }
-        %UnsafeSetElement(localbuffer, t, x);
-        %UnsafeSetElement(conflicts, t, true);
-      }
     }
   }
 
-  function ParFillScatterGaps(buffer, length, writes) {
-    // FIXME: Just throw away some work for now to warmup every time
-    fill(0, 1, true);
-    return %ParallelDo(fill, CheckParallel(m), false);
+  function seq() {
+    var buffer = %DenseArray(length);
+    var conflicts = %DenseArray(length);
 
-    function fill(id, n, warmup) {
-      var [start, end] = ComputeSliceBounds(length, id, n);
-      for (var i = start; i < end; i++) {
-        if (!writes[i]) {
-          %UnsafeSetElement(buffer, i, zero);
-        }
-      }
-    }
-  }
+    for (var i = 0; i < length; i++)
+      buffer[i] = zero;
 
-  function ParallelArrayScatterSeq(targets, zero, f, length) {
-    // TODO: N-dimensional
-
-    var source = self.buffer;
-
-    if (targets.length >>> 0 !== targets.length)
-      %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
-    if (length && length >>> 0 !== length)
-      %ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
-
-    var buffer = [];
-    buffer.length = length || source.length;
-    fillseq(buffer, 0, 1, targets, zero, f, source);
-
-    return %NewParallelArray(ParallelArrayView, [buffer.length], buffer, 0);
-  }
-
-  function fillseq(result, id, n, targets, zero, f, source) {
-    var length = result.length;
-
-    // Initialize a conflict array and initialize the result to the zero value.
-    var conflict = [];
-    var [start, end] = ComputeSliceBounds(length, id, n);
-    for (var i = start; i < end; i++) {
-      result[i] = zero;
-      conflict[i] = false;
-    }
-
-    var [start, end] = ComputeSliceBounds(targets.length, id, n);
-
-    for (var i = start; i < end; i++) {
+    for (var i = 0; i < targets.length; i++) {
+      var x = self.get(i);
       var t = targets[i];
+      checkTarget(t);
+      if (conflicts[t])
+        x = collide(x, buffer[t]);
 
-      if (t >>> 0 !== t)
+      %UnsafeSetElement(buffer, t, x,
+                        conflicts, t, true);
+    }
+
+    return %NewParallelArray(ParallelArrayView, [length], buffer, 0);
+  }
+
+  function checkTarget(t) {
+      if ((t | 0) !== t)
         %ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ".prototype.scatter");
 
       if (t >= length)
         %ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
-
-      if (conflict[t]) {
-        if (!f)
-          %ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
-        result[t] = f(source[i], result[t]);
-      } else {
-        result[t] = source[i];
-        conflict[t] = true;
-      }
-    }
   }
 }
 

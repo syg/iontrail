@@ -6,11 +6,10 @@ function testScatter() {
     shape.push(i+1);
     var p = new ParallelArray(shape, function(k) { return k; });
     var r = p.scatter([1,0,3,2,4]);
-    var p2 = new ParallelArray([p[1], p[0], p[3], p[2], p[4]]);
+    var p2 = new ParallelArray([p.get(1), p.get(0), p.get(3), p.get(2), p.get(4)]);
     assertEqParallelArray(p2, r);
   }
 }
 
-// FIXME scatter on N-dim not implemented
-// testScatter();
+testScatter();
 

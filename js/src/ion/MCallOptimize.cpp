@@ -847,24 +847,66 @@ IonBuilder::inlineRegExpTest(uint32_t argc, bool constructing)
 IonBuilder::InliningStatus
 IonBuilder::inlineUnsafeSetElement(uint32_t argc, bool constructing)
 {
-    if (argc != 3 || constructing)
+    if (argc < 3 || (argc % 3) != 0 || constructing)
         return InliningStatus_NotInlined;
 
-    types::StackTypeSet *obj = getInlineArgTypeSet(argc, 1);
-    types::StackTypeSet *id = getInlineArgTypeSet(argc, 2);
+    /* Important:
+     *
+     * Here we inline each of the stores resulting from a call to
+     * %UnsafeSetElement().  It is essential that these stores occur
+     * atomically and cannot be interrupted by a stack or recursion
+     * check.  If this is not true, race conditions can occur.
+     */
 
-    if (oracle->elementAccessIsDenseArray(obj, id))
-        return inlineUnsafeSetDenseArrayElement(argc);
+    for (uint32_t base = 0; base < argc; base += 3) {
+        uint32_t arri = base + 1;
+        uint32_t idxi = base + 2;
 
-    int arrayType;
-    if (oracle->elementAccessIsTypedArray(obj, id, &arrayType))
-        return inlineUnsafeSetTypedArrayElement(argc, arrayType);
+        types::StackTypeSet *obj = getInlineArgTypeSet(argc, arri);
+        types::StackTypeSet *id = getInlineArgTypeSet(argc, idxi);
 
-    return InliningStatus_NotInlined;
+        int arrayType;
+        if (!oracle->elementAccessIsDenseArray(obj, id) &&
+            !oracle->elementAccessIsTypedArray(obj, id, &arrayType))
+            return InliningStatus_NotInlined;
+    }
+
+    MDefinitionVector argv;
+    if (!discardCall(argc, argv, current))
+        return InliningStatus_Error;
+
+    for (uint32_t base = 0; base < argc; base += 3) {
+        uint32_t arri = base + 1;
+        uint32_t idxi = base + 2;
+
+        types::StackTypeSet *obj = getInlineArgTypeSet(argc, arri);
+        types::StackTypeSet *id = getInlineArgTypeSet(argc, idxi);
+
+        if (oracle->elementAccessIsDenseArray(obj, id)) {
+            if (!inlineUnsafeSetDenseArrayElement(argc, argv, base))
+                return InliningStatus_Error;
+            continue;
+        }
+
+        int arrayType;
+        if (oracle->elementAccessIsTypedArray(obj, id, &arrayType)) {
+            if (!inlineUnsafeSetTypedArrayElement(argc, argv, base, arrayType))
+                return InliningStatus_Error;
+            continue;
+        }
+
+        JS_NOT_REACHED("Element access not dense array nor typed array");
+    }
+
+    MConstant *udef = MConstant::New(UndefinedValue());
+    current->add(udef);
+    current->push(udef);
+
+    return InliningStatus_Inlined;
 }
 
-IonBuilder::InliningStatus
-IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc)
+bool
+IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc, MDefinitionVector &argv, uint32_t base)
 {
     // Note: we do not check the conditions that are asserted as true
     // in intrinsic_UnsafeSetElement():
@@ -873,48 +915,47 @@ IonBuilder::inlineUnsafeSetDenseArrayElement(uint32_t argc)
     // Furthermore, note that inference should be propagating
     // the type of the value to the JSID_VOID property of the array.
 
-    MDefinitionVector argv;
-    if (!discardCall(argc, argv, current))
-        return InliningStatus_Error;
+    uint32_t arri = base + 1;
+    uint32_t idxi = base + 2;
+    uint32_t elemi = base + 3;
 
-    MElements *elements = MElements::New(argv[1]);
+    MElements *elements = MElements::New(argv[arri]);
     current->add(elements);
 
-    MToInt32 *id = MToInt32::New(argv[2]);
+    MToInt32 *id = MToInt32::New(argv[idxi]);
     current->add(id);
 
-    MStoreElement *store = MStoreElement::New(elements, id, argv[3]);
+    MStoreElement *store = MStoreElement::New(elements, id, argv[elemi]);
     store->setRacy();
 
     current->add(store);
-    current->push(argv[3]);
 
     if (!resumeAfter(store))
-        return InliningStatus_Error;
+        return false;
 
-    return InliningStatus_Inlined;
+    return true;
 }
 
-IonBuilder::InliningStatus
-IonBuilder::inlineUnsafeSetTypedArrayElement(uint32_t argc, int arrayType)
+bool
+IonBuilder::inlineUnsafeSetTypedArrayElement(uint32_t argc, MDefinitionVector &argv,
+                                             uint32_t base, int arrayType)
 {
     // Note: we do not check the conditions that are asserted as true
     // in intrinsic_UnsafeSetElement():
     // - arr is a typed array
     // - idx < length
 
-    MDefinitionVector argv;
-    if (!discardCall(argc, argv, current))
-        return InliningStatus_Error;
+    uint32_t arri = base + 1;
+    uint32_t idxi = base + 2;
+    uint32_t elemi = base + 3;
 
-    MInstruction *elements = getTypedArrayElements(argv[1]);
+    MInstruction *elements = getTypedArrayElements(argv[arri]);
     current->add(elements);
 
-    MToInt32 *id = MToInt32::New(argv[2]);
+    MToInt32 *id = MToInt32::New(argv[idxi]);
     current->add(id);
 
-    MDefinition *value = argv[3];
-    MDefinition *unclampedValue = value;
+    MDefinition *value = argv[elemi];
     if (arrayType == TypedArray::TYPE_UINT8_CLAMPED) {
         value = MClampToUint8::New(value);
         current->add(value->toInstruction());
@@ -924,12 +965,11 @@ IonBuilder::inlineUnsafeSetTypedArrayElement(uint32_t argc, int arrayType)
     store->setRacy();
 
     current->add(store);
-    current->push(unclampedValue);
 
     if (!resumeAfter(store))
-        return InliningStatus_Error;
+        return false;
 
-    return InliningStatus_Inlined;
+    return true;
 }
 
 IonBuilder::InliningStatus

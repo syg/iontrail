@@ -673,9 +673,13 @@ js::intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %UnsafeSetElement(arr, idx, elem)
+    // Usage: %UnsafeSetElement(arr0, idx0, elem0,
+    //                          ...,
+    //                          arrN, idxN, elemN)
     //
-    // Updates element |idx| of the dense array |arr|.
+    // For each set of |(arr, idx, elem)| arguments that are passed,
+    // performs the assignment |arr[idx] = elem|. |arr| must be either
+    // a dense array or a typed array.
     //
     // If |arr| is a dense array, the index must be an int32 less than the
     // initialized length of |arr|. Use |%EnsureDenseResultArrayElements| to
@@ -685,21 +689,33 @@ js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
     // length of |arr|.
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    JS_ASSERT(args[0].isObject());
-    JS_ASSERT(args[0].toObject().isDenseArray() || args[0].toObject().isTypedArray());
-    JS_ASSERT(args[1].isInt32());
+    if ((args.length() % 3) != 0) {
+        JS_ReportError(cx, "Incorrect number of arguments, not divisible by 3");
+        return false;
+    }
 
-    RootedObject arrobj(cx, &args[0].toObject());
-    uint32_t idx = args[1].toInt32();
+    for (uint32_t base = 0; base < args.length(); base += 3) {
+        uint32_t arri = base;
+        uint32_t idxi = base+1;
+        uint32_t elemi = base+2;
 
-    if (arrobj->isDenseArray()) {
-        JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
-        JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[2]);
-    } else {
-        JS_ASSERT(idx < TypedArray::length(arrobj));
-        RootedValue tmp(cx, args[2]);
-        // XXX: Always non-strict.
-        JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false);
+        JS_ASSERT(args[arri].isObject());
+        JS_ASSERT(args[arri].toObject().isDenseArray() ||
+                  args[arri].toObject().isTypedArray());
+        JS_ASSERT(args[idxi].isInt32());
+
+        RootedObject arrobj(cx, &args[arri].toObject());
+        uint32_t idx = args[idxi].toInt32();
+
+        if (arrobj->isDenseArray()) {
+            JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
+            JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[elemi]);
+        } else {
+            JS_ASSERT(idx < TypedArray::length(arrobj));
+            RootedValue tmp(cx, args[elemi]);
+            // XXX: Always non-strict.
+            JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false);
+        }
     }
 
     args.rval().setUndefined();

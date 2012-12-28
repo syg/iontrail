@@ -7,7 +7,7 @@ load(libdir + "parallelarray-helpers.js");
 // [A, B, ..., Y, Z] ==> [Z, Y, ..., B, A]
 
 function testDivideScatterVector() {
-    var len = 32;
+    var len = 1024;
     function add1(x) { return x+1; }
     function id(x) { return x; }
     var p = new ParallelArray(len, add1);
@@ -17,6 +17,7 @@ function testDivideScatterVector() {
                  ["par", "divide-scatter-vector"],
                  ["par", "divide-output-range"]];
     for (var i = 0; i < 3; i++) {
+      print(modes[i][1]);
         var r = p.scatter(revidx, 0, undefined, len,
                           {mode: modes[i][0], strategy: modes[i][1],
                            expect: "success"});

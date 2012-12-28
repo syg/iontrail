@@ -7,7 +7,7 @@ load(libdir + "parallelarray-helpers.js");
 // [A, B, C, D, ..., W, X, Y, Z] ==> [Z+Y, X, W, ..., D, C, B+A]
 
 function testDivideScatterVector() {
-    var len = 12;
+    var len = 1024;
     function add1(x) { return x+1; }
     function add3(x) { return x+3; }
     function id(x) { return x; }
