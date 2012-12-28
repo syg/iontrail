@@ -443,8 +443,8 @@ function ParallelArrayReduce(f, m) {
       var indexPos = chunkStart << CHUNK_SHIFT;
       var acc = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
 
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
-      %UnsafeSetElement(subreductions, id, acc); // see (*) above
+      %UnsafeSetElement(subreductions, id, acc, // see (*) above
+                        info, SLICE_POS(id), ++chunkPos);
     }
 
     var acc = subreductions[id]; // see (*) above
@@ -452,9 +452,9 @@ function ParallelArrayReduce(f, m) {
     while (chunkPos < chunkEnd) {
       var indexPos = chunkPos << CHUNK_SHIFT;
       acc = reduceChunk(acc, indexPos, indexPos + CHUNK_SIZE);
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      %UnsafeSetElement(subreductions, id, acc,
+                        info, SLICE_POS(id), ++chunkPos);
     }
-    %UnsafeSetElement(subreductions, id, acc);
   }
 
   function reduceChunk(acc, from, to) {
@@ -935,9 +935,9 @@ function ParallelArrayFilter(func, m) {
         count += keep;
       }
 
-      %UnsafeSetElement(survivors, chunkPos, chunkBits);
-      %UnsafeSetElement(counts, id, count);
-      %UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      %UnsafeSetElement(survivors, chunkPos, chunkBits,
+                        counts, id, count,
+                        info, SLICE_POS(id), ++chunkPos);
     }
   }
 
