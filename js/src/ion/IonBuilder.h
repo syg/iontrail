@@ -347,7 +347,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_notearg();
     bool jsop_funcall(uint32_t argc);
     bool jsop_funapply(uint32_t argc);
-    bool jsop_funapplyarguments(uint32_t argc);
+    bool jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes);
     bool jsop_call(uint32_t argc, bool constructing);
     bool jsop_ifeq(JSOp op);
     bool jsop_condswitch();
@@ -465,22 +465,22 @@ class IonBuilder : public MIRGenerator
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
     bool makeInliningDecision(AutoObjectVector &targets, uint32_t argc);
 
-    bool anyFunctionIsCallsiteClone(types::StackTypeSet *funTypes);
+    bool anyFunctionIsCloneAtCallsite(types::StackTypeSet *funTypes);
     MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);
     void popFormals(uint32_t argc, MDefinition **fun, MPassArg **thisArg,
                     Vector<MPassArg *> *args);
-    MCall *makeCallHelper(HandleFunction target, bool constructing, bool callsiteClone,
+    MCall *makeCallHelper(HandleFunction target, bool constructing, bool cloneAtCallsite,
                           MDefinition *fun, MPassArg *thisArg, Vector<MPassArg *> &args);
     MCall *makeCallHelper(HandleFunction target, uint32_t argc, bool constructing,
-                          bool callsiteClone);
+                          bool cloneAtCallsite);
     bool makeCallBarrier(HandleFunction target, uint32_t argc, bool constructing,
-                         bool callsiteClone, types::StackTypeSet *types,
+                         bool cloneAtCallsite, types::StackTypeSet *types,
                          types::StackTypeSet *barrier);
-    bool makeCallBarrier(HandleFunction target, bool constructing, bool callsiteClone,
+    bool makeCallBarrier(HandleFunction target, bool constructing, bool cloneAtCallsite,
                          MDefinition *fun, MPassArg *thisArg, Vector<MPassArg *> &args,
                          types::StackTypeSet *types, types::StackTypeSet *barrier);
-    bool makeCall(HandleFunction target, uint32_t argc, bool constructing, bool callsiteClone);
-    bool makeCall(HandleFunction target, bool constructing, bool callsiteClone,
+    bool makeCall(HandleFunction target, uint32_t argc, bool constructing, bool cloneAtCallsite);
+    bool makeCall(HandleFunction target, bool constructing, bool cloneAtCallsite,
                   MDefinition *fun, MPassArg *thisArg, Vector<MPassArg *> &args);
 
     inline bool TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types,

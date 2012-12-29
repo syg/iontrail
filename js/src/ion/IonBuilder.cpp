@@ -4017,7 +4017,7 @@ IonBuilder::createThis(HandleFunction target, MDefinition *callee)
 }
 
 bool
-IonBuilder::anyFunctionIsCallsiteClone(types::StackTypeSet *funTypes)
+IonBuilder::anyFunctionIsCloneAtCallsite(types::StackTypeSet *funTypes)
 {
     uint32_t count = funTypes->getObjectCount();
     if (count < 1)
@@ -4041,15 +4041,17 @@ IonBuilder::jsop_funcall(uint32_t argc)
     // argc+1: MPassArg(JSFunction *), the 'f' in |f.call()|, in |this| position.
     // argc+2: The native 'call' function.
 
+    // Get the possible callees.
+    types::StackTypeSet *funTypes = oracle->getCallArg(script(), argc, 0, pc);
+
     // If |Function.prototype.call| may be overridden, don't optimize callsite.
     RootedFunction native(cx);
     if (!getSingleCallTarget(argc, pc, &native))
         return false;
     if (!native || !native->isNative() || native->native() != &js_fun_call)
-        return makeCall(native, argc, false, false);
+        return makeCall(native, argc, false, anyFunctionIsCloneAtCallsite(funTypes));
 
     // Extract call target.
-    types::StackTypeSet *funTypes = oracle->getCallArg(script(), argc, 0, pc);
     RootedFunction target(cx);
     if (!getSingleCallTarget(funTypes, &target))
         return false;
@@ -4080,7 +4082,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
     }
 
     // Call without inlining.
-    return makeCall(target, argc, false, anyFunctionIsCallsiteClone(funTypes));
+    return makeCall(target, argc, false, anyFunctionIsCloneAtCallsite(funTypes));
 }
 
 bool
@@ -4089,8 +4091,12 @@ IonBuilder::jsop_funapply(uint32_t argc)
     RootedFunction native(cx);
     if (!getSingleCallTarget(argc, pc, &native))
         return false;
+
+    // Get the possible callees.
+    types::StackTypeSet *funTypes = oracle->getCallArg(script(), argc, 0, pc);
+
     if (argc != 2)
-        return makeCall(native, argc, false, false);
+        return makeCall(native, argc, false, anyFunctionIsCloneAtCallsite(funTypes));
 
     // Disable compilation if the second argument to |apply| cannot be guaranteed
     // to be either definitely |arguments| or definitely not |arguments|.
@@ -4111,11 +4117,11 @@ IonBuilder::jsop_funapply(uint32_t argc)
     }
 
     // Use funapply that definitely uses |arguments|
-    return jsop_funapplyarguments(argc);
+    return jsop_funapplyarguments(argc, funTypes);
 }
 
 bool
-IonBuilder::jsop_funapplyarguments(uint32_t argc)
+IonBuilder::jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes)
 {
     // Stack for JSOP_FUNAPPLY:
     // 1:      MPassArg(Vp)
@@ -4124,9 +4130,9 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
     // argc+2: The native 'apply' function.
 
     // Extract call target.
-    types::StackTypeSet *funTypes = oracle->getCallArg(script(), argc, 0, pc);
+    bool isClone;
     RootedFunction target(cx);
-    if (!getSingleCallTarget(funTypes, &target))
+    if (!getSingleCallTarget(funTypes, &target, &isClone))
         return false;
 
     // Vp
@@ -4187,13 +4193,13 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
     MDefinition *argFunc = passFunc->getArgument();
     passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
-    if (anyFunctionIsCallsiteClone(funTypes))
+    if (anyFunctionIsCloneAtCallsite(funTypes))
         argFunc = makeCallsiteClone(target, argFunc);
 
     // Pop apply function.
     current->pop();
 
-    return makeCall(target, false, anyFunctionIsCallsiteClone(funTypes), argFunc, thisArg, args);
+    return makeCall(target, false, isClone, argFunc, thisArg, args);
 }
 
 bool
@@ -4372,18 +4378,18 @@ IonBuilder::popFormals(uint32_t argc, MDefinition **fun, MPassArg **thisArg,
 
 MCall *
 IonBuilder::makeCallHelper(HandleFunction target, uint32_t argc, bool constructing,
-                           bool callsiteClone)
+                           bool cloneAtCallsite)
 {
     Vector<MPassArg *> args(cx);
     MPassArg *thisArg;
     MDefinition *fun;
 
     popFormals(argc, &fun, &thisArg, &args);
-    return makeCallHelper(target, constructing, callsiteClone, fun, thisArg, args);
+    return makeCallHelper(target, constructing, cloneAtCallsite, fun, thisArg, args);
 }
 
 MCall *
-IonBuilder::makeCallHelper(HandleFunction target, bool constructing, bool callsiteClone,
+IonBuilder::makeCallHelper(HandleFunction target, bool constructing, bool cloneAtCallsite,
                            MDefinition *fun, MPassArg *thisArg, Vector<MPassArg *> &args)
 {
     // This function may be called with mutated stack.
@@ -4444,7 +4450,7 @@ IonBuilder::makeCallHelper(HandleFunction target, bool constructing, bool callsi
 
     // Add a callsite clone IC for multiple targets which all should be
     // callsite cloned, or bake in the clone for a single target.
-    if (callsiteClone)
+    if (cloneAtCallsite)
         fun = makeCallsiteClone(target, fun);
 
     if (target && JSOp(*pc) == JSOP_CALL) {
@@ -4469,7 +4475,7 @@ IonBuilder::makeCallHelper(HandleFunction target, bool constructing, bool callsi
 
 bool
 IonBuilder::makeCallBarrier(HandleFunction target, uint32_t argc,
-                            bool constructing, bool callsiteClone,
+                            bool constructing, bool cloneAtCallsite,
                             types::StackTypeSet *types,
                             types::StackTypeSet *barrier)
 {
@@ -4478,18 +4484,18 @@ IonBuilder::makeCallBarrier(HandleFunction target, uint32_t argc,
     MDefinition *fun;
 
     popFormals(argc, &fun, &thisArg, &args);
-    return makeCallBarrier(target, constructing, callsiteClone,
+    return makeCallBarrier(target, constructing, cloneAtCallsite,
                            fun, thisArg, args, types, barrier);
 }
 
 bool
-IonBuilder::makeCallBarrier(HandleFunction target, bool constructing, bool callsiteClone,
+IonBuilder::makeCallBarrier(HandleFunction target, bool constructing, bool cloneAtCallsite,
                             MDefinition *fun, MPassArg *thisArg,
                             Vector<MPassArg *> &args,
                             types::StackTypeSet *types,
                             types::StackTypeSet *barrier)
 {
-    MCall *call = makeCallHelper(target, constructing, callsiteClone, fun, thisArg, args);
+    MCall *call = makeCallHelper(target, constructing, cloneAtCallsite, fun, thisArg, args);
     if (!call)
         return false;
 
@@ -4501,24 +4507,24 @@ IonBuilder::makeCallBarrier(HandleFunction target, bool constructing, bool calls
 }
 
 bool
-IonBuilder::makeCall(HandleFunction target, uint32_t argc, bool constructing, bool callsiteClone)
+IonBuilder::makeCall(HandleFunction target, uint32_t argc, bool constructing, bool cloneAtCallsite)
 {
     Vector<MPassArg *> args(cx);
     MPassArg *thisArg;
     MDefinition *fun;
 
     popFormals(argc, &fun, &thisArg, &args);
-    return makeCall(target, constructing, callsiteClone, fun, thisArg, args);
+    return makeCall(target, constructing, cloneAtCallsite, fun, thisArg, args);
 }
 
 bool
-IonBuilder::makeCall(HandleFunction target, bool constructing, bool callsiteClone,
+IonBuilder::makeCall(HandleFunction target, bool constructing, bool cloneAtCallsite,
                      MDefinition *fun, MPassArg *thisArg,
                      Vector<MPassArg*> &args)
 {
     types::StackTypeSet *barrier;
     types::StackTypeSet *types = oracle->returnTypeSet(script(), pc, &barrier);
-    return makeCallBarrier(target, constructing, callsiteClone,
+    return makeCallBarrier(target, constructing, cloneAtCallsite,
                            fun, thisArg, args, types, barrier);
 }
 

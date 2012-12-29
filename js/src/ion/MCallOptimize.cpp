@@ -1016,7 +1016,7 @@ IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
     if (!getSingleCallTarget(ctorTypes, &target))
         return InliningStatus_Error;
     MDefinition *ctor = current->peek(-(argc + 1))->toPassArg()->getArgument();
-    if (anyFunctionIsCallsiteClone(ctorTypes))
+    if (anyFunctionIsCloneAtCallsite(ctorTypes))
         ctor = makeCallsiteClone(target, ctor);
 
     // Discard the function.
