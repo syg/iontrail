@@ -9,7 +9,7 @@ function testMap() {
   };
 
   // this will compile, but fail at runtime
-  p.map(func, {mode: "par", expect: "bailout"});
+  p.map(func, {mode: "par", expect: "disqualified"});
 }
 
 testMap();

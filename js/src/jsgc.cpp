@@ -1407,7 +1407,7 @@ RunLastDitchGC(JSContext *cx, JSCompartment *comp, AllocKind thingKind)
     // section.  Of course we could modify the `runGC` flag below but
     // since that path is quite hot is was deemed better to offload
     // the access to thread-local data into this function.
-    if (ForkJoinSlice::Executing())
+    if (ForkJoinSlice::InParallelSection())
         return NULL;
 
     PrepareCompartmentForGC(comp);
@@ -4256,7 +4256,7 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
         JSGCInvocationKind gckind, gcreason::Reason reason)
 {
     // GC shouldn't be running in par. exec. mode
-    JS_ASSERT(!ForkJoinSlice::Executing());
+    JS_ASSERT(!ForkJoinSlice::InParallelSection());
 
     JS_AbortIfWrongThread(rt);
 

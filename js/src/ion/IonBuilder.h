@@ -444,7 +444,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineUnsafeSetElement(uint32_t argc, bool constructing);
     bool inlineUnsafeSetDenseArrayElement(uint32_t argc, MDefinitionVector &argv, uint32_t base);
     bool inlineUnsafeSetTypedArrayElement(uint32_t argc, MDefinitionVector &argv, uint32_t base, int arrayType);
-    InliningStatus inlineInOrEnterParallelSection(uint32_t argc, bool constructing, bool enter);
+    InliningStatus inlineForceSequentialOrInParallelSection(uint32_t argc, bool constructing);
     InliningStatus inlineNewParallelArray(uint32_t argc, bool constructing);
     InliningStatus inlineParallelArray(uint32_t argc, bool constructing);
     InliningStatus inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefinition *ctor,

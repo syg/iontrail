@@ -203,7 +203,7 @@ js::intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 static JSBool
 intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %ParallelDo(func, feedback, args...)
+    // Usage: ParallelDo(func, feedback)
     //
     // Invokes |func| many times in parallel.  Executed based on the
     // fork join pool described in vm/ForkJoin.h.  If func() has not
@@ -212,41 +212,34 @@ intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
     // gather TI information and to determine which functions func()
     // will invoke.
     //
-    // The |feedback| argument is optional.  If provided, it should be
-    // a closure.  This closure will be invoked with one of the
-    // following strings, depending on the outcome:
-    // - "success" -- execution was successful
-    // - "disqualified" -- warmup or compilation failed
-    // - "bailout" -- execution started, but bailed
-    // The precise details of this closure are likely to evolve.
-    //
-    // Note: Parallel execution is never guaranteed.  It can fail for
-    // any number of reasons, only some of which are in your control:
-    // in case of such a failure, |%ParallelDo()| will return
-    // undefined.
-    //
     // func() should expect the following arguments:
     //
     //     func(id, n, warmup, args...)
     //
     // Here, |id| is the slice id. |n| is the total number of slices;
-    // |warmup| is true if this is the warmup phase; and |args| are
-    // the additional arguments passed to |%ParallelDo()|.
+    // |warmup| is true if this is a warmup or recovery phase.
     // Typically, if |warmup| is true, you will want to do less work.
+    //
+    // The |feedback| argument is optional.  If provided, it should be
+    // a closure.  This closure will either be invoked with a double
+    // argument representing the number of bailouts that occurred before
+    // a successful parallel execution.  If the number is infinity, then
+    // parallel execution was abandoned and |func| was simply invoked
+    // sequentially.
     //
     // See ParallelArray.js for examples.
 
     CallArgs args = CallArgsFromVp(argc, vp);
-    return parallel::Do(cx, args) != parallel::ExecutionFatal;
+    return parallel::Do(cx, args);
 }
 
 static JSBool
 intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %ParallelSlices()
+    // Usage: ParallelSlices()
     //
     // Returns the number of parallel slices that will be created
-    // by |%ParallelDo()|.
+    // by |ParallelDo()|.
 
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setInt32(ForkJoinSlices(cx));
@@ -366,55 +359,14 @@ js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
 }
 
 JSBool
-js::intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp)
+js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %InParallelSection()
+    // Usage: ForceSequential()
     //
-    // Returns true if the code is executing in a parallel section.
+    // Returns true if parallel ops should take the sequential fallback path.
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(ForkJoinSlice::InParallelSection());
-    return true;
-}
-
-JSBool
-js::intrinsic_EnterParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %EnterParallelSection()
-    //
-    // Returns bool if successfully entered.
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(ForkJoinSlice::EnterParallelSection());
-    return true;
-}
-
-static JSBool
-intrinsic_LeaveParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %LeaveParallelSection()
-    //
-    // Returns nothing. Asserts if not in parallel section.
-    ForkJoinSlice::LeaveParallelSection();
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setUndefined();
-    return true;
-}
-
-static JSBool
-intrinsic_CompiledForParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %CompiledForParallelExecution(func)
-    //
-    // Returns true if `func` has been compiled for parallel execution.
-    //
-    // Asserts if:
-    // - func is not a function
-    // - func is a lazily cloned intrinsic
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args[0].isObject());
-    JS_ASSERT(args[0].toObject().isFunction());
-    RootedFunction func(cx, args[0].toObject().toFunction());
-    RootedScript script(cx, func->nonLazyScript());
-    args.rval().setBoolean(script->hasParallelIonScript());
+    args.rval().setBoolean(cx->runtime->warmup ||
+                           ForkJoinSlice::InParallelSection());
     return true;
 }
 
@@ -432,10 +384,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
     JS_FN("DenseArray",           intrinsic_DenseArray,           1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
-    JS_FN("InParallelSection",    intrinsic_InParallelSection,    0,0),
-    JS_FN("EnterParallelSection", intrinsic_EnterParallelSection, 0,0),
-    JS_FN("LeaveParallelSection", intrinsic_LeaveParallelSection, 0,0),
-    JS_FN("CompiledForParallelExecution", intrinsic_CompiledForParallelSection, 1,0),
+    JS_FN("ForceSequential",      intrinsic_ForceSequential,      0,0),
 
 #ifdef DEBUG
     JS_FN("Dump",                 intrinsic_Dump,                 1,0),

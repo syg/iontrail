@@ -1072,6 +1072,10 @@ struct JSRuntime : js::RuntimeFriendFields
 
     js::ThreadPool threadPool;
 
+    // Non-zero if this is a parallel warmup execution.  See
+    // js::parallel::Do() for more information.
+    uint32_t warmup;
+
   private:
     // In certain cases, we want to optimize certain opcodes to typed instructions,
     // to avoid carrying an extra register to feed into an unbox. Unfortunately,
@@ -2245,8 +2249,7 @@ class ContextAllocPolicy
 JSBool intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp);
-JSBool intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp);
-JSBool intrinsic_EnterParallelSection(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 
 #ifdef DEBUG

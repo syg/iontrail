@@ -10,57 +10,21 @@
 
 namespace js {
 
-#ifdef JS_THREADSAFE
-
 /* static */ inline ForkJoinSlice *
 ForkJoinSlice::Current()
 {
-    ForkJoinSlice *slice = (ForkJoinSlice*) PR_GetThreadPrivate(ThreadPrivateIndex);
-    JS_ASSERT_IF(slice, InParallelSection());
-    return slice;
-}
-
-/* static */ inline bool
-ForkJoinSlice::Executing()
-{
-    return Current() != NULL;
+#ifdef JS_THREADSAFE
+    return (ForkJoinSlice*) PR_GetThreadPrivate(ThreadPrivateIndex);
+#else
+    return NULL;
+#endif
 }
 
 /* static */ inline bool
 ForkJoinSlice::InParallelSection()
 {
-    // See note in ForkJoin.h for why this is decoupled from being in
-    // multithreaded code.
-    JS_ASSERT_IF(!InParallelSection_, !Executing());
-    return InParallelSection_;
+    return Current() != NULL;
 }
-
-/* static */ inline bool
-ForkJoinSlice::EnterParallelSection()
-{
-    if (InParallelSection())
-        return false;
-    InParallelSection_ = true;
-    return true;
-}
-
-/* static */ inline void
-ForkJoinSlice::LeaveParallelSection()
-{
-    JS_ASSERT(InParallelSection());
-    InParallelSection_ = false;
-}
-
-#else
-
-/* static */ inline ForkJoinSlice *ForkJoinSlice::Current() { return NULL; }
-/* static */ inline bool *ForkJoinSlice::Executing() { return false; }
-/* static */ inline bool *ForkJoinSlice::InParallelSection() { return false; }
-/* static */ inline bool *ForkJoinSlice::EnterParallelSection() { return false; }
-/* static */ inline void *ForkJoinSlice::LeaveParallelSection() { }
->>>>>>> Stashed changes
-
-#endif // JS_THREADSAFE
 
 } // namespace js
 

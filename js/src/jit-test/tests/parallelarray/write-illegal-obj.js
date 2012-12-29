@@ -9,7 +9,7 @@ function buildSimple() {
         obj.y += 1;
         obj.z += 1;
         return obj;
-    }, {mode: "par", expect: "bailout"});
+    }, {mode: "par", expect: "disqualified"});
 
     print(obj.x);
     print(obj.y);

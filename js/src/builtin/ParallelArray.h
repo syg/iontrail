@@ -19,20 +19,17 @@ namespace js {
 namespace parallel {
 
 enum ExecutionStatus {
-    // For some reason not eligible for parallel exec, use seq fallback
-    ExecutionDisqualified = 0,
-
-    // Parallel execution went off the safe path, use seq fallback
-    ExecutionBailout,
-
     // Parallel or seq execution terminated in a fatal way, operation failed
     ExecutionFatal,
 
-    // Parallel or seq op was successful
-    ExecutionSucceeded
+    // Parallel exec failed and so we fell back to sequential
+    ExecutionSequential,
+
+    // Parallel exec was successful after some number of bailouts
+    ExecutionParallel
 };
 
-ExecutionStatus Do(JSContext *cx, CallArgs &args);
+bool Do(JSContext *cx, CallArgs &args);
 
 enum SpewChannel {
     SpewOps,
@@ -46,6 +43,7 @@ enum SpewChannel {
 bool SpewEnabled(SpewChannel channel);
 void Spew(SpewChannel channel, const char *fmt, ...);
 void SpewBeginOp(JSContext *cx, const char *name);
+void SpewBailout(uint32_t count);
 ExecutionStatus SpewEndOp(ExecutionStatus status);
 void SpewBeginCompile(HandleFunction fun);
 ion::MethodStatus SpewEndCompile(ion::MethodStatus status);
@@ -57,6 +55,7 @@ void SpewBailoutIR(const char *lir, const char *mir, JSScript *script, jsbytecod
 static inline bool SpewEnabled(SpewChannel channel) { return false; }
 static inline void Spew(SpewChannel channel, const char *fmt, ...) { }
 static inline void SpewBeginOp(JSContext *cx, const char *name) { }
+static inline void SpewBailout(uint32_t count) {}
 static inline ExecutionStatus SpewEndOp(ExecutionStatus status) { return status; }
 static inline void SpewBeginCompile(HandleFunction fun) { }
 static inline ion::MethodStatus SpewEndCompile(ion::MethodStatus status) { return status; }

@@ -1,7 +1,7 @@
 // |jit-test| error: expected success but found bailout
 
 function kernel(n) {
-  if (n > 10)
+  if (n > 10 && inParallelSection())
     // Note: no base case :)
     return kernel(n);
   return n+1;

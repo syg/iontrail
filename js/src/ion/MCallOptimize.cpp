@@ -8,6 +8,7 @@
 #include "jslibmath.h"
 #include "jsmath.h"
 #include "builtin/ParallelArray.h"
+#include "builtin/TestingFunctions.h"
 
 #include "MIR.h"
 #include "MIRGraph.h"
@@ -78,10 +79,10 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     // Parallel Array
     if (native == intrinsic_UnsafeSetElement)
         return inlineUnsafeSetElement(argc, constructing);
-    if (native == intrinsic_InParallelSection)
-        return inlineInOrEnterParallelSection(argc, constructing, false);
-    if (native == intrinsic_EnterParallelSection)
-        return inlineInOrEnterParallelSection(argc, constructing, true);
+    if (native == intrinsic_ForceSequential)
+        return inlineForceSequentialOrInParallelSection(argc, constructing);
+    if (native == testingFunc_inParallelSection)
+        return inlineForceSequentialOrInParallelSection(argc, constructing);
     if (native == intrinsic_NewParallelArray)
         return inlineNewParallelArray(argc, constructing);
     if (native == ParallelArrayObject::construct)
@@ -975,28 +976,32 @@ IonBuilder::inlineUnsafeSetTypedArrayElement(uint32_t argc, MDefinitionVector &a
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineInOrEnterParallelSection(uint32_t argc, bool constructing, bool enter)
+IonBuilder::inlineForceSequentialOrInParallelSection(uint32_t argc, bool constructing)
 {
     if (constructing)
         return InliningStatus_NotInlined;
 
-    MDefinitionVector argv;
-    if (!discardCall(argc, argv, current))
-        return InliningStatus_Error;
-
     ExecutionMode executionMode = info().executionMode();
-    bool willBeInParallelSection = false;
     switch (executionMode) {
-      case SequentialExecution: break;
-      case ParallelExecution: willBeInParallelSection = true; break;
+      case SequentialExecution:
+        // In sequential mode, leave as is, because we'd have to
+        // access the "in warmup" flag of the runtime.
+        return InliningStatus_NotInlined;
+
+      case ParallelExecution:
+        // During Parallel Exec, we always force sequential, so
+        // replace with true.  This permits UCE to eliminate the
+        // entire path as dead, which is important.
+        MDefinitionVector argv;
+        if (!discardCall(argc, argv, current))
+            return InliningStatus_Error;
+        MConstant *ins = MConstant::New(BooleanValue(true));
+        current->add(ins);
+        current->push(ins);
+        return InliningStatus_Inlined;
     }
 
-    MConstant *ins = MConstant::New(BooleanValue(enter ? !willBeInParallelSection
-                                                       : willBeInParallelSection));
-    current->add(ins);
-    current->push(ins);
-
-    return InliningStatus_Inlined;
+    JS_NOT_REACHED("Invalid execution mode");
 }
 
 IonBuilder::InliningStatus

@@ -38,14 +38,12 @@ static const char *
 ExecutionStatusToString(ExecutionStatus status)
 {
     switch (status) {
-      case ExecutionDisqualified:
-        return "disqualified";
-      case ExecutionBailout:
-        return "bailout";
       case ExecutionFatal:
         return "fatal";
-      case ExecutionSucceeded:
-        return "success";
+      case ExecutionSequential:
+        return "sequential";
+      case ExecutionParallel:
+        return "parallel";
     }
     return "(unknown status)";
 }
@@ -199,14 +197,13 @@ class ParallelSpewer
 
         const char *statusColor;
         switch (status) {
-          case ExecutionDisqualified:
           case ExecutionFatal:
             statusColor = red();
             break;
-          case ExecutionBailout:
+          case ExecutionSequential:
             statusColor = yellow();
             break;
-          case ExecutionSucceeded:
+          case ExecutionParallel:
             statusColor = green();
             break;
           default:
@@ -216,6 +213,13 @@ class ParallelSpewer
 
         spew(SpewOps, "%sEND %s%s%s", bold(),
              statusColor, ExecutionStatusToString(status), reset());
+    }
+
+    void bailout(uint32_t count) {
+        if (!active[SpewOps])
+            return;
+
+        spew(SpewOps, "%s%sBAILOUT %d%s", bold(), yellow(), count, reset());
     }
 
     void beginCompile(HandleFunction fun) {
@@ -312,6 +316,12 @@ parallel::SpewEndOp(ExecutionStatus status)
 }
 
 void
+parallel::SpewBailout(uint32_t count)
+{
+    spewer.bailout(count);
+}
+
+void
 parallel::SpewBeginCompile(HandleFunction fun)
 {
     spewer.beginCompile(fun);
@@ -341,26 +351,15 @@ parallel::SpewBailoutIR(const char *lir, const char *mir, JSScript *script, jsby
 
 #endif // DEBUG
 
-static ExecutionStatus
-ToExecutionStatus(ParallelResult pr)
+class AutoEnterWarmup
 {
-    ExecutionStatus status;
-    switch (pr) {
-      case TP_SUCCESS:
-        status = ExecutionSucceeded;
-        break;
+    JSRuntime *runtime_;
 
-      case TP_RETRY_SEQUENTIALLY:
-        status = ExecutionBailout;
-        break;
+  public:
+    AutoEnterWarmup(JSRuntime *runtime) : runtime_(runtime) { runtime_->warmup++; }
+    ~AutoEnterWarmup() { runtime_->warmup--; }
+};
 
-      case TP_FATAL:
-        status = ExecutionFatal;
-        break;
-    }
-
-    return status;
-}
 
 // Can only enter callees with a valid IonScript.
 template <uint32_t maxArgc>
@@ -404,22 +403,17 @@ class FastestIonInvoke
 
 class ParallelDo : public ForkJoinOp
 {
-    // The first 2 arguments: slice id, and number of slices.
-    static const uint32_t baseArgc = 2;
-
     JSContext *cx_;
     HeapPtrObject fun_;
-    Value *funArgs_;
-    uint32_t funArgc_;
 
   public:
+    uint32_t bailouts;
     Vector<JSScript *> pendingInvalidations;
 
-    ParallelDo(JSContext *cx, HandleObject fun, Value *funArgs, uint32_t funArgc)
+    ParallelDo(JSContext *cx, HandleObject fun)
       : cx_(cx),
         fun_(fun),
-        funArgs_(funArgs),
-        funArgc_(funArgc),
+        bailouts(0),
         pendingInvalidations(cx)
     { }
 
@@ -427,19 +421,44 @@ class ParallelDo : public ForkJoinOp
         SpewBeginOp(cx_, "ParallelDo");
 
         if (!ion::IsEnabled(cx_))
-            return SpewEndOp(ExecutionDisqualified);
+            return SpewEndOp(disqualifyFromParallelExecution());
 
         if (!pendingInvalidations.resize(ForkJoinSlices(cx_)))
             return SpewEndOp(ExecutionFatal);
 
-        MethodStatus status = compileForParallelExecution();
-        if (status == Method_Error)
-            return SpewEndOp(ExecutionFatal);
-        if (status != Method_Compiled)
-            return SpewEndOp(ExecutionDisqualified);
+        // Try to execute in parallel.  If a bailout occurs, re-warmup
+        // and then try again.  Repeat this a few times.
+        while (bailouts < 3) {
+            MethodStatus status = compileForParallelExecution();
+            if (status == Method_Error)
+                return SpewEndOp(ExecutionFatal);
+            if (status != Method_Compiled)
+                return SpewEndOp(disqualifyFromParallelExecution());
 
-        Spew(SpewOps, "Executing parallel section");
-        return SpewEndOp(ToExecutionStatus(js::ExecuteForkJoinOp(cx_, *this)));
+            ParallelResult result = js::ExecuteForkJoinOp(cx_, *this);
+            switch (result) {
+              case TP_RETRY_SEQUENTIALLY:
+                break;
+
+              case TP_SUCCESS:
+                return SpewEndOp(ExecutionParallel);
+
+              case TP_FATAL:
+                return SpewEndOp(ExecutionFatal);
+            }
+
+            bailouts += 1;
+            SpewBailout(bailouts);
+
+            if (!invalidateBailedOutScripts())
+                return SpewEndOp(ExecutionFatal);
+
+            if (!warmupForParallelExecution())
+                return SpewEndOp(ExecutionFatal);
+        }
+
+        // After enough tries, just execute sequentially.
+        return SpewEndOp(disqualifyFromParallelExecution());
     }
 
     MethodStatus compileForParallelExecution() {
@@ -454,6 +473,14 @@ class ParallelDo : public ForkJoinOp
 
         if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx_))
             return Method_Error;
+
+        // If this function has not been run enough to enable parallel
+        // execution, perform a warmup.
+        RootedScript script(cx_, callee->nonLazyScript());
+        if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel) {
+            if (!warmupForParallelExecution())
+                return Method_Error;
+        }
 
         Spew(SpewOps, "Compiling all reachable functions");
 
@@ -475,18 +502,64 @@ class ParallelDo : public ForkJoinOp
         return Method_Compiled;
     }
 
+    ExecutionStatus disqualifyFromParallelExecution() {
+        if (!executeSequentially())
+            return ExecutionFatal;
+        return ExecutionSequential;
+    }
+
+    bool invalidateBailedOutScripts() {
+        IonScript *ion = fun_->toFunction()->nonLazyScript()->parallelIonScript();
+        JS_ASSERT(pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
+        Vector<types::RecompileInfo> invalid(cx_);
+        for (uint32_t i = 0; i < pendingInvalidations.length(); i++) {
+            JSScript *script = pendingInvalidations[i];
+            if (script && !hasScript(invalid, script)) {
+                JS_ASSERT(script->hasParallelIonScript());
+                if (!invalid.append(script->parallelIonScript()->recompileInfo()))
+                    return false;
+                ion->parallelInvalidatedScriptList()[i] = script;
+            }
+        }
+        Invalidate(cx_, invalid);
+        return true;
+    }
+
+    bool warmupForParallelExecution() {
+        AutoEnterWarmup warmup(cx_->runtime);
+        return executeSequentially();
+    }
+
+    bool executeSequentially() {
+        uint32_t numSlices = ForkJoinSlices(cx_);
+        RootedValue funVal(cx_, ObjectValue(*fun_));
+        FastInvokeGuard fig(cx_, funVal);
+        for (uint32_t i = 0; i < numSlices; i++) {
+            InvokeArgsGuard &args = fig.args();
+            if (!args.pushed() && !cx_->stack.pushInvokeArgs(cx_, 3, &args))
+                return false;
+            args.setCallee(funVal);
+            args.setThis(UndefinedValue());
+            args[0].setInt32(i);
+            args[1].setInt32(numSlices);
+            args[2].setBoolean(!!cx_->runtime->warmup);
+            if (!fig.invoke(cx_))
+                return false;
+        }
+        return true;
+    }
+
     virtual bool parallel(ForkJoinSlice &slice) {
         // Setting maximum argc at 10, since it is more than we
         // actually use in practice.  If you add parameters, you may
         // have to adjust this.
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);
-        FastestIonInvoke<10> fii(cx_, fun, funArgc_ + baseArgc);
+        FastestIonInvoke<3> fii(cx_, fun, 3);
 
         fii.args[0] = Int32Value(slice.sliceId);
         fii.args[1] = Int32Value(slice.numSlices);
-        for (uint32_t i = 0; i < funArgc_; i++)
-            fii.args[baseArgc + i] = funArgs_[i];
+        fii.args[2] = BooleanValue(false);
 
         bool ok = fii.invoke();
         if (ok) {
@@ -499,83 +572,47 @@ class ParallelDo : public ForkJoinOp
         }
         return ok;
     }
+
+    inline bool
+    hasScript(Vector<types::RecompileInfo> &scripts, JSScript *script) {
+        for (uint32_t i = 0; i < scripts.length(); i++) {
+            if (scripts[i] == script->parallelIonScript()->recompileInfo())
+                return true;
+        }
+        return false;
+    }
 };
 
-static inline bool
-HasScript(Vector<types::RecompileInfo> &scripts, JSScript *script)
-{
-    for (uint32_t i = 0; i < scripts.length(); i++) {
-        if (scripts[i] == script->parallelIonScript()->recompileInfo())
-            return true;
-    }
-    return false;
-}
-
-static ExecutionStatus Do1(JSContext *cx, CallArgs &args);
-
-ExecutionStatus
+bool
 js::parallel::Do(JSContext *cx, CallArgs &args)
-{
-    ExecutionStatus status = Do1(cx, args);
-
-    if (status != ExecutionFatal) {
-        if (args[1].isObject()) {
-            RootedObject feedback(cx, &args[1].toObject());
-            if (feedback && feedback->isFunction()) {
-                const char *statusCString = ExecutionStatusToString(status);
-                RootedString statusString(cx, JS_NewStringCopyZ(cx, statusCString));
-                InvokeArgsGuard args1;
-                if (!cx->stack.pushInvokeArgs(cx, 1, &args1))
-                    return ExecutionFatal;
-                args1.setCallee(ObjectValue(*feedback));
-                args1.setThis(UndefinedValue());
-                args1[0].setString(statusString);
-                if (!Invoke(cx, args1))
-                    return ExecutionFatal;
-            }
-        }
-    }
-
-    return status;
-}
-
-static ExecutionStatus
-Do1(JSContext *cx, CallArgs &args)
 {
     JS_ASSERT(args[0].isObject());
     JS_ASSERT(args[0].toObject().isFunction());
 
     RootedObject fun(cx, &args[0].toObject());
-    ParallelDo op(cx, fun, args.array() + 2, args.length() - 2);
+    ParallelDo op(cx, fun);
     ExecutionStatus status = op.apply();
+    if (status == ExecutionFatal)
+        return false;
 
-    // If we bailed out, invalidate the function that bailed.
-    //
-    // TODO: This is too coarse grained.
-    if (status == ExecutionSucceeded) {
-        args.rval().setBoolean(true);
-    } else {
-        if (status == ExecutionBailout) {
-            IonScript *ion = fun->toFunction()->nonLazyScript()->parallelIonScript();
-            JS_ASSERT(op.pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
-
-            Vector<types::RecompileInfo> invalid(cx);
-            for (uint32_t i = 0; i < op.pendingInvalidations.length(); i++) {
-                JSScript *script = op.pendingInvalidations[i];
-                if (script && !HasScript(invalid, script)) {
-                    JS_ASSERT(script->hasParallelIonScript());
-                    if (!invalid.append(script->parallelIonScript()->recompileInfo()))
-                        return ExecutionFatal;
-                    ion->parallelInvalidatedScriptList()[i] = script;
-                }
-            }
-            Invalidate(cx, invalid);
+    if (args[1].isObject()) {
+        RootedObject feedback(cx, &args[1].toObject());
+        if (feedback && feedback->isFunction()) {
+            InvokeArgsGuard feedbackArgs;
+            if (!cx->stack.pushInvokeArgs(cx, 1, &feedbackArgs))
+                return false;
+            feedbackArgs.setCallee(ObjectValue(*feedback));
+            feedbackArgs.setThis(UndefinedValue());
+            if (status == ExecutionParallel)
+                feedbackArgs[0].setInt32(op.bailouts);
+            else
+                feedbackArgs[0] = cx->runtime->positiveInfinityValue;
+            if (!Invoke(cx, feedbackArgs))
+                return false;
         }
-
-        args.rval().setBoolean(false);
     }
 
-    return status;
+    return true;
 }
 
 //

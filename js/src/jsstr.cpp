@@ -1877,7 +1877,6 @@ struct ReplaceData
         dollarRoot(cx, &dollar), dollarEndRoot(cx, &dollarEnd),
         fig(cx, NullValue()), sb(cx)
     {
-        JS_ASSERT(!ForkJoinSlice::Executing()); // due to COMPILE_MODE_SEQ above
     }
 
     RootedString       str;            /* 'this' parameter object as a string */
