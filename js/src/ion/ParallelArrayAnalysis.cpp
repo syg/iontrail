@@ -132,7 +132,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(TableSwitch)
     SAFE_OP(Goto)
     CUSTOM_OP(Test)
-    SPECIALIZED_OP(Compare, PERMIT_NUMERIC | PERMIT(MIRType_String))
+    CUSTOM_OP(Compare)
     SAFE_OP(Phi)
     SAFE_OP(Beta)
     UNSAFE_OP(OsrValue)
@@ -392,6 +392,15 @@ bool
 ParallelArrayVisitor::visitTest(MTest *)
 {
     return true;
+}
+
+bool
+ParallelArrayVisitor::visitCompare(MCompare *compare)
+{
+    MCompare::CompareType type = compare->compareType();
+    return type == MCompare::Compare_Int32 ||
+           type == MCompare::Compare_Double ||
+           type == MCompare::Compare_String;
 }
 
 bool

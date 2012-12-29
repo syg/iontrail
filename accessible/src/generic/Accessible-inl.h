@@ -31,18 +31,17 @@ Accessible::ARIARole()
   return ARIATransformRole(mRoleMapEntry->role);
 }
 
-inline void
-Accessible::SetRoleMapEntry(nsRoleMapEntry* aRoleMapEntry)
+inline bool
+Accessible::HasGenericType(AccGenericType aType) const
 {
-  mRoleMapEntry = aRoleMapEntry;
-  if (mRoleMapEntry)
-    mFlags |= mRoleMapEntry->accTypes;
+  return (mGenericTypes & aType) ||
+    (mRoleMapEntry && mRoleMapEntry->IsOfType(aType));
 }
 
 inline bool
 Accessible::HasNumericValue() const
 {
-  if (mFlags & eHasNumericValue)
+  if (mStateFlags & eHasNumericValue)
     return true;
 
   return mRoleMapEntry && mRoleMapEntry->valueRule != eNoValue;

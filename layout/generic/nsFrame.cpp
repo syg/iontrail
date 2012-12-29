@@ -7,7 +7,7 @@
 /* base class of all rendering objects */
 
 #include "mozilla/Attributes.h"
-#include "mozilla/Util.h"
+#include "mozilla/DebugOnly.h"
 
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
@@ -20,6 +20,7 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsStyleContext.h"
+#include "nsTableOuterFrame.h"
 #include "nsIView.h"
 #include "nsIViewManager.h"
 #include "nsIScrollableFrame.h"
@@ -53,7 +54,6 @@
 #include "nsStyleChangeList.h"
 #include "nsIDOMRange.h"
 #include "nsRange.h"
-#include "nsITableLayout.h"    //selection necessity
 #include "nsITableCellLayout.h"//  "
 #include "nsITextControlFrame.h"
 #include "nsINameSpaceManager.h"
@@ -985,11 +985,12 @@ bool
 nsIFrame::IsTransformed() const
 {
   return ((mState & NS_FRAME_MAY_BE_TRANSFORMED) &&
-          (GetStyleDisplay()->HasTransform() ||
+          ((GetStyleDisplay()->HasTransform() && IsFrameOfType(eSupportsCSSTransforms)) ||
            IsSVGTransformed() ||
            (mContent &&
             nsLayoutUtils::HasAnimationsForCompositor(mContent,
                                                       eCSSProperty_transform) &&
+            IsFrameOfType(eSupportsCSSTransforms) &&
             mContent->GetPrimaryFrame() == this)));
 }
 
@@ -2410,7 +2411,7 @@ nsFrame::HandleEvent(nsPresContext* aPresContext,
                      nsEventStatus*  aEventStatus)
 {
 
-  if (aEvent->message == NS_MOUSE_MOVE || aEvent->message == NS_TOUCH_MOVE) {
+  if (aEvent->message == NS_MOUSE_MOVE) {
     return HandleDrag(aPresContext, aEvent, aEventStatus);
   }
 
@@ -2501,8 +2502,8 @@ nsFrame::GetDataForTableSelection(const nsFrameSelection *aFrameSelection,
       // If not a cell, check for table
       // This will happen when starting frame is the table or child of a table,
       //  such as a row (we were inbetween cells or in table border)
-      nsITableLayout *tableElement = do_QueryFrame(frame);
-      if (tableElement)
+      nsTableOuterFrame *tableFrame = do_QueryFrame(frame);
+      if (tableFrame)
       {
         foundTable = true;
         //TODO: How can we select row when along left table edge
@@ -3011,6 +3012,8 @@ NS_IMETHODIMP nsFrame::HandleDrag(nsPresContext* aPresContext,
                                   nsGUIEvent*     aEvent,
                                   nsEventStatus*  aEventStatus)
 {
+  MOZ_ASSERT(aEvent->eventStructType == NS_MOUSE_EVENT, "HandleDrag can only handle mouse event");
+
   bool    selectable;
   uint8_t selectStyle;
   IsSelectable(&selectable, &selectStyle);
@@ -4866,10 +4869,6 @@ static void InvalidateFrameInternal(nsIFrame *aFrame, bool aHasDisplayItem = tru
     aFrame->Properties().Delete(nsIFrame::InvalidationRect());
     aFrame->RemoveStateBits(NS_FRAME_HAS_INVALID_RECT);
   }
-  if (aFrame->HasAnyStateBits(NS_FRAME_HAS_CACHED_BACKGROUND)) {
-    aFrame->Properties().Delete(nsIFrame::CachedBackgroundImage());
-    aFrame->RemoveStateBits(NS_FRAME_HAS_CACHED_BACKGROUND);
-  }
 }
 
 void
@@ -4986,7 +4985,7 @@ nsIFrame::TryUpdateTransformOnly()
   // changes.)
  static const gfx::Float kError = 0.0001;
   if (!transform3d.Is2D(&transform) ||
-      !layer->GetTransform().Is2D(&previousTransform) ||
+      !layer->GetBaseTransform().Is2D(&previousTransform) ||
       !gfx::FuzzyEqual(transform.xx, previousTransform.xx, kError) ||
       !gfx::FuzzyEqual(transform.yy, previousTransform.yy, kError) ||
       !gfx::FuzzyEqual(transform.xy, previousTransform.xy, kError) ||
@@ -5113,27 +5112,7 @@ ComputeOutlineAndEffectsRect(nsIFrame* aFrame,
   }
 
   // box-shadow
-  nsCSSShadowArray* boxShadows = aFrame->GetStyleBorder()->mBoxShadow;
-  if (boxShadows) {
-    nsRect shadows;
-    int32_t A2D = aFrame->PresContext()->AppUnitsPerDevPixel();
-    for (uint32_t i = 0; i < boxShadows->Length(); ++i) {
-      nsRect tmpRect(nsPoint(0, 0), aNewSize);
-      nsCSSShadowItem* shadow = boxShadows->ShadowAt(i);
-
-      // inset shadows are never painted outside the frame
-      if (shadow->mInset)
-        continue;
-
-      tmpRect.MoveBy(nsPoint(shadow->mXOffset, shadow->mYOffset));
-      tmpRect.Inflate(shadow->mSpread, shadow->mSpread);
-      tmpRect.Inflate(
-        nsContextBoxBlur::GetBlurRadiusMargin(shadow->mRadius, A2D));
-
-      shadows.UnionRect(shadows, tmpRect);
-    }
-    r.UnionRect(r, shadows);
-  }
+  r.UnionRect(r, nsLayoutUtils::GetBoxShadowRectForFrame(aFrame, aNewSize));
 
   const nsStyleOutline* outline = aFrame->GetStyleOutline();
   uint8_t outlineStyle = outline->GetOutlineStyle();
@@ -6798,7 +6777,7 @@ nsFrame::ChildIsDirty(nsIFrame* aChild)
 a11y::AccType
 nsFrame::AccessibleType()
 {
-  return a11y::eNoAccessible;
+  return a11y::eNoType;
 }
 #endif
 
@@ -7019,7 +6998,7 @@ nsIFrame::FinishAndStoreOverflow(nsOverflowAreas& aOverflowAreas,
       nsRect& o = aOverflowAreas.Overflow(otype);
       o = nsDisplayTransform::TransformRect(o, this, nsPoint(0, 0), &newBounds);
     }
-    if ((sizeChanged || HasAnyStateBits(NS_FRAME_TRANSFORM_CHANGED)) && Preserves3DChildren()) {
+    if (Preserves3DChildren()) {
       ComputePreserve3DChildrenOverflow(aOverflowAreas, newBounds);
     } else if (sizeChanged && ChildrenHavePerspective()) {
       RecomputePerspectiveChildrenOverflow(this->GetStyleContext(), &newBounds);
@@ -7031,8 +7010,6 @@ nsIFrame::FinishAndStoreOverflow(nsOverflowAreas& aOverflowAreas,
       RecomputePerspectiveChildrenOverflow(this->GetStyleContext(), &newBounds);
     }
   }
-  RemoveStateBits(NS_FRAME_TRANSFORM_CHANGED);
-    
 
   bool anyOverflowChanged;
   if (aOverflowAreas != nsOverflowAreas(bounds, bounds)) {

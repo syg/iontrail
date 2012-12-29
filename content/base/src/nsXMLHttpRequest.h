@@ -52,7 +52,7 @@
 class nsILoadGroup;
 class AsyncVerifyRedirectCallbackForwarder;
 class nsIUnicodeDecoder;
-class nsIDOMFormData;
+class nsFormData;
 
 class nsXHREventTarget : public nsDOMEventTargetHelper,
                          public nsIXMLHttpRequestEventTarget
@@ -159,7 +159,7 @@ public:
 
     nsRefPtr<nsXMLHttpRequest> req = new nsXMLHttpRequest();
     req->Construct(principal->GetPrincipal(), window);
-    req->InitParameters(aParams.mozAnon, aParams.mozSystem);
+    req->InitParameters(aParams.mMozAnon, aParams.mMozSystem);
     return req.forget();
   }
 
@@ -276,6 +276,10 @@ private:
     {
       mValue.mArrayBuffer = aArrayBuffer;
     }
+    RequestBody(mozilla::dom::ArrayBufferView* aArrayBufferView) : mType(ArrayBufferView)
+    {
+      mValue.mArrayBufferView = aArrayBufferView;
+    }
     RequestBody(nsIDOMBlob* aBlob) : mType(Blob)
     {
       mValue.mBlob = aBlob;
@@ -288,9 +292,9 @@ private:
     {
       mValue.mString = &aString;
     }
-    RequestBody(nsIDOMFormData* aFormData) : mType(FormData)
+    RequestBody(nsFormData& aFormData) : mType(FormData)
     {
-      mValue.mFormData = aFormData;
+      mValue.mFormData = &aFormData;
     }
     RequestBody(nsIInputStream* aStream) : mType(InputStream)
     {
@@ -300,6 +304,7 @@ private:
     enum Type {
       Uninitialized,
       ArrayBuffer,
+      ArrayBufferView,
       Blob,
       Document,
       DOMString,
@@ -308,10 +313,11 @@ private:
     };
     union Value {
       mozilla::dom::ArrayBuffer* mArrayBuffer;
+      mozilla::dom::ArrayBufferView* mArrayBufferView;
       nsIDOMBlob* mBlob;
       nsIDocument* mDocument;
       const nsAString* mString;
-      nsIDOMFormData* mFormData;
+      nsFormData* mFormData;
       nsIInputStream* mStream;
     };
 
@@ -357,15 +363,18 @@ public:
   {
     aRv = Send(RequestBody(&aArrayBuffer));
   }
+  void Send(mozilla::dom::ArrayBufferView& aArrayBufferView, ErrorResult& aRv)
+  {
+    aRv = Send(RequestBody(&aArrayBufferView));
+  }
   void Send(nsIDOMBlob* aBlob, ErrorResult& aRv)
   {
     NS_ASSERTION(aBlob, "Null should go to string version");
     aRv = Send(RequestBody(aBlob));
   }
-  void Send(nsIDocument* aDoc, ErrorResult& aRv)
+  void Send(nsIDocument& aDoc, ErrorResult& aRv)
   {
-    NS_ASSERTION(aDoc, "Null should go to string version");
-    aRv = Send(RequestBody(aDoc));
+    aRv = Send(RequestBody(&aDoc));
   }
   void Send(const nsAString& aString, ErrorResult& aRv)
   {
@@ -376,9 +385,8 @@ public:
       aRv = Send(RequestBody(aString));
     }
   }
-  void Send(nsIDOMFormData* aFormData, ErrorResult& aRv)
+  void Send(nsFormData& aFormData, ErrorResult& aRv)
   {
-    NS_ASSERTION(aFormData, "Null should go to string version");
     aRv = Send(RequestBody(aFormData));
   }
   void Send(nsIInputStream* aStream, ErrorResult& aRv)

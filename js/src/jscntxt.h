@@ -235,10 +235,10 @@ struct EvalCacheHashPolicy
     typedef EvalCacheLookup Lookup;
 
     static HashNumber hash(const Lookup &l);
-    static bool match(JSScript *script, const EvalCacheLookup &l);
+    static bool match(UnrootedScript script, const EvalCacheLookup &l);
 };
 
-typedef HashSet<JSScript *, EvalCacheHashPolicy, SystemAllocPolicy> EvalCache;
+typedef HashSet<RawScript, EvalCacheHashPolicy, SystemAllocPolicy> EvalCache;
 
 class NativeIterCache
 {
@@ -348,7 +348,7 @@ class NewObjectCache
     inline void fillType(EntryIndex entry, Class *clasp, js::types::TypeObject *type, gc::AllocKind kind, JSObject *obj);
 
     /* Invalidate any entries which might produce an object with shape/proto. */
-    void invalidateEntriesForShape(JSContext *cx, Shape *shape, JSObject *proto);
+    void invalidateEntriesForShape(JSContext *cx, HandleShape shape, HandleObject proto);
 
   private:
     inline bool lookup(Class *clasp, gc::Cell *key, gc::AllocKind kind, EntryIndex *pentry);
@@ -490,6 +490,10 @@ class PerThreadData : public js::PerThreadDataFriendFields
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
 };
 
+namespace gc {
+class MarkingValidator;
+} // namespace gc
+
 } // namespace js
 
 struct JSRuntime : js::RuntimeFriendFields
@@ -518,7 +522,11 @@ struct JSRuntime : js::RuntimeFriendFields
     void clearOwnerThread();
     void setOwnerThread();
     JS_FRIEND_API(void) abortIfWrongThread() const;
+#ifdef DEBUG
     JS_FRIEND_API(void) assertValidThread() const;
+#else
+    void assertValidThread() const {}
+#endif
   private:
     void                *ownerThread_;
   public:
@@ -553,7 +561,7 @@ struct JSRuntime : js::RuntimeFriendFields
 #endif
     js::ion::IonRuntime *ionRuntime_;
 
-    JSObject *selfHostedGlobal_;
+    JSObject *selfHostingGlobal_;
 
     JSC::ExecutableAllocator *createExecutableAllocator(JSContext *cx);
     WTF::BumpPointerAllocator *createBumpPointerAllocator(JSContext *cx);
@@ -591,12 +599,10 @@ struct JSRuntime : js::RuntimeFriendFields
     }
 
     bool initSelfHosting(JSContext *cx);
-    void markSelfHostedGlobal(JSTracer *trc);
-    bool isSelfHostedGlobal(js::HandleObject global) {
-        return global == selfHostedGlobal_;
+    void markSelfHostingGlobal(JSTracer *trc);
+    bool isSelfHostingGlobal(js::HandleObject global) {
+        return global == selfHostingGlobal_;
     }
-    bool getUnclonedSelfHostedValue(JSContext *cx, js::Handle<js::PropertyName*> name,
-                                    js::MutableHandleValue vp);
     bool cloneSelfHostedFunctionScript(JSContext *cx, js::Handle<js::PropertyName*> name,
                                        js::Handle<JSFunction*> targetFun);
     bool cloneSelfHostedValue(JSContext *cx, js::Handle<js::PropertyName*> name,
@@ -769,6 +775,10 @@ struct JSRuntime : js::RuntimeFriendFields
      */
     js::gc::ArenaHeader *gcArenasAllocatedDuringSweep;
 
+#ifdef DEBUG
+    js::gc::MarkingValidator *gcMarkingValidator;
+#endif
+
     /*
      * Indicates that a GC slice has taken place in the middle of an animation
      * frame, rather than at the beginning. In this case, the next slice will be
@@ -939,10 +949,7 @@ struct JSRuntime : js::RuntimeFriendFields
     /* Had an out-of-memory error which did not populate an exception. */
     bool                hadOutOfMemory;
 
-    /*
-     * Linked list of all js::Debugger objects. This may be accessed by the GC
-     * thread, if any, or a thread that is in a request and holds gcLock.
-     */
+    /* Linked list of all Debugger objects in the runtime. */
     mozilla::LinkedList<js::Debugger> debuggerList;
 
     /*
@@ -954,7 +961,7 @@ struct JSRuntime : js::RuntimeFriendFields
     /* Client opaque pointers */
     void                *data;
 
-    /* These combine to interlock the GC and new requests. */
+    /* Synchronize GC heap access between main thread and GCHelperThread. */
     PRLock              *gcLock;
 
     js::GCHelperThread  gcHelperThread;
@@ -1397,9 +1404,6 @@ struct JSContext : js::ContextFriendFields,
     /* True if generating an error, to prevent runaway recursion. */
     bool                generatingError;
 
-    /* The current compartment. */
-    JSCompartment       *compartment;
-
     inline void setCompartment(JSCompartment *c) { compartment = c; }
 
     /*
@@ -1603,7 +1607,6 @@ struct JSContext : js::ContextFriendFields,
 
     inline bool typeInferenceEnabled() const;
 
-    /* Caller must be holding runtime->gcLock. */
     void updateJITEnabled();
 
 #ifdef MOZ_TRACE_JSCALLS
@@ -1928,6 +1931,11 @@ enum DestroyContextMode {
 extern void
 DestroyContext(JSContext *cx, DestroyContextMode mode);
 
+enum ErrorArgumentsType {
+    ArgumentsAreUnicode,
+    ArgumentsAreASCII
+};
+
 } /* namespace js */
 
 #ifdef va_start
@@ -1937,7 +1945,7 @@ js_ReportErrorVA(JSContext *cx, unsigned flags, const char *format, va_list ap);
 extern JSBool
 js_ReportErrorNumberVA(JSContext *cx, unsigned flags, JSErrorCallback callback,
                        void *userRef, const unsigned errorNumber,
-                       JSBool charArgs, va_list ap);
+                       js::ErrorArgumentsType argumentsType, va_list ap);
 
 extern bool
 js_ReportErrorNumberUCArray(JSContext *cx, unsigned flags, JSErrorCallback callback,
@@ -1948,7 +1956,7 @@ extern JSBool
 js_ExpandErrorArguments(JSContext *cx, JSErrorCallback callback,
                         void *userRef, const unsigned errorNumber,
                         char **message, JSErrorReport *reportp,
-                        bool charArgs, va_list ap);
+                        js::ErrorArgumentsType argumentsType, va_list ap);
 #endif
 
 namespace js {
@@ -2120,12 +2128,12 @@ SetValueRangeToNull(Value *vec, size_t len)
     SetValueRangeToNull(vec, vec + len);
 }
 
-class AutoObjectVector : public AutoVectorRooter<JSObject *>
+class AutoObjectVector : public AutoVectorRooter<RawObject>
 {
   public:
     explicit AutoObjectVector(JSContext *cx
                               JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoVectorRooter<JSObject *>(cx, OBJVECTOR)
+        : AutoVectorRooter<RawObject>(cx, OBJVECTOR)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
     }
@@ -2133,12 +2141,12 @@ class AutoObjectVector : public AutoVectorRooter<JSObject *>
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
-class AutoStringVector : public AutoVectorRooter<JSString *>
+class AutoStringVector : public AutoVectorRooter<RawString>
 {
   public:
     explicit AutoStringVector(JSContext *cx
                               JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoVectorRooter<JSString *>(cx, STRINGVECTOR)
+        : AutoVectorRooter<RawString>(cx, STRINGVECTOR)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
     }
@@ -2146,12 +2154,12 @@ class AutoStringVector : public AutoVectorRooter<JSString *>
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
-class AutoShapeVector : public AutoVectorRooter<Shape *>
+class AutoShapeVector : public AutoVectorRooter<RawShape>
 {
   public:
     explicit AutoShapeVector(JSContext *cx
                              JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoVectorRooter<Shape *>(cx, SHAPEVECTOR)
+        : AutoVectorRooter<RawShape>(cx, SHAPEVECTOR)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
     }
@@ -2161,20 +2169,33 @@ class AutoShapeVector : public AutoVectorRooter<Shape *>
 
 class AutoValueArray : public AutoGCRooter
 {
-    js::Value *start_;
+    RawValue *start_;
     unsigned length_;
     SkipRoot skip;
 
   public:
-    AutoValueArray(JSContext *cx, js::Value *start, unsigned length
+    AutoValueArray(JSContext *cx, RawValue *start, unsigned length
                    JS_GUARD_OBJECT_NOTIFIER_PARAM)
       : AutoGCRooter(cx, VALARRAY), start_(start), length_(length), skip(cx, start, length)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
-    Value *start() { return start_; }
+    RawValue *start() { return start_; }
     unsigned length() const { return length_; }
+
+    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+};
+
+class AutoObjectObjectHashMap : public AutoHashMapRooter<RawObject, RawObject>
+{
+  public:
+    explicit AutoObjectObjectHashMap(JSContext *cx
+                                     JS_GUARD_OBJECT_NOTIFIER_PARAM)
+      : AutoHashMapRooter<RawObject, RawObject>(cx, OBJOBJHASHMAP)
+    {
+        JS_GUARD_OBJECT_NOTIFIER_INIT;
+    }
 
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };

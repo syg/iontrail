@@ -22,7 +22,6 @@ MOCHITEST_FILES	= \
 		file_bug291653.html \
 		test_bug291653.html \
 		test_bug308856.html \
-		test_bug317448.html \
 		test_bug327891.html \
 		test_bug333983.html \
 		test_bug335976.xhtml \
@@ -135,9 +134,12 @@ MOCHITEST_FILES	= \
 		file_bug809290_b2.html \
 		file_bug809290_c.html \
 		file_empty.html \
+		test_domparser_after_blank.html \
+		iframe_domparser_after_blank.html \
 		test_sizetocontent_clamp.html \
 		test_protochains.html \
 		test_bug817476.html \
+		test_bug823173.html \
 		$(NULL)
 
 ifneq (Linux,$(OS_ARCH))

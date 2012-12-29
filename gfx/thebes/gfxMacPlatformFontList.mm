@@ -62,6 +62,7 @@
 #include "nsISimpleEnumerator.h"
 #include "nsCharTraits.h"
 
+#include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 
 #include <unistd.h>
@@ -667,10 +668,6 @@ gfxMacPlatformFontList::gfxMacPlatformFontList() :
                                    kATSFontNotifyOptionDefault,
                                    (void*)this, nullptr);
 
-    // this should always be available (though we won't actually fail if it's missing,
-    // we'll just end up doing a search and then caching the new result instead)
-    mReplacementCharFallbackFamily = NS_LITERAL_STRING("Lucida Grande");
-
     // cache this in a static variable so that MacOSFontFamily objects
     // don't have to repeatedly look it up
     sFontManager = [NSFontManager sharedFontManager];
@@ -739,7 +736,7 @@ gfxMacPlatformFontList::InitFontList()
     // start the delayed cmap loader
     StartLoader(kDelayBeforeLoadingCmaps, kIntervalBetweenLoadingCmaps);
 
-	return NS_OK;
+    return NS_OK;
 }
 
 void
@@ -772,7 +769,6 @@ gfxMacPlatformFontList::InitSingleFaceList()
                 familyEntry->AddFontEntry(fontEntry);
                 familyEntry->SetHasStyles(true);
                 mFontFamilies.Put(key, familyEntry);
-                fontEntry->mFamily = familyEntry;
 #ifdef PR_LOGGING
                 LOG_FONTLIST(("(fontlist-singleface) added new family\n",
                               NS_ConvertUTF16toUTF8(familyName).get(),
@@ -831,18 +827,23 @@ gfxMacPlatformFontList::GetStandardFamilyName(const nsAString& aFontName, nsAStr
 
 void
 gfxMacPlatformFontList::ATSNotification(ATSFontNotificationInfoRef aInfo,
-                                    void* aUserArg)
+                                        void* aUserArg)
 {
     // xxx - should be carefully pruning the list of fonts, not rebuilding it from scratch
-    gfxMacPlatformFontList *qfc = (gfxMacPlatformFontList*)aUserArg;
-    qfc->UpdateFontList();
+    static_cast<gfxMacPlatformFontList*>(aUserArg)->UpdateFontList();
+
+    // modify a preference that will trigger reflow everywhere
+    static const char kPrefName[] = "font.internaluseonly.changed";
+    bool fontInternalChange = Preferences::GetBool(kPrefName, false);
+    Preferences::SetBool(kPrefName, !fontInternalChange);
 }
 
 gfxFontEntry*
 gfxMacPlatformFontList::GlobalFontFallback(const uint32_t aCh,
                                            int32_t aRunScript,
                                            const gfxFontStyle* aMatchStyle,
-                                           uint32_t& aCmapCount)
+                                           uint32_t& aCmapCount,
+                                           gfxFontFamily** aMatchedFamily)
 {
     bool useCmaps = gfxPlatform::GetPlatform()->UseCmapsDuringSystemFallback();
 
@@ -850,7 +851,8 @@ gfxMacPlatformFontList::GlobalFontFallback(const uint32_t aCh,
         return gfxPlatformFontList::GlobalFontFallback(aCh,
                                                        aRunScript,
                                                        aMatchStyle,
-                                                       aCmapCount);
+                                                       aCmapCount,
+                                                       aMatchedFamily);
     }
 
     CFStringRef str;
@@ -900,14 +902,21 @@ gfxMacPlatformFontList::GlobalFontFallback(const uint32_t aCh,
             ::CFStringGetCharacters(familyName, ::CFRangeMake(0, len),
                                     buffer.Elements());
             buffer[len] = 0;
-            nsDependentString family(buffer.Elements(), len);
+            nsDependentString familyName(buffer.Elements(), len);
 
             bool needsBold;  // ignored in the system fallback case
 
-            fontEntry = FindFontForFamily(family, aMatchStyle, needsBold);
-            if (fontEntry && !fontEntry->TestCharacterMap(aCh)) {
-                fontEntry = nullptr;
-                cantUseFallbackFont = true;
+            gfxFontFamily *family = FindFamily(familyName);
+            if (family) {
+                fontEntry = family->FindFontForStyle(*aMatchStyle, needsBold);
+                if (fontEntry) {
+                    if (fontEntry->TestCharacterMap(aCh)) {
+                        *aMatchedFamily = family;
+                    } else {
+                        fontEntry = nullptr;
+                        cantUseFallbackFont = true;
+                    }
+                }
             }
         }
 
@@ -925,8 +934,8 @@ gfxMacPlatformFontList::GlobalFontFallback(const uint32_t aCh,
     return fontEntry;
 }
 
-gfxFontEntry*
-gfxMacPlatformFontList::GetDefaultFont(const gfxFontStyle* aStyle, bool& aNeedsBold)
+gfxFontFamily*
+gfxMacPlatformFontList::GetDefaultFont(const gfxFontStyle* aStyle)
 {
     nsAutoreleasePool localPool;
 
@@ -934,7 +943,7 @@ gfxMacPlatformFontList::GetDefaultFont(const gfxFontStyle* aStyle, bool& aNeedsB
     nsAutoString familyName;
 
     GetStringForNSString(defaultFamily, familyName);
-    return FindFontForFamily(familyName, aStyle, aNeedsBold);
+    return FindFamily(familyName);
 }
 
 int32_t
@@ -1031,11 +1040,9 @@ gfxMacPlatformFontList::MakePlatformFont(const gfxProxyFontEntry *aProxyEntry,
     }
 
     // if something is funky about this font, delete immediately
+
 #if DEBUG
-    char warnBuf[1024];
-    sprintf(warnBuf, "downloaded font not loaded properly, removed face for (%s)",
-            NS_ConvertUTF16toUTF8(aProxyEntry->mFamily->Name()).get());
-    NS_WARNING(warnBuf);
+    NS_WARNING("downloaded font not loaded properly");
 #endif
 
     return nullptr;

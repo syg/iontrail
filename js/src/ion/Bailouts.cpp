@@ -521,14 +521,15 @@ ion::RecompileForInlining()
     return true;
 }
 
+// Initialize the decl env Object and the call object of the current frame.
 bool
-ion::EnsureHasCallObject(JSContext *cx, StackFrame *fp)
+ion::EnsureHasScopeObjects(JSContext *cx, StackFrame *fp)
 {
     if (fp->isFunctionFrame() &&
         fp->fun()->isHeavyweight() &&
         !fp->hasCallObj())
     {
-        return fp->initCallObject(cx);
+        return fp->initFunctionScopeObjects(cx);
     }
     return true;
 }
@@ -537,7 +538,7 @@ uint32_t
 ion::BoundsCheckFailure()
 {
     JSContext *cx = GetIonContext()->cx;
-    JSScript *script = GetBailedJSScript(cx);
+    UnrootedScript script = GetBailedJSScript(cx);
 
     IonSpew(IonSpew_Bailouts, "Bounds check failure %s:%d", script->filename,
             script->lineno);
@@ -558,7 +559,7 @@ uint32_t
 ion::ShapeGuardFailure()
 {
     JSContext *cx = GetIonContext()->cx;
-    JSScript *script = GetBailedJSScript(cx);
+    UnrootedScript script = GetBailedJSScript(cx);
 
     JS_ASSERT(script->hasIonScript());
     JS_ASSERT(!script->ion->invalidated());
@@ -574,7 +575,7 @@ uint32_t
 ion::CachedShapeGuardFailure()
 {
     JSContext *cx = GetIonContext()->cx;
-    JSScript *script = GetBailedJSScript(cx);
+    UnrootedScript script = GetBailedJSScript(cx);
 
     JS_ASSERT(script->hasIonScript());
     JS_ASSERT(!script->ion->invalidated());
@@ -597,9 +598,10 @@ ion::ThunkToInterpreter(Value *vp)
     JSContext *cx = GetIonContext()->cx;
     IonActivation *activation = cx->runtime->mainThread.ionActivation;
     BailoutClosure *br = activation->takeBailout();
+    InterpMode resumeMode = JSINTERP_BAILOUT;
 
-    if (!EnsureHasCallObject(cx, cx->fp()))
-        return Interpret_Error;
+    if (!EnsureHasScopeObjects(cx, cx->fp()))
+        resumeMode = JSINTERP_RETHROW;
 
     // By default we set the forbidOsr flag on the ion script, but if a GC
     // happens just after we re-enter the interpreter, the ion script get
@@ -622,7 +624,7 @@ ion::ThunkToInterpreter(Value *vp)
         br->entryfp()->clearRunningInIon();
         ScriptFrameIter iter(cx);
         StackFrame *fp = NULL;
-        Rooted<JSScript*> script(cx, NULL);
+        Rooted<JSScript*> script(cx);
         do {
             fp = iter.interpFrame();
             script = iter.script();
@@ -632,8 +634,10 @@ ion::ThunkToInterpreter(Value *vp)
                 // object yet.
                 JS_ASSERT(!fp->hasArgsObj());
                 ArgumentsObject *argsobj = ArgumentsObject::createExpected(cx, fp);
-                if (!argsobj)
-                    return Interpret_Error;
+                if (!argsobj) {
+                    resumeMode = JSINTERP_RETHROW;
+                    break;
+                }
                 InternalBindingsHandle bindings(script, &script->bindings);
                 const unsigned var = Bindings::argumentsVarIndex(cx, bindings);
                 // The arguments is a local binding and needsArgsObj does not
@@ -654,10 +658,11 @@ ion::ThunkToInterpreter(Value *vp)
         // original Interpret activation.
         vp->setMagic(JS_ION_BAILOUT);
         js_delete(br);
-        return Interpret_Ok;
+        return resumeMode == JSINTERP_RETHROW ? Interpret_Error : Interpret_Ok;
     }
 
-    InterpretStatus status = Interpret(cx, br->entryfp(), JSINTERP_BAILOUT);
+    InterpretStatus status = Interpret(cx, br->entryfp(), resumeMode);
+    JS_ASSERT_IF(resumeMode == JSINTERP_RETHROW, status == Interpret_Error);
 
     if (status == Interpret_OSR) {
         // The interpreter currently does not ask to perform inline OSR, so

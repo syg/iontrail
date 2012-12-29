@@ -19,6 +19,7 @@
 #include "nsISocketTransportService.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/net/DashboardTypes.h"
 
 #include "nsIObserver.h"
 #include "nsITimer.h"
@@ -223,6 +224,10 @@ public:
     
     bool     SupportsPipelining(nsHttpConnectionInfo *);
 
+    bool GetConnectionData(nsTArray<mozilla::net::HttpRetParams> *);
+
+    void ResetIPFamillyPreference(nsHttpConnectionInfo *);
+
 private:
     virtual ~nsHttpConnectionMgr();
 
@@ -341,6 +346,20 @@ private:
         bool mTestedSpdy;
 
         bool mSpdyPreferred;
+
+        // Flags to remember our happy-eyeballs decision.
+        // Reset only by Ctrl-F5 reload.
+        // True when we've first connected an IPv4 server for this host,
+        // initially false.
+        bool mPreferIPv4 : 1;
+        // True when we've first connected an IPv6 server for this host,
+        // initially false.
+        bool mPreferIPv6 : 1;
+
+        // Set the IP family preference flags according the connected family
+        void RecordIPFamilyPreference(uint16_t family);
+        // Resets all flags to their default values
+        void ResetIPFamilyPreference();
     };
 
     // nsConnectionHandle
@@ -611,6 +630,11 @@ private:
     nsTHashtable<nsCStringHashKey> mAlternateProtocolHash;
     static PLDHashOperator TrimAlternateProtocolHash(nsCStringHashKey *entry,
                                                      void *closure);
+
+    static PLDHashOperator ReadConnectionEntry(const nsACString &key,
+                                               nsAutoPtr<nsConnectionEntry> &ent,
+                                               void *aArg);
+
     // Read Timeout Tick handlers
     void ActivateTimeoutTick();
     void TimeoutTick();

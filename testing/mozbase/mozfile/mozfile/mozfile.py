@@ -2,17 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-"""
-mozfile.py:
-Cointains file functions for mozbase:
-https://bugzilla.mozilla.org/show_bug.cgi?id=774916
-"""
-
 import os
 import tarfile
+import tempfile
 import zipfile
 
-__all__ = ['extract_tarball', 'extract_zip', 'extract', 'rmtree']
+__all__ = ['extract_tarball', 'extract_zip', 'extract', 'rmtree', 'NamedTemporaryFile']
 
 
 ### utilities for extracting archives
@@ -89,9 +84,11 @@ def extract(src, dest=None):
 
 
 def rmtree(dir):
-    """This is a replacement for shutil.rmtree that works better under
-    windows. Thanks to Bear at the OSAF for the code."""
+    """Removes the specified directory tree
 
+    This is a replacement for shutil.rmtree that works better under
+    windows."""
+    # (Thanks to Bear at the OSAF for the code.)
     if not os.path.exists(dir):
         return
     if os.path.islink(dir):
@@ -106,10 +103,12 @@ def rmtree(dir):
     # If a non-unicode-named dir contains a unicode filename,
     # that filename will get garbled.
     # So force dir to be unicode.
-    try:
-        dir = unicode(dir, "utf-8")
-    except:
-        print("rmtree: decoding from UTF-8 failed")
+    if not isinstance(dir, unicode):
+        try:
+            dir = unicode(dir, "utf-8")
+        except UnicodeDecodeError:
+            if os.environ.get('DEBUG') == '1':
+                print("rmtree: decoding from UTF-8 failed for directory: %s" %s)
 
     for name in os.listdir(dir):
         full_name = os.path.join(dir, name)
@@ -131,3 +130,51 @@ def rmtree(dir):
                 os.chmod(full_name, 0700)
             os.remove(full_name)
     os.rmdir(dir)
+
+
+class NamedTemporaryFile(object):
+    """
+    Like tempfile.NamedTemporaryFile except it works on Windows
+    in the case where you open the created file a second time.
+
+    This behaves very similarly to tempfile.NamedTemporaryFile but may
+    not behave exactly the same. For example, this function does not
+    prevent fd inheritance by children.
+
+    Example usage:
+
+    with NamedTemporaryFile() as fh:
+        fh.write(b'foobar')
+
+        print('Filename: %s' % fh.name)
+
+    see https://bugzilla.mozilla.org/show_bug.cgi?id=821362
+    """
+    def __init__(self, mode='w+b', bufsize=-1, suffix='', prefix='tmp',
+        dir=None):
+
+        fd, path = tempfile.mkstemp(suffix, prefix, dir, 't' in mode)
+        os.close(fd)
+
+        self.file = open(path, mode)
+        self._path = path
+        self._unlinked = False
+
+    def __getattr__(self, k):
+        return getattr(self.__dict__['file'], k)
+
+    def __enter__(self):
+        self.file.__enter__()
+        return self
+
+    def __exit__(self, exc, value, tb):
+        self.file.__exit__(exc, value, tb)
+        os.unlink(self.__dict__['_path'])
+        self._unlinked = True
+
+    def __del__(self):
+        if self.__dict__['_unlinked']:
+            return
+
+        self.file.__exit__(None, None, None)
+        os.unlink(self.__dict__['_path'])

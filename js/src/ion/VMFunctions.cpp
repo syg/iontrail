@@ -15,6 +15,7 @@
 
 #include "builtin/ParallelArray.h"
 
+#include "jsboolinlines.h"
 #include "jsinterpinlines.h"
 
 using namespace js;
@@ -67,7 +68,7 @@ InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value
         }
 
         if (!fun->nonLazyScript()->canIonCompile()) {
-            JSScript *script = GetTopIonJSScript(cx);
+            UnrootedScript script = GetTopIonJSScript(cx);
             if (script->hasIonScript() &&
                 ++script->ion->slowCallCount >= js_IonOptions.slowCallLimit)
             {
@@ -99,45 +100,6 @@ InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value
     // Run the function in the interpreter.
     Value fval = ObjectValue(*fun);
     bool ok = Invoke(cx, thisv, fval, argc, argvWithoutThis, rval);
-    if (ok && needsMonitor)
-        types::TypeScript::Monitor(cx, *rval);
-
-    return ok;
-}
-
-bool
-InvokeConstructor(JSContext *cx, JSObject *obj, uint32_t argc, Value *argv, Value *rval)
-{
-    // See the comment in InvokeFunction.
-    bool needsMonitor;
-
-    if (obj->isFunction()) {
-        if (obj->toFunction()->isInterpretedLazy() &&
-            !obj->toFunction()->initializeLazyScript(cx))
-        {
-            return false;
-        }
-
-        if (obj->toFunction()->isCloneAtCallsite()) {
-            RootedFunction original(cx, obj->toFunction());
-            RootedScript script(cx);
-            jsbytecode *pc;
-            types::TypeScript::GetPcScript(cx, &script, &pc);
-            obj = CloneFunctionAtCallsite(cx, original, script, pc);
-            if (!obj)
-                return false;
-        }
-
-        needsMonitor = ShouldMonitorReturnType(obj->toFunction());
-    } else {
-        needsMonitor = true;
-    }
-
-    // Data in the argument vector is arranged for a JIT -> JIT call.
-    Value *argvWithoutThis = argv + 1;
-
-    Value fval = ObjectValue(*obj);
-    bool ok = js::InvokeConstructor(cx, fval, argc, argvWithoutThis, rval);
     if (ok && needsMonitor)
         types::TypeScript::Monitor(cx, *rval);
 
@@ -193,7 +155,7 @@ InitProp(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue v
 
     if (name == cx->names().proto)
         return baseops::SetPropertyHelper(cx, obj, obj, id, 0, &rval, false);
-    return !!DefineNativeProperty(cx, obj, id, rval, NULL, NULL, JSPROP_ENUMERATE, 0, 0, 0);
+    return DefineNativeProperty(cx, obj, id, rval, NULL, NULL, JSPROP_ENUMERATE, 0, 0, 0);
 }
 
 template<bool Equal>
@@ -278,11 +240,11 @@ StringsEqual(JSContext *cx, HandleString lhs, HandleString rhs, JSBool *res)
 template bool StringsEqual<true>(JSContext *cx, HandleString lhs, HandleString rhs, JSBool *res);
 template bool StringsEqual<false>(JSContext *cx, HandleString lhs, HandleString rhs, JSBool *res);
 
-bool
-ValueToBooleanComplement(JSContext *cx, const Value &input, JSBool *output)
+JSBool
+ObjectEmulatesUndefined(RawObject obj)
 {
-    *output = !ToBoolean(input);
-    return true;
+    AutoAssertNoGC nogc;
+    return EmulatesUndefined(obj);
 }
 
 bool
@@ -426,6 +388,20 @@ ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObje
     if (!js::array_concat(cx, 1, argv))
         return NULL;
     return &argv[0].toObject();
+}
+
+bool
+CharCodeAt(JSContext *cx, HandleString str, int32_t index, uint32_t *code)
+{
+    JS_ASSERT(index >= 0 &&
+              static_cast<uint32_t>(index) < str->length());
+
+    const jschar *chars = str->getChars(cx);
+    if (!chars)
+        return false;
+
+    *code = chars[index];
+    return true;
 }
 
 JSFlatString *

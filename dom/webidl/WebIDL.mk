@@ -21,8 +21,14 @@ webidl_files = \
   Blob.webidl \
   CanvasRenderingContext2D.webidl \
   ClientRectList.webidl \
+  CSS.webidl \
+  CSSPrimitiveValue.webidl \
   CSSStyleDeclaration.webidl \
+  CSSValue.webidl \
+  CSSValueList.webidl \
   DelayNode.webidl \
+  Document.webidl \
+  DocumentFragment.webidl \
   DOMImplementation.webidl \
   DOMParser.webidl \
   DOMSettableTokenList.webidl \
@@ -32,29 +38,58 @@ webidl_files = \
   Element.webidl \
   EventHandler.webidl \
   EventListener.webidl \
+  EventSource.webidl \
   EventTarget.webidl \
+  File.webidl \
   FileHandle.webidl \
   FileList.webidl \
   FileReaderSync.webidl \
+  FormData.webidl \
   Function.webidl \
   GainNode.webidl \
+  HTMLBodyElement.webidl \
   HTMLCollection.webidl \
+  HTMLDataListElement.webidl \
+  HTMLDivElement.webidl \
+  HTMLDocument.webidl \
   HTMLElement.webidl \
+  HTMLFontElement.webidl \
+  HTMLFrameSetElement.webidl \
+  HTMLHeadingElement.webidl \
+  HTMLLabelElement.webidl \
   HTMLOptionsCollection.webidl \
   HTMLPropertiesCollection.webidl \
   ImageData.webidl \
+  Location.webidl \
+  MutationObserver.webidl \
   Node.webidl \
+  NodeFilter.webidl \
   NodeList.webidl \
+  PaintRequest.webidl \
   PaintRequestList.webidl \
   PannerNode.webidl \
   Performance.webidl \
   PerformanceNavigation.webidl \
   PerformanceTiming.webidl \
+  RGBColor.webidl \
   Screen.webidl \
+  SVGAngle.webidl \
+  SVGAnimatedAngle.webidl \
+  SVGAnimatedBoolean.webidl \
+  SVGAnimatedLengthList.webidl \
+  SVGAnimatedNumberList.webidl \
+  SVGAnimatedPreserveAspectRatio.webidl \
+  SVGAnimatedTransformList.webidl \
+  SVGElement.webidl \
   SVGLengthList.webidl \
+  SVGMatrix.webidl \
   SVGNumberList.webidl \
+  SVGPathSeg.webidl \
   SVGPathSegList.webidl \
+  SVGPoint.webidl \
   SVGPointList.webidl \
+  SVGPreserveAspectRatio.webidl \
+  SVGTransform.webidl \
   SVGTransformList.webidl \
   TextDecoder.webidl \
   TextEncoder.webidl \
@@ -64,6 +99,7 @@ webidl_files = \
   XMLHttpRequestEventTarget.webidl \
   XMLHttpRequestUpload.webidl \
   XMLSerializer.webidl \
+  XPathEvaluator.webidl \
   $(NULL)
 
 ifdef MOZ_WEBGL

@@ -5,6 +5,7 @@ import com.jayway.android.robotium.solo.Solo;
 import @ANDROID_PACKAGE_NAME@.*;
 
 import android.app.Activity;
+import android.content.pm.ActivityInfo;
 import android.app.Instrumentation;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -17,6 +18,9 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import android.view.View;
+import android.os.Build;
+import android.util.DisplayMetrics;
 
 /**
  *  A convenient base class suitable for most Robocop tests.
@@ -28,6 +32,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     private static final String TARGET_PACKAGE_ID = "org.mozilla.gecko";
     private static final String LAUNCH_ACTIVITY_FULL_CLASSNAME="@ANDROID_PACKAGE_NAME@.App";
     private static final int VERIFY_URL_TIMEOUT = 2000;
+    private static final int MAX_WAIT_MS = 3000;
 
     private static Class<Activity> mLauncherActivityClass;
     private Activity mActivity;
@@ -347,8 +352,30 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
 
     public final void verifyPageTitle(String title) {
 	Element awesomebar = mDriver.findElement(getActivity(), "awesome_bar_title");
-        mAsserter.isnot(awesomebar, null, "Got the awesomebar");
-        assertMatches(awesomebar.getText(), title, "Page title match");
+        String pageTitle = null;
+        if (awesomebar != null) {
+            // Wait for the title to make sure it has been displayed in case the view
+            // does not update fast enough
+            waitForTest(new VerifyTitle(awesomebar, title), MAX_WAIT_MS);
+            pageTitle = awesomebar.getText();
+        }
+        mAsserter.is(pageTitle, title, "Page title is correct");
+    }
+
+    class VerifyTitle implements BooleanTest {
+        private Element mAwesomebar;
+        private String mTitle;
+        public VerifyTitle(Element awesomebar, String title) {
+            mAwesomebar = awesomebar;
+            mTitle = title;
+        }
+        public boolean test() {
+            String pageTitle = mAwesomebar.getText();
+            if (pageTitle.equals(mTitle)) {
+                return true;
+            }
+            return false;
+        }
     }
 
     public final void verifyTabCount(int expectedTabCount) {
@@ -357,5 +384,145 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         String tabCountText = tabCount.getText();
         int tabCountInt = Integer.parseInt(tabCountText);
         mAsserter.is(tabCountInt, expectedTabCount, "The correct number of tabs are opened");
+    }
+
+    public void addTab(String url) {
+        Element tabs = null;
+        Element addTab = null;
+
+        Activity activity = getActivity();
+        tabs = mDriver.findElement(activity, "tabs");
+        addTab = mDriver.findElement(activity, "add_tab");
+        final int addTabId = addTab.getId();
+        mAsserter.ok(tabs.click(), "checking that tabs clicked", "tabs element clicked");
+
+        // wait for addTab to appear (this is usually immediate)
+        boolean success = waitForTest(new BooleanTest() {
+            public boolean test() {
+                View addTabView = getActivity().findViewById(addTabId);
+                if (addTabView == null) {
+                    return false;
+                }
+                return true;
+            }
+        }, MAX_WAIT_MS);
+        mAsserter.ok(success, "waiting for add tab view", "add tab view available");
+
+        mAsserter.ok(addTab.click(), "checking that add_tab clicked", "add_tab element clicked");
+
+        // must pause before sending keys, until awesome bar is displayed; waiting for known text is simple
+        mSolo.waitForText("History");
+
+        // cannot use loadUrl(): getText fails because we are using a different urlbar
+        mActions.sendKeys(url);
+        hitEnterAndWait();
+    }
+
+    class Device {
+        Build.VERSION mBuildVersion;
+        public String version; // 2.x or 3.x or 4.x
+        public String type; // tablet or phone
+        public int width;
+        public int height;
+
+        public Device() {
+            detectDevice();
+        }
+
+        private void detectDevice() {
+            // Determine device version
+            mBuildVersion = new Build.VERSION();
+            int mSDK = mBuildVersion.SDK_INT;
+            if (mSDK < Build.VERSION_CODES.HONEYCOMB) {
+                version = "2.x";
+            }
+            else {
+                if (mSDK > Build.VERSION_CODES.HONEYCOMB_MR2) {
+                    version = "4.x";
+                }
+                else {
+                    version = "3.x";
+                }
+            }
+
+            // Determine with and height
+            DisplayMetrics dm = new DisplayMetrics();
+            getActivity().getWindowManager().getDefaultDisplay().getMetrics(dm);
+            height = dm.heightPixels;
+            width = dm.widthPixels;
+
+            // Determine device type
+            if (width > 480 && height > 480) {
+                type = "tablet";
+            }
+            else {
+                type = "phone";
+            }
+        }
+
+        public void rotate() {
+            if (getActivity().getRequestedOrientation () == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
+                mSolo.setActivityOrientation(Solo.PORTRAIT);
+            }
+            else {
+                mSolo.setActivityOrientation(Solo.LANDSCAPE);
+            }
+        }
+    }
+
+    class Navigation {
+        private String devType;
+        private String osVersion;
+
+        public Navigation(Device mDevice) {
+            devType = mDevice.type;
+            osVersion = mDevice.version;
+        }
+
+        public void back() {
+            if (devType == "tablet"){
+                Element backBtn = mDriver.findElement(getActivity(), "back");
+                backBtn.click();
+            }
+            else {
+                mActions.sendSpecialKey(Actions.SpecialKey.BACK);
+            }
+        }
+
+        public void forward() {
+            if (devType == "tablet"){
+                Element fwdBtn = mDriver.findElement(getActivity(), "forward");
+                fwdBtn.click();
+            }
+            else {
+                mActions.sendSpecialKey(Actions.SpecialKey.MENU);
+                mSolo.waitForText("^New Tab$");
+                if (osVersion != "2.x") {
+                    Element fwdBtn = mDriver.findElement(getActivity(), "forward");
+                    fwdBtn.click();
+                }
+                else {
+                    mSolo.clickOnText("^Forward$");
+                }
+            }
+        }
+
+        public void reload() {
+            if (devType == "tablet"){
+                Element reloadBtn = mDriver.findElement(getActivity(), "reload");
+                reloadBtn.click();
+            }
+            else {
+                mActions.sendSpecialKey(Actions.SpecialKey.MENU);
+                mSolo.waitForText("^New Tab$");
+                if (osVersion != "2.x") {
+                    Element reloadBtn = mDriver.findElement(getActivity(), "reload");
+                    reloadBtn.click();
+                }
+                else {
+                    mSolo.clickOnText("^Forward$");
+                }
+            }
+        }
     }
 }

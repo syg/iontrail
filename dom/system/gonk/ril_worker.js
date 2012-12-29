@@ -60,6 +60,11 @@ const TLV_EVENT_LIST_SIZE = 3;
 const TLV_LOCATION_STATUS_SIZE = 3;
 const TLV_LOCATION_INFO_GSM_SIZE = 9;
 const TLV_LOCATION_INFO_UMTS_SIZE = 11;
+const TLV_IMEI_SIZE = 10;
+const TLV_DATE_TIME_ZONE_SIZE = 9;
+const TLV_LANGUAGE_SIZE = 4;
+const TLV_TIMER_IDENTIFIER = 3;
+const TLV_TIMER_VALUE = 5;
 
 const DEFAULT_EMERGENCY_NUMBERS = ["112", "911"];
 
@@ -475,8 +480,9 @@ let Buf = {
     // we process any backlog in parcels immediately, before writing
     // new data to the buffer. So the only edge case we need to handle
     // is when the incoming data is larger than the buffer size.
-    if (incoming.length > this.INCOMING_BUFFER_LENGTH) {
-      this.growIncomingBuffer(incoming.length);
+    let minMustAvailableSize = incoming.length + this.readIncoming;
+    if (minMustAvailableSize > this.INCOMING_BUFFER_LENGTH) {
+      this.growIncomingBuffer(minMustAvailableSize);
     }
 
     // We can let the typed arrays do the copying if the incoming data won't
@@ -585,6 +591,13 @@ let Buf = {
       let error = this.readUint32();
 
       options = this.tokenRequestMap[token];
+      if (!options) {
+        if (DEBUG) {
+          debug("Suspicious uninvited request found: " + token + ". Ignored!");
+        }
+        return;
+      }
+
       delete this.tokenRequestMap[token];
       request_type = options.rilRequestType;
 
@@ -1509,7 +1522,7 @@ let RIL = {
       if (DEBUG) debug("PLMN Selector: Process PLMN Selector");
 
       let length = Buf.readUint32();
-      this.iccInfoPrivate.PLMN = this.readPLMNEntries(length/6);
+      this.iccInfoPrivate.PLMN = this.readPLMNEntries(length/3);
       Buf.readStringDelimiter(length);
 
       if (DEBUG) debug("PLMN Selector: " + JSON.stringify(this.iccInfoPrivate.PLMN));
@@ -1542,39 +1555,34 @@ let RIL = {
    */
   getSPDI: function getSPDI() {
     function callback() {
-      if (DEBUG) debug("SPDI: Process SPDI callback");
       let length = Buf.readUint32();
-      let tlvTag;
-      let tlvLen;
       let readLen = 0;
       let endLoop = false;
       this.iccInfoPrivate.SPDI = null;
-      while ((readLen < length) && !endLoop) {
-        tlvTag = GsmPDUHelper.readHexOctet();
-        tlvLen = GsmPDUHelper.readHexOctet();
-        readLen += 2; // For tag and length.
+      while ((readLen < length / 2) && !endLoop) {
+        let tlvTag = GsmPDUHelper.readHexOctet();
+        let tlvLen = GsmPDUHelper.readHexOctet();
+        readLen += 2; // For tag and length fields.
         switch (tlvTag) {
         case SPDI_TAG_SPDI:
           // The value part itself is a TLV.
           continue;
         case SPDI_TAG_PLMN_LIST:
           // This PLMN list is what we want.
-          this.iccInfoPrivate.SPDI = readPLMNEntries(tlvLen/6);
+          this.iccInfoPrivate.SPDI = this.readPLMNEntries(tlvLen / 3);
           readLen += tlvLen;
           endLoop = true;
           break;
         default:
           // We don't care about its content if its tag is not SPDI nor
           // PLMN_LIST.
-          GsmPDUHelper.readHexOctetArray(tlvLen);
-          readLen += tlvLen;
+          endLoop = true;
+          break;
         }
       }
 
       // Consume unread octets.
-      if (length - readLen > 0) {
-        GsmPDUHelper.readHexOctetArray(length - readLen);
-      }
+      Buf.seekIncoming((length / 2 - readLen) * PDU_HEX_OCTET_SIZE);
       Buf.readStringDelimiter(length);
 
       if (DEBUG) debug("SPDI: " + JSON.stringify(this.iccInfoPrivate.SPDI));
@@ -1583,7 +1591,7 @@ let RIL = {
       }
     }
 
-    // PLMN List is Servive 51 in USIM, EF_SPDI
+    // PLMN List is Service 51 in USIM, EF_SPDI
     this.iccIO({
       command:   ICC_COMMAND_GET_RESPONSE,
       fileId:    ICC_EF_SPDI,
@@ -1661,6 +1669,219 @@ let RIL = {
   },
 
   /**
+   * Choose network names using EF_OPL and EF_PNN
+   * See 3GPP TS 31.102 sec. 4.2.58 and sec. 4.2.59 for USIM,
+   *     3GPP TS 51.011 sec. 10.3.41 and sec. 10.3.42 for SIM.
+   */
+  updateNetworkName: function updateNetworkName() {
+    let iccInfoPriv = this.iccInfoPrivate;
+    let iccInfo = this.iccInfo;
+
+    // We won't update network name if voice registration isn't ready
+    // or PNN file haven't been retrieved.
+    if (!iccInfoPriv.PNN ||
+        !this.voiceRegistrationState.cell ||
+        this.voiceRegistrationState.cell.gsmLocationAreaCode == -1) {
+      return null;
+    }
+
+    let pnnEntry;
+    let lac = this.voiceRegistrationState.cell.gsmLocationAreaCode;
+    let mcc = this.operator.mcc;
+    let mnc = this.operator.mnc;
+
+    // According to 3GPP TS 31.102 Sec. 4.2.59 and 3GPP TS 51.011 Sec. 10.3.42,
+    // the ME shall use this EF_OPL in association with the EF_PNN in place
+    // of any network name stored within the ME's internal list and any network
+    // name received when registered to the PLMN.
+    if (iccInfoPriv.OPL) {
+      for (let i in iccInfoPriv.OPL) {
+        let opl = iccInfoPriv.OPL[i];
+        // Try to match the MCC/MNC.
+        if (mcc != opl.mcc || mnc != opl.mnc) {
+          continue;
+        }
+        // Try to match the location area code. If current local area code is
+        // covered by lac range that specified in the OPL entry, use the PNN
+        // that specified in the OPL entry.
+        if ((opl.lacTacStart == 0x0 && opl.lacTacEnd == 0xFFFE) ||
+            (opl.lacTacStart <= lac && opl.lacTacEnd >= lac)) {
+          if (opl.pnnRecordId == 0) {
+            // See 3GPP TS 31.102 Sec. 4.2.59 and 3GPP TS 51.011 Sec. 10.3.42,
+            // A value of '00' indicates that the name is to be taken from other
+            // sources.
+            return null;
+          }
+          pnnEntry = iccInfoPriv.PNN[opl.pnnRecordId - 1]
+          break;
+        }
+      }
+    }
+
+    // According to 3GPP TS 31.102 Sec. 4.2.58 and 3GPP TS 51.011 Sec. 10.3.41,
+    // the first record in this EF is used for the default network name when
+    // registered to the HPLMN.
+    // If we haven't get pnnEntry assigned, we should try to assign default
+    // value to it.
+    if (!pnnEntry && mcc == iccInfo.mcc && mnc == iccInfo.mnc) {
+      pnnEntry = iccInfoPriv.PNN[0]
+    }
+
+    if (DEBUG) {
+      if (pnnEntry) {
+        debug("updateNetworkName: Network names will be overriden: longName = " +
+              pnnEntry.fullName + ", shortName = " + pnnEntry.shortName);
+      } else {
+        debug("updateNetworkName: Network names will not be overriden");
+      }
+    }
+
+    if (pnnEntry) {
+      return [pnnEntry.fullName, pnnEntry.shortName];
+    }
+    return null;
+  },
+
+  /**
+   * Read OPL (Operator PLMN List) from USIM.
+   *
+   * See 3GPP TS 31.102 Sec. 4.2.59 for USIM
+   *     3GPP TS 51.011 Sec. 10.3.42 for SIM.
+   */
+  getOPL: function getOPL() {
+    let opl = [];
+    function callback(options) {
+      let len = Buf.readUint32();
+      // The first 7 bytes are LAI (for UMTS) and the format of LAI is defined
+      // in 3GPP TS 23.003, Sec 4.1
+      //    +-------------+---------+
+      //    | Octet 1 - 3 | MCC/MNC |
+      //    +-------------+---------+
+      //    | Octet 4 - 7 |   LAC   |
+      //    +-------------+---------+
+      let mccMnc = [GsmPDUHelper.readHexOctet(),
+                    GsmPDUHelper.readHexOctet(),
+                    GsmPDUHelper.readHexOctet()];
+      if (mccMnc[0] != 0xFF || mccMnc[1] != 0xFF || mccMnc[2] != 0xFF) {
+        let oplElement = {};
+        let semiOctets = [];
+        for (let i = 0; i < mccMnc.length; i++) {
+          semiOctets.push((mccMnc[i] & 0xf0) >> 4);
+          semiOctets.push(mccMnc[i] & 0x0f);
+        }
+        let reformat = [semiOctets[1], semiOctets[0], semiOctets[3],
+                        semiOctets[5], semiOctets[4], semiOctets[2]];
+        let buf = "";
+        for (let i = 0; i < reformat.length; i++) {
+          if (reformat[i] != 0xF) {
+            buf += GsmPDUHelper.semiOctetToBcdChar(reformat[i]);
+          }
+          if (i === 2) {
+            // 0-2: MCC
+            oplElement.mcc = parseInt(buf);
+            buf = "";
+          } else if (i === 5) {
+            // 3-5: MNC
+            oplElement.mnc = parseInt(buf);
+          }
+        }
+        // LAC/TAC
+        oplElement.lacTacStart =
+          (GsmPDUHelper.readHexOctet() << 8) | GsmPDUHelper.readHexOctet();
+        oplElement.lacTacEnd =
+          (GsmPDUHelper.readHexOctet() << 8) | GsmPDUHelper.readHexOctet();
+        // PLMN Network Name Record Identifier
+        oplElement.pnnRecordId = GsmPDUHelper.readHexOctet();
+        if (DEBUG) {
+          debug("OPL: [" + (opl.length + 1) + "]: " + JSON.stringify(oplElement));
+        }
+        opl.push(oplElement);
+      }
+      Buf.readStringDelimiter(len);
+      if (options.p1 < options.totalRecords) {
+        options.p1++;
+        this.iccIO(options);
+      } else {
+        this.iccInfoPrivate.OPL = opl;
+      }
+    }
+
+    this.iccIO({
+      command:   ICC_COMMAND_GET_RESPONSE,
+      fileId:    ICC_EF_OPL,
+      pathId:    this._getPathIdForICCRecord(ICC_EF_OPL),
+      p1:        0, // For GET_RESPONSE, p1 = 0
+      p2:        0, // For GET_RESPONSE, p2 = 0
+      p3:        GET_RESPONSE_EF_SIZE_BYTES,
+      data:      null,
+      pin2:      null,
+      type:      EF_TYPE_LINEAR_FIXED,
+      callback:  callback,
+    });
+  },
+
+  /**
+   * Read PNN (PLMN Network Name) from USIM.
+   *
+   * See 3GPP TS 31.102 Sec. 4.2.58 for USIM
+   *     3GPP TS 51.011 Sec. 10.3.41 for SIM.
+   */
+  getPNN: function getPNN() {
+    let pnn = [];
+    function callback(options) {
+      let pnnElement = this.iccInfoPrivate.PNN = {};
+      let len = Buf.readUint32();
+      let readLen = 0;
+      while (len > readLen) {
+        let tlvTag = GsmPDUHelper.readHexOctet();
+        readLen = readLen + 2; // 1 Hex octet
+        if (tlvTag == 0xFF) {
+          // Unused byte
+          continue;
+        }
+        let tlvLen = GsmPDUHelper.readHexOctet();
+        let name;
+        switch (tlvTag) {
+        case PNN_IEI_FULL_NETWORK_NAME:
+          pnnElement.fullName = GsmPDUHelper.readNetworkName(tlvLen);
+          break;
+        case PNN_IEI_SHORT_NETWORK_NAME:
+          pnnElement.shortName = GsmPDUHelper.readNetworkName(tlvLen);
+          break;
+        default:
+          Buf.seekIncoming(PDU_HEX_OCTET_SIZE * tlvLen);
+        }
+        readLen += (tlvLen * 2 + 2);
+      }
+      if (DEBUG) {
+        debug("PNN: [" + (pnn.length + 1) + "]: " + JSON.stringify(pnnElement));
+      }
+      Buf.readStringDelimiter(len);
+      pnn.push(pnnElement);
+
+      if (options.p1 < options.totalRecords) {
+        options.p1++;
+        this.iccIO(options);
+      } else {
+        this.iccInfoPrivate.PNN = pnn;
+      }
+    }
+
+    this.iccIO({
+      command:   ICC_COMMAND_GET_RESPONSE,
+      fileId:    ICC_EF_PNN,
+      pathId:    this._getPathIdForICCRecord(ICC_EF_PNN),
+      p1:        0, // For GET_RESPONSE, p1 = 0
+      p2:        0, // For GET_RESPONSE, p2 = 0
+      p3:        GET_RESPONSE_EF_SIZE_BYTES,
+      data:      null,
+      pin2:      null,
+      type:      EF_TYPE_LINEAR_FIXED,
+      callback:  callback,
+    });
+  },
+
+  /**
    * Read the (U)SIM Service Table from the ICC.
    */
   getSST: function getSST() {
@@ -1692,6 +1913,20 @@ let RIL = {
         this.getSPDI();
       } else {
         if (DEBUG) debug("SPDI: SPDI service is not available");
+      }
+
+      if (this.isICCServiceAvailable("PNN")) {
+        if (DEBUG) debug("PNN: PNN is available");
+        this.getPNN();
+      } else {
+        if (DEBUG) debug("PNN: PNN is not available");
+      }
+
+      if (this.isICCServiceAvailable("OPL")) {
+        if (DEBUG) debug("OPL: OPL is available");
+        this.getOPL();
+      } else {
+        if (DEBUG) debug("OPL: OPL is not available");
       }
 
       if (this.isICCServiceAvailable("CBMI")) {
@@ -2079,7 +2314,7 @@ let RIL = {
             plmn[1] != 0xFF &&
             plmn[2] != 0xFF) {
           let semiOctets = [];
-          for (let i = 0; i < plmn.length; i++) {
+          for (let idx = 0; idx < plmn.length; idx++) {
             semiOctets.push((plmn[idx] & 0xF0) >> 4);
             semiOctets.push(plmn[idx] & 0x0F);
           }
@@ -2532,22 +2767,18 @@ let RIL = {
    *        String containing the processId for the SmsRequestManager.
    */
   sendSMS: function sendSMS(options) {
-    //TODO: verify values on 'options'
+    options.langIndex = options.langIndex || PDU_NL_IDENTIFIER_DEFAULT;
+    options.langShiftIndex = options.langShiftIndex || PDU_NL_IDENTIFIER_DEFAULT;
 
     if (!options.retryCount) {
       options.retryCount = 0;
     }
 
-    if (options.segmentMaxSeq > 1) {
-      if (!options.segmentSeq) {
-        // Fist segment to send
-        options.segmentSeq = 1;
-        options.body = options.segments[0].body;
-        options.encodedBodyLength = options.segments[0].encodedBodyLength;
-      }
-    } else {
-      options.body = options.fullBody;
-      options.encodedBodyLength = options.encodedFullBodyLength;
+    if (!options.segmentSeq) {
+      // Fist segment to send
+      options.segmentSeq = 1;
+      options.body = options.segments[0].body;
+      options.encodedBodyLength = options.segments[0].encodedBodyLength;
     }
 
     Buf.newParcel(REQUEST_SEND_SMS, options);
@@ -3118,11 +3349,14 @@ let RIL = {
    * Send STK terminal response.
    *
    * @param command
+   * @param deviceIdentities
    * @param resultCode
    * @param [optional] itemIdentifier
    * @param [optional] input
    * @param [optional] isYesNo
    * @param [optional] hasConfirmed
+   * @param [optional] localInfo
+   * @param [optional] timer
    */
   sendStkTerminalResponse: function sendStkTerminalResponse(response) {
     if (response.hasConfirmed !== undefined) {
@@ -3148,12 +3382,32 @@ let RIL = {
       }
     }
 
+    let berLen = TLV_COMMAND_DETAILS_SIZE +
+                 TLV_DEVICE_ID_SIZE +
+                 TLV_RESULT_SIZE +
+                 (response.itemIdentifier ? TLV_ITEM_ID_SIZE : 0) +
+                 (textLen ? textLen + 3 : 0);
+
+    if (response.localInfo) {
+      let localInfo = response.localInfo;
+      berLen += ((localInfo.locationInfo ?
+                 (localInfo.locationInfo.gsmCellId > 0xffff ?
+                   TLV_LOCATION_INFO_UMTS_SIZE :
+                   TLV_LOCATION_INFO_GSM_SIZE) :
+                  0) +
+                 (localInfo.imei ? TLV_IMEI_SIZE : 0) +
+                 (localInfo.date ? TLV_DATE_TIME_ZONE_SIZE : 0) +
+                 (localInfo.language ? TLV_LANGUAGE_SIZE : 0));
+    }
+
+    if (response.timer) {
+      let timer = response.timer;
+      berLen += TLV_TIMER_IDENTIFIER +
+                (timer.timerValue ? TLV_TIMER_VALUE : 0);
+    }
+
     // 1 octets = 2 chars.
-    let size = (TLV_COMMAND_DETAILS_SIZE +
-                TLV_DEVICE_ID_SIZE +
-                TLV_RESULT_SIZE +
-                (response.itemIdentifier ? TLV_ITEM_ID_SIZE : 0) +
-                (textLen ? textLen + 3 : 0)) * 2;
+    let size = berLen * 2;
     Buf.writeUint32(size);
 
     // Command Details
@@ -3238,6 +3492,55 @@ let RIL = {
       }
     }
 
+    // Local Information
+    if (response.localInfo) {
+      let localInfo = response.localInfo;
+
+      // Location Infomation
+      if (localInfo.locationInfo) {
+        ComprehensionTlvHelper.writeLocationInfoTlv(localInfo.locationInfo);
+      }
+
+      // IMEI
+      if (localInfo.imei) {
+        let imei = localInfo.imei;
+        if(imei.length == 15) {
+          imei = imei + "0";
+        }
+
+        GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_IMEI);
+        GsmPDUHelper.writeHexOctet(8);
+        for (let i = 0; i < imei.length / 2; i++) {
+          GsmPDUHelper.writeHexOctet(parseInt(imei.substr(i * 2, 2), 16));
+        }
+      }
+
+      // Date and Time Zone
+      if (localInfo.date) {
+        ComprehensionTlvHelper.writeDateTimeZoneTlv(localInfo.date);
+      }
+
+      // Language
+      if (localInfo.language) {
+        ComprehensionTlvHelper.writeLanguageTlv(localInfo.language);
+      }
+    }
+
+    // Timer
+    if (response.timer) {
+      let timer = response.timer;
+
+      if (timer.timerId) {
+        GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER);
+        GsmPDUHelper.writeHexOctet(1);
+        GsmPDUHelper.writeHexOctet(timer.timerId);
+      }
+
+      if (timer.timerValue) {
+        ComprehensionTlvHelper.writeTimerValueTlv(timer.timerValue, false);
+      }
+    }
+
     Buf.writeUint32(0);
     Buf.sendParcel();
   },
@@ -3254,6 +3557,22 @@ let RIL = {
       sourceId :STK_DEVICE_ID_KEYPAD,
       destinationId: STK_DEVICE_ID_SIM
     };
+    this.sendICCEnvelopeCommand(command);
+  },
+
+  /**
+   * Send STK Envelope(Timer Expiration) command.
+   *
+   * @param timer
+   */
+  sendStkTimerExpiration: function sendStkTimerExpiration(command) {
+    command.tag = BER_TIMER_EXPIRATION_TAG;
+    command.deviceId = {
+      sourceId: STK_DEVICE_ID_ME,
+      destinationId: STK_DEVICE_ID_SIM
+    };
+    command.timerId = command.timer.timerId;
+    command.timerValue = command.timer.timerValue;
     this.sendICCEnvelopeCommand(command);
   },
 
@@ -3311,6 +3630,8 @@ let RIL = {
    * @param [optional] address
    * @param [optional] transactionId
    * @param [optional] cause
+   * @param [optional] timerId
+   * @param [optional] timerValue
    */
   sendICCEnvelopeCommand: function sendICCEnvelopeCommand(options) {
     if (DEBUG) {
@@ -3334,7 +3655,9 @@ let RIL = {
                     Math.ceil(options.address.length/2) + 1) + // Length of length field.
                   Math.ceil(options.address.length/2) + 1 // address BCD + TON.
                   : 0) +
-                 (options.cause ? 4 : 0);
+                 (options.cause ? 4 : 0) +
+                 (options.timerId ? TLV_TIMER_IDENTIFIER : 0) +
+                 (options.timerValue ? TLV_TIMER_VALUE : 0);
     let size = (2 + berLen) * 2;
 
     Buf.writeUint32(size);
@@ -3409,6 +3732,19 @@ let RIL = {
     // Cause of disconnection.
     if (options.cause) {
       ComprehensionTlvHelper.writeCauseTlv(options.cause);
+    }
+
+    // Timer Identifier
+    if (options.timerId) {
+        GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER |
+                                   COMPREHENSIONTLV_FLAG_CR);
+        GsmPDUHelper.writeHexOctet(1);
+        GsmPDUHelper.writeHexOctet(options.timerId);
+    }
+
+    // Timer Value
+    if (options.timerValue) {
+        ComprehensionTlvHelper.writeTimerValueTlv(options.timerValue, true);
     }
 
     Buf.writeUint32(0);
@@ -3568,6 +3904,7 @@ let RIL = {
           case ICC_EF_MBDN:
           case ICC_EF_PLMNsel:
           case ICC_EF_SPN:
+          case ICC_EF_SPDI:
           case ICC_EF_SST:
           case ICC_EF_CBMI:
           case ICC_EF_CBMIR:
@@ -3584,6 +3921,8 @@ let RIL = {
           case ICC_EF_SPDI:
           case ICC_EF_CBMI:
           case ICC_EF_CBMIR:
+          case ICC_EF_OPL:
+          case ICC_EF_PNN:
             return EF_PATH_MF_SIM + EF_PATH_ADF_USIM;
 
           default:
@@ -3909,8 +4248,15 @@ let RIL = {
         this.operator.shortName !== shortName ||
         thisTuple !== networkTuple) {
 
-      this.operator.longName = longName;
-      this.operator.shortName = shortName;
+      let networkName = this.updateNetworkName();
+      if (networkName) {
+        this.operator.longName = networkName[0];
+        this.operator.shortName = networkName[1];
+      } else {
+        this.operator.longName = longName;
+        this.operator.shortName = shortName;
+      }
+
       this.operator.mcc = 0;
       this.operator.mnc = 0;
 
@@ -3953,6 +4299,9 @@ let RIL = {
         // Call is still valid.
         if (newCall.state != currentCall.state) {
           // State has changed.
+          if (!currentCall.started && newCall.state == CALL_STATE_ACTIVE) {
+            currentCall.started = new Date().getTime();
+          }
           currentCall.state = newCall.state;
           this._handleChangedCallState(currentCall);
         }
@@ -3972,6 +4321,11 @@ let RIL = {
             newCall.toa == TOA_INTERNATIONAL &&
             newCall.number[0] != "+") {
           newCall.number = "+" + newCall.number;
+        }
+        if (newCall.state == CALL_STATE_INCOMING) {
+          newCall.direction = 'incoming';
+        } else if (newCall.state == CALL_STATE_DIALING) {
+          newCall.direction = 'outgoing';
         }
         // Add to our map.
         this.currentCalls[newCall.callIndex] = newCall;
@@ -4963,12 +5317,17 @@ let RIL = {
            " commandQualifier = " + cmdDetails.commandQualifier);
     }
 
-    let param = StkCommandParamsFactory.createParam(cmdDetails, ctlvs);
-    if (param) {
-      cmdDetails.rilMessageType = "stkcommand";
-      cmdDetails.options = param;
-      RIL.sendDOMMessage(cmdDetails);
+    // STK_CMD_MORE_TIME need not to propagate event to DOM.
+    if (cmdDetails.typeOfCommand == STK_CMD_MORE_TIME) {
+      RIL.sendStkTerminalResponse({
+        command: cmdDetails,
+        resultCode: STK_RESULT_OK});
+      return;
     }
+
+    cmdDetails.rilMessageType = "stkcommand";
+    cmdDetails.options = StkCommandParamsFactory.createParam(cmdDetails, ctlvs);
+    RIL.sendDOMMessage(cmdDetails);
   },
 
   /**
@@ -5911,7 +6270,7 @@ RIL[UNSOLICITED_NITZ_TIME_RECEIVED] = function UNSOLICITED_NITZ_TIME_RECEIVED() 
   debug("DateTimeZone string " + dateString);
 
   let now = Date.now();
-	
+
   let year = parseInt(dateString.substr(0, 2), 10);
   let month = parseInt(dateString.substr(3, 2), 10);
   let day = parseInt(dateString.substr(6, 2), 10);
@@ -6121,6 +6480,20 @@ let GsmPDUHelper = {
   },
 
   /**
+   * Convert a BCD number to an octet (number)
+   *
+   * Only take two digits with absolute value.
+   *
+   * @param bcd
+   *
+   * @return the corresponding octet.
+   */
+  BCDToOctet: function BCDToOctet(bcd) {
+    bcd = Math.abs(bcd);
+    return ((bcd % 10) << 4) + (Math.floor(bcd / 10) % 10);
+  },
+
+  /**
    * Convert a semi-octet (number) to a GSM BCD char.
    */
   bcdChars: "0123456789*#,;",
@@ -6197,6 +6570,24 @@ let GsmPDUHelper = {
     data = data.toString();
     if (data.length % 2) {
       data += "F";
+    }
+    for (let i = 0; i < data.length; i += 2) {
+      Buf.writeUint16(data.charCodeAt(i + 1));
+      Buf.writeUint16(data.charCodeAt(i));
+    }
+  },
+
+  /**
+   * Write numerical data as swapped nibble BCD.
+   * If the number of digit of data is even, add '0' at the beginning.
+   *
+   * @param data
+   *        Data to write (as a string or a number)
+   */
+  writeSwappedNibbleBCDNum: function writeSwappedNibbleBCDNum(data) {
+    data = data.toString();
+    if (data.length % 2) {
+      data = "0" + data;
     }
     for (let i = 0; i < data.length; i += 2) {
       Buf.writeUint16(data.charCodeAt(i + 1));
@@ -6309,7 +6700,7 @@ let GsmPDUHelper = {
     return ret;
   },
 
-  writeStringAsSeptets: function writeStringAsSeptets(message, paddingBits, langIndex, langShiftIndex, strict7BitEncoding) {
+  writeStringAsSeptets: function writeStringAsSeptets(message, paddingBits, langIndex, langShiftIndex) {
     const langTable = PDU_NL_LOCKING_SHIFT_TABLES[langIndex];
     const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[langShiftIndex];
 
@@ -6317,10 +6708,6 @@ let GsmPDUHelper = {
     let data = 0;
     for (let i = 0; i < message.length; i++) {
       let c = message.charAt(i);
-      if (strict7BitEncoding) {
-        c = GSM_SMS_STRICT_7BIT_CHARMAP[c] || c;
-      }
-
       let septet = langTable.indexOf(c);
       if (septet == PDU_NL_EXTENDED_ESCAPE) {
         continue;
@@ -6730,16 +7117,18 @@ let GsmPDUHelper = {
       this.writeHexOctet(options.segmentSeq & 0xFF);
     }
 
-    if (options.langIndex != PDU_NL_IDENTIFIER_DEFAULT) {
-      this.writeHexOctet(PDU_IEI_NATIONAL_LANGUAGE_LOCKING_SHIFT);
-      this.writeHexOctet(1);
-      this.writeHexOctet(options.langIndex);
-    }
+    if (options.dcs == PDU_DCS_MSG_CODING_7BITS_ALPHABET) {
+      if (options.langIndex != PDU_NL_IDENTIFIER_DEFAULT) {
+        this.writeHexOctet(PDU_IEI_NATIONAL_LANGUAGE_LOCKING_SHIFT);
+        this.writeHexOctet(1);
+        this.writeHexOctet(options.langIndex);
+      }
 
-    if (options.langShiftIndex != PDU_NL_IDENTIFIER_DEFAULT) {
-      this.writeHexOctet(PDU_IEI_NATIONAL_LANGUAGE_SINGLE_SHIFT);
-      this.writeHexOctet(1);
-      this.writeHexOctet(options.langShiftIndex);
+      if (options.langShiftIndex != PDU_NL_IDENTIFIER_DEFAULT) {
+        this.writeHexOctet(PDU_IEI_NATIONAL_LANGUAGE_SINGLE_SHIFT);
+        this.writeHexOctet(1);
+        this.writeHexOctet(options.langShiftIndex);
+      }
     }
   },
 
@@ -7029,6 +7418,43 @@ let GsmPDUHelper = {
   },
 
   /**
+   * Write GSM TP-Service-Centre-Time-Stamp(TP-SCTS).
+   *
+   * @see 3GPP TS 23.040 9.2.3.11
+   */
+  writeTimestamp: function writeTimestamp(date) {
+    this.writeSwappedNibbleBCDNum(date.getFullYear() - PDU_TIMESTAMP_YEAR_OFFSET);
+
+    // The value returned by getMonth() is an integer between 0 and 11.
+    // 0 is corresponds to January, 1 to February, and so on.
+    this.writeSwappedNibbleBCDNum(date.getMonth() + 1);
+    this.writeSwappedNibbleBCDNum(date.getDate());
+    this.writeSwappedNibbleBCDNum(date.getHours());
+    this.writeSwappedNibbleBCDNum(date.getMinutes());
+    this.writeSwappedNibbleBCDNum(date.getSeconds());
+
+    // the value returned by getTimezoneOffset() is the difference,
+    // in minutes, between UTC and local time.
+    // For example, if your time zone is UTC+10 (Australian Eastern Standard Time),
+    // -600 will be returned.
+    // In TS 23.040 9.2.3.11, the Time Zone field of TP-SCTS indicates
+    // the different between the local time and GMT.
+    // And expressed in quarters of an hours. (so need to divid by 15)
+    let zone = date.getTimezoneOffset() / 15;
+    let octet = this.BCDToOctet(zone);
+
+    // the bit3 of the Time Zone field represents the algebraic sign.
+    // (0: positive, 1: negative).
+    // For example, if the time zone is -0800 GMT,
+    // 480 will be returned by getTimezoneOffset().
+    // In this case, need to mark sign bit as 1. => 0x08
+    if (zone > 0) {
+      octet = octet | 0x08;
+    }
+    this.writeHexOctet(octet);
+  },
+
+  /**
    * User data can be 7 bit (default alphabet) data, 8 bit data, or 16 bit
    * (UCS2) data.
    *
@@ -7282,7 +7708,6 @@ let GsmPDUHelper = {
     let encodedBodyLength = options.encodedBodyLength;
     let langIndex = options.langIndex;
     let langShiftIndex = options.langShiftIndex;
-    let strict7BitEncoding = options.strict7BitEncoding;
 
     // SMS-SUBMIT Format:
     //
@@ -7405,8 +7830,7 @@ let GsmPDUHelper = {
 
     switch (dcs) {
       case PDU_DCS_MSG_CODING_7BITS_ALPHABET:
-        this.writeStringAsSeptets(body, paddingBits, langIndex, langShiftIndex,
-                                  strict7BitEncoding);
+        this.writeStringAsSeptets(body, paddingBits, langIndex, langShiftIndex);
         break;
       case PDU_DCS_MSG_CODING_8BITS_ALPHABET:
         // Unsupported.
@@ -7720,6 +8144,60 @@ let GsmPDUHelper = {
 
     return msg;
   },
+
+  /**
+   * Read network name.
+   *
+   * @param len Length of the information element.
+   * @return
+   *   {
+   *     networkName: network name.
+   *     shouldIncludeCi: Should Country's initials included in text string.
+   *   }
+   * @see TS 24.008 clause 10.5.3.5a.
+   */
+  readNetworkName: function readNetworkName(len) {
+    // According to TS 24.008 Sec. 10.5.3.5a, the first octet is:
+    // bit 8: must be 1.
+    // bit 5-7: Text encoding.
+    //          000 - GSM default alphabet.
+    //          001 - UCS2 (16 bit).
+    //          else - reserved.
+    // bit 4: MS should add the letters for Country's Initials and a space
+    //        to the text string if this bit is true.
+    // bit 1-3: number of spare bits in last octet.
+
+    let codingInfo = GsmPDUHelper.readHexOctet();
+    if (!(codingInfo & 0x80)) {
+      return null;
+    }
+
+    let textEncoding = (codingInfo & 0x70) >> 4,
+        shouldIncludeCountryInitials = !!(codingInfo & 0x08),
+        spareBits = codingInfo & 0x07;
+    let resultString;
+
+    switch (textEncoding) {
+    case 0:
+      // GSM Default alphabet.
+      resultString = GsmPDUHelper.readSeptetsToString(
+        ((len - 1) * 8 - spareBits) / 7, 0,
+        PDU_NL_IDENTIFIER_DEFAULT,
+        PDU_NL_IDENTIFIER_DEFAULT);
+      break;
+    case 1:
+      // UCS2 encoded.
+      resultString = this.readUCS2String(len - 1);
+      break;
+    default:
+      // Not an available text coding.
+      return null;
+    }
+
+    // TODO - Bug 820286: According to shouldIncludeCountryInitials, add
+    // country initials to the resulting string.
+    return resultString;
+  }
 };
 
 let StkCommandParamsFactory = {
@@ -7729,14 +8207,14 @@ let StkCommandParamsFactory = {
       case STK_CMD_REFRESH:
         param = this.processRefresh(cmdDetails, ctlvs);
         break;
-      case STK_CMD_MORE_TIME:
-        param = this.processMoreTime(cmdDetails, ctlvs);
-        break;
       case STK_CMD_POLL_INTERVAL:
         param = this.processPollInterval(cmdDetails, ctlvs);
         break;
       case STK_CMD_POLL_OFF:
         param = this.processPollOff(cmdDetails, ctlvs);
+        break;
+      case STK_CMD_PROVIDE_LOCAL_INFO:
+        param = this.processProvideLocalInfo(cmdDetails, ctlvs);
         break;
       case STK_CMD_SET_UP_EVENT_LIST:
         param = this.processSetUpEventList(cmdDetails, ctlvs);
@@ -7772,6 +8250,9 @@ let StkCommandParamsFactory = {
       case STK_CMD_PLAY_TONE:
         param = this.processPlayTone(cmdDetails, ctlvs);
         break;
+      case STK_CMD_TIMER_MANAGEMENT:
+        param = this.processTimerManagement(cmdDetails, ctlvs);
+        break;
       default:
         debug("unknown proactive command");
         break;
@@ -7793,7 +8274,7 @@ let StkCommandParamsFactory = {
       case STK_REFRESH_FILE_CHANGE:
       case STK_REFRESH_NAA_INIT_AND_FILE_CHANGE:
         let ctlv = StkProactiveCmdHelper.searchForTag(
-          COMPREHENSIONTLV_FILE_LIST, ctlvs);
+          COMPREHENSIONTLV_TAG_FILE_LIST, ctlvs);
         if (ctlv) {
           let list = ctlv.value.fileList;
           if (DEBUG) {
@@ -7803,21 +8284,6 @@ let StkCommandParamsFactory = {
         }
         break;
     }
-    return {};
-  },
-
-  /**
-   * Construct a param for MORE TIME.
-   *
-   * @param cmdDetails
-   *        The value object of CommandDetails TLV.
-   * @param ctlvs
-   *        The all TLVs in this proactive command.
-   */
-  processMoreTime: function processMoreTime(cmdDetails, ctlvs) {
-    RIL.sendStkTerminalResponse({
-      command: cmdDetails,
-      resultCode: STK_RESULT_OK});
     return null;
   },
 
@@ -7851,7 +8317,7 @@ let StkCommandParamsFactory = {
    *        The all TLVs in this proactive command.
    */
   processPollOff: function processPollOff(cmdDetails, ctlvs) {
-    return {};
+    return null;
   },
 
   /**
@@ -8145,6 +8611,41 @@ let StkCommandParamsFactory = {
     playTone.isVibrate = (cmdDetails.commandQualifier & 0x01) != 0x00;
 
     return playTone;
+  },
+
+  /**
+   * Construct a param for Provide Local Information
+   *
+   * @param cmdDetails
+   *        The value object of CommandDetails TLV.
+   * @param ctlvs
+   *        The all TLVs in this proactive command.
+   */
+  processProvideLocalInfo: function processProvideLocalInfo(cmdDetails, ctlvs) {
+    let provideLocalInfo = {
+      localInfoType: cmdDetails.commandQualifier
+    };
+    return provideLocalInfo;
+  },
+
+  processTimerManagement: function processTimerManagement(cmdDetails, ctlvs) {
+    let timer = {
+      timerAction: cmdDetails.commandQualifier
+    };
+
+    let ctlv = StkProactiveCmdHelper.searchForTag(
+        COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER, ctlvs);
+    if (ctlv) {
+      timer.timerId = ctlv.value.timerId;
+    }
+
+    ctlv = StkProactiveCmdHelper.searchForTag(
+        COMPREHENSIONTLV_TAG_TIMER_VALUE, ctlvs);
+    if (ctlv) {
+      timer.timerValue = ctlv.value.timerValue;
+    }
+
+    return timer;
   }
 };
 
@@ -8177,6 +8678,10 @@ let StkProactiveCmdHelper = {
         return this.retrieveDefaultText(length);
       case COMPREHENSIONTLV_TAG_EVENT_LIST:
         return this.retrieveEventList(length);
+      case COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER:
+        return this.retrieveTimerId(length);
+      case COMPREHENSIONTLV_TAG_TIMER_VALUE:
+        return this.retrieveTimerValue(length);
       case COMPREHENSIONTLV_TAG_IMMEDIATE_RESPONSE:
         return this.retrieveImmediaResponse(length);
       case COMPREHENSIONTLV_TAG_URL:
@@ -8335,6 +8840,13 @@ let StkProactiveCmdHelper = {
    * | (Y-1)+X+2    |                        |        |
    */
   retrieveItem: function retrieveItem(length) {
+    // TS 102.223 ,clause 6.6.7 SET-UP MENU
+    // If the "Item data object for item 1" is a null data object
+    // (i.e. length = '00' and no value part), this is an indication to the ME
+    // to remove the existing menu from the menu system in the ME.
+    if (!length) {
+      return null;
+    }
     let item = {
       identifier: GsmPDUHelper.readHexOctet(),
       text: GsmPDUHelper.readAlphaIdentifier(length - 1)
@@ -8424,6 +8936,40 @@ let StkProactiveCmdHelper = {
     return {
       eventList: eventList
     };
+  },
+
+  /**
+   * Timer Identifier.
+   *
+   * | Byte  | Description          | Length |
+   * |  1    | Timer Identifier Tag |   1    |
+   * |  2    | Length = 01          |   1    |
+   * |  3    | Timer Identifier     |   1    |
+   */
+  retrieveTimerId: function retrieveTimerId(length) {
+    let id = {
+      timerId: GsmPDUHelper.readHexOctet()
+    };
+    return id;
+  },
+
+  /**
+   * Timer Value.
+   *
+   * | Byte  | Description          | Length |
+   * |  1    | Timer Value Tag      |   1    |
+   * |  2    | Length = 03          |   1    |
+   * |  3    | Hour                 |   1    |
+   * |  4    | Minute               |   1    |
+   * |  5    | Second               |   1    |
+   */
+  retrieveTimerValue: function retrieveTimerValue(length) {
+    let value = {
+      timerValue: (GsmPDUHelper.readSwappedNibbleBcdNum(1) * 60 * 60) +
+                  (GsmPDUHelper.readSwappedNibbleBcdNum(1) * 60) +
+                  (GsmPDUHelper.readSwappedNibbleBcdNum(1))
+    };
+    return value;
   },
 
   /**
@@ -8662,6 +9208,44 @@ let ComprehensionTlvHelper = {
     // | Ext = 1 (1 bit) |          Cause (7 bits)          |
     // +-----------------+----------------------------------+
     GsmPDUHelper.writeHexOctet(0x80 | cause);
+  },
+
+  writeDateTimeZoneTlv: function writeDataTimeZoneTlv(date) {
+    GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_DATE_TIME_ZONE);
+    GsmPDUHelper.writeHexOctet(7);
+    GsmPDUHelper.writeTimestamp(date);
+  },
+
+  writeLanguageTlv: function writeLanguageTlv(language) {
+    GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_LANGUAGE);
+    GsmPDUHelper.writeHexOctet(2);
+
+    // ISO 639-1, Alpha-2 code
+    // TS 123.038, clause 6.2.1, GSM 7 bit Default Alphabet
+    GsmPDUHelper.writeHexOctet(
+      PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT].indexOf(language[0]));
+    GsmPDUHelper.writeHexOctet(
+      PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT].indexOf(language[1]));
+  },
+
+  /**
+   * Write Timer Value Comprehension TLV.
+   *
+   * @param seconds length of time during of the timer.
+   * @param cr Comprehension Required or not
+   */
+  writeTimerValueTlv: function writeTimerValueTlv(seconds, cr) {
+    GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_TIMER_VALUE |
+                               (cr ? COMPREHENSIONTLV_FLAG_CR : 0));
+    GsmPDUHelper.writeHexOctet(3);
+
+    // TS 102.223, clause 8.38
+    // +----------------+------------------+-------------------+
+    // | hours (1 byte) | minutes (1 btye) | secounds (1 byte) |
+    // +----------------+------------------+-------------------+
+    GsmPDUHelper.writeSwappedNibbleBCDNum(Math.floor(seconds / 60 / 60));
+    GsmPDUHelper.writeSwappedNibbleBCDNum(Math.floor(seconds / 60) % 60);
+    GsmPDUHelper.writeSwappedNibbleBCDNum(seconds % 60);
   },
 
   getSizeOfLengthOctets: function getSizeOfLengthOctets(length) {

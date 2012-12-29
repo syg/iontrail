@@ -22,6 +22,7 @@
 #include "nsITimer.h"
 
 #include "mozilla/dom/file/FileService.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/dom/TabContext.h"
 #include "mozilla/LazyIdleThread.h"
 #include "mozilla/Preferences.h"
@@ -36,17 +37,16 @@
 #include "nsThreadUtils.h"
 #include "nsXPCOM.h"
 #include "nsXPCOMPrivate.h"
-#include "test_quota.h"
-#include "xpcpublic.h"
 
 #include "AsyncConnectionHelper.h"
-#include "CheckQuotaHelper.h"
 #include "IDBDatabase.h"
 #include "IDBEvents.h"
 #include "IDBFactory.h"
 #include "IDBKeyRange.h"
 #include "OpenDatabaseHelper.h"
 #include "TransactionThreadPool.h"
+
+#include "IndexedDatabaseInlines.h"
 
 // The amount of time, in milliseconds, that our IO thread will stay alive
 // after the last event it processes.
@@ -70,6 +70,7 @@ using namespace mozilla::services;
 using namespace mozilla::dom;
 using mozilla::Preferences;
 using mozilla::dom::file::FileService;
+using mozilla::dom::quota::QuotaManager;
 
 static NS_DEFINE_CID(kDOMSOF_CID, NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
 
@@ -102,29 +103,6 @@ GetDatabaseBaseFilename(const nsAString& aFilename,
 
   return true;
 }
-
-class QuotaCallback MOZ_FINAL : public mozIStorageQuotaCallback
-{
-public:
-  NS_DECL_ISUPPORTS
-
-  NS_IMETHOD
-  QuotaExceeded(const nsACString& aFilename,
-                int64_t aCurrentSizeLimit,
-                int64_t aCurrentTotalSize,
-                nsISupports* aUserData,
-                int64_t* _retval)
-  {
-    if (IndexedDatabaseManager::QuotaIsLifted()) {
-      *_retval = 0;
-      return NS_OK;
-    }
-
-    return NS_ERROR_FAILURE;
-  }
-};
-
-NS_IMPL_THREADSAFE_ISUPPORTS1(QuotaCallback, mozIStorageQuotaCallback)
 
 // Adds all databases in the hash to the given array.
 template <class T>
@@ -366,9 +344,7 @@ GetASCIIOriginFromPrincipal(nsIPrincipal* aPrincipal,
 } // anonymous namespace
 
 IndexedDatabaseManager::IndexedDatabaseManager()
-: mCurrentWindowIndex(BAD_TLS_INDEX),
-  mQuotaHelperMutex("IndexedDatabaseManager.mQuotaHelperMutex"),
-  mFileMutex("IndexedDatabaseManager.mFileMutex")
+: mFileMutex("IndexedDatabaseManager.mFileMutex")
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   NS_ASSERTION(!gInstance, "More than one instance!");
@@ -402,18 +378,7 @@ IndexedDatabaseManager::GetOrCreate()
     instance = new IndexedDatabaseManager();
 
     instance->mLiveDatabases.Init();
-    instance->mQuotaHelperHash.Init();
     instance->mFileManagers.Init();
-
-    // We need a thread-local to hold the current window.
-    NS_ASSERTION(instance->mCurrentWindowIndex == BAD_TLS_INDEX, "Huh?");
-
-    if (PR_NewThreadPrivateIndex(&instance->mCurrentWindowIndex, nullptr) !=
-        PR_SUCCESS) {
-      NS_ERROR("PR_NewThreadPrivateIndex failed, IndexedDB disabled");
-      instance->mCurrentWindowIndex = BAD_TLS_INDEX;
-      return nullptr;
-    }
 
     nsresult rv;
 
@@ -440,14 +405,14 @@ IndexedDatabaseManager::GetOrCreate()
                            NS_LITERAL_CSTRING("IndexedDB I/O"),
                            LazyIdleThread::ManualShutdown);
 
-      // We need one quota callback object to hand to SQLite.
-      instance->mQuotaCallbackSingleton = new QuotaCallback();
-
       // Make a timer here to avoid potential failures later. We don't actually
       // initialize the timer until shutdown.
       instance->mShutdownTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
       NS_ENSURE_TRUE(instance->mShutdownTimer, nullptr);
     }
+
+    // Make sure that the quota manager is up.
+    NS_ENSURE_TRUE(QuotaManager::GetOrCreate(), nullptr);
 
     nsCOMPtr<nsIObserverService> obs = GetObserverService();
     NS_ENSURE_TRUE(obs, nullptr);
@@ -932,25 +897,6 @@ IndexedDatabaseManager::OnDatabaseClosed(IDBDatabase* aDatabase)
   }
 }
 
-void
-IndexedDatabaseManager::SetCurrentWindowInternal(nsPIDOMWindow* aWindow)
-{
-  if (aWindow) {
-#ifdef DEBUG
-    NS_ASSERTION(!PR_GetThreadPrivate(mCurrentWindowIndex),
-                 "Somebody forgot to clear the current window!");
-#endif
-    PR_SetThreadPrivate(mCurrentWindowIndex, aWindow);
-  }
-  else {
-    // We cannot assert PR_GetThreadPrivate(mCurrentWindowIndex) here
-    // because we cannot distinguish between the thread private became
-    // null and that it was set to null on the first place, 
-    // because we didn't have a window.
-    PR_SetThreadPrivate(mCurrentWindowIndex, nullptr);
-  }
-}
-
 // static
 uint32_t
 IndexedDatabaseManager::GetIndexedDBQuotaMB()
@@ -996,36 +942,14 @@ IndexedDatabaseManager::EnsureOriginIsInitialized(const nsACString& aOrigin,
     return NS_OK;
   }
 
-  // First figure out the filename pattern we'll use.
-  nsCOMPtr<nsIFile> patternFile;
-  rv = directory->Clone(getter_AddRefs(patternFile));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = patternFile->Append(NS_LITERAL_STRING("*"));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsString pattern;
-  rv = patternFile->GetPath(pattern);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Now tell SQLite to start tracking this pattern for content.
-  nsCOMPtr<mozIStorageServiceQuotaManagement> ss =
-    do_GetService(MOZ_STORAGE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(ss, NS_ERROR_FAILURE);
-
-  if (aPrivilege != Chrome) {
-    rv = ss->SetQuotaForFilenamePattern(NS_ConvertUTF16toUTF8(pattern),
-                                        GetIndexedDBQuotaMB() * 1024 * 1024,
-                                        mQuotaCallbackSingleton, nullptr);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
   // We need to see if there are any files in the directory already. If they
   // are database files then we need to cleanup stored files (if it's needed)
-  // and also tell SQLite about all of them.
+  // and also initialize the quota.
 
   nsAutoTArray<nsString, 20> subdirsToProcess;
   nsAutoTArray<nsCOMPtr<nsIFile> , 20> unknownFiles;
+
+  uint64_t usage = 0;
 
   nsTHashtable<nsStringHashKey> validSubdirs;
   validSubdirs.Init(20);
@@ -1068,20 +992,28 @@ IndexedDatabaseManager::EnsureOriginIsInitialized(const nsACString& aOrigin,
       continue;
     }
 
-    nsCOMPtr<nsIFile> fileManagerDirectory;
-    rv = directory->Clone(getter_AddRefs(fileManagerDirectory));
+    nsCOMPtr<nsIFile> fmDirectory;
+    rv = directory->Clone(getter_AddRefs(fmDirectory));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = fileManagerDirectory->Append(dbBaseFilename);
+    rv = fmDirectory->Append(dbBaseFilename);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = FileManager::InitDirectory(ss, fileManagerDirectory, file,
-                                    aPrivilege);
+    rv = FileManager::InitDirectory(fmDirectory, file, aOrigin);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (aPrivilege != Chrome) {
-      rv = ss->UpdateQuotaInformationForFile(file);
+      uint64_t fileUsage;
+      rv = FileManager::GetUsage(fmDirectory, &fileUsage);
       NS_ENSURE_SUCCESS(rv, rv);
+
+      IncrementUsage(&usage, fileUsage);
+
+      int64_t fileSize;
+      rv = file->GetFileSize(&fileSize);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      IncrementUsage(&usage, uint64_t(fileSize));
     }
 
     validSubdirs.PutEntry(dbBaseFilename);
@@ -1117,74 +1049,36 @@ IndexedDatabaseManager::EnsureOriginIsInitialized(const nsACString& aOrigin,
     }
   }
 
+  if (aPrivilege != Chrome) {
+    QuotaManager* quotaManager = QuotaManager::Get();
+    NS_ASSERTION(quotaManager, "Shouldn't be null!");
+
+    quotaManager->InitQuotaForOrigin(aOrigin, GetIndexedDBQuotaMB(), usage);
+  }
+
   mInitializedOrigins.AppendElement(aOrigin);
 
   NS_ADDREF(*aDirectory = directory);
   return NS_OK;
 }
 
-bool
-IndexedDatabaseManager::QuotaIsLiftedInternal()
-{
-  nsPIDOMWindow* window = nullptr;
-  nsRefPtr<CheckQuotaHelper> helper = nullptr;
-  bool createdHelper = false;
-
-  window =
-    static_cast<nsPIDOMWindow*>(PR_GetThreadPrivate(mCurrentWindowIndex));
-
-  // Once IDB is supported outside of Windows this should become an early
-  // return true.
-  NS_ASSERTION(window, "Why don't we have a Window here?");
-
-  // Hold the lock from here on.
-  MutexAutoLock autoLock(mQuotaHelperMutex);
-
-  mQuotaHelperHash.Get(window, getter_AddRefs(helper));
-
-  if (!helper) {
-    helper = new CheckQuotaHelper(window, mQuotaHelperMutex);
-    createdHelper = true;
-
-    mQuotaHelperHash.Put(window, helper);
-
-    // Unlock while calling out to XPCOM
-    {
-      MutexAutoUnlock autoUnlock(mQuotaHelperMutex);
-
-      nsresult rv = NS_DispatchToMainThread(helper);
-      NS_ENSURE_SUCCESS(rv, false);
-    }
-
-    // Relocked.  If any other threads hit the quota limit on the same Window,
-    // they are using the helper we created here and are now blocking in
-    // PromptAndReturnQuotaDisabled.
-  }
-
-  bool result = helper->PromptAndReturnQuotaIsDisabled();
-
-  // If this thread created the helper and added it to the hash, this thread
-  // must remove it.
-  if (createdHelper) {
-    mQuotaHelperHash.Remove(window);
-  }
-
-  return result;
-}
-
 void
-IndexedDatabaseManager::CancelPromptsForWindowInternal(nsPIDOMWindow* aWindow)
+IndexedDatabaseManager::UninitializeOriginsByPattern(
+                                                    const nsACString& aPattern)
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+#ifdef DEBUG
+  {
+    bool correctThread;
+    NS_ASSERTION(NS_SUCCEEDED(mIOThread->IsOnCurrentThread(&correctThread)) &&
+                 correctThread,
+                 "Running on the wrong thread!");
+  }
+#endif
 
-  nsRefPtr<CheckQuotaHelper> helper;
-
-  MutexAutoLock autoLock(mQuotaHelperMutex);
-
-  mQuotaHelperHash.Get(aWindow, getter_AddRefs(helper));
-
-  if (helper) {
-    helper->Cancel();
+  for (int32_t i = mInitializedOrigins.Length() - 1; i >= 0; i--) {
+    if (PatternMatchesOrigin(aPattern, mInitializedOrigins[i])) {
+      mInitializedOrigins.RemoveElementAt(i);
+    }
   }
 }
 
@@ -1250,16 +1144,14 @@ IndexedDatabaseManager::GetFileManager(const nsACString& aOrigin,
 }
 
 void
-IndexedDatabaseManager::AddFileManager(const nsACString& aOrigin,
-                                       const nsAString& aDatabaseName,
-                                       FileManager* aFileManager)
+IndexedDatabaseManager::AddFileManager(FileManager* aFileManager)
 {
   NS_ASSERTION(aFileManager, "Null file manager!");
 
   nsTArray<nsRefPtr<FileManager> >* array;
-  if (!mFileManagers.Get(aOrigin, &array)) {
+  if (!mFileManagers.Get(aFileManager->Origin(), &array)) {
     array = new nsTArray<nsRefPtr<FileManager> >();
-    mFileManagers.Put(aOrigin, array);
+    mFileManagers.Put(aFileManager->Origin(), array);
   }
 
   array->AppendElement(aFileManager);
@@ -1783,6 +1675,13 @@ OriginClearRunnable::DeleteFiles(IndexedDatabaseManager* aManager)
       // correctly...
       NS_ERROR("Failed to remove directory!");
     }
+
+    QuotaManager* quotaManager = QuotaManager::Get();
+    NS_ASSERTION(quotaManager, "Shouldn't be null!");
+
+    quotaManager->RemoveQuotaForPattern(mOriginOrPattern);
+
+    aManager->UninitializeOriginsByPattern(mOriginOrPattern);
   }
 }
 
@@ -1877,19 +1776,6 @@ IndexedDatabaseManager::AsyncUsageRunnable::Cancel()
 {
   if (PR_ATOMIC_SET(&mCanceled, 1)) {
     NS_ERROR("Canceled more than once?!");
-  }
-}
-
-inline void
-IncrementUsage(uint64_t* aUsage, uint64_t aDelta)
-{
-  // Watch for overflow!
-  if ((INT64_MAX - *aUsage) <= aDelta) {
-    NS_WARNING("Database sizes exceed max we can report!");
-    *aUsage = INT64_MAX;
-  }
-  else {
-    *aUsage += aDelta;
   }
 }
 
@@ -2295,25 +2181,22 @@ IndexedDatabaseManager::AsyncDeleteFileRunnable::Run()
   nsCOMPtr<nsIFile> file = mFileManager->GetFileForId(directory, mFileId);
   NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
 
-  nsString filePath;
-  nsresult rv = file->GetPath(filePath);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsresult rv;
+  int64_t fileSize;
 
-  int rc = sqlite3_quota_remove(NS_ConvertUTF16toUTF8(filePath).get());
-  if (rc != SQLITE_OK) {
-    NS_WARNING("Failed to delete stored file!");
-    return NS_ERROR_FAILURE;
+  if (mFileManager->Privilege() != Chrome) {
+    rv = file->GetFileSize(&fileSize);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
   }
 
-  // sqlite3_quota_remove won't actually remove anything if we're not tracking
-  // the quota here. Manually remove the file if it exists.
-  bool exists;
-  rv = file->Exists(&exists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  rv = file->Remove(false);
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
-  if (exists) {
-    rv = file->Remove(false);
-    NS_ENSURE_SUCCESS(rv, rv);
+  if (mFileManager->Privilege() != Chrome) {
+    QuotaManager* quotaManager = QuotaManager::Get();
+    NS_ASSERTION(quotaManager, "Shouldn't be null!");
+
+    quotaManager->DecreaseUsageForOrigin(mFileManager->Origin(), fileSize);
   }
 
   directory = mFileManager->GetJournalDirectory();

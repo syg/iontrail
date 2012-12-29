@@ -622,7 +622,7 @@ this.PlacesUIUtils = {
   openNodeWithEvent:
   function PUIU_openNodeWithEvent(aNode, aEvent, aView) {
     let window = aView.ownerWindow;
-    this._openNodeIn(aNode, window.whereToOpenLink(aEvent), window);
+    this._openNodeIn(aNode, window.whereToOpenLink(aEvent, false, true), window);
   },
 
   /**
@@ -1009,9 +1009,11 @@ XPCOMUtils.defineLazyGetter(PlacesUIUtils, "ellipsis", function() {
                                         Ci.nsIPrefLocalizedString).data;
 });
 
+#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
 XPCOMUtils.defineLazyServiceGetter(PlacesUIUtils, "privateBrowsing",
                                    "@mozilla.org/privatebrowsing;1",
                                    "nsIPrivateBrowsingService");
+#endif
 
 XPCOMUtils.defineLazyServiceGetter(this, "URIFixup",
                                    "@mozilla.org/docshell/urifixup;1",

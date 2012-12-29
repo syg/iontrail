@@ -741,7 +741,7 @@ pref("urlclassifier.gethashtables", "goog-phish-shavar,goog-malware-shavar");
 // If an urlclassifier table has not been updated in this number of seconds,
 // a gethash request will be forced to check that the result is still in
 // the database.
-pref("urlclassifier.confirm-age", 2700);
+pref("urlclassifier.max-complete-age", 2700);
 #endif
 
 pref("browser.geolocation.warning.infoURL", "http://www.mozilla.com/%LOCALE%/firefox/geolocation/");
@@ -862,8 +862,10 @@ pref("security.alternate_certificate_error_page", "certerror");
 // Whether to start the private browsing mode at application startup
 pref("browser.privatebrowsing.autostart", false);
 
+#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
 // Whether we should skip prompting before starting the private browsing mode
 pref("browser.privatebrowsing.dont_prompt_on_enter", false);
+#endif
 
 // Don't try to alter this pref, it'll be reset the next time you use the
 // bookmarking dialog
@@ -1033,7 +1035,6 @@ pref("devtools.debugger.remote-connection-retries", 3);
 pref("devtools.debugger.remote-timeout", 20000);
 
 // The default Debugger UI settings
-pref("devtools.debugger.ui.height", 250);
 pref("devtools.debugger.ui.win-x", 0);
 pref("devtools.debugger.ui.win-y", 0);
 pref("devtools.debugger.ui.win-width", 900);
@@ -1044,6 +1045,9 @@ pref("devtools.debugger.ui.panes-visible-on-startup", false);
 pref("devtools.debugger.ui.variables-sorting-enabled", true);
 pref("devtools.debugger.ui.variables-only-enum-visible", false);
 pref("devtools.debugger.ui.variables-searchbox-visible", false);
+
+// Enable the Profiler
+pref("devtools.profiler.enabled", true);
 
 // Enable the Tilt inspector
 pref("devtools.tilt.enabled", true);
@@ -1163,14 +1167,15 @@ pref("pdfjs.previousHandler.alwaysAskBeforeHandling", false);
 // (This is intentionally on the high side; see bug 746055.)
 pref("image.mem.max_decoded_image_kb", 256000);
 
-// Example social provider
+// Default social providers
 pref("social.manifest.facebook", "{\"origin\":\"https://www.facebook.com\",\"name\":\"Facebook Messenger\",\"workerURL\":\"https://www.facebook.com/desktop/fbdesktop2/socialfox/fbworker.js.php\",\"iconURL\":\"data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8%2F9hAAAAX0lEQVQ4jWP4%2F%2F8%2FAyUYTFhHzjgDxP9JxGeQDSBVMxgTbUBCxer%2Fr999%2BQ8DJBuArJksA9A10s8AXIBoA0B%2BR%2FY%2FjD%2BEwoBoA1yT5v3PbdmCE8MAshhID%2FUMoDgzUYIBj0Cgi7ar4coAAAAASUVORK5CYII%3D\",\"sidebarURL\":\"https://www.facebook.com/desktop/fbdesktop2/?socialfox=true\"}");
+
 // Comma-separated list of nsIURI::prePaths that are allowed to activate
 // built-in social functionality.
 pref("social.activation.whitelist", "https://www.facebook.com");
+
 pref("social.sidebar.open", true);
 pref("social.sidebar.unload_timeout_ms", 10000);
-pref("social.active", false);
 pref("social.toast-notifications.enabled", true);
 
 pref("dom.identity.enabled", false);

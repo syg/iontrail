@@ -55,12 +55,19 @@ struct AllocationIntegrityState
     // debug-builds-only bloat in the size of the involved structures.
 
     struct InstructionInfo {
-        Vector<uint32_t, 2, SystemAllocPolicy> inputs;
-        Vector<uint32_t, 1, SystemAllocPolicy> outputs;
-        InstructionInfo() {}
-        InstructionInfo(const InstructionInfo &o) {
+        Vector<LAllocation, 2, SystemAllocPolicy> inputs;
+        Vector<LDefinition, 0, SystemAllocPolicy> temps;
+        Vector<LDefinition, 1, SystemAllocPolicy> outputs;
+
+        InstructionInfo()
+        { }
+
+        InstructionInfo(const InstructionInfo &o)
+        {
             for (size_t i = 0; i < o.inputs.length(); i++)
                 inputs.append(o.inputs[i]);
+            for (size_t i = 0; i < o.temps.length(); i++)
+                temps.append(o.temps[i]);
             for (size_t i = 0; i < o.outputs.length(); i++)
                 outputs.append(o.outputs[i]);
         }
@@ -114,9 +121,10 @@ struct AllocationIntegrityState
 
     bool checkIntegrity(LBlock *block, LInstruction *ins, uint32_t vreg, LAllocation alloc,
                         bool populateSafepoints);
+    bool checkSafepointAllocation(LInstruction *ins, uint32_t vreg, LAllocation alloc,
+                                  bool populateSafepoints);
     bool addPredecessor(LBlock *block, uint32_t vreg, LAllocation alloc);
 
-    void check(bool cond, const char *msg);
     void dump();
 };
 

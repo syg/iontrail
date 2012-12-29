@@ -17,7 +17,6 @@ MOCHITEST_BROWSER_FILES = \
 	browser_bug646422.js \
 	browser_bug680727.js \
 	browser_colorAnalyzer.js \
-	browser_favicon_privatebrowsing.js \
 	browser_notfound.js \
 	browser_redirect.js \
 	browser_visituri.js \
@@ -34,9 +33,11 @@ MOCHITEST_BROWSER_FILES += \
 	browser_bug248970.js \
 	browser_favicon_setAndFetchFaviconForPage.js \
 	browser_favicon_setAndFetchFaviconForPage_failures.js \
+	browser_visituri_privatebrowsing_perwindowpb.js \
 	$(NULL)
 else
 MOCHITEST_BROWSER_FILES += \
+	browser_favicon_privatebrowsing.js \
 	browser_visituri_privatebrowsing.js \
 	$(NULL)
 endif

@@ -6,6 +6,7 @@
 
 /* A namespace class for static layout utilities. */
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 
@@ -53,7 +54,7 @@
 #include "nsIFormControl.h"
 #include "nsGkAtoms.h"
 #include "imgINotificationObserver.h"
-#include "imgIRequest.h"
+#include "imgRequestProxy.h"
 #include "imgIContainer.h"
 #include "imgLoader.h"
 #include "nsDocShellCID.h"
@@ -122,10 +123,6 @@
 #include "nsILoadContext.h"
 #include "nsTextFragment.h"
 #include "mozilla/Selection.h"
-#include "nsSVGUtils.h"
-#include "nsISVGChildFrame.h"
-#include "nsRenderingContext.h"
-#include "gfxSVGGlyphs.h"
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
@@ -172,6 +169,7 @@
 #include "DecoderTraits.h"
 
 #include "nsWrapperCacheInlines.h"
+#include "nsViewportInfo.h"
 
 extern "C" int MOZ_XMLTranslateEntity(const char* ptr, const char* end,
                                       const char** next, PRUnichar* result);
@@ -243,17 +241,6 @@ nsIFragmentContentSink* nsContentUtils::sXMLFragmentSink = nullptr;
 bool nsContentUtils::sFragmentParsingActive = false;
 
 namespace {
-
-/**
- * Default values for the ViewportInfo structure.
- */
-static const double   kViewportMinScale = 0.0;
-static const double   kViewportMaxScale = 10.0;
-static const uint32_t kViewportMinWidth = 200;
-static const uint32_t kViewportMaxWidth = 10000;
-static const uint32_t kViewportMinHeight = 223;
-static const uint32_t kViewportMaxHeight = 10000;
-static const int32_t  kViewportDefaultScreenWidth = 980;
 
 static const char kJSStackContractID[] = "@mozilla.org/js/xpc/ContextStack;1";
 static NS_DEFINE_CID(kParserServiceCID, NS_PARSERSERVICE_CID);
@@ -1519,7 +1506,7 @@ nsContentUtils::Shutdown()
  */
 // static
 nsresult
-nsContentUtils::CheckSameOrigin(nsINode *aTrustedNode,
+nsContentUtils::CheckSameOrigin(const nsINode *aTrustedNode,
                                 nsIDOMNode *aUnTrustedNode)
 {
   MOZ_ASSERT(aTrustedNode);
@@ -1531,8 +1518,8 @@ nsContentUtils::CheckSameOrigin(nsINode *aTrustedNode,
 }
 
 nsresult
-nsContentUtils::CheckSameOrigin(nsINode* aTrustedNode,
-                                nsINode* unTrustedNode)
+nsContentUtils::CheckSameOrigin(const nsINode* aTrustedNode,
+                                const nsINode* unTrustedNode)
 {
   MOZ_ASSERT(aTrustedNode);
   MOZ_ASSERT(unTrustedNode);
@@ -1755,6 +1742,17 @@ nsContentUtils::IsCallerChrome()
   // If the check failed, look for UniversalXPConnect on the cx compartment.
   return xpc::IsUniversalXPConnectEnabled(GetCurrentJSContext());
 }
+
+bool
+nsContentUtils::IsCallerXBL()
+{
+    JSScript *script;
+    JSContext *cx = GetCurrentJSContext();
+    if (!cx || !JS_DescribeScriptedCaller(cx, &script, nullptr) || !script)
+        return false;
+    return JS_GetScriptUserBit(script);
+}
+
 
 bool
 nsContentUtils::IsImageSrcSetDisabled()
@@ -2678,7 +2676,7 @@ nsresult
 nsContentUtils::LoadImage(nsIURI* aURI, nsIDocument* aLoadingDocument,
                           nsIPrincipal* aLoadingPrincipal, nsIURI* aReferrer,
                           imgINotificationObserver* aObserver, int32_t aLoadFlags,
-                          imgIRequest** aRequest)
+                          imgRequestProxy** aRequest)
 {
   NS_PRECONDITION(aURI, "Must have a URI");
   NS_PRECONDITION(aLoadingDocument, "Must have a document");
@@ -2761,11 +2759,11 @@ nsContentUtils::GetImageFromContent(nsIImageLoadingContent* aContent,
 }
 
 //static
-already_AddRefed<imgIRequest>
-nsContentUtils::GetStaticRequest(imgIRequest* aRequest)
+already_AddRefed<imgRequestProxy>
+nsContentUtils::GetStaticRequest(imgRequestProxy* aRequest)
 {
   NS_ENSURE_TRUE(aRequest, nullptr);
-  nsCOMPtr<imgIRequest> retval;
+  nsRefPtr<imgRequestProxy> retval;
   aRequest->GetStaticRequest(getter_AddRefs(retval));
   return retval.forget();
 }
@@ -3111,7 +3109,8 @@ static const char gPropertiesFiles[nsContentUtils::PropertiesFile_COUNT][56] = {
   "chrome://global/locale/layout/htmlparser.properties",
   "chrome://global/locale/svg/svg.properties",
   "chrome://branding/locale/brand.properties",
-  "chrome://global/locale/commonDialogs.properties"
+  "chrome://global/locale/commonDialogs.properties",
+  "chrome://global/locale/mathml/mathml.properties"
 };
 
 /* static */ nsresult
@@ -3442,8 +3441,7 @@ nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
   rv = event->InitEvent(aEventName, aCanBubble, aCancelable);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = event->SetTrusted(aTrusted);
-  NS_ENSURE_SUCCESS(rv, rv);
+  event->SetTrusted(aTrusted);
 
   rv = event->SetTarget(target);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -3594,27 +3592,10 @@ nsContentUtils::ConvertStringFromCharset(const nsACString& aCharset,
 
   const char* data = flatInput.get();
   aOutput.Truncate();
-  for (;;) {
-    int32_t srcLen = length;
-    int32_t dstLen = outLen;
-    rv = decoder->Convert(data, &srcLen, ustr, &dstLen);
-    // Convert will convert the input partially even if the status
-    // indicates a failure.
-    ustr[dstLen] = 0;
-    aOutput.Append(ustr, dstLen);
-    if (rv != NS_ERROR_ILLEGAL_INPUT) {
-      break;
-    }
-    // Emit a decode error manually because some decoders
-    // do not support kOnError_Recover (bug 638379)
-    if (srcLen == -1) {
-      decoder->Reset();
-    } else {
-      data += srcLen + 1;
-      length -= srcLen + 1;
-      aOutput.Append(static_cast<PRUnichar>(0xFFFD));
-    }
-  }
+  rv = decoder->Convert(data, &length, ustr, &outLen);
+  MOZ_ASSERT(rv != NS_ERROR_ILLEGAL_INPUT);
+  ustr[outLen] = 0;
+  aOutput.Append(ustr, outLen);
 
   nsMemory::Free(ustr);
   return rv;
@@ -4274,15 +4255,16 @@ nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
   nsCOMPtr<nsIPrincipal> principal =
     do_CreateInstance(NS_NULLPRINCIPAL_CONTRACTID);
   nsCOMPtr<nsIDOMDocument> domDocument;
-  nsresult rv = nsContentUtils::CreateDocument(EmptyString(),
-                                               EmptyString(),
-                                               nullptr,
-                                               uri,
-                                               uri,
-                                               principal,
-                                               nullptr,
-                                               DocumentFlavorHTML,
-                                               getter_AddRefs(domDocument));
+  nsresult rv = NS_NewDOMDocument(getter_AddRefs(domDocument),
+                                  EmptyString(),
+                                  EmptyString(),
+                                  nullptr,
+                                  uri,
+                                  uri,
+                                  principal,
+                                  true,
+                                  nullptr,
+                                  DocumentFlavorHTML);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDocument> document = do_QueryInterface(domDocument);
@@ -4299,22 +4281,6 @@ nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
   encoder->SetWrapColumn(aWrapCol);
 
   return encoder->EncodeToString(aResultBuffer);
-}
-
-/* static */
-nsresult
-nsContentUtils::CreateDocument(const nsAString& aNamespaceURI, 
-                               const nsAString& aQualifiedName, 
-                               nsIDOMDocumentType* aDoctype,
-                               nsIURI* aDocumentURI, nsIURI* aBaseURI,
-                               nsIPrincipal* aPrincipal,
-                               nsIScriptGlobalObject* aEventObject,
-                               DocumentFlavor aFlavor,
-                               nsIDOMDocument** aResult)
-{
-  return NS_NewDOMDocument(aResult, aNamespaceURI, aQualifiedName,
-                           aDoctype, aDocumentURI, aBaseURI, aPrincipal,
-                           true, aEventObject, aFlavor);
 }
 
 /* static */
@@ -5062,32 +5028,11 @@ static void ProcessViewportToken(nsIDocument *aDocument,
                          (c == '\t') || (c == '\n') || (c == '\r'))
 
 /* static */
-void
-nsContentUtils::ConstrainViewportValues(ViewportInfo& aViewInfo)
-{
-  // Constrain the min/max zoom as specified at:
-  // dev.w3.org/csswg/css-device-adapt section 6.2
-  aViewInfo.maxZoom = NS_MAX(aViewInfo.minZoom, aViewInfo.maxZoom);
-
-  aViewInfo.defaultZoom = NS_MIN(aViewInfo.defaultZoom, aViewInfo.maxZoom);
-  aViewInfo.defaultZoom = NS_MAX(aViewInfo.defaultZoom, aViewInfo.minZoom);
-}
-
-/* static */
-ViewportInfo
+nsViewportInfo
 nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
                                 uint32_t aDisplayWidth,
                                 uint32_t aDisplayHeight)
 {
-  ViewportInfo ret;
-  ret.defaultZoom = 1.0;
-  ret.autoSize = true;
-  ret.allowZoom = true;
-  ret.width = aDisplayWidth;
-  ret.height = aDisplayHeight;
-  ret.minZoom = kViewportMinScale;
-  ret.maxZoom = kViewportMaxScale;
-
   nsAutoString viewport;
   aDocument->GetHeaderData(nsGkAtoms::viewport, viewport);
   if (viewport.IsEmpty()) {
@@ -5104,7 +5049,7 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
             (docId.Find("Mobile") != -1) ||
             (docId.Find("WML") != -1))
         {
-          nsContentUtils::ConstrainViewportValues(ret);
+          nsViewportInfo ret(aDisplayWidth, aDisplayHeight);
           return ret;
         }
       }
@@ -5113,7 +5058,7 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
     nsAutoString handheldFriendly;
     aDocument->GetHeaderData(nsGkAtoms::handheldFriendly, handheldFriendly);
     if (handheldFriendly.EqualsLiteral("true")) {
-      nsContentUtils::ConstrainViewportValues(ret);
+      nsViewportInfo ret(aDisplayWidth, aDisplayHeight);
       return ret;
     }
   }
@@ -5243,15 +5188,8 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
     allowZoom = false;
   }
 
-  ret.allowZoom = allowZoom;
-  ret.width = width;
-  ret.height = height;
-  ret.defaultZoom = scaleFloat;
-  ret.minZoom = scaleMinFloat;
-  ret.maxZoom = scaleMaxFloat;
-  ret.autoSize = autoSize;
-
-  nsContentUtils::ConstrainViewportValues(ret);
+  nsViewportInfo ret(scaleFloat, scaleMinFloat, scaleMaxFloat, width, height,
+                     autoSize, allowZoom);
   return ret;
 }
 
@@ -5363,7 +5301,7 @@ nsContentUtils::GetDragSession()
 nsresult
 nsContentUtils::SetDataTransferInEvent(nsDragEvent* aDragEvent)
 {
-  if (aDragEvent->dataTransfer || !NS_IS_TRUSTED_EVENT(aDragEvent))
+  if (aDragEvent->dataTransfer || !aDragEvent->mFlags.mIsTrusted)
     return NS_OK;
 
   // For draggesture and dragstart events, the data transfer object is
@@ -6008,35 +5946,10 @@ nsContentTypeParser::GetParameter(const char* aParameterName, nsAString& aResult
 
 /* static */
 
-// If you change this code, change also AllowedToAct() in
-// XPCSystemOnlyWrapper.cpp!
 bool
 nsContentUtils::CanAccessNativeAnon()
 {
-  JSContext* cx = GetCurrentJSContext();
-  if (!cx) {
-    return true;
-  }
-
-  if (IsCallerChrome()) {
-    return true;
-  }
-
-  // Allow any code loaded from chrome://global/ to touch us, even if it was
-  // cloned into a less privileged context.
-  JSScript *script;
-  if (!JS_DescribeScriptedCaller(cx, &script, nullptr) || !script) {
-    return false;
-  }
-  static const char prefix[] = "chrome://global/";
-  const char *filename;
-  if ((filename = JS_GetScriptFilename(cx, script)) &&
-      !strncmp(filename, prefix, ArrayLength(prefix) - 1))
-  {
-    return true;
-  }
-
-  return false;
+  return IsCallerChrome() || IsCallerXBL();
 }
 
 /* static */ nsresult
@@ -6168,7 +6081,7 @@ nsContentUtils::CreateBlobBuffer(JSContext* aCx,
                                  jsval& aBlob)
 {
   uint32_t blobLen = aData.Length();
-  void* blobData = PR_Malloc(blobLen);
+  void* blobData = moz_malloc(blobLen);
   nsCOMPtr<nsIDOMBlob> blob;
   if (blobData) {
     memcpy(blobData, aData.BeginReading(), blobLen);
@@ -6632,6 +6545,17 @@ nsContentUtils::FindInternalContentViewer(const char* aType,
     return docFactory.forget();
   }
 #endif // MOZ_MEDIA_PLUGINS
+
+#ifdef MOZ_WMF
+  if (DecoderTraits::IsWMFSupportedType(nsDependentCString(aType))) {
+    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
+    if (docFactory && aLoaderType) {
+      *aLoaderType = TYPE_CONTENT;
+    }
+    return docFactory.forget();
+  }
+#endif
+
 #endif // MOZ_MEDIA
 
   return NULL;
@@ -6934,60 +6858,6 @@ nsContentUtils::JSArrayToAtomArray(JSContext* aCx, const JS::Value& aJSArray,
     aRetVal.AppendObject(a);
   }
   return NS_OK;
-}
-
-/* static */
-bool
-nsContentUtils::PaintSVGGlyph(Element *aElement, gfxContext *aContext,
-                              gfxFont::DrawMode aDrawMode,
-                              gfxTextObjectPaint *aObjectPaint)
-{
-  nsIFrame *frame = aElement->GetPrimaryFrame();
-  if (!frame) {
-    NS_WARNING("No frame for SVG glyph");
-    return false;
-  }
-
-  nsISVGChildFrame *displayFrame = do_QueryFrame(frame);
-  if (!displayFrame) {
-    NS_WARNING("Non SVG frame for SVG glyph");
-    return false;
-  }
-
-  nsRenderingContext context;
-
-  context.Init(frame->PresContext()->DeviceContext(), aContext);
-  context.AddUserData(&gfxTextObjectPaint::sUserDataKey, aObjectPaint, nullptr);
-
-  nsresult rv = displayFrame->PaintSVG(&context, nullptr);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
-}
-
-/* static */
-bool
-nsContentUtils::GetSVGGlyphExtents(Element *aElement, const gfxMatrix& aSVGToAppSpace,
-                                   gfxRect *aResult)
-{
-  nsIFrame *frame = aElement->GetPrimaryFrame();
-  if (!frame) {
-    NS_WARNING("No frame for SVG glyph");
-    return false;
-  }
-
-  nsISVGChildFrame *displayFrame = do_QueryFrame(frame);
-  if (!displayFrame) {
-    NS_WARNING("Non SVG frame for SVG glyph");
-    return false;
-  }
-
-  *aResult = displayFrame->GetBBoxContribution(aSVGToAppSpace,
-      nsSVGUtils::eBBoxIncludeFill | nsSVGUtils::eBBoxIncludeFillGeometry |
-      nsSVGUtils::eBBoxIncludeStroke | nsSVGUtils::eBBoxIncludeStrokeGeometry |
-      nsSVGUtils::eBBoxIncludeMarkers);
-
-  return true;
 }
 
 // static

@@ -102,6 +102,7 @@ public:
   virtual NS_HIDDEN_(void) CancelAllPendingReflows();
   virtual NS_HIDDEN_(bool) IsSafeToFlush() const;
   virtual NS_HIDDEN_(void) FlushPendingNotifications(mozFlushType aType);
+  virtual NS_HIDDEN_(void) FlushPendingNotifications(mozilla::ChangesToFlush aType);
 
   /**
    * Recreates the frames for a node
@@ -559,7 +560,7 @@ protected:
   public:
     nsDelayedMouseEvent(nsMouseEvent* aEvent) : nsDelayedInputEvent()
     {
-      mEvent = new nsMouseEvent(NS_IS_TRUSTED_EVENT(aEvent),
+      mEvent = new nsMouseEvent(aEvent->mFlags.mIsTrusted,
                                 aEvent->message,
                                 aEvent->widget,
                                 aEvent->reason,
@@ -579,7 +580,7 @@ protected:
   public:
     nsDelayedKeyEvent(nsKeyEvent* aEvent) : nsDelayedInputEvent()
     {
-      mEvent = new nsKeyEvent(NS_IS_TRUSTED_EVENT(aEvent),
+      mEvent = new nsKeyEvent(aEvent->mFlags.mIsTrusted,
                               aEvent->message,
                               aEvent->widget);
       Init(aEvent);

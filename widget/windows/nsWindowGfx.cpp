@@ -163,6 +163,13 @@ EnsureSharedSurfaceSize(gfxIntSize size)
   return (sSharedSurfaceData != nullptr);
 }
 
+nsIWidgetListener* nsWindow::GetPaintListener()
+{
+  if (mDestroyCalled)
+    return nullptr;
+  return mAttachedWidgetListener ? mAttachedWidgetListener : mWidgetListener;
+}
+
 bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 {
   // We never have reentrant paint events, except when we're running our RPC
@@ -205,10 +212,14 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
     return true;
   }
 
-  nsIWidgetListener* listener = mAttachedWidgetListener ? mAttachedWidgetListener : mWidgetListener;
+  nsIWidgetListener* listener = GetPaintListener();
   if (listener) {
     listener->WillPaintWindow(this, true);
   }
+  // Re-get the listener since the will paint notification may have killed it.
+  listener = GetPaintListener();
+  if (!listener)
+    return false;
 
   bool result = true;
   PAINTSTRUCT ps;
@@ -506,7 +517,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 #ifdef MOZ_ENABLE_D3D9_LAYER
       case LAYERS_D3D9:
         {
-          LayerManagerD3D9 *layerManagerD3D9 =
+          nsRefPtr<LayerManagerD3D9> layerManagerD3D9 =
             static_cast<mozilla::layers::LayerManagerD3D9*>(GetLayerManager());
           layerManagerD3D9->SetClippingRegion(region);
           result = listener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
@@ -566,6 +577,8 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 
   mPainting = false;
 
+  // Re-get the listener since painting may have killed it.
+  listener = GetPaintListener();
   if (listener)
     listener->DidPaintWindow();
 

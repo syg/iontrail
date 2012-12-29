@@ -73,7 +73,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.7.14.1
+SQLITE_VERSION=3.7.15.1
 
 MSMANIFEST_TOOL=
 
@@ -1426,6 +1426,14 @@ if test "$GNU_CC"; then
     AC_TRY_LINK(,,AC_MSG_RESULT([yes]),
                   AC_MSG_RESULT([no])
                   LDFLAGS=$_SAVE_LDFLAGS)
+    AC_MSG_CHECKING([for --build-id option to ld])
+    _SAVE_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS -Wl,--build-id"
+    AC_TRY_LINK(,,AC_MSG_RESULT([yes])
+                  [NSPR_LDFLAGS="$NSPR_LDFLAGS -Wl,--build-id"],
+                  AC_MSG_RESULT([no])
+                  LDFLAGS=$_SAVE_LDFLAGS)
+
 
     # Check for -mssse3 on $CC
     AC_MSG_CHECKING([if toolchain supports -mssse3 option])
@@ -3756,7 +3764,7 @@ if test -n "$MOZ_LINKER" -a -z "$MOZ_OLD_LINKER" -a "$OS_TARGET" = "Android"; th
     dnl Using LDFLAGS in nspr is safe, since we only really build
     dnl libraries there.
     DSO_LDOPTS="$DSO_LDOPTS -nostartfiles"
-    NSPR_LDFLAGS=-nostartfiles
+    NSPR_LDFLAGS="$NSPR_LDFLAGS -nostartfiles"
   fi
 fi
 
@@ -3938,6 +3946,15 @@ else
     fi
 fi
 
+dnl set GRE_MILESTONE
+dnl ========================================================
+if test -n "$LIBXUL_SDK"; then
+    GRE_MILESTONE=`$PYTHON "$_topsrcdir"/config/printconfigsetting.py "$LIBXUL_DIST"/bin/platform.ini Build Milestone`
+else
+    GRE_MILESTONE=`tail -n 1 "$_topsrcdir"/config/milestone.txt 2>/dev/null || tail -1 "$_topsrcdir"/config/milestone.txt`
+fi
+AC_SUBST(GRE_MILESTONE)
+
 dnl system libevent Support
 dnl ========================================================
 MOZ_ARG_WITH_STRING(system-libevent,
@@ -3987,7 +4004,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.14.1, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.14.2, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSS"; then
@@ -4236,6 +4253,7 @@ MOZ_MEDIA=
 MOZ_OPUS=1
 MOZ_WEBM=1
 MOZ_DASH=1
+MOZ_WMF=
 MOZ_WEBRTC=1
 MOZ_PEERCONNECTION=
 MOZ_SRTP=
@@ -4365,6 +4383,19 @@ else
     AC_MSG_RESULT([$MOZ_BUILD_APP])
   fi
 fi
+
+# The app update channel is 'default' when not supplied. The value is used in
+# the application's confvars.sh so it must be set before confvars.sh is called.
+MOZ_ARG_ENABLE_STRING([update-channel],
+[  --enable-update-channel=CHANNEL
+                          Select application update channel (default=default)],
+    MOZ_UPDATE_CHANNEL=`echo $enableval | tr A-Z a-z`)
+
+if test -z "$MOZ_UPDATE_CHANNEL"; then
+    MOZ_UPDATE_CHANNEL=default
+fi
+AC_DEFINE_UNQUOTED(MOZ_UPDATE_CHANNEL, $MOZ_UPDATE_CHANNEL)
+AC_SUBST(MOZ_UPDATE_CHANNEL)
 
 # Allow the application to influence configure with a confvars.sh script.
 
@@ -5262,7 +5293,7 @@ if test -n "$MOZ_WEBRTC"; then
     dnl OpenSLES is only available in Android 2.3 and later; we'll change this
     dnl hard dependency to a dynamic load with graceful runtime failure before
     dnl we make --enable-webrtc on by default in Android (bug 815905)
-    dnl 
+    dnl
     if test "$OS_TARGET" = "Android"; then
        LDFLAGS="$LDFLAGS -lOpenSLES"
     fi
@@ -5396,6 +5427,29 @@ if test -n "$MOZ_DASH"; then
         AC_MSG_ERROR([WebM is currently disabled and must be enabled for DASH
                      to work.])
     fi
+fi;
+
+
+dnl ========================================================
+dnl = Windows Media Foundation support
+dnl ========================================================
+if test "$OS_ARCH" = "WINNT"; then
+    dnl Enable Windows Media Foundation support by default.
+    dnl Note our minimum SDK version is Windows 7 SDK, so we are (currently)
+    dnl guaranteed to have a recent-enough SDK to build WMF.
+    MOZ_WMF=1
+fi
+
+MOZ_ARG_DISABLE_BOOL(wmf,
+[  --disable-wmf  Disable support for Windows Media Foundation],
+    MOZ_WMF=,
+    MOZ_WMF=1)
+
+if test -n "$MOZ_WMF"; then
+    AC_DEFINE(MOZ_WMF)
+    MOZ_SYDNEYAUDIO=1
+    MOZ_CUBEB=1
+    MOZ_MEDIA=1
 fi;
 
 dnl ========================================================
@@ -6313,18 +6367,6 @@ if test -n "$MOZ_UPDATER"; then
     AC_DEFINE(MOZ_UPDATER)
 fi
 
-# app update channel is 'default' when not supplied.
-MOZ_ARG_ENABLE_STRING([update-channel],
-[  --enable-update-channel=CHANNEL
-                          Select application update channel (default=default)],
-    MOZ_UPDATE_CHANNEL=`echo $enableval | tr A-Z a-z`)
-
-if test -z "$MOZ_UPDATE_CHANNEL"; then
-    MOZ_UPDATE_CHANNEL=default
-fi
-AC_DEFINE_UNQUOTED(MOZ_UPDATE_CHANNEL, $MOZ_UPDATE_CHANNEL)
-AC_SUBST(MOZ_UPDATE_CHANNEL)
-
 # tools/update-packaging is not checked out by default.
 MOZ_ARG_ENABLE_BOOL(update-packaging,
 [  --enable-update-packaging
@@ -6985,7 +7027,7 @@ dnl = Enable trace malloc
 dnl ========================================================
 NS_TRACE_MALLOC=${MOZ_TRACE_MALLOC}
 MOZ_ARG_ENABLE_BOOL(trace-malloc,
-[  --enable-trace-malloc   Enable malloc tracing; also disables jemalloc],
+[  --enable-trace-malloc   Enable malloc tracing; also disables DMD and jemalloc],
     NS_TRACE_MALLOC=1,
     NS_TRACE_MALLOC= )
 if test "$NS_TRACE_MALLOC"; then
@@ -6995,6 +7037,33 @@ if test "$NS_TRACE_MALLOC"; then
   AC_DEFINE(NS_TRACE_MALLOC)
 fi
 AC_SUBST(NS_TRACE_MALLOC)
+
+dnl ========================================================
+dnl = Enable DMD
+dnl ========================================================
+
+MOZ_ARG_ENABLE_BOOL(dmd,
+[  --enable-dmd            Enable DMD; also enables jemalloc and replace-malloc and disables DMDV],
+    MOZ_DMD=1,
+    MOZ_DMD= )
+
+if test "$NS_TRACE_MALLOC"; then        # trace-malloc disables DMD
+    MOZ_DMD=
+fi
+if test "$MOZ_DMD"; then
+    USE_ELF_DYNSTR_GC=
+    AC_DEFINE(MOZ_DMD)
+
+    if test "${CPU_ARCH}" = "arm"; then
+        CFLAGS="$CFLAGS -funwind-tables"
+        CXXFLAGS="$CXXFLAGS -funwind-tables"
+    fi
+
+    MOZ_MEMORY=1                        # DMD enables jemalloc
+    MOZ_REPLACE_MALLOC=1                # DMD enables replace-malloc
+    MOZ_DMDV=                           # DMD disables DMDV
+fi
+AC_SUBST(MOZ_DMD)
 
 dnl ========================================================
 dnl = Enable jemalloc
@@ -7039,8 +7108,81 @@ else
   fi
 fi
 
+dnl ========================================================
+dnl = Enable dynamic replacement of malloc implementation
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(replace-malloc,
+[  --enable-replace-malloc   Enable ability to dynamically replace the malloc implementation],
+    MOZ_REPLACE_MALLOC=1,
+    MOZ_REPLACE_MALLOC= )
+
+if test -n "$MOZ_REPLACE_MALLOC" -a -z "$MOZ_MEMORY"; then
+    dnl We don't want to enable jemalloc unconditionally because it may be a
+    dnl deliberate choice not to enable it (bug 702250, for instance)
+    AC_MSG_ERROR([--enable-replace-malloc requires --enable-jemalloc])
+elif test -n "$MOZ_REPLACE_MALLOC"; then
+    MOZ_NATIVE_JEMALLOC=
+
+    dnl Replace-malloc Mac linkage quirks
+    if test -n "$MACOSX_DEPLOYMENT_TARGET"; then
+        AC_CACHE_CHECK([how to do weak dynamic linking],
+            ac_cv_weak_dynamic_linking,
+            [echo 'extern void foo() __attribute__((weak_import));int bar() { if (foo) foo(); return 0; }' > conftest.c
+             if AC_TRY_COMMAND([${CC-cc} -o conftest${DLL_SUFFIX} $CFLAGS -dynamiclib $LDFLAGS -Wl,-U,_foo conftest.c $LIBS 1>&5]) &&
+                test -s conftest${DLL_SUFFIX}; then
+                 dnl There are several ways the linker can put link edit rules in a binary:
+                 dnl - classic info only (for OSX < 10.6)
+                 dnl - dyld info only
+                 dnl - both
+                 if otool -l conftest${DLL_SUFFIX} 2> /dev/null | grep "LC_DYLD_INFO_ONLY" > /dev/null; then
+                     _CLASSIC_INFO=
+                 else
+                     _CLASSIC_INFO=1
+                 fi
+                 if otool -l conftest${DLL_SUFFIX} 2> /dev/null | grep "LC_DYLD_INFO" > /dev/null; then
+                     _DYLD_INFO=1
+                 else
+                     _DYLD_INFO=
+                 fi
+                 dnl With classic info, we need to build with -flat_namespace.
+                 dnl With dyld info, Xcode 4.5 does the right thing without additional flags,
+                 dnl but Xcode < 4.5 requires a dummy library and -flat_namespace because it
+                 dnl forgets to set the weak flag in the dyld info.
+                 dnl See http://glandium.org/blog/?p=2764 for more details.
+                 dnl
+                 dnl Values for ac_cv_weak_dynamic_linking, and subsequently
+                 dnl MOZ_REPLACE_MALLOC_LINKAGE are thus:
+                 dnl - "flat namespace" when -flat_namespace alone is needed
+                 dnl - "dummy library" when a dummy library and -flat_namespace are needed
+                 dnl - "compiler support" when nothing is needed
+                 if test -n "$_DYLD_INFO" && dyldinfo -bind conftest${DLL_SUFFIX} 2> /dev/null | grep "_foo (weak import)" > /dev/null; then
+                     if test -n "$_CLASSIC_INFO"; then
+                         ac_cv_weak_dynamic_linking="flat namespace"
+                     else
+                         ac_cv_weak_dynamic_linking="compiler support"
+                     fi
+                 else
+                     if test -n "$_DYLD_INFO"; then
+                         ac_cv_weak_dynamic_linking="dummy library"
+                     else
+                         ac_cv_weak_dynamic_linking="flat namespace"
+                     fi
+                 fi
+             else
+                 AC_ERROR([couldn't compile a simple C file])
+             fi
+             rm -rf conftest*])
+        MOZ_REPLACE_MALLOC_LINKAGE="$ac_cv_weak_dynamic_linking"
+    fi
+fi
+AC_SUBST(MOZ_REPLACE_MALLOC)
+AC_SUBST(MOZ_REPLACE_MALLOC_LINKAGE)
+
+dnl ========================================================
+dnl = Jemalloc build setup
+dnl ========================================================
 if test -z "$MOZ_MEMORY"; then
-  if test -n "$MOZ_JEMALLOC"; then
+  if test -n "$MOZ_JEMALLOC3" -a -z "$MOZ_REPLACE_MALLOC"; then
     MOZ_NATIVE_JEMALLOC=1
     AC_CHECK_FUNCS(mallctl nallocm,,
       [MOZ_NATIVE_JEMALLOC=
@@ -7048,7 +7190,7 @@ if test -z "$MOZ_MEMORY"; then
     if test -n "$MOZ_NATIVE_JEMALLOC"; then
       MOZ_MEMORY=1
       AC_DEFINE(MOZ_MEMORY)
-      AC_DEFINE(MOZ_JEMALLOC)
+      AC_DEFINE(MOZ_JEMALLOC3)
       AC_DEFINE(MOZ_NATIVE_JEMALLOC)
     fi
   fi
@@ -7083,8 +7225,8 @@ else
   fi
 
   AC_DEFINE(MOZ_MEMORY)
-  if test -n "$MOZ_JEMALLOC"; then
-    AC_DEFINE(MOZ_JEMALLOC)
+  if test -n "$MOZ_JEMALLOC3"; then
+    AC_DEFINE(MOZ_JEMALLOC3)
   fi
   if test "x$MOZ_DEBUG" = "x1"; then
     AC_DEFINE(MOZ_MEMORY_DEBUG)
@@ -7145,7 +7287,7 @@ else
   esac
 fi # MOZ_MEMORY
 AC_SUBST(MOZ_MEMORY)
-AC_SUBST(MOZ_JEMALLOC)
+AC_SUBST(MOZ_JEMALLOC3)
 AC_SUBST(MOZ_NATIVE_JEMALLOC)
 AC_SUBST(MOZ_GLUE_LDFLAGS)
 AC_SUBST(MOZ_GLUE_PROGRAM_LDFLAGS)
@@ -7493,6 +7635,15 @@ fi
 AC_SUBST(MOZ_B2G_CAMERA)
 
 dnl ========================================================
+dnl = Enable Support B2G-specific changes to the NSS
+dnl = certificate trust database.
+dnl ========================================================
+if test -n "$MOZ_B2G_CERTDATA"; then
+    AC_DEFINE(MOZ_B2G_CERTDATA)
+fi
+AC_SUBST(MOZ_B2G_CERTDATA)
+
+dnl ========================================================
 dnl = Enable Support for Payment API
 dnl ========================================================
 if test -n "$MOZ_PAY"; then
@@ -7518,9 +7669,9 @@ if test -z "$SKIP_LIBRARY_CHECKS"; then
     AC_LANG_RESTORE
 fi
 
-# Demangle only for debug or trace-malloc builds
+# Demangle only for debug or trace-malloc or DMD builds
 MOZ_DEMANGLE_SYMBOLS=
-if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_DEMANGLE_SYMBOLS=1
     AC_DEFINE(MOZ_DEMANGLE_SYMBOLS)
 fi
@@ -8325,7 +8476,7 @@ if test -n "$MOZ_SERVICES_SYNC"; then
 fi
 
 dnl ========================================================
-if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS=
 fi
 
@@ -8566,8 +8717,17 @@ AC_SUBST(MOZ_PKG_SPECIAL)
 
 AC_SUBST(MOZILLA_OFFICIAL)
 
+AC_DEFINE_UNQUOTED(MOZ_TELEMETRY_DISPLAY_REV, 2)
+AC_SUBST(MOZ_TELEMETRY_DISPLAY_REV)
+
 if test "$MOZ_TELEMETRY_REPORTING"; then
     AC_DEFINE(MOZ_TELEMETRY_REPORTING)
+
+    # Enable Telemetry by default for nightly and aurora channels
+    if test "$MOZ_UPDATE_CHANNEL" = "nightly" -o \
+        "$MOZ_UPDATE_CHANNEL" = "aurora"; then
+        AC_DEFINE(MOZ_TELEMETRY_ON_BY_DEFAULT)
+    fi
 fi
 
 dnl win32 options
@@ -8702,6 +8862,7 @@ AC_SUBST(MOZ_TREMOR)
 AC_SUBST(MOZ_OPUS)
 AC_SUBST(MOZ_WEBM)
 AC_SUBST(MOZ_DASH)
+AC_SUBST(MOZ_WMF)
 AC_SUBST(MOZ_MEDIA_PLUGINS)
 AC_SUBST(MOZ_OMX_PLUGIN)
 AC_SUBST(MOZ_VP8_ERROR_CONCEALMENT)
@@ -8904,6 +9065,11 @@ if test "${OS_TARGET}" = "WINNT"; then
 
 elif test "${OS_TARGET}" = "Android"; then
    EXTRA_GYP_DEFINES="-D gtest_target_type=executable -D android_toolchain=${android_toolchain} -G os=android "
+   if test -n "$ARM_ARCH" && test "$ARM_ARCH" -lt 7; then
+      EXTRA_GYP_DEFINES+=" -D armv7=0 "
+   else
+      EXTRA_GYP_DEFINES+=" -D armv7=1 "
+   fi
 fi
 
 if test -n "$MOZ_WEBRTC"; then
@@ -8994,25 +9160,41 @@ fi
 
 # Run jemalloc configure script
 
-if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_JEMALLOC" -a "$MOZ_MEMORY" ; then
+if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_MEMORY" && test -n "$MOZ_JEMALLOC3" -o -n "$MOZ_REPLACE_MALLOC"; then
   ac_configure_args="$_SUBDIR_CONFIG_ARGS --build=$build --host=$target --enable-stats --with-jemalloc-prefix=je_"
-  case "$OS_ARCH" in
-    Linux|DragonFly|FreeBSD|NetBSD|OpenBSD)
-      MANGLE="malloc calloc valloc free realloc posix_memalign"
-      case "$OS_ARCH" in
-        Linux)
-          MANGLE="$MANGLE memalign malloc_usable_size"
-          ;;
-        FreeBSD)
-          MANGLE="$MANGLE malloc_usable_size"
-          ;;
-      esac
-      ;;
-  esac
+  if test -n "$MOZ_REPLACE_MALLOC"; then
+    # When using replace_malloc, we always want memalign and valloc exported from jemalloc.
+    ac_configure_args="$ac_configure_args ac_cv_func_memalign=yes"
+    ac_configure_args="$ac_configure_args ac_cv_func_valloc=yes"
+  fi
+  if test -n "$MOZ_JEMALLOC3"; then
+    case "${OS_ARCH}" in
+      WINNT|Darwin)
+        # We want jemalloc functions to be kept hidden on both Mac and Windows
+        # See memory/build/mozmemory_wrap.h for details.
+        ac_configure_args="$ac_configure_args --without-export"
+        ;;
+    esac
+  elif test "${OS_ARCH}" = Darwin; then
+    # When building as a replace-malloc lib, disabling the zone allocator
+    # forces to use pthread_atfork.
+    ac_configure_args="$ac_configure_args --disable-zone-allocator"
+  fi
+  _MANGLE="malloc posix_memalign aligned_alloc calloc realloc free memalign valloc malloc_usable_size"
+  JEMALLOC_WRAPPER=
+  if test -z "$MOZ_REPLACE_MALLOC"; then
+    case "$OS_ARCH" in
+      Linux|DragonFly|FreeBSD|NetBSD|OpenBSD)
+        MANGLE=$_MANGLE
+        ;;
+    esac
+  elif test -z "$MOZ_JEMALLOC3"; then
+    MANGLE=$_MANGLE
+    JEMALLOC_WRAPPER=replace_
+  fi
   if test -n "$MANGLE"; then
     MANGLED=
-    JEMALLOC_WRAPPER=
-    if test -n "$_WRAP_MALLOC"; then
+    if test -n "$_WRAP_MALLOC" -a -z "$JEMALLOC_WRAPPER"; then
       JEMALLOC_WRAPPER=__wrap_
     fi
     for mangle in ${MANGLE}; do
@@ -9040,42 +9222,6 @@ if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_JEMALLOC" -a "$MOZ_MEMORY" ; then
   AC_OUTPUT_SUBDIRS(memory/jemalloc/src)
   cache_file="$_save_cache_file"
   ac_configure_args="$_SUBDIR_CONFIG_ARGS"
-fi
-
-dnl Build libunwind for Android profiling builds
-if test "$OS_TARGET" = "Android" -a "$MOZ_PROFILING"; then
-  old_ac_configure_arg="$ac_configure_args"
-  ac_configure_args="--build=${build} --host=${target_alias} --disable-shared --enable-block-signals=no"
-  if test "$MOZ_DEBUG"; then
-    ac_configure_args="$ac_configure_args --enable-debug"
-  fi
-  if test "$DSO_PIC_CFLAGS"; then
-    ac_configure_args="$ac_configure_args --with-pic"
-  fi
-  ac_configure_args="$ac_configure_args \
-      CC=\"$CC\" \
-      CXX=\"$CXX\" \
-      CPP=\"$CPP\" \
-      CFLAGS=\"$CFLAGS\" \
-      CXXFLAGS=\"$CXXFLAGS\" \
-      CPPFLAGS=\"$CPPFLAGS\" \
-      LD=\"$LD\" \
-      LDFLAGS=\"$LDFLAGS\" \
-      AR=\"$AR\" \
-      RANLIB=\"$RANLIB\" \
-      STRIP=\"$STRIP\" \
-      LIBS=\"$LIBS\""
-
-  # Use a separate cache file for libunwind, since it does not use caching.
-  mkdir -p $_objdir/tools/profiler/libunwind/src
-  old_cache_file=$cache_file
-  cache_file=$_objdir/tools/profiler/libunwind/src/config.cache
-  old_config_files=$CONFIG_FILES
-  unset CONFIG_FILES
-  AC_OUTPUT_SUBDIRS(tools/profiler/libunwind/src)
-  cache_file=$old_cache_file
-  ac_configure_args="$old_ac_configure_args"
-  CONFIG_FILES=$old_config_files
 fi
 
 # Run freetype configure script

@@ -260,7 +260,7 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     @Override
-    protected void initializeChrome(String uri, Boolean isExternalURL) {
+    protected void initializeChrome(String uri, boolean isExternalURL) {
         super.initializeChrome(uri, isExternalURL);
 
         mBrowserToolbar.updateBackButton(false);
@@ -268,18 +268,22 @@ abstract public class BrowserApp extends GeckoApp
 
         mDoorHangerPopup.setAnchor(mBrowserToolbar.mFavicon);
 
-        if (!isExternalURL) {
-            // show about:home if we aren't restoring previous session
-            if (mRestoreMode == RESTORE_NONE) {
-                Tab tab = Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB);
-            } else {
-                hideAboutHome();
-                mAboutHomeStartupTimer.cancel();
-            }
-        } else {
-            int flags = Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_USER_ENTERED;
-            Tabs.getInstance().loadUrl(uri, flags);
+        if (isExternalURL || mRestoreMode != RESTORE_NONE) {
             mAboutHomeStartupTimer.cancel();
+        }
+
+        if (!mIsRestoringActivity) {
+            if (!isExternalURL) {
+                // show about:home if we aren't restoring previous session
+                if (mRestoreMode == RESTORE_NONE) {
+                    Tab tab = Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB);
+                } else {
+                    hideAboutHome();
+                }
+            } else {
+                int flags = Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_USER_ENTERED;
+                Tabs.getInstance().loadUrl(uri, flags);
+            }
         }
     }
 
@@ -495,8 +499,12 @@ abstract public class BrowserApp extends GeckoApp
         showAwesomebar(AwesomeBar.Target.NEW_TAB);
     }
 
-    public void showLocalTabs() {
-        showTabs(TabsPanel.Panel.LOCAL_TABS);
+    public void showNormalTabs() {
+        showTabs(TabsPanel.Panel.NORMAL_TABS);
+    }
+
+    public void showPrivateTabs() {
+        showTabs(TabsPanel.Panel.PRIVATE_TABS);
     }
 
     public void showRemoteTabs() {
@@ -972,6 +980,10 @@ abstract public class BrowserApp extends GeckoApp
         MenuItem charEncoding = aMenu.findItem(R.id.char_encoding);
         MenuItem findInPage = aMenu.findItem(R.id.find_in_page);
         MenuItem desktopMode = aMenu.findItem(R.id.desktop_mode);
+
+        // Only show the "Quit" menu item on pre-ICS. In ICS+, it's easy to
+        // kill an app through the task switcher.
+        aMenu.findItem(R.id.quit).setVisible(Build.VERSION.SDK_INT < 14);
 
         if (tab == null || tab.getURL() == null) {
             bookmark.setEnabled(false);

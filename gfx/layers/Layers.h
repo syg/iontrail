@@ -6,6 +6,8 @@
 #ifndef GFX_LAYERS_H
 #define GFX_LAYERS_H
 
+#include "mozilla/DebugOnly.h"
+
 #include "gfxTypes.h"
 #include "gfxASurface.h"
 #include "nsRegion.h"
@@ -576,7 +578,13 @@ public:
      * If this is set then this layer is part of a preserve-3d group, and should
      * be sorted with sibling layers that are also part of the same group.
      */
-    CONTENT_PRESERVE_3D = 0x04
+    CONTENT_PRESERVE_3D = 0x04,
+    /**
+     * This indicates that the transform may be changed on during an empty
+     * transaction where there is no possibility of redrawing the content, so the
+     * implementation should be ready for that.
+     */
+    CONTENT_MAY_CHANGE_TRANSFORM = 0x08
   };
   /**
    * CONSTRUCTION PHASE ONLY
@@ -803,6 +811,9 @@ public:
 
   AnimationArray& GetAnimations() { return mAnimations; }
   InfallibleTArray<AnimData>& GetAnimationData() { return mAnimationData; }
+
+  uint64_t GetAnimationGeneration() { return mAnimationGeneration; }
+  void SetAnimationGeneration(uint64_t aCount) { mAnimationGeneration = aCount; }
 
   /**
    * DRAWING PHASE ONLY
@@ -1080,6 +1091,14 @@ protected:
                             const gfxRect& aSnapRect,
                             gfxMatrix* aResidualTransform);
 
+  /**
+   * Returns true if this layer's effective transform is not just
+   * a translation by integers, or if this layer or some ancestor layer
+   * is marked as having a transform that may change without a full layer
+   * transaction.
+   */
+  bool MayResample();
+
   LayerManager* mManager;
   ContainerLayer* mParent;
   Layer* mNextSibling;
@@ -1108,6 +1127,9 @@ protected:
   bool mIsFixedPosition;
   gfxPoint mAnchor;
   DebugOnly<uint32_t> mDebugColorIndex;
+  // If this layer is used for OMTA, then this counter is used to ensure we
+  // stay in sync with the animation manager
+  uint64_t mAnimationGeneration;
 };
 
 /**

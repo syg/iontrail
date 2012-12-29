@@ -11,8 +11,10 @@ const PANES_APPEARANCE_DELAY = 50; // ms
 const BREAKPOINT_LINE_TOOLTIP_MAX_LENGTH = 1000; // chars
 const BREAKPOINT_CONDITIONAL_POPUP_POSITION = "after_start";
 const BREAKPOINT_CONDITIONAL_POPUP_OFFSET = 50; // px
-const GLOBAL_SEARCH_LINE_MAX_LENGTH = 300; // chars
+const FILTERED_SOURCES_POPUP_POSITION = "before_start";
+const FILTERED_SOURCES_MAX_RESULTS = 10;
 const GLOBAL_SEARCH_EXPAND_MAX_RESULTS = 50;
+const GLOBAL_SEARCH_LINE_MAX_LENGTH = 300; // chars
 const GLOBAL_SEARCH_ACTION_MAX_DELAY = 1500; // ms
 const SEARCH_GLOBAL_FLAG = "!";
 const SEARCH_TOKEN_FLAG = "#";
@@ -40,6 +42,7 @@ let DebuggerView = {
     this.ChromeGlobals.initialize();
     this.Sources.initialize();
     this.Filtering.initialize();
+    this.FilteredSources.initialize();
     this.StackFrames.initialize();
     this.Breakpoints.initialize();
     this.WatchExpressions.initialize();
@@ -70,6 +73,7 @@ let DebuggerView = {
     this.ChromeGlobals.destroy();
     this.Sources.destroy();
     this.Filtering.destroy();
+    this.FilteredSources.destroy();
     this.StackFrames.destroy();
     this.Breakpoints.destroy();
     this.WatchExpressions.destroy();
@@ -470,6 +474,7 @@ let DebuggerView = {
 
     if (this.editor) {
       this.editor.setText("");
+      this.editor.focus();
       this._editorSource = null;
     }
   },
@@ -613,6 +618,7 @@ MenuContainer.prototype = {
    *          - unsorted: true if the items should not always remain sorted
    *          - relaxed: true if this container should allow dupes & degenerates
    *          - description: an optional description of the item
+   *          - tooltip: an optional tooltip for the item
    *          - attachment: some attached primitive/object
    * @return MenuItem
    *         The item associated with the displayed element if a forced push,
@@ -624,7 +630,7 @@ MenuContainer.prototype = {
 
     // Batch the item to be added later.
     if (!aOptions.forced) {
-      this._stagedItems.push(item);
+      this._stagedItems.push({ item: item, options: aOptions });
     }
     // Immediately insert the item at the specified index.
     else if (aOptions.forced && aOptions.forced.atIndex !== undefined) {
@@ -652,11 +658,12 @@ MenuContainer.prototype = {
 
     // By default, sort the items before adding them to this container.
     if (!aOptions.unsorted) {
-      stagedItems.sort(function(a, b) a.label.toLowerCase() > b.label.toLowerCase());
+      stagedItems.sort(function(a, b) a.item.label.toLowerCase() >
+                                      b.item.label.toLowerCase());
     }
     // Append the prepared items to this container.
-    for (let item of stagedItems) {
-      this._appendItem(item, aOptions);
+    for (let { item, options } of stagedItems) {
+      this._appendItem(item, options);
     }
     // Recreate the temporary items list for ulterior pushes.
     this._stagedItems = [];
@@ -745,7 +752,7 @@ MenuContainer.prototype = {
    */
   containsLabel: function DVMC_containsLabel(aLabel) {
     return this._itemsByLabel.has(aLabel) ||
-           this._stagedItems.some(function(o) o.label == aLabel);
+           this._stagedItems.some(function({item}) item.label == aLabel);
   },
 
   /**
@@ -759,7 +766,7 @@ MenuContainer.prototype = {
    */
   containsValue: function DVMC_containsValue(aValue) {
     return this._itemsByValue.has(aValue) ||
-           this._stagedItems.some(function(o) o.value == aValue);
+           this._stagedItems.some(function({item}) item.value == aValue);
   },
 
   /**
@@ -783,7 +790,7 @@ MenuContainer.prototype = {
         return true;
       }
     }
-    return this._stagedItems.some(function(o) aTrim(o.value) == trimmedValue);
+    return this._stagedItems.some(function({item}) aTrim(item.value) == trimmedValue);
   },
 
   /**
@@ -936,7 +943,7 @@ MenuContainer.prototype = {
   },
 
   /**
-   * Gets the total items in this container.
+   * Gets the total number of items in this container.
    * @return number
    */
   get totalItems() {
@@ -944,15 +951,17 @@ MenuContainer.prototype = {
   },
 
   /**
-   * Gets the total visible (non-hidden) items in this container.
-   * @return number
+   * Returns a list of all the visible (non-hidden) items in this container.
+   * @return array
    */
   get visibleItems() {
-    let count = 0;
-    for (let [element] of this._itemsByElement) {
-      count += element.hidden ? 0 : 1;
+    let items = [];
+    for (let [element, item] of this._itemsByElement) {
+      if (!element.hidden) {
+        items.push(item);
+      }
     }
-    return count;
+    return items;
   },
 
   /**
@@ -1039,8 +1048,15 @@ MenuContainer.prototype = {
       return null;
     }
 
-    return this._entangleItem(aItem, this._container.appendItem(
+    this._entangleItem(aItem, this._container.appendItem(
       aItem.label, aItem.value, "", aOptions.attachment));
+
+    // Handle any additional options after entangling the item.
+    if (aOptions.tooltip) {
+      aItem._target.setAttribute("tooltiptext", aOptions.tooltip);
+    }
+
+    return aItem;
   },
 
   /**
@@ -1061,8 +1077,15 @@ MenuContainer.prototype = {
       return null;
     }
 
-    return this._entangleItem(aItem, this._container.insertItemAt(
+    this._entangleItem(aItem, this._container.insertItemAt(
       aIndex, aItem.label, aItem.value, "", aOptions.attachment));
+
+    // Handle any additional options after entangling the item.
+    if (aOptions.tooltip) {
+      aItem._target.setAttribute("tooltiptext", aOptions.tooltip);
+    }
+
+    return aItem;
   },
 
   /**
@@ -1133,8 +1156,6 @@ MenuContainer.prototype = {
  * set permaText(aValue:string)
  * set itemType(aType:string)
  * set itemFactory(aCallback:function)
- *
- * TODO: Use this in #796135 - "Provide some obvious UI for scripts filtering".
  *
  * @param nsIDOMNode aAssociatedNode
  *        The element associated with the displayed container.

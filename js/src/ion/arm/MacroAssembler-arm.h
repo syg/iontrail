@@ -8,6 +8,8 @@
 #ifndef jsion_macro_assembler_arm_h__
 #define jsion_macro_assembler_arm_h__
 
+#include "mozilla/DebugOnly.h"
+
 #include "ion/arm/Assembler-arm.h"
 #include "ion/IonCaches.h"
 #include "ion/IonFrames.h"
@@ -47,6 +49,8 @@ class MacroAssemblerARM : public Assembler
     void convertUInt32ToDouble(const Register &src, const FloatRegister &dest);
     void convertDoubleToFloat(const FloatRegister &src, const FloatRegister &dest);
     void branchTruncateDouble(const FloatRegister &src, const Register &dest, Label *fail);
+
+    void negateDouble(FloatRegister reg);
 
     void inc64(AbsoluteAddress dest);
 
@@ -334,6 +338,11 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     // the initial number of arguments declared was correct.
     uint32_t passedArgs_;
 
+#ifdef JS_CPU_ARM_HARDFP
+    uint32_t usedIntSlots_;
+    uint32_t usedFloatSlots_;
+    uint32_t padding_;
+#else
     // ARM treats arguments as a vector in registers/memory, that looks like:
     // { r0, r1, r2, r3, [sp], [sp,+4], [sp,+8] ... }
     // usedSlots_ keeps track of how many of these have been used.
@@ -341,6 +350,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     // can effectively use between one and three slots depending on its size and
     // alignment requirements
     uint32_t usedSlots_;
+#endif
     bool dynamicAlignment_;
 
     bool enoughMemory_;
@@ -1026,6 +1036,8 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void setStackArg(const Register &reg, uint32_t arg);
 
     void breakpoint();
+    // conditional breakpoint
+    void breakpoint(Condition cc);
 
     void compareDouble(FloatRegister lhs, FloatRegister rhs);
     void branchDouble(DoubleCondition cond, const FloatRegister &lhs, const FloatRegister &rhs,
@@ -1063,8 +1075,14 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void passABIArg(const FloatRegister &reg);
     void passABIArg(const ValueOperand &regs);
 
+  private:
+    void callWithABIPre(uint32_t *stackAdjust);
+    void callWithABIPost(uint32_t stackAdjust, Result result);
+
+  public:
     // Emits a call to a C/C++ function, resolving all argument moves.
     void callWithABI(void *fun, Result result = GENERAL);
+    void callWithABI(const Address &fun, Result result = GENERAL);
 
     CodeOffsetLabel labelForPatch() {
         return CodeOffsetLabel(nextOffset().getOffset());

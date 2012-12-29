@@ -275,7 +275,7 @@ NS_QUERYFRAME_TAIL_INHERITING(nsObjectFrameSuper)
 a11y::AccType
 nsObjectFrame::AccessibleType()
 {
-  return a11y::eHTMLObjectFrameAccessible;
+  return a11y::ePluginType;
 }
 
 #ifdef XP_WIN
@@ -637,7 +637,7 @@ nsObjectFrame::FixupWindow(const nsSize& aSize)
   NPWindow *window;
   mInstanceOwner->GetWindow(window);
 
-  NS_ENSURE_TRUE(window, /**/);
+  NS_ENSURE_TRUE_VOID(window);
 
 #ifdef XP_MACOSX
   nsWeakFrame weakFrame(this);

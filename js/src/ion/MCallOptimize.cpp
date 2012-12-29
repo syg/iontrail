@@ -136,7 +136,7 @@ types::StackTypeSet *
 IonBuilder::getInlineReturnTypeSet()
 {
     types::StackTypeSet *barrier;
-    types::StackTypeSet *returnTypes = oracle->returnTypeSet(script_, pc, &barrier);
+    types::StackTypeSet *returnTypes = oracle->returnTypeSet(script(), pc, &barrier);
 
     JS_ASSERT(returnTypes);
     return returnTypes;
@@ -152,7 +152,7 @@ IonBuilder::getInlineReturnType()
 types::StackTypeSet *
 IonBuilder::getInlineArgTypeSet(uint32_t argc, uint32_t arg)
 {
-    types::StackTypeSet *argTypes = oracle->getCallArg(script_, argc, arg, pc);
+    types::StackTypeSet *argTypes = oracle->getCallArg(script(), argc, arg, pc);
     JS_ASSERT(argTypes);
     return argTypes;
 }
@@ -236,7 +236,7 @@ IonBuilder::inlineArray(uint32_t argc, bool constructing)
         current->add(elements);
 
         // Store all values, no need to initialize the length after each as
-        // jsop_initelem_dense is doing because we do not expect to bailout
+        // jsop_initelem_array is doing because we do not expect to bailout
         // because the memory is supposed to be allocated by now.
         MConstant *id = NULL;
         for (uint32_t i = 0; i < initLength; i++) {
@@ -366,7 +366,7 @@ IonBuilder::inlineArrayConcat(uint32_t argc, bool constructing)
     if (types::ArrayPrototypeHasIndexedProperty(cx, script))
         return InliningStatus_NotInlined;
 
-    // Require the 'this' types to have a specific type matching the current
+    // Require the |this| types to have a specific type matching the current
     // global, so we can create the result object inline.
     if (thisTypes->getObjectCount() != 1)
         return InliningStatus_NotInlined;
@@ -736,7 +736,8 @@ IonBuilder::inlineStrCharCodeAt(uint32_t argc, bool constructing)
         return InliningStatus_NotInlined;
     if (getInlineArgType(argc, 0) != MIRType_String)
         return InliningStatus_NotInlined;
-    if (getInlineArgType(argc, 1) != MIRType_Int32)
+    MIRType argType = getInlineArgType(argc, 1);
+    if (argType != MIRType_Int32 && argType != MIRType_Double)
         return InliningStatus_NotInlined;
 
     MDefinitionVector argv;
@@ -791,7 +792,8 @@ IonBuilder::inlineStrCharAt(uint32_t argc, bool constructing)
         return InliningStatus_NotInlined;
     if (getInlineArgType(argc, 0) != MIRType_String)
         return InliningStatus_NotInlined;
-    if (getInlineArgType(argc, 1) != MIRType_Int32)
+    MIRType argType = getInlineArgType(argc, 1);
+    if (argType != MIRType_Int32 && argType != MIRType_Double)
         return InliningStatus_NotInlined;
 
     MDefinitionVector argv;
@@ -1007,13 +1009,12 @@ IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
     RootedFunction target(cx);
     if (!getSingleCallTarget(ctorTypes, &target))
         return InliningStatus_Error;
-
     MDefinition *ctor = current->peek(-(argc + 1))->toPassArg()->getArgument();
     if (anyFunctionIsCallsiteClone(ctorTypes))
         ctor = makeCallsiteClone(target, ctor);
 
-    // Discard 2 arguments: the old 'this' and the init function.
-    return inlineParallelArrayTail(argc, target, ctor, target ? NULL : ctorTypes, 2);
+    // Discard the function.
+    return inlineParallelArrayTail(argc, target, ctor, target ? NULL : ctorTypes, 1);
 }
 
 IonBuilder::InliningStatus
@@ -1035,8 +1036,7 @@ IonBuilder::inlineParallelArray(uint32_t argc, bool constructing)
     MConstant *ctor = MConstant::New(ObjectValue(*target));
     current->add(ctor);
 
-    // Discard 1 argument: the old 'this'.
-    return inlineParallelArrayTail(argc, target, ctor, NULL, 1);
+    return inlineParallelArrayTail(argc, target, ctor, NULL, 0);
 }
 
 IonBuilder::InliningStatus
@@ -1057,9 +1057,15 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
         return InliningStatus_NotInlined;
     types::TypeObject *typeObject = returnTypes->getTypeObject(0);
 
-    // Adjust argc according to discards. The 'this' value is included in argc,
-    // thus the - 1.
-    argc -= discards - 1;
+    // Pop the arguments and |this|.
+    Vector<MPassArg *> args(cx);
+    MPassArg *oldThis;
+    MDefinition *discardFun;
+
+    popFormals(argc, &discardFun, &oldThis, &args);
+
+    // Adjust argc according to how many arguments we're discarding.
+    argc -= discards;
 
     // Create the call and add in the non-this arguments.
     uint32_t targetArgs = argc;
@@ -1070,17 +1076,27 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     if (!call)
         return InliningStatus_Error;
 
-    if (!popAndAddNonThisArgumentsAndPrepareCall(call, targetArgs, argc))
-        return InliningStatus_Error;
-
-    // Discard the pass args that we won't be using.
-    for (int32_t i = discards; i > 0; i--) {
-        MPassArg *passArg = current->pop()->toPassArg();
-        MBasicBlock *block = passArg->block();
-        MDefinition *wrapped = passArg->getArgument();
-        passArg->replaceAllUsesWith(wrapped);
-        block->discard(passArg);
+    // Explicitly pad any missing arguments with |undefined|.
+    // This permits skipping the argumentsRectifier.
+    for (int32_t i = targetArgs; i > (int)argc; i--) {
+        JS_ASSERT_IF(target, !target->isNative());
+        MConstant *undef = MConstant::New(UndefinedValue());
+        current->add(undef);
+        MPassArg *pass = MPassArg::New(undef);
+        current->add(pass);
+        call->addArg(i, pass);
     }
+
+    // Add explicit arguments.
+    // Skip addArg(0) because it is reserved for this
+    for (int32_t i = argc - 1; i >= 0; i--)
+        call->addArg(i + 1, args[i + discards]);
+
+    // Place an MPrepareCall before the first passed argument, before we
+    // potentially perform rearrangement.
+    MPrepareCall *start = new MPrepareCall;
+    oldThis->block()->insertBefore(oldThis, start);
+    call->initPrepareCall(start);
 
     // Create the MIR to allocate the new parallel array.  Take the type
     // object is taken from the prediction set.
@@ -1090,8 +1106,6 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     templateObject->setType(typeObject);
     MNewParallelArray *newObject = MNewParallelArray::New(templateObject);
     current->add(newObject);
-    if (!resumeAfter(newObject))
-        return InliningStatus_Error;
     MPassArg *newThis = MPassArg::New(newObject);
     current->add(newThis);
     call->addArg(0, newThis);
@@ -1099,12 +1113,11 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     // Set the new callee.
     call->initFunction(ctor);
 
-    // Pop the old callee.
-    current->pop();
-
     current->add(call);
     current->push(newObject);
     if (!resumeAfter(call))
+        return InliningStatus_Error;
+    if (!resumeAfter(newObject))
         return InliningStatus_Error;
 
     return InliningStatus_Inlined;

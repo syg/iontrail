@@ -9,11 +9,13 @@
  * JS execution context.
  */
 
-#include <limits.h> /* make sure that <features.h> is included and we can use
-                       __GLIBC__ to detect glibc presence */
+#include <limits.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "mozilla/DebugOnly.h"
+
 #ifdef ANDROID
 # include <android/log.h>
 # include <fstream>
@@ -45,9 +47,7 @@
 #ifdef JS_ION
 #include "ion/Ion.h"
 #include "ion/IonFrames.h"
-#include "builtin/ParallelArray.h"
 #endif
-#include "vm/ForkJoin.h"
 
 #ifdef JS_METHODJIT
 # include "assembler/assembler/MacroAssembler.h"
@@ -65,9 +65,6 @@
 #include "jsobjinlines.h"
 #include "jsinferinlines.h"
 #include "jstypedarrayinlines.h"
-#include "vm/ForkJoin-inl.h"
-
-#include "selfhosted.out.h"
 
 using namespace js;
 using namespace js::gc;
@@ -341,573 +338,6 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     }
 #endif
     return clone;
-}
-
-static void
-selfHosting_ErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
-{
-    PrintError(cx, stderr, message, report, true);
-}
-
-static JSClass self_hosting_global_class = {
-    "self-hosting-global", JSCLASS_GLOBAL_FLAGS,
-    JS_PropertyStub,  JS_PropertyStub,
-    JS_PropertyStub,  JS_StrictPropertyStub,
-    JS_EnumerateStub, JS_ResolveStub,
-    JS_ConvertStub,   NULL
-};
-
-static JSBool
-intrinsic_ToObject(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    RootedValue val(cx, args[0]);
-    RootedObject obj(cx, ToObject(cx, val));
-    if (!obj)
-        return false;
-    args.rval().set(OBJECT_TO_JSVAL(obj));
-    return true;
-}
-
-static JSBool
-intrinsic_ToInteger(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    double result;
-    if (!ToInteger(cx, args[0], &result))
-        return false;
-    args.rval().set(DOUBLE_TO_JSVAL(result));
-    return true;
-}
-
-static JSBool
-intrinsic_IsCallable(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    Value val = args[0];
-    bool isCallable = val.isObject() && val.toObject().isCallable();
-    args.rval().set(BOOLEAN_TO_JSVAL(isCallable));
-    return true;
-}
-
-JSBool
-js::intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args.length() >= 1);
-    uint32_t errorNumber = args[0].toInt32();
-
-    char *errorArgs[3] = {NULL, NULL, NULL};
-    for (unsigned i = 1; i < 4 && i < args.length(); i++) {
-        RootedValue val(cx, args[i]);
-        if (val.isInt32()) {
-            JSString *str = ToString(cx, val);
-            if (!str)
-                return false;
-            errorArgs[i - 1] = JS_EncodeString(cx, str);
-        } else if (val.isString()) {
-            errorArgs[i - 1] = JS_EncodeString(cx, ToString(cx, val));
-        } else {
-            errorArgs[i - 1] = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, val, NullPtr());
-        }
-        if (!errorArgs[i - 1])
-            return false;
-    }
-
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, errorNumber,
-                         errorArgs[0], errorArgs[1], errorArgs[2]);
-    for (unsigned i = 0; i < 3; i++)
-        js_free(errorArgs[i]);
-    return false;
-}
-
-/*
- * Used to decompile values in the nearest non-builtin stack frame, falling
- * back to decompiling in the current frame. Helpful for printing higher-order
- * function arguments.
- *
- * The user must supply the argument number of the value in question; it
- * _cannot_ be automatically determined.
- */
-static JSBool
-intrinsic_DecompileArg(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args.length() == 2);
-
-    RootedValue value(cx, args[1]);
-    ScopedFreePtr<char> str(DecompileArgument(cx, args[0].toInt32(), value));
-    if (!str)
-        return false;
-    RootedAtom atom(cx, Atomize(cx, str, strlen(str)));
-    if (!atom)
-        return false;
-    args.rval().setString(atom);
-    return true;
-}
-
-static JSBool
-intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args.length() >= 2);
-    JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());
-    JS_ASSERT(args[1].isObject());
-
-    RootedFunction fun(cx, args[0].toObject().toFunction());
-    RootedObject flags(cx, &args[1].toObject());
-
-    RootedId id(cx);
-    RootedValue propv(cx);
-
-    id = AtomToId(Atomize(cx, "cloneAtCallsite", strlen("cloneAtCallsite")));
-    if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
-        return false;
-    if (ToBoolean(propv))
-        fun->setIsCloneAtCallsite();
-
-    id = AtomToId(Atomize(cx, "constructible", strlen("constructible")));
-    if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
-        return false;
-    if (ToBoolean(propv))
-        fun->setIsSelfHostedConstructor();
-
-    return true;
-}
-
-#ifdef DEBUG
-JSBool
-js::intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    RootedValue val(cx, args[0]);
-    js_DumpValue(val);
-    fprintf(stderr, "\n");
-    args.rval().setUndefined();
-    return true;
-}
-#endif
-
-static JSBool
-intrinsic_SetNonBuiltinCallerInitObjectType(JSContext *cx, unsigned argc, Value *vp)
-{
-    // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
-    //
-    // The argument **cannot be used** after this function returns. Doing so
-    // will cause infer crashes.
-    //
-    // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
-    //
-    // This is a _slow_ function to key the type of an object to the pc of the
-    // nearest non-builtin script. This is needed when we would like an
-    // allocated object in builtin code to really have the context of the user
-    // code in terms of type information.
-    //
-    // For example, for a function like Array.prototype.map, which allocates a
-    // new Array, it would be too imprecise if all newly allocated arrays from
-    // the function, ever, had the same TypeObject.
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args.length() >= 1);
-    JS_ASSERT(args[0].isObject());
-    RootedObject obj(cx, &args[0].toObject());
-
-    if (!cx->typeInferenceEnabled()) {
-        args.rval().setObject(*obj);
-        return true;
-    }
-
-    NonBuiltinScriptFrameIter iter(cx);
-    if (iter.done()) {
-        args.rval().setObject(*obj);
-        return true;
-    }
-
-    RootedScript script(cx, iter.script());
-    if (!types::SetInitializerObjectType(cx, script, iter.pc(), obj))
-        return false;
-
-    args.rval().setObject(*obj);
-    return true;
-}
-
-static JSBool
-intrinsic_GetThreadPoolInfo(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-#ifndef JS_THREADSAFE
-    args.rval().setUndefined();
-#else
-    ThreadPool *threadPool = &cx->runtime->threadPool;
-    RootedObject info(cx, NewBuiltinClassInstance(cx, &ObjectClass));
-    if (!info)
-        return false;
-
-    RootedAtom atom(cx);
-    RootedValue val(cx);
-
-    atom = Atomize(cx, "numThreads", strlen("numThreads"));
-    if (!atom)
-        return false;
-    val = Int32Value(threadPool->numWorkers() + 1);
-    if (!JSObject::defineProperty(cx, info, atom->asPropertyName(), val))
-        return false;
-
-    args.rval().setObject(*info);
-#endif
-    return true;
-}
-
-static JSBool
-intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %ParallelDo(func, feedback, args...)
-    //
-    // Invokes |func| many times in parallel.  Executed based on the
-    // fork join pool described in vm/ForkJoin.h.  If func() has not
-    // been compiled for parallel execution, it will first be invoked
-    // various times sequentially as a warmup phase, which is used to
-    // gather TI information and to determine which functions func()
-    // will invoke.
-    //
-    // The |feedback| argument is optional.  If provided, it should be
-    // a closure.  This closure will be invoked with one of the
-    // following strings, depending on the outcome:
-    // - "success" -- execution was successful
-    // - "disqualified" -- warmup or compilation failed
-    // - "bailout" -- execution started, but bailed
-    // The precise details of this closure are likely to evolve.
-    //
-    // Note: Parallel execution is never guaranteed.  It can fail for
-    // any number of reasons, only some of which are in your control:
-    // in case of such a failure, |%ParallelDo()| will return
-    // undefined.
-    //
-    // func() should expect the following arguments:
-    //
-    //     func(id, n, warmup, args...)
-    //
-    // Here, |id| is the slice id. |n| is the total number of slices;
-    // |warmup| is true if this is the warmup phase; and |args| are
-    // the additional arguments passed to |%ParallelDo()|.
-    // Typically, if |warmup| is true, you will want to do less work.
-    //
-    // See ParallelArray.js for examples.
-
-    CallArgs args = CallArgsFromVp(argc, vp);
-    return parallel::Do(cx, args) != parallel::ExecutionFatal;
-}
-
-static JSBool
-intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %ParallelSlices()
-    //
-    // Returns the number of parallel slices that will be created
-    // by |%ParallelDo()|.
-
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setInt32(ForkJoinSlices(cx));
-    return true;
-}
-
-JSBool
-js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %NewParallelArray(init, ...args)
-    //
-    // Creates a new parallel array using an initialization function init. All
-    // subsequent arguments are passed to init. The new instance will be
-    // passed as the 'this' value.
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());
-
-    RootedFunction init(cx, args[0].toObject().toFunction());
-    CallArgs args0 = CallArgsFromVp(argc - 1, vp + 1);
-    if (!js::ParallelArrayObject::constructHelper(cx, &init, args0))
-        return false;
-    args.rval().set(args0.rval());
-    return true;
-}
-
-JSBool
-js::intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %DenseArray(length)
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    // Check that index is an int32
-    if (!args[0].isInt32()) {
-        JS_ReportError(cx, "Expected int32 as second argument");
-        return false;
-    }
-    uint32_t length = args[0].toInt32();
-
-    // Make a new buffer and initialize it up to length.
-    RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
-    if (!buffer)
-        return false;
-
-    types::TypeObject *newtype = types::GetTypeCallerInitObject(cx, JSProto_Array);
-    if (!newtype)
-        return false;
-    buffer->setType(newtype);
-
-    JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
-    switch (edr) {
-      case JSObject::ED_OK:
-        args.rval().setObject(*buffer);
-        return true;
-
-      case JSObject::ED_SPARSE: // shouldn't happen!
-        JS_ASSERT(!"%EnsureDenseArrayElements() would yield sparse array");
-        JS_ReportError(cx, "%EnsureDenseArrayElements() would yield sparse array");
-        break;
-
-      case JSObject::ED_FAILED:
-        break;
-    }
-    return false;
-}
-
-JSBool
-js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %UnsafeSetElement(arr0, idx0, elem0,
-    //                          ...,
-    //                          arrN, idxN, elemN)
-    //
-    // For each set of |(arr, idx, elem)| arguments that are passed,
-    // performs the assignment |arr[idx] = elem|. |arr| must be either
-    // a dense array or a typed array.
-    //
-    // If |arr| is a dense array, the index must be an int32 less than the
-    // initialized length of |arr|. Use |%EnsureDenseResultArrayElements| to
-    // ensure that the initialized length is long enough.
-    //
-    // If |arr| is a typed array, the index must be an int32 less than the
-    // length of |arr|.
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    if ((args.length() % 3) != 0) {
-        JS_ReportError(cx, "Incorrect number of arguments, not divisible by 3");
-        return false;
-    }
-
-    for (uint32_t base = 0; base < args.length(); base += 3) {
-        uint32_t arri = base;
-        uint32_t idxi = base+1;
-        uint32_t elemi = base+2;
-
-        JS_ASSERT(args[arri].isObject());
-        JS_ASSERT(args[arri].toObject().isDenseArray() ||
-                  args[arri].toObject().isTypedArray());
-        JS_ASSERT(args[idxi].isInt32());
-
-        RootedObject arrobj(cx, &args[arri].toObject());
-        uint32_t idx = args[idxi].toInt32();
-
-        if (arrobj->isDenseArray()) {
-            JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
-            JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[elemi]);
-        } else {
-            JS_ASSERT(idx < TypedArray::length(arrobj));
-            RootedValue tmp(cx, args[elemi]);
-            // XXX: Always non-strict.
-            JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false);
-        }
-    }
-
-    args.rval().setUndefined();
-    return true;
-}
-
-JSBool
-js::intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %InParallelSection()
-    //
-    // Returns true if the code is executing in a parallel section.
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(ForkJoinSlice::InParallelSection());
-    return true;
-}
-
-JSBool
-js::intrinsic_EnterParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %EnterParallelSection()
-    //
-    // Returns bool if successfully entered.
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(ForkJoinSlice::EnterParallelSection());
-    return true;
-}
-
-static JSBool
-intrinsic_LeaveParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %LeaveParallelSection()
-    //
-    // Returns nothing. Asserts if not in parallel section.
-    ForkJoinSlice::LeaveParallelSection();
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setUndefined();
-    return true;
-}
-
-static JSBool
-intrinsic_CompiledForParallelSection(JSContext *cx, unsigned argc, Value *vp)
-{
-    // Usage: %CompiledForParallelExecution(func)
-    //
-    // Returns true if `func` has been compiled for parallel execution.
-    //
-    // Asserts if:
-    // - func is not a function
-    // - func is a lazily cloned intrinsic
-    CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(args[0].isObject());
-    JS_ASSERT(args[0].toObject().isFunction());
-    RootedFunction func(cx, args[0].toObject().toFunction());
-    RootedScript script(cx, func->nonLazyScript());
-    args.rval().setBoolean(script->hasParallelIonScript());
-    return true;
-}
-
-
-JSFunctionSpec intrinsic_functions[] = {
-    JS_FN("ToObject",             intrinsic_ToObject,             1,0),
-    JS_FN("ToInteger",            intrinsic_ToInteger,            1,0),
-    JS_FN("IsCallable",           intrinsic_IsCallable,           1,0),
-    JS_FN("ThrowError",           intrinsic_ThrowError,           4,0),
-
-    JS_FN("ParallelDo",           intrinsic_ParallelDo,           2,0),
-    JS_FN("ParallelSlices",       intrinsic_ParallelSlices,       0,0),
-    JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
-    JS_FN("DenseArray",           intrinsic_DenseArray,           1,0),
-    JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
-    JS_FN("InParallelSection",    intrinsic_InParallelSection,    0,0),
-    JS_FN("EnterParallelSection", intrinsic_EnterParallelSection, 0,0),
-    JS_FN("LeaveParallelSection", intrinsic_LeaveParallelSection, 0,0),
-    JS_FN("CompiledForParallelExecution", intrinsic_CompiledForParallelSection, 1,0),
-
-#ifdef DEBUG
-    JS_FN("Dump",                  intrinsic_Dump,                1,0),
-#endif
-
-    JS_FN("_DecompileArg",         intrinsic_DecompileArg,        2,0),
-    JS_FN("_SetFunctionFlags",     intrinsic_SetFunctionFlags,    2,0),
-    JS_FN("_GetThreadPoolInfo",    intrinsic_GetThreadPoolInfo,   1,0),
-    JS_FN("_SetNonBuiltinCallerInitObjectType", intrinsic_SetNonBuiltinCallerInitObjectType, 1,0),
-    JS_FS_END
-};
-
-bool
-JSRuntime::initSelfHosting(JSContext *cx)
-{
-    JS_ASSERT(!selfHostedGlobal_);
-
-    RootedObject savedGlobal(cx, JS_GetGlobalObject(cx));
-    if (!(selfHostedGlobal_ = JS_NewGlobalObject(cx, &self_hosting_global_class, NULL)))
-        return false;
-    JS_SetGlobalObject(cx, selfHostedGlobal_);
-    JSAutoCompartment ac(cx, cx->global());
-    RootedObject shg(cx, selfHostedGlobal_);
-
-    if (!JS_DefineFunctions(cx, shg, intrinsic_functions))
-        return false;
-
-    CompileOptions options(cx);
-    options.setFileAndLine("self-hosted", 1);
-    options.setSelfHostingMode(true);
-    options.setVersion(JSVERSION_LATEST);
-
-    /*
-     * Set a temporary error reporter printing to stderr because it is too
-     * early in the startup process for any other reporter to be registered
-     * and we don't want errors in self-hosted code to be silently swallowed.
-     */
-    JSErrorReporter oldReporter = JS_SetErrorReporter(cx, selfHosting_ErrorReporter);
-    Value rv;
-    bool ok = false;
-
-    char *filename = getenv("MOZ_SELFHOSTEDJS");
-    if (filename) {
-        RootedScript script(cx, Compile(cx, shg, options, filename));
-        if (script)
-            ok = Execute(cx, script, *shg.get(), &rv);
-    } else {
-        const char *src = selfhosted::raw_sources;
-        uint32_t srcLen = selfhosted::GetRawScriptsSize();
-        ok = Evaluate(cx, shg, options, src, srcLen, &rv);
-    }
-    JS_SetErrorReporter(cx, oldReporter);
-    JS_SetGlobalObject(cx, savedGlobal);
-
-    return ok;
-}
-
-void
-JSRuntime::markSelfHostedGlobal(JSTracer *trc)
-{
-    MarkObjectRoot(trc, &selfHostedGlobal_, "self-hosting global");
-}
-
-bool
-JSRuntime::getUnclonedSelfHostedValue(JSContext *cx, Handle<PropertyName*> name,
-                                      MutableHandleValue vp)
-{
-    RootedObject shg(cx, selfHostedGlobal_);
-    AutoCompartment ac(cx, shg);
-    return JS_GetPropertyById(cx, shg, NameToId(name), vp.address());
-}
-
-bool
-JSRuntime::cloneSelfHostedFunctionScript(JSContext *cx, Handle<PropertyName*> name,
-                                         Handle<JSFunction*> targetFun)
-{
-    RootedValue funVal(cx);
-    if (!getUnclonedSelfHostedValue(cx, name, &funVal))
-        return false;
-
-    RootedFunction sourceFun(cx, funVal.toObject().toFunction());
-    Rooted<JSScript*> sourceScript(cx, sourceFun->nonLazyScript());
-    JS_ASSERT(!sourceScript->enclosingStaticScope());
-    RawScript cscript = CloneScript(cx, NullPtr(), targetFun, sourceScript);
-    if (!cscript)
-        return false;
-    targetFun->setScript(cscript);
-    cscript->setFunction(targetFun);
-    JS_ASSERT(sourceFun->nargs == targetFun->nargs);
-    targetFun->flags = sourceFun->flags | JSFunction::EXTENDED;
-    return true;
-}
-
-bool
-JSRuntime::cloneSelfHostedValue(JSContext *cx, Handle<PropertyName*> name, MutableHandleValue vp)
-{
-    RootedValue funVal(cx);
-    if (!getUnclonedSelfHostedValue(cx, name, &funVal))
-        return false;
-
-    /*
-     * We don't clone if we're operating in the self-hosting global, as that
-     * means we're currently executing the self-hosting script while
-     * initializing the runtime (see JSRuntime::initSelfHosting).
-     */
-    if (cx->global() == selfHostedGlobal_) {
-        vp.set(funVal);
-    } else if (funVal.isObject() && funVal.toObject().isFunction()) {
-        RootedFunction fun(cx, funVal.toObject().toFunction());
-        RootedObject clone(cx, CloneFunctionObject(cx, fun, cx->global(), fun->getAllocKind()));
-        if (!clone)
-            return false;
-        vp.set(ObjectValue(*clone));
-    } else {
-        vp.set(UndefinedValue());
-    }
-    return true;
 }
 
 JSContext *
@@ -1187,8 +617,8 @@ checkReportFlags(JSContext *cx, unsigned *flags)
          * We assume that if the top frame is a native, then it is strict if
          * the nearest scripted frame is strict, see bug 536306.
          */
-        JSScript *script = cx->stack.currentScript();
-        if (script && script->strictModeCode)
+        UnrootedScript script = cx->stack.currentScript();
+        if (script && script->strict)
             *flags &= ~JSREPORT_WARNING;
         else if (cx->hasStrictOption())
             *flags |= JSREPORT_WARNING;
@@ -1244,7 +674,7 @@ js::ReportUsageError(JSContext *cx, HandleObject callee, const char *msg)
 {
     const char *usageStr = "usage";
     PropertyName *usageAtom = Atomize(cx, usageStr, strlen(usageStr))->asPropertyName();
-    DebugOnly<Shape *> shape = callee->nativeLookup(cx, NameToId(usageAtom));
+    DebugOnly<RawShape> shape = static_cast<RawShape>(callee->nativeLookup(cx, NameToId(usageAtom)));
     JS_ASSERT(!shape->configurable());
     JS_ASSERT(!shape->writable());
     JS_ASSERT(shape->hasDefaultGetter());
@@ -1352,7 +782,7 @@ JSBool
 js_ExpandErrorArguments(JSContext *cx, JSErrorCallback callback,
                         void *userRef, const unsigned errorNumber,
                         char **messagep, JSErrorReport *reportp,
-                        bool charArgs, va_list ap)
+                        ErrorArgumentsType argumentsType, va_list ap)
 {
     const JSErrorFormatString *efs;
     int i;
@@ -1392,7 +822,7 @@ js_ExpandErrorArguments(JSContext *cx, JSErrorCallback callback,
             for (i = 0; i < argCount; i++) {
                 if (messageArgsPassed) {
                     /* Do nothing. */
-                } else if (charArgs) {
+                } else if (argumentsType == ArgumentsAreASCII) {
                     char *charArg = va_arg(ap, char *);
                     size_t charArgLength = strlen(charArg);
                     reportp->messageArgs[i] = InflateString(cx, charArg, &charArgLength);
@@ -1489,7 +919,7 @@ js_ExpandErrorArguments(JSContext *cx, JSErrorCallback callback,
 error:
     if (!messageArgsPassed && reportp->messageArgs) {
         /* free the arguments only if we allocated them */
-        if (charArgs) {
+        if (argumentsType == ArgumentsAreASCII) {
             i = 0;
             while (reportp->messageArgs[i])
                 js_free((void *)reportp->messageArgs[i++]);
@@ -1511,7 +941,7 @@ error:
 JSBool
 js_ReportErrorNumberVA(JSContext *cx, unsigned flags, JSErrorCallback callback,
                        void *userRef, const unsigned errorNumber,
-                       JSBool charArgs, va_list ap)
+                       ErrorArgumentsType argumentsType, va_list ap)
 {
     JSErrorReport report;
     char *message;
@@ -1527,7 +957,7 @@ js_ReportErrorNumberVA(JSContext *cx, unsigned flags, JSErrorCallback callback,
     PopulateReportBlame(cx, &report);
 
     if (!js_ExpandErrorArguments(cx, callback, userRef, errorNumber,
-                                 &message, &report, !!charArgs, ap)) {
+                                 &message, &report, argumentsType, ap)) {
         return JS_FALSE;
     }
 
@@ -1540,7 +970,7 @@ js_ReportErrorNumberVA(JSContext *cx, unsigned flags, JSErrorCallback callback,
          * js_ExpandErrorArguments owns its messageArgs only if it had to
          * inflate the arguments (from regular |char *|s).
          */
-        if (charArgs) {
+        if (argumentsType == ArgumentsAreASCII) {
             int i = 0;
             while (report.messageArgs[i])
                 js_free((void *)report.messageArgs[i++]);
@@ -1572,7 +1002,7 @@ js_ReportErrorNumberUCArray(JSContext *cx, unsigned flags, JSErrorCallback callb
     char *message;
     va_list dummy;
     if (!js_ExpandErrorArguments(cx, callback, userRef, errorNumber,
-                                 &message, &report, JS_FALSE, dummy)) {
+                                 &message, &report, ArgumentsAreUnicode, dummy)) {
         return false;
     }
 
@@ -1770,7 +1200,6 @@ JSContext::JSContext(JSRuntime *rt)
     localeCallbacks(NULL),
     resolvingList(NULL),
     generatingError(false),
-    compartment(NULL),
     enterCompartmentDepth_(0),
     savedFrameChains_(),
     defaultCompartmentObject_(NULL),
@@ -1800,6 +1229,9 @@ JSContext::JSContext(JSRuntime *rt)
 #endif
     activeCompilations(0)
 {
+    JS_ASSERT(static_cast<ContextFriendFields*>(this) ==
+              ContextFriendFields::get(this));
+
 #ifdef JSGC_ROOT_ANALYSIS
     PodArrayZero(thingGCRooters);
 #if defined(JS_GC_ZEAL) && defined(DEBUG) && !defined(JS_THREADSAFE)

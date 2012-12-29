@@ -52,6 +52,7 @@
 
 #include "nsIDOMHTMLButtonElement.h"
 #include "mozilla/dom/HTMLCollectionBinding.h"
+#include "mozilla/dom/BindingUtils.h"
 #include "nsSandboxFlags.h"
 
 using namespace mozilla::dom;
@@ -183,6 +184,7 @@ ShouldBeInElements(nsIFormControl* aFormControl)
   case NS_FORM_INPUT_TEL :
   case NS_FORM_INPUT_URL :
   case NS_FORM_INPUT_NUMBER :
+  case NS_FORM_INPUT_DATE :
   case NS_FORM_SELECT :
   case NS_FORM_TEXTAREA :
   case NS_FORM_FIELDSET :
@@ -582,9 +584,9 @@ nsHTMLFormElement::WillHandleEvent(nsEventChainPostVisitor& aVisitor)
   // for this form too.
   if ((aVisitor.mEvent->message == NS_FORM_SUBMIT ||
        aVisitor.mEvent->message == NS_FORM_RESET) &&
-      aVisitor.mEvent->flags & NS_EVENT_FLAG_BUBBLE &&
+      aVisitor.mEvent->mFlags.mInBubblingPhase &&
       aVisitor.mEvent->originalTarget != static_cast<nsIContent*>(this)) {
-    aVisitor.mEvent->flags |= NS_EVENT_FLAG_STOP_DISPATCH;
+    aVisitor.mEvent->mFlags.mPropagationStopped = true;
   }
   return NS_OK;
 }

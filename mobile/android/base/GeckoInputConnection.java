@@ -52,9 +52,11 @@ class GeckoInputConnection
     private final ExtractedText mUpdateExtract = new ExtractedText();
     private boolean mBatchSelectionChanged;
     private boolean mBatchTextChanged;
+    private Runnable mRestartInputRunnable;
+    private final InputConnection mPluginInputConnection;
 
-    public static InputConnectionHandler create(View targetView,
-                                                GeckoEditableClient editable) {
+    public static GeckoEditableListener create(View targetView,
+                                               GeckoEditableClient editable) {
         if (DEBUG)
             return DebugGeckoInputConnection.create(targetView, editable);
         else
@@ -65,9 +67,9 @@ class GeckoInputConnection
                                    GeckoEditableClient editable) {
         super(targetView, true);
         mEditableClient = editable;
-        // install the editable => input connection listener
-        editable.setListener(this);
         mIMEState = IME_STATE_DISABLED;
+        // InputConnection for plugins, which don't have full editors
+        mPluginInputConnection = new BaseInputConnection(targetView, false);
     }
 
     @Override
@@ -198,16 +200,27 @@ class GeckoInputConnection
     }
 
     private void restartInput() {
-        final InputMethodManager imm = getInputMethodManager();
-        if (imm != null) {
-            final View v = getView();
-            final Editable editable = getEditable();
-            // Fake a selection change, so that when we restart the input,
-            // the IME will make sure that any old composition string is cleared
-            notifySelectionChange(Selection.getSelectionStart(editable),
-                                  Selection.getSelectionEnd(editable));
-            imm.restartInput(v);
+        if (mRestartInputRunnable != null) {
+            return;
         }
+        final InputMethodManager imm = getInputMethodManager();
+        if (imm == null) {
+            return;
+        }
+        mRestartInputRunnable = new Runnable() {
+            @Override
+            public void run() {
+                final View v = getView();
+                final Editable editable = getEditable();
+                // Fake a selection change, so that when we restart the input,
+                // the IME will make sure that any old composition string is cleared
+                notifySelectionChange(Selection.getSelectionStart(editable),
+                                      Selection.getSelectionEnd(editable));
+                imm.restartInput(v);
+                mRestartInputRunnable = null;
+            }
+        };
+        GeckoApp.mAppContext.mMainHandler.postDelayed(mRestartInputRunnable, 200);
     }
 
     public void onTextChange(String text, int start, int oldEnd, int newEnd) {
@@ -277,6 +290,8 @@ class GeckoInputConnection
 
         if (mIMEState == IME_STATE_PASSWORD)
             outAttrs.inputType |= InputType.TYPE_TEXT_VARIATION_PASSWORD;
+        else if (mIMEState == IME_STATE_PLUGIN)
+            outAttrs.inputType = InputType.TYPE_NULL; // "send key events" mode
         else if (mIMETypeHint.equalsIgnoreCase("url"))
             outAttrs.inputType |= InputType.TYPE_TEXT_VARIATION_URI;
         else if (mIMETypeHint.equalsIgnoreCase("email"))
@@ -292,7 +307,7 @@ class GeckoInputConnection
                                  | InputType.TYPE_NUMBER_FLAG_DECIMAL;
         else if (mIMETypeHint.equalsIgnoreCase("week") ||
                  mIMETypeHint.equalsIgnoreCase("month"))
-             outAttrs.inputType = InputType.TYPE_CLASS_DATETIME
+            outAttrs.inputType = InputType.TYPE_CLASS_DATETIME
                                   | InputType.TYPE_DATETIME_VARIATION_DATE;
         else if (mIMEModeHint.equalsIgnoreCase("numeric"))
             outAttrs.inputType = InputType.TYPE_CLASS_NUMBER |
@@ -350,9 +365,15 @@ class GeckoInputConnection
             }
         }
 
-        // We don't know the selection
-        outAttrs.initialSelStart = -1;
-        outAttrs.initialSelEnd = -1;
+        if (mIMEState == IME_STATE_PLUGIN) {
+            // Since we are using a temporary string as the editable, the selection is at 0
+            outAttrs.initialSelStart = 0;
+            outAttrs.initialSelEnd = 0;
+            return mPluginInputConnection;
+        }
+        Editable editable = getEditable();
+        outAttrs.initialSelStart = Selection.getSelectionStart(editable);
+        outAttrs.initialSelEnd = Selection.getSelectionEnd(editable);
         return this;
     }
 
@@ -389,6 +410,7 @@ class GeckoInputConnection
 
         // KeyListener returns true if it handled the event for us.
         if (mIMEState == IME_STATE_DISABLED ||
+                mIMEState == IME_STATE_PLUGIN ||
                 keyCode == KeyEvent.KEYCODE_ENTER ||
                 keyCode == KeyEvent.KEYCODE_DEL ||
                 keyCode == KeyEvent.KEYCODE_TAB ||
@@ -420,6 +442,7 @@ class GeckoInputConnection
         KeyListener keyListener = TextKeyListener.getInstance();
 
         if (mIMEState == IME_STATE_DISABLED ||
+            mIMEState == IME_STATE_PLUGIN ||
             keyCode == KeyEvent.KEYCODE_ENTER ||
             keyCode == KeyEvent.KEYCODE_DEL ||
             (event.getFlags() & KeyEvent.FLAG_SOFT_KEYBOARD) != 0 ||
@@ -507,6 +530,14 @@ class GeckoInputConnection
         mIMEModeHint = (modeHint == null) ? "" : modeHint;
         mIMEActionHint = (actionHint == null) ? "" : actionHint;
 
+        View v = getView();
+        if (v == null || !v.hasFocus()) {
+            // When using Find In Page, we can still receive notifyIMEEnabled calls due to the
+            // selection changing when highlighting. However in this case we don't want to reset/
+            // show/hide the keyboard because the find box has the focus and is taking input from
+            // the keyboard.
+            return;
+        }
         restartInput();
         GeckoApp.mAppContext.mMainHandler.postDelayed(new Runnable() {
             public void run() {
@@ -531,8 +562,8 @@ final class DebugGeckoInputConnection
         super(targetView, editable);
     }
 
-    public static InputConnectionHandler create(View targetView,
-                                                GeckoEditableClient editable) {
+    public static GeckoEditableListener create(View targetView,
+                                               GeckoEditableClient editable) {
         final Class[] PROXY_INTERFACES = { InputConnection.class,
                 InputConnectionHandler.class,
                 GeckoEditableListener.class };
@@ -541,8 +572,7 @@ final class DebugGeckoInputConnection
         dgic.mProxy = (InputConnection)Proxy.newProxyInstance(
                 GeckoInputConnection.class.getClassLoader(),
                 PROXY_INTERFACES, dgic);
-        editable.setListener((GeckoEditableListener)dgic.mProxy);
-        return (InputConnectionHandler)dgic.mProxy;
+        return (GeckoEditableListener)dgic.mProxy;
     }
 
     private static StringBuilder debugAppend(StringBuilder sb, Object obj) {

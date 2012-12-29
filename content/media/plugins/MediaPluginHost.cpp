@@ -14,6 +14,7 @@
 #include "pratom.h"
 #include "MediaPluginReader.h"
 #include "nsIGfxInfo.h"
+#include "gfxCrashReporterUtils.h"
 
 #include "MPAPI.h"
 
@@ -113,6 +114,8 @@ static bool IsOmxSupported()
     return false;
   }
 
+  ScopedGfxFeatureReporter reporter("Stagefright", forceEnabled);
+
   if (!forceEnabled) {
     nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
     if (gfxInfo) {
@@ -125,6 +128,8 @@ static bool IsOmxSupported()
       }
     }
   }
+
+  reporter.SetSuccessful();
   return true;
 }
 
@@ -152,7 +157,22 @@ static const char* GetOmxLibraryName()
     ALOG("Android Release Version is: %s", NS_LossyConvertUTF16toASCII(release_version).get());
   }
 
-  if (version == 13 || version == 12 || version == 11) {
+  nsAutoString device;
+  rv = infoService->GetPropertyAsAString(NS_LITERAL_STRING("device"), device);
+  if (NS_SUCCEEDED(rv)) {
+    ALOG("Android Device is: %s", NS_LossyConvertUTF16toASCII(device).get());
+  }
+
+  if (version == 15 &&
+      (device.Find("LT28", false) == 0 ||
+       device.Find("LT26", false) == 0 ||
+       device.Find("LT22", false) == 0 ||
+       device.Find("IS12", false) == 0 ||
+       device.Find("MT27", false) == 0)) {
+    // Sony Ericsson devices running ICS
+    return "lib/libomxpluginsony.so";
+  }
+  else if (version == 13 || version == 12 || version == 11) {
     return "lib/libomxpluginhc.so";
   }
   else if (version == 10 && release_version >= NS_LITERAL_STRING("2.3.6")) {
@@ -160,13 +180,23 @@ static const char* GetOmxLibraryName()
     // layout to those on 2.3.5 and below.
     return "lib/libomxplugingb.so";
   }
+  else if (version == 10 && release_version >= NS_LITERAL_STRING("2.3.4") &&
+           device.Find("HTC") == 0) {
+    // HTC devices running Gingerbread 2.3.4+ (HTC Desire HD, HTC Evo Design, etc) seem to
+    // use a newer version of Gingerbread libstagefright than other 2.3.4 devices.
+    return "lib/libomxplugingb.so";
+  }
   else if (version == 9 || (version == 10 && release_version <= NS_LITERAL_STRING("2.3.5"))) {
     // Gingerbread versions from 2.3.5 and below have a different DataSource
     // than 2.3.6 and above.
     return "lib/libomxplugingb235.so";
   }
-  else if (version < 9) {
-    // Froyo and below are not supported
+  else if (version == 8) {
+    // Froyo
+    return "lib/libomxpluginfroyo.so";
+  }
+  else if (version < 8) {
+    // Below Froyo not supported
     return nullptr;
   }
 

@@ -32,8 +32,7 @@ public:
     nsresult    GetOutputStream(uint32_t offset, nsIOutputStream ** outputStream);
 
     nsresult    CloseOutputStream(nsDiskCacheOutputStream * outputStream);
-    nsresult    CloseOutputStreamInternal(nsDiskCacheOutputStream * outputStream);
-        
+
     nsresult    Write( const char * buffer,
                        uint32_t     count,
                        uint32_t *   bytesWritten);
@@ -71,7 +70,6 @@ private:
     nsDiskCacheDevice *         mDevice;
     nsDiskCacheOutputStream *   mOutStream;     // not an owning reference
     int32_t                     mInStreamCount;
-    nsCOMPtr<nsIFile>           mLocalFile;
     PRFileDesc *                mFD;
 
     uint32_t                    mStreamPos;     // for Output Streams

@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "Assembler-arm.h"
 #include "MacroAssembler-arm.h"
 #include "gc/Marking.h"
@@ -1637,6 +1639,10 @@ Assembler::as_b(BOffImm off, Condition c, bool isPatchable)
 BufferOffset
 Assembler::as_b(Label *l, Condition c, bool isPatchable)
 {
+    if (m_buffer.oom()) {
+        BufferOffset ret;
+        return ret;
+    }
     m_buffer.markNextAsBranch();
     if (l->bound()) {
         BufferOffset ret = as_nop();

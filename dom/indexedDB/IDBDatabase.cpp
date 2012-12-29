@@ -11,6 +11,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/storage.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 #include "nsDOMClassInfo.h"
 #include "nsDOMLists.h"
 #include "nsJSUtils.h"
@@ -18,7 +19,6 @@
 #include "nsThreadUtils.h"
 
 #include "AsyncConnectionHelper.h"
-#include "CheckQuotaHelper.h"
 #include "DatabaseInfo.h"
 #include "IDBEvents.h"
 #include "IDBFactory.h"
@@ -37,6 +37,7 @@
 
 USING_INDEXEDDB_NAMESPACE
 using mozilla::dom::ContentParent;
+using mozilla::dom::quota::QuotaManager;
 
 namespace {
 
@@ -188,10 +189,7 @@ IDBDatabase::Create(IDBWrapperCache* aOwnerCache,
   nsRefPtr<IDBDatabase> db(new IDBDatabase());
 
   db->BindToOwner(aOwnerCache);
-  if (!db->SetScriptOwner(aOwnerCache->GetScriptOwner())) {
-    return nullptr;
-  }
-
+  db->SetScriptOwner(aOwnerCache->GetScriptOwner());
   db->mFactory = aFactory;
   db->mDatabaseId = databaseInfo->id;
   db->mName = databaseInfo->name;
@@ -261,11 +259,11 @@ IDBDatabase::Invalidate()
   Close();
 
   // When the IndexedDatabaseManager needs to invalidate databases, all it has
-  // is an origin, so we call back into the manager to cancel any prompts for
-  // our owner.
+  // is an origin, so we call into the quota manager here to cancel any prompts
+  // for our owner.
   nsPIDOMWindow* owner = GetOwner();
   if (owner) {
-    IndexedDatabaseManager::CancelPromptsForWindow(owner);
+    QuotaManager::CancelPromptsForWindow(owner);
   }
 
   DatabaseInfo::Remove(mDatabaseId);
@@ -289,7 +287,7 @@ IDBDatabase::DisconnectFromActorParent()
   // Kill any outstanding prompts.
   nsPIDOMWindow* owner = GetOwner();
   if (owner) {
-    IndexedDatabaseManager::CancelPromptsForWindow(owner);
+    QuotaManager::CancelPromptsForWindow(owner);
   }
 }
 
@@ -782,6 +780,12 @@ IDBDatabase::Close()
   return NS_OK;
 }
 
+const nsACString&
+IDBDatabase::StorageOrigin()
+{
+  return Origin();
+}
+
 nsISupports*
 IDBDatabase::StorageId()
 {
@@ -804,13 +808,13 @@ void
 IDBDatabase::SetThreadLocals()
 {
   NS_ASSERTION(GetOwner(), "Should have owner!");
-  IndexedDatabaseManager::SetCurrentWindow(GetOwner());
+  QuotaManager::SetCurrentWindow(GetOwner());
 }
 
 void
 IDBDatabase::UnsetThreadLocals()
 {
-  IndexedDatabaseManager::SetCurrentWindow(nullptr);
+  QuotaManager::SetCurrentWindow(nullptr);
 }
 
 nsresult

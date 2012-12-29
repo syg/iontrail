@@ -269,7 +269,11 @@ var PlacesCommandHook = {
       var description;
       var charset;
       try {
-        title = webNav.document.title || url.spec;
+        let isErrorPage = /^about:(neterror|certerror|blocked)/
+                          .test(webNav.document.documentURI);
+        title = isErrorPage ? PlacesUtils.history.getPageTitle(url)
+                            : webNav.document.title;
+        title = title || url.spec;
         description = PlacesUIUtils.getDescriptionFromDocument(webNav.document);
         charset = webNav.document.characterSet;
       }
@@ -440,7 +444,7 @@ var PlacesCommandHook = {
    * @param   aLeftPaneRoot
    *          The query to select in the organizer window - options
    *          are: History, AllBookmarks, BookmarksMenu, BookmarksToolbar,
-   *          UnfiledBookmarks and Tags.
+   *          UnfiledBookmarks, Tags and Downloads.
    */
   showPlacesOrganizer: function PCH_showPlacesOrganizer(aLeftPaneRoot) {
     var organizer = Services.wm.getMostRecentWindow("Places:Organizer");
@@ -660,15 +664,6 @@ HistoryMenu.prototype = {
 #endif
   },
 
-  toggleRestoreLastSession: function PHM_toggleRestoreLastSession() {
-    let restoreItem = this._rootElt.getElementsByClassName("restoreLastSession")[0];
-
-    if (this._ss.canRestoreLastSession)
-      restoreItem.removeAttribute("disabled");
-    else
-      restoreItem.setAttribute("disabled", true);
-  },
-
   _onPopupShowing: function HM__onPopupShowing(aEvent) {
     PlacesMenu.prototype._onPopupShowing.apply(this, arguments);
 
@@ -679,7 +674,6 @@ HistoryMenu.prototype = {
     this.toggleRecentlyClosedTabs();
     this.toggleRecentlyClosedWindows();
     this.toggleTabsFromOtherComputers();
-    this.toggleRestoreLastSession();
   },
 
   _onCommand: function HM__onCommand(aEvent) {

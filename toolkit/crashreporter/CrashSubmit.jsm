@@ -71,17 +71,84 @@ function getL10nStrings() {
   }
 }
 
-function getPendingMinidump(id) {
+function getPendingDir() {
   let directoryService = Cc["@mozilla.org/file/directory_service;1"].
                          getService(Ci.nsIProperties);
   let pendingDir = directoryService.get("UAppData", Ci.nsIFile);
   pendingDir.append("Crash Reports");
   pendingDir.append("pending");
+  return pendingDir;
+}
+
+function getPendingMinidump(id) {
+  let pendingDir = getPendingDir();
   let dump = pendingDir.clone();
   let extra = pendingDir.clone();
   dump.append(id + ".dmp");
   extra.append(id + ".extra");
   return [dump, extra];
+}
+
+function getAllPendingMinidumpsIDs() {
+  let minidumps = [];
+  let pendingDir = getPendingDir();
+
+  if (!(pendingDir.exists() && pendingDir.isDirectory()))
+    return [];
+  let entries = pendingDir.directoryEntries;
+
+  while (entries.hasMoreElements()) {
+    let entry = entries.getNext().QueryInterface(Ci.nsIFile);
+    if (entry.isFile()) {
+      let matches = entry.leafName.match(/(.+)\.extra$/);
+      if (matches)
+        minidumps.push(matches[1]);
+    }
+  }
+
+  return minidumps;
+}
+
+function pruneSavedDumps() {
+  const KEEP = 10;
+
+  let pendingDir = getPendingDir();
+  if (!(pendingDir.exists() && pendingDir.isDirectory()))
+    return;
+  let entries = pendingDir.directoryEntries;
+  let entriesArray = [];
+
+  while (entries.hasMoreElements()) {
+    let entry = entries.getNext().QueryInterface(Ci.nsIFile);
+    if (entry.isFile()) {
+      let matches = entry.leafName.match(/(.+)\.extra$/);
+      if (matches)
+	entriesArray.push(entry);
+    }
+  }
+
+  entriesArray.sort(function(a,b) {
+    let dateA = a.lastModifiedTime;
+    let dateB = b.lastModifiedTime;
+    if (dateA < dateB)
+      return -1;
+    if (dateB < dateA)
+      return 1;
+    return 0;
+  });
+
+  if (entriesArray.length > KEEP) {
+    for (let i = 0; i < entriesArray.length - KEEP; ++i) {
+      let extra = entriesArray[i];
+      let matches = extra.leafName.match(/(.+)\.extra$/);
+      if (matches) {
+        let dump = extra.clone();
+        dump.leafName = matches[1] + '.dmp';
+        dump.remove(false);
+        extra.remove(false);
+      }
+    }
+  }
 }
 
 function addFormEntry(doc, form, name, value) {
@@ -349,6 +416,23 @@ this.CrashSubmit = {
                                   noThrottle);
     CrashSubmit._activeSubmissions.push(submitter);
     return submitter.submit();
+  },
+
+  /**
+   * Get the list of pending crash IDs.
+   *
+   * @return an array of string, each being an ID as
+   *         expected to be passed to submit()
+   */
+  pendingIDs: function CrashSubmit_pendingIDs() {
+    return getAllPendingMinidumpsIDs();
+  },
+
+  /**
+   * Prune the saved dumps.
+   */
+  pruneSavedDumps: function CrashSubmit_pruneSavedDumps() {
+    pruneSavedDumps();
   },
 
   // List of currently active submit objects

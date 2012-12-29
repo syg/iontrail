@@ -9,8 +9,12 @@
  * boxes, also used for various anonymous boxes
  */
 
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
+
 #include "nsCOMPtr.h"
 #include "nsBlockFrame.h"
+#include "nsAbsoluteContainingBlock.h"
 #include "nsBlockReflowContext.h"
 #include "nsBlockReflowState.h"
 #include "nsBulletFrame.h"
@@ -53,8 +57,6 @@
 #include "nsRenderingContext.h"
 #include "TextOverflow.h"
 #include "nsStyleStructInlines.h"
-#include "mozilla/Util.h" // for DebugOnly
-#include "mozilla/Likely.h"
 
 #ifdef IBMBIDI
 #include "nsBidiPresUtils.h"
@@ -6250,14 +6252,14 @@ nsBlockFrame::AccessibleType()
 {
   // block frame may be for <hr>
   if (mContent->Tag() == nsGkAtoms::hr) {
-    return a11y::eHTMLHRAccessible;
+    return a11y::eHTMLHRType;
   }
 
   if (!HasBullet() || !PresContext()) {
     if (!mContent->GetParent()) {
       // Don't create accessible objects for the root content node, they are redundant with
       // the nsDocAccessible object created with the document node
-      return a11y::eNoAccessible;
+      return a11y::eNoType;
     }
     
     nsCOMPtr<nsIDOMHTMLDocument> htmlDoc =
@@ -6268,16 +6270,16 @@ nsBlockFrame::AccessibleType()
       if (SameCOMIdentity(body, mContent)) {
         // Don't create accessible objects for the body, they are redundant with
         // the nsDocAccessible object created with the document node
-        return a11y::eNoAccessible;
+        return a11y::eNoType;
       }
     }
 
     // Not a bullet, treat as normal HTML container
-    return a11y::eHyperTextAccessible;
+    return a11y::eHyperTextType;
   }
 
   // Create special list bullet accessible
-  return a11y::eHTMLLiAccessible;
+  return a11y::eHTMLLiType;
 }
 #endif
 

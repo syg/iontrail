@@ -10,12 +10,9 @@ const Cu = Components.utils;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import("resource://gre/modules/PermissionSettings.jsm");
+Cu.import("resource://gre/modules/PermissionsTable.jsm");
 
-this.EXPORTED_SYMBOLS = ["PermissionsInstaller",
-                         "expandPermissions",
-                         "PermissionsTable",
-                         "appendAccessToPermName"
-                        ];
+this.EXPORTED_SYMBOLS = ["PermissionsInstaller"];
 const UNKNOWN_ACTION = Ci.nsIPermissionManager.UNKNOWN_ACTION;
 const ALLOW_ACTION = Ci.nsIPermissionManager.ALLOW_ACTION;
 const DENY_ACTION = Ci.nsIPermissionManager.DENY_ACTION;
@@ -33,336 +30,16 @@ function debug(aMsg) {
   //dump("-*-*- PermissionsInstaller.jsm : " + aMsg + "\n");
 }
 
-// Permissions Matrix: https://docs.google.com/spreadsheet/ccc?key=0Akyz_Bqjgf5pdENVekxYRjBTX0dCXzItMnRyUU1RQ0E#gid=0
-// Also, keep in sync with https://mxr.mozilla.org/mozilla-central/source/extensions/cookie/Permission.txt
-
-// Permissions that are implicit:
-// battery-status, network-information, vibration,
-// device-capabilities
-
-this.PermissionsTable =  { geolocation: {
-                             app: PROMPT_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           camera: {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           alarms: {
-                             app: ALLOW_ACTION,
-                             privileged: ALLOW_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "tcp-socket": {
-                             app: DENY_ACTION,
-                             privileged: ALLOW_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "network-events": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           contacts: {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write", "create"]
-                           },
-                           "device-storage:apps": {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write", "create"]
-                           },
-                           "device-storage:pictures": {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write", "create"]
-                           },
-                           "device-storage:videos": {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write", "create"]
-                           },
-                           "device-storage:music": {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write", "create"]
-                           },
-                           "device-storage:sdcard": {
-                             app: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write", "create"]
-                           },
-                           sms: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           telephony: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           browser: {
-                             app: DENY_ACTION,
-                             privileged: ALLOW_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           bluetooth: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           mobileconnection: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           power: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           settings: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write"],
-                             additional: ["indexedDB-chrome-settings"]
-                           },
-                           permissions: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           fmradio: {
-                             app: ALLOW_ACTION,
-                             privileged: ALLOW_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           attention: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "webapps-manage": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "backgroundservice": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "desktop-notification": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "networkstats-manage": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "wifi-manage": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "systemXHR": {
-                             app: DENY_ACTION,
-                             privileged: ALLOW_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "voicemail": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "deprecated-hwvideo": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "idle": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "time": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "embed-apps": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           "storage": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION,
-                             substitute: [
-                               "indexedDB-unlimited",
-                               "offline-app",
-                               "pin-app"
-                             ]
-                           },
-                           "background-sensors": {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           cellbroadcast: {
-                             app: DENY_ACTION,
-                             privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION
-                           },
-                           audio: {
-                             app: DENY_ACTION,
-                             privileged: ALLOW_ACTION,
-                             certified: ALLOW_ACTION,
-                             channels: ["normal", "content", "notification",
-                               "alarm", "telephony", "ringer", "publicnotification"]
-                           },
-                         };
-
-/**
- * Append access modes to the permission name as suffixes.
- *   e.g. permission name 'contacts' with ['read', 'write'] =
- *   ['contacts-read', contacts-write']
- * @param string aPermName
- * @param array aAccess
- * @returns array containing access-appended permission names.
- **/
-this.appendAccessToPermName = function appendAccessToPermName(aPermName, aAccess) {
-  if (aAccess.length == 0) {
-    return [aPermName];
-  }
-  return aAccess.map(function(aMode) {
-    return aPermName + "-" + aMode;
-  });
-};
-
-/**
- * Expand an access string into multiple permission names,
- *   e.g: permission name 'contacts' with 'readwrite' =
- *   ['contacts-read', 'contacts-create', 'contacts-write']
- * @param string aPermName
- * @param string aAccess
- * @param string array aChannels
- * @returns array containing expanded permission names.
- **/
-this.expandPermissions = function expandPermissions(aPermName, aAccess, aChannels) {
-  if (!PermissionsTable[aPermName]) {
-    Cu.reportError("PermissionsTable.jsm: expandPermissions: Unknown Permission: " + aPermName);
-    dump("PermissionsTable.jsm: expandPermissions: Unknown Permission: " + aPermName);
-    return [];
-  }
-
-  const tableEntry = PermissionsTable[aPermName];
-
-  if (tableEntry.substitute && tableEntry.additional) {
-    Cu.reportError("PermissionsTable.jsm: expandPermissions: Can't handle both 'substitute' " +
-                   "and 'additional' entries for permission: " + aPermName);
-    return [];
-  }
-
-  if (!aAccess && tableEntry.access ||
-      aAccess && !tableEntry.access) {
-    Cu.reportError("PermissionsTable.jsm: expandPermissions: Invalid Manifest : " +
-                   aPermName + " " + aAccess + "\n");
-    dump("PermissionsTable.jsm: expandPermissions: Invalid Manifest: " +
-         aPermName + " " + aAccess + "\n");
-    throw new Error("PermissionsTable.jsm: expandPermissions: Invalid Manifest: " +
-                    aPermName + " " + aAccess + "\n");
-  }
-
-  let expandedPermNames = [];
-
-  if (tableEntry.access && aAccess) {
-    let requestedSuffixes = [];
-    switch (aAccess) {
-    case READONLY:
-      requestedSuffixes.push("read");
-      break;
-    case CREATEONLY:
-      requestedSuffixes.push("create");
-      break;
-    case READCREATE:
-      requestedSuffixes.push("read", "create");
-      break;
-    case READWRITE:
-      requestedSuffixes.push("read", "create", "write");
-      break;
-    default:
-      return [];
-    }
-
-    let permArr = appendAccessToPermName(aPermName, requestedSuffixes);
-
-    // Add the same suffix to each of the additions.
-    if (tableEntry.additional) {
-      for each (let additional in tableEntry.additional) {
-        permArr = permArr.concat(appendAccessToPermName(additional, requestedSuffixes));
-      }
-    }
-
-    // Only add the suffixed version if the suffix exisits in the table.
-    for (let idx in permArr) {
-      let suffix = requestedSuffixes[idx % requestedSuffixes.length];
-      if (tableEntry.access.indexOf(suffix) != -1) {
-        expandedPermNames.push(permArr[idx]);
-      }
-    }
-  } else if (tableEntry.substitute) {
-    expandedPermNames = expandedPermNames.concat(tableEntry.substitute);
-  } else if (tableEntry.channels) {
-    if ("audio" == aPermName && aChannels) {
-      let allowChannels = tableEntry.channels;
-
-      for (let idx in aChannels) {
-        let candidate = aChannels[idx];
-        if (allowChannels.indexOf(candidate) == -1) {
-          continue;
-        }
-        let permAttr = aPermName + "-channel-" + candidate;
-        expandedPermNames.push(permAttr);
-      }
-    }
-  } else {
-    expandedPermNames.push(aPermName);
-    // Include each of the additions exactly as they appear in the table.
-    if (tableEntry.additional) {
-      expandedPermNames = expandedPermNames.concat(tableEntry.additional);
-    }
-  }
-
-  return expandedPermNames;
-};
-
 // An array carring all the possible (expanded) permission names.
 let AllPossiblePermissions = [];
 for (let permName in PermissionsTable) {
+  let expandedPermNames = [];
   if (PermissionsTable[permName].access) {
-    AllPossiblePermissions =
-      AllPossiblePermissions.concat(expandPermissions(permName, READWRITE));
-  } else if (PermissionsTable[permName].channels) {
-      AllPossiblePermissions.concat(expandPermissions(permName, null, PermissionsTable[permName].channels));
+    expandedPermNames = expandPermissions(permName, READWRITE);
   } else {
-    AllPossiblePermissions =
-      AllPossiblePermissions.concat(expandPermissions(permName));
+    expandedPermNames = expandPermissions(permName);
   }
+  AllPossiblePermissions = AllPossiblePermissions.concat(expandedPermNames);
 }
 
 this.PermissionsInstaller = {
@@ -394,8 +71,7 @@ this.PermissionsInstaller = {
           for (let permName in newManifest.permissions) {
             let expandedPermNames =
               expandPermissions(permName,
-                                newManifest.permissions[permName].access,
-                                newManifest.permissions[permName].channels);
+                                newManifest.permissions[permName].access);
             newPermNames = newPermNames.concat(expandedPermNames);
           }
 
@@ -451,8 +127,7 @@ this.PermissionsInstaller = {
 
         let expandedPermNames =
           expandPermissions(permName,
-                            newManifest.permissions[permName].access,
-                            newManifest.permissions[permName].channels);
+                            newManifest.permissions[permName].access);
         for (let idx in expandedPermNames) {
           this._setPermission(expandedPermNames[idx],
                               PERM_TO_STRING[PermissionsTable[permName][appStatus]],

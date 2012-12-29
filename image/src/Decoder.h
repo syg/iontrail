@@ -7,8 +7,8 @@
 #define MOZILLA_IMAGELIB_DECODER_H_
 
 #include "RasterImage.h"
-
-#include "imgIDecoderObserver.h"
+#include "imgDecoderObserver.h"
+#include "mozilla/RefPtr.h"
 
 namespace mozilla {
 namespace image {
@@ -17,7 +17,7 @@ class Decoder
 {
 public:
 
-  Decoder(RasterImage& aImage, imgIDecoderObserver* aObserver);
+  Decoder(RasterImage& aImage, imgDecoderObserver* aObserver);
   virtual ~Decoder();
 
   /**
@@ -89,7 +89,7 @@ public:
   // If we're doing a "size decode", we more or less pass through the image
   // data, stopping only to scoop out the image dimensions. A size decode
   // must be enabled by SetSizeDecode() _before_calling Init().
-  bool IsSizeDecode() { return mSizeDecode; };
+  bool IsSizeDecode() { return mSizeDecode; }
   void SetSizeDecode(bool aSizeDecode)
   {
     NS_ABORT_IF_FALSE(!mInitialized, "Can't set size decode after Init()!");
@@ -104,10 +104,10 @@ public:
   uint32_t GetCompleteFrameCount() { return mInFrame ? mFrameCount - 1 : mFrameCount; }
 
   // Error tracking
-  bool HasError() { return HasDataError() || HasDecoderError(); };
-  bool HasDataError() { return mDataError; };
-  bool HasDecoderError() { return NS_FAILED(mFailCode); };
-  nsresult GetDecoderError() { return mFailCode; };
+  bool HasError() { return HasDataError() || HasDecoderError(); }
+  bool HasDataError() { return mDataError; }
+  bool HasDecoderError() { return NS_FAILED(mFailCode); }
+  nsresult GetDecoderError() { return mFailCode; }
   void PostResizeError() { PostDataError(); }
   bool GetDecodeDone() const {
     return mDecodeDone;
@@ -175,7 +175,7 @@ protected:
    *
    */
   RasterImage &mImage;
-  nsCOMPtr<imgIDecoderObserver> mObserver;
+  RefPtr<imgDecoderObserver> mObserver;
 
   uint32_t mDecodeFlags;
   bool mDecodeDone;
@@ -192,6 +192,7 @@ private:
   bool mSizeDecode;
   bool mInFrame;
   bool mIsAnimated;
+  bool mFirstWrite;
 };
 
 } // namespace image

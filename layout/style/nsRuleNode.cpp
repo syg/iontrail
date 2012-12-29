@@ -11,6 +11,11 @@
 
 #include <algorithm>
 
+#include "mozilla/Assertions.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
+#include "mozilla/Util.h"
+
 #include "nsRuleNode.h"
 #include "nscore.h"
 #include "nsIServiceManager.h"
@@ -40,11 +45,8 @@
 #include "CSSCalc.h"
 #include "nsPrintfCString.h"
 
-#include "mozilla/Assertions.h"
 #include "mozilla/dom/Element.h"
-#include "mozilla/Likely.h"
 #include "mozilla/LookAndFeel.h"
-#include "mozilla/Util.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h>
@@ -65,7 +67,7 @@ using namespace mozilla::dom;
   if ((context_)->PresContext()->IsDynamic()) {                               \
     method_(request_);                                                      \
   } else {                                                                  \
-    nsCOMPtr<imgIRequest> req = nsContentUtils::GetStaticRequest(request_); \
+    nsRefPtr<imgRequestProxy> req = nsContentUtils::GetStaticRequest(request_); \
     method_(req);                                                           \
   }
 
@@ -1297,6 +1299,9 @@ nsRuleNode::nsRuleNode(nsPresContext* aContext, nsRuleNode* aParent,
     mNoneBits(0),
     mRefCnt(0)
 {
+  NS_ABORT_IF_FALSE(IsRoot() == !aRule,
+                    "non-root rule nodes must have a rule");
+
   mChildren.asVoid = nullptr;
   MOZ_COUNT_CTOR(nsRuleNode);
   NS_IF_ADDREF(mRule);
@@ -7614,6 +7619,13 @@ nsRuleNode::ComputeSVGResetData(void* aStartStruct,
     canStoreInRuleTree = false;
     svgReset->mMask = parentSVGReset->mMask;
   }
+
+  // mask-type: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForMaskType(),
+              svgReset->mMaskType,
+              canStoreInRuleTree, SETDSC_ENUMERATED,
+              parentSVGReset->mMaskType,
+              NS_STYLE_MASK_TYPE_LUMINANCE, 0, 0, 0, 0);
 
   COMPUTE_END_RESET(SVGReset, svgReset)
 }

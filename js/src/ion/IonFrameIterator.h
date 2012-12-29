@@ -12,8 +12,8 @@
 #include "IonCode.h"
 #include "SnapshotReader.h"
 
-struct JSFunction;
-struct JSScript;
+class JSFunction;
+class JSScript;
 
 namespace js {
 namespace ion {
@@ -129,7 +129,7 @@ class IonFrameIterator
     JSFunction *callee() const;
     JSFunction *maybeCallee() const;
     unsigned numActualArgs() const;
-    JSScript *script() const;
+    UnrootedScript script() const;
     Value *nativeVp() const;
     Value *actualArgs() const;
 
@@ -275,6 +275,7 @@ class InlineFrameIterator
   public:
     InlineFrameIterator(const IonFrameIterator *iter);
     InlineFrameIterator(const IonBailoutIterator *iter);
+    InlineFrameIterator(const InlineFrameIterator *iter);
 
     bool more() const {
         return frame_ && framesRead_ < start_.frameCount();
@@ -291,8 +292,8 @@ class InlineFrameIterator
     template <class Op>
     inline void forEachCanonicalActualArg(Op op, unsigned start, unsigned count) const;
 
-    JSScript *script() const {
-        return script_;
+    UnrootedScript script() const {
+        return script_.get();
     }
     jsbytecode *pc() const {
         return pc_;
@@ -304,7 +305,7 @@ class InlineFrameIterator
     bool isConstructing() const;
     JSObject *scopeChain() const;
     JSObject *thisObject() const;
-    InlineFrameIterator operator++();
+    InlineFrameIterator &operator++();
 
     void dump() const;
 };

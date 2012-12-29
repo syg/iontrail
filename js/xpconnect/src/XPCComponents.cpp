@@ -4224,6 +4224,34 @@ nsXPCComponents_Utils::CreateArrayIn(const jsval &vobj, JSContext *cx, jsval *rv
     return NS_OK;
 }
 
+/* jsval createDateIn(in jsval vobj, in long long msec); */
+NS_IMETHODIMP
+nsXPCComponents_Utils::CreateDateIn(const jsval &vobj,
+                                    int64_t msec,
+                                    JSContext *cx, jsval *rval)
+{
+    if (!cx)
+        return NS_ERROR_FAILURE;
+
+    // first argument must be an object
+    if (JSVAL_IS_PRIMITIVE(vobj))
+        return NS_ERROR_XPC_BAD_CONVERT_JS;
+
+    JSObject *scope = js::UnwrapObject(JSVAL_TO_OBJECT(vobj));
+    JSObject *obj;
+    {
+        JSAutoCompartment ac(cx, scope);
+        obj =  JS_NewDateObjectMsec(cx, msec);
+        if (!obj)
+            return NS_ERROR_FAILURE;
+    }
+
+    if (!JS_WrapObject(cx, &obj))
+        return NS_ERROR_FAILURE;
+    *rval = OBJECT_TO_JSVAL(obj);
+    return NS_OK;
+}
+
 JSBool
 FunctionWrapper(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -4792,7 +4820,7 @@ ContentComponentsGetterOp(JSContext *cx, JSHandleObject obj, JSHandleId id,
         return true;
 
     // If the caller is XBL, this is ok.
-    if (AccessCheck::callerIsXBL(cx))
+    if (nsContentUtils::IsCallerXBL())
         return true;
 
     // Do Telemetry on how often this happens.
@@ -4881,7 +4909,7 @@ nsXPCComponents::CanCallMethod(const nsIID * iid, const PRUnichar *methodName, c
     *_retval = xpc_CheckAccessList(methodName, allowed);
     if (*_retval &&
         methodName[0] == 'l' &&
-        !AccessCheck::callerIsXBL(nsContentUtils::GetCurrentJSContext()))
+        !nsContentUtils::IsCallerXBL())
     {
         Telemetry::Accumulate(Telemetry::COMPONENTS_LOOKUPMETHOD_ACCESSED_BY_CONTENT, true);
     }
@@ -4896,7 +4924,7 @@ nsXPCComponents::CanGetProperty(const nsIID * iid, const PRUnichar *propertyName
     *_retval = xpc_CheckAccessList(propertyName, allowed);
     if (*_retval &&
         propertyName[0] == 'i' &&
-        !AccessCheck::callerIsXBL(nsContentUtils::GetCurrentJSContext()))
+        !nsContentUtils::IsCallerXBL())
     {
         Telemetry::Accumulate(Telemetry::COMPONENTS_INTERFACES_ACCESSED_BY_CONTENT, true);
     }

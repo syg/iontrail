@@ -58,12 +58,14 @@ StaticScopeIter::hasDynamicScopeObject() const
            : obj->toFunction()->isHeavyweight();
 }
 
-Shape *
+UnrootedShape
 StaticScopeIter::scopeShape() const
 {
     JS_ASSERT(hasDynamicScopeObject());
     JS_ASSERT(type() != NAMED_LAMBDA);
-    return type() == BLOCK ? block().lastProperty() : funScript()->bindings.callObjShape();
+    return type() == BLOCK
+           ? UnrootedShape(block().lastProperty())
+           : funScript()->bindings.callObjShape();
 }
 
 StaticScopeIter::Type
@@ -156,7 +158,7 @@ CallObject::create(JSContext *cx, HandleShape shape, HandleTypeObject type, Heap
  * callee) or used as a template for jit compilation.
  */
 CallObject *
-CallObject::createTemplateObject(JSContext *cx, JSScript *script)
+CallObject::createTemplateObject(JSContext *cx, HandleScript script)
 {
     RootedShape shape(cx, script->bindings.callObjShape());
 
@@ -196,6 +198,28 @@ CallObject::create(JSContext *cx, HandleScript script, HandleObject enclosing, H
 }
 
 CallObject *
+CallObject::createForFunction(JSContext *cx, HandleObject enclosing, HandleFunction callee)
+{
+    AssertCanGC();
+
+    RootedObject scopeChain(cx, enclosing);
+    JS_ASSERT(scopeChain);
+
+    /*
+     * For a named function expression Call's parent points to an environment
+     * object holding function's name.
+     */
+    if (callee->isNamedLambda()) {
+        scopeChain = DeclEnvObject::create(cx, scopeChain, callee);
+        if (!scopeChain)
+            return NULL;
+    }
+
+    RootedScript script(cx, callee->nonLazyScript());
+    return create(cx, script, scopeChain, callee);
+}
+
+CallObject *
 CallObject::createForFunction(JSContext *cx, StackFrame *fp)
 {
     AssertCanGC();
@@ -203,25 +227,14 @@ CallObject::createForFunction(JSContext *cx, StackFrame *fp)
     assertSameCompartment(cx, fp);
 
     RootedObject scopeChain(cx, fp->scopeChain());
-
-    /*
-     * For a named function expression Call's parent points to an environment
-     * object holding function's name.
-     */
-    if (fp->fun()->isNamedLambda()) {
-        scopeChain = DeclEnvObject::create(cx, fp);
-        if (!scopeChain)
-            return NULL;
-    }
-
-    RootedScript script(cx, fp->script());
     RootedFunction callee(cx, &fp->callee());
-    CallObject *callobj = create(cx, script, scopeChain, callee);
+
+    CallObject *callobj = createForFunction(cx, scopeChain, callee);
     if (!callobj)
         return NULL;
 
     /* Copy in the closed-over formal arguments. */
-    for (AliasedFormalIter i(script); i; i++)
+    for (AliasedFormalIter i(fp->script()); i; i++)
         callobj->setAliasedVar(i, fp->unaliasedFormal(i.frameIndex(), DONT_CHECK_ALIASING));
 
     return callobj;
@@ -254,7 +267,6 @@ JS_PUBLIC_DATA(Class) js::CallClass = {
 
 Class js::DeclEnvClass = {
     js_Object_str,
-    JSCLASS_HAS_PRIVATE |
     JSCLASS_HAS_RESERVED_SLOTS(DeclEnvObject::RESERVED_SLOTS) |
     JSCLASS_HAS_CACHED_PROTO(JSProto_Object),
     JS_PropertyStub,         /* addProperty */
@@ -266,18 +278,21 @@ Class js::DeclEnvClass = {
     JS_ConvertStub
 };
 
+/*
+ * Create a DeclEnvObject for a JSScript that is not initialized to any
+ * particular callsite. This object can either be initialized (with an enclosing
+ * scope and callee) or used as a template for jit compilation.
+ */
 DeclEnvObject *
-DeclEnvObject::create(JSContext *cx, StackFrame *fp)
+DeclEnvObject::createTemplateObject(JSContext *cx, HandleFunction fun)
 {
-    assertSameCompartment(cx, fp);
-
     RootedTypeObject type(cx, cx->compartment->getNewType(cx, NULL));
     if (!type)
         return NULL;
 
     RootedShape emptyDeclEnvShape(cx);
     emptyDeclEnvShape = EmptyShape::getInitialShape(cx, &DeclEnvClass, NULL,
-                                                    &fp->global(), FINALIZE_KIND,
+                                                    cx->global(), FINALIZE_KIND,
                                                     BaseShape::DELEGATE);
     if (!emptyDeclEnvShape)
         return NULL;
@@ -286,15 +301,29 @@ DeclEnvObject::create(JSContext *cx, StackFrame *fp)
     if (!obj)
         return NULL;
 
-    obj->asScope().setEnclosingScope(fp->scopeChain());
-    Rooted<jsid> id(cx, AtomToId(fp->fun()->atom()));
-    RootedValue value(cx, ObjectValue(fp->callee()));
-    if (!DefineNativeProperty(cx, obj, id, value, NULL, NULL,
-                              JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY,
-                              0, 0)) {
+    // Assign a fixed slot to a property with the same name as the lambda.
+    Rooted<jsid> id(cx, AtomToId(fun->atom()));
+    Class *clasp = obj->getClass();
+    unsigned attrs = JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY;
+    if (!JSObject::putProperty(cx, obj, id, clasp->getProperty, clasp->setProperty,
+                               lambdaSlot(), attrs, 0, 0))
+    {
         return NULL;
     }
 
+    JS_ASSERT(!obj->hasDynamicSlots());
+    return &obj->asDeclEnv();
+}
+
+DeclEnvObject *
+DeclEnvObject::create(JSContext *cx, HandleObject enclosing, HandleFunction callee)
+{
+    RootedObject obj(cx, createTemplateObject(cx, callee));
+    if (!obj)
+        return NULL;
+
+    obj->asScope().setEnclosingScope(enclosing);
+    obj->setFixedSlot(lambdaSlot(), ObjectValue(*callee));
     return &obj->asDeclEnv();
 }
 
@@ -662,7 +691,7 @@ StaticBlockObject::create(JSContext *cx)
     return &obj->asStaticBlock();
 }
 
-/* static */ Shape *
+/* static */ UnrootedShape
 StaticBlockObject::addVar(JSContext *cx, Handle<StaticBlockObject*> block, HandleId id,
                           int index, bool *redeclared)
 {
@@ -674,7 +703,7 @@ StaticBlockObject::addVar(JSContext *cx, Handle<StaticBlockObject*> block, Handl
     Shape **spp;
     if (Shape::search(cx, block->lastProperty(), id, &spp, true)) {
         *redeclared = true;
-        return NULL;
+        return UnrootedShape(NULL);
     }
 
     /*
@@ -682,10 +711,10 @@ StaticBlockObject::addVar(JSContext *cx, Handle<StaticBlockObject*> block, Handl
      * block's shape later.
      */
     uint32_t slot = JSSLOT_FREE(&BlockClass) + index;
-    return block->addPropertyInternal(cx, id, /* getter = */ NULL, /* setter = */ NULL,
-                                      slot, JSPROP_ENUMERATE | JSPROP_PERMANENT,
-                                      Shape::HAS_SHORTID, index, spp,
-                                      /* allowDictionary = */ false);
+    return JSObject::addPropertyInternal(cx, block, id, /* getter = */ NULL, /* setter = */ NULL,
+                                         slot, JSPROP_ENUMERATE | JSPROP_PERMANENT,
+                                         Shape::HAS_SHORTID, index, spp,
+                                         /* allowDictionary = */ false);
 }
 
 Class js::BlockClass = {
@@ -773,7 +802,7 @@ js::XDRStaticBlockObject(XDRState<mode> *xdr, HandleObject enclosingScope, Handl
             return false;
 
         for (Shape::Range r(obj->lastProperty()); !r.empty(); r.popFront()) {
-            Shape *shape = &r.front();
+            UnrootedShape shape = &r.front();
             shapes[shape->shortid()] = shape;
         }
 
@@ -781,18 +810,21 @@ js::XDRStaticBlockObject(XDRState<mode> *xdr, HandleObject enclosingScope, Handl
          * XDR the block object's properties. We know that there are 'count'
          * properties to XDR, stored as id/shortid pairs.
          */
+        RootedShape shape(cx);
+        RootedId propid(cx);
+        RootedAtom atom(cx);
         for (unsigned i = 0; i < count; i++) {
-            Shape *shape = shapes[i];
+            shape = shapes[i];
             JS_ASSERT(shape->hasDefaultGetter());
             JS_ASSERT(unsigned(shape->shortid()) == i);
 
-            jsid propid = shape->propid();
+            propid = shape->propid();
             JS_ASSERT(JSID_IS_ATOM(propid) || JSID_IS_INT(propid));
 
             /* The empty string indicates an int id. */
-            RootedAtom atom(cx, JSID_IS_ATOM(propid)
-                                ? JSID_TO_ATOM(propid)
-                                : cx->runtime->emptyString);
+            atom = JSID_IS_ATOM(propid)
+                   ? JSID_TO_ATOM(propid)
+                   : cx->runtime->emptyString;
             if (!XDRAtom(xdr, &atom))
                 return false;
 
@@ -1195,7 +1227,7 @@ class DebugScopeProxy : public BaseProxyHandler
         /* Handle unaliased let and catch bindings at block scope. */
         if (scope->isClonedBlock()) {
             ClonedBlockObject &block = scope->asClonedBlock();
-            Shape *shape = block.lastProperty()->search(cx, id);
+            UnrootedShape shape = block.lastProperty()->search(cx, id);
             if (!shape)
                 return false;
 
@@ -1711,7 +1743,7 @@ DebugScopes::onPopCall(StackFrame *fp, JSContext *cx)
     if (!scopes)
         return;
 
-    DebugScopeObject *debugScope = NULL;
+    Rooted<DebugScopeObject*> debugScope(cx, NULL);
 
     if (fp->fun()->isHeavyweight()) {
         /*

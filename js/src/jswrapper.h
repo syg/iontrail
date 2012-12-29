@@ -49,8 +49,8 @@ class JS_FRIEND_API(Wrapper) : public DirectProxyHandler
      * is not safe to unwrap, operations requiring full access to the underlying
      * object (via UnwrapObjectChecked) will throw. Otherwise, they will succeed.
      */
-    void setSafeToUnwrap(bool safe) { mSafeToUnwrap = safe; };
-    bool isSafeToUnwrap() { return mSafeToUnwrap; };
+    void setSafeToUnwrap(bool safe) { mSafeToUnwrap = safe; }
+    bool isSafeToUnwrap() { return mSafeToUnwrap; }
 
     static JSObject *New(JSContext *cx, JSObject *obj, JSObject *proto,
                          JSObject *parent, Wrapper *handler);
@@ -181,10 +181,19 @@ class JS_FRIEND_API(SecurityWrapper) : public Base
   public:
     SecurityWrapper(unsigned flags);
 
+    virtual bool enter(JSContext *cx, JSObject *wrapper, jsid id, Wrapper::Action act,
+                       bool *bp) MOZ_OVERRIDE;
     virtual bool nativeCall(JSContext *cx, IsAcceptableThis test, NativeImpl impl,
                             CallArgs args) MOZ_OVERRIDE;
     virtual bool objectClassIs(JSObject *obj, ESClassValue classValue, JSContext *cx) MOZ_OVERRIDE;
     virtual bool regexp_toShared(JSContext *cx, JSObject *proxy, RegExpGuard *g) MOZ_OVERRIDE;
+
+    /*
+     * Allow our subclasses to select the superclass behavior they want without
+     * needing to specify an exact superclass.
+     */
+    typedef Base Permissive;
+    typedef SecurityWrapper<Base> Restrictive;
 };
 
 typedef SecurityWrapper<Wrapper> SameCompartmentSecurityWrapper;

@@ -36,28 +36,28 @@ class LayerManager;
 
 // Represents (affine) transforms that are calculated from a content view.
 struct ViewTransform {
-  ViewTransform(nsIntPoint aTranslation = nsIntPoint(0, 0), float aXScale = 1, float aYScale = 1)
+  ViewTransform(nsIntPoint aTranslation = nsIntPoint(0, 0),
+                gfxSize aScale = gfxSize(1, 1))
     : mTranslation(aTranslation)
-    , mXScale(aXScale)
-    , mYScale(aYScale)
+    , mScale(aScale)
   {}
 
   operator gfx3DMatrix() const
   {
     return
-      gfx3DMatrix::ScalingMatrix(mXScale, mYScale, 1) *
+      gfx3DMatrix::ScalingMatrix(mScale.width, mScale.height, 1) *
       gfx3DMatrix::Translation(mTranslation.x, mTranslation.y, 0);
   }
 
   nsIntPoint mTranslation;
-  float mXScale;
-  float mYScale;
+  gfxSize mScale;
 };
 
 class CompositorParent : public PCompositorParent,
                          public ShadowLayersManager
 {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CompositorParent)
+
 public:
   CompositorParent(nsIWidget* aWidget,
                    bool aRenderToEGLSurface = false,
@@ -171,11 +171,16 @@ protected:
   virtual void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
                                 nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
   void SetEGLSurfaceSize(int width, int height);
+  // If SetPanZoomControllerForLayerTree is not set, Compositor will use
+  // derived class AsyncPanZoomController transformations.
+  // Compositor will not own AsyncPanZoomController here.
+  virtual AsyncPanZoomController* GetDefaultPanZoomController() { return nullptr; }
 
 private:
   void PauseComposition();
   void ResumeComposition();
   void ResumeCompositionAndResize(int width, int height);
+  void ForceComposition();
 
   // Sample transforms for layer trees.  Return true to request
   // another animation frame.
@@ -243,7 +248,7 @@ private:
    */
   void TransformFixedLayers(Layer* aLayer,
                             const gfxPoint& aTranslation,
-                            const gfxPoint& aScaleDiff);
+                            const gfxSize& aScaleDiff);
 
   virtual PGrallocBufferParent* AllocPGrallocBuffer(
     const gfxIntSize&, const uint32_t&, const uint32_t&,
@@ -286,6 +291,9 @@ private:
   mozilla::Monitor mResumeCompositionMonitor;
 
   uint64_t mCompositorID;
+
+  bool mOverrideComposeReadiness;
+  CancelableTask* mForceCompositionTask;
 
   DISALLOW_EVIL_CONSTRUCTORS(CompositorParent);
 };

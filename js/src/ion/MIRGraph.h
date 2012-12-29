@@ -171,12 +171,12 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void replacePredecessor(MBasicBlock *old, MBasicBlock *split);
     void replaceSuccessor(size_t pos, MBasicBlock *split);
 
-    // Removes `pred` from the predecessor list.  If this block
-    // defines phis, removes the entry for `pred` and updates the
-    // indices of later entries.  This may introduce redundant phis
-    // (or empty phis, if the block no longer has any preds at all).
+    // Removes `pred` from the predecessor list.  `pred` should not be
+    // the final predecessor. If this block defines phis, removes the
+    // entry for `pred` and updates the indices of later entries.
+    // This may introduce redundant phis if the new block has fewer
+    // than two predecessors.
     void removePredecessor(MBasicBlock *pred);
-    void removePredecessorAtIndex(size_t pos);
 
     // Resets all the dominator info so that it can be recomputed.
     void clearDominatorInfo();
@@ -410,8 +410,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return loopDepth_;
     }
 
-    bool strictModeCode() const {
-        return info_.script()->strictModeCode;
+    bool strict() const {
+        return info_.script()->strict;
     }
 
     void dumpStack(FILE *fp);
@@ -474,7 +474,7 @@ class MIRGraph
     MStart *osrStart_;
 
     // List of compiled/inlined scripts.
-    Vector<JSScript *, 4, IonAllocPolicy> scripts_;
+    Vector<RawScript, 4, IonAllocPolicy> scripts_;
 
     size_t numBlocks_;
 
@@ -593,7 +593,7 @@ class MIRGraph
     MStart *osrStart() {
         return osrStart_;
     }
-    bool addScript(JSScript *script) {
+    bool addScript(UnrootedScript script) {
         // The same script may be inlined multiple times, add it only once.
         for (size_t i = 0; i < scripts_.length(); i++) {
             if (scripts_[i] == script)

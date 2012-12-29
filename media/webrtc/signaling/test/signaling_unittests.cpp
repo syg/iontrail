@@ -77,12 +77,15 @@ enum sdpTestFlags
   SHOULD_RECV_AUDIO     = (1<<1),
   SHOULD_INACTIVE_AUDIO = (1<<2),
   SHOULD_REJECT_AUDIO   = (1<<3),
-  SHOULD_SEND_VIDEO     = (1<<4),
-  SHOULD_RECV_VIDEO     = (1<<5),
-  SHOULD_INACTIVE_VIDEO = (1<<6),
-  SHOULD_REJECT_VIDEO   = (1<<7),
-  DONT_CHECK_AUDIO      = (1<<8),
-  DONT_CHECK_VIDEO      = (1<<9),
+  SHOULD_OMIT_AUDIO     = (1<<4),
+  DONT_CHECK_AUDIO      = (1<<5),
+
+  SHOULD_SEND_VIDEO     = (1<<8),
+  SHOULD_RECV_VIDEO     = (1<<9),
+  SHOULD_INACTIVE_VIDEO = (1<<10),
+  SHOULD_REJECT_VIDEO   = (1<<11),
+  SHOULD_OMIT_VIDEO     = (1<<12),
+  DONT_CHECK_VIDEO      = (1<<13),
 
   SHOULD_SENDRECV_AUDIO = SHOULD_SEND_AUDIO | SHOULD_RECV_AUDIO,
   SHOULD_SENDRECV_VIDEO = SHOULD_SEND_VIDEO | SHOULD_RECV_VIDEO,
@@ -90,11 +93,11 @@ enum sdpTestFlags
 
   AUDIO_FLAGS = SHOULD_SEND_AUDIO | SHOULD_RECV_AUDIO
                 | SHOULD_INACTIVE_AUDIO | SHOULD_REJECT_AUDIO
-                | DONT_CHECK_AUDIO,
+                | DONT_CHECK_AUDIO | SHOULD_OMIT_AUDIO,
 
   VIDEO_FLAGS = SHOULD_SEND_VIDEO | SHOULD_RECV_VIDEO
                 | SHOULD_INACTIVE_VIDEO | SHOULD_REJECT_VIDEO
-                | DONT_CHECK_VIDEO
+                | DONT_CHECK_VIDEO | SHOULD_OMIT_VIDEO
 };
 
 enum offerAnswerFlags
@@ -297,20 +300,20 @@ TestObserver::OnAddStream(nsIDOMMediaStream *stream, const char *type)
 
   nsDOMMediaStream *ms = static_cast<nsDOMMediaStream *>(stream);
 
-  cout << "OnAddStream called hints=" << ms->GetHintContents() << endl;
-  state = stateSuccess;
+  cout << "OnAddStream called hints=" << ms->GetHintContents() << " type=" << type << " thread=" <<
+    PR_GetCurrentThread() << endl ;
+
   onAddStreamCalled = true;
+
+  streams.push_back(ms);
 
   // We know that the media stream is secretly a Fake_SourceMediaStream,
   // so now we can start it pulling from us
   Fake_SourceMediaStream *fs = static_cast<Fake_SourceMediaStream *>(ms->GetStream());
 
-  nsresult ret;
   test_utils->sts_target()->Dispatch(
-    WrapRunnableRet(fs, &Fake_SourceMediaStream::Start, &ret),
-    NS_DISPATCH_SYNC);
-
-  streams.push_back(ms);
+    WrapRunnable(fs, &Fake_SourceMediaStream::Start),
+    NS_DISPATCH_NORMAL);
 
   return NS_OK;
 }
@@ -475,14 +478,15 @@ class ParsedSDP {
 
 class SignalingAgent {
  public:
-  SignalingAgent() {
-    Init();
-  }
+  SignalingAgent() : pc(nullptr) {}
+
   ~SignalingAgent() {
-    Close();
+    pc->GetMainThread()->Dispatch(
+      WrapRunnable(this, &SignalingAgent::Close),
+      NS_DISPATCH_SYNC);
   }
 
-  void Init()
+  void Init(nsCOMPtr<nsIThread> thread)
   {
     size_t found = 2;
     ASSERT_TRUE(found > 0);
@@ -493,7 +497,7 @@ class SignalingAgent {
     pObserver = new TestObserver(pc);
     ASSERT_TRUE(pObserver);
 
-    ASSERT_EQ(pc->Initialize(pObserver, nullptr, nullptr), NS_OK);
+    ASSERT_EQ(pc->Initialize(pObserver, nullptr, thread), NS_OK);
 
     ASSERT_TRUE_WAIT(sipcc_state() == sipcc::PeerConnectionImpl::kStarted,
                      kDefaultTimeout);
@@ -520,7 +524,10 @@ class SignalingAgent {
   void Close()
   {
     cout << "Close" << endl;
+
     pc->Close(false);
+    pc = nullptr;
+
     // Shutdown is synchronous evidently.
     // ASSERT_TRUE(pObserver->WaitForObserverCall());
     // ASSERT_EQ(pc->sipcc_state(), sipcc::PeerConnectionInterface::kIdle);
@@ -528,6 +535,24 @@ class SignalingAgent {
 
   char* offer() const { return offer_; }
   char* answer() const { return answer_; }
+
+  std::string getLocalDescription() const {
+    char *sdp = nullptr;
+    pc->GetLocalDescription(&sdp);
+    if (!sdp) {
+      return "";
+    }
+    return sdp;
+  }
+
+  std::string getRemoteDescription() const {
+    char *sdp = 0;
+    pc->GetRemoteDescription(&sdp);
+    if (!sdp) {
+      return "";
+    }
+    return sdp;
+  }
 
   void CreateOffer(sipcc::MediaConstraints& constraints,
                    uint32_t offerFlags, uint32_t sdpCheck) {
@@ -708,21 +733,26 @@ private:
     ASSERT_NE(sdp.find("c=IN IP4"), std::string::npos);
     ASSERT_NE(sdp.find("a=fingerprint:sha-256"), std::string::npos);
 
-    cout << "SDPSanityCheck flags = " << std::hex << std::showbase
+    cout << "SDPSanityCheck flags for "
+         << (offer ? "offer" : "answer")
+         << " = " << std::hex << std::showbase
          << flags << std::dec
+
          << ((flags & SHOULD_SEND_AUDIO)?" SHOULD_SEND_AUDIO":"")
          << ((flags & SHOULD_RECV_AUDIO)?" SHOULD_RECV_AUDIO":"")
          << ((flags & SHOULD_INACTIVE_AUDIO)?" SHOULD_INACTIVE_AUDIO":"")
          << ((flags & SHOULD_REJECT_AUDIO)?" SHOULD_REJECT_AUDIO":"")
+         << ((flags & SHOULD_OMIT_AUDIO)?" SHOULD_OMIT_AUDIO":"")
+         << ((flags & DONT_CHECK_AUDIO)?" DONT_CHECK_AUDIO":"")
+
          << ((flags & SHOULD_SEND_VIDEO)?" SHOULD_SEND_VIDEO":"")
          << ((flags & SHOULD_RECV_VIDEO)?" SHOULD_RECV_VIDEO":"")
          << ((flags & SHOULD_INACTIVE_VIDEO)?" SHOULD_INACTIVE_VIDEO":"")
          << ((flags & SHOULD_REJECT_VIDEO)?" SHOULD_REJECT_VIDEO":"")
-         << endl;
+         << ((flags & SHOULD_OMIT_VIDEO)?" SHOULD_OMIT_VIDEO":"")
+         << ((flags & DONT_CHECK_VIDEO)?" DONT_CHECK_VIDEO":"")
 
-    if ((flags & AUDIO_FLAGS) && offer) {
-      ASSERT_NE(sdp.find("a=rtpmap:0 PCMU/8000"), std::string::npos);
-    }
+         << endl;
 
     switch(flags & AUDIO_FLAGS) {
       case 0:
@@ -731,14 +761,23 @@ private:
       case SHOULD_SEND_AUDIO:
             ASSERT_NE(sdp.find("a=rtpmap:109 opus/48000"), std::string::npos);
             ASSERT_NE(sdp.find(" 0-15\r\na=sendonly"), std::string::npos);
+            if (offer) {
+              ASSERT_NE(sdp.find("a=rtpmap:0 PCMU/8000"), std::string::npos);
+            }
         break;
       case SHOULD_RECV_AUDIO:
             ASSERT_NE(sdp.find("a=rtpmap:109 opus/48000"), std::string::npos);
             ASSERT_NE(sdp.find(" 0-15\r\na=recvonly"), std::string::npos);
+            if (offer) {
+              ASSERT_NE(sdp.find("a=rtpmap:0 PCMU/8000"), std::string::npos);
+            }
         break;
       case SHOULD_SENDRECV_AUDIO:
             ASSERT_NE(sdp.find("a=rtpmap:109 opus/48000"), std::string::npos);
             ASSERT_NE(sdp.find(" 0-15\r\na=sendrecv"), std::string::npos);
+            if (offer) {
+              ASSERT_NE(sdp.find("a=rtpmap:0 PCMU/8000"), std::string::npos);
+            }
         break;
       case SHOULD_INACTIVE_AUDIO:
             ASSERT_NE(sdp.find("a=rtpmap:109 opus/48000"), std::string::npos);
@@ -747,6 +786,9 @@ private:
       case SHOULD_REJECT_AUDIO:
             ASSERT_EQ(sdp.find("a=rtpmap:109 opus/48000"), std::string::npos);
             ASSERT_NE(sdp.find("m=audio 0 "), std::string::npos);
+        break;
+      case SHOULD_OMIT_AUDIO:
+            ASSERT_EQ(sdp.find("m=audio"), std::string::npos);
         break;
       case DONT_CHECK_AUDIO:
         break;
@@ -777,6 +819,9 @@ private:
       case SHOULD_REJECT_VIDEO:
             ASSERT_NE(sdp.find("m=video 0 "), std::string::npos);
         break;
+      case SHOULD_OMIT_VIDEO:
+            ASSERT_EQ(sdp.find("m=video"), std::string::npos);
+        break;
       case DONT_CHECK_VIDEO:
         break;
       default:
@@ -794,6 +839,24 @@ class SignalingEnvironment : public ::testing::Environment {
 
 class SignalingTest : public ::testing::Test {
 public:
+  static void SetUpTestCase() {
+    nsIThread *thread;
+
+    nsresult rv = NS_NewThread(&thread);
+    ASSERT_TRUE(NS_SUCCEEDED(rv));
+
+    gThread = thread;
+  }
+
+  void SetUp() {
+    a1_.Init(gThread);
+    a2_.Init(gThread);
+  }
+
+  static void TearDownTestCase() {
+    gThread = nullptr;
+  }
+
   void CreateOffer(sipcc::MediaConstraints& constraints,
                    uint32_t offerFlags, uint32_t sdpCheck) {
     a1_.CreateOffer(constraints, offerFlags, sdpCheck);
@@ -882,9 +945,12 @@ public:
   }
 
  protected:
+  static nsCOMPtr<nsIThread> gThread;
   SignalingAgent a1_;  // Canonically "caller"
   SignalingAgent a2_;  // Canonically "callee"
 };
+
+nsCOMPtr<nsIThread> SignalingTest::gThread;
 
 
 TEST_F(SignalingTest, JustInit)
@@ -909,7 +975,7 @@ TEST_F(SignalingTest, CreateOfferNoVideoStream)
   constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
   CreateOffer(constraints, OFFER_AUDIO,
-              SHOULD_SENDRECV_AUDIO | SHOULD_RECV_VIDEO);
+              SHOULD_SENDRECV_AUDIO | SHOULD_OMIT_VIDEO);
 }
 
 TEST_F(SignalingTest, CreateOfferNoAudioStream)
@@ -918,7 +984,7 @@ TEST_F(SignalingTest, CreateOfferNoAudioStream)
   constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
   CreateOffer(constraints, OFFER_VIDEO,
-              SHOULD_RECV_AUDIO | SHOULD_SENDRECV_VIDEO);
+              SHOULD_OMIT_AUDIO | SHOULD_SENDRECV_VIDEO);
 }
 
 TEST_F(SignalingTest, CreateOfferDontReceiveAudio)
@@ -1035,8 +1101,8 @@ TEST_F(SignalingTest, OfferAnswerDontAddAudioStreamOnOffer)
   answerconstraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   answerconstraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
   OfferAnswer(offerconstraints, answerconstraints, OFFER_VIDEO | ANSWER_AV,
-              false, SHOULD_RECV_AUDIO | SHOULD_SENDRECV_VIDEO,
-              SHOULD_SEND_AUDIO | SHOULD_SENDRECV_VIDEO);
+              false, SHOULD_OMIT_AUDIO | SHOULD_SENDRECV_VIDEO,
+              SHOULD_OMIT_AUDIO | SHOULD_SENDRECV_VIDEO);
 }
 
 TEST_F(SignalingTest, OfferAnswerDontAddVideoStreamOnOffer)
@@ -1048,8 +1114,8 @@ TEST_F(SignalingTest, OfferAnswerDontAddVideoStreamOnOffer)
   answerconstraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   answerconstraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
   OfferAnswer(offerconstraints, answerconstraints, OFFER_AUDIO | ANSWER_AV,
-              false, SHOULD_SENDRECV_AUDIO | SHOULD_RECV_VIDEO,
-              SHOULD_SENDRECV_AUDIO | SHOULD_SEND_VIDEO);
+              false, SHOULD_SENDRECV_AUDIO | SHOULD_OMIT_VIDEO,
+              SHOULD_SENDRECV_AUDIO | SHOULD_OMIT_VIDEO);
 }
 
 TEST_F(SignalingTest, OfferAnswerDontAddAudioStreamOnAnswer)
@@ -1124,7 +1190,8 @@ TEST_F(SignalingTest, OfferAnswerDontAddVideoStreamOnOfferDontReceiveVideoOnOffe
   answerconstraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   answerconstraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
   OfferAnswer(offerconstraints, answerconstraints, OFFER_AUDIO | ANSWER_AV,
-              false, SHOULD_SENDRECV_AUDIO, SHOULD_SENDRECV_AUDIO);
+              false, SHOULD_SENDRECV_AUDIO | SHOULD_OMIT_VIDEO,
+              SHOULD_SENDRECV_AUDIO | SHOULD_OMIT_VIDEO);
 }
 
 TEST_F(SignalingTest, OfferAnswerDontReceiveAudioNoAudioStreamOnOfferDontReceiveVideoOnAnswer)
@@ -1199,16 +1266,6 @@ TEST_F(SignalingTest, OfferAnswerDontAddAudioVideoStreamsOnAnswerNoConstraints)
               SHOULD_RECV_AUDIO | SHOULD_RECV_VIDEO);
 }
 
-TEST_F(SignalingTest, OfferModifiedAnswer)
-{
-  sipcc::MediaConstraints constraints;
-  OfferModifiedAnswer(constraints, constraints, SHOULD_SENDRECV_AV,
-                      SHOULD_SENDRECV_AV);
-  PR_Sleep(kDefaultTimeout * 2); // Wait for completion
-  a1_.CloseSendStreams();
-  a2_.CloseReceiveStreams();
-}
-
 TEST_F(SignalingTest, FullCall)
 {
   sipcc::MediaConstraints constraints;
@@ -1226,12 +1283,62 @@ TEST_F(SignalingTest, FullCall)
   ASSERT_GE(a2_.GetPacketsReceived(0), 40);
 }
 
+TEST_F(SignalingTest, FullCallAudioOnly)
+{
+  sipcc::MediaConstraints constraints;
+  OfferAnswer(constraints, constraints, OFFER_AUDIO | ANSWER_AUDIO,
+              true, SHOULD_SENDRECV_AUDIO, SHOULD_SENDRECV_AUDIO);
+
+  PR_Sleep(kDefaultTimeout * 2); // Wait for some data to get written
+
+  a1_.CloseSendStreams();
+  a2_.CloseReceiveStreams();
+  // Check that we wrote a bunch of data
+  ASSERT_GE(a1_.GetPacketsSent(0), 40);
+  //ASSERT_GE(a2_.GetPacketsSent(0), 40);
+  //ASSERT_GE(a1_.GetPacketsReceived(0), 40);
+  ASSERT_GE(a2_.GetPacketsReceived(0), 40);
+}
+
+TEST_F(SignalingTest, FullCallVideoOnly)
+{
+  sipcc::MediaConstraints constraints;
+  OfferAnswer(constraints, constraints, OFFER_VIDEO | ANSWER_VIDEO,
+              true, SHOULD_SENDRECV_VIDEO, SHOULD_SENDRECV_VIDEO);
+
+  PR_Sleep(kDefaultTimeout * 2); // Wait for some data to get written
+
+  a1_.CloseSendStreams();
+  a2_.CloseReceiveStreams();
+
+  // FIXME -- Ideally we would check that packets were sent
+  // and received; however, the test driver setup does not
+  // currently support sending/receiving with Fake_VideoStreamSource.
+  //
+  // Check that we wrote a bunch of data
+  // ASSERT_GE(a1_.GetPacketsSent(0), 40);
+  //ASSERT_GE(a2_.GetPacketsSent(0), 40);
+  //ASSERT_GE(a1_.GetPacketsReceived(0), 40);
+  // ASSERT_GE(a2_.GetPacketsReceived(0), 40);
+}
+
+TEST_F(SignalingTest, OfferModifiedAnswer)
+{
+  sipcc::MediaConstraints constraints;
+  OfferModifiedAnswer(constraints, constraints, SHOULD_SENDRECV_AV,
+                      SHOULD_SENDRECV_AV);
+  PR_Sleep(kDefaultTimeout * 2); // Wait for completion
+  a1_.CloseSendStreams();
+  a2_.CloseReceiveStreams();
+}
+
 TEST_F(SignalingTest, FullCallTrickle)
 {
   sipcc::MediaConstraints constraints;
   OfferAnswerTrickle(constraints, constraints,
                      SHOULD_SENDRECV_AV, SHOULD_SENDRECV_AV);
 
+  std::cerr << "ICE handshake completed" << std::endl;
   PR_Sleep(kDefaultTimeout * 2); // Wait for some data to get written
 
   a1_.CloseSendStreams();
@@ -1404,6 +1511,53 @@ TEST_F(SignalingTest, OfferAllDynamicTypes)
       ASSERT_NE(answer.find(ss.str() + " opus/"), std::string::npos);
   }
 
+}
+
+TEST_F(SignalingTest, OfferAnswerCheckDescriptions)
+{
+  sipcc::MediaConstraints constraints;
+  OfferAnswer(constraints, constraints, OFFER_AV | ANSWER_AV, true,
+              SHOULD_SENDRECV_AV, SHOULD_SENDRECV_AV);
+
+  std::cout << "Caller's LocalDescription: " << std::endl <<
+    a1_.getLocalDescription() << std::endl << std::endl;
+  std::cout << "Caller's Remote Description: " << std::endl <<
+    a1_.getRemoteDescription() << std::endl << std::endl;
+  std::cout << "Callee's LocalDescription: " << std::endl <<
+    a2_.getLocalDescription() << std::endl << std::endl;
+  std::cout << "Callee's Remote Description: " << std::endl <<
+    a2_.getRemoteDescription() << std::endl << std::endl;
+
+  ASSERT_EQ(a1_.getLocalDescription(),a2_.getRemoteDescription());
+  ASSERT_EQ(a2_.getLocalDescription(),a1_.getRemoteDescription());
+}
+
+TEST_F(SignalingTest, CheckTrickleSdpChange)
+{
+  sipcc::MediaConstraints constraints;
+  OfferAnswerTrickle(constraints, constraints,
+                     SHOULD_SENDRECV_AV, SHOULD_SENDRECV_AV);
+  std::cerr << "ICE handshake completed" << std::endl;
+
+  PR_Sleep(kDefaultTimeout * 2); // Wait for some data to get written
+  a1_.CloseSendStreams();
+  a2_.CloseReceiveStreams();
+
+  std::cout << "Caller's LocalDescription: " << std::endl <<
+    a1_.getLocalDescription() << std::endl << std::endl;
+  std::cout << "Caller's Remote Description: " << std::endl <<
+    a1_.getRemoteDescription() << std::endl << std::endl;
+  std::cout << "Callee's LocalDescription: " << std::endl <<
+    a2_.getLocalDescription() << std::endl << std::endl;
+  std::cout << "Callee's Remote Description: " << std::endl <<
+    a2_.getRemoteDescription() << std::endl << std::endl;
+
+  ASSERT_NE(a1_.getLocalDescription().find("\r\na=candidate"), string::npos);
+  ASSERT_NE(a1_.getRemoteDescription().find("\r\na=candidate"), string::npos);
+  ASSERT_NE(a2_.getLocalDescription().find("\r\na=candidate"), string::npos);
+  ASSERT_NE(a2_.getRemoteDescription().find("\r\na=candidate"), string::npos);
+  ASSERT_EQ(a1_.getLocalDescription(),a2_.getRemoteDescription());
+  ASSERT_EQ(a2_.getLocalDescription(),a1_.getRemoteDescription());
 }
 
 } // End namespace test.

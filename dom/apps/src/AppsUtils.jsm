@@ -12,6 +12,11 @@ const Cr = Components.results;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
+XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
+  return Cc["@mozilla.org/network/util;1"]
+           .getService(Ci.nsINetUtil);
+});
+
 // Shared code for AppsServiceChild.jsm, Webapps.jsm and Webapps.js
 
 this.EXPORTED_SYMBOLS = ["AppsUtils", "ManifestHelper"];
@@ -33,7 +38,9 @@ this.AppsUtils = {
       manifestURL: aApp.manifestURL,
       appStatus: aApp.appStatus,
       removable: aApp.removable,
+      id: aApp.id,
       localId: aApp.localId,
+      basePath: aApp.basePath,
       progress: aApp.progress || 0.0,
       installState: aApp.installState || "installed",
       downloadAvailable: aApp.downloadAvailable,
@@ -42,7 +49,10 @@ this.AppsUtils = {
       downloadSize: aApp.downloadSize || 0,
       lastUpdateCheck: aApp.lastUpdateCheck,
       updateTime: aApp.updateTime,
-      etag: aApp.etag
+      etag: aApp.etag,
+      packageEtag: aApp.packageEtag,
+      installerAppId: aApp.installerAppId || Ci.nsIScriptSecurityManager.NO_APP_ID,
+      installerIsBrowser: !!aApp.installerIsBrowser
     };
   },
 
@@ -185,8 +195,11 @@ this.AppsUtils = {
   },
 
   checkManifestContentType: function
-     checkManifestContentType(installOrigin, webappOrigin, contentType) {
-    if (installOrigin != webappOrigin &&
+     checkManifestContentType(aInstallOrigin, aWebappOrigin, aContentType) {
+    let hadCharset = { };
+    let charset = { };
+    let contentType = NetUtil.parseContentType(aContentType, charset, hadCharset);
+    if (aInstallOrigin != aWebappOrigin &&
         contentType != "application/x-web-app-manifest+json") {
       return false;
     }
@@ -255,6 +268,63 @@ this.AppsUtils = {
 
     return ((mstone != savedmstone) || (buildID != savedBuildID));
   },
+
+  /**
+   * Check if two manifests have the same set of properties and that the
+   * values of these properties are the same, in each locale.
+   * Manifests here are raw json ones.
+   */
+  compareManifests: function compareManifests(aManifest1, aManifest2) {
+    // 1. check if we have the same locales in both manifests.
+    let locales1 = [];
+    let locales2 = [];
+    if (aManifest1.locales) {
+      for (let locale in aManifest1.locales) {
+        locales1.push(locale);
+      }
+    }
+    if (aManifest2.locales) {
+      for (let locale in aManifest2.locales) {
+        locales2.push(locale);
+      }
+    }
+    if (locales1.sort().join() !== locales2.sort().join()) {
+      return false;
+    }
+
+    // Helper function to check the app name and developer information for
+    // two given roots.
+    let checkNameAndDev = function(aRoot1, aRoot2) {
+      let name1 = aRoot1.name;
+      let name2 = aRoot2.name;
+      if (name1 !== name2) {
+        return false;
+      }
+
+      let dev1 = aRoot1.developer;
+      let dev2 = aRoot2.developer;
+      if ((dev1 && !dev2) || (dev2 && !dev1)) {
+        return false;
+      }
+
+      return (dev1.name === dev2.name && dev1.url === dev2.url);
+    }
+
+    // 2. For each locale, check if the name and dev info are the same.
+    if (!checkNameAndDev(aManifest1, aManifest2)) {
+      return false;
+    }
+
+    for (let locale in aManifest1.locales) {
+      if (!checkNameAndDev(aManifest1.locales[locale],
+                           aManifest2.locales[locale])) {
+        return false;
+      }
+    }
+
+    // Nothing failed.
+    return true;
+  }
 }
 
 /**

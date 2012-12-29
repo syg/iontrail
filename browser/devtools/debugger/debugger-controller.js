@@ -11,6 +11,7 @@ const Cu = Components.utils;
 
 const DBG_STRINGS_URI = "chrome://browser/locale/devtools/debugger.properties";
 const NEW_SCRIPT_DISPLAY_DELAY = 200; // ms
+const FETCH_SOURCE_RESPONSE_DELAY = 50; // ms
 const FRAME_STEP_CLEAR_DELAY = 100; // ms
 const CALL_STACK_PAGE_SIZE = 25; // frames
 
@@ -215,9 +216,18 @@ let DebuggerController = {
 
   /**
    * Called for each location change in the debugged tab.
+   *
+   * @param string aType
+   *        Packet type.
+   * @param object aPacket
+   *        Packet received from the server.
    */
-  _onTabNavigated: function DC__onTabNavigated() {
-    DebuggerView._handleTabNavigation();
+  _onTabNavigated: function DC__onTabNavigated(aType, aPacket) {
+    if (aPacket.state == "start") {
+      DebuggerView._handleTabNavigation();
+      return;
+    }
+
     this.ThreadState._handleTabNavigation();
     this.StackFrames._handleTabNavigation();
     this.SourceScripts._handleTabNavigation();
@@ -637,6 +647,7 @@ StackFrames.prototype = {
       let arrow = L10N.getStr("watchExpressionsSeparatorLabel");
       let scope = DebuggerView.Variables.addScope(label);
       scope.separator = arrow;
+      scope.showDescriptorTooltip = false;
       scope.allowNameInput = true;
       scope.allowDeletion = true;
       scope.contextMenu = "debuggerWatchExpressionsContextMenu";
@@ -926,7 +937,9 @@ StackFrames.prototype = {
         label += " [" + aEnv.object.class + "]";
         break;
       case "function":
-        label += " [" + aEnv.functionName + "]";
+        let f = aEnv.function;
+        label += " [" + (f.name || f.userDisplayName || f.displayName ||
+                         "(anonymous)") + "]";
         break;
     }
     return label;
@@ -1154,6 +1167,7 @@ SourceScripts.prototype = {
 
     DebuggerView.Sources.push(label, url, {
       forced: aOptions.forced,
+      tooltip: url,
       attachment: aSource
     });
   },
@@ -1165,18 +1179,29 @@ SourceScripts.prototype = {
    *        The source object coming from the active thread.
    * @param function aCallback
    *        Function called after the source text has been loaded.
+   * @param function aOnTimeout
+   *        Function called when the source text takes too long to fetch.
    */
-  getText: function SS_getText(aSource, aCallback) {
+  getText: function SS_getText(aSource, aCallback, aOnTimeout) {
     // If already loaded, return the source text immediately.
     if (aSource.loaded) {
       aCallback(aSource.url, aSource.text);
       return;
     }
 
+    // If the source text takes too long to fetch, invoke a timeout to
+    // avoid blocking any operations.
+    if (aOnTimeout) {
+      var fetchTimeout = window.setTimeout(aOnTimeout, FETCH_SOURCE_RESPONSE_DELAY);
+    }
+
     // Get the source text from the active thread.
     this.activeThread.source(aSource.source).source(function(aResponse) {
+      window.clearTimeout(fetchTimeout);
+
       if (aResponse.error) {
-        Cu.reportError("Error loading " + aUrl);
+        Cu.reportError("Error loading " + aSource.url + "\n" + aResponse.error);
+        aCallback(aSource.url, "");
         return;
       }
       aSource.loaded = true;
@@ -1597,7 +1622,6 @@ let Prefs = {
   }
 };
 
-Prefs.map("Int", "height", "devtools.debugger.ui.height");
 Prefs.map("Int", "windowX", "devtools.debugger.ui.win-x");
 Prefs.map("Int", "windowY", "devtools.debugger.ui.win-y");
 Prefs.map("Int", "windowWidth", "devtools.debugger.ui.win-width");

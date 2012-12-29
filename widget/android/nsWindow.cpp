@@ -229,6 +229,10 @@ nsWindow::Create(nsIWidget *aParent,
         mParent = parent;
     }
 
+#ifdef DEBUG_ANDROID_WIDGET
+    DumpWindows();
+#endif
+
     return NS_OK;
 }
 
@@ -249,6 +253,10 @@ nsWindow::Destroy(void)
     SetParent(nullptr);
 
     nsBaseWidget::OnDestroy();
+
+#ifdef DEBUG_ANDROID_WIDGET
+    DumpWindows();
+#endif
 
     return NS_OK;
 }
@@ -272,10 +280,7 @@ void
 nsWindow::RedrawAll()
 {
     if (mFocus && mFocus->mWidgetListener) {
-        nsIView* view = mFocus->mWidgetListener->GetView();
-        if (view && view->GetViewManager()) {
-            view->GetViewManager()->InvalidateView(view);
-        }
+        mFocus->mWidgetListener->RequestRepaint();
     }
 }
 
@@ -406,8 +411,8 @@ nsWindow::ConstrainPosition(bool aAllowSlop,
 }
 
 NS_IMETHODIMP
-nsWindow::Move(int32_t aX,
-               int32_t aY)
+nsWindow::Move(double aX,
+               double aY)
 {
     if (IsTopLevel())
         return NS_OK;
@@ -420,8 +425,8 @@ nsWindow::Move(int32_t aX,
 }
 
 NS_IMETHODIMP
-nsWindow::Resize(int32_t aWidth,
-                 int32_t aHeight,
+nsWindow::Resize(double aWidth,
+                 double aHeight,
                  bool aRepaint)
 {
     return Resize(mBounds.x,
@@ -432,20 +437,20 @@ nsWindow::Resize(int32_t aWidth,
 }
 
 NS_IMETHODIMP
-nsWindow::Resize(int32_t aX,
-                 int32_t aY,
-                 int32_t aWidth,
-                 int32_t aHeight,
+nsWindow::Resize(double aX,
+                 double aY,
+                 double aWidth,
+                 double aHeight,
                  bool aRepaint)
 {
-    ALOG("nsWindow[%p]::Resize [%d %d %d %d] (repaint %d)", (void*)this, aX, aY, aWidth, aHeight, aRepaint);
+    ALOG("nsWindow[%p]::Resize [%f %f %f %f] (repaint %d)", (void*)this, aX, aY, aWidth, aHeight, aRepaint);
 
     bool needSizeDispatch = aWidth != mBounds.width || aHeight != mBounds.height;
 
-    mBounds.x = aX;
-    mBounds.y = aY;
-    mBounds.width = aWidth;
-    mBounds.height = aHeight;
+    mBounds.x = NSToIntRound(aX);
+    mBounds.y = NSToIntRound(aY);
+    mBounds.width = NSToIntRound(aWidth);
+    mBounds.height = NSToIntRound(aHeight);
 
     if (needSizeDispatch)
         OnSizeChanged(gfxIntSize(aWidth, aHeight));
@@ -680,12 +685,10 @@ nsWindow::GetLayerManager(PLayersChild*, LayersBackend, LayerManagerPersistence,
         return mLayerManager;
     }
 
-    nsWindow *topWindow = TopWindow();
-
-    if (!topWindow) {
-        printf_stderr(" -- no topwindow\n");
-        mLayerManager = CreateBasicLayerManager();
-        return mLayerManager;
+    nsWindow *topLevelWindow = FindTopLevel();
+    if (!topLevelWindow || topLevelWindow->mWindowType == eWindowType_invisible) {
+        // don't create a layer manager for an invisible top-level window
+        return nullptr;
     }
 
     mUseLayersAcceleration = ComputeShouldAccelerate(mUseLayersAcceleration);
@@ -1168,7 +1171,6 @@ void
 nsWindow::OnMouseEvent(AndroidGeckoEvent *ae)
 {
     uint32_t msg;
-    int16_t buttons = nsMouseEvent::eLeftButtonFlag;
     switch (ae->Action() & AndroidMotionEvent::ACTION_MASK) {
 #ifndef MOZ_ONLY_TOUCH_EVENTS
         case AndroidMotionEvent::ACTION_DOWN:
@@ -1185,11 +1187,16 @@ nsWindow::OnMouseEvent(AndroidGeckoEvent *ae)
             break;
 #endif
 
-        case AndroidMotionEvent::ACTION_HOVER_ENTER:
         case AndroidMotionEvent::ACTION_HOVER_MOVE:
-        case AndroidMotionEvent::ACTION_HOVER_EXIT:
             msg = NS_MOUSE_MOVE;
-            buttons = 0;
+            break;
+
+        case AndroidMotionEvent::ACTION_HOVER_ENTER:
+            msg = NS_MOUSEENTER;
+            break;
+
+        case AndroidMotionEvent::ACTION_HOVER_EXIT:
+            msg = NS_MOUSELEAVE;
             break;
 
         default:
@@ -1673,7 +1680,7 @@ nsWindow::OnKeyEvent(AndroidGeckoEvent *ae)
     nsKeyEvent pressEvent(true, NS_KEY_PRESS, this);
     InitKeyEvent(pressEvent, *ae, &pluginEvent);
     if (status == nsEventStatus_eConsumeNoDefault) {
-        pressEvent.flags |= NS_EVENT_FLAG_NO_DEFAULT;
+        pressEvent.mFlags.mDefaultPrevented = true;
     }
 #ifdef DEBUG_ANDROID_WIDGET
     __android_log_print(ANDROID_LOG_INFO, "Gecko", "Dispatching key pressEvent with keyCode %d charCode %d shift %d alt %d sym/ctrl %d metamask %d", pressEvent.keyCode, pressEvent.charCode, pressEvent.IsShift(), pressEvent.IsAlt(), pressEvent.IsControl(), ae->MetaState());

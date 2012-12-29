@@ -30,7 +30,9 @@ namespace ion {
     _(ParCheckOverRecursed)                                                 \
     _(RecompileCheck)                                                       \
     _(DefVar)                                                               \
+    _(DefFun)                                                               \
     _(CreateThis)                                                           \
+    _(CreateThisWithTemplate)                                               \
     _(PrepareCall)                                                          \
     _(PassArg)                                                              \
     _(Call)                                                                 \
@@ -73,6 +75,7 @@ namespace ion {
     _(NewParallelArray)                                                     \
     _(NewArray)                                                             \
     _(NewObject)                                                            \
+    _(NewDeclEnvObject)                                                     \
     _(NewCallObject)                                                        \
     _(ParNewCallObject)                                                     \
     _(NewStringObject)                                                      \

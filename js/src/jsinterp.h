@@ -67,6 +67,9 @@ ScriptDebugEpilogue(JSContext *cx, StackFrame *fp, bool ok);
 extern bool
 BoxNonStrictThis(JSContext *cx, const CallReceiver &call);
 
+extern bool
+BoxNonStrictThis(JSContext *cx, MutableHandleValue thisv, bool *modified);
+
 /*
  * Ensure that fp->thisValue() is the correct value of |this| for the scripted
  * call represented by |fp|. ComputeThis is necessary because fp->thisValue()
@@ -169,7 +172,8 @@ enum InterpMode
     JSINTERP_NORMAL    = 0, /* interpreter is running normally */
     JSINTERP_REJOIN    = 1, /* as normal, but the frame has already started */
     JSINTERP_SKIP_TRAP = 2, /* as REJOIN, but skip trap at first opcode */
-    JSINTERP_BAILOUT   = 3  /* interpreter is running from an Ion bailout */
+    JSINTERP_BAILOUT   = 3, /* interpreter is running from an Ion bailout */
+    JSINTERP_RETHROW   = 4  /* as BAILOUT, but unwind all frames */
 };
 
 enum InterpretStatus
@@ -376,6 +380,12 @@ SetProperty(JSContext *cx, HandleObject obj, HandleId id, const Value &value);
 template <bool strict>
 bool
 DeleteProperty(JSContext *ctx, HandleValue val, HandlePropertyName name, JSBool *bv);
+
+bool
+DefFunOperation(JSContext *cx, HandleScript script, HandleObject scopeChain, HandleFunction funArg);
+
+bool
+GetAndClearException(JSContext *cx, MutableHandleValue res);
 
 }  /* namespace js */
 

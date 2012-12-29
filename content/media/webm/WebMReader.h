@@ -133,11 +133,6 @@ public:
     return mHasVideo;
   }
 
-  // Bug 575140, cannot seek in webm if no cue is present.
-  bool IsSeekableInBufferedRanges() {
-    return false;
-  }
-
   virtual nsresult ReadMetadata(VideoInfo* aInfo,
                                 MetadataTags** aTags);
   virtual nsresult Seek(int64_t aTime, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime);
@@ -185,6 +180,9 @@ public:
   void SetIndexByteRange(MediaByteRange &aByteRange) MOZ_OVERRIDE {
     mCuesByteRange = aByteRange;
   }
+
+  // Returns the index of the subsegment which contains the seek time.
+  int64_t GetSubsegmentForSeekTime(int64_t aSeekToTime) MOZ_OVERRIDE;
 
   // Returns list of ranges for cluster start and end offsets.
   nsresult GetSubsegmentByteRanges(nsTArray<MediaByteRange>& aByteRanges)
@@ -309,7 +307,7 @@ private:
   MediaByteRange mCuesByteRange;
 
   // Byte ranges for clusters; set internally, derived from cues.
-  nsTArray<MediaByteRange> mClusterByteRanges;
+  nsTArray<TimestampedMediaByteRange> mClusterByteRanges;
 
   // Pointer to the main |DASHReader|. Set in the constructor.
   DASHReader* mMainReader;

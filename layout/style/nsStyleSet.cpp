@@ -516,7 +516,8 @@ ReplaceAnimationRule(nsRuleNode *aOldRuleNode,
   }
 
   NS_ABORT_IF_FALSE(!IsMoreSpecificThanAnimation(n) &&
-                    n->GetLevel() != nsStyleSet::eAnimationSheet,
+                    (n->IsRoot() ||
+                     n->GetLevel() != nsStyleSet::eAnimationSheet),
                     "wrong level");
 
   if (aNewAnimRule) {
@@ -968,6 +969,23 @@ nsStyleSet::ResolveStyleForRules(nsStyleContext* aParentContext,
 
   return GetContext(aParentContext, ruleWalker.CurrentNode(), nullptr,
                     false, false,
+                    nullptr, nsCSSPseudoElements::ePseudo_NotPseudoElement,
+                    false, nullptr);
+}
+
+already_AddRefed<nsStyleContext>
+nsStyleSet::ResolveStyleForRules(nsStyleContext* aParentContext,
+                                 nsStyleContext* aOldStyle,
+                                 const nsTArray<RuleAndLevel>& aRules)
+{
+  nsRuleWalker ruleWalker(mRuleTree);
+  for (int32_t i = aRules.Length() - 1; i >= 0; --i) {
+    ruleWalker.SetLevel(aRules[i].mLevel, false, false);
+    ruleWalker.ForwardOnPossiblyCSSRule(aRules[i].mRule);
+  }
+
+  return GetContext(aParentContext, ruleWalker.CurrentNode(), nullptr,
+                    aOldStyle->IsLinkContext(), aOldStyle->RelevantLinkVisited(),
                     nullptr, nsCSSPseudoElements::ePseudo_NotPseudoElement,
                     false, nullptr);
 }

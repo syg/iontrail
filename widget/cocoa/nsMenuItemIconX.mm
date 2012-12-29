@@ -34,7 +34,7 @@
 #include "nsToolkit.h"
 #include "nsNetUtil.h"
 #include "imgLoader.h"
-#include "imgIRequest.h"
+#include "imgRequestProxy.h"
 #include "nsMenuItemX.h"
 #include "gfxImageSurface.h"
 #include "imgIContainer.h"
@@ -74,7 +74,7 @@ nsMenuItemIconX::~nsMenuItemIconX()
 }
 
 // Called from mMenuObjectX's destructor, to prevent us from outliving it
-// (as might otherwise happen if calls to our imgIDecoderObserver methods
+// (as might otherwise happen if calls to our imgINotificationObserver methods
 // are still outstanding).  mMenuObjectX owns our nNativeMenuItem.
 void nsMenuItemIconX::Destroy()
 {

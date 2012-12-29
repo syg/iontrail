@@ -5,7 +5,7 @@
 
 #include "VectorImage.h"
 
-#include "imgIDecoderObserver.h"
+#include "imgDecoderObserver.h"
 #include "SVGDocumentWrapper.h"
 #include "gfxContext.h"
 #include "gfxPlatform.h"
@@ -169,8 +169,9 @@ NS_IMPL_ISUPPORTS3(VectorImage,
 //------------------------------------------------------------------------------
 // Constructor / Destructor
 
-VectorImage::VectorImage(imgStatusTracker* aStatusTracker) :
-  Image(aStatusTracker), // invoke superclass's constructor
+VectorImage::VectorImage(imgStatusTracker* aStatusTracker,
+                         nsIURI* aURI /* = nullptr */) :
+  ImageResource(aStatusTracker, aURI), // invoke superclass's constructor
   mRestrictedRegion(0, 0, 0, 0),
   mIsInitialized(false),
   mIsFullyLoaded(false),
@@ -188,9 +189,8 @@ VectorImage::~VectorImage()
 // Methods inherited from Image.h
 
 nsresult
-VectorImage::Init(imgIDecoderObserver* aObserver,
+VectorImage::Init(imgDecoderObserver* aObserver,
                   const char* aMimeType,
-                  const char* aURIString,
                   uint32_t aFlags)
 {
   // We don't support re-initialization
@@ -201,7 +201,9 @@ VectorImage::Init(imgIDecoderObserver* aObserver,
                     !mHaveRestrictedRegion && !mError,
                     "Flags unexpectedly set before initialization");
 
-  mObserver = do_GetWeakReference(aObserver);
+  if (aObserver) {
+    mObserver = aObserver->asWeakPtr();
+  }
   NS_ABORT_IF_FALSE(!strcmp(aMimeType, SVG_MIMETYPE), "Unexpected mimetype");
 
   mIsInitialized = true;
@@ -244,6 +246,30 @@ VectorImage::OutOfProcessSizeOfDecoded() const
 }
 
 nsresult
+VectorImage::OnImageDataComplete(nsIRequest* aRequest,
+                                 nsISupports* aContext,
+                                 nsresult aStatus)
+{
+  return OnStopRequest(aRequest, aContext, aStatus);
+}
+
+nsresult
+VectorImage::OnImageDataAvailable(nsIRequest* aRequest,
+                                  nsISupports* aContext,
+                                  nsIInputStream* aInStr,
+                                  uint64_t aSourceOffset,
+                                  uint32_t aCount)
+{
+  return OnDataAvailable(aRequest, aContext, aInStr, aSourceOffset, aCount);
+}
+
+nsresult
+VectorImage::OnNewSourceData()
+{
+  return NS_OK;
+}
+
+nsresult
 VectorImage::StartAnimation()
 {
   if (mError)
@@ -271,7 +297,7 @@ VectorImage::StopAnimation()
 bool
 VectorImage::ShouldAnimate()
 {
-  return Image::ShouldAnimate() && mIsFullyLoaded && mHaveAnimations;
+  return ImageResource::ShouldAnimate() && mIsFullyLoaded && mHaveAnimations;
 }
 
 //------------------------------------------------------------------------------
@@ -685,7 +711,7 @@ VectorImage::OnStopRequest(nsIRequest* aRequest, nsISupports* aCtxt,
   mRenderingObserver = new SVGRootRenderingObserver(mSVGDocumentWrapper, this);
 
   // Tell *our* observers that we're done loading
-  nsCOMPtr<imgIDecoderObserver> observer = do_QueryReferent(mObserver);
+  RefPtr<imgDecoderObserver> observer(mObserver);
   if (observer) {
     // NOTE: This signals that width/height are available.
     observer->OnStartContainer();
@@ -724,17 +750,10 @@ VectorImage::OnDataAvailable(nsIRequest* aRequest, nsISupports* aCtxt,
 void
 VectorImage::InvalidateObserver()
 {
-  if (!mObserver)
-    return;
-
-  nsCOMPtr<imgIContainerObserver> containerObs(do_QueryReferent(mObserver));
-  if (containerObs) {
-    containerObs->FrameChanged(&nsIntRect::GetMaxSizedIntRect());
-  }
-
-  nsCOMPtr<imgIDecoderObserver> decoderObs(do_QueryReferent(mObserver));
-  if (decoderObs) {
-    decoderObs->OnStopFrame();
+  RefPtr<imgDecoderObserver> observer(mObserver);
+  if (observer) {
+    observer->FrameChanged(&nsIntRect::GetMaxSizedIntRect());
+    observer->OnStopFrame();
   }
 }
 

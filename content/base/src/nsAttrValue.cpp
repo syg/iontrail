@@ -8,6 +8,9 @@
  * attribute.
  */
 
+#include "mozilla/DebugOnly.h"
+#include "mozilla/HashFunctions.h"
+
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
 #include "nsIAtom.h"
@@ -17,7 +20,6 @@
 #include "nsContentUtils.h"
 #include "nsReadableUtils.h"
 #include "prprf.h"
-#include "mozilla/HashFunctions.h"
 #include "nsHTMLCSSStyleSheet.h"
 #include "nsCSSParser.h"
 #include "nsStyledElement.h"
@@ -1066,7 +1068,7 @@ nsAttrValue::Equals(const nsAString& aValue,
         nsDependentString dep(static_cast<PRUnichar*>(str->Data()),
                               str->StorageSize()/sizeof(PRUnichar) - 1);
         return aCaseSensitive == eCaseMatters ? aValue.Equals(dep) :
-          aValue.Equals(dep, nsCaseInsensitiveStringComparator());
+          nsContentUtils::EqualsIgnoreASCIICase(aValue, dep);
       }
       return aValue.IsEmpty();
     }
@@ -1074,8 +1076,9 @@ nsAttrValue::Equals(const nsAString& aValue,
       if (aCaseSensitive == eCaseMatters) {
         return static_cast<nsIAtom*>(GetPtr())->Equals(aValue);
       }
-      return nsDependentAtomString(static_cast<nsIAtom*>(GetPtr())).
-        Equals(aValue, nsCaseInsensitiveStringComparator());
+      return nsContentUtils::EqualsIgnoreASCIICase(
+          nsDependentAtomString(static_cast<nsIAtom*>(GetPtr())),
+          aValue);
     default:
       break;
   }
@@ -1083,7 +1086,7 @@ nsAttrValue::Equals(const nsAString& aValue,
   nsAutoString val;
   ToString(val);
   return aCaseSensitive == eCaseMatters ? val.Equals(aValue) :
-    val.Equals(aValue, nsCaseInsensitiveStringComparator());
+    nsContentUtils::EqualsIgnoreASCIICase(val, aValue);
 }
 
 bool

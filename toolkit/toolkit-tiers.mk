@@ -15,6 +15,10 @@ ifdef NS_TRACE_MALLOC
 tier_platform_dirs = tools/trace-malloc/lib
 endif
 
+ifdef MOZ_DMD
+tier_platform_dirs += memory/replace/dmd
+endif
+
 ifdef MOZ_TREE_FREETYPE
 tier_platform_staticdirs += modules/freetype2
 endif
@@ -169,12 +173,16 @@ tier_platform_dirs += \
 		media/omx-plugin/lib/ics/libstagefright \
 		media/omx-plugin/lib/gb/libutils \
 		media/omx-plugin/lib/gb/libstagefright \
+		media/omx-plugin/lib/gb/libstagefright_color_conversion \
 		media/omx-plugin/lib/gb235/libstagefright \
+		media/omx-plugin/lib/froyo/libstagefright \
 		media/omx-plugin \
 		media/omx-plugin/gb \
 		media/omx-plugin/gb235 \
+		media/omx-plugin/froyo \
 		media/omx-plugin/lib/hc/libstagefright \
 		media/omx-plugin/hc \
+		media/omx-plugin/sony \
 		$(NULL)
 endif
 
@@ -283,6 +291,10 @@ endif
 tier_platform_dirs += toolkit/library
 
 tier_platform_dirs += xpcom/stub
+
+ifdef MOZ_REPLACE_MALLOC
+tier_platform_dirs += memory/replace
+endif
 
 ifdef NS_TRACE_MALLOC
 tier_platform_dirs += tools/trace-malloc

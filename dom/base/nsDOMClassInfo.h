@@ -20,31 +20,10 @@
 #undef GetClassName
 #endif
 
-namespace mozilla {
-class DOMSVGLengthList;
-class DOMSVGNumberList;
-class DOMSVGPathSegList;
-class DOMSVGPointList;
-class DOMSVGStringList;
-class DOMSVGTransformList;
-}
-
 class nsContentList;
 class nsGlobalWindow;
 class nsICanvasRenderingContextInternal;
 class nsIDOMHTMLOptionsCollection;
-class nsIDOMSVGLength;
-class nsIDOMSVGLengthList;
-class nsIDOMSVGNumber;
-class nsIDOMSVGNumberList;
-class nsIDOMSVGPathSeg;
-class nsIDOMSVGPathSegList;
-class nsIDOMSVGPoint;
-class nsIDOMSVGPointList;
-class nsIDOMSVGStringList;
-class nsIDOMSVGTests;
-class nsIDOMSVGTransform;
-class nsIDOMSVGTransformList;
 class nsIDOMWindow;
 class nsIForm;
 class nsIHTMLDocument;
@@ -196,19 +175,6 @@ protected:
             id == sURL_id);
   }
 
-  static inline bool IsWritableReplaceable(jsid id)
-  {
-    return (id == sInnerHeight_id  ||
-            id == sInnerWidth_id   ||
-            id == sOpener_id       ||
-            id == sOuterHeight_id  ||
-            id == sOuterWidth_id   ||
-            id == sScreenX_id      ||
-            id == sScreenY_id      ||
-            id == sStatus_id       ||
-            id == sName_id);
-  }
-
   static nsIXPConnect *sXPConnect;
   static nsIScriptSecurityManager *sSecMan;
 
@@ -234,14 +200,6 @@ public:
   static jsid sDialogArguments_id;
   static jsid sControllers_id;
   static jsid sLength_id;
-  static jsid sInnerHeight_id;
-  static jsid sInnerWidth_id;
-  static jsid sOuterHeight_id;
-  static jsid sOuterWidth_id;
-  static jsid sScreenX_id;
-  static jsid sScreenY_id;
-  static jsid sStatus_id;
-  static jsid sName_id;
   static jsid sScrollX_id;
   static jsid sScrollY_id;
   static jsid sScrollMaxX_id;
@@ -254,7 +212,6 @@ public:
   static jsid sDocument_id;
   static jsid sFrames_id;
   static jsid sSelf_id;
-  static jsid sOpener_id;
   static jsid sAll_id;
   static jsid sTags_id;
   static jsid sDocumentURIObject_id;
@@ -334,30 +291,6 @@ public:
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsEventTargetSH(aData);
-  }
-};
-
-class nsDOMMutationObserverSH : public nsDOMGenericSH
-{
-protected:
-  nsDOMMutationObserverSH(nsDOMClassInfoData* aData) : nsDOMGenericSH(aData)
-  {
-  }
-
-  virtual ~nsDOMMutationObserverSH()
-  {
-  }
-public:
-  NS_IMETHOD PreCreate(nsISupports* aNativeObj, JSContext* aCx,
-                       JSObject* aGlobalObj, JSObject** aParentObj);
-  NS_IMETHOD AddProperty(nsIXPConnectWrappedNative* aWrapper, JSContext* aCx,
-                         JSObject* aObj, jsid aId, jsval* aVp, bool* aRetval);
-
-  virtual void PreserveWrapper(nsISupports* aNative);
-
-  static nsIClassInfo* doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsDOMMutationObserverSH(aData);
   }
 };
 
@@ -848,6 +781,7 @@ protected:
 
   static nsresult GetPluginInstanceIfSafe(nsIXPConnectWrappedNative *aWrapper,
                                           JSObject *obj,
+                                          JSContext *cx,
                                           nsNPAPIPluginInstance **aResult);
 
   static nsresult GetPluginJSObject(JSContext *cx, JSObject *obj,
@@ -1098,29 +1032,6 @@ public:
 };
 
 
-// CSSValueList helper
-
-class nsCSSValueListSH : public nsArraySH
-{
-protected:
-  nsCSSValueListSH(nsDOMClassInfoData* aData) : nsArraySH(aData)
-  {
-  }
-
-  virtual ~nsCSSValueListSH()
-  {
-  }
-
-  virtual nsISupports* GetItemAt(nsISupports *aNative, uint32_t aIndex,
-                                 nsWrapperCache **aCache, nsresult *aResult);
-
-public:
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsCSSValueListSH(aData);
-  }
-};
-
 // CSSRuleList helper
 
 class nsCSSRuleListSH : public nsArraySH
@@ -1244,24 +1155,6 @@ public:
   }
 
   virtual ~nsEventListenerThisTranslator()
-  {
-  }
-
-  // nsISupports
-  NS_DECL_ISUPPORTS
-
-  // nsIXPCFunctionThisTranslator
-  NS_DECL_NSIXPCFUNCTIONTHISTRANSLATOR
-};
-
-class nsMutationCallbackThisTranslator : public nsIXPCFunctionThisTranslator
-{
-public:
-  nsMutationCallbackThisTranslator()
-  {
-  }
-
-  virtual ~nsMutationCallbackThisTranslator()
   {
   }
 

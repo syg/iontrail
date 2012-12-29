@@ -13,15 +13,17 @@ this.EXPORTED_SYMBOLS = ["ObjectWrapper"];
 // Makes sure that we expose correctly chrome JS objects to content.
 
 this.ObjectWrapper = {
-  getObjectKind: function objWrapper_getobjectkind(aObject) {
-    if (!aObject) {
-      return "null";
-    }
-
-    if (Array.isArray(aObject)) {
+  getObjectKind: function objWrapper_getObjectKind(aObject) {
+    if (aObject === null || aObject === undefined) {
+      return "primitive";
+    } else if (Array.isArray(aObject)) {
       return "array";
-    } else if (aObject.mozSlice && (typeof aObject.mozSlice == "function")) {
+    } else if (aObject instanceof Ci.nsIDOMFile) {
+      return "file";
+    } else if (aObject instanceof Ci.nsIDOMBlob) {
       return "blob";
+    } else if (aObject instanceof Date) {
+      return "date";
     } else if (typeof aObject == "object") {
       return "object";
     } else {
@@ -30,10 +32,6 @@ this.ObjectWrapper = {
   },
 
   wrap: function objWrapper_wrap(aObject, aCtxt) {
-    if (!aObject) {
-      return null;
-    }
-
     // First check wich kind of object we have.
     let kind = this.getObjectKind(aObject);
     if (kind == "array") {
@@ -42,36 +40,27 @@ this.ObjectWrapper = {
         res.push(this.wrap(aObj, aCtxt));
       }, this);
       return res;
+    } else if (kind == "file") {
+      return new aCtxt.File(aObject,
+                            { name: aObject.name,
+                              type: aObject.type });
     } else if (kind == "blob") {
-      return new aCtxt.Blob([aObject]);
+      return new aCtxt.Blob([aObject], { type: aObject.type });
+    } else if (kind == "date") {
+      return Cu.createDateIn(aCtxt, aObject.getTime());
     } else if (kind == "primitive") {
       return aObject;
     }
 
-    //  Fall-through, we now have a dictionnary object.
+    // Fall-through, we now have a dictionnary object.
     let res = Cu.createObjectIn(aCtxt);
     let propList = { };
     for (let prop in aObject) {
-      let value;
-      let objProp = aObject[prop];
-      let propKind = this.getObjectKind(objProp);
-      if (propKind == "array") {
-        value = Cu.createArrayIn(aCtxt);
-        objProp.forEach(function(aObj) {
-          value.push(this.wrap(aObj, aCtxt));
-        }, this);
-      } else if (propKind == "blob") {
-        value = new aCtxt.Blob([objProp]);
-      } else if (propKind == "object") {
-        value = this.wrap(objProp, aCtxt);
-      } else {
-        value = objProp;
-      }
       propList[prop] = {
         enumerable: true,
         configurable: true,
         writable: true,
-        value: value
+        value: this.wrap(aObject[prop], aCtxt)
       }
     }
     Object.defineProperties(res, propList);

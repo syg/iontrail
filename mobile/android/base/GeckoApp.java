@@ -28,6 +28,9 @@ import org.json.JSONObject;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.app.Notification;
+import android.app.PendingIntent;
+import android.app.WallpaperManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -43,7 +46,9 @@ import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.Sensor;
@@ -61,8 +66,10 @@ import android.os.StrictMode;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Base64;
 import android.util.Log;
 import android.util.SparseBooleanArray;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -70,6 +77,7 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -94,6 +102,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
@@ -146,6 +155,7 @@ abstract public class GeckoApp
     public static final String PREFS_NAME          = "GeckoApp";
     public static final String PREFS_OOM_EXCEPTION = "OOMException";
     public static final String PREFS_WAS_STOPPED   = "wasStopped";
+    public static final String PREFS_CRASHED       = "crashed";
 
     static public final int RESTORE_NONE = 0;
     static public final int RESTORE_OOM = 1;
@@ -163,7 +173,7 @@ abstract public class GeckoApp
     public Handler mMainHandler;
     private GeckoProfile mProfile;
     public static int mOrientation;
-    private boolean mIsRestoringActivity;
+    protected boolean mIsRestoringActivity;
     private String mCurrentResponse = "";
     public static boolean sIsUsingCustomProfile = false;
 
@@ -794,7 +804,9 @@ abstract public class GeckoApp
 
     void addTab() { }
 
-    public void showLocalTabs() { }
+    public void showNormalTabs() { }
+
+    public void showPrivateTabs() { }
 
     public void showRemoteTabs() { }
 
@@ -837,17 +849,17 @@ abstract public class GeckoApp
                 handleContentLoaded(tabId);
                 Tab tab = Tabs.getInstance().getTab(tabId);
                 if (backgroundColor != null) {
-                    tab.setCheckerboardColor(backgroundColor);
+                    tab.setBackgroundColor(backgroundColor);
                 } else {
                     // Default to white if no color is given
-                    tab.setCheckerboardColor(Color.WHITE);
+                    tab.setBackgroundColor(Color.WHITE);
                 }
 
                 // Sync up the layer view and the tab if the tab is
                 // currently displayed.
                 LayerView layerView = mLayerView;
                 if (layerView != null && Tabs.getInstance().isSelectedTab(tab)) {
-                    layerView.setCheckerboardColor(tab.getCheckerboardColor());
+                    layerView.setBackgroundColor(tab.getBackgroundColor());
                 }
             } else if (event.equals("DOMTitleChanged")) {
                 final int tabId = message.getInt("tabID");
@@ -1015,6 +1027,9 @@ abstract public class GeckoApp
                 String src = message.getString("url");
                 String type = message.getString("mime");
                 GeckoAppShell.shareImage(src, type);
+            } else if (event.equals("Wallpaper:Set")) {
+                String src = message.getString("url");
+                setImageAsWallpaper(src);
             } else if (event.equals("Sanitize:ClearHistory")) {
                 handleClearHistory();
             } else if (event.equals("Update:Check")) {
@@ -1131,8 +1146,6 @@ abstract public class GeckoApp
         tab.setState(shouldShowProgress(uri) ? Tab.STATE_SUCCESS : Tab.STATE_LOADING);
         tab.updateIdentityData(null);
         tab.setReaderEnabled(false);
-        if (Tabs.getInstance().isSelectedTab(tab))
-            mLayerView.getRenderer().resetCheckerboard();
         Tabs.getInstance().notifyListeners(tab, Tabs.TabEvents.START, showProgress);
     }
 
@@ -1153,11 +1166,6 @@ abstract public class GeckoApp
                     return;
 
                 ThumbnailHelper.getInstance().getAndProcessThumbnailFor(tab);
-                if (Tabs.getInstance().isSelectedTab(tab)) {
-                    GeckoAppShell.sendEventToGecko(GeckoEvent.createStartPaintListentingEvent(tab.getId()));
-                    ScreenshotHandler.screenshotWholePage(tab);
-                }
-
             }
         }, 500);
     }
@@ -1317,7 +1325,161 @@ abstract public class GeckoApp
             }
         });
     }
-    
+
+    private void setImageAsWallpaper(final String aSrc) {
+        final String progText = mAppContext.getString(R.string.wallpaper_progress);
+        final String successText = mAppContext.getString(R.string.wallpaper_success);
+        final String failureText = mAppContext.getString(R.string.wallpaper_fail);
+        final String fileName = aSrc.substring(aSrc.lastIndexOf("/") + 1);
+        final PendingIntent emptyIntent = PendingIntent.getActivity(mAppContext, 0, new Intent(), 0);
+        final AlertNotification notification = new AlertNotification(mAppContext, fileName.hashCode(), 
+                                R.drawable.alert_download, fileName, progText, System.currentTimeMillis() );
+        notification.setLatestEventInfo(mAppContext, fileName, progText, emptyIntent );
+        notification.flags |= Notification.FLAG_ONGOING_EVENT;
+        notification.show();
+        new GeckoAsyncTask<Void, Void, Boolean>(mAppContext, GeckoAppShell.getHandler()){
+
+            @Override
+            protected Boolean doInBackground(Void... params) {
+                WallpaperManager mgr = WallpaperManager.getInstance(mAppContext);
+
+                // Determine the ideal width and height of the wallpaper
+                // for the device
+
+                int idealWidth = mgr.getDesiredMinimumWidth();
+                int idealHeight = mgr.getDesiredMinimumHeight();
+
+                // Sometimes WallpaperManager's getDesiredMinimum*() methods
+                // can return 0 if a Remote Exception occurs when calling the
+                // Wallpaper Service. So if that fails, we are calculating
+                // the ideal width and height from the device's display 
+                // resolution (excluding the decorated area)
+
+                if(idealWidth <= 0 || idealHeight <= 0) {
+                    int orientation;
+                    Display defaultDisplay = getWindowManager().getDefaultDisplay();
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO) {
+                        orientation = defaultDisplay.getRotation();
+                    } else {
+                        orientation = defaultDisplay.getOrientation();
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+                        Point size = new Point();
+                        defaultDisplay.getSize(size);
+                        // The ideal wallpaper width is always twice the size of
+                        // display width
+                        if (orientation == Surface.ROTATION_0 || orientation == Surface.ROTATION_270) {
+                            idealWidth = size.x * 2;
+                            idealHeight = size.y;
+                        } else {
+                            idealWidth = size.y;
+                            idealHeight = size.x * 2;
+                        }
+                    } else {
+                        if (orientation == Surface.ROTATION_0 || orientation == Surface.ROTATION_270) {
+                            idealWidth = defaultDisplay.getWidth() * 2;
+                            idealHeight = defaultDisplay.getHeight();
+                        } else {
+                            idealWidth = defaultDisplay.getHeight();
+                            idealHeight = defaultDisplay.getWidth() * 2;
+                        }
+                    }
+                }
+
+                boolean isDataURI = aSrc.startsWith("data:");
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inJustDecodeBounds = true;
+                Bitmap image = null;
+                InputStream is = null;
+                ByteArrayOutputStream os = null;
+                try{
+                    if (isDataURI) {
+                        int dataStart = aSrc.indexOf(',');
+                        byte[] buf = Base64.decode(aSrc.substring(dataStart+1), Base64.DEFAULT);
+                        BitmapFactory.decodeByteArray(buf, 0, buf.length, options);
+                        options.inSampleSize = getBitmapSampleSize(options, idealWidth, idealHeight);
+                        options.inJustDecodeBounds = false;
+                        image = BitmapFactory.decodeByteArray(buf, 0, buf.length, options);
+                    } else {
+                        int byteRead;
+                        byte[] buf = new byte[4192];
+                        os = new ByteArrayOutputStream();
+                        URL url = new URL(aSrc);
+                        is = url.openStream();
+
+                        // Cannot read from same stream twice. Also, InputStream from
+                        // URL does not support reset. So converting to byte array
+
+                        while((byteRead = is.read(buf)) != -1) {
+                            os.write(buf, 0, byteRead);
+                        }
+                        byte[] imgBuffer = os.toByteArray();
+                        BitmapFactory.decodeByteArray(imgBuffer, 0, imgBuffer.length, options);
+                        options.inSampleSize = getBitmapSampleSize(options, idealWidth, idealHeight);
+                        options.inJustDecodeBounds = false;
+                        image = BitmapFactory.decodeByteArray(imgBuffer, 0, imgBuffer.length, options);
+                    }
+                    if(image != null) {
+                        mgr.setBitmap(image);
+                        return true;
+                    } else {
+                        return false;
+                    }
+                } catch(OutOfMemoryError ome) {
+                    Log.e(LOGTAG, "Out of Memmory when coverting to byte array", ome);
+                    return false;
+                } catch(IOException ioe) {
+                    Log.e(LOGTAG, "I/O Exception while setting wallpaper", ioe);
+                    return false;
+                } finally {
+                    if(is != null) {
+                        try {
+                            is.close();
+                        } catch(IOException ioe) {
+                            Log.w(LOGTAG, "I/O Exception while closing stream", ioe);
+                        }
+                    }
+                    if(os != null) {
+                        try {
+                            os.close();
+                        } catch(IOException ioe) {
+                            Log.w(LOGTAG, "I/O Exception while closing stream", ioe);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Boolean success) {
+                notification.cancel();
+                notification.flags = 0;
+                notification.flags |= Notification.FLAG_AUTO_CANCEL;
+                if(!success) {
+                    notification.tickerText = failureText;
+                    notification.setLatestEventInfo(mAppContext, fileName, failureText, emptyIntent);
+                } else {
+                    notification.tickerText = successText;
+                    notification.setLatestEventInfo(mAppContext, fileName, successText, emptyIntent);
+                }
+                notification.show();
+            }
+        }.execute();
+    }
+
+    private int getBitmapSampleSize(BitmapFactory.Options options, int idealWidth, int idealHeight) {
+        int width = options.outWidth;
+        int height = options.outHeight;
+        int inSampleSize = 1;
+        if (height > idealHeight || width > idealWidth) {
+            if (width > height) {
+                inSampleSize = Math.round((float)height / (float)idealHeight);
+            } else {
+                inSampleSize = Math.round((float)width / (float)idealWidth);
+            }
+        }
+        return inSampleSize;
+    }
+
     private void hidePluginLayer(Layer layer) {
         LayerView layerView = mLayerView;
         layerView.removeLayer(layer);
@@ -1416,7 +1578,7 @@ abstract public class GeckoApp
             enableStrictMode();
         }
 
-        GeckoAppShell.loadMozGlue();
+        GeckoAppShell.loadMozGlue(this);
         if (sGeckoThread != null) {
             // this happens when the GeckoApp activity is destroyed by android
             // without killing the entire application (see bug 769269)
@@ -1480,7 +1642,7 @@ abstract public class GeckoApp
         });
     }
 
-    protected void initializeChrome(String uri, Boolean isExternalURL) {
+    protected void initializeChrome(String uri, boolean isExternalURL) {
         mDoorHangerPopup = new DoorHangerPopup(this, null);
         mPluginContainer = (AbsoluteLayout) findViewById(R.id.plugin_container);
         mFormAssistPopup = (FormAssistPopup) findViewById(R.id.form_assist_popup);
@@ -1581,7 +1743,7 @@ abstract public class GeckoApp
 
         // If we are doing a restore, read the session data and send it to Gecko
         String restoreMessage = null;
-        if (mRestoreMode != RESTORE_NONE) {
+        if (mRestoreMode != RESTORE_NONE && !mIsRestoringActivity) {
             try {
                 String sessionString = getProfile().readSessionFile(false);
                 if (sessionString == null) {
@@ -1713,6 +1875,7 @@ abstract public class GeckoApp
         registerEventListener("DesktopMode:Changed");
         registerEventListener("Share:Text");
         registerEventListener("Share:Image");
+        registerEventListener("Wallpaper:Set");
         registerEventListener("Sanitize:ClearHistory");
         registerEventListener("Update:Check");
         registerEventListener("PrivateBrowsing:Data");
@@ -1726,7 +1889,8 @@ abstract public class GeckoApp
         mTextSelection = new TextSelection((TextSelectionHandle) findViewById(R.id.start_handle),
                                            (TextSelectionHandle) findViewById(R.id.middle_handle),
                                            (TextSelectionHandle) findViewById(R.id.end_handle),
-                                           GeckoAppShell.getEventDispatcher());
+                                           GeckoAppShell.getEventDispatcher(),
+                                           this);
 
         PrefsHelper.getPref("app.update.autodownload", new PrefsHelper.PrefHandlerBase() {
             @Override public void prefValue(String pref, String value) {
@@ -1774,7 +1938,7 @@ abstract public class GeckoApp
             setLaunchState(GeckoApp.LaunchState.GeckoRunning);
             Tab selectedTab = Tabs.getInstance().getSelectedTab();
             if (selectedTab != null)
-                Tabs.getInstance().selectTab(selectedTab.getId());
+                Tabs.getInstance().notifyListeners(selectedTab, Tabs.TabEvents.SELECTED);
             connectGeckoLayerClient();
             GeckoAppShell.setLayerClient(mLayerView.getLayerClient());
             GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Viewport:Flush", null));
@@ -1790,7 +1954,19 @@ abstract public class GeckoApp
     }
 
     protected boolean shouldRestoreSession() {
-        return getProfile().shouldRestoreSession();
+        SharedPreferences prefs = GeckoApp.mAppContext.getSharedPreferences(PREFS_NAME, 0);
+
+        // We record crashes in the crash reporter. If sessionstore.js
+        // exists, but we didn't flag a crash in the crash reporter, we
+        // were probably just force killed by the user, so we shouldn't do
+        // a restore.
+        if (prefs.getBoolean(PREFS_CRASHED, false)) {
+            prefs.edit().putBoolean(GeckoApp.PREFS_CRASHED, false).commit();
+            if (getProfile().shouldRestoreSession()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -2164,6 +2340,7 @@ abstract public class GeckoApp
         unregisterEventListener("DesktopMode:Changed");
         unregisterEventListener("Share:Text");
         unregisterEventListener("Share:Image");
+        unregisterEventListener("Wallpaper:Set");
         unregisterEventListener("Sanitize:ClearHistory");
         unregisterEventListener("Update:Check");
         unregisterEventListener("PrivateBrowsing:Data");

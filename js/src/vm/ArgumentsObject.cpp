@@ -97,7 +97,7 @@ struct CopyStackIterArgs
         /* Define formals which are not part of the actuals. */
         unsigned numActuals = iter_.numActualArgs();
         unsigned numFormals = iter_.callee()->nargs;
-       if (numActuals < numFormals) {
+        if (numActuals < numFormals) {
             HeapValue *dst = dstBase + numActuals, *dstEnd = dstBase + numFormals;
             while (dst != dstEnd)
                 (dst++)->init(UndefinedValue());
@@ -129,7 +129,7 @@ ArgumentsObject::create(JSContext *cx, HandleScript script, HandleFunction calle
     if (!type)
         return NULL;
 
-    bool strict = callee->inStrictMode();
+    bool strict = callee->strict();
     Class *clasp = strict ? &StrictArgumentsObjectClass : &NormalArgumentsObjectClass;
 
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(proto),

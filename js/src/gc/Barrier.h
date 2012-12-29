@@ -320,7 +320,7 @@ BarrieredSetPair(JSCompartment *comp,
     v2.post();
 }
 
-struct Shape;
+class Shape;
 class BaseShape;
 namespace types { struct TypeObject; }
 
@@ -628,6 +628,7 @@ class ReadBarriered
     T *operator->() const { return get(); }
 
     T **unsafeGet() { return &value; }
+    T * const * unsafeGet() const { return &value; }
 
     void set(T *v) { value = v; }
 

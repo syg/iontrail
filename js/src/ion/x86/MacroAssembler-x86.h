@@ -272,6 +272,11 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         cmpl(tag, ImmTag(JSVAL_TAG_MAGIC));
         return cond;
     }
+    Condition testMagic(Condition cond, const Operand &operand) {
+        JS_ASSERT(cond == Equal || cond == NotEqual);
+        cmpl(ToType(operand), ImmTag(JSVAL_TAG_MAGIC));
+        return cond;
+    }
     Condition testPrimitive(Condition cond, const Register &tag) {
         JS_ASSERT(cond == Equal || cond == NotEqual);
         cmpl(tag, ImmTag(JSVAL_UPPER_EXCL_TAG_OF_PRIMITIVE_SET));
@@ -714,8 +719,14 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     void passABIArg(const Register &reg);
     void passABIArg(const FloatRegister &reg);
 
+  private:
+    void callWithABIPre(uint32_t *stackAdjust);
+    void callWithABIPost(uint32_t stackAdjust, Result result);
+
+  public:
     // Emits a call to a C/C++ function, resolving all argument moves.
     void callWithABI(void *fun, Result result = GENERAL);
+    void callWithABI(const Address &fun, Result result = GENERAL);
 
     // Used from within an Exit frame to handle a pending exception.
     void handleException();

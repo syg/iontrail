@@ -480,9 +480,10 @@ DebuggerClient.prototype = {
         this._threadClients[aPacket.from]._onThreadState(aPacket);
       }
       // On navigation the server resumes, so the client must resume as well.
-      // We achive that by generating a fake resumption packet that triggers
+      // We achieve that by generating a fake resumption packet that triggers
       // the client's thread state change listeners.
-      if (aPacket.type == UnsolicitedNotifications.tabNavigated &&
+      if (this.activeThread &&
+          aPacket.type == UnsolicitedNotifications.tabNavigated &&
           aPacket.from in this._tabClients) {
         let resumption = { from: this.activeThread._actor, type: "resumed" };
         this.activeThread._onThreadState(resumption);
@@ -1089,17 +1090,19 @@ GripClient.prototype = {
   valid: true,
 
   /**
-   * Request the name of the function and its formal parameters.
+   * Request the names of a function's formal parameters.
    *
    * @param aOnResponse function
-   *        Called with the request's response.
+   *        Called with an object of the form:
+   *        { parameterNames:[<parameterName>, ...] }
+   *        where each <parameterName> is the name of a parameter.
    */
-  getSignature: function GC_getSignature(aOnResponse) {
+  getParameterNames: function GC_getParameterNames(aOnResponse) {
     if (this._grip["class"] !== "Function") {
-      throw "getSignature is only valid for function grips.";
+      throw "getParameterNames is only valid for function grips.";
     }
 
-    let packet = { to: this.actor, type: "nameAndParameters" };
+    let packet = { to: this.actor, type: "parameterNames" };
     this._client.request(packet, function (aResponse) {
                                    if (aOnResponse) {
                                      aOnResponse(aResponse);

@@ -8,6 +8,8 @@
 #ifndef jsion_macro_assembler_x86_shared_h__
 #define jsion_macro_assembler_x86_shared_h__
 
+#include "mozilla/DebugOnly.h"
+
 #ifdef JS_CPU_X86
 # include "ion/x86/Assembler-x86.h"
 #elif JS_CPU_X64
@@ -256,6 +258,14 @@ class MacroAssemblerX86Shared : public Assembler
     }
     void zeroDouble(FloatRegister reg) {
         xorpd(reg, reg);
+    }
+    void negateDouble(FloatRegister reg) {
+        // From MacroAssemblerX86Shared::maybeInlineDouble
+        pcmpeqw(ScratchFloatReg, ScratchFloatReg);
+        psllq(Imm32(63), ScratchFloatReg);
+
+        // XOR the float in a float register with -0.0.
+        xorpd(ScratchFloatReg, reg); // s ^ 0x80000000000000
     }
     void addDouble(FloatRegister src, FloatRegister dest) {
         addsd(src, dest);

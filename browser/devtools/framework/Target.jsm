@@ -6,10 +6,11 @@
 
 this.EXPORTED_SYMBOLS = [ "TargetFactory" ];
 
-const Cu = Components.utils;
-const Ci = Components.interfaces;
-Cu.import("resource:///modules/devtools/EventEmitter.jsm");
+const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/commonjs/promise/core.js");
+Cu.import("resource:///modules/devtools/EventEmitter.jsm");
 
 
 const targets = new WeakMap();
@@ -169,7 +170,7 @@ Object.defineProperty(Target.prototype, "version", {
  * be web pages served over http(s), but they don't have to be.
  */
 function TabTarget(tab) {
-  new EventEmitter(this);
+  EventEmitter.decorate(this);
   this._tab = tab;
   this._setupListeners();
 }
@@ -184,6 +185,10 @@ TabTarget.prototype = {
     return this._tab;
   },
 
+  get window() {
+    return this._tab.linkedBrowser.contentWindow;
+  },
+
   get name() {
     return this._tab.linkedBrowser.contentDocument.title;
   },
@@ -194,6 +199,10 @@ TabTarget.prototype = {
 
   get isRemote() {
     return false;
+  },
+
+  get isLocalTab() {
+    return true;
   },
 
   /**
@@ -224,24 +233,25 @@ TabTarget.prototype = {
     }
   },
 
-
   /**
    * Target is not alive anymore.
    */
   destroy: function() {
-    if (this._destroyed) {
-      return;
-    }
-    this.tab.linkedBrowser.removeProgressListener(this._webProgressListener)
-    this._webProgressListener.target = null;
-    this._webProgressListener = null;
-    this.tab.removeEventListener("TabClose", this);
-    this.tab.parentNode.removeEventListener("TabSelect", this);
-    this._destroyed = true;
-    this.emit("close");
+    if (!this._destroyed) {
+      this._destroyed = true;
 
-    targets.delete(this._tab);
-    this._tab = null;
+      this.tab.linkedBrowser.removeProgressListener(this._webProgressListener)
+      this._webProgressListener.target = null;
+      this._webProgressListener = null;
+      this.tab.removeEventListener("TabClose", this);
+      this.tab.parentNode.removeEventListener("TabSelect", this);
+      this.emit("close");
+
+      targets.delete(this._tab);
+      this._tab = null;
+    }
+
+    return Promise.resolve(null);
   },
 
   toString: function() {
@@ -285,9 +295,10 @@ TabWebProgressListener.prototype = {
   onSecurityChange: function() {},
   onStatusChange: function() {},
 
-  onLocationChange: function TwPL_onLocationChange(webProgress) {
-    let window = webProgress.DOMWindow;
-    if (this.target) {
+  onLocationChange: function TwPL_onLocationChange(webProgress, request, URI, flags) {
+    if (this.target &&
+        !(flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT)) {
+      let window = webProgress.DOMWindow;
       this.target.emit("navigate", window);
     }
   },
@@ -299,7 +310,7 @@ TabWebProgressListener.prototype = {
  * these will have a chrome: URL
  */
 function WindowTarget(window) {
-  new EventEmitter(this);
+  EventEmitter.decorate(this);
   this._window = window;
 }
 
@@ -323,6 +334,26 @@ WindowTarget.prototype = {
     return false;
   },
 
+  get isLocalTab() {
+    return false;
+  },
+
+  /**
+   * Target is not alive anymore.
+   */
+  destroy: function() {
+    if (!this._destroyed) {
+      this._destroyed = true;
+
+      this.emit("close");
+
+      targets.delete(this._window);
+      this._window = null;
+    }
+
+    return Promise.resolve(null);
+  },
+
   toString: function() {
     return 'WindowTarget:' + this.window;
   },
@@ -332,7 +363,7 @@ WindowTarget.prototype = {
  * A RemoteTarget represents a page living in a remote Firefox instance.
  */
 function RemoteTarget(form, client, chrome) {
-  new EventEmitter(this);
+  EventEmitter.decorate(this);
   this._client = client;
   this._form = form;
   this._chrome = chrome;
@@ -340,8 +371,12 @@ function RemoteTarget(form, client, chrome) {
   this.destroy = this.destroy.bind(this);
   this.client.addListener("tabDetached", this.destroy);
 
-  this._onTabNavigated = function onRemoteTabNavigated() {
-    this.emit("navigate");
+  this._onTabNavigated = function onRemoteTabNavigated(aType, aPacket) {
+    if (aPacket.state == "start") {
+      this.emit("will-navigate", aPacket);
+    } else {
+      this.emit("navigate", aPacket);
+    }
   }.bind(this);
   this.client.addListener("tabNavigated", this._onTabNavigated);
 }
@@ -354,29 +389,39 @@ RemoteTarget.prototype = {
 
   get chrome() this._chrome,
 
-  get name() this._form._title,
+  get name() this._form.title,
 
-  get url() this._form._url,
+  get url() this._form.url,
 
   get client() this._client,
 
   get form() this._form,
 
+  get isLocalTab() false,
+
   /**
    * Target is not alive anymore.
    */
   destroy: function RT_destroy() {
-    if (this._destroyed) {
-      return;
+    // If several things call destroy then we give them all the same
+    // destruction promise so we're sure to destroy only once
+    if (this._destroyer) {
+      return this._destroyer.promise;
     }
+
+    this._destroyer = Promise.defer();
+
     this.client.removeListener("tabNavigated", this._onTabNavigated);
     this.client.removeListener("tabDetached", this.destroy);
 
     this._client.close(function onClosed() {
       this._client = null;
-      this._destroyed = true;
       this.emit("close");
+
+      this._destroyer.resolve(null);
     }.bind(this));
+
+    return this._destroyer.promise;
   },
 
   toString: function() {

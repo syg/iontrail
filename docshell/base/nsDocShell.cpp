@@ -1961,6 +1961,14 @@ nsDocShell::GetChannelIsUnsafe(bool *aUnsafe)
 }
 
 NS_IMETHODIMP
+nsDocShell::GetHasMixedActiveContentLoaded(bool *aHasMixedActiveContentLoaded)
+{
+    nsCOMPtr<nsIDocument> doc(do_GetInterface(GetAsSupports(this)));
+    *aHasMixedActiveContentLoaded = doc && doc->GetHasMixedActiveContentLoaded();
+    return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDocShell::GetAllowPlugins(bool * aAllowPlugins)
 {
     NS_ENSURE_ARG_POINTER(aAllowPlugins);
@@ -5211,7 +5219,7 @@ nsDocShell::SetIsActive(bool aIsActive)
       win->SetIsBackground(!aIsActive);
       nsCOMPtr<nsIDocument> doc = do_QueryInterface(win->GetExtantDocument());
       if (doc) {
-          doc->UpdateVisibilityState(false);
+          doc->PostVisibilityUpdateEvent();
       }
   }
 
@@ -8982,12 +8990,13 @@ nsDocShell::InternalLoad(nsIURI * aURI,
     if (!bIsJavascript) {
         MaybeInitTiming();
     }
-    if (mTiming) {
+    bool timeBeforeUnload = aFileName.IsVoid();
+    if (mTiming && timeBeforeUnload) {
       mTiming->NotifyBeforeUnload();
     }
     // Check if the page doesn't want to be unloaded. The javascript:
     // protocol handler deals with this for javascript: URLs.
-    if (!bIsJavascript && mContentViewer) {
+    if (!bIsJavascript && aFileName.IsVoid() && mContentViewer) {
         bool okToUnload;
         rv = mContentViewer->PermitUnload(false, &okToUnload);
 
@@ -8998,7 +9007,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
         }
     }
 
-    if (mTiming) {
+    if (mTiming && timeBeforeUnload) {
       mTiming->NotifyUnloadAccepted(mCurrentURI);
     }
 

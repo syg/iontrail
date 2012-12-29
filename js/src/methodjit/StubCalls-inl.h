@@ -29,22 +29,6 @@ ReportAtomNotDefined(JSContext *cx, JSAtom *atom)
         js_ReportIsNotDefined(cx, printable.ptr());
 }
 
-#define NATIVE_GET(cx,obj,pobj,shape,getHow,vp,onerr)                         \
-    JS_BEGIN_MACRO                                                            \
-        if (shape->isDataDescriptor() && shape->hasDefaultGetter()) {         \
-            /* Fast path for Object instance properties. */                   \
-            JS_ASSERT((shape)->slot() != SHAPE_INVALID_SLOT ||                \
-                      !shape->hasDefaultSetter());                            \
-            if (((shape)->slot() != SHAPE_INVALID_SLOT))                      \
-                *(vp) = (pobj)->nativeGetSlot((shape)->slot());               \
-            else                                                              \
-                (vp)->setUndefined();                                         \
-        } else {                                                              \
-            if (!js_NativeGet(cx, obj, pobj, shape, getHow, vp))              \
-                onerr;                                                        \
-        }                                                                     \
-    JS_END_MACRO
-
 inline bool
 stubs::UncachedCallResult::setFunction(JSContext *cx, CallArgs &args,
                                        HandleScript callScript, jsbytecode *callPc)
@@ -66,7 +50,8 @@ stubs::UncachedCallResult::setFunction(JSContext *cx, CallArgs &args,
     return true;
 }
 
-}}
+} /* namespace mjit */
+} /* namespace js */
 
 #endif /* jslogic_h__ */
 

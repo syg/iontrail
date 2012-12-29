@@ -18,9 +18,9 @@
 
 extern "C" {
 struct JSContext;
-struct JSFunction;
+class JSFunction;
 struct JSObject;
-struct JSScript;
+class JSScript;
 }
 
 class JSAtom;
@@ -32,7 +32,7 @@ class ArgumentsObject;
 class BaseShape;
 class GlobalObject;
 class UnownedBaseShape;
-struct Shape;
+class Shape;
 
 template<class, typename> class HeapPtr;
 
@@ -97,6 +97,7 @@ DeclMarker(Object, DebugScopeObject)
 DeclMarker(Object, GlobalObject)
 DeclMarker(Object, JSObject)
 DeclMarker(Object, JSFunction)
+DeclMarker(Object, RegExpObject)
 DeclMarker(Object, ScopeObject)
 DeclMarker(Script, JSScript)
 DeclMarker(Shape, Shape)
@@ -236,7 +237,7 @@ MarkChildren(JSTracer *trc, JSObject *obj);
  * JS_TraceShapeCycleCollectorChildren.
  */
 void
-MarkCycleCollectorChildren(JSTracer *trc, Shape *shape);
+MarkCycleCollectorChildren(JSTracer *trc, UnrootedShape shape);
 
 void
 PushArena(GCMarker *gcmarker, ArenaHeader *aheader);

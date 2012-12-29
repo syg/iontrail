@@ -187,6 +187,7 @@ struct VMFunction
 template <class> struct TypeToDataType { /* Unexpected return type for a VMFunction. */ };
 template <> struct TypeToDataType<bool> { static const DataType result = Type_Bool; };
 template <> struct TypeToDataType<JSObject *> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<DeclEnvObject *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSString *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSFlatString *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<HandleObject> { static const DataType result = Type_Handle; };
@@ -218,7 +219,7 @@ template <> struct TypeToArgProperties<HandleFunction> {
     static const uint32_t result = TypeToArgProperties<JSFunction *>::result | VMFunction::ByRef;
 };
 template <> struct TypeToArgProperties<HandleScript> {
-    static const uint32_t result = TypeToArgProperties<JSScript *>::result | VMFunction::ByRef;
+    static const uint32_t result = TypeToArgProperties<RawScript>::result | VMFunction::ByRef;
 };
 template <> struct TypeToArgProperties<HandleValue> {
     static const uint32_t result = TypeToArgProperties<Value>::result | VMFunction::ByRef;
@@ -342,31 +343,31 @@ struct FunctionInfo<R (*)(JSContext *)> : public VMFunction {
 template <class R, class A1>
 struct FunctionInfo<R (*)(JSContext *, A1)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1)
 };
 
 template <class R, class A1, class A2>
 struct FunctionInfo<R (*)(JSContext *, A1, A2)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2)
 };
 
 template <class R, class A1, class A2, class A3>
 struct FunctionInfo<R (*)(JSContext *, A1, A2, A3)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3)
 };
 
 template <class R, class A1, class A2, class A3, class A4>
 struct FunctionInfo<R (*)(JSContext *, A1, A2, A3, A4)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3, A4);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4)
 };
 
 template <class R, class A1, class A2, class A3, class A4, class A5>
     struct FunctionInfo<R (*)(JSContext *, A1, A2, A3, A4, A5)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3, A4, A5);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5)
 };
 
 #undef FUNCTION_INFO_STRUCT_BODY
@@ -410,7 +411,6 @@ class AutoDetectInvalidation
 };
 
 bool InvokeFunction(JSContext *cx, JSFunction *fun, uint32_t argc, Value *argv, Value *rval);
-bool InvokeConstructor(JSContext *cx, JSObject *obj, uint32_t argc, Value *argv, Value *rval);
 JSObject *NewGCThing(JSContext *cx, gc::AllocKind allocKind, size_t thingSize);
 
 bool CheckOverRecursed(JSContext *cx);
@@ -432,7 +432,7 @@ bool GreaterThanOrEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool 
 template<bool Equal>
 bool StringsEqual(JSContext *cx, HandleString left, HandleString right, JSBool *res);
 
-bool ValueToBooleanComplement(JSContext *cx, const Value &input, JSBool *output);
+JSBool ObjectEmulatesUndefined(RawObject obj);
 
 bool IteratorMore(JSContext *cx, HandleObject obj, JSBool *res);
 
@@ -446,6 +446,7 @@ bool ArrayPushDense(JSContext *cx, HandleObject obj, HandleValue v, uint32_t *le
 bool ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval);
 JSObject *ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObject res);
 
+bool CharCodeAt(JSContext *cx, HandleString str, int32_t index, uint32_t *code);
 JSFlatString *StringFromCharCode(JSContext *cx, int32_t code);
 
 bool SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue value,

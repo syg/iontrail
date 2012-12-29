@@ -186,12 +186,20 @@ enum eNPPStreamTypeInternal {
 
 static NS_DEFINE_IID(kMemoryCID, NS_MEMORY_CID);
 
+PRIntervalTime NS_NotifyBeginPluginCall()
+{
+  nsNPAPIPluginInstance::BeginPluginCall();
+  return PR_IntervalNow();
+}
+
 // This function sends a notification using the observer service to any object
 // registered to listen to the "experimental-notify-plugin-call" subject.
 // Each "experimental-notify-plugin-call" notification carries with it the run
 // time value in milliseconds that the call took to execute.
 void NS_NotifyPluginCall(PRIntervalTime startTime) 
 {
+  nsNPAPIPluginInstance::EndPluginCall();
+
   PRIntervalTime endTime = PR_IntervalNow() - startTime;
   nsCOMPtr<nsIObserverService> notifyUIService =
     mozilla::services::GetObserverService();
@@ -1585,7 +1593,7 @@ _evaluate(NPP npp, NPObject* npobj, NPString *script, NPVariant *result)
                   npp, npobj, script->UTF8Characters));
 
   nsresult rv = scx->EvaluateStringWithValue(utf16script, obj, principal,
-                                             spec, 0, 0, rval, nullptr);
+                                             spec, 0, 0, false, rval, nullptr);
 
   return NS_SUCCEEDED(rv) &&
          (!result || JSValToNPVariant(npp, cx, *rval, result));
@@ -2763,12 +2771,16 @@ _getauthenticationinfo(NPP instance, const char *protocol, const char *host,
   bool authPrivate = false;
   GetPrivacyFromNPP(instance, &authPrivate);
 
+  nsIDocument *doc = GetDocumentFromNPP(instance);
+  NS_ENSURE_TRUE(doc, NPERR_GENERIC_ERROR);
+  nsIPrincipal *principal = doc->NodePrincipal();
+
   nsAutoString unused, uname16, pwd16;
   if (NS_FAILED(authManager->GetAuthIdentity(proto, nsDependentCString(host),
                                              port, nsDependentCString(scheme),
                                              nsDependentCString(realm),
                                              EmptyCString(), unused, uname16,
-                                             pwd16, authPrivate))) {
+                                             pwd16, authPrivate, principal))) {
     return NPERR_GENERIC_ERROR;
   }
 

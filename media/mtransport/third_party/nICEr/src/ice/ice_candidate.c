@@ -222,7 +222,7 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
       if(cand->stun_server != foundation->stun_server)
         goto next;
 
-      sprintf(fnd,"%d",i);
+      snprintf(fnd,sizeof(fnd),"%d",i);
       if(!(cand->foundation=r_strdup(fnd)))
         ABORT(R_NO_MEMORY);
       return(0);
@@ -239,7 +239,7 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
     foundation->stun_server=cand->stun_server;
     STAILQ_INSERT_TAIL(&ctx->foundations,foundation,entry);
 
-    sprintf(fnd,"%d",i);
+    snprintf(fnd,sizeof(fnd),"%d",i);
     if(!(cand->foundation=r_strdup(fnd)))
       ABORT(R_NO_MEMORY);
 
@@ -473,6 +473,8 @@ static void nr_ice_srvrflx_stun_finished_cb(NR_SOCKET sock, int how, void *cb_ar
   {
     int _status;
     nr_ice_candidate *cand=cb_arg;
+
+    r_log(LOG_ICE,LOG_DEBUG,"ICE(%s): %s for %s",cand->ctx->label,__FUNCTION__,cand->label);
 
     /* Deregister to suppress duplicates */
     if(cand->u.srvrflx.stun_handle){ /* This test because we might have failed before CB registered */

@@ -172,7 +172,7 @@ typedef enum {
     JSTRACE_LAST = JSTRACE_TYPE_OBJECT
 } JSGCTraceKind;
 
-/* Struct typedefs. */
+/* Struct typedefs and class forward declarations. */
 typedef struct JSClass                      JSClass;
 typedef struct JSCompartment                JSCompartment;
 typedef struct JSConstDoubleSpec            JSConstDoubleSpec;
@@ -180,7 +180,6 @@ typedef struct JSContext                    JSContext;
 typedef struct JSCrossCompartmentCall       JSCrossCompartmentCall;
 typedef struct JSErrorReport                JSErrorReport;
 typedef struct JSExceptionState             JSExceptionState;
-typedef struct JSFunction                   JSFunction;
 typedef struct JSFunctionSpec               JSFunctionSpec;
 typedef struct JSIdArray                    JSIdArray;
 typedef struct JSLocaleCallbacks            JSLocaleCallbacks;
@@ -193,7 +192,6 @@ typedef struct JSPropertySpec               JSPropertySpec;
 typedef struct JSRuntime                    JSRuntime;
 typedef struct JSSecurityCallbacks          JSSecurityCallbacks;
 typedef struct JSStackFrame                 JSStackFrame;
-typedef struct JSScript          JSScript;
 typedef struct JSStructuredCloneCallbacks   JSStructuredCloneCallbacks;
 typedef struct JSStructuredCloneReader      JSStructuredCloneReader;
 typedef struct JSStructuredCloneWriter      JSStructuredCloneWriter;
@@ -201,10 +199,14 @@ typedef struct JSTracer                     JSTracer;
 
 #ifdef __cplusplus
 class                                       JSFlatString;
+class                                       JSFunction;
+class                                       JSScript;
 class                                       JSStableString;  // long story
 class                                       JSString;
 #else
 typedef struct JSFlatString                 JSFlatString;
+typedef struct JSFunction                   JSFunction;
+typedef struct JSScript                     JSScript;
 typedef struct JSString                     JSString;
 #endif /* !__cplusplus */
 
@@ -267,8 +269,12 @@ template <> struct RootKind<JS::Value> : SpecificRootKind<JS::Value, THING_ROOT_
 struct ContextFriendFields {
     JSRuntime *const    runtime;
 
-    ContextFriendFields(JSRuntime *rt)
-      : runtime(rt) { }
+    /* The current compartment. */
+    JSCompartment       *compartment;
+
+    explicit ContextFriendFields(JSRuntime *rt)
+      : runtime(rt), compartment(NULL)
+    { }
 
     static const ContextFriendFields *get(const JSContext *cx) {
         return reinterpret_cast<const ContextFriendFields *>(cx);

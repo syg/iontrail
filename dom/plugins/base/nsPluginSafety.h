@@ -10,10 +10,21 @@
 #include "nsPluginHost.h"
 #include <prinrval.h>
 
+// On Android, we need to guard against plugin code leaking entries in the local
+// JNI ref table. See https://bugzilla.mozilla.org/show_bug.cgi?id=780831#c21
+#ifdef MOZ_WIDGET_ANDROID
+  #include "AndroidBridge.h"
+
+  #define MAIN_THREAD_JNI_REF_GUARD mozilla::AutoLocalJNIFrame jniFrame
+#else
+  #define MAIN_THREAD_JNI_REF_GUARD
+#endif
+
 #if defined(XP_WIN)
 #define CALL_SAFETY_ON
 #endif
 
+PRIntervalTime NS_NotifyBeginPluginCall();
 void NS_NotifyPluginCall(PRIntervalTime);
 
 #ifdef CALL_SAFETY_ON
@@ -31,7 +42,8 @@ PR_END_MACRO
 
 #define NS_TRY_SAFE_CALL_RETURN(ret, fun, pluginInst) \
 PR_BEGIN_MACRO                                     \
-  PRIntervalTime startTime = PR_IntervalNow();     \
+  MAIN_THREAD_JNI_REF_GUARD;                       \
+  PRIntervalTime startTime = NS_NotifyBeginPluginCall(); \
   if(gSkipPluginSafeCalls)                         \
     ret = fun;                                     \
   else                                             \
@@ -40,7 +52,7 @@ PR_BEGIN_MACRO                                     \
     {                                              \
       ret = fun;                                   \
     }                                              \
-    MOZ_SEH_EXCEPT(true)                        \
+    MOZ_SEH_EXCEPT(true)                           \
     {                                              \
       nsresult res;                                \
       nsCOMPtr<nsIPluginHost> host(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID, &res));\
@@ -54,7 +66,8 @@ PR_END_MACRO
 
 #define NS_TRY_SAFE_CALL_VOID(fun, pluginInst) \
 PR_BEGIN_MACRO                              \
-  PRIntervalTime startTime = PR_IntervalNow();     \
+  MAIN_THREAD_JNI_REF_GUARD;                \
+  PRIntervalTime startTime = NS_NotifyBeginPluginCall(); \
   if(gSkipPluginSafeCalls)                  \
     fun;                                    \
   else                                      \
@@ -63,7 +76,7 @@ PR_BEGIN_MACRO                              \
     {                                       \
       fun;                                  \
     }                                       \
-    MOZ_SEH_EXCEPT(true)                 \
+    MOZ_SEH_EXCEPT(true)                    \
     {                                       \
       nsresult res;                         \
       nsCOMPtr<nsIPluginHost> host(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID, &res));\
@@ -78,16 +91,18 @@ PR_END_MACRO
 
 #define NS_TRY_SAFE_CALL_RETURN(ret, fun, pluginInst) \
 PR_BEGIN_MACRO                                     \
-  PRIntervalTime startTime = PR_IntervalNow();     \
+  MAIN_THREAD_JNI_REF_GUARD;                       \
+  PRIntervalTime startTime = NS_NotifyBeginPluginCall(); \
   ret = fun;                                       \
-  NS_NotifyPluginCall(startTime);		   \
+  NS_NotifyPluginCall(startTime);		               \
 PR_END_MACRO
 
-#define NS_TRY_SAFE_CALL_VOID(fun, pluginInst) \
-PR_BEGIN_MACRO                              \
-  PRIntervalTime startTime = PR_IntervalNow();     \
-  fun;                                      \
-  NS_NotifyPluginCall(startTime);		   \
+#define NS_TRY_SAFE_CALL_VOID(fun, pluginInst)     \
+PR_BEGIN_MACRO                                     \
+  MAIN_THREAD_JNI_REF_GUARD;                       \
+  PRIntervalTime startTime = NS_NotifyBeginPluginCall(); \
+  fun;                                             \
+  NS_NotifyPluginCall(startTime);		               \
 PR_END_MACRO
 
 #endif // CALL_SAFETY_ON

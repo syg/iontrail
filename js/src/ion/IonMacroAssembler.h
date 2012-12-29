@@ -272,8 +272,6 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
     void PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore);
 
-    void branchTestValueTruthy(const ValueOperand &value, Label *ifTrue, FloatRegister fr);
-
     void branchIfFunctionHasNoScript(Register fun, Label *label) {
         // 16-bit loads are slow and unaligned 32-bit loads may be too so
         // perform an aligned 32-bit load and adjust the bitmask accordingly.
@@ -283,6 +281,16 @@ class MacroAssembler : public MacroAssemblerSpecific
         Address address(fun, offsetof(JSFunction, nargs));
         uint32_t bit = JSFunction::INTERPRETED << 16;
         branchTest32(Assembler::Zero, address, Imm32(bit), label);
+    }
+    void branchIfInterpreted(Register fun, Label *label) {
+        // 16-bit loads are slow and unaligned 32-bit loads may be too so
+        // perform an aligned 32-bit load and adjust the bitmask accordingly.
+        JS_STATIC_ASSERT(offsetof(JSFunction, nargs) % sizeof(uint32_t) == 0);
+        JS_STATIC_ASSERT(offsetof(JSFunction, flags) == offsetof(JSFunction, nargs) + 2);
+        JS_STATIC_ASSERT(IS_LITTLE_ENDIAN);
+        Address address(fun, offsetof(JSFunction, nargs));
+        uint32_t bit = JSFunction::INTERPRETED << 16;
+        branchTest32(Assembler::NonZero, address, Imm32(bit), label);
     }
 
     using MacroAssemblerSpecific::Push;
@@ -509,7 +517,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
     void link(IonCode *code) {
-
+        JS_ASSERT(!oom());
         // If this code can transition to C++ code and witness a GC, then we need to store
         // the IonCode onto the stack in order to GC it correctly.  exitCodePatch should
         // be unset if the code never needed to push its IonCode*.
@@ -538,7 +546,8 @@ class MacroAssembler : public MacroAssemblerSpecific
     // they are returning the offset of the assembler just after the call has
     // been made so that a safepoint can be made at that location.
 
-    void callWithABI(void *fun, Result result = GENERAL) {
+    template <typename T>
+    void callWithABI(const T &fun, Result result = GENERAL) {
         leaveSPSFrame();
         MacroAssemblerSpecific::callWithABI(fun, result);
         reenterSPSFrame();
@@ -642,7 +651,7 @@ class MacroAssembler : public MacroAssemblerSpecific
         bind(&stackFull);
     }
 
-    void spsPushFrame(SPSProfiler *p, const char *str, JSScript *s, Register temp) {
+    void spsPushFrame(SPSProfiler *p, const char *str, UnrootedScript s, Register temp) {
         Label stackFull;
         spsProfileEntryAddress(p, 0, temp, &stackFull);
 

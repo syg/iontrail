@@ -1572,6 +1572,13 @@ public:
   static bool IsAnimationLoggingEnabled();
 
   /**
+   * Find the maximum scale for an element (aContent) over the course of any
+   * animations and transitions on the element. Will return 1,1 if there is no
+   * animated scaling.
+   */
+  static gfxSize GetMaximumAnimatedScale(nsIContent* aContent);
+
+  /**
    * Checks if we should forcibly use nearest pixel filtering for the
    * background.
    */
@@ -1766,6 +1773,14 @@ public:
   static bool PointIsCloserToRect(PointType aPoint, const RectType& aRect,
                                   CoordType& aClosestXDistance,
                                   CoordType& aClosestYDistance);
+  /**
+   * Computes the box shadow rect for the frame, or returns an empty rect if
+   * there are no shadows.
+   *
+   * @param aFrame Frame to compute shadows for.
+   * @param aFrameSize Size of aFrame (in case it hasn't been set yet).
+   */
+  static nsRect GetBoxShadowRectForFrame(nsIFrame* aFrame, const nsSize& aFrameSize);
 
 #ifdef DEBUG
   /**

@@ -20,7 +20,11 @@ Cu.import("resource://gre/modules/ctypes.jsm");
 const PAYLOAD_VERSION = 1;
 
 const PREF_SERVER = "toolkit.telemetry.server";
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+const PREF_ENABLED = "toolkit.telemetry.enabledPreRelease";
+#else
 const PREF_ENABLED = "toolkit.telemetry.enabled";
+#endif
 // Do not gather data more than once a minute
 const TELEMETRY_INTERVAL = 60000;
 // Delay before intializing telemetry (ms)
@@ -143,7 +147,7 @@ function getSimpleMeasurements() {
            .getService(Ci.nsIJSEngineTelemetryStats)
            .telemetryValue;
 
-  let shutdownDuration = Services.startup.lastShutdownDuration;
+  let shutdownDuration = Telemetry.lastShutdownDuration;
   if (shutdownDuration)
     ret.shutdownDuration = shutdownDuration;
 
@@ -419,6 +423,8 @@ TelemetryPing.prototype = {
       return;
     }
 
+    let histogram = Telemetry.getHistogramById("TELEMETRY_MEMORY_REPORTER_MS");
+    let startTime = new Date();
     let e = mgr.enumerateReporters();
     while (e.hasMoreElements()) {
       let mr = e.getNext().QueryInterface(Ci.nsIMemoryReporter);
@@ -435,6 +441,7 @@ TelemetryPing.prototype = {
       catch (e) {
       }
     }
+    histogram.add(new Date() - startTime);
   },
 
   handleMemoryReport: function handleMemoryReport(id, path, units, amount) {
@@ -487,7 +494,7 @@ TelemetryPing.prototype = {
   /** 
    * Make a copy of interesting histograms at startup.
    */
-  gatherStartupInformation: function gatherStartupInformation() {
+  gatherStartupHistograms: function gatherStartupHistograms() {
     let info = Telemetry.registeredHistograms;
     let snapshots = Telemetry.histogramSnapshots;
     for (let name in info) {
@@ -496,7 +503,6 @@ TelemetryPing.prototype = {
         Telemetry.histogramFrom("STARTUP_" + name, name);
       }
     }
-    this._slowSQLStartup = Telemetry.slowSQL;
   },
 
   getCurrentSessionPayload: function getCurrentSessionPayload(reason) {
@@ -608,6 +614,7 @@ TelemetryPing.prototype = {
       this.sendPingsFromIterator(server, reason, i);
     }
     function onError() {
+      this.savePing(data, true);
       // Notify that testing is complete, even if we didn't send everything.
       finishPings(reason);
     }
@@ -718,7 +725,9 @@ TelemetryPing.prototype = {
       Telemetry.canRecord = false;
       return;
     }
+#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
     Services.obs.addObserver(this, "private-browsing", false);
+#endif
     Services.obs.addObserver(this, "profile-before-change", false);
     Services.obs.addObserver(this, "sessionstore-windows-restored", false);
     Services.obs.addObserver(this, "quit-application-granted", false);
@@ -734,6 +743,9 @@ TelemetryPing.prototype = {
       this._initialized = true;
       this.attachObservers();
       this.gatherMemory();
+
+      Telemetry.asyncFetchTelemetryData(function () {
+      });
       delete this._timer;
     }
     this._timer.initWithCallback(timerCallback.bind(this), TELEMETRY_DELAY,
@@ -803,6 +815,12 @@ TelemetryPing.prototype = {
         this.addToPendingPings(file, stream);
       }).bind(this));
     }
+  },
+
+  testLoadHistograms: function testLoadHistograms(file, sync) {
+    this._pingsLoaded = 0;
+    this._pingLoadsCompleted = 0;
+    this.loadHistograms(file, sync);
   },
 
   loadSavedPings: function loadSavedPings(sync) {
@@ -934,15 +952,19 @@ TelemetryPing.prototype = {
       this._hasXulWindowVisibleObserver = false;
     }
     Services.obs.removeObserver(this, "profile-before-change");
+#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
     Services.obs.removeObserver(this, "private-browsing");
+#endif
     Services.obs.removeObserver(this, "quit-application-granted");
   },
 
   getPayload: function getPayload() {
     // This function returns the current Telemetry payload to the caller.
     // We only gather startup info once.
-    if (Object.keys(this._slowSQLStartup).length == 0)
-      this.gatherStartupInformation();
+    if (Object.keys(this._slowSQLStartup).length == 0) {
+      this.gatherStartupHistograms();
+      this._slowSQLStartup = Telemetry.slowSQL;
+    }
     this.gatherMemory();
     return this.getCurrentSessionPayload("gather-payload");
   },
@@ -953,7 +975,8 @@ TelemetryPing.prototype = {
       [this._startupIO.startupSessionRestoreReadBytes,
         this._startupIO.startupSessionRestoreWriteBytes] = counters;
     }
-    this.gatherStartupInformation();
+    this.gatherStartupHistograms();
+    this._slowSQLStartup = Telemetry.slowSQL;
   },
 
   enableLoadSaveNotifications: function enableLoadSaveNotifications() {
@@ -999,6 +1022,7 @@ TelemetryPing.prototype = {
         this.gatherMemory();
       }
       break;
+#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
     case "private-browsing":
       Telemetry.canRecord = aData == "exit";
       if (aData == "enter") {
@@ -1007,6 +1031,7 @@ TelemetryPing.prototype = {
         this.attachObservers()
       }
       break;
+#endif
     case "xul-window-visible":
       Services.obs.removeObserver(this, "xul-window-visible");
       this._hasXulWindowVisibleObserver = false;   
@@ -1034,11 +1059,6 @@ TelemetryPing.prototype = {
         idleService.addIdleObserver(this, IDLE_TIMEOUT_SECONDS);
         this._isIdleObserver = true;
       }).bind(this), Ci.nsIThread.DISPATCH_NORMAL);
-      break;
-    case "test-load-histograms":
-      this._pingsLoaded = 0;
-      this._pingLoadsCompleted = 0;
-      this.loadHistograms(aSubject.QueryInterface(Ci.nsIFile), aData != "async");
       break;
     case "idle":
       this.sendIdlePing(false, this._server);

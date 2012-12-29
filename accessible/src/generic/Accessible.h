@@ -6,6 +6,7 @@
 #ifndef _Accessible_H_
 #define _Accessible_H_
 
+#include "mozilla/a11y/AccTypes.h"
 #include "mozilla/a11y/Role.h"
 #include "mozilla/a11y/States.h"
 #include "nsAccessNodeWrap.h"
@@ -303,7 +304,8 @@ public:
   /**
    * Set the ARIA role map entry for a new accessible.
    */
-  void SetRoleMapEntry(nsRoleMapEntry* aRoleMapEntry);
+  void SetRoleMapEntry(nsRoleMapEntry* aRoleMapEntry)
+    { mRoleMapEntry = aRoleMapEntry; }
 
   /**
    * Update the children cache.
@@ -465,53 +467,68 @@ public:
       (mContent->Tag() == nsGkAtoms::abbr || mContent->Tag() == nsGkAtoms::acronym);
   }
 
-  inline bool IsApplication() const { return mFlags & eApplicationAccessible; }
+  bool IsApplication() const { return mType == eApplicationType; }
 
-  bool IsAutoComplete() const { return mFlags & eAutoCompleteAccessible; }
+  bool IsAutoComplete() const { return HasGenericType(eAutoComplete); }
 
-  inline bool IsAutoCompletePopup() const { return mFlags & eAutoCompletePopupAccessible; }
+  bool IsAutoCompletePopup() const
+    { return HasGenericType(eAutoCompletePopup); }
 
-  inline bool IsCombobox() const { return mFlags & eComboboxAccessible; }
+  bool IsCombobox() const { return HasGenericType(eCombobox); }
 
-  inline bool IsDoc() const { return mFlags & eDocAccessible; }
+  bool IsDoc() const { return HasGenericType(eDocument); }
   DocAccessible* AsDoc();
 
-  inline bool IsHyperText() const { return mFlags & eHyperTextAccessible; }
+  bool IsHyperText() const { return HasGenericType(eHyperText); }
   HyperTextAccessible* AsHyperText();
 
-  inline bool IsHTMLFileInput() const { return mFlags & eHTMLFileInputAccessible; }
+  bool IsHTMLFileInput() const { return mType == eHTMLFileInputType; }
 
-  inline bool IsHTMLListItem() const { return mFlags & eHTMLListItemAccessible; }
-  mozilla::a11y::HTMLLIAccessible* AsHTMLListItem();
+  bool IsHTMLListItem() const { return mType == eHTMLLiType; }
+  HTMLLIAccessible* AsHTMLListItem();
 
-  inline bool IsImage() const { return mFlags & eImageAccessible; }
-  mozilla::a11y::ImageAccessible* AsImage();
+  bool IsHTMLTableRow() const { return mType == eHTMLTableRowType; }
 
-  bool IsImageMapAccessible() const { return mFlags & eImageMapAccessible; }
-  mozilla::a11y::HTMLImageMapAccessible* AsImageMap();
+  bool IsImage() const { return mType == eImageType; }
+  ImageAccessible* AsImage();
 
-  inline bool IsXULTree() const { return mFlags & eXULTreeAccessible; }
-  mozilla::a11y::XULTreeAccessible* AsXULTree();
+  bool IsImageMap() const { return mType == eImageMapType; }
+  HTMLImageMapAccessible* AsImageMap();
 
-  inline bool IsXULDeck() const { return mFlags & eXULDeckAccessible; }
+  bool IsList() const { return HasGenericType(eList); }
 
-  inline bool IsListControl() const { return mFlags & eListControlAccessible; }
+  bool IsListControl() const { return HasGenericType(eListControl); }
 
-  inline bool IsMenuButton() const { return mFlags & eMenuButtonAccessible; }
+  bool IsMenuButton() const { return HasGenericType(eMenuButton); }
 
-  inline bool IsMenuPopup() const { return mFlags & eMenuPopupAccessible; }
+  bool IsMenuPopup() const { return mType == eMenuPopupType; }
 
-  inline bool IsProgress() const { return mFlags & eProgressAccessible; }
+  bool IsProgress() const { return mType == eProgressType; }
 
-  inline bool IsRoot() const { return mFlags & eRootAccessible; }
-  mozilla::a11y::RootAccessible* AsRoot();
+  bool IsRoot() const { return mType == eRootType; }
+  a11y::RootAccessible* AsRoot();
 
-  virtual mozilla::a11y::TableAccessible* AsTable() { return nullptr; }
+  bool IsSelect() const { return HasGenericType(eSelect); }
 
-  virtual mozilla::a11y::TableCellAccessible* AsTableCell() { return nullptr; }
+  bool IsTable() const { return HasGenericType(eTable); }
+  virtual TableAccessible* AsTable() { return nullptr; }
 
-  inline bool IsTextLeaf() const { return mFlags & eTextLeafAccessible; }
-  mozilla::a11y::TextLeafAccessible* AsTextLeaf();
+  virtual TableCellAccessible* AsTableCell() { return nullptr; }
+
+  bool IsTableRow() const { return HasGenericType(eTableRow); }
+
+  bool IsTextLeaf() const { return mType == eTextLeafType; }
+  TextLeafAccessible* AsTextLeaf();
+
+  bool IsXULDeck() const { return mType == eXULDeckType; }
+
+  bool IsXULTree() const { return mType == eXULTreeType; }
+  XULTreeAccessible* AsXULTree();
+
+  /**
+   * Return true if the accessible belongs to the given accessible type.
+   */
+  bool HasGenericType(AccGenericType aType) const;
 
   //////////////////////////////////////////////////////////////////////////////
   // ActionAccessible
@@ -586,12 +603,6 @@ public:
 
   //////////////////////////////////////////////////////////////////////////////
   // SelectAccessible
-
-  /**
-   * Return true if the accessible is a select control containing selectable
-   * items.
-   */
-  bool IsSelect() const { return mFlags & eSelectAccessible; }
 
   /**
    * Return an array of selected items.
@@ -678,28 +689,24 @@ public:
   /**
    * Return true if the accessible is defunct.
    */
-  bool IsDefunct() const { return mFlags & eIsDefunct; }
+  bool IsDefunct() const { return mStateFlags & eIsDefunct; }
 
   /**
    * Return true if the accessible is no longer in the document.
    */
-  bool IsInDocument() const { return !(mFlags & eIsNotInDocument); }
+  bool IsInDocument() const { return !(mStateFlags & eIsNotInDocument); }
 
   /**
    * Return true if the accessible should be contained by document node map.
    */
   bool IsNodeMapEntry() const
-    { return HasOwnContent() && !(mFlags & eNotNodeMapEntry); }
+    { return HasOwnContent() && !(mStateFlags & eNotNodeMapEntry); }
 
   /**
    * Return true if the accessible has associated DOM content.
    */
-  bool HasOwnContent() const { return mContent && !(mFlags & eSharedNode); }
-
-  /**
-   * Return true if accessible is of given type.
-   */
-  bool IsOfType(uint32_t aType) const { return mFlags & aType; }
+  bool HasOwnContent() const
+    { return mContent && !(mStateFlags & eSharedNode); }
 
   /**
   * Return true if the accessible has a numeric value.
@@ -746,63 +753,34 @@ protected:
   enum ChildrenFlags {
     eChildrenUninitialized = 0, // children aren't initialized
     eMixedChildren = 1 << 0, // text leaf children are presented
-    eEmbeddedChildren = 1 << 1 // all children are embedded objects
+    eEmbeddedChildren = 1 << 1, // all children are embedded objects
+
+    eLastChildrenFlag = eEmbeddedChildren
   };
 
   /**
    * Return true if the children flag is set.
    */
-  inline bool IsChildrenFlag(ChildrenFlags aFlag) const
-    { return static_cast<ChildrenFlags> (mFlags & kChildrenFlagsMask) == aFlag; }
+  bool IsChildrenFlag(ChildrenFlags aFlag) const
+    { return static_cast<ChildrenFlags>(mChildrenFlags) == aFlag; }
 
   /**
    * Set children flag.
    */
-  inline void SetChildrenFlag(ChildrenFlags aFlag)
-    { mFlags = (mFlags & ~kChildrenFlagsMask) | aFlag; }
+  void SetChildrenFlag(ChildrenFlags aFlag) { mChildrenFlags = aFlag; }
 
   /**
    * Flags used to describe the state of this accessible.
    * @note keep these flags in sync with ChildrenFlags
    */
   enum StateFlags {
-    eIsDefunct = 1 << 2, // accessible is defunct
-    eIsNotInDocument = 1 << 3, // accessible is not in document
-    eSharedNode = 1 << 4, // accessible shares DOM node from another accessible
-    eNotNodeMapEntry = 1 << 5, // accessible shouldn't be in document node map
-    eHasNumericValue = 1 << 6 // accessible has a numeric value
-  };
+    eIsDefunct = 1 << 0, // accessible is defunct
+    eIsNotInDocument = 1 << 1, // accessible is not in document
+    eSharedNode = 1 << 2, // accessible shares DOM node from another accessible
+    eNotNodeMapEntry = 1 << 3, // accessible shouldn't be in document node map
+    eHasNumericValue = 1 << 4, // accessible has a numeric value
 
-public: // XXX: a small hack to make these visible for nsARIAMap
-  /**
-   * Flags describing the type of this accessible.
-   * @note keep these flags in sync with ChildrenFlags and StateFlags
-   */
-  enum AccessibleTypes {
-    eApplicationAccessible = 1 << 7,
-    eAutoCompleteAccessible = 1 << 8,
-    eAutoCompletePopupAccessible = 1 << 9,
-    eComboboxAccessible = 1 << 10,
-    eDocAccessible = 1 << 11,
-    eHyperTextAccessible = 1 << 12,
-    eHTMLFileInputAccessible = 1 << 13,
-    eHTMLListItemAccessible = 1 << 14,
-    eHTMLTableRowAccessible = 1 << 15,
-    eImageAccessible = 1 << 16,
-    eImageMapAccessible = 1 << 17,
-    eListAccessible = 1 << 18,
-    eListControlAccessible = 1 << 19,
-    eMenuButtonAccessible = 1 << 20,
-    eMenuPopupAccessible = 1 << 21,
-    eProgressAccessible = 1 << 22,
-    eRootAccessible = 1 << 23,
-    eSelectAccessible = 1 << 24,
-    eTableAccessible = 1 << 25,
-    eTableCellAccessible = 1 << 26,
-    eTableRowAccessible = 1 << 27,
-    eTextLeafAccessible = 1 << 28,
-    eXULDeckAccessible = 1 << 29,
-    eXULTreeAccessible = 1 << 30
+    eLastStateFlag = eHasNumericValue
   };
 
 protected:
@@ -909,10 +887,21 @@ protected:
   nsTArray<nsRefPtr<Accessible> > mChildren;
   int32_t mIndexInParent;
 
-  static const uint32_t kChildrenFlagsMask =
-    eChildrenUninitialized | eMixedChildren | eEmbeddedChildren;
+  static const uint8_t kChildrenFlagsBits = 2;
+  static const uint8_t kStateFlagsBits = 5;
+  static const uint8_t kTypeBits = 5;
+  static const uint8_t kGenericTypesBits = 12;
 
-  uint32_t mFlags;
+  /**
+   * Keep in sync with ChildrenFlags, StateFlags and AccTypes.
+   */
+  uint32_t mChildrenFlags : kChildrenFlagsBits;
+  uint32_t mStateFlags : kStateFlagsBits;
+  uint32_t mType : kTypeBits;
+  uint32_t mGenericTypes : kGenericTypesBits;
+
+  void StaticAsserts() const;
+
   friend class DocAccessible;
 
   nsAutoPtr<mozilla::a11y::EmbeddedObjCollector> mEmbeddedObjCollector;
@@ -950,7 +939,7 @@ public:
 
   KeyBinding() : mKey(0), mModifierMask(0) {}
   KeyBinding(uint32_t aKey, uint32_t aModifierMask) :
-    mKey(aKey), mModifierMask(aModifierMask) {};
+    mKey(aKey), mModifierMask(aModifierMask) {}
 
   inline bool IsEmpty() const { return !mKey; }
   inline uint32_t Key() const { return mKey; }

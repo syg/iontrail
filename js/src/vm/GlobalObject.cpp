@@ -18,6 +18,7 @@
 #include "builtin/Eval.h"
 #include "builtin/Intl.h"
 #include "builtin/MapObject.h"
+#include "builtin/Object.h"
 #include "builtin/RegExp.h"
 #include "frontend/BytecodeEmitter.h"
 
@@ -273,7 +274,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         if (!ctor)
             return NULL;
         RootedAtom objectAtom(cx, cx->names().Object);
-        objectCtor = js_NewFunction(cx, ctor, js_Object, 1, JSFunction::NATIVE_CTOR, self,
+        objectCtor = js_NewFunction(cx, ctor, obj_construct, 1, JSFunction::NATIVE_CTOR, self,
                                     objectAtom);
         if (!objectCtor)
             return NULL;
@@ -376,12 +377,17 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         return NULL;
     self->setThrowTypeError(throwTypeError);
 
-    RootedObject intrinsicsHolder(cx, JS_NewObject(cx, NULL, NULL, self));
-    if (!intrinsicsHolder)
-        return NULL;
+    RootedObject intrinsicsHolder(cx);
+    if (cx->runtime->isSelfHostingGlobal(self)) {
+        intrinsicsHolder = this;
+    } else {
+        intrinsicsHolder = NewObjectWithClassProto(cx, &ObjectClass, NULL, self);
+        if (!intrinsicsHolder)
+            return NULL;
+    }
     self->setIntrinsicsHolder(intrinsicsHolder);
     /* Define a property 'global' with the current global as its value. */
-    RootedValue global(cx, OBJECT_TO_JSVAL(self));
+    RootedValue global(cx, ObjectValue(*self));
     if (!JSObject::defineProperty(cx, intrinsicsHolder, cx->names().global,
                                   global, JS_PropertyStub, JS_StrictPropertyStub,
                                   JSPROP_PERMANENT | JSPROP_READONLY))
@@ -406,7 +412,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
      * |Function.prototype| -- after all initialization, for simplicity.
      */
     RootedScript functionProtoScript(cx, functionProto->nonLazyScript());
-    js_CallNewScriptHook(cx, functionProtoScript, functionProto);
+    CallNewScriptHook(cx, functionProtoScript, functionProto);
     return functionProto;
 }
 

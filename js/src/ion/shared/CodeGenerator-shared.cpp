@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "CodeGenerator-shared.h"
 #include "ion/MIRGenerator.h"
 #include "ion/IonFrames-inl.h"
@@ -78,6 +80,7 @@ CodeGeneratorShared::addOutOfLineCode(OutOfLineCode *code)
     return outOfLineCode_.append(code);
 }
 
+// see OffsetOfFrameSlot
 static inline int32_t
 ToStackIndex(LAllocation *a)
 {
@@ -85,7 +88,8 @@ ToStackIndex(LAllocation *a)
         JS_ASSERT(a->toStackSlot()->slot() >= 1);
         return a->toStackSlot()->slot();
     }
-    return -a->toArgument()->index();
+    JS_ASSERT(-int32_t(sizeof(IonJSFrameLayout)) <= a->toArgument()->index());
+    return -(sizeof(IonJSFrameLayout) + a->toArgument()->index());
 }
 
 bool

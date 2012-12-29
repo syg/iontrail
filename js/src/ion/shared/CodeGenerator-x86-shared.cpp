@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsmath.h"
@@ -89,42 +91,16 @@ OutOfLineBailout::accept(CodeGeneratorX86Shared *codegen)
     return codegen->visitOutOfLineBailout(this);
 }
 
-static inline NaNCond
-NaNCondFromDoubleCondition(Assembler::DoubleCondition cond)
-{
-    switch (cond) {
-      case Assembler::DoubleOrdered:
-      case Assembler::DoubleEqual:
-      case Assembler::DoubleNotEqual:
-      case Assembler::DoubleGreaterThan:
-      case Assembler::DoubleGreaterThanOrEqual:
-      case Assembler::DoubleLessThan:
-      case Assembler::DoubleLessThanOrEqual:
-        return NaN_IsFalse;
-      case Assembler::DoubleUnordered:
-      case Assembler::DoubleEqualOrUnordered:
-      case Assembler::DoubleNotEqualOrUnordered:
-      case Assembler::DoubleGreaterThanOrUnordered:
-      case Assembler::DoubleGreaterThanOrEqualOrUnordered:
-      case Assembler::DoubleLessThanOrUnordered:
-      case Assembler::DoubleLessThanOrEqualOrUnordered:
-        return NaN_IsTrue;
-    }
-
-    JS_NOT_REACHED("Unknown double condition");
-    return NaN_Unexpected;
-}
-
 void
 CodeGeneratorX86Shared::emitBranch(Assembler::Condition cond, MBasicBlock *mirTrue,
-                                   MBasicBlock *mirFalse, NaNCond ifNaN)
+                                   MBasicBlock *mirFalse, Assembler::NaNCond ifNaN)
 {
     LBlock *ifTrue = mirTrue->lir();
     LBlock *ifFalse = mirFalse->lir();
 
-    if (ifNaN == NaN_IsFalse)
+    if (ifNaN == Assembler::NaN_IsFalse)
         masm.j(Assembler::Parity, ifFalse->label());
-    else if (ifNaN == NaN_IsTrue)
+    else if (ifNaN == Assembler::NaN_IsTrue)
         masm.j(Assembler::Parity, ifTrue->label());
 
     if (isNextBlock(ifFalse)) {
@@ -169,7 +145,8 @@ CodeGeneratorX86Shared::visitTestDAndBranch(LTestDAndBranch *test)
 }
 
 void
-CodeGeneratorX86Shared::emitSet(Assembler::Condition cond, const Register &dest, NaNCond ifNaN)
+CodeGeneratorX86Shared::emitSet(Assembler::Condition cond, const Register &dest,
+                                Assembler::NaNCond ifNaN)
 {
     if (GeneralRegisterSet(Registers::SingleByteRegs).has(dest)) {
         // If the register we're defining is a single byte register,
@@ -177,10 +154,10 @@ CodeGeneratorX86Shared::emitSet(Assembler::Condition cond, const Register &dest,
         masm.setCC(cond, dest);
         masm.movzxbl(dest, dest);
 
-        if (ifNaN != NaN_Unexpected) {
+        if (ifNaN != Assembler::NaN_Unexpected) {
             Label noNaN;
             masm.j(Assembler::NoParity, &noNaN);
-            if (ifNaN == NaN_IsTrue)
+            if (ifNaN == Assembler::NaN_IsTrue)
                 masm.movl(Imm32(1), dest);
             else
                 masm.xorl(dest, dest);
@@ -190,11 +167,11 @@ CodeGeneratorX86Shared::emitSet(Assembler::Condition cond, const Register &dest,
         Label end;
         Label ifFalse;
 
-        if (ifNaN == NaN_IsFalse)
+        if (ifNaN == Assembler::NaN_IsFalse)
             masm.j(Assembler::Parity, &ifFalse);
         masm.movl(Imm32(1), dest);
         masm.j(cond, &end);
-        if (ifNaN == NaN_IsTrue)
+        if (ifNaN == Assembler::NaN_IsTrue)
             masm.j(Assembler::Parity, &end);
         masm.bind(&ifFalse);
         masm.xorl(dest, dest);
@@ -204,10 +181,10 @@ CodeGeneratorX86Shared::emitSet(Assembler::Condition cond, const Register &dest,
 }
 
 void
-CodeGeneratorX86Shared::emitCompare(MIRType type, const LAllocation *left, const LAllocation *right)
+CodeGeneratorX86Shared::emitCompare(MCompare::CompareType type, const LAllocation *left, const LAllocation *right)
 {
 #ifdef JS_CPU_X64
-    if (type == MIRType_Object) {
+    if (type == MCompare::Compare_Object) {
         masm.cmpq(ToRegister(left), ToOperand(right));
         return;
     }
@@ -222,7 +199,7 @@ CodeGeneratorX86Shared::emitCompare(MIRType type, const LAllocation *left, const
 bool
 CodeGeneratorX86Shared::visitCompare(LCompare *comp)
 {
-    emitCompare(comp->mir()->specialization(), comp->left(), comp->right());
+    emitCompare(comp->mir()->compareType(), comp->left(), comp->right());
     emitSet(JSOpToCondition(comp->jsop()), ToRegister(comp->output()));
     return true;
 }
@@ -230,7 +207,7 @@ CodeGeneratorX86Shared::visitCompare(LCompare *comp)
 bool
 CodeGeneratorX86Shared::visitCompareAndBranch(LCompareAndBranch *comp)
 {
-    emitCompare(comp->mir()->specialization(), comp->left(), comp->right());
+    emitCompare(comp->mir()->compareType(), comp->left(), comp->right());
     Assembler::Condition cond = JSOpToCondition(comp->jsop());
     emitBranch(cond, comp->ifTrue(), comp->ifFalse());
     return true;
@@ -245,7 +222,7 @@ CodeGeneratorX86Shared::visitCompareD(LCompareD *comp)
     Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->mir()->jsop());
     masm.compareDouble(cond, lhs, rhs);
     emitSet(Assembler::ConditionFromDoubleCondition(cond), ToRegister(comp->output()),
-            NaNCondFromDoubleCondition(cond));
+            Assembler::NaNCondFromDoubleCondition(cond));
     return true;
 }
 
@@ -264,7 +241,7 @@ CodeGeneratorX86Shared::visitNotD(LNotD *ins)
 
     masm.xorpd(ScratchFloatReg, ScratchFloatReg);
     masm.compareDouble(Assembler::DoubleEqualOrUnordered, opd, ScratchFloatReg);
-    emitSet(Assembler::Equal, ToRegister(ins->output()), NaN_IsTrue);
+    emitSet(Assembler::Equal, ToRegister(ins->output()), Assembler::NaN_IsTrue);
     return true;
 }
 
@@ -277,7 +254,7 @@ CodeGeneratorX86Shared::visitCompareDAndBranch(LCompareDAndBranch *comp)
     Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->mir()->jsop());
     masm.compareDouble(cond, lhs, rhs);
     emitBranch(Assembler::ConditionFromDoubleCondition(cond), comp->ifTrue(), comp->ifFalse(),
-               NaNCondFromDoubleCondition(cond));
+               Assembler::NaNCondFromDoubleCondition(cond));
     return true;
 }
 
@@ -456,21 +433,6 @@ CodeGeneratorX86Shared::visitMinMaxD(LMinMaxD *ins)
     masm.movsd(second, output);
 
     masm.bind(&done);
-    return true;
-}
-
-bool
-CodeGeneratorX86Shared::visitNegD(LNegD *ins)
-{
-    // XOR the float in a float register with -0.0.
-    FloatRegister input = ToFloatRegister(ins->input());
-    JS_ASSERT(input == ToFloatRegister(ins->output()));
-
-    // From MacroAssemblerX86Shared::maybeInlineDouble
-    masm.pcmpeqw(ScratchFloatReg, ScratchFloatReg);
-    masm.psllq(Imm32(63), ScratchFloatReg);
-
-    masm.xorpd(ScratchFloatReg, input); // s ^ 0x80000000000000
     return true;
 }
 
@@ -814,10 +776,16 @@ CodeGeneratorX86Shared::visitModI(LModI *ins)
     Register remainder = ToRegister(ins->remainder());
     Register lhs = ToRegister(ins->lhs());
     Register rhs = ToRegister(ins->rhs());
+    Register temp = ToRegister(ins->getTemp(0));
 
     // Required to use idiv.
     JS_ASSERT(remainder == edx);
-    JS_ASSERT(lhs == eax);
+    JS_ASSERT(temp == eax);
+
+    if (lhs != temp) {
+        masm.mov(lhs, temp);
+        lhs = temp;
+    }
 
     // If rhs == 0, bailout, since result must be a double (NaN).
     masm.testl(rhs, rhs);

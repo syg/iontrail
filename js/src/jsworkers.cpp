@@ -4,6 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "jsworkers.h"
 
 #if JS_ION
@@ -20,7 +22,7 @@ using mozilla::DebugOnly;
 bool
 js::OffThreadCompilationAvailable(JSContext *cx)
 {
-    return cx->runtime->useHelperThreads();
+    return cx->runtime->useHelperThreads() && cx->runtime->helperThreadCount() > 0;
 }
 
 bool

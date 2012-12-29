@@ -30,11 +30,10 @@
 #include "nsCSSValue.h"
 #include "nsStyleTransformMatrix.h"
 #include "nsAlgorithm.h"
-#include "imgIRequest.h"
+#include "imgRequestProxy.h"
 #include "gfxRect.h"
 
 class nsIFrame;
-class imgIRequest;
 class imgIContainer;
 struct nsCSSValueList;
 
@@ -840,8 +839,8 @@ struct nsStyleBorder {
   }
 
   // These are defined in nsStyleStructInlines.h
-  inline void SetBorderImage(imgIRequest* aImage);
-  inline imgIRequest* GetBorderImage() const;
+  inline void SetBorderImage(imgRequestProxy* aImage);
+  inline imgRequestProxy* GetBorderImage() const;
 
   bool HasBorderImage() {return !!mBorderImageSource;}
 
@@ -894,7 +893,7 @@ public:
 #endif
 
 protected:
-  nsCOMPtr<imgIRequest> mBorderImageSource; // [reset]
+  nsRefPtr<imgRequestProxy> mBorderImageSource; // [reset]
 
 public:
   nsStyleCorners mBorderRadius;       // [reset] coord, percent
@@ -1049,8 +1048,8 @@ struct nsStyleList {
     return NS_STYLE_HINT_FRAMECHANGE;
   }
 
-  imgIRequest* GetListStyleImage() const { return mListStyleImage; }
-  void SetListStyleImage(imgIRequest* aReq)
+  imgRequestProxy* GetListStyleImage() const { return mListStyleImage; }
+  void SetListStyleImage(imgRequestProxy* aReq)
   {
     if (mListStyleImage)
       mListStyleImage->UnlockImage();
@@ -1062,7 +1061,7 @@ struct nsStyleList {
   uint8_t   mListStyleType;             // [inherited] See nsStyleConsts.h
   uint8_t   mListStylePosition;         // [inherited]
 private:
-  nsCOMPtr<imgIRequest> mListStyleImage; // [inherited]
+  nsRefPtr<imgRequestProxy> mListStyleImage; // [inherited]
   nsStyleList& operator=(const nsStyleList& aOther) MOZ_DELETE;
 public:
   nsRect        mImageRegion;           // [inherited] the rect to use within an image
@@ -1682,13 +1681,6 @@ struct nsStyleDisplay {
            NS_STYLE_POSITION_FIXED == mPosition;
   }
 
-  /* Returns true if we're positioned or there's a transform in effect. */
-  bool IsPositionedStyle() const {
-    return IsAbsolutelyPositionedStyle() ||
-           IsRelativelyPositionedStyle() ||
-           HasTransform();
-  }
-
   bool IsRelativelyPositionedStyle() const {
     return mPosition == NS_STYLE_POSITION_RELATIVE;
   }
@@ -1786,7 +1778,7 @@ struct nsStyleContentData {
   nsStyleContentType  mType;
   union {
     PRUnichar *mString;
-    imgIRequest *mImage;
+    imgRequestProxy *mImage;
     nsCSSValue::Array* mCounters;
   } mContent;
 #ifdef DEBUG
@@ -1811,7 +1803,7 @@ struct nsStyleContentData {
   void TrackImage(nsPresContext* aContext);
   void UntrackImage(nsPresContext* aContext);
 
-  void SetImage(imgIRequest* aRequest)
+  void SetImage(imgRequestProxy* aRequest)
   {
     NS_ABORT_IF_FALSE(!mImageTracked,
                       "Setting a new image without untracking the old one!");
@@ -2286,6 +2278,7 @@ struct nsStyleSVGReset {
 
   uint8_t          mDominantBaseline; // [reset] see nsStyleConsts.h
   uint8_t          mVectorEffect;     // [reset] see nsStyleConsts.h
+  uint8_t          mMaskType;         // [reset] see nsStyleConsts.h
 };
 
 #endif /* nsStyleStruct_h___ */

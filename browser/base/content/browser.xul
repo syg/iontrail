@@ -44,7 +44,6 @@
         windowtype="navigator:browser"
         macanimationtype="document"
         screenX="4" screenY="4"
-        browsingmode="normal"
         fullscreenbutton="true"
         persist="screenX screenY width height sizemode">
 
@@ -194,7 +193,7 @@
         <button id="social-undoactivation-button"
                 label="&social.activated.undobutton.label;"
                 accesskey="&social.activated.undobutton.accesskey;"
-                onclick="SocialUI.undoActivation();"/>
+                onclick="SocialUI.undoActivation(this);"/>
         <button default="true"
                 autofocus="autofocus"
                 label="&social.ok.label;"
@@ -209,7 +208,7 @@
         <button id="social-undoactivation-button"
                 label="&social.activated.undobutton.label;"
                 accesskey="&social.activated.undobutton.accesskey;"
-                onclick="SocialUI.undoActivation();"/>
+                onclick="SocialUI.undoActivation(this);"/>
 #endif
           </hbox>
         </vbox>
@@ -444,6 +443,34 @@
       <label class="tooltip-label" value="&backForwardButtonMenu.tooltip;"/>
 #endif
     </tooltip>
+
+    <popupnotification id="webRTC-shareDevices-notification" hidden="true">
+      <popupnotificationcontent id="webRTC-selectCamera" orient="vertical">
+        <separator class="thin"/>
+        <label value="&getUserMedia.selectCamera.label;"
+               accesskey="&getUserMedia.selectCamera.accesskey;"
+               control="webRTC-selectCamera-menulist"/>
+        <menulist id="webRTC-selectCamera-menulist">
+          <menupopup id="webRTC-selectCamera-menupopup"/>
+        </menulist>
+      </popupnotificationcontent>
+      <popupnotificationcontent id="webRTC-selectMicrophone" orient="vertical">
+        <separator class="thin"/>
+        <label value="&getUserMedia.selectMicrophone.label;"
+               accesskey="&getUserMedia.selectMicrophone.accesskey;"
+               control="webRTC-selectMicrophone-menulist"/>
+        <menulist id="webRTC-selectMicrophone-menulist">
+          <menupopup id="webRTC-selectMicrophone-menupopup"/>
+        </menulist>
+      </popupnotificationcontent>
+    </popupnotification>
+
+    <popupnotification id="geolocation-notification" hidden="true">
+      <popupnotificationcontent orient="vertical" align="start">
+        <separator class="thin"/>
+        <label id="geolocation-learnmore-link" class="text-link"/>
+      </popupnotificationcontent>
+    </popupnotification>
   </popupset>
 
 #ifdef CAN_DRAW_IN_TITLEBAR
@@ -557,6 +584,7 @@
             <image id="password-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="webapps-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="plugins-notification-icon" class="notification-anchor-icon" role="button"/>
+            <image id="blocked-plugins-notification-icon" class="notification-anchor-icon" role="button"/>
           </box>
           <!-- Use onclick instead of normal popup= syntax since the popup
                code fires onmousedown, and hence eats our favicon drag events.
@@ -679,6 +707,7 @@
                       label="&social.toggleNotifications.label;"
                       accesskey="&social.toggleNotifications.accesskey;"/>
             <menuseparator class="social-statusarea-separator"/>
+            <menuseparator class="social-provider-menu" hidden="true"/>
             <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
             <menuitem class="social-remove-menuitem" command="Social:Remove"/>
           </menupopup>
@@ -1027,6 +1056,8 @@
                      observes="tabviewGroupsNumber"/>
     </toolbarpalette>
   </toolbox>
+
+  <hbox id="fullscr-toggler" collapsed="true"/>
 
   <hbox flex="1" id="browser">
     <vbox id="browser-border-start" hidden="true" layer="true"/>

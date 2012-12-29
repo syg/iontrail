@@ -30,8 +30,14 @@
 
 @media (-moz-windows-default-theme) {
   #downloadsPanel[hasdownloads] > #downloadsFooter {
+%ifdef WINSTRIPE_AERO
+    background-color: #f1f5fb;
+%else
     background-color: hsla(216,45%,88%,.98);
+%endif
     box-shadow: 0px 1px 2px rgb(204,214,234) inset;
+    border-bottom-left-radius: 3px;
+    border-bottom-right-radius: 3px;
   }
 }
 
@@ -56,9 +62,7 @@ richlistitem[type="download"] {
 }
 
 #downloadsSummary > .downloadTypeIcon {
-  height: 24px;
-  width: 24px;
-  list-style-image: url("chrome://mozapps/skin/downloads/downloadIcon.png");
+  list-style-image: url("chrome://browser/skin/downloads/download-summary.png");
 }
 
 #downloadsSummaryDescription {
@@ -297,7 +301,7 @@ richlistitem[type="download"][state="1"]:hover > stack > .downloadButton.downloa
   -moz-appearance: none;
   min-width: 0;
   min-height: 0;
-  background-image: -moz-linear-gradient(#505050, #575757);
+  background-image: linear-gradient(#505050, #575757);
   border: 1px solid;
   border-color: hsla(0,0%,0%,.6) hsla(0,0%,0%,.4) hsla(0,0%,0%,.4);
   -moz-border-start: none;
@@ -309,5 +313,5 @@ richlistitem[type="download"][state="1"]:hover > stack > .downloadButton.downloa
 }
 
 #downloads-indicator[paused] > #downloads-indicator-anchor > #downloads-indicator-progress-area > #downloads-indicator-progress > .progress-remainder {
-  background-image: -moz-linear-gradient(#4b5000, #515700);
+  background-image: linear-gradient(#4b5000, #515700);
 }

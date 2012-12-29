@@ -130,7 +130,7 @@ function run_test() {
 
   let channel = Services.prefs.getCharPref(PREF_APP_UPDATE_CHANNEL);
   let patches = getLocalPatchString(null, null, null, null, null, "true",
-                                    STATE_PENDING);
+                                    STATE_PENDING_SVC);
   let updates = getLocalUpdateString(patches, null, null, null, null, null,
                                      null, null, null, null, null, null,
                                      null, "true", channel);
@@ -167,6 +167,17 @@ function run_test() {
   do_check_true(!!gActiveUpdate);
 
   setEnvironment();
+
+  // Backup the updater.ini if it exists by moving it. This prevents the post
+  // update executable from being launched if it is specified.
+//XXX disabled until bug 820933 and bug 820934 are fixed
+if (0) {
+  let updaterIni = processDir.clone();
+  updaterIni.append(FILE_UPDATER_INI);
+  if (updaterIni.exists()) {
+    updaterIni.moveTo(processDir, FILE_UPDATER_INI_BAK);
+  }
+}
 
   let updateSettingsIni = processDir.clone();
   updateSettingsIni.append(UPDATE_SETTINGS_INI_FILE);
@@ -215,6 +226,14 @@ function end_test() {
   }
 
   resetEnvironment();
+
+  let processDir = getAppDir();
+  // Restore the backup of the updater.ini if it exists
+  let updaterIni = processDir.clone();
+  updaterIni.append(FILE_UPDATER_INI_BAK);
+  if (updaterIni.exists()) {
+    updaterIni.moveTo(processDir, FILE_UPDATER_INI);
+  }
 
   // Remove the files added by the update.
   let updateTestDir = getUpdateTestDir();
@@ -543,5 +562,6 @@ function checkUpdateFinished() {
   logTestInfo("testing " + updatesDir.path + " should exist");
   do_check_true(updatesDir.exists());
 
-  removeCallbackCopy();
+  // Give the callback app time to close before trying to delete it.
+  do_timeout(TEST_HELPER_TIMEOUT, removeCallbackCopy);
 }

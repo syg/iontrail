@@ -59,6 +59,7 @@ public:
                                            const char* aURL,
                                            uint32_t aLineNo,
                                            uint32_t aVersion,
+                                           bool aIsXBL,
                                            JS::Value* aRetValue,
                                            bool* aIsUndefined);
 
@@ -103,7 +104,7 @@ public:
                                    JSObject** aFunctionObject);
 
   virtual nsIScriptGlobalObject *GetGlobalObject();
-  inline nsIScriptGlobalObject *GetGlobalObjectRef() { return mGlobalObjectRef; };
+  inline nsIScriptGlobalObject *GetGlobalObjectRef() { return mGlobalObjectRef; }
 
   virtual JSContext* GetNativeContext();
   virtual JSObject* GetNativeGlobal();

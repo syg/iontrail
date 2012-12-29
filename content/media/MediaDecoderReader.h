@@ -158,6 +158,16 @@ public:
                            int64_t aTimecode,
                            nsIntRect aPicture);
 
+  static VideoData* CreateFromImage(VideoInfo& aInfo,
+                                    ImageContainer* aContainer,
+                                    int64_t aOffset,
+                                    int64_t aTime,
+                                    int64_t aEndTime,
+                                    const nsRefPtr<Image>& aImage,
+                                    bool aKeyframe,
+                                    int64_t aTimecode,
+                                    nsIntRect aPicture);
+
   // Constructs a duplicate VideoData object. This intrinsically tells the
   // player that it does not need to update the displayed frame when this
   // frame is played; this frame is identical to the previous.
@@ -404,6 +414,17 @@ public:
                         int64_t aStartTime,
                         int64_t aEndTime,
                         int64_t aCurrentTime) = 0;
+  
+  // Called when the decode thread is started, before calling any other
+  // decode, read metadata, or seek functions. Do any thread local setup
+  // in this function.
+  virtual void OnDecodeThreadStart() {}
+  
+  // Called when the decode thread is about to finish, after all calls to
+  // any other decode, read metadata, or seek functions. Any backend specific
+  // thread local tear down must be done in this function. Note that another
+  // decode thread could start up and run in future.
+  virtual void OnDecodeThreadFinish() {}
 
 protected:
   // Queue of audio frames. This queue is threadsafe, and is accessed from
@@ -421,9 +442,6 @@ public:
   // should only be called on the main thread.
   virtual nsresult GetBuffered(nsTimeRanges* aBuffered,
                                int64_t aStartTime) = 0;
-
-  // True if we can seek using only buffered ranges. This is backend dependant.
-  virtual bool IsSeekableInBufferedRanges() = 0;
 
   class VideoQueueMemoryFunctor : public nsDequeFunctor {
   public:

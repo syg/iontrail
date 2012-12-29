@@ -8,11 +8,10 @@
 #define imgStatusTracker_h__
 
 class imgIContainer;
-class imgRequest;
 class imgRequestProxy;
 class imgStatusNotifyRunnable;
 class imgRequestNotifyRunnable;
-class imgStatusTracker;
+class imgStatusTrackerObserver;
 struct nsIntRect;
 namespace mozilla {
 namespace image {
@@ -21,42 +20,22 @@ class Image;
 } // namespace mozilla
 
 
+#include "mozilla/RefPtr.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsTObserverArray.h"
 #include "nsIRunnable.h"
 #include "nscore.h"
-#include "nsWeakReference.h"
-#include "imgIDecoderObserver.h"
+#include "imgDecoderObserver.h"
 
 enum {
   stateRequestStarted    = 1u << 0,
   stateHasSize           = 1u << 1,
+  stateDecodeStarted     = 1u << 2,
   stateDecodeStopped     = 1u << 3,
   stateFrameStopped      = 1u << 4,
   stateRequestStopped    = 1u << 5,
   stateBlockingOnload    = 1u << 6
-};
-
-class imgStatusTrackerObserver : public imgIDecoderObserver,
-                                 public nsSupportsWeakReference
-{
-public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_IMGIDECODEROBSERVER
-  NS_DECL_IMGICONTAINEROBSERVER
-
-  imgStatusTrackerObserver(imgStatusTracker* aTracker)
-  : mTracker(aTracker) {}
-
-  virtual ~imgStatusTrackerObserver() {}
-
-  void SetTracker(imgStatusTracker* aTracker) {
-    mTracker = aTracker;
-  }
-
-private:
-  imgStatusTracker* mTracker;
 };
 
 /*
@@ -70,14 +49,15 @@ private:
  * and the notifications will be replayed to the proxy asynchronously.
  */
 
-class imgStatusTracker
+class imgStatusTracker : public mozilla::RefCounted<imgStatusTracker>
 {
 public:
   // aImage is the image that this status tracker will pass to the
   // imgRequestProxys in SyncNotify() and EmulateRequestFinished(), and must be
   // alive as long as this instance is, because we hold a weak reference to it.
-  imgStatusTracker(mozilla::image::Image* aImage, imgRequest* aRequest);
+  imgStatusTracker(mozilla::image::Image* aImage);
   imgStatusTracker(const imgStatusTracker& aOther);
+  ~imgStatusTracker();
 
   // Image-setter, for imgStatusTrackers created by imgRequest::Init, which
   // are created before their Image is created.  This method should only
@@ -85,12 +65,15 @@ public:
   // without an image.
   void SetImage(mozilla::image::Image* aImage);
 
+  // Inform this status tracker that it is associated with a multipart image.
+  void SetIsMultipart() { mIsMultipart = true; }
+
   // Schedule an asynchronous "replaying" of all the notifications that would
   // have to happen to put us in the current state.
   // We will also take note of any notifications that happen between the time
   // Notify() is called and when we call SyncNotify on |proxy|, and replay them
   // as well.
-  void Notify(imgRequest* request, imgRequestProxy* proxy);
+  void Notify(imgRequestProxy* proxy);
 
   // Schedule an asynchronous "replaying" of all the notifications that would
   // have to happen to put us in the state we are in right now.
@@ -114,7 +97,7 @@ public:
   // with its status. Weak pointers.
   void AddConsumer(imgRequestProxy* aConsumer);
   bool RemoveConsumer(imgRequestProxy* aConsumer, nsresult aStatus);
-  size_t ConsumerCount() const { return mConsumers.Length(); };
+  size_t ConsumerCount() const { return mConsumers.Length(); }
 
   // This is intentionally non-general because its sole purpose is to support an
   // some obscure network priority logic in imgRequest. That stuff could probably
@@ -147,11 +130,15 @@ public:
   // StartFrame, DataAvailable, StopFrame, StopDecode.
   void RecordDecoded();
 
-  /* non-virtual imgIDecoderObserver methods */
+  /* non-virtual imgDecoderObserver methods */
+  void RecordStartDecode();
+  void SendStartDecode(imgRequestProxy* aProxy);
   void RecordStartContainer(imgIContainer* aContainer);
   void SendStartContainer(imgRequestProxy* aProxy);
   void RecordDataAvailable();
   void SendDataAvailable(imgRequestProxy* aProxy, const nsIntRect* aRect);
+  void RecordFrameChanged(const nsIntRect* aDirtyRect);
+  void SendFrameChanged(imgRequestProxy* aProxy, const nsIntRect* aDirtyRect);
   void RecordStopFrame();
   void SendStopFrame(imgRequestProxy* aProxy);
   void RecordStopDecode(nsresult statusg);
@@ -160,10 +147,6 @@ public:
   void SendDiscard(imgRequestProxy* aProxy);
   void RecordImageIsAnimated();
   void SendImageIsAnimated(imgRequestProxy *aProxy);
-
-  /* non-virtual imgIContainerObserver methods */
-  void RecordFrameChanged(const nsIntRect* aDirtyRect);
-  void SendFrameChanged(imgRequestProxy* aProxy, const nsIntRect* aDirtyRect);
 
   /* non-virtual sort-of-nsIRequestObserver methods */
   void RecordStartRequest();
@@ -186,36 +169,36 @@ public:
 
   void MaybeUnblockOnload();
 
-  // Null out any reference to an associated image request
-  void ClearRequest();
+  bool IsMultipart() const { return mIsMultipart; }
 
   // Weak pointer getters - no AddRefs.
-  inline mozilla::image::Image* GetImage() const { return mImage; };
-  inline imgRequest* GetRequest() const { return mRequest; };
+  inline mozilla::image::Image* GetImage() const { return mImage; }
 
-  inline imgIDecoderObserver* GetDecoderObserver() { return mTrackerObserver.get(); }
+  inline imgDecoderObserver* GetDecoderObserver() { return mTrackerObserver.get(); }
 
 private:
   friend class imgStatusNotifyRunnable;
   friend class imgRequestNotifyRunnable;
   friend class imgStatusTrackerObserver;
 
+  void FireFailureNotification();
+
   nsCOMPtr<nsIRunnable> mRequestRunnable;
 
-  // Weak pointers to the image and request. The request owns the image, and
-  // the image (or the request, if there's no image) owns the status tracker.
+  // Weak pointer to the image. The image owns the status tracker.
   mozilla::image::Image* mImage;
-  imgRequest* mRequest;
-  uint32_t mState;
-  uint32_t mImageStatus;
-  bool mHadLastPart;
-  bool mBlockingOnload;
 
   // List of proxies attached to the image. Each proxy represents a consumer
   // using the image.
   nsTObserverArray<imgRequestProxy*> mConsumers;
 
-  nsRefPtr<imgStatusTrackerObserver> mTrackerObserver;
+  mozilla::RefPtr<imgDecoderObserver> mTrackerObserver;
+
+  uint32_t mState;
+  uint32_t mImageStatus;
+  bool mIsMultipart    : 1;
+  bool mHadLastPart    : 1;
+  bool mBlockingOnload : 1;
 };
 
 #endif

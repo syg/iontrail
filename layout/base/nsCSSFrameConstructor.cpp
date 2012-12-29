@@ -9,10 +9,12 @@
  * tree and updating of that tree in response to dynamic changes
  */
 
-#include "mozilla/Util.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/Likely.h"
+#include "mozilla/LinkedList.h"
 
 #include "nsCSSFrameConstructor.h"
+#include "nsAbsoluteContainingBlock.h"
 #include "nsCRT.h"
 #include "nsIAtom.h"
 #include "nsIURL.h"
@@ -89,6 +91,8 @@
 #include "nsCSSRenderingBorders.h"
 #include "nsRenderingContext.h"
 #include "nsStyleStructInlines.h"
+#include "nsAnimationManager.h"
+#include "nsTransitionManager.h"
 
 #ifdef MOZ_XUL
 #include "nsIRootBox.h"
@@ -695,7 +699,7 @@ private:
 // Structure used to keep track of a list of bindings we need to call
 // AddToAttachedQueue on.  These should be in post-order depth-first
 // flattened tree traversal order.
-struct PendingBinding : public PRCList
+struct PendingBinding : public LinkedListElement<PendingBinding>
 {
 #ifdef NS_BUILD_REFCNT_LOGGING
   PendingBinding() {
@@ -859,7 +863,6 @@ public:
       mState(aState),
       mPendingBinding(aState.mCurrentPendingBindingInsertionPoint)
         {
-          NS_PRECONDITION(mPendingBinding, "how did that happen?");
           if (aPendingBinding) {
             aState.mCurrentPendingBindingInsertionPoint = aPendingBinding;
           }
@@ -872,14 +875,18 @@ public:
 
   private:
     nsFrameConstructorState& mState;
-    PRCList* mPendingBinding;
+    PendingBinding* mPendingBinding;
   };
 
   /**
    * Add a new pending binding to the list
    */
   void AddPendingBinding(PendingBinding* aPendingBinding) {
-    PR_INSERT_BEFORE(aPendingBinding, mCurrentPendingBindingInsertionPoint);
+    if (mCurrentPendingBindingInsertionPoint) {
+      mCurrentPendingBindingInsertionPoint->setPrevious(aPendingBinding);
+    } else {
+      mPendingBindings.insertBack(aPendingBinding);
+    }
   }
 
 protected:
@@ -894,9 +901,9 @@ protected:
 
   // Our list of all pending bindings.  When we're done, we need to call
   // AddToAttachedQueue on all of them, in order.
-  PRCList mPendingBindings;
+  LinkedList<PendingBinding> mPendingBindings;
 
-  PRCList* mCurrentPendingBindingInsertionPoint;
+  PendingBinding* mCurrentPendingBindingInsertionPoint;
 };
 
 nsFrameConstructorState::nsFrameConstructorState(nsIPresShell*          aPresShell,
@@ -923,7 +930,7 @@ nsFrameConstructorState::nsFrameConstructorState(nsIPresShell*          aPresShe
     mCreatingExtraFrames(false),
     mTreeMatchContext(true, nsRuleWalker::eRelevantLinkUnvisited,
                       aPresShell->GetDocument()),
-    mCurrentPendingBindingInsertionPoint(&mPendingBindings)
+    mCurrentPendingBindingInsertionPoint(nullptr)
 {
 #ifdef MOZ_XUL
   nsIRootBox* rootBox = nsIRootBox::GetRootBox(aPresShell);
@@ -932,7 +939,6 @@ nsFrameConstructorState::nsFrameConstructorState(nsIPresShell*          aPresShe
   }
 #endif
   MOZ_COUNT_CTOR(nsFrameConstructorState);
-  PR_INIT_CLIST(&mPendingBindings);
 }
 
 nsFrameConstructorState::nsFrameConstructorState(nsIPresShell* aPresShell,
@@ -957,7 +963,7 @@ nsFrameConstructorState::nsFrameConstructorState(nsIPresShell* aPresShell,
     mCreatingExtraFrames(false),
     mTreeMatchContext(true, nsRuleWalker::eRelevantLinkUnvisited,
                       aPresShell->GetDocument()),
-    mCurrentPendingBindingInsertionPoint(&mPendingBindings)
+    mCurrentPendingBindingInsertionPoint(nullptr)
 {
 #ifdef MOZ_XUL
   nsIRootBox* rootBox = nsIRootBox::GetRootBox(aPresShell);
@@ -967,7 +973,6 @@ nsFrameConstructorState::nsFrameConstructorState(nsIPresShell* aPresShell,
 #endif
   MOZ_COUNT_CTOR(nsFrameConstructorState);
   mFrameState = aPresShell->GetDocument()->GetLayoutHistoryState();
-  PR_INIT_CLIST(&mPendingBindings);
 }
 
 nsFrameConstructorState::~nsFrameConstructorState()
@@ -991,15 +996,14 @@ nsFrameConstructorState::~nsFrameConstructorState()
     mGeneratedTextNodesWithInitializer[i]->
       DeleteProperty(nsGkAtoms::genConInitializerProperty);
   }
-  if (!PR_CLIST_IS_EMPTY(&mPendingBindings)) {
+  if (!mPendingBindings.isEmpty()) {
     nsBindingManager* bindingManager = mPresShell->GetDocument()->BindingManager();
     do {
-      PendingBinding* pendingBinding =
-        static_cast<PendingBinding*>(PR_NEXT_LINK(&mPendingBindings));
-      PR_REMOVE_LINK(pendingBinding);
+      nsAutoPtr<PendingBinding> pendingBinding;
+      pendingBinding = mPendingBindings.popFirst();
       bindingManager->AddToAttachedQueue(pendingBinding->mBinding);
-      delete pendingBinding;
-    } while (!PR_CLIST_IS_EMPTY(&mPendingBindings));
+    } while (!mPendingBindings.isEmpty());
+    mCurrentPendingBindingInsertionPoint = nullptr;
   }
 }
 
@@ -1397,6 +1401,7 @@ nsCSSFrameConstructor::nsCSSFrameConstructor(nsIDocument *aDocument,
   , mInStyleRefresh(false)
   , mHoverGeneration(0)
   , mRebuildAllExtraHint(nsChangeHint(0))
+  , mAnimationGeneration(0)
   , mPendingRestyles(ELEMENT_HAS_PENDING_RESTYLE |
                      ELEMENT_IS_POTENTIAL_RESTYLE_ROOT, this)
   , mPendingAnimationRestyles(ELEMENT_HAS_PENDING_ANIMATION_RESTYLE |
@@ -3427,6 +3432,8 @@ nsCSSFrameConstructor::FindInputData(Element* aElement,
     SIMPLE_INT_CREATE(NS_FORM_INPUT_PASSWORD, NS_NewTextControlFrame),
     // TODO: this is temporary until a frame is written: bug 635240.
     SIMPLE_INT_CREATE(NS_FORM_INPUT_NUMBER, NS_NewTextControlFrame),
+    // TODO: this is temporary until a frame is written: bug 773205.
+    SIMPLE_INT_CREATE(NS_FORM_INPUT_DATE, NS_NewTextControlFrame),
     { NS_FORM_INPUT_SUBMIT,
       FCDATA_WITH_WRAPPING_BLOCK(0, NS_NewGfxButtonControlFrame,
                                  nsCSSAnonBoxes::buttonContent) },
@@ -7700,6 +7707,11 @@ GetFrameForChildrenOnlyTransformHint(nsIFrame *aFrame)
   // For an nsHTMLScrollFrame, this will get the SVG frame that has the
   // children-only transforms:
   aFrame = aFrame->GetContent()->GetPrimaryFrame();
+  if (aFrame->GetType() == nsGkAtoms::svgOuterSVGFrame) {
+    aFrame = aFrame->GetFirstPrincipalChild();
+    NS_ABORT_IF_FALSE(aFrame->GetType() == nsGkAtoms::svgOuterSVGAnonChildFrame,
+                      "Where is the nsSVGOuterSVGFrame's anon child??");
+  }
   NS_ABORT_IF_FALSE(aFrame->IsFrameOfType(nsIFrame::eSVG |
                                           nsIFrame::eSVGContainer),
                     "Children-only transforms only expected on SVG frames");
@@ -7739,7 +7751,8 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
         if (aChange & nsChangeHint_UpdateEffects) {
           needInvalidatingPaint = true;
           // Invalidate and update our area:
-          nsSVGUtils::InvalidateAndScheduleReflowSVG(aFrame);
+          nsSVGUtils::InvalidateBounds(aFrame, false);
+          nsSVGUtils::ScheduleReflowSVG(aFrame);
         } else {
           needInvalidatingPaint = true;
           // Just invalidate our area:
@@ -7764,7 +7777,6 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
     }
     if (aChange & nsChangeHint_UpdateTransformLayer) {
       aFrame->MarkLayersActive(nsChangeHint_UpdateTransformLayer);
-      aFrame->AddStateBits(NS_FRAME_TRANSFORM_CHANGED);
       // If we're not already going to do an invalidating paint, see
       // if we can get away with only updating the transform on a
       // layer for this frame, and not scheduling an invalidating
@@ -7793,9 +7805,8 @@ ApplyRenderingChangeToTree(nsPresContext* aPresContext,
                            nsChangeHint aChange)
 {
   // We check GetStyleDisplay()->HasTransform() in addition to checking
-  // IsTransformed() since we can get here for some frames that don't have the
-  // NS_FRAME_MAY_BE_TRANSFORMED bit set (e.g. nsTableFrame; for a transformed
-  // table that bit is only set on the nsTableOuterFrame).
+  // IsTransformed() since we can get here for some frames that don't support
+  // CSS transforms.
   NS_ASSERTION(!(aChange & nsChangeHint_UpdateTransformLayer) ||
                aFrame->IsTransformed() ||
                aFrame->GetStyleDisplay()->HasTransform(),
@@ -8058,7 +8069,8 @@ NeedToReframeForAddingOrRemovingTransform(nsIFrame* aFrame)
 }
 
 nsresult
-nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
+nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList,
+                                             OverflowChangedTracker& aTracker)
 {
   NS_ASSERTION(!nsContentUtils::IsSafeToRunScript(),
                "Someone forgot a script blocker");
@@ -8189,19 +8201,21 @@ nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
                    "nsChangeHint_UpdateOverflow should be passed too");
       if ((hint & nsChangeHint_UpdateOverflow) && !didReflowThisFrame) {
         if (hint & nsChangeHint_ChildrenOnlyTransform) {
-          // Update overflow areas of children first:
-          nsIFrame* childFrame =
-            GetFrameForChildrenOnlyTransformHint(frame)->GetFirstPrincipalChild();
+          // The overflow areas of the child frames need to be updated:
+          nsIFrame* hintFrame = GetFrameForChildrenOnlyTransformHint(frame);
+          nsIFrame* childFrame = hintFrame->GetFirstPrincipalChild();
           for ( ; childFrame; childFrame = childFrame->GetNextSibling()) {
             NS_ABORT_IF_FALSE(childFrame->IsFrameOfType(nsIFrame::eSVG),
                               "Not expecting non-SVG children");
+            // If |childFrame| is dirty or has dirty children, we don't bother
+            // updating overflows since that will happen when it's reflowed.
             if (!(childFrame->GetStateBits() &
                   (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN))) {
-              childFrame->UpdateOverflow();
+              aTracker.AddFrame(childFrame);
             }
             NS_ASSERTION(!nsLayoutUtils::GetNextContinuationOrSpecialSibling(childFrame),
                          "SVG frames should not have continuations or special siblings");
-            NS_ASSERTION(childFrame->GetParent() == frame,
+            NS_ASSERTION(childFrame->GetParent() == hintFrame,
                          "SVG child frame not expected to have different parent");
           }
         }
@@ -8210,30 +8224,10 @@ nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
         if (!(frame->GetStateBits() &
               (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN))) {
           while (frame) {
-            nsOverflowAreas* pre = static_cast<nsOverflowAreas*>
-              (frame->Properties().Get(frame->PreTransformOverflowAreasProperty()));
-            if (pre) {
-              // FinishAndStoreOverflow will change the overflow areas passed in,
-              // so make a copy.
-              nsOverflowAreas overflowAreas = *pre;
-              frame->FinishAndStoreOverflow(overflowAreas, frame->GetSize());
-            } else {
-              frame->UpdateOverflow();
-            }
+            aTracker.AddFrame(frame);
 
-            nsIFrame* next =
+            frame =
               nsLayoutUtils::GetNextContinuationOrSpecialSibling(frame);
-            // Update the ancestors' overflow after we have updated the overflow
-            // for all the continuations with the same parent.
-            if (!next || frame->GetParent() != next->GetParent()) {
-              for (nsIFrame* ancestor = frame->GetParent(); ancestor;
-                   ancestor = ancestor->GetParent()) {
-                if (!ancestor->UpdateOverflow()) {
-                  break;
-                }
-              }
-            }
-            frame = next;
           }
         }
       }
@@ -8259,9 +8253,12 @@ nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
 #ifdef DEBUG
     // reget frame from content since it may have been regenerated...
     if (changeData->mContent) {
-      nsIFrame* frame = changeData->mContent->GetPrimaryFrame();
-      if (frame) {
-        DebugVerifyStyleTree(frame);
+      if (!nsAnimationManager::ContentOrAncestorHasAnimation(changeData->mContent) &&
+          !nsTransitionManager::ContentOrAncestorHasTransition(changeData->mContent)) {
+        nsIFrame* frame = changeData->mContent->GetPrimaryFrame();
+        if (frame) {
+          DebugVerifyStyleTree(frame);
+        }
       }
     } else {
       NS_WARNING("Unable to test style tree integrity -- no content node");
@@ -8278,7 +8275,8 @@ nsCSSFrameConstructor::RestyleElement(Element        *aElement,
                                       nsIFrame       *aPrimaryFrame,
                                       nsChangeHint   aMinHint,
                                       RestyleTracker& aRestyleTracker,
-                                      bool            aRestyleDescendants)
+                                      bool            aRestyleDescendants,
+                                      OverflowChangedTracker& aTracker)
 {
   NS_ASSERTION(aPrimaryFrame == aElement->GetPrimaryFrame(),
                "frame/content mismatch");
@@ -8315,7 +8313,7 @@ nsCSSFrameConstructor::RestyleElement(Element        *aElement,
     nsStyleChangeList changeList;
     ComputeStyleChangeFor(aPrimaryFrame, &changeList, aMinHint,
                           aRestyleTracker, aRestyleDescendants);
-    ProcessRestyledFrames(changeList);
+    ProcessRestyledFrames(changeList, aTracker);
   } else {
     // no frames, reconstruct for content
     MaybeRecreateFramesForElement(aElement);
@@ -9769,7 +9767,7 @@ nsCSSFrameConstructor::CreateNeededTablePseudos(nsFrameConstructorState& aState,
           eTypeColGroup : eTypeRowGroup;
         break;
       default:
-        NS_NOTREACHED("Colgroups should be suppresing non-col child items");
+        MOZ_NOT_REACHED("Colgroups should be suppresing non-col child items");
         break;
     }
 
@@ -12070,7 +12068,9 @@ nsCSSFrameConstructor::DoRebuildAllStyleData(RestyleTracker& aRestyleTracker,
                         &changeList, aExtraHint,
                         aRestyleTracker, true);
   // Process the required changes
-  ProcessRestyledFrames(changeList);
+  OverflowChangedTracker tracker;
+  ProcessRestyledFrames(changeList, tracker);
+  tracker.Flush();
 
   // Tell the style set it's safe to destroy the old rule tree.  We
   // must do this after the ProcessRestyledFrames call in case the
@@ -12092,6 +12092,17 @@ nsCSSFrameConstructor::ProcessPendingRestyles()
   NS_ABORT_IF_FALSE(!presContext->IsProcessingRestyles(),
                     "Nesting calls to ProcessPendingRestyles?");
   presContext->SetProcessingRestyles(true);
+
+  // Before we process any restyles, we need to ensure that style
+  // resulting from any throttled animations (animations that we're
+  // running entirely on the compositor thread) is up-to-date, so that
+  // if any style changes we cause trigger transitions, we have the
+  // correct old style for starting the transition.
+  if (css::CommonAnimationManager::ThrottlingEnabled() &&
+      mPendingRestyles.Count() > 0) {
+    ++mAnimationGeneration;
+    presContext->TransitionManager()->UpdateAllThrottledStyles();
+  }
 
   mPendingRestyles.ProcessRestyles();
 

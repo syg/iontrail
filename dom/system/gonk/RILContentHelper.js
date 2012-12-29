@@ -111,7 +111,11 @@ MobileICCCardLockResult.prototype = {
                       success: 'r'}
 };
 
-function MobileICCInfo() {}
+function MobileICCInfo() {
+  try {
+    this.lastKnownMcc = Services.prefs.getIntPref("ril.lastKnownMcc");
+  } catch (e) {}
+};
 MobileICCInfo.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozMobileICCInfo]),
   classID:        MOBILEICCINFO_CID,
@@ -126,13 +130,14 @@ MobileICCInfo.prototype = {
 
   iccid: null,
   mcc: 0,
+  lastKnownMcc: 0,
   mnc: 0,
   spn: null,
   msisdn: null
 };
 
-function MobileVoicemailInfo() {}
-MobileVoicemailInfo.prototype = {
+function VoicemailInfo() {}
+VoicemailInfo.prototype = {
   number: null,
   displayName: null
 };
@@ -314,7 +319,7 @@ function RILContentHelper() {
   this.iccInfo = new MobileICCInfo();
   this.voiceConnectionInfo = new MobileConnectionInfo();
   this.dataConnectionInfo = new MobileConnectionInfo();
-  this.voicemailInfo = new MobileVoicemailInfo();
+  this.voicemailInfo = new VoicemailInfo();
 
   this.initRequests();
   this.initMessageListener(RIL_IPC_MSG_NAMES);
@@ -331,7 +336,6 @@ function RILContentHelper() {
   this.updateICCInfo(rilContext.icc, this.iccInfo);
   this.updateConnectionInfo(rilContext.voice, this.voiceConnectionInfo);
   this.updateConnectionInfo(rilContext.data, this.dataConnectionInfo);
-  this.updateVoicemailInfo(rilContext.voicemail, this.voicemailInfo);
 }
 
 RILContentHelper.prototype = {
@@ -355,6 +359,9 @@ RILContentHelper.prototype = {
   updateICCInfo: function updateICCInfo(srcInfo, destInfo) {
     for (let key in srcInfo) {
       destInfo[key] = srcInfo[key];
+      if (key === 'mcc') {
+        destInfo['lastKnownMcc'] = srcInfo[key];
+      }
     }
   },
 
@@ -572,6 +579,15 @@ RILContentHelper.prototype = {
                                                        helpRequested: helpRequested});
   },
 
+  sendStkTimerExpiration: function sendStkTimerExpiration(window,
+                                                          timer) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    cpmm.sendAsyncMessage("RIL:SendStkTimerExpiration", {timer: timer});
+  },
+
   sendStkEventDownload: function sendStkEventDownload(window,
                                                       event) {
     if (window == null) {
@@ -634,11 +650,25 @@ RILContentHelper.prototype = {
   _enumerateTelephonyCallbacks: null,
 
   voicemailStatus: null,
+
+  getVoicemailInfo: function getVoicemailInfo() {
+    // Get voicemail infomation by IPC only on first time.
+    this.getVoicemailInfo = function getVoicemailInfo() {
+      return this.voicemailInfo;
+    };
+
+    let voicemailInfo = cpmm.sendSyncMessage("RIL:GetVoicemailInfo")[0];
+    if (voicemailInfo) {
+      this.updateVoicemailInfo(voicemailInfo, this.voicemailInfo);
+    }
+
+    return this.voicemailInfo;
+  },
   get voicemailNumber() {
-    return this.voicemailInfo.number;
+    return this.getVoicemailInfo().number;
   },
   get voicemailDisplayName() {
-    return this.voicemailInfo.displayName;
+    return this.getVoicemailInfo().displayName;
   },
 
   registerCallback: function registerCallback(callbackType, callback) {
@@ -853,6 +883,9 @@ RILContentHelper.prototype = {
         break;
       case "RIL:IccInfoChanged":
         this.updateICCInfo(msg.json, this.iccInfo);
+        if (this.iccInfo.mcc) {
+          Services.prefs.setIntPref("ril.lastKnownMcc", this.iccInfo.mcc);
+        }
         Services.obs.notifyObservers(null, kIccInfoChangedTopic, null);
         break;
       case "RIL:VoiceInfoChanged":

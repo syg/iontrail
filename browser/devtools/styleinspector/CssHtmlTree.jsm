@@ -133,6 +133,7 @@ this.CssHtmlTree = function CssHtmlTree(aStyleInspector)
   this.getRTLAttr = chromeReg.isLocaleRTL("global") ? "rtl" : "ltr";
 
   // Create bound methods.
+  this.siFocusWindow = this.focusWindow.bind(this);
   this.siBoundMenuUpdate = this.computedViewMenuUpdate.bind(this);
   this.siBoundCopy = this.computedViewCopy.bind(this);
   this.siBoundCopyDeclaration = this.computedViewCopyDeclaration.bind(this);
@@ -140,6 +141,7 @@ this.CssHtmlTree = function CssHtmlTree(aStyleInspector)
   this.siBoundCopyPropertyValue = this.computedViewCopyPropertyValue.bind(this);
 
   this.styleDocument.addEventListener("copy", this.siBoundCopy);
+  this.styleDocument.addEventListener("mousedown", this.siFocusWindow);
 
   // Nodes used in templating
   this.root = this.styleDocument.getElementById("root");
@@ -558,6 +560,17 @@ CssHtmlTree.prototype = {
   },
 
   /**
+   * Focus the window on mousedown.
+   *
+   * @param aEvent The event object
+   */
+  focusWindow: function si_focusWindow(aEvent)
+  {
+    let win = this.styleDocument.defaultView;
+    win.focus();
+  },
+
+  /**
    * Copy selected text.
    *
    * @param aEvent The event object
@@ -704,6 +717,7 @@ CssHtmlTree.prototype = {
 
     // Remove bound listeners
     this.styleDocument.removeEventListener("copy", this.siBoundCopy);
+    this.styleDocument.removeEventListener("mousedown", this.siFocusWindow);
 
     // Nodes used in templating
     delete this.root;
@@ -736,7 +750,7 @@ this.PropertyView = function PropertyView(aTree, aName)
   this.name = aName;
   this.getRTLAttr = aTree.getRTLAttr;
 
-  this.link = "https://developer.mozilla.org/en/CSS/" + aName;
+  this.link = "https://developer.mozilla.org/CSS/" + aName;
 
   this.templateMatchedSelectors = aTree.styleDocument.getElementById("templateMatchedSelectors");
 }
@@ -1190,13 +1204,13 @@ SelectorView.prototype = {
     let result = this.selectorInfo.selector.text;
     if (this.selectorInfo.elementStyle) {
       let source = this.selectorInfo.sourceElement;
-      let IUI = this.tree.styleInspector.IUI;
-      if (IUI && IUI.selection == source) {
+      let inspector = this.tree.styleInspector.inspector;
+
+      if (inspector.selection.node == source) {
         result = "this";
       } else {
         result = CssLogic.getShortName(source);
       }
-
       result += ".style";
     }
 
@@ -1257,12 +1271,9 @@ SelectorView.prototype = {
       let target = inspector.target;
 
       if (styleEditorDefinition.isTargetSupported(target)) {
-        let toolbox = gDevTools.getToolboxForTarget(target);
-
-        toolbox.once("styleeditor-selected", function SE_selected(id, styleEditor) {
-          styleEditor.selectStyleSheet(styleSheet, line);
+        gDevTools.showToolbox(target, "styleeditor").then(function(toolbox) {
+          toolbox.getCurrentPanel().selectStyleSheet(styleSheet, line);
         });
-        toolbox.selectTool("styleeditor");
       }
     } else {
       let href = styleSheet ? styleSheet.href : "";

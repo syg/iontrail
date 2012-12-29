@@ -10,7 +10,7 @@
 
 #include <string.h>
 
-#include "mozilla/Util.h"
+#include "mozilla/DebugOnly.h"
 
 #include "jsfriendapi.h"
 #include "jspubtd.h"
@@ -32,6 +32,7 @@ enum Phase {
     PHASE_MARK_DELAYED,
     PHASE_SWEEP,
     PHASE_SWEEP_MARK,
+    PHASE_SWEEP_MARK_TYPES,
     PHASE_SWEEP_MARK_DELAYED,
     PHASE_SWEEP_MARK_INCOMING_BLACK,
     PHASE_SWEEP_MARK_WEAK,

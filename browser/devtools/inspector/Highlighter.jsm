@@ -84,7 +84,7 @@ this.Highlighter = function Highlighter(aTarget, aInspector, aToolbox)
   this.chromeWin = this.chromeDoc.defaultView;
   this.inspector = aInspector
 
-  new EventEmitter(this);
+  EventEmitter.decorate(this);
 
   this._init();
 }
@@ -133,14 +133,18 @@ Highlighter.prototype = {
 
     this.selection.on("new-node", this.highlight);
     this.selection.on("new-node", this.updateInfobar);
-    this.selection.on("detached", this.highlight);
     this.selection.on("pseudoclass", this.updateInfobar);
     this.selection.on("attribute-changed", this.updateInfobar);
 
     this.onToolSelected = function(event, id) {
       if (id != "inspector") {
+        this.chromeWin.clearTimeout(this.pageEventsMuter);
+        this.detachMouseListeners();
         this.hide();
       } else {
+        if (!this.locked) {
+          this.attachMouseListeners();
+        }
         this.show();
       }
     }.bind(this);
@@ -163,7 +167,6 @@ Highlighter.prototype = {
 
     this.selection.off("new-node", this.highlight);
     this.selection.off("new-node", this.updateInfobar);
-    this.selection.off("detached", this.highlight);
     this.selection.off("pseudoclass", this.updateInfobar);
     this.selection.off("attribute-changed", this.updateInfobar);
 

@@ -45,6 +45,7 @@
 #include "nsISMILAttr.h"
 #include "nsClientRect.h"
 #include "nsIDOMDOMTokenList.h"
+#include "nsEvent.h"
 
 class nsIDOMEventListener;
 class nsIFrame;
@@ -457,12 +458,12 @@ public:
 
   virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
                            const nsAString& aValue, bool aNotify);
-  virtual nsresult SetParsedAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                                 nsIAtom* aPrefix, nsAttrValue& aParsedValue,
-                                 bool aNotify);
+  nsresult SetParsedAttr(int32_t aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
+                         nsAttrValue& aParsedValue, bool aNotify);
   virtual bool GetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                          nsAString& aResult) const;
   virtual bool HasAttr(int32_t aNameSpaceID, nsIAtom* aName) const;
+  // aCaseSensitive == eIgnoreCaase means ASCII case-insensitive matching.
   virtual bool AttrValueIs(int32_t aNameSpaceID, nsIAtom* aName,
                              const nsAString& aValue,
                              nsCaseTreatment aCaseSensitive) const;
@@ -694,6 +695,14 @@ public:
            nsPresContext::AppUnitsToIntCSSPixels(sf->GetScrollRange().XMost()) :
            0;
   }
+  virtual void GetInnerHTML(nsAString& aInnerHTML,
+                            mozilla::ErrorResult& aError);
+  virtual void SetInnerHTML(const nsAString& aInnerHTML,
+                            mozilla::ErrorResult& aError);
+  void GetOuterHTML(nsAString& aOuterHTML, mozilla::ErrorResult& aError);
+  void SetOuterHTML(const nsAString& aOuterHTML, mozilla::ErrorResult& aError);
+  void InsertAdjacentHTML(const nsAString& aPosition, const nsAString& aText,
+                          mozilla::ErrorResult& aError);
 
   //----------------------------------------
 
@@ -721,12 +730,15 @@ public:
    * through the full dispatching of the presshell of the aPresContext; if it's
    * false the event will be dispatched only as a DOM event.
    * If aPresContext is nullptr, this does nothing.
+   *
+   * @param aFlags      Extra flags for the dispatching event.  The true flags
+   *                    will be respected.
    */
   static nsresult DispatchClickEvent(nsPresContext* aPresContext,
                                      nsInputEvent* aSourceEvent,
                                      nsIContent* aTarget,
                                      bool aFullDispatch,
-                                     uint32_t aFlags,
+                                     const mozilla::widget::EventFlags* aFlags,
                                      nsEventStatus* aStatus);
 
   /**
@@ -839,6 +851,11 @@ public:
 
   virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope,
                                bool *aTriedToWrap) MOZ_FINAL;
+
+  /**
+   * Locate an nsIEditor rooted at this content node, if there is one.
+   */
+  nsIEditor* GetEditorInternal();
 
 protected:
   /*
@@ -1077,6 +1094,8 @@ private:
   nsRect GetClientAreaRect();
 
   nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr);
+
+  nsresult GetMarkup(bool aIncludeSelf, nsAString& aMarkup);
 
   // Data members
   nsEventStates mState;

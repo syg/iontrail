@@ -8,14 +8,20 @@
 #include "nsDOMClassInfoID.h"
 #include "nsGenericHTMLElement.h"
 #include "nsHTMLCanvasElement.h"
-#include "nsHTMLDivElement.h"
+#include "nsHTMLFormElement.h"
 #include "nsHTMLImageElement.h"
 #include "nsHTMLOptionElement.h"
 #include "nsHTMLOptGroupElement.h"
 #include "nsHTMLVideoElement.h"
 #include "nsHTMLDocument.h"
 #include "nsICSSDeclaration.h"
-#include "nsSVGStylableElement.h"
+#include "nsSVGElement.h"
+#include "mozilla/dom/EventTargetBinding.h"
+#include "mozilla/dom/NodeBinding.h"
+#include "mozilla/dom/ElementBinding.h"
+#include "mozilla/dom/HTMLElementBinding.h"
+#include "mozilla/dom/DocumentBinding.h"
+#include "mozilla/dom/SVGElementBinding.h"
 
 template<class T>
 struct ProtoIDAndDepth
@@ -26,16 +32,24 @@ struct ProtoIDAndDepth
     };
 };
 
-#define NEW_BINDING(_native)                                                  \
+#define NEW_BINDING(_native, _id)                                             \
 template<>                                                                    \
 struct ProtoIDAndDepth<_native>                                               \
 {                                                                             \
     enum {                                                                    \
-        PrototypeID = mozilla::dom::PrototypeIDMap<_native>::PrototypeID,     \
+        PrototypeID = mozilla::dom::prototypes::id::_id,                      \
         Depth = mozilla::dom::PrototypeTraits<                                \
             static_cast<mozilla::dom::prototypes::ID>(PrototypeID)>::Depth    \
     };                                                                        \
 }
+
+NEW_BINDING(mozilla::dom::EventTarget, EventTarget);
+NEW_BINDING(nsINode, Node);
+NEW_BINDING(mozilla::dom::Element, Element);
+NEW_BINDING(nsGenericHTMLElement, HTMLElement);
+NEW_BINDING(nsIDocument, Document);
+NEW_BINDING(nsDocument, Document);
+NEW_BINDING(nsSVGElement, SVGElement);
 
 #define DEFINE_UNWRAP_CAST(_interface, _base, _bit)                           \
 template <>                                                                   \
@@ -155,7 +169,7 @@ xpc_qsUnwrapArg<_clazz>(JSContext *cx, jsval v, _clazz **ppArg,               \
 }
 
 DEFINE_UNWRAP_CAST_HTML(canvas, nsHTMLCanvasElement)
-DEFINE_UNWRAP_CAST_HTML(div, nsHTMLDivElement)
+DEFINE_UNWRAP_CAST_HTML(form, nsHTMLFormElement)
 DEFINE_UNWRAP_CAST_HTML(img, nsHTMLImageElement)
 DEFINE_UNWRAP_CAST_HTML(optgroup, nsHTMLOptGroupElement)
 DEFINE_UNWRAP_CAST_HTML(option, nsHTMLOptionElement)

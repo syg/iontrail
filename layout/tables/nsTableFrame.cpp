@@ -160,7 +160,6 @@ nsTableFrame::nsTableFrame(nsStyleContext* aContext)
 }
 
 NS_QUERYFRAME_HEAD(nsTableFrame)
-  NS_QUERYFRAME_ENTRY(nsITableLayout)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 NS_IMETHODIMP
@@ -180,9 +179,6 @@ nsTableFrame::Init(nsIContent*      aContent,
   const nsStyleTableBorder* tableStyle = GetStyleTableBorder();
   bool borderCollapse = (NS_STYLE_BORDER_COLLAPSE == tableStyle->mBorderCollapse);
   SetBorderCollapse(borderCollapse);
-
-  // Transforms need to affect the outer frame, not the inner frame (bug 722777)
-  mState &= ~NS_FRAME_MAY_BE_TRANSFORMED;
 
   // Create the cell map if this frame is the first-in-flow.
   if (!aPrevInFlow) {
@@ -2942,29 +2938,24 @@ nsTableFrame::ReflowChildren(nsTableReflowState& aReflowState,
             break;
           }
 
-          // Insert the continuing frame into the sibling list.
+          // Insert the kid's new next-in-flow into our sibling list...
           mFrames.InsertFrame(nullptr, kidFrame, kidNextInFlow);
-
-          // Fall through and update |rowGroups| with the new rowgroup, just as
-          // it would have been if we had called OrderRowGroups again.
-          // Note that rowGroups doesn't get used again after we PushChildren
-          // below, anyway.
+          // and in rowGroups after childX so that it will get pushed below.
+          rowGroups.InsertElementAt(childX + 1,
+                      static_cast <nsTableRowGroupFrame*>(kidNextInFlow));
         }
 
-        // Put the nextinflow so that it will get pushed
-        rowGroups.InsertElementAt(childX + 1,
-                           static_cast <nsTableRowGroupFrame*>(kidNextInFlow));
-
         // We've used up all of our available space so push the remaining
-        // children to the next-in-flow
+        // children.
         if (allowRepeatedFooter) {
           PlaceRepeatedFooter(aReflowState, tfoot, footerHeight);
         }
         else if (tfoot && tfoot->IsRepeatable()) {
           tfoot->SetRepeatable(false);
         }
+
         nsIFrame* nextSibling = kidFrame->GetNextSibling();
-        if (nullptr != nextSibling) {
+        if (nextSibling) {
           PushChildren(rowGroups, childX + 1);
         }
         break;
@@ -3693,108 +3684,6 @@ int32_t nsTableIterator::Count()
   }
   return mCount;
 }
-
-/*------------------ nsITableLayout methods ------------------------------*/
-NS_IMETHODIMP
-nsTableFrame::GetCellDataAt(int32_t        aRowIndex,
-                            int32_t        aColIndex,
-                            nsIDOMElement* &aCell,   //out params
-                            int32_t&       aStartRowIndex,
-                            int32_t&       aStartColIndex,
-                            int32_t&       aRowSpan,
-                            int32_t&       aColSpan,
-                            int32_t&       aActualRowSpan,
-                            int32_t&       aActualColSpan,
-                            bool&          aIsSelected)
-{
-  // Initialize out params
-  aCell = nullptr;
-  aStartRowIndex = 0;
-  aStartColIndex = 0;
-  aRowSpan = 0;
-  aColSpan = 0;
-  aIsSelected = false;
-
-  nsTableCellMap* cellMap = GetCellMap();
-  if (!cellMap) { return NS_ERROR_NOT_INITIALIZED;}
-
-  bool originates;
-  int32_t colSpan; // Is this the "effective" or "html" value?
-
-  nsTableCellFrame *cellFrame = cellMap->GetCellInfoAt(aRowIndex, aColIndex, &originates, &colSpan);
-  if (!cellFrame) return NS_TABLELAYOUT_CELL_NOT_FOUND;
-
-  nsresult result= cellFrame->GetRowIndex(aStartRowIndex);
-  if (NS_FAILED(result)) return result;
-  result = cellFrame->GetColIndex(aStartColIndex);
-  if (NS_FAILED(result)) return result;
-  //This returns HTML value, which may be 0
-  aRowSpan = cellFrame->GetRowSpan();
-  aColSpan = cellFrame->GetColSpan();
-  aActualRowSpan = GetEffectiveRowSpan(*cellFrame);
-  aActualColSpan = GetEffectiveColSpan(*cellFrame);
-
-  // If these aren't at least 1, we have a cellmap error
-  if (aActualRowSpan == 0 || aActualColSpan == 0)
-    return NS_ERROR_FAILURE;
-
-  aIsSelected = cellFrame->IsSelected();
-
-  // do this last, because it addrefs,
-  // and we don't want the caller leaking it on error
-  nsIContent* content = cellFrame->GetContent();
-  if (!content) return NS_ERROR_FAILURE;
-
-  return CallQueryInterface(content, &aCell);
-}
-
-NS_IMETHODIMP nsTableFrame::GetTableSize(int32_t& aRowCount, int32_t& aColCount)
-{
-  nsTableCellMap* cellMap = GetCellMap();
-  // Initialize out params
-  aRowCount = 0;
-  aColCount = 0;
-  if (!cellMap) { return NS_ERROR_NOT_INITIALIZED;}
-
-  aRowCount = cellMap->GetRowCount();
-  aColCount = cellMap->GetColCount();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsTableFrame::GetIndexByRowAndColumn(int32_t aRow, int32_t aColumn,
-                                     int32_t *aIndex)
-{
-  NS_ENSURE_ARG_POINTER(aIndex);
-  *aIndex = -1;
-
-  nsTableCellMap* cellMap = GetCellMap();
-  if (!cellMap)
-    return NS_ERROR_NOT_INITIALIZED;
-
-  *aIndex = cellMap->GetIndexByRowAndColumn(aRow, aColumn);
-  return (*aIndex == -1) ? NS_TABLELAYOUT_CELL_NOT_FOUND : NS_OK;
-}
-
-NS_IMETHODIMP
-nsTableFrame::GetRowAndColumnByIndex(int32_t aIndex,
-                                    int32_t *aRow, int32_t *aColumn)
-{
-  NS_ENSURE_ARG_POINTER(aRow);
-  *aRow = -1;
-
-  NS_ENSURE_ARG_POINTER(aColumn);
-  *aColumn = -1;
-
-  nsTableCellMap* cellMap = GetCellMap();
-  if (!cellMap)
-    return NS_ERROR_NOT_INITIALIZED;
-
-  cellMap->GetRowAndColumnByIndex(aIndex, aRow, aColumn);
-  return NS_OK;
-}
-
-/*---------------- end of nsITableLayout implementation ------------------*/
 
 bool
 nsTableFrame::ColumnHasCellSpacingBefore(int32_t aColIndex) const
@@ -7300,8 +7189,9 @@ nsTableFrame::InvalidateTableFrame(nsIFrame* aFrame,
     // XXXbz this doesn't handle outlines, does it?
     aFrame->InvalidateFrame();
     parent->InvalidateFrameWithRect(aOrigVisualOverflow + aOrigRect.TopLeft());
-  } else {
-    aFrame->InvalidateFrameWithRect(aOrigVisualOverflow);;
+  } else if (aOrigRect.Size() != aFrame->GetSize() ||
+             aOrigVisualOverflow.Size() != visualOverflow.Size()){
+    aFrame->InvalidateFrameWithRect(aOrigVisualOverflow);
     aFrame->InvalidateFrame();
     parent->InvalidateFrameWithRect(aOrigRect);;
     parent->InvalidateFrame();

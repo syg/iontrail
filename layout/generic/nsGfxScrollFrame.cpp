@@ -861,10 +861,10 @@ nsHTMLScrollFrame::AccessibleType()
   if (mContent->IsRootOfNativeAnonymousSubtree() ||
       GetScrollbarStyles() == nsIScrollableFrame::
         ScrollbarStyles(NS_STYLE_OVERFLOW_HIDDEN, NS_STYLE_OVERFLOW_HIDDEN) ) {
-    return a11y::eNoAccessible;
+    return a11y::eNoType;
   }
 
-  return a11y::eHyperTextAccessible;
+  return a11y::eHyperTextType;
 }
 #endif
 
@@ -2847,7 +2847,7 @@ nsGfxScrollFrameInner::FireScrollEvent()
   } else {
     // scroll events fired at elements don't bubble (although scroll events
     // fired at documents do, to the window)
-    event.flags |= NS_EVENT_FLAG_CANT_BUBBLE;
+    event.mFlags.mBubbles = false;
     nsEventDispatcher::Dispatch(content, prescontext, &event, nullptr, &status);
   }
 }

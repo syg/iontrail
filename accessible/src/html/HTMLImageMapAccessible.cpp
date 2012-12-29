@@ -28,7 +28,7 @@ HTMLImageMapAccessible::
   HTMLImageMapAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   ImageAccessibleWrap(aContent, aDoc)
 {
-  mFlags |= eImageMapAccessible;
+  mType = eImageMapType;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -153,7 +153,7 @@ HTMLAreaAccessible::
 {
   // Make HTML area DOM element not accessible. HTML image map accessible
   // manages its tree itself.
-  mFlags |= eNotNodeMapEntry;
+  mStateFlags |= eNotNodeMapEntry;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

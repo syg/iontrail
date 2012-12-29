@@ -17,13 +17,13 @@
 #include "imgIContainer.h"
 
 inline void
-nsStyleBorder::SetBorderImage(imgIRequest* aImage)
+nsStyleBorder::SetBorderImage(imgRequestProxy* aImage)
 {
   mBorderImageSource = aImage;
   mSubImages.Clear();
 }
 
-inline imgIRequest*
+inline imgRequestProxy*
 nsStyleBorder::GetBorderImage() const
 {
   NS_ABORT_IF_FALSE(!mBorderImageSource || mImageTracked,
@@ -127,7 +127,10 @@ nsStyleDisplay::IsFloating(const nsIFrame* aFrame) const
 bool
 nsStyleDisplay::IsPositioned(const nsIFrame* aFrame) const
 {
-  return IsPositionedStyle() && !aFrame->IsSVGText();
+  return (IsAbsolutelyPositionedStyle() ||
+          IsRelativelyPositionedStyle() ||
+          (HasTransform() && aFrame->IsFrameOfType(nsIFrame::eSupportsCSSTransforms))) &&
+         !aFrame->IsSVGText();
 }
 
 bool

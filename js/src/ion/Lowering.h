@@ -82,6 +82,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitNewParallelArray(MNewParallelArray *ins);
     bool visitNewArray(MNewArray *ins);
     bool visitNewObject(MNewObject *ins);
+    bool visitNewDeclEnvObject(MNewDeclEnvObject *ins);
     bool visitNewCallObject(MNewCallObject *ins);
     bool visitNewStringObject(MNewStringObject *ins);
     bool visitParNew(MParNew *ins);
@@ -92,8 +93,10 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitCheckOverRecursed(MCheckOverRecursed *ins);
     bool visitParCheckOverRecursed(MParCheckOverRecursed *ins);
     bool visitDefVar(MDefVar *ins);
+    bool visitDefFun(MDefFun *ins);
     bool visitPrepareCall(MPrepareCall *ins);
     bool visitPassArg(MPassArg *arg);
+    bool visitCreateThisWithTemplate(MCreateThisWithTemplate *ins);
     bool visitCreateThis(MCreateThis *ins);
     bool visitReturnFromCtor(MReturnFromCtor *ins);
     bool visitCall(MCall *call);

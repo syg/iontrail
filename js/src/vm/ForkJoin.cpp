@@ -249,7 +249,8 @@ ForkJoinShared::execute()
     {
         gc::AutoSuppressGC gc(cx_);
         AutoUnlockMonitor unlock(*this);
-        threadPool_->submitAll(this);
+        if (!threadPool_->submitAll(cx_, this))
+            return TP_FATAL;
         executeFromMainThread();
     }
 

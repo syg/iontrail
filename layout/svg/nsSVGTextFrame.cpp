@@ -56,14 +56,16 @@ nsSVGTextFrame::AttributeChanged(int32_t         aNameSpaceID,
     return NS_OK;
 
   if (aAttribute == nsGkAtoms::transform) {
-    nsSVGUtils::InvalidateAndScheduleReflowSVG(this);
+    nsSVGUtils::InvalidateBounds(this, false);
+    nsSVGUtils::ScheduleReflowSVG(this);
     NotifySVGChanged(TRANSFORM_CHANGED);
   } else if (aAttribute == nsGkAtoms::x ||
              aAttribute == nsGkAtoms::y ||
              aAttribute == nsGkAtoms::dx ||
              aAttribute == nsGkAtoms::dy ||
              aAttribute == nsGkAtoms::rotate) {
-    nsSVGUtils::InvalidateAndScheduleReflowSVG(this);
+    nsSVGUtils::InvalidateBounds(this, false);
+    nsSVGUtils::ScheduleReflowSVG(this);
     NotifyGlyphMetricsChange();
   }
 
@@ -112,7 +114,7 @@ nsSVGTextFrame::GetSubStringLength(uint32_t charnum, uint32_t nchars)
 }
 
 int32_t
-nsSVGTextFrame::GetCharNumAtPosition(nsIDOMSVGPoint *point)
+nsSVGTextFrame::GetCharNumAtPosition(DOMSVGPoint *point)
 {
   UpdateGlyphPositioning(false);
 
@@ -120,7 +122,7 @@ nsSVGTextFrame::GetCharNumAtPosition(nsIDOMSVGPoint *point)
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::GetStartPositionOfChar(uint32_t charnum, nsIDOMSVGPoint **_retval)
+nsSVGTextFrame::GetStartPositionOfChar(uint32_t charnum, nsISupports **_retval)
 {
   UpdateGlyphPositioning(false);
 
@@ -128,7 +130,7 @@ nsSVGTextFrame::GetStartPositionOfChar(uint32_t charnum, nsIDOMSVGPoint **_retva
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::GetEndPositionOfChar(uint32_t charnum, nsIDOMSVGPoint **_retval)
+nsSVGTextFrame::GetEndPositionOfChar(uint32_t charnum, nsISupports **_retval)
 {
   UpdateGlyphPositioning(false);
 
@@ -320,7 +322,8 @@ nsSVGTextFrame::NotifyGlyphMetricsChange()
   // as fully dirty to get ReflowSVG() called on them:
   MarkDirtyBitsOnDescendants(this);
 
-  nsSVGUtils::InvalidateAndScheduleReflowSVG(this);
+  nsSVGUtils::InvalidateBounds(this, false);
+  nsSVGUtils::ScheduleReflowSVG(this);
 
   mPositioningDirty = true;
 }

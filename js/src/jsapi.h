@@ -31,6 +31,7 @@
 
 #include "jsalloc.h"
 #include "js/Vector.h"
+#include "js/HashTable.h"
 
 /************************************************************************/
 
@@ -592,7 +593,7 @@ class Value
 #if !defined(_MSC_VER) && !defined(__sparc)
   /* To make jsval binary compatible when linking across C and C++ with MSVC,
    * JS::Value needs to be POD. Otherwise, jsval will be passed in memory
-   * in C++ but by value in C (bug 645111).
+   * in C++ but by value in C (bug 689101).
    * Same issue for SPARC ABI. (bug 737344).
    */
   private:
@@ -1041,7 +1042,7 @@ class JS_PUBLIC_API(AutoGCRooter) {
         *stackTop = down;
     }
 
-    /* Implemented in jsgc.cpp. */
+    /* Implemented in gc/RootMarking.cpp. */
     inline void trace(JSTracer *trc);
     static void traceAll(JSTracer *trc);
     static void traceAllWrappers(JSTracer *trc);
@@ -1087,7 +1088,8 @@ class JS_PUBLIC_API(AutoGCRooter) {
         IONMASM =     -28, /* js::ion::MacroAssembler */
         IONALLOC =    -29, /* js::ion::AutoTempAllocatorRooter */
         WRAPVECTOR =  -30, /* js::AutoWrapperVector */
-        WRAPPER =     -31  /* js::AutoWrapperRooter */
+        WRAPPER =     -31, /* js::AutoWrapperRooter */
+        OBJOBJHASHMAP=-32  /* js::AutoObjectObjectHashMap */
     };
 
   private:
@@ -1324,6 +1326,129 @@ class AutoVectorRooter : protected AutoGCRooter
 
     /* Prevent overwriting of inline elements in vector. */
     js::SkipRoot vectorRoot;
+
+    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+};
+
+template<class Key, class Value>
+class AutoHashMapRooter : protected AutoGCRooter
+{
+  private:
+    typedef js::HashMap<Key, Value> HashMapImpl;
+
+  public:
+    explicit AutoHashMapRooter(JSContext *cx, ptrdiff_t tag
+                               JS_GUARD_OBJECT_NOTIFIER_PARAM)
+      : AutoGCRooter(cx, tag), map(cx)
+    {
+        JS_GUARD_OBJECT_NOTIFIER_INIT;
+    }
+
+    typedef Key KeyType;
+    typedef Value ValueType;
+    typedef typename HashMapImpl::Lookup Lookup;
+    typedef typename HashMapImpl::Ptr Ptr;
+    typedef typename HashMapImpl::AddPtr AddPtr;
+
+    bool init(uint32_t len = 16) {
+        return map.init(len);
+    }
+    bool initialized() const {
+        return map.initialized();
+    }
+    Ptr lookup(const Lookup &l) const {
+        return map.lookup(l);
+    }
+    void remove(Ptr p) {
+        map.remove(p);
+    }
+    AddPtr lookupForAdd(const Lookup &l) const {
+        return map.lookupForAdd(l);
+    }
+
+    template<typename KeyInput, typename ValueInput>
+    bool add(AddPtr &p, const KeyInput &k, const ValueInput &v) {
+        return map.add(k, v);
+    }
+
+    bool add(AddPtr &p, const Key &k) {
+        return map.add(p, k);
+    }
+
+    template<typename KeyInput, typename ValueInput>
+    bool relookupOrAdd(AddPtr &p, const KeyInput &k, const ValueInput &v) {
+        return map.relookupOrAdd(p, k, v);
+    }
+
+    typedef typename HashMapImpl::Range Range;
+    Range all() const {
+        return map.all();
+    }
+
+    typedef typename HashMapImpl::Enum Enum;
+
+    void clear() {
+        map.clear();
+    }
+
+    void finish() {
+        map.finish();
+    }
+
+    bool empty() const {
+        return map.empty();
+    }
+
+    uint32_t count() const {
+        return map.count();
+    }
+
+    size_t capacity() const {
+        return map.capacity();
+    }
+
+    size_t sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf) const {
+        return map.sizeOfExcludingThis(mallocSizeOf);
+    }
+    size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf) const {
+        return map.sizeOfIncludingThis(mallocSizeOf);
+    }
+
+    unsigned generation() const {
+        return map.generation();
+    }
+
+    /************************************************** Shorthand operations */
+
+    bool has(const Lookup &l) const {
+        return map.has(l);
+    }
+
+    template<typename KeyInput, typename ValueInput>
+    bool put(const KeyInput &k, const ValueInput &v) {
+        return map.put(k, v);
+    }
+
+    template<typename KeyInput, typename ValueInput>
+    bool putNew(const KeyInput &k, const ValueInput &v) {
+        return map.putNew(k, v);
+    }
+
+    Ptr lookupWithDefault(const Key &k, const Value &defaultValue) {
+        return map.lookupWithDefault(k, defaultValue);
+    }
+
+    void remove(const Lookup &l) {
+        map.remove(l);
+    }
+
+    friend void AutoGCRooter::trace(JSTracer *trc);
+
+  private:
+    AutoHashMapRooter(const AutoHashMapRooter &hmr) MOZ_DELETE;
+    AutoHashMapRooter &operator=(const AutoHashMapRooter &hmr) MOZ_DELETE;
+
+    HashMapImpl map;
 
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
@@ -1713,7 +1838,6 @@ typedef JSBool
  *
  *  JSRESOLVE_QUALIFIED   a qualified property id: obj.id or obj[id], not id
  *  JSRESOLVE_ASSIGNING   obj[id] is on the left-hand side of an assignment
- *  JSRESOLVE_DETECTING   'if (o.p)...' or similar detection opcode sequence
  *
  * The *objp out parameter, on success, should be null to indicate that id
  * was not resolved; and non-null, referring to obj or one of its prototypes,
@@ -2636,8 +2760,6 @@ ToBoolean(const Value &v)
         return v.toBoolean();
     if (v.isInt32())
         return v.toInt32() != 0;
-    if (v.isObject())
-        return true;
     if (v.isNullOrUndefined())
         return false;
     if (v.isDouble()) {
@@ -2645,7 +2767,7 @@ ToBoolean(const Value &v)
         return !MOZ_DOUBLE_IS_NaN(d) && d != 0;
     }
 
-    /* Slow path. Handle Strings. */
+    /* The slow path handles strings and objects. */
     return js::ToBooleanSlow(v);
 }
 
@@ -3118,6 +3240,9 @@ JS_WrapObject(JSContext *cx, JSObject **objp);
 
 extern JS_PUBLIC_API(JSBool)
 JS_WrapValue(JSContext *cx, jsval *vp);
+
+extern JS_PUBLIC_API(JSBool)
+JS_WrapId(JSContext *cx, jsid *idp);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_TransplantObject(JSContext *cx, JSObject *origobj, JSObject *target);
@@ -3962,7 +4087,9 @@ struct JSClass {
 #define JSCLASS_IS_DOMJSCLASS           (1<<4)  /* objects are DOM */
 #define JSCLASS_IMPLEMENTS_BARRIERS     (1<<5)  /* Correctly implements GC read
                                                    and write barriers */
-#define JSCLASS_DOCUMENT_OBSERVER       (1<<6)  /* DOM document observer */
+#define JSCLASS_EMULATES_UNDEFINED      (1<<6)  /* objects of this class act
+                                                   like the value undefined,
+                                                   in some contexts */
 #define JSCLASS_USERBIT1                (1<<7)  /* Reserved for embeddings. */
 
 /*
@@ -4105,7 +4232,6 @@ JS_IdToValue(JSContext *cx, jsid id, jsval *vp);
  */
 #define JSRESOLVE_QUALIFIED     0x01    /* resolve a qualified property id */
 #define JSRESOLVE_ASSIGNING     0x02    /* resolve on the left of assignment */
-#define JSRESOLVE_DETECTING     0x04    /* 'if (o.p)...' or '(o.p) ?...:...' */
 
 /*
  * Invoke the [[DefaultValue]] hook (see ES5 8.6.2) with the provided hint on
@@ -4915,6 +5041,7 @@ struct JS_PUBLIC_API(CompileOptions) {
     bool compileAndGo;
     bool noScriptRval;
     bool selfHostingMode;
+    bool userBit;
     enum SourcePolicy {
         NO_SOURCE,
         LAZY_SOURCE,
@@ -4932,6 +5059,7 @@ struct JS_PUBLIC_API(CompileOptions) {
     CompileOptions &setCompileAndGo(bool cng) { compileAndGo = cng; return *this; }
     CompileOptions &setNoScriptRval(bool nsr) { noScriptRval = nsr; return *this; }
     CompileOptions &setSelfHostingMode(bool shm) { selfHostingMode = shm; return *this; }
+    CompileOptions &setUserBit(bool bit) { userBit = bit; return *this; }
     CompileOptions &setSourcePolicy(SourcePolicy sp) { sourcePolicy = sp; return *this; }
 };
 
@@ -5358,13 +5486,6 @@ JS_NewDependentString(JSContext *cx, JSString *str, size_t start,
  */
 extern JS_PUBLIC_API(JSString *)
 JS_ConcatStrings(JSContext *cx, JSString *left, JSString *right);
-
-/*
- * Convert a dependent string into an independent one.  This function does not
- * change the string's mutability, so the thread safety comments above apply.
- */
-extern JS_PUBLIC_API(const jschar *)
-JS_UndependString(JSContext *cx, JSString *str);
 
 /*
  * For JS_DecodeBytes, set *dstlenp to the size of the destination buffer before

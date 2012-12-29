@@ -10,6 +10,7 @@
 #include "nsIUUIDGenerator.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIPopupWindowManager.h"
+#include "nsISupportsArray.h"
 
 // For PR_snprintf
 #include "prprf.h"
@@ -200,6 +201,13 @@ NS_IMETHODIMP
 MediaDevice::GetType(nsAString& aType)
 {
   aType.Assign(mType);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+MediaDevice::GetId(nsAString& aID)
+{
+  aID.Assign(mID);
   return NS_OK;
 }
 
@@ -487,6 +495,7 @@ public:
         if (vSource->IsAvailable()) {
           found = true;
           mVideoDevice = new MediaDevice(videoSources[i]);
+          break;
         }
       }
 
@@ -517,6 +526,7 @@ public:
         if (aSource->IsAvailable()) {
           found = true;
           mAudioDevice = new MediaDevice(audioSources[i]);
+          break;
         }
       }
 
@@ -681,9 +691,17 @@ private:
   already_AddRefed<nsIDOMGetUserMediaErrorCallback> mError;
 };
 
-nsRefPtr<MediaManager> MediaManager::sSingleton;
+NS_IMPL_THREADSAFE_ISUPPORTS2(MediaManager, nsIMediaManagerService, nsIObserver)
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(MediaManager, nsIObserver)
+/* static */ StaticRefPtr<MediaManager> MediaManager::sSingleton;
+
+/* static */ already_AddRefed<MediaManager>
+MediaManager::GetInstance()
+{
+  // so we can have non-refcounted getters
+  nsRefPtr<MediaManager> service = MediaManager::Get();
+  return service.forget();
+}
 
 /**
  * The entry point for this file. A call from Navigator::mozGetUserMedia
@@ -986,20 +1004,35 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
     mActiveCallbacks.Remove(key);
 
     if (aSubject) {
-      // A particular device was chosen by the user.
+      // A particular device or devices were chosen by the user.
       // NOTE: does not allow setting a device to null; assumes nullptr
-      nsCOMPtr<nsIMediaDevice> device = do_QueryInterface(aSubject);
-      if (device) {
-        GetUserMediaRunnable* gUMRunnable =
-          static_cast<GetUserMediaRunnable*>(runnable.get());
-        nsString type;
-        device->GetType(type);
-        if (type.EqualsLiteral("video")) {
-          gUMRunnable->SetVideoDevice(static_cast<MediaDevice*>(device.get()));
-        } else if (type.EqualsLiteral("audio")) {
-          gUMRunnable->SetAudioDevice(static_cast<MediaDevice*>(device.get()));
-        } else {
-          NS_WARNING("Unknown device type in getUserMedia");
+      GetUserMediaRunnable* gUMRunnable =
+        static_cast<GetUserMediaRunnable*>(runnable.get());
+
+      nsCOMPtr<nsISupportsArray> array(do_QueryInterface(aSubject));
+      MOZ_ASSERT(array);
+      uint32_t len = 0;
+      array->Count(&len);
+      MOZ_ASSERT(len);
+      if (!len) {
+        gUMRunnable->Denied(); // neither audio nor video were selected
+        return NS_OK;
+      }
+      for (uint32_t i = 0; i < len; i++) {
+        nsCOMPtr<nsISupports> supports;
+        array->GetElementAt(i,getter_AddRefs(supports));
+        nsCOMPtr<nsIMediaDevice> device(do_QueryInterface(supports));
+        MOZ_ASSERT(device); // shouldn't be returning anything else...
+        if (device) {
+          nsString type;
+          device->GetType(type);
+          if (type.EqualsLiteral("video")) {
+            gUMRunnable->SetVideoDevice(static_cast<MediaDevice*>(device.get()));
+          } else if (type.EqualsLiteral("audio")) {
+            gUMRunnable->SetAudioDevice(static_cast<MediaDevice*>(device.get()));
+          } else {
+            NS_WARNING("Unknown device type in getUserMedia");
+          }
         }
       }
     }
@@ -1023,6 +1056,40 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
     return NS_OK;
   }
 
+  return NS_OK;
+}
+
+static PLDHashOperator
+WindowsHashToArrayFunc (const uint64_t& aId,
+                        StreamListeners* aData,
+                        void *userArg)
+{
+    nsISupportsArray *array =
+        static_cast<nsISupportsArray *>(userArg);
+    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
+      (nsGlobalWindow::GetInnerWindowWithId(aId));
+    (void) aData;
+
+    MOZ_ASSERT(window);
+    if (window) {
+      array->AppendElement(window);
+    }
+    return PL_DHASH_NEXT;
+}
+
+
+nsresult
+MediaManager::GetActiveMediaCaptureWindows(nsISupportsArray **aArray)
+{
+  MOZ_ASSERT(aArray);
+  nsISupportsArray *array;
+  nsresult rv = NS_NewISupportsArray(&array); // AddRefs
+  if (NS_FAILED(rv))
+    return rv;
+
+  mActiveWindows.EnumerateRead(WindowsHashToArrayFunc, array);
+
+  *aArray = array;
   return NS_OK;
 }
 

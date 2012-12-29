@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "CodeGenerator-x86.h"
 #include "ion/shared/CodeGenerator-shared-inl.h"
 #include "ion/MIR.h"
@@ -139,7 +141,7 @@ void
 CodeGeneratorX86::linkAbsoluteLabels()
 {
     ExecutionMode executionMode = gen->info().executionMode();
-    JSScript *script = gen->info().script();
+    UnrootedScript script = gen->info().script();
     IonScript *ionScript = GetIonScript(script, executionMode);
     IonCode *method = ionScript->method();
 
@@ -233,12 +235,17 @@ CodeGeneratorX86::visitLoadElementT(LLoadElementT *load)
 {
     Operand source = createArrayElementOperand(ToRegister(load->elements()), load->index());
 
+    if (load->mir()->needsHoleCheck()) {
+        Assembler::Condition cond = masm.testMagic(Assembler::Equal, source);
+        if (!bailoutIf(cond, load->snapshot()))
+            return false;
+    }
+
     if (load->mir()->type() == MIRType_Double)
         masm.loadInt32OrDouble(source, ToFloatRegister(load->output()));
     else
         masm.movl(masm.ToPayload(source), ToRegister(load->output()));
 
-    JS_ASSERT(!load->mir()->needsHoleCheck());
     return true;
 }
 
@@ -364,5 +371,59 @@ CodeGeneratorX86::visitCompareBAndBranch(LCompareBAndBranch *lir)
     else
         masm.cmp32(lhs.payloadReg(), ToRegister(rhs));
     emitBranch(JSOpToCondition(mir->jsop()), lir->ifTrue(), lir->ifFalse());
+    return true;
+}
+
+bool
+CodeGeneratorX86::visitCompareV(LCompareV *lir)
+{
+    MCompare *mir = lir->mir();
+    Assembler::Condition cond = JSOpToCondition(mir->jsop());
+    const ValueOperand lhs = ToValue(lir, LCompareV::LhsInput);
+    const ValueOperand rhs = ToValue(lir, LCompareV::RhsInput);
+    const Register output = ToRegister(lir->output());
+
+    JS_ASSERT(mir->jsop() == JSOP_EQ || mir->jsop() == JSOP_STRICTEQ ||
+              mir->jsop() == JSOP_NE || mir->jsop() == JSOP_STRICTNE);
+
+    Label notEqual, done;
+    masm.cmp32(lhs.typeReg(), rhs.typeReg());
+    masm.j(Assembler::NotEqual, &notEqual);
+    {
+        masm.cmp32(lhs.payloadReg(), rhs.payloadReg());
+        emitSet(cond, output);
+        masm.jump(&done);
+    }
+    masm.bind(&notEqual);
+    {
+        masm.move32(Imm32(cond == Assembler::NotEqual), output);
+    }
+
+    masm.bind(&done);
+    return true;
+}
+
+bool
+CodeGeneratorX86::visitCompareVAndBranch(LCompareVAndBranch *lir)
+{
+    MCompare *mir = lir->mir();
+    Assembler::Condition cond = JSOpToCondition(mir->jsop());
+    const ValueOperand lhs = ToValue(lir, LCompareVAndBranch::LhsInput);
+    const ValueOperand rhs = ToValue(lir, LCompareVAndBranch::RhsInput);
+
+    JS_ASSERT(mir->jsop() == JSOP_EQ || mir->jsop() == JSOP_STRICTEQ ||
+              mir->jsop() == JSOP_NE || mir->jsop() == JSOP_STRICTNE);
+
+    Label *notEqual;
+    if (cond == Assembler::Equal)
+        notEqual = lir->ifFalse()->lir()->label();
+    else
+        notEqual = lir->ifTrue()->lir()->label();
+
+    masm.cmp32(lhs.typeReg(), rhs.typeReg());
+    masm.j(Assembler::NotEqual, notEqual);
+    masm.cmp32(lhs.payloadReg(), rhs.payloadReg());
+    emitBranch(cond, lir->ifTrue(), lir->ifFalse());
+
     return true;
 }

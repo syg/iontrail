@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "jscntxt.h"
 #include "gc/Marking.h"
 #include "methodjit/MethodJIT.h"
@@ -49,7 +51,7 @@ using mozilla::DebugOnly;
 /*****************************************************************************/
 
 void
-StackFrame::initExecuteFrame(JSScript *script, StackFrame *prev, FrameRegs *regs,
+StackFrame::initExecuteFrame(UnrootedScript script, StackFrame *prev, FrameRegs *regs,
                              const Value &thisv, JSObject &scopeChain, ExecuteType type)
 {
     /*
@@ -73,7 +75,7 @@ StackFrame::initExecuteFrame(JSScript *script, StackFrame *prev, FrameRegs *regs
         dstvp[0] = NullValue();
         exec.script = script;
 #ifdef DEBUG
-        u.evalScript = (JSScript *)0xbad;
+        u.evalScript = (RawScript)0xbad;
 #endif
     }
 
@@ -268,7 +270,7 @@ AssertDynamicScopeMatchesStaticScope(JSScript *script, JSObject *scope)
 }
 
 bool
-StackFrame::initCallObject(JSContext *cx)
+StackFrame::initFunctionScopeObjects(JSContext *cx)
 {
     CallObject *callobj = CallObject::createForFunction(cx, this);
     if (!callobj)
@@ -287,7 +289,7 @@ StackFrame::prologue(JSContext *cx, bool newType)
     JS_ASSERT(cx->regs().pc == script->code);
 
     if (isEvalFrame()) {
-        if (script->strictModeCode) {
+        if (script->strict) {
             CallObject *callobj = CallObject::createForStrictEval(cx, this);
             if (!callobj)
                 return false;
@@ -306,7 +308,7 @@ StackFrame::prologue(JSContext *cx, bool newType)
     JS_ASSERT(isNonEvalFunctionFrame());
     AssertDynamicScopeMatchesStaticScope(script, scopeChain());
 
-    if (fun()->isHeavyweight() && !initCallObject(cx))
+    if (fun()->isHeavyweight() && !initFunctionScopeObjects(cx))
         return false;
 
     if (isConstructing()) {
@@ -1245,7 +1247,7 @@ void
 StackIter::poisonRegs()
 {
     pc_ = (jsbytecode *)0xbad;
-    script_ = (JSScript *)0xbad;
+    script_ = (RawScript)0xbad;
 }
 
 void

@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/TabChild.h"
+#include "mozilla/Hal.h"
 #include "mozilla/layers/PLayerChild.h"
 #include "mozilla/layers/PLayersChild.h"
 #include "mozilla/layers/PLayersParent.h"
@@ -629,16 +630,7 @@ BasicLayerManager::EndTransactionInternal(DrawThebesLayerCallback aCallback,
 void
 BasicLayerManager::FlashWidgetUpdateArea(gfxContext *aContext)
 {
-  static bool sWidgetFlashingEnabled;
-  static bool sWidgetFlashingPrefCached = false;
-
-  if (!sWidgetFlashingPrefCached) {
-    sWidgetFlashingPrefCached = true;
-    mozilla::Preferences::AddBoolVarCache(&sWidgetFlashingEnabled,
-                                          "nglayout.debug.widget_update_flashing");
-  }
-
-  if (sWidgetFlashingEnabled) {
+  if (gfxPlatform::GetPlatform()->WidgetUpdateFlashing()) {
     float r = float(rand()) / RAND_MAX;
     float g = float(rand()) / RAND_MAX;
     float b = float(rand()) / RAND_MAX;
@@ -1103,7 +1095,17 @@ BasicShadowLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
   // don't signal a new transaction to ShadowLayerForwarder. Carry on adding
   // to the previous transaction.
   if (HasShadowManager()) {
-    ShadowLayerForwarder::BeginTransaction(mTargetBounds, mTargetRotation);
+    ScreenOrientation orientation;
+    nsIntRect clientBounds;
+    if (TabChild* window = mWidget->GetOwningTabChild()) {
+      orientation = window->GetOrientation();
+    } else {
+      hal::ScreenConfiguration currentConfig;
+      hal::GetCurrentScreenConfiguration(&currentConfig);
+      orientation = currentConfig.orientation();
+    }
+    mWidget->GetClientBounds(clientBounds);
+    ShadowLayerForwarder::BeginTransaction(mTargetBounds, mTargetRotation, clientBounds, orientation);
 
     // If we're drawing on behalf of a context with async pan/zoom
     // enabled, then the entire buffer of thebes layers might be

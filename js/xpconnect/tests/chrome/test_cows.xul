@@ -27,6 +27,8 @@ var test_utils = window.QueryInterface(Ci.nsIInterfaceRequestor).
                  getInterface(Ci.nsIDOMWindowUtils);
 
 function getCOW(x) {
+  if (typeof x != 'object' && typeof x != 'function')
+    return x;
   var rval = {};
   if (typeof x == "function")
     rval = eval(uneval(x));
@@ -34,7 +36,7 @@ function getCOW(x) {
     if (x.__lookupGetter__(i))
       rval.__defineGetter__(i, eval(uneval(x.__lookupGetter__(i))))
     else
-      rval[i] = x[i];
+      rval[i] = getCOW(x[i]);
   }
   return rval;
 }
@@ -233,8 +235,6 @@ function COWTests() {
         var props = [name for (name in getCOW(readable))];
         is(props.length, 1, "COW w/ one exposed prop should enumerate once");
         is(props[0], 'foo', "COW w/ one exposed prop should enumerate it");
-        props = [value for each (value in getCOW(readable))];
-        is(props[0], 5, "for-each over COWs works");
     } catch (e) {
         ok(false, "COW w/ a readable prop should not raise exc " +
                   "on enumeration: " + e);

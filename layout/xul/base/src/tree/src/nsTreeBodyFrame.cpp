@@ -3,6 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <cmath> // for std::abs(float/double)
+#include <cstdlib> // for std::abs(int/long)
+
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
+
 #include "nsCOMPtr.h"
 #include "nsISupportsArray.h"
 #include "nsPresContext.h"
@@ -46,7 +52,6 @@
 #include "nsITheme.h"
 #include "imgIRequest.h"
 #include "imgIContainer.h"
-#include "imgIContainerObserver.h"
 #include "imgILoader.h"
 #include "nsINodeInfo.h"
 #include "nsContentUtils.h"
@@ -57,11 +62,6 @@
 #include "nsTreeBoxObject.h"
 #include "nsRenderingContext.h"
 #include "nsIScriptableRegion.h"
-
-#include "mozilla/Likely.h"
-#include "mozilla/Util.h"
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -2089,7 +2089,7 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
 
   nsAutoString imageSrc;
   mView->GetImageSrc(aRowIndex, aCol, imageSrc);
-  nsCOMPtr<imgIRequest> styleRequest;
+  nsRefPtr<imgRequestProxy> styleRequest;
   if (!aUseContext && !imageSrc.IsEmpty()) {
     aAllowImageRegions = false;
   }
@@ -2147,7 +2147,7 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
     listener->AddCell(aRowIndex, aCol);
     nsCOMPtr<imgINotificationObserver> imgNotificationObserver = listener;
 
-    nsCOMPtr<imgIRequest> imageRequest;
+    nsRefPtr<imgRequestProxy> imageRequest;
     if (styleRequest) {
       styleRequest->Clone(imgNotificationObserver, getter_AddRefs(imageRequest));
     } else {
@@ -4438,7 +4438,7 @@ nsTreeBodyFrame::FireScrollEvent()
   mScrollEvent.Forget();
   nsScrollbarEvent event(true, NS_SCROLL_EVENT, nullptr);
   // scroll events fired at elements don't bubble
-  event.flags |= NS_EVENT_FLAG_CANT_BUBBLE;
+  event.mFlags.mBubbles = false;
   nsEventDispatcher::Dispatch(GetContent(), PresContext(), &event);
 }
 

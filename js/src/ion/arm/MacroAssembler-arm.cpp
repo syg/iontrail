@@ -5,11 +5,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "ion/arm/MacroAssembler-arm.h"
 #include "ion/MoveEmitter.h"
 
 using namespace js;
 using namespace ion;
+
 bool
 isValueDTRDCandidate(ValueOperand &val)
 {
@@ -63,6 +66,12 @@ MacroAssemblerARM::branchTruncateDouble(const FloatRegister &src, const Register
     ma_cmp(dest, Imm32(0x7fffffff));
     ma_cmp(dest, Imm32(0x80000000), Assembler::NotEqual);
     ma_b(fail, Assembler::Equal);
+}
+
+void
+MacroAssemblerARM::negateDouble(FloatRegister reg)
+{
+    ma_vneg(reg, reg);
 }
 
 void
@@ -2648,13 +2657,25 @@ MacroAssemblerARMCompat::breakpoint()
 }
 
 void
+MacroAssemblerARMCompat::breakpoint(Condition cc)
+{
+    ma_ldr(DTRAddr(r12, DtrRegImmShift(r12, LSL, 0, IsDown)), r12, Offset, cc);
+}
+
+void
 MacroAssemblerARMCompat::setupABICall(uint32_t args)
 {
     JS_ASSERT(!inCall_);
     inCall_ = true;
     args_ = args;
     passedArgs_ = 0;
+#ifdef JS_CPU_ARM_HARDFP
+    usedIntSlots_ = 0;
+    usedFloatSlots_ = 0;
+    padding_ = 0;
+#else
     usedSlots_ = 0;
+#endif
     floatArgsInGPR[0] = VFPRegister();
     floatArgsInGPR[1] = VFPRegister();
 }
@@ -2679,7 +2700,43 @@ MacroAssemblerARMCompat::setupUnalignedABICall(uint32_t args, const Register &sc
     ma_and(Imm32(~(StackAlignment - 1)), sp, sp);
     ma_push(scratch);
 }
+#ifdef JS_CPU_ARM_HARDFP
+void
+MacroAssemblerARMCompat::passABIArg(const MoveOperand &from)
+{
+    MoveOperand to;
+    uint32_t increment = 1;
+    bool useResolver = true;
+    ++passedArgs_;
+    Move::Kind kind = Move::GENERAL;
+    if (!enoughMemory_)
+        return;
+    if (from.isDouble()) {
+        FloatRegister fr;
+        if (GetFloatArgReg(usedIntSlots_, usedFloatSlots_, &fr)) {
+            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(fr), Move::DOUBLE);
+        } else {
+            // If (and only if) the integer registers have started spilling, do we
+            // need to take the double register's alignment into accoun
+            uint32_t disp = GetFloatArgStackDisp(usedIntSlots_, usedFloatSlots_, &padding_);
+            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), Move::DOUBLE);
+        }
+        usedFloatSlots_++;
+    } else {
+        Register r;
+        if (GetIntArgReg(usedIntSlots_, usedFloatSlots_, &r)) {
+            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(r), Move::GENERAL);
+        } else {
+            uint32_t disp = GetIntArgStackDisp(usedIntSlots_, usedFloatSlots_, &padding_);
+            fprintf(stderr, "Float on the stack! (%d)\n", disp);
+            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), Move::GENERAL);
+        }
+            usedIntSlots_++;
+    }
 
+}
+
+#else
 void
 MacroAssemblerARMCompat::passABIArg(const MoveOperand &from)
 {
@@ -2698,7 +2755,7 @@ MacroAssemblerARMCompat::passABIArg(const MoveOperand &from)
 
     Register destReg;
     MoveOperand dest;
-    if (GetArgReg(usedSlots_, &destReg)) {
+    if (GetIntArgReg(usedSlots_, 0, &destReg)) {
         if (from.isDouble()) {
             floatArgsInGPR[destReg.code() >> 1] = VFPRegister(from.floatReg());
             useResolver = false;
@@ -2714,6 +2771,7 @@ MacroAssemblerARMCompat::passABIArg(const MoveOperand &from)
         enoughMemory_ = enoughMemory_ && moveResolver_.addMove(from, dest, kind);
     usedSlots_ += increment;
 }
+#endif
 
 void
 MacroAssemblerARMCompat::passABIArg(const Register &reg)
@@ -2730,27 +2788,30 @@ MacroAssemblerARMCompat::passABIArg(const FloatRegister &freg)
 void MacroAssemblerARMCompat::checkStackAlignment()
 {
 #ifdef DEBUG
-    Label good;
     ma_tst(sp, Imm32(StackAlignment - 1));
-    ma_b(&good, Equal);
-    breakpoint();
-    bind(&good);
+    breakpoint(NonZero);
 #endif
 }
 
 void
-MacroAssemblerARMCompat::callWithABI(void *fun, Result result)
+MacroAssemblerARMCompat::callWithABIPre(uint32_t *stackAdjust)
 {
     JS_ASSERT(inCall_);
-    uint32_t stackAdjust = ((usedSlots_ > NumArgRegs) ? usedSlots_ - NumArgRegs : 0) * STACK_SLOT_SIZE;
-    if (!dynamicAlignment_)
-        stackAdjust +=
-            ComputeByteAlignment(framePushed_ + stackAdjust, StackAlignment);
-    else
+#ifdef JS_CPU_ARM_HARDFP
+    *stackAdjust = ((usedIntSlots_ > NumIntArgRegs) ? usedIntSlots_ - NumIntArgRegs : 0) * STACK_SLOT_SIZE;
+    *stackAdjust += 2*((usedFloatSlots_ > NumFloatArgRegs) ? usedFloatSlots_ - NumFloatArgRegs : 0) * STACK_SLOT_SIZE;
+#else
+    *stackAdjust = ((usedSlots_ > NumIntArgRegs) ? usedSlots_ - NumIntArgRegs : 0) * STACK_SLOT_SIZE;
+#endif
+    if (!dynamicAlignment_) {
+        *stackAdjust += ComputeByteAlignment(framePushed_ + *stackAdjust, StackAlignment);
+    } else {
         // STACK_SLOT_SIZE account for the saved stack pointer pushed by setupUnalignedABICall
-        stackAdjust += ComputeByteAlignment(stackAdjust + STACK_SLOT_SIZE, StackAlignment);
+        *stackAdjust += ComputeByteAlignment(*stackAdjust + STACK_SLOT_SIZE, StackAlignment);
+    }
 
-    reserveStack(stackAdjust);
+    reserveStack(*stackAdjust);
+
     // Position all arguments.
     {
         enoughMemory_ = enoughMemory_ && moveResolver_.resolve();
@@ -2766,14 +2827,22 @@ MacroAssemblerARMCompat::callWithABI(void *fun, Result result)
             ma_vxfer(floatArgsInGPR[i], Register::FromCode(i*2), Register::FromCode(i*2+1));
     }
     checkStackAlignment();
-    ma_call(fun);
+}
 
+void
+MacroAssemblerARMCompat::callWithABIPost(uint32_t stackAdjust, Result result)
+{
     if (result == DOUBLE) {
+#ifdef JS_CPU_ARM_HARDFP
+        as_vmov(ReturnFloatReg, d0);
+#else
         // Move double from r0/r1 to ReturnFloatReg.
         as_vxfer(r0, r1, ReturnFloatReg, CoreToFloat);
+#endif
     }
 
     freeStack(stackAdjust);
+
     if (dynamicAlignment_) {
         // x86 supports pop esp.  on arm, that isn't well defined, so just
         // do it manually
@@ -2782,6 +2851,28 @@ MacroAssemblerARMCompat::callWithABI(void *fun, Result result)
 
     JS_ASSERT(inCall_);
     inCall_ = false;
+}
+
+void
+MacroAssemblerARMCompat::callWithABI(void *fun, Result result)
+{
+    uint32_t stackAdjust;
+    callWithABIPre(&stackAdjust);
+    ma_call(fun);
+    callWithABIPost(stackAdjust, result);
+}
+
+void
+MacroAssemblerARMCompat::callWithABI(const Address &fun, Result result)
+{
+    // Load the callee in r12, no instruction between the ldr and call
+    // should clobber it. Note that we can't use fun.base because it may
+    // be one of the IntArg registers clobbered before the call.
+    ma_ldr(fun, r12);
+    uint32_t stackAdjust;
+    callWithABIPre(&stackAdjust);
+    call(r12);
+    callWithABIPost(stackAdjust, result);
 }
 
 void

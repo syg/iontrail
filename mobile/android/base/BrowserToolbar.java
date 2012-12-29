@@ -55,6 +55,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private int mAwesomeBarEntryRightMargin;
     private GeckoFrameLayout mAwesomeBarRightEdge;
     private BrowserToolbarBackground mAddressBarBg;
+    private View mAddressBarView;
     private BrowserToolbarBackground.CurveTowards mAddressBarBgCurveTowards;
     private int mAddressBarBgRightMargin;
     private GeckoTextView mTitle;
@@ -97,11 +98,17 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private TranslateAnimation mTitleSlideLeft;
     private TranslateAnimation mTitleSlideRight;
 
+    private int mAddressBarViewOffset;
+    private int mAddressBarViewOffsetNoForward;
+    private PropertyAnimator mForwardAnim = null;
+
     private int mCount;
     private int mFaviconSize;
 
     private static final int TABS_CONTRACTED = 1;
     private static final int TABS_EXPANDED = 2;
+
+    private static final int FORWARD_ANIMATION_DURATION = 450;
 
     public BrowserToolbar(BrowserApp activity) {
         // BrowserToolbar is attached to BrowserApp only.
@@ -124,6 +131,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mShowReader = false;
 
         mAddressBarBg = (BrowserToolbarBackground) mLayout.findViewById(R.id.address_bar_bg);
+        mAddressBarView = mLayout.findViewById(R.id.addressbar);
+        mAddressBarViewOffset = mActivity.getResources().getDimensionPixelSize(R.dimen.addressbar_offset_left);
+        mAddressBarViewOffsetNoForward = mActivity.getResources().getDimensionPixelSize(R.dimen.addressbar_offset_left_noforward);
         mAwesomeBarRightEdge = (GeckoFrameLayout) mLayout.findViewById(R.id.awesome_bar_right_edge);
         mAwesomeBarEntry = mLayout.findViewById(R.id.awesome_bar_entry);
 
@@ -204,6 +214,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         });
 
         mForward = (ImageButton) mLayout.findViewById(R.id.forward);
+        mForward.setEnabled(false); // initialize the forward button to not be enabled
         mForward.setOnClickListener(new Button.OnClickListener() {
             public void onClick(View view) {
                 Tabs.getInstance().getSelectedTab().doForward();
@@ -403,6 +414,15 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         if (animation.equals(mLockFadeIn)) {
             if (mSiteSecurityVisible)
                 mSiteSecurity.setVisibility(View.VISIBLE);
+        } else if (animation.equals(mTitleSlideLeft)) {
+            // These two animations may be scheduled to start while the forward
+            // animation is occurring. If we're showing the site security icon, make
+            // sure it doesn't take any space during the forward transition.
+            mSiteSecurity.setVisibility(View.GONE);
+        } else if (animation.equals(mTitleSlideRight)) {
+            // If we're hiding the icon, make sure that we keep its padding
+            // in place during the forward transition
+            mSiteSecurity.setVisibility(View.INVISIBLE);
         }
     }
 
@@ -412,9 +432,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
     @Override
     public void onAnimationEnd(Animation animation) {
-        if (animation.equals(mTitleSlideLeft)) {
-            mSiteSecurity.setVisibility(View.GONE);
-        } else if (animation.equals(mTitleSlideRight)) {
+        if (animation.equals(mTitleSlideRight)) {
             mSiteSecurity.startAnimation(mLockFadeIn);
         }
     }
@@ -425,22 +443,93 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         return mInflater.inflate(R.layout.tabs_counter, null);
     }
 
+    private int prepareAwesomeBarAnimation() {
+        // Keep the entry highlighted during the animation
+        mAwesomeBar.setSelected(true);
+
+        // Expand the entry to fill all the horizontal space available during the
+        // animation. The fake right edge will slide on top of it to give the effect
+        // of expanding the entry.
+        MarginLayoutParams entryParams = (MarginLayoutParams) mAwesomeBarEntry.getLayoutParams();
+        mAwesomeBarEntryRightMargin = entryParams.rightMargin;
+        entryParams.rightMargin = 0;
+        mAwesomeBarEntry.requestLayout();
+
+        // Remove any curves from the toolbar background and expand it to fill all
+        // the horizontal space.
+        MarginLayoutParams barParams = (MarginLayoutParams) mAddressBarBg.getLayoutParams();
+        mAddressBarBgRightMargin = barParams.rightMargin;
+        barParams.rightMargin = 0;
+        mAddressBarBgCurveTowards = mAddressBarBg.getCurveTowards();
+        mAddressBarBg.setCurveTowards(BrowserToolbarBackground.CurveTowards.NONE);
+        mAddressBarBg.requestLayout();
+
+        // If we don't have any menu_items, then we simply slide all elements on the
+        // rigth side of the toolbar out of screen.
+        int translation = mAwesomeBarEntryRightMargin;
+
+        if (mActionItemBar.getVisibility() == View.VISIBLE) {
+            // If the toolbar has action items (e.g. on the tablet UI), the translation will
+            // be in relation to the left side of their container (i.e. mActionItemBar).
+            MarginLayoutParams itemBarParams = (MarginLayoutParams) mActionItemBar.getLayoutParams();
+            translation = itemBarParams.rightMargin + mActionItemBar.getWidth() - entryParams.leftMargin;
+
+            // Expand the whole entry container to fill all the horizontal space available
+            View awesomeBarParent = (View) mAwesomeBar.getParent();
+            mAwesomeBarParams = (LayoutParams) awesomeBarParent.getLayoutParams();
+            awesomeBarParent.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                                                              ViewGroup.LayoutParams.MATCH_PARENT));
+
+            // Align the fake right edge to the right side of the entry bar
+            MarginLayoutParams rightEdgeParams = (MarginLayoutParams) mAwesomeBarRightEdge.getLayoutParams();
+            rightEdgeParams.rightMargin = itemBarParams.rightMargin + mActionItemBar.getWidth() - 100;
+            mAwesomeBarRightEdge.requestLayout();
+        }
+
+        // Make the right edge visible to start the animation
+        mAwesomeBarRightEdge.setVisibility(View.VISIBLE);
+
+        return translation;
+    }
+
     public void fromAwesomeBarSearch() {
         if (mActivity.hasTabsSideBar() || Build.VERSION.SDK_INT < 11) {
             return;
         }
 
+        AnimatorProxy proxy = null;
+
+        // If the awesomebar entry is not selected at this point, this means that
+        // we had to reinflate the toolbar layout for some reason (device rotation
+        // while in awesome screen, activity was killed in background, etc). In this
+        // case, we have to ensure the toolbar is in the correct initial state to
+        // shrink back.
+        if (!mAwesomeBar.isSelected()) {
+            int translation = prepareAwesomeBarAnimation();
+
+            proxy = AnimatorProxy.create(mAwesomeBarRightEdge);
+            proxy.setTranslationX(translation);
+            proxy = AnimatorProxy.create(mTabs);
+            proxy.setTranslationX(translation);
+            proxy = AnimatorProxy.create(mTabsCount);
+            proxy.setTranslationX(translation);
+            proxy = AnimatorProxy.create(mMenu);
+            proxy.setTranslationX(translation);
+            proxy = AnimatorProxy.create(mActionItemBar);
+            proxy.setTranslationX(translation);
+        }
+
         // Restore opacity of content elements in the toolbar immediatelly
         // so that the response is immediate from user interaction in the
         // awesome screen.
-        AnimatorProxy proxy = AnimatorProxy.create(mFavicon);
+        proxy = AnimatorProxy.create(mFavicon);
         proxy.setAlpha(1);
         proxy = AnimatorProxy.create(mSiteSecurity);
         proxy.setAlpha(1);
         proxy = AnimatorProxy.create(mTitle);
         proxy.setAlpha(1);
         proxy = AnimatorProxy.create(mForward);
-        proxy.setAlpha(1);
+        proxy.setAlpha(mForward.isEnabled() ? 1 : 0);
         proxy = AnimatorProxy.create(mBack);
         proxy.setAlpha(1);
 
@@ -489,7 +578,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 // alignment of the entry in relation to them. mAwesomeBarParams might
                 // be null if the activity holding the toolbar is killed before returning
                 // from awesome screen (e.g. "Don't keep activities" is on)
-                if (mActionItemBar.getVisibility() == View.VISIBLE && mAwesomeBarParams != null)
+                if (mActionItemBar.getVisibility() == View.VISIBLE)
                     ((View) mAwesomeBar.getParent()).setLayoutParams(mAwesomeBarParams);
 
                 // Hide fake right edge, we only use for the animation
@@ -526,47 +615,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
         final PropertyAnimator contentAnimator = new PropertyAnimator(250);
 
-        // Keep the entry highlighted during the animation
-        mAwesomeBar.setSelected(true);
-
-        // Expand the entry to fill all the horizontal space available during the
-        // animation. The fake right edge will slide on top of it to give the effect
-        // of expanding the entry.
-        MarginLayoutParams entryParams = (MarginLayoutParams) mAwesomeBarEntry.getLayoutParams();
-        mAwesomeBarEntryRightMargin = entryParams.rightMargin;
-        entryParams.rightMargin = 0;
-        mAwesomeBarEntry.requestLayout();
-
-        // Remove any curves from the toolbar background and expand it to fill all
-        // the horizontal space.
-        MarginLayoutParams barParams = (MarginLayoutParams) mAddressBarBg.getLayoutParams();
-        mAddressBarBgRightMargin = barParams.rightMargin;
-        barParams.rightMargin = 0;
-        mAddressBarBgCurveTowards = mAddressBarBg.getCurveTowards();
-        mAddressBarBg.setCurveTowards(BrowserToolbarBackground.CurveTowards.NONE);
-        mAddressBarBg.requestLayout();
-
-        // If we don't have any menu_items, then we simply slide all elements on the
-        // rigth side of the toolbar out of screen.
-        int translation = mAwesomeBarEntryRightMargin;
+        int translation = prepareAwesomeBarAnimation();
 
         if (mActionItemBar.getVisibility() == View.VISIBLE) {
-            // If the toolbar has action items (e.g. on the tablet UI), the translation will
-            // be in relation to the left side of their container (i.e. mActionItemBar).
-            MarginLayoutParams itemBarParams = (MarginLayoutParams) mActionItemBar.getLayoutParams();
-            translation = itemBarParams.rightMargin + mActionItemBar.getWidth() - entryParams.leftMargin;
-
-            // Expand the whole entry container to fill all the horizontal space available
-            View awesomeBarParent = (View) mAwesomeBar.getParent();
-            mAwesomeBarParams = (LayoutParams) awesomeBarParent.getLayoutParams();
-            awesomeBarParent.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                                                              ViewGroup.LayoutParams.MATCH_PARENT));
-
-            // Align the fake right edge to the right side of the entry bar
-            MarginLayoutParams rightEdgeParams = (MarginLayoutParams) mAwesomeBarRightEdge.getLayoutParams();
-            rightEdgeParams.rightMargin = itemBarParams.rightMargin + mActionItemBar.getWidth() - 100;
-            mAwesomeBarRightEdge.requestLayout();
-
             contentAnimator.attach(mFavicon,
                                    PropertyAnimator.Property.ALPHA,
                                    0);
@@ -577,9 +628,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                                    PropertyAnimator.Property.ALPHA,
                                    0);
         }
-
-        // Make the right edge visible to start the animation
-        mAwesomeBarRightEdge.setVisibility(View.VISIBLE);
 
         // Fade out all controls inside the toolbar
         contentAnimator.attach(mForward,
@@ -642,7 +690,14 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             InputMethodManager imm =
                     (InputMethodManager) mActivity.getSystemService(Context.INPUT_METHOD_SERVICE);
             imm.hideSoftInputFromWindow(mTabs.getWindowToken(), 0);
-            mActivity.showLocalTabs();
+
+            Tab tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null) {
+                if (!tab.isPrivate())
+                    mActivity.showNormalTabs();
+                else
+                    mActivity.showPrivateTabs();
+            }
         }
     }
 
@@ -666,7 +721,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             public void run() {
                 GeckoTextView view = (GeckoTextView) mTabsCount.getCurrentView();
                 view.setSelected(true);
-                view.setPrivateMode(false);
             }
         }, mDuration);
 
@@ -674,7 +728,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             public void run() {
                 GeckoTextView view = (GeckoTextView) mTabsCount.getCurrentView();
                 view.setSelected(false);
-                view.setPrivateMode(Tabs.getInstance().getSelectedTab().isPrivate());
             }
         }, 2 * mDuration);
     }
@@ -838,10 +891,14 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mTitleSlideLeft.reset();
         mTitleSlideRight.reset();
 
-        if (visible)
-            mSiteSecurity.setVisibility(View.INVISIBLE);
-        else
-            mSiteSecurity.setVisibility(View.GONE);
+        if (mForwardAnim != null) {
+            long delay = mForwardAnim.getRemainingTime();
+            mTitleSlideRight.setStartOffset(delay);
+            mTitleSlideLeft.setStartOffset(delay);
+        } else {
+            mTitleSlideRight.setStartOffset(0);
+            mTitleSlideLeft.setStartOffset(0);
+        }
 
         mTitle.startAnimation(visible ? mTitleSlideRight : mTitleSlideLeft);
     }
@@ -935,9 +992,104 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
          mBack.setEnabled(enabled);
     }
 
-    public void updateForwardButton(boolean enabled) {
-         mForward.setColorFilter(enabled ? 0 : 0xFF999999);
-         mForward.setEnabled(enabled);
+    public void updateForwardButton(final boolean enabled) {
+        if (mForward.isEnabled() == enabled)
+            return;
+
+        // Save the state on the forward button so that we can skip animations
+        // when there's nothing to change
+        mForward.setEnabled(enabled);
+
+        if (mForward.getVisibility() != View.VISIBLE)
+            return;
+
+        mForwardAnim = new PropertyAnimator(FORWARD_ANIMATION_DURATION);
+        final int width = enabled ? mForward.getWidth()/2 : 0;
+
+        mForwardAnim.setPropertyAnimationListener(new PropertyAnimator.PropertyAnimationListener() {
+            @Override
+            public void onPropertyAnimationStart() {
+                if (!enabled) {
+                    // Set the margin before the transition when hiding the forward button. We
+                    // have to do this so that the favicon isn't clipped during the transition
+                    ViewGroup.MarginLayoutParams layoutParams =
+                        (ViewGroup.MarginLayoutParams)mAddressBarView.getLayoutParams();
+                    layoutParams.leftMargin = mAddressBarViewOffsetNoForward;
+                    mAddressBarView.requestLayout();
+                    // Note, we already translated the favicon, site security, and text field
+                    // in prepareForwardAnimation, so they should appear to have not moved at
+                    // all at this point.
+                }
+            }
+
+            @Override
+            public void onPropertyAnimationEnd() {
+                if (enabled) {
+                    ViewGroup.MarginLayoutParams layoutParams =
+                        (ViewGroup.MarginLayoutParams)mAddressBarView.getLayoutParams();
+                    layoutParams.leftMargin = mAddressBarViewOffset;
+
+                    AnimatorProxy proxy = AnimatorProxy.create(mTitle);
+                    proxy.setTranslationX(0);
+                    proxy = AnimatorProxy.create(mFavicon);
+                    proxy.setTranslationX(0);
+                    proxy = AnimatorProxy.create(mSiteSecurity);
+                    proxy.setTranslationX(0);
+
+                    mAddressBarView.requestLayout();
+                }
+                mForwardAnim = null;
+            }
+        });
+        prepareForwardAnimation(mForwardAnim, width);
+        mForwardAnim.start();
+    }
+
+    private void prepareForwardAnimation(PropertyAnimator anim, int width) {
+        if (width == 0) {
+            anim.attach(mForward,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      0);
+            anim.attach(mForward,
+                      PropertyAnimator.Property.ALPHA,
+                      0);
+            anim.attach(mTitle,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      0);
+            anim.attach(mFavicon,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      0);
+            anim.attach(mSiteSecurity,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      0);
+
+            // We're hiding the forward button. We're going to reset the margin before
+            // the animation starts, so we shift these items to the right so that they don't
+            // appear to move initially.
+            int startTrans = mAddressBarViewOffset - mAddressBarViewOffsetNoForward;
+            AnimatorProxy proxy = AnimatorProxy.create(mTitle);
+            proxy.setTranslationX(startTrans);
+            proxy = AnimatorProxy.create(mFavicon);
+            proxy.setTranslationX(startTrans);
+            proxy = AnimatorProxy.create(mSiteSecurity);
+            proxy.setTranslationX(startTrans);
+        } else {
+            anim.attach(mForward,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      width);
+            anim.attach(mForward,
+                      PropertyAnimator.Property.ALPHA,
+                      1);
+            anim.attach(mTitle,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      mAddressBarViewOffset - mAddressBarViewOffsetNoForward);
+            anim.attach(mFavicon,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      mAddressBarViewOffset - mAddressBarViewOffsetNoForward);
+            anim.attach(mSiteSecurity,
+                      PropertyAnimator.Property.TRANSLATION_X,
+                      mAddressBarViewOffset - mAddressBarViewOffsetNoForward);
+        }
     }
 
     @Override
@@ -989,8 +1141,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 ((GeckoRelativeLayout) mAwesomeBar).setPrivateMode(tab.isPrivate());
 
             mTabs.setPrivateMode(tab.isPrivate());
-            mTabsCount.setPrivateMode(tab.isPrivate());
-            ((GeckoTextView) mTabsCount.getCurrentView()).setPrivateMode(tab.isPrivate());
             mTitle.setPrivateMode(tab.isPrivate());
             mMenu.setPrivateMode(tab.isPrivate());
 

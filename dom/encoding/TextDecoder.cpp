@@ -14,9 +14,8 @@ namespace dom {
 static const PRUnichar kReplacementChar = static_cast<PRUnichar>(0xFFFD);
 
 void
-TextDecoder::Init(const nsAString& aEncoding,
-                  const TextDecoderOptions& aFatal,
-                  ErrorResult& aRv)
+TextDecoderBase::Init(const nsAString& aEncoding, const bool aFatal,
+                      ErrorResult& aRv)
 {
   nsAutoString label(aEncoding);
   EncodingUtils::TrimSpaceCharacters(label);
@@ -31,7 +30,7 @@ TextDecoder::Init(const nsAString& aEncoding,
   // If the constructor is called with an options argument,
   // and the fatal property of the dictionary is set,
   // set the internal fatal flag of the decoder object.
-  mFatal = aFatal.fatal;
+  mFatal = aFatal;
 
   // Create a decoder object for mEncoding.
   nsCOMPtr<nsICharsetConverterManager> ccm =
@@ -53,13 +52,13 @@ TextDecoder::Init(const nsAString& aEncoding,
 }
 
 void
-TextDecoder::Decode(const ArrayBufferView* aView,
-                    const TextDecodeOptions& aOptions,
-                    nsAString& aOutDecodedString,
-                    ErrorResult& aRv)
+TextDecoderBase::Decode(const ArrayBufferView* aView,
+                        const bool aStream,
+                        nsAString& aOutDecodedString,
+                        ErrorResult& aRv)
 {
   const char* data;
-  uint32_t length;
+  int32_t length;
   // If view is not specified, let view be a Uint8Array of length 0.
   if (!aView) {
     data = EmptyCString().BeginReading();
@@ -87,31 +86,14 @@ TextDecoder::Decode(const ArrayBufferView* aView,
     return;
   }
 
-  for (;;) {
-    int32_t srcLen = length;
-    int32_t dstLen = outLen;
-    rv = mDecoder->Convert(data, &srcLen, buf, &dstLen);
-    // Convert will convert the input partially even if the status
-    // indicates a failure.
-    buf[dstLen] = 0;
-    aOutDecodedString.Append(buf, dstLen);
-    if (mFatal || rv != NS_ERROR_ILLEGAL_INPUT) {
-      break;
-    }
-    // Emit a decode error manually because some decoders
-    // do not support kOnError_Recover (bug 638379)
-    if (srcLen == -1) {
-      mDecoder->Reset();
-    } else {
-      data += srcLen + 1;
-      length -= srcLen + 1;
-      aOutDecodedString.Append(kReplacementChar);
-    }
-  }
+  rv = mDecoder->Convert(data, &length, buf, &outLen);
+  MOZ_ASSERT(mFatal || rv != NS_ERROR_ILLEGAL_INPUT);
+  buf[outLen] = 0;
+  aOutDecodedString.Append(buf, outLen);
 
   // If the internal streaming flag of the decoder object is not set,
   // then reset the encoding algorithm state to the default values
-  if (!aOptions.stream) {
+  if (!aStream) {
     mDecoder->Reset();
     if (rv == NS_OK_UDEC_MOREINPUT) {
       if (mFatal) {
@@ -130,7 +112,7 @@ TextDecoder::Decode(const ArrayBufferView* aView,
 }
 
 void
-TextDecoder::GetEncoding(nsAString& aEncoding)
+TextDecoderBase::GetEncoding(nsAString& aEncoding)
 {
   CopyASCIItoUTF16(mEncoding, aEncoding);
   nsContentUtils::ASCIIToLower(aEncoding);

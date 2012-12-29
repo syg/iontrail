@@ -117,6 +117,10 @@ class Marionette(object):
         self._test_name = None
 
         if bin:
+            port = int(self.port)
+            if not Marionette.is_port_available(port, host=self.host):
+                ex_msg = "%s:%d is unavailable." % (self.host, port)
+                raise MarionetteException(message=ex_msg)
             self.instance = GeckoInstance(host=self.host, port=self.port,
                                           bin=self.bin, profile=self.profile)
             self.instance.start()
@@ -157,6 +161,18 @@ class Marionette(object):
             self.instance.close()
         for qemu in self.extra_emulators:
             qemu.emulator.close()
+
+    @staticmethod
+    def is_port_available(port, host=''):
+        port = int(port)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((host, port))
+            return True
+        except socket.error:
+            return False
+        finally:
+            s.close()
 
     @classmethod
     def getMarionetteOrExit(cls, *args, **kwargs):
@@ -360,11 +376,11 @@ class Marionette(object):
         self.window = window_id
         return response
 
-    def switch_to_frame(self, frame=None):
+    def switch_to_frame(self, frame=None, focus=True):
         if isinstance(frame, HTMLElement):
-            response = self._send_message('switchToFrame', 'ok', element=frame.id)
+            response = self._send_message('switchToFrame', 'ok', element=frame.id, focus=focus)
         else:
-            response = self._send_message('switchToFrame', 'ok', value=frame)
+            response = self._send_message('switchToFrame', 'ok', value=frame, focus=focus)
         return response
 
     def get_url(self):

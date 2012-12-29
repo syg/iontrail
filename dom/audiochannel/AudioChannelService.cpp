@@ -59,7 +59,6 @@ AudioChannelService::Shutdown()
   }
 
   if (gAudioChannelService) {
-    delete gAudioChannelService;
     gAudioChannelService = nullptr;
   }
 }
@@ -121,6 +120,22 @@ AudioChannelService::UnregisterType(AudioChannelType aType)
 {
   mChannelCounters[aType]--;
   MOZ_ASSERT(mChannelCounters[aType] >= 0);
+
+  bool isNoChannelUsed = true;
+  for (int32_t type = AUDIO_CHANNEL_NORMAL;
+         type <= AUDIO_CHANNEL_PUBLICNOTIFICATION;
+         ++type) {
+    if (mChannelCounters[type]) {
+      isNoChannelUsed = false;
+      break;
+    }
+  }
+
+  if (isNoChannelUsed) {
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    obs->NotifyObservers(nullptr, "audio-channel-changed", NS_LITERAL_STRING("default").get());
+    return;
+  }
 
   // In order to avoid race conditions, it's safer to notify any existing
   // agent any time a new one is registered.
@@ -282,18 +297,4 @@ AudioChannelService::ChannelName(AudioChannelType aType)
   NS_NOTREACHED("Execution should not reach here!");
   return nullptr;
 }
-
-#ifdef MOZ_WIDGET_GONK
-void
-AudioChannelService::SetPhoneInCall(bool aActive)
-{
-  //while ring tone and in-call mode, mute media element
-  if (aActive) {
-    mChannelCounters[AUDIO_CHANNEL_TELEPHONY] = 1;
-  } else {
-    mChannelCounters[AUDIO_CHANNEL_TELEPHONY] = 0;
-  }
-  Notify();
-}
-#endif
 

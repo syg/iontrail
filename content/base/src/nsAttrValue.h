@@ -19,12 +19,11 @@
 #include "nsMargin.h"
 #include "nsCOMPtr.h"
 #include "SVGAttrValueWrapper.h"
+#include "nsTArrayForwardDeclare.h"
 
 class nsAString;
 class nsIAtom;
 class nsIDocument;
-template<class E, class A> class nsTArray;
-struct nsTArrayDefaultAllocator;
 class nsStyledElementNotElementCSSInlineStyle;
 struct MiscContainer;
 
@@ -200,6 +199,7 @@ public:
 
   uint32_t HashValue() const;
   bool Equals(const nsAttrValue& aOther) const;
+  // aCaseSensitive == eIgnoreCase means ASCII case-insenstive matching
   bool Equals(const nsAString& aValue, nsCaseTreatment aCaseSensitive) const;
   bool Equals(nsIAtom* aValue, nsCaseTreatment aCaseSensitive) const;
 
@@ -425,7 +425,7 @@ private:
   int32_t EnumTableEntryToValue(const EnumTable* aEnumTable,
                                 const EnumTable* aTableEntry);  
 
-  static nsTArray<const EnumTable*, nsTArrayDefaultAllocator>* sEnumTableArray;
+  static nsTArray<const EnumTable*>* sEnumTableArray;
 
   uintptr_t mBits;
 };

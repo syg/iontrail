@@ -1514,11 +1514,15 @@ DrawTargetD2D::GetBlendStateForOperator(CompositionOp aOperator)
 ID2D1RenderTarget*
 DrawTargetD2D::GetRTForOperation(CompositionOp aOperator, const Pattern &aPattern)
 {
-  if (aOperator == OP_OVER && !IsPatternSupportedByD2D(aPattern)) {
+  if (aOperator == OP_OVER && IsPatternSupportedByD2D(aPattern)) {
     return mRT;
   }
 
   PopAllClips();
+
+  if (aOperator > OP_XOR) {
+    mRT->Flush();
+  }
 
   if (mTempRT) {
     mTempRT->Clear(D2D1::ColorF(0, 0));
@@ -1557,7 +1561,7 @@ DrawTargetD2D::GetRTForOperation(CompositionOp aOperator, const Pattern &aPatter
 void
 DrawTargetD2D::FinalizeRTForOperation(CompositionOp aOperator, const Pattern &aPattern, const Rect &aBounds)
 {
-  if (aOperator == OP_OVER && !IsPatternSupportedByD2D(aPattern)) {
+  if (aOperator == OP_OVER && IsPatternSupportedByD2D(aPattern)) {
     return;
   }
 
@@ -1598,15 +1602,65 @@ DrawTargetD2D::FinalizeRTForOperation(CompositionOp aOperator, const Pattern &aP
   viewport.TopLeftX = 0;
   viewport.TopLeftY = 0;
 
+  RefPtr<ID3D10Texture2D> tmpTexture;
+  RefPtr<ID3D10ShaderResourceView> mBckSRView;
+
   mDevice->RSSetViewports(1, &viewport);
   mPrivateData->mEffect->GetVariableByName("QuadDesc")->AsVector()->
     SetFloatVector(ShaderConstantRectD3D10(-1.0f, 1.0f, 2.0f, -2.0f));
 
-  if (!IsPatternSupportedByD2D(aPattern)) {
+  if (IsPatternSupportedByD2D(aPattern)) {
     mPrivateData->mEffect->GetVariableByName("TexCoords")->AsVector()->
       SetFloatVector(ShaderConstantRectD3D10(0, 0, 1.0f, 1.0f));
     mPrivateData->mEffect->GetVariableByName("tex")->AsShaderResource()->SetResource(mSRView);
-    mPrivateData->mEffect->GetTechniqueByName("SampleTexture")->GetPassByIndex(0)->Apply(0);
+
+    // Handle the case where we blend with the backdrop
+    if (aOperator > OP_XOR) {
+      IntSize size = mSize;
+      SurfaceFormat format = mFormat;
+
+      CD3D10_TEXTURE2D_DESC desc(DXGIFormat(format), size.width, size.height, 1, 1);
+      desc.BindFlags = D3D10_BIND_RENDER_TARGET | D3D10_BIND_SHADER_RESOURCE;
+
+      HRESULT hr = mDevice->CreateTexture2D(&desc, nullptr, byRef(tmpTexture));
+      if (FAILED(hr)) {
+        gfxWarning() << "Failed to create temporary texture to hold surface data.";
+        return;
+      }
+
+      mDevice->CopyResource(tmpTexture, mTexture);
+      if (FAILED(hr)) {
+        gfxWarning() << *this << "Failed to create shader resource view for temp texture. Code: " << hr;
+        return;
+      }
+
+      DrawTargetD2D::Flush();
+
+      hr = mDevice->CreateShaderResourceView(tmpTexture, nullptr, byRef(mBckSRView));
+
+      if (FAILED(hr)) {
+        gfxWarning() << *this << "Failed to create shader resource view for temp texture. Code: " << hr;
+        return;
+      }
+
+      unsigned int compop = (unsigned int)aOperator - (unsigned int)OP_XOR;
+      mPrivateData->mEffect->GetVariableByName("bcktex")->AsShaderResource()->SetResource(mBckSRView);
+      mPrivateData->mEffect->GetVariableByName("blendop")->AsScalar()->SetInt(compop);
+
+      if (aOperator > OP_EXCLUSION)
+        mPrivateData->mEffect->GetTechniqueByName("SampleTextureForNonSeparableBlending")->
+          GetPassByIndex(0)->Apply(0);
+      else if (aOperator > OP_COLOR_DODGE)
+        mPrivateData->mEffect->GetTechniqueByName("SampleTextureForSeparableBlending_2")->
+          GetPassByIndex(0)->Apply(0);
+      else
+        mPrivateData->mEffect->GetTechniqueByName("SampleTextureForSeparableBlending_1")->
+          GetPassByIndex(0)->Apply(0);
+    }
+    else {
+      mPrivateData->mEffect->GetTechniqueByName("SampleTexture")->GetPassByIndex(0)->Apply(0);
+    }
+
   } else if (aPattern.GetType() == PATTERN_RADIAL_GRADIENT) {
     const RadialGradientPattern *pat = static_cast<const RadialGradientPattern*>(&aPattern);
 
@@ -2088,7 +2142,7 @@ DrawTargetD2D::FillGlyphsManual(ScaledFontDWrite *aFont,
 TemporaryRef<ID2D1Brush>
 DrawTargetD2D::CreateBrushForPattern(const Pattern &aPattern, Float aAlpha)
 {
-  if (IsPatternSupportedByD2D(aPattern)) {
+  if (!IsPatternSupportedByD2D(aPattern)) {
     RefPtr<ID2D1SolidColorBrush> colBrush;
     mRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), byRef(colBrush));
     return colBrush;

@@ -58,9 +58,10 @@ public:
 
   // Callers to Init or ChangeOwner are required to call NotifyListener after
   // (although not immediately after) doing so.
-  nsresult Init(imgStatusTracker* aStatusTracker,
+  nsresult Init(imgRequest* aOwner,
                 nsILoadGroup *aLoadGroup,
-                nsIURI* aURI, imgINotificationObserver *aObserver);
+                nsIURI* aURI,
+                imgINotificationObserver *aObserver);
 
   nsresult ChangeOwner(imgRequest *aNewOwner); // this will change mOwner.  Do not call this if the previous
                                                // owner has already sent notifications out!
@@ -103,6 +104,9 @@ public:
   // imgRequest::RemoveProxy
   void ClearAnimationConsumers();
 
+  nsresult Clone(imgINotificationObserver* aObserver, imgRequestProxy** aClone);
+  nsresult GetStaticRequest(imgRequestProxy** aReturn);
+
 protected:
   friend class imgStatusTracker;
   friend class imgStatusNotifyRunnable;
@@ -132,7 +136,8 @@ protected:
   // class) imgStatusTracker is the only class allowed to send us
   // notifications.
 
-  /* non-virtual imgIDecoderObserver methods */
+  /* non-virtual imgDecoderObserver methods */
+  void OnStartDecode     ();
   void OnStartContainer  ();
   void OnFrameUpdate     (const nsIntRect * aRect);
   void OnStopFrame       ();
@@ -176,7 +181,7 @@ protected:
 
   nsresult PerformClone(imgINotificationObserver* aObserver,
                         imgRequestProxy* (aAllocFn)(imgRequestProxy*),
-                        imgIRequest** aClone);
+                        imgRequestProxy** aClone);
 
 public:
   NS_FORWARD_SAFE_NSITIMEDCHANNEL(TimedChannel())

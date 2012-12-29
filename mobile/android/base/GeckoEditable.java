@@ -5,6 +5,9 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.gfx.InputConnectionHandler;
+import org.mozilla.gecko.gfx.LayerView;
+
 import android.os.Build;
 import android.text.Editable;
 import android.text.InputFilter;
@@ -30,7 +33,6 @@ interface GeckoEditableClient {
     void sendEvent(GeckoEvent event);
     Editable getEditable();
     void setUpdateGecko(boolean update);
-    void setListener(GeckoEditableListener listener);
 }
 
 /* interface for the Editable to listen to the Gecko thread
@@ -75,7 +77,7 @@ final class GeckoEditable
     private final SpannableStringBuilder mText;
     private final SpannableStringBuilder mChangedText;
     private final Editable mProxy;
-    private GeckoEditableListener mListener;
+    private final GeckoEditableListener mListener;
     private final ActionQueue mActionQueue;
 
     private int mSavedSelectionStart;
@@ -253,6 +255,9 @@ final class GeckoEditable
         mProxy = (Editable)Proxy.newProxyInstance(
                 Editable.class.getClassLoader(),
                 PROXY_INTERFACES, this);
+
+        LayerView v = GeckoApp.mAppContext.getLayerView();
+        mListener = GeckoInputConnection.create(v, this);
     }
 
     private static void geckoPostToUI(Runnable runnable) {
@@ -453,18 +458,9 @@ final class GeckoEditable
         mUpdateGecko = update;
     }
 
-    @Override
-    public void setListener(GeckoEditableListener listener) {
-        if (DEBUG) {
-            // GeckoEditableClient methods should all be called from the UI thread
-            GeckoApp.assertOnUiThread();
-        }
-        mListener = listener;
-    }
-
     // GeckoEditableListener interface
 
-    void geckoActionReply() {
+    private void geckoActionReply() {
         if (DEBUG) {
             // GeckoEditableListener methods should all be called from the Gecko thread
             GeckoApp.assertOnGeckoThread();
@@ -490,8 +486,7 @@ final class GeckoEditable
                     mActionQueue.syncWithGecko();
                     final int start = Selection.getSelectionStart(mText);
                     final int end = Selection.getSelectionEnd(mText);
-                    if (mListener != null &&
-                            selStart == start && selEnd == end) {
+                    if (selStart == start && selEnd == end) {
                         // There has not been another new selection in the mean time that
                         // made this notification out-of-date
                         mListener.onSelectionChange(start, end);
@@ -506,7 +501,6 @@ final class GeckoEditable
         if (action.mShouldUpdate) {
             geckoUpdateGecko(false);
         }
-        mActionQueue.poll();
     }
 
     @Override
@@ -516,7 +510,17 @@ final class GeckoEditable
             GeckoApp.assertOnGeckoThread();
         }
         if (type == NOTIFY_IME_REPLY_EVENT) {
-            geckoActionReply();
+            try {
+                if (mFocused) {
+                    // When mFocused is false, the reply is for a stale action,
+                    // and we should not do anything
+                    geckoActionReply();
+                }
+            } finally {
+                // Ensure action is always removed from queue
+                // even if stale action results in exception in geckoActionReply
+                mActionQueue.poll();
+            }
             return;
         }
         geckoPostToUI(new Runnable() {
@@ -533,9 +537,7 @@ final class GeckoEditable
                                 GeckoEvent.IME_ACKNOWLEDGE_FOCUS));
                     }
                 }
-                if (mListener != null) {
-                    mListener.notifyIME(type, state);
-                }
+                mListener.notifyIME(type, state);
             }
         });
     }
@@ -551,10 +553,15 @@ final class GeckoEditable
             public void run() {
                 // Make sure there are no other things going on
                 mActionQueue.syncWithGecko();
-                if (mListener != null) {
-                    mListener.notifyIMEEnabled(state, typeHint,
-                                               modeHint, actionHint);
+                // Set InputConnectionHandler in notifyIMEEnabled because
+                // GeckoInputConnection.notifyIMEEnabled calls restartInput() which will invoke
+                // InputConnectionHandler.onCreateInputConnection
+                LayerView v = GeckoApp.mAppContext.getLayerView();
+                if (v != null) {
+                    v.setInputConnectionHandler((InputConnectionHandler)mListener);
                 }
+                mListener.notifyIMEEnabled(state, typeHint,
+                                           modeHint, actionHint);
             }
         });
     }
@@ -678,9 +685,7 @@ final class GeckoEditable
         }
         geckoPostToUI(new Runnable() {
             public void run() {
-                if (mListener != null) {
-                    mListener.onTextChange(text, start, oldEnd, newEnd);
-                }
+                mListener.onTextChange(text, start, oldEnd, newEnd);
             }
         });
     }

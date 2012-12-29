@@ -5,6 +5,8 @@
 
 /* a presentation of a document, part 1 */
 
+#include "mozilla/DebugOnly.h"
+
 #include "base/basictypes.h"
 
 #include "nsCOMPtr.h"
@@ -956,6 +958,10 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
       mRefreshDriver = new nsRefreshDriver(this);
     }
   }
+
+  // Initialise refresh tick counters for OMTA
+  mLastStyleUpdateForAllAnimations =
+    mLastUpdateThrottledStyle = mRefreshDriver->MostRecentRefresh();
 
   mLangService = do_GetService(NS_LANGUAGEATOMSERVICE_CONTRACTID);
 

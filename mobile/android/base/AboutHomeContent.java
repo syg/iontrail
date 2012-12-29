@@ -29,7 +29,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.drawable.Drawable;
 import android.graphics.Path;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
@@ -684,16 +683,35 @@ public class AboutHomeContent extends ScrollView
 
     @Override
     public void onLightweightThemeChanged() {
-        final Drawable drawable = mActivity.getLightweightTheme().getDrawableWithAlpha(this, 255, 0);
+        LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getColorDrawable(this);
         if (drawable == null)
             return;
 
+         drawable.setAlpha(255, 0);
          setBackgroundDrawable(drawable);
+
+         boolean isLight = mActivity.getLightweightTheme().isLightTheme();
+
+         if (mAddons != null) {
+             mAddons.setTheme(isLight);
+             mLastTabs.setTheme(isLight);
+             mRemoteTabs.setTheme(isLight);
+             ((GeckoImageView) findViewById(R.id.abouthome_logo)).setTheme(isLight);
+             ((GeckoTextView) findViewById(R.id.top_sites_title)).setTheme(isLight);
+         }
     }
 
     @Override
     public void onLightweightThemeReset() {
         setBackgroundResource(R.drawable.abouthome_bg_repeat);
+
+        if (mAddons != null) {
+            mAddons.resetTheme();
+            mLastTabs.resetTheme();
+            mRemoteTabs.resetTheme();
+            ((GeckoImageView) findViewById(R.id.abouthome_logo)).resetTheme();
+            ((GeckoTextView) findViewById(R.id.top_sites_title)).resetTheme();
+        }
     }
 
     @Override

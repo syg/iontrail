@@ -3622,9 +3622,9 @@ Downloader.prototype = {
         LOG("Downloader:onStopRequest - verification of patch failed, " +
             "downloading complete update patch");
         this._update.isCompleteUpdate = true;
-        var status = this.downloadUpdate(this._update);
+        let updateStatus = this.downloadUpdate(this._update);
 
-        if (status == STATE_NONE) {
+        if (updateStatus == STATE_NONE) {
           cleanupActiveUpdate();
         } else {
           allFailed = false;
@@ -3651,6 +3651,14 @@ Downloader.prototype = {
             prompter.showUpdateError(this._update);
           }
         }
+
+#ifdef MOZ_WIDGET_GONK
+        // We always forward errors in B2G, since Gaia controls the update UI
+        var prompter = Cc["@mozilla.org/updates/update-prompt;1"].
+                       createInstance(Ci.nsIUpdatePrompt);
+        prompter.showUpdateError(this._update);
+#endif
+
         // Prevent leaking the update object (bug 454964).
         this._update = null;
       }

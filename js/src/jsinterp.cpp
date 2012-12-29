@@ -9,6 +9,7 @@
  * JavaScript bytecode interpreter.
  */
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/FloatingPoint.h"
 
 #include <stdio.h>
@@ -51,6 +52,7 @@
 #include "ion/ParallelArrayAnalysis.h"
 
 #include "jsatominlines.h"
+#include "jsboolinlines.h"
 #include "jsinferinlines.h"
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
@@ -96,6 +98,35 @@ CallThisObjectHook(JSContext *cx, HandleObject obj, Value *argv)
     return thisp;
 }
 
+bool
+js::BoxNonStrictThis(JSContext *cx, MutableHandleValue thisv, bool *modified)
+{
+    /*
+     * Check for SynthesizeFrame poisoning and fast constructors which
+     * didn't check their callee properly.
+     */
+    JS_ASSERT(!thisv.isMagic());
+    *modified = false;
+
+    if (thisv.isNullOrUndefined()) {
+        Rooted<GlobalObject*> global(cx, cx->global());
+        JSObject *thisp = JSObject::thisObject(cx, global);
+        if (!thisp)
+            return false;
+        thisv.set(ObjectValue(*thisp));
+        *modified = true;
+        return true;
+    }
+
+    if (!thisv.isObject()) {
+        if (!js_PrimitiveToObject(cx, thisv.address()))
+            return false;
+        *modified = true;
+    }
+
+    return true;
+}
+
 /*
  * ECMA requires "the global object", but in embeddings such as the browser,
  * which have multiple top-level objects (windows, frames, etc. in the DOM),
@@ -118,28 +149,19 @@ js::BoxNonStrictThis(JSContext *cx, const CallReceiver &call)
      * Check for SynthesizeFrame poisoning and fast constructors which
      * didn't check their callee properly.
      */
-    Value thisv = call.thisv();
+    RootedValue thisv(cx, call.thisv());
     JS_ASSERT(!thisv.isMagic());
 
 #ifdef DEBUG
     JSFunction *fun = call.callee().isFunction() ? call.callee().toFunction() : NULL;
-    JS_ASSERT_IF(fun && fun->isInterpreted(), !fun->inStrictMode());
+    JS_ASSERT_IF(fun && fun->isInterpreted(), !fun->strict());
 #endif
 
-    if (thisv.isNullOrUndefined()) {
-        Rooted<GlobalObject*> global(cx, &call.callee().global());
-        JSObject *thisp = JSObject::thisObject(cx, global);
-        if (!thisp)
-            return false;
-        call.setThis(ObjectValue(*thisp));
-        return true;
-    }
-
-    if (!thisv.isObject()) {
-        if (!js_PrimitiveToObject(cx, &thisv))
-            return false;
+    bool modified;
+    if (!BoxNonStrictThis(cx, &thisv, &modified))
+        return false;
+    if (modified)
         call.setThis(thisv);
-    }
 
     return true;
 }
@@ -508,7 +530,7 @@ js::ExecuteKernel(JSContext *cx, HandleScript script, JSObject &scopeChain, cons
     if (!cx->stack.pushExecuteFrame(cx, script, thisv, scopeChain, type, evalInFrame, &efg))
         return false;
 
-    if (!script->ensureRanAnalysis(cx))
+    if (!JSScript::ensureRanAnalysis(cx, script))
         return false;
     TypeScript::SetThis(cx, script, efg.fp()->thisValue());
 
@@ -531,12 +553,14 @@ js::Execute(JSContext *cx, HandleScript script, JSObject &scopeChainArg, Value *
     if (!scopeChain)
         return false;
 
-    /* If we were handed a non-native object, complain bitterly. */
-    if (!scopeChain->isNative()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_NON_NATIVE_SCOPE);
-        return false;
-    }
-    JS_ASSERT(!scopeChain->getOps()->defineProperty);
+    /* Ensure the scope chain is all same-compartment and terminates in a global. */
+#ifdef DEBUG
+    RawObject s = scopeChain;
+    do {
+        assertSameCompartment(cx, s);
+        JS_ASSERT_IF(!s->enclosingScope(), s->isGlobal());
+    } while ((s = s->enclosingScope()));
+#endif
 
     /* The VAROBJFIX option makes varObj == globalObj in global code. */
     if (!cx->hasRunOption(JSOPTION_VAROBJFIX)) {
@@ -618,12 +642,13 @@ js::LooselyEqual(JSContext *cx, const Value &lval, const Value &rval, bool *resu
     }
 
     if (lval.isNullOrUndefined()) {
-        *result = rval.isNullOrUndefined();
+        *result = rval.isNullOrUndefined() ||
+                  (rval.isObject() && EmulatesUndefined(&rval.toObject()));
         return true;
     }
 
     if (rval.isNullOrUndefined()) {
-        *result = false;
+        *result = (lval.isObject() && EmulatesUndefined(&lval.toObject()));
         return true;
     }
 
@@ -868,16 +893,16 @@ TryNoteIter::settle()
     }
 }
 
-#define PUSH_COPY(v)             do { *regs.sp++ = v; assertSameCompartment(cx, regs.sp[-1]); } while (0)
+#define PUSH_COPY(v)             do { *regs.sp++ = v; assertSameCompartmentDebugOnly(cx, regs.sp[-1]); } while (0)
 #define PUSH_COPY_SKIP_CHECK(v)  *regs.sp++ = v
 #define PUSH_NULL()              regs.sp++->setNull()
 #define PUSH_UNDEFINED()         regs.sp++->setUndefined()
 #define PUSH_BOOLEAN(b)          regs.sp++->setBoolean(b)
 #define PUSH_DOUBLE(d)           regs.sp++->setDouble(d)
 #define PUSH_INT32(i)            regs.sp++->setInt32(i)
-#define PUSH_STRING(s)           do { regs.sp++->setString(s); assertSameCompartment(cx, regs.sp[-1]); } while (0)
-#define PUSH_OBJECT(obj)         do { regs.sp++->setObject(obj); assertSameCompartment(cx, regs.sp[-1]); } while (0)
-#define PUSH_OBJECT_OR_NULL(obj) do { regs.sp++->setObjectOrNull(obj); assertSameCompartment(cx, regs.sp[-1]); } while (0)
+#define PUSH_STRING(s)           do { regs.sp++->setString(s); assertSameCompartmentDebugOnly(cx, regs.sp[-1]); } while (0)
+#define PUSH_OBJECT(obj)         do { regs.sp++->setObject(obj); assertSameCompartmentDebugOnly(cx, regs.sp[-1]); } while (0)
+#define PUSH_OBJECT_OR_NULL(obj) do { regs.sp++->setObjectOrNull(obj); assertSameCompartmentDebugOnly(cx, regs.sp[-1]); } while (0)
 #define PUSH_HOLE()              regs.sp++->setMagic(JS_ARRAY_HOLE)
 #define POP_COPY_TO(v)           v = *--regs.sp
 #define POP_RETURN_VALUE()       regs.fp()->setReturnValue(*--regs.sp)
@@ -1155,6 +1180,7 @@ js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode)
     RootedPropertyName rootName0(cx);
     RootedId rootId0(cx);
     RootedShape rootShape0(cx);
+    RootedScript rootScript0(cx);
     DebugOnly<uint32_t> blockDepth;
 
     if (!entryFrame)
@@ -1208,6 +1234,13 @@ js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode)
     /* The REJOIN mode acts like the normal mode, except the prologue is skipped. */
     if (interpMode == JSINTERP_REJOIN)
         interpMode = JSINTERP_NORMAL;
+
+    /*
+     * The RETHROW mode acts like a bailout mode, except that it resume an
+     * exception instead of resuming the script.
+     */
+    if (interpMode == JSINTERP_RETHROW)
+        goto error;
 
     /*
      * It is important that "op" be initialized before calling DO_OP because
@@ -1317,11 +1350,8 @@ ADD_EMPTY_CASE(JSOP_NOP)
 ADD_EMPTY_CASE(JSOP_UNUSED1)
 ADD_EMPTY_CASE(JSOP_UNUSED2)
 ADD_EMPTY_CASE(JSOP_UNUSED3)
-ADD_EMPTY_CASE(JSOP_UNUSED10)
-ADD_EMPTY_CASE(JSOP_UNUSED11)
 ADD_EMPTY_CASE(JSOP_UNUSED12)
 ADD_EMPTY_CASE(JSOP_UNUSED13)
-ADD_EMPTY_CASE(JSOP_UNUSED15)
 ADD_EMPTY_CASE(JSOP_UNUSED17)
 ADD_EMPTY_CASE(JSOP_UNUSED18)
 ADD_EMPTY_CASE(JSOP_UNUSED19)
@@ -1768,6 +1798,10 @@ BEGIN_CASE(JSOP_BINDGNAME)
     PUSH_OBJECT(regs.fp()->global());
 END_CASE(JSOP_BINDGNAME)
 
+BEGIN_CASE(JSOP_BINDINTRINSIC)
+    PUSH_OBJECT(*cx->global()->intrinsicsHolder());
+END_CASE(JSOP_BINDGNAME)
+
 BEGIN_CASE(JSOP_BINDNAME)
 {
     RootedObject &scopeChain = rootObject0;
@@ -2063,7 +2097,7 @@ BEGIN_CASE(JSOP_DELNAME)
         goto error;
 
     /* Strict mode code should never contain JSOP_DELNAME opcodes. */
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     /* ECMA says to return true if name is undefined or inherited. */
     PUSH_BOOLEAN(true);
@@ -2084,7 +2118,7 @@ BEGIN_CASE(JSOP_DELPROP)
     FETCH_OBJECT(cx, -1, obj);
 
     MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
-    if (!JSObject::deleteProperty(cx, obj, name, res, script->strictModeCode))
+    if (!JSObject::deleteProperty(cx, obj, name, res, script->strict))
         goto error;
 }
 END_CASE(JSOP_DELPROP)
@@ -2099,7 +2133,7 @@ BEGIN_CASE(JSOP_DELELEM)
     propval = regs.sp[-1];
 
     MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
-    if (!JSObject::deleteByValue(cx, obj, propval, res, script->strictModeCode))
+    if (!JSObject::deleteByValue(cx, obj, propval, res, script->strict))
         goto error;
 
     regs.sp--;
@@ -2204,9 +2238,21 @@ BEGIN_CASE(JSOP_CALLPROP)
     TypeScript::Monitor(cx, script, regs.pc, rval);
 
     regs.sp[-1] = rval;
-    assertSameCompartment(cx, regs.sp[-1]);
+    assertSameCompartmentDebugOnly(cx, regs.sp[-1]);
 }
 END_CASE(JSOP_GETPROP)
+
+BEGIN_CASE(JSOP_SETINTRINSIC)
+{
+    HandleValue value = HandleValue::fromMarkedLocation(&regs.sp[-1]);
+
+    if (!SetIntrinsicOperation(cx, script, regs.pc, value))
+        goto error;
+
+    regs.sp[-2] = regs.sp[-1];
+    regs.sp--;
+}
+END_CASE(JSOP_SETINTRINSIC)
 
 BEGIN_CASE(JSOP_SETGNAME)
 BEGIN_CASE(JSOP_SETNAME)
@@ -2258,7 +2304,7 @@ BEGIN_CASE(JSOP_SETELEM)
     RootedId &id = rootId0;
     FETCH_ELEMENT_ID(obj, -2, id);
     Value &value = regs.sp[-1];
-    if (!SetObjectElementOperation(cx, obj, id, value, script->strictModeCode))
+    if (!SetObjectElementOperation(cx, obj, id, value, script->strict))
         goto error;
     regs.sp[-3] = value;
     regs.sp -= 2;
@@ -2275,7 +2321,7 @@ BEGIN_CASE(JSOP_ENUMELEM)
     RootedId &id = rootId0;
     FETCH_ELEMENT_ID(obj, -1, id);
     rval = regs.sp[-3];
-    if (!JSObject::setGeneric(cx, obj, obj, id, &rval, script->strictModeCode))
+    if (!JSObject::setGeneric(cx, obj, obj, id, &rval, script->strict))
         goto error;
     regs.sp -= 3;
 }
@@ -2460,18 +2506,18 @@ BEGIN_CASE(JSOP_CALLNAME)
 }
 END_CASE(JSOP_NAME)
 
-BEGIN_CASE(JSOP_INTRINSICNAME)
+BEGIN_CASE(JSOP_GETINTRINSIC)
 BEGIN_CASE(JSOP_CALLINTRINSIC)
 {
     RootedValue &rval = rootValue0;
 
-    if (!IntrinsicNameOperation(cx, script, regs.pc, &rval))
+    if (!GetIntrinsicOperation(cx, script, regs.pc, &rval))
         goto error;
 
     PUSH_COPY(rval);
     TypeScript::Monitor(cx, script, regs.pc, rval);
 }
-END_CASE(JSOP_INTRINSICNAME)
+END_CASE(JSOP_GETINTRINSIC)
 
 BEGIN_CASE(JSOP_UINT16)
     PUSH_INT32((int32_t) GET_UINT16(regs.pc));
@@ -2721,7 +2767,7 @@ BEGIN_CASE(JSOP_CALLLOCAL)
      * a use of the variable.
      */
     if (regs.pc[JSOP_GETLOCAL_LENGTH] != JSOP_POP)
-        assertSameCompartment(cx, regs.sp[-1]);
+        assertSameCompartmentDebugOnly(cx, regs.sp[-1]);
 }
 END_CASE(JSOP_GETLOCAL)
 
@@ -2765,96 +2811,8 @@ BEGIN_CASE(JSOP_DEFFUN)
     RootedFunction &fun = rootFunction0;
     fun = script->getFunction(GET_UINT32_INDEX(regs.pc));
 
-    /*
-     * If static link is not current scope, clone fun's object to link to the
-     * current scope via parent. We do this to enable sharing of compiled
-     * functions among multiple equivalent scopes, amortizing the cost of
-     * compilation over a number of executions.  Examples include XUL scripts
-     * and event handlers shared among Firefox or other Mozilla app chrome
-     * windows, and user-defined JS functions precompiled and then shared among
-     * requests in server-side JS.
-     */
-    HandleObject scopeChain = regs.fp()->scopeChain();
-    if (fun->environment() != scopeChain) {
-        fun = CloneFunctionObjectIfNotSingleton(cx, fun, scopeChain);
-        if (!fun)
-            goto error;
-    } else {
-        JS_ASSERT(script->compileAndGo);
-        JS_ASSERT(regs.fp()->isGlobalFrame() || regs.fp()->isEvalInFunction());
-    }
-
-    /*
-     * ECMA requires functions defined when entering Eval code to be
-     * impermanent.
-     */
-    unsigned attrs = regs.fp()->isEvalFrame()
-                  ? JSPROP_ENUMERATE
-                  : JSPROP_ENUMERATE | JSPROP_PERMANENT;
-
-    /*
-     * We define the function as a property of the variable object and not the
-     * current scope chain even for the case of function expression statements
-     * and functions defined by eval inside let or with blocks.
-     */
-    RootedObject &parent = rootObject0;
-    parent = &regs.fp()->varObj();
-
-    /* ES5 10.5 (NB: with subsequent errata). */
-    RootedPropertyName &name = rootName0;
-    name = fun->atom()->asPropertyName();
-    RootedShape &shape = rootShape0;
-    RootedObject &pobj = rootObject1;
-    if (!JSObject::lookupProperty(cx, parent, name, &pobj, &shape))
+    if (!DefFunOperation(cx, script, regs.fp()->scopeChain(), fun))
         goto error;
-
-    RootedValue &rval = rootValue0;
-    rval = ObjectValue(*fun);
-
-    do {
-        /* Steps 5d, 5f. */
-        if (!shape || pobj != parent) {
-            if (!JSObject::defineProperty(cx, parent, name, rval,
-                                          JS_PropertyStub, JS_StrictPropertyStub, attrs))
-            {
-                goto error;
-            }
-            break;
-        }
-
-        /* Step 5e. */
-        JS_ASSERT(parent->isNative());
-        if (parent->isGlobal()) {
-            if (shape->configurable()) {
-                if (!JSObject::defineProperty(cx, parent, name, rval,
-                                              JS_PropertyStub, JS_StrictPropertyStub, attrs))
-                {
-                    goto error;
-                }
-                break;
-            }
-
-            if (shape->isAccessorDescriptor() || !shape->writable() || !shape->enumerable()) {
-                JSAutoByteString bytes;
-                if (js_AtomToPrintableString(cx, name, &bytes)) {
-                    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
-                                         JSMSG_CANT_REDEFINE_PROP, bytes.ptr());
-                }
-                goto error;
-            }
-        }
-
-        /*
-         * Non-global properties, and global properties which we aren't simply
-         * redefining, must be set.  First, this preserves their attributes.
-         * Second, this will produce warnings and/or errors as necessary if the
-         * specified Call object property is not writable (const).
-         */
-
-        /* Step 5f. */
-        if (!JSObject::setProperty(cx, parent, parent, name, &rval, script->strictModeCode))
-            goto error;
-    } while (false);
 }
 END_CASE(JSOP_DEFFUN)
 
@@ -2964,7 +2922,7 @@ BEGIN_CASE(JSOP_SETTER)
     if (js_CodeSpec[op2].ndefs > js_CodeSpec[op2].nuses) {
         JS_ASSERT(js_CodeSpec[op2].ndefs == js_CodeSpec[op2].nuses + 1);
         regs.sp[-1] = rval;
-        assertSameCompartment(cx, regs.sp[-1]);
+        assertSameCompartmentDebugOnly(cx, regs.sp[-1]);
     }
     len = js_CodeSpec[op2].length;
     DO_NEXT_OP(len);
@@ -3048,7 +3006,7 @@ BEGIN_CASE(JSOP_INITPROP)
     id = NameToId(name);
 
     if (JS_UNLIKELY(name == cx->names().proto)
-        ? !baseops::SetPropertyHelper(cx, obj, obj, id, 0, &rval, script->strictModeCode)
+        ? !baseops::SetPropertyHelper(cx, obj, obj, id, 0, &rval, script->strict)
         : !DefineNativeProperty(cx, obj, id, rval, NULL, NULL,
                                 JSPROP_ENUMERATE, 0, 0, 0)) {
         goto error;
@@ -3058,58 +3016,56 @@ BEGIN_CASE(JSOP_INITPROP)
 }
 END_CASE(JSOP_INITPROP);
 
-BEGIN_CASE(JSOP_INITELEM_INC)
 BEGIN_CASE(JSOP_INITELEM)
 {
-    /* Pop the element's value into rval. */
     JS_ASSERT(regs.stackDepth() >= 3);
-    HandleValue rref = HandleValue::fromMarkedLocation(&regs.sp[-1]);
+    HandleValue val = HandleValue::fromMarkedLocation(&regs.sp[-1]);
+    MutableHandleValue id = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
 
     RootedObject &obj = rootObject0;
+    obj = &regs.sp[-3].toObject();
 
-    /* Find the object being initialized at top of stack. */
-    const Value &lref = regs.sp[-3];
-    JS_ASSERT(lref.isObject());
-    obj = &lref.toObject();
+    if (!InitElemOperation(cx, obj, id, val))
+        goto error;
 
-    /* Fetch id now that we have obj. */
-    RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -2, id);
-
-    /*
-     * If rref is a hole, do not call JSObject::defineProperty. In this case,
-     * obj must be an array, so if the current op is the last element
-     * initialiser, set the array length to one greater than id.
-     */
-    if (rref.isMagic(JS_ARRAY_HOLE)) {
-        JS_ASSERT(obj->isArray());
-        JS_ASSERT(JSID_IS_INT(id));
-        JS_ASSERT(uint32_t(JSID_TO_INT(id)) < StackSpace::ARGS_LENGTH_MAX);
-        JSOp next = JSOp(*(regs.pc + GetBytecodeLength(regs.pc)));
-        if ((next == JSOP_ENDINIT && op == JSOP_INITELEM) ||
-            (next == JSOP_POP && op == JSOP_INITELEM_INC))
-        {
-            if (!SetLengthProperty(cx, obj, (uint32_t) (JSID_TO_INT(id) + 1)))
-                goto error;
-        }
-    } else {
-        if (!JSObject::defineGeneric(cx, obj, id, rref, NULL, NULL, JSPROP_ENUMERATE))
-            goto error;
-    }
-    if (op == JSOP_INITELEM_INC) {
-        JS_ASSERT(obj->isArray());
-        if (JSID_TO_INT(id) == INT32_MAX) {
-            JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
-                                 JSMSG_SPREAD_TOO_LARGE);
-            goto error;
-        }
-        regs.sp[-2].setInt32(JSID_TO_INT(id) + 1);
-        regs.sp--;
-    } else {
-        regs.sp -= 2;
-    }
+    regs.sp -= 2;
 }
 END_CASE(JSOP_INITELEM)
+
+BEGIN_CASE(JSOP_INITELEM_ARRAY)
+{
+    JS_ASSERT(regs.stackDepth() >= 2);
+    HandleValue val = HandleValue::fromMarkedLocation(&regs.sp[-1]);
+
+    RootedObject &obj = rootObject0;
+    obj = &regs.sp[-2].toObject();
+
+    JS_ASSERT(obj->isDenseArray());
+
+    uint32_t index = GET_UINT24(regs.pc);
+    if (!InitArrayElemOperation(cx, regs.pc, obj, index, val))
+        goto error;
+
+    regs.sp--;
+}
+END_CASE(JSOP_INITELEM_ARRAY)
+
+BEGIN_CASE(JSOP_INITELEM_INC)
+{
+    JS_ASSERT(regs.stackDepth() >= 3);
+    HandleValue val = HandleValue::fromMarkedLocation(&regs.sp[-1]);
+
+    RootedObject &obj = rootObject0;
+    obj = &regs.sp[-3].toObject();
+
+    uint32_t index = regs.sp[-2].toInt32();
+    if (!InitArrayElemOperation(cx, regs.pc, obj, index, val))
+        goto error;
+
+    regs.sp[-2].setInt32(index + 1);
+    regs.sp--;
+}
+END_CASE(JSOP_INITELEM_INC)
 
 BEGIN_CASE(JSOP_SPREAD)
 {
@@ -3169,9 +3125,12 @@ END_VARLEN_CASE
 }
 
 BEGIN_CASE(JSOP_EXCEPTION)
-    PUSH_COPY(cx->getPendingException());
-    cx->clearPendingException();
-    CHECK_BRANCH();
+{
+    PUSH_NULL();
+    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
+    if (!GetAndClearException(cx, res))
+        goto error;
+}
 END_CASE(JSOP_EXCEPTION)
 
 BEGIN_CASE(JSOP_FINALLY)
@@ -3243,7 +3202,7 @@ END_CASE(JSOP_DEBUGGER)
 #if JS_HAS_XML_SUPPORT
 BEGIN_CASE(JSOP_DEFXMLNS)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     if (!js_SetDefaultXMLNamespace(cx, regs.sp[-1]))
         goto error;
@@ -3253,7 +3212,7 @@ END_CASE(JSOP_DEFXMLNS)
 
 BEGIN_CASE(JSOP_ANYNAME)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     cx->runtime->gcExactScanningEnabled = false;
 
@@ -3267,7 +3226,7 @@ END_CASE(JSOP_ANYNAME)
 
 BEGIN_CASE(JSOP_QNAMEPART)
     /*
-     * We do not JS_ASSERT(!script->strictModeCode) here because JSOP_QNAMEPART
+     * We do not JS_ASSERT(!script->strict) here because JSOP_QNAMEPART
      * is used for __proto__ and (in contexts where we favor JSOP_*ELEM instead
      * of JSOP_*PROP) obj.prop compiled as obj['prop'].
      */
@@ -3277,7 +3236,7 @@ END_CASE(JSOP_QNAMEPART)
 #if JS_HAS_XML_SUPPORT
 BEGIN_CASE(JSOP_QNAMECONST)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
     Value rval = StringValue(script->getAtom(regs.pc));
     Value lval = regs.sp[-1];
     JSObject *obj = js_ConstructXMLQNameObject(cx, lval, rval);
@@ -3289,7 +3248,7 @@ END_CASE(JSOP_QNAMECONST)
 
 BEGIN_CASE(JSOP_QNAME)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval = regs.sp[-1];
     Value lval = regs.sp[-2];
@@ -3303,7 +3262,7 @@ END_CASE(JSOP_QNAME)
 
 BEGIN_CASE(JSOP_TOATTRNAME)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval;
     rval = regs.sp[-1];
@@ -3315,7 +3274,7 @@ END_CASE(JSOP_TOATTRNAME)
 
 BEGIN_CASE(JSOP_TOATTRVAL)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval;
     rval = regs.sp[-1];
@@ -3330,7 +3289,7 @@ END_CASE(JSOP_TOATTRVAL)
 BEGIN_CASE(JSOP_ADDATTRNAME)
 BEGIN_CASE(JSOP_ADDATTRVAL)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval = regs.sp[-1];
     Value lval = regs.sp[-2];
@@ -3346,7 +3305,7 @@ END_CASE(JSOP_ADDATTRNAME)
 
 BEGIN_CASE(JSOP_BINDXMLNAME)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value lval;
     lval = regs.sp[-1];
@@ -3361,14 +3320,14 @@ END_CASE(JSOP_BINDXMLNAME)
 
 BEGIN_CASE(JSOP_SETXMLNAME)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Rooted<JSObject*> obj(cx, &regs.sp[-3].toObject());
     RootedValue &rval = rootValue0;
     rval = regs.sp[-1];
     RootedId &id = rootId0;
     FETCH_ELEMENT_ID(obj, -2, id);
-    if (!JSObject::setGeneric(cx, obj, obj, id, &rval, script->strictModeCode))
+    if (!JSObject::setGeneric(cx, obj, obj, id, &rval, script->strict))
         goto error;
     rval = regs.sp[-1];
     regs.sp -= 2;
@@ -3379,7 +3338,7 @@ END_CASE(JSOP_SETXMLNAME)
 BEGIN_CASE(JSOP_CALLXMLNAME)
 BEGIN_CASE(JSOP_XMLNAME)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value lval = regs.sp[-1];
     RootedObject &obj = rootObject0;
@@ -3402,7 +3361,7 @@ END_CASE(JSOP_XMLNAME)
 BEGIN_CASE(JSOP_DESCENDANTS)
 BEGIN_CASE(JSOP_DELDESC)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     JSObject *obj;
     FETCH_OBJECT(cx, -2, obj);
@@ -3424,7 +3383,7 @@ END_CASE(JSOP_DESCENDANTS)
 
 BEGIN_CASE(JSOP_FILTER)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     /*
      * We push the hole value before jumping to [enditer] so we can detect the
@@ -3439,7 +3398,7 @@ END_VARLEN_CASE
 
 BEGIN_CASE(JSOP_ENDFILTER)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     bool cond = !regs.sp[-1].isMagic();
     if (cond) {
@@ -3467,7 +3426,7 @@ END_CASE(JSOP_ENDFILTER);
 
 BEGIN_CASE(JSOP_TOXML)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     cx->runtime->gcExactScanningEnabled = false;
 
@@ -3481,7 +3440,7 @@ END_CASE(JSOP_TOXML)
 
 BEGIN_CASE(JSOP_TOXMLLIST)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval = regs.sp[-1];
     JSObject *obj = js_ValueToXMLListObject(cx, rval);
@@ -3493,7 +3452,7 @@ END_CASE(JSOP_TOXMLLIST)
 
 BEGIN_CASE(JSOP_XMLTAGEXPR)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval = regs.sp[-1];
     JSString *str = ToString(cx, rval);
@@ -3505,7 +3464,7 @@ END_CASE(JSOP_XMLTAGEXPR)
 
 BEGIN_CASE(JSOP_XMLELTEXPR)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval = regs.sp[-1];
     JSString *str;
@@ -3524,7 +3483,7 @@ END_CASE(JSOP_XMLELTEXPR)
 
 BEGIN_CASE(JSOP_XMLCDATA)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     JSAtom *atom = script->getAtom(regs.pc);
     JSObject *obj = js_NewXMLSpecialObject(cx, JSXML_CLASS_TEXT, NULL, atom);
@@ -3536,7 +3495,7 @@ END_CASE(JSOP_XMLCDATA)
 
 BEGIN_CASE(JSOP_XMLCOMMENT)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     JSAtom *atom = script->getAtom(regs.pc);
     JSObject *obj = js_NewXMLSpecialObject(cx, JSXML_CLASS_COMMENT, NULL, atom);
@@ -3548,7 +3507,7 @@ END_CASE(JSOP_XMLCOMMENT)
 
 BEGIN_CASE(JSOP_XMLPI)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     JSAtom *atom = script->getAtom(regs.pc);
     Value rval = regs.sp[-1];
@@ -3562,7 +3521,7 @@ END_CASE(JSOP_XMLPI)
 
 BEGIN_CASE(JSOP_GETFUNNS)
 {
-    JS_ASSERT(!script->strictModeCode);
+    JS_ASSERT(!script->strict);
 
     Value rval;
     if (!cx->fp()->global().getFunctionNamespace(cx, &rval))
@@ -3881,6 +3840,106 @@ js::Lambda(JSContext *cx, HandleFunction fun, HandleObject parent)
 
     JS_ASSERT(clone->global() == clone->global());
     return clone;
+}
+
+bool
+js::DefFunOperation(JSContext *cx, HandleScript script, HandleObject scopeChain,
+                    HandleFunction funArg)
+{
+    /*
+     * If static link is not current scope, clone fun's object to link to the
+     * current scope via parent. We do this to enable sharing of compiled
+     * functions among multiple equivalent scopes, amortizing the cost of
+     * compilation over a number of executions.  Examples include XUL scripts
+     * and event handlers shared among Firefox or other Mozilla app chrome
+     * windows, and user-defined JS functions precompiled and then shared among
+     * requests in server-side JS.
+     */
+    RootedFunction fun(cx, funArg);
+    if (fun->environment() != scopeChain) {
+        fun = CloneFunctionObjectIfNotSingleton(cx, fun, scopeChain);
+        if (!fun)
+            return false;
+    } else {
+        JS_ASSERT(script->compileAndGo);
+        JS_ASSERT_IF(!cx->fp()->beginsIonActivation(),
+                     cx->fp()->isGlobalFrame() || cx->fp()->isEvalInFunction());
+    }
+
+    /*
+     * We define the function as a property of the variable object and not the
+     * current scope chain even for the case of function expression statements
+     * and functions defined by eval inside let or with blocks.
+     */
+    RootedObject parent(cx, scopeChain);
+    while (!parent->isVarObj())
+        parent = parent->enclosingScope();
+
+    /* ES5 10.5 (NB: with subsequent errata). */
+    RootedPropertyName name(cx, fun->atom()->asPropertyName());
+
+    RootedShape shape(cx);
+    RootedObject pobj(cx);
+    if (!JSObject::lookupProperty(cx, parent, name, &pobj, &shape))
+        return false;
+
+    RootedValue rval(cx, ObjectValue(*fun));
+
+    /*
+     * ECMA requires functions defined when entering Eval code to be
+     * impermanent.
+     */
+    unsigned attrs = script->isActiveEval
+                     ? JSPROP_ENUMERATE
+                     : JSPROP_ENUMERATE | JSPROP_PERMANENT;
+
+    /* Steps 5d, 5f. */
+    if (!shape || pobj != parent) {
+        return JSObject::defineProperty(cx, parent, name, rval, JS_PropertyStub,
+                                        JS_StrictPropertyStub, attrs);
+    }
+
+    /* Step 5e. */
+    JS_ASSERT(parent->isNative());
+    if (parent->isGlobal()) {
+        if (shape->configurable()) {
+            return JSObject::defineProperty(cx, parent, name, rval, JS_PropertyStub,
+                                            JS_StrictPropertyStub, attrs);
+        }
+
+        if (shape->isAccessorDescriptor() || !shape->writable() || !shape->enumerable()) {
+            JSAutoByteString bytes;
+            if (js_AtomToPrintableString(cx, name, &bytes)) {
+                JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_CANT_REDEFINE_PROP,
+                                     bytes.ptr());
+            }
+
+            return false;
+        }
+    }
+
+    /*
+     * Non-global properties, and global properties which we aren't simply
+     * redefining, must be set.  First, this preserves their attributes.
+     * Second, this will produce warnings and/or errors as necessary if the
+     * specified Call object property is not writable (const).
+     */
+
+    /* Step 5f. */
+    return JSObject::setProperty(cx, parent, parent, name, &rval, script->strict);
+}
+
+bool
+js::GetAndClearException(JSContext *cx, MutableHandleValue res)
+{
+    // Check the interrupt flag to allow interrupting deeply nested exception
+    // handling.
+    if (cx->runtime->interrupt && !js_HandleExecutionInterrupt(cx))
+        return false;
+
+    res.set(cx->getPendingException());
+    cx->clearPendingException();
+    return true;
 }
 
 template <bool strict>

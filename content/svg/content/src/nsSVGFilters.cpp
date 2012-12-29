@@ -1148,8 +1148,8 @@ NS_IMETHODIMP nsSVGFEColorMatrixElement::GetType(nsIDOMSVGAnimatedEnumeration * 
   return mEnumAttributes[TYPE].ToDOMAnimatedEnum(aType, this);
 }
 
-/* readonly attribute nsIDOMSVGAnimatedNumberList values; */
-NS_IMETHODIMP nsSVGFEColorMatrixElement::GetValues(nsIDOMSVGAnimatedNumberList * *aValues)
+/* readonly attribute DOMSVGAnimatedNumberList values; */
+NS_IMETHODIMP nsSVGFEColorMatrixElement::GetValues(nsISupports * *aValues)
 {
   *aValues = DOMSVGAnimatedNumberList::GetDOMWrapper(&mNumberListAttributes[VALUES],
                                                      this, VALUES).get();
@@ -1935,8 +1935,8 @@ NS_IMETHODIMP nsSVGComponentTransferFunctionElement::GetType(nsIDOMSVGAnimatedEn
   return mEnumAttributes[TYPE].ToDOMAnimatedEnum(aType, this);
 }
 
-/* readonly attribute nsIDOMSVGAnimatedNumberList tableValues; */
-NS_IMETHODIMP nsSVGComponentTransferFunctionElement::GetTableValues(nsIDOMSVGAnimatedNumberList * *aTableValues)
+/* readonly attribute DOMSVGAnimatedNumberList tableValues; */
+NS_IMETHODIMP nsSVGComponentTransferFunctionElement::GetTableValues(nsISupports * *aTableValues)
 {
   *aTableValues = DOMSVGAnimatedNumberList::GetDOMWrapper(&mNumberListAttributes[TABLEVALUES],
                                                           this, TABLEVALUES).get();
@@ -4092,7 +4092,7 @@ NS_IMETHODIMP nsSVGFEConvolveMatrixElement::GetOrderY(nsIDOMSVGAnimatedInteger *
   return mIntegerPairAttributes[ORDER].ToDOMAnimatedInteger(aOrderY, nsSVGIntegerPair::eSecond, this);
 }
 
-NS_IMETHODIMP nsSVGFEConvolveMatrixElement::GetKernelMatrix(nsIDOMSVGAnimatedNumberList * *aKernelMatrix)
+NS_IMETHODIMP nsSVGFEConvolveMatrixElement::GetKernelMatrix(nsISupports * *aKernelMatrix)
 {
   *aKernelMatrix = DOMSVGAnimatedNumberList::GetDOMWrapper(&mNumberListAttributes[KERNELMATRIX],
                                                            this, KERNELMATRIX).get();
@@ -4114,7 +4114,7 @@ NS_IMETHODIMP nsSVGFEConvolveMatrixElement::GetEdgeMode(nsIDOMSVGAnimatedEnumera
   return mEnumAttributes[EDGEMODE].ToDOMAnimatedEnum(aEdgeMode, this);
 }
 
-NS_IMETHODIMP nsSVGFEConvolveMatrixElement::GetPreserveAlpha(nsIDOMSVGAnimatedBoolean * *aPreserveAlpha)
+NS_IMETHODIMP nsSVGFEConvolveMatrixElement::GetPreserveAlpha(nsISupports * *aPreserveAlpha)
 {
   return mBooleanAttributes[PRESERVEALPHA].ToDOMAnimatedBoolean(aPreserveAlpha, this);
 }
@@ -5123,8 +5123,8 @@ nsSVGFELightingElement::Filter(nsSVGFilterInstance *instance,
         S[2] = pointsAt[2] - lightPos[2];
         NORMALIZE(S);
         float dot = -DOT(L, S);
-        if (dot < cosConeAngle) dot = 0;
         float tmp = pow(dot, specularExponent);
+        if (dot < cosConeAngle) tmp = 0;
         color = NS_RGB(uint8_t(NS_GET_R(lightColor) * tmp),
                        uint8_t(NS_GET_G(lightColor) * tmp),
                        uint8_t(NS_GET_B(lightColor) * tmp));
@@ -5983,7 +5983,7 @@ nsSVGFEDisplacementMapElement::Filter(nsSVGFilterInstance *instance,
   uint8_t* targetData = aTarget->mImage->Data();
   uint32_t stride = aTarget->mImage->Stride();
 
-  static uint8_t dummyData[4] = { 0, 0, 0, 0 };
+  static const uint8_t dummyData[4] = { 0, 0, 0, 0 };
 
   static const uint16_t channelMap[5] = {
                              0,
@@ -6010,7 +6010,7 @@ nsSVGFEDisplacementMapElement::Filter(nsSVGFilterInstance *instance,
 
       bool outOfBounds = sourceX < 0 || sourceX >= width ||
                          sourceY < 0 || sourceY >= height;
-      uint8_t* data;
+      const uint8_t* data;
       int32_t multiplier;
       if (outOfBounds) {
         data = dummyData;

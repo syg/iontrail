@@ -26,6 +26,7 @@
     _(NewArray)                     \
     _(NewObject)                    \
     _(NewSlots)                     \
+    _(NewDeclEnvObject)             \
     _(NewCallObject)                \
     _(NewStringObject)              \
     _(ParNew)                       \
@@ -37,15 +38,16 @@
     _(ParCheckOverRecursed)         \
     _(RecompileCheck)               \
     _(DefVar)                       \
+    _(DefFun)                       \
     _(CallKnown)                    \
     _(CallGeneric)                  \
     _(CallNative)                   \
-    _(CallConstructor)              \
     _(ApplyArgsGeneric)             \
     _(StackArgT)                    \
     _(StackArgV)                    \
-    _(CreateThis)                   \
-    _(CreateThisVM)                 \
+    _(CreateThisV)                  \
+    _(CreateThisO)                  \
+    _(CreateThisWithTemplate)       \
     _(ReturnFromCtor)               \
     _(BitNotI)                      \
     _(BitNotV)                      \
@@ -59,18 +61,23 @@
     _(TestIAndBranch)               \
     _(TestDAndBranch)               \
     _(TestVAndBranch)               \
+    _(TestOAndBranch)               \
     _(PolyInlineDispatch)           \
     _(Compare)                      \
+    _(CompareAndBranch)             \
     _(CompareD)                     \
+    _(CompareDAndBranch)            \
     _(CompareS)                     \
     _(ParCompareS)                  \
-    _(CompareV)                     \
-    _(CompareAndBranch)             \
-    _(CompareDAndBranch)            \
     _(CompareB)                     \
     _(CompareBAndBranch)            \
-    _(IsNullOrUndefined)            \
-    _(IsNullOrUndefinedAndBranch)   \
+    _(CompareV)                     \
+    _(CompareVAndBranch)            \
+    _(CompareVM)                    \
+    _(IsNullOrLikeUndefined)        \
+    _(IsNullOrLikeUndefinedAndBranch)\
+    _(EmulatesUndefined)            \
+    _(EmulatesUndefinedAndBranch)   \
     _(MinMaxI)                      \
     _(MinMaxD)                      \
     _(NegD)                         \
@@ -83,6 +90,7 @@
     _(MathFunctionD)                \
     _(NotI)                         \
     _(NotD)                         \
+    _(NotO)                         \
     _(NotV)                         \
     _(AddI)                         \
     _(SubI)                         \

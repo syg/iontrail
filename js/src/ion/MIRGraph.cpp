@@ -804,36 +804,30 @@ MBasicBlock::clearDominatorInfo()
 void
 MBasicBlock::removePredecessor(MBasicBlock *pred)
 {
+    JS_ASSERT(numPredecessors() >= 2);
+
     for (size_t i = 0; i < numPredecessors(); i++) {
         if (getPredecessor(i) != pred)
             continue;
 
-        removePredecessorAtIndex(i);
+        // Adjust phis.  Note that this can leave redundant phis
+        // behind.
+        if (!phisEmpty()) {
+            JS_ASSERT(pred->successorWithPhis());
+            JS_ASSERT(pred->positionInPhiSuccessor() == i);
+            for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++)
+                iter->removeOperand(i);
+            for (size_t j = i+1; j < numPredecessors(); j++)
+                getPredecessor(j)->setSuccessorWithPhis(this, j - 1);
+        }
+
+        // Remove from pred list.
+        MBasicBlock **ptr = predecessors_.begin() + i;
+        predecessors_.erase(ptr);
         return;
     }
 
     JS_NOT_REACHED("predecessor was not found");
-}
-
-void
-MBasicBlock::removePredecessorAtIndex(size_t predIndex)
-{
-    MBasicBlock *pred = predecessors_[predIndex];
-
-    // Adjust phis.  Note that this can leave redundant phis
-    // behind.
-    if (!phisEmpty()) {
-        JS_ASSERT(pred->successorWithPhis());
-        JS_ASSERT(pred->positionInPhiSuccessor() == predIndex);
-        for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++)
-            iter->removeOperand(predIndex);
-        for (size_t i = predIndex+1; i < numPredecessors(); i++)
-            getPredecessor(i)->setSuccessorWithPhis(this, i - 1);
-    }
-
-    // Remove from pred list.
-    MBasicBlock **ptr = predecessors_.begin() + predIndex;
-    predecessors_.erase(ptr);
 }
 
 void

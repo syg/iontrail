@@ -125,13 +125,12 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
             return false;
 
 #ifdef JS_ION
-        // If this script hasn't been compiled yet, make sure it will never
-        // be compiled. IonMonkey does not guarantee |f.arguments| can be
+        // Disabling compiling of this script in IonMonkey.
+        // IonMonkey does not guarantee |f.arguments| can be
         // fully recovered, so we try to mitigate observing this behavior by
         // detecting its use early.
         UnrootedScript script = iter.script();
-        if (!script->hasAnyIonScript())
-            ion::ForbidCompilation(cx, script);
+        ion::ForbidCompilation(cx, script);
 #endif
 
         vp.setObject(*argsobj);
@@ -179,7 +178,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
             vp.setNull();
         } else if (caller.isFunction()) {
             JSFunction *callerFun = caller.toFunction();
-            if (callerFun->isInterpreted() && callerFun->inStrictMode()) {
+            if (callerFun->isInterpreted() && callerFun->strict()) {
                 JS_ReportErrorFlagsAndNumber(cx, JSREPORT_ERROR, js_GetErrorMessage, NULL,
                                              JSMSG_CALLER_IS_STRICT);
                 return false;
@@ -344,7 +343,7 @@ fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
             unsigned attrs = JSPROP_PERMANENT;
             if (fun->isInterpretedLazy() && !fun->initializeLazyScript(cx))
                 return false;
-            if (fun->isInterpreted() ? fun->inStrictMode() : fun->isBoundFunction()) {
+            if (fun->isInterpreted() ? fun->strict() : fun->isBoundFunction()) {
                 JSObject *throwTypeError = fun->global().getThrowTypeError();
 
                 getter = CastAsPropertyOp(throwTypeError);
@@ -425,7 +424,7 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
             return false;
         JS_ASSERT(fun->nargs == fun->nonLazyScript()->bindings.numArgs());
         RootedScript script(cx, fun->nonLazyScript());
-        js_CallNewScriptHook(cx, script, fun);
+        CallNewScriptHook(cx, script, fun);
         objp.set(fun);
     }
 
@@ -451,7 +450,7 @@ js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleF
         return NULL;
 
     RootedScript srcScript(cx, srcFun->nonLazyScript());
-    RawScript clonedScript = CloneScript(cx, enclosingScope, clone, srcScript);
+    RootedScript clonedScript(cx, CloneScript(cx, enclosingScope, clone, srcScript));
     if (!clonedScript)
         return NULL;
 
@@ -464,7 +463,7 @@ js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleF
         return NULL;
 
     RootedScript cloneScript(cx, clone->nonLazyScript());
-    js_CallNewScriptHook(cx, cloneScript, clone);
+    CallNewScriptHook(cx, cloneScript, clone);
     return clone;
 }
 
@@ -660,7 +659,7 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
         // have "use strict", we insert "use strict" into the body of the
         // function. This ensures that if the result of toString is evaled, the
         // resulting function will have the same semantics.
-        bool addUseStrict = script->strictModeCode && !script->explicitUseStrict;
+        bool addUseStrict = script->strict && !script->explicitUseStrict;
 
         bool buildBody = funCon && !bodyOnly;
         if (buildBody) {
@@ -1478,6 +1477,11 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
     clone->nargs = fun->nargs;
     clone->flags = fun->flags & ~JSFunction::EXTENDED;
     if (fun->isInterpreted()) {
+        if (fun->isInterpretedLazy()) {
+            AutoCompartment ac(cx, fun);
+            if (!fun->getOrCreateScript(cx))
+                return NULL;
+        }
         clone->initScript(fun->nonLazyScript());
         clone->initEnvironment(parent);
     } else {

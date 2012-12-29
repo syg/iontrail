@@ -136,7 +136,7 @@ class BailoutClosure
 
     void constructFrame() {
         guards_.construct();
-    };
+    }
     InvokeArgsGuard *argsGuard() {
         return &guards_.ref().iag;
     }
@@ -205,7 +205,7 @@ class IonBailoutIterator : public IonFrameIterator
     void dump() const;
 };
 
-bool EnsureHasCallObject(JSContext *cx, StackFrame *fp);
+bool EnsureHasScopeObjects(JSContext *cx, StackFrame *fp);
 
 // Called from a bailout thunk. Returns a BAILOUT_* error code.
 uint32_t Bailout(BailoutStack *sp);

@@ -19,6 +19,7 @@ namespace xpc {
 class AccessCheck {
   public:
     static bool subsumes(JSCompartment *a, JSCompartment *b);
+    static bool subsumes(JSObject *a, JSObject *b);
     static bool wrapperSubsumes(JSObject *wrapper);
     static bool subsumesIgnoringDomain(JSCompartment *a, JSCompartment *b);
     static bool isChrome(JSCompartment *compartment);
@@ -27,7 +28,6 @@ class AccessCheck {
     static nsIPrincipal *getPrincipal(JSCompartment *compartment);
     static bool isCrossOriginAccessPermitted(JSContext *cx, JSObject *obj, jsid id,
                                              js::Wrapper::Action act);
-    static bool callerIsXBL(JSContext *cx);
     static bool isSystemOnlyAccessPermitted(JSContext *cx);
 
     static bool needsSystemOnlyWrapper(JSObject *obj);
@@ -51,6 +51,11 @@ struct OnlyIfSubjectIsSystem : public Policy {
         AccessCheck::deny(cx, id);
         return false;
     }
+
+    static bool allowNativeCall(JSContext *cx, JS::IsAcceptableThis test, JS::NativeImpl impl)
+    {
+        return AccessCheck::isSystemOnlyAccessPermitted(cx);
+    }
 };
 
 // This policy only permits access to properties that are safe to be used
@@ -61,6 +66,10 @@ struct CrossOriginAccessiblePropertiesOnly : public Policy {
     }
     static bool deny(JSContext *cx, jsid id, js::Wrapper::Action act) {
         AccessCheck::deny(cx, id);
+        return false;
+    }
+    static bool allowNativeCall(JSContext *cx, JS::IsAcceptableThis test, JS::NativeImpl impl)
+    {
         return false;
     }
 };
@@ -78,6 +87,7 @@ struct ExposedPropertiesOnly : public Policy {
         AccessCheck::deny(cx, id);
         return false;
     }
+    static bool allowNativeCall(JSContext *cx, JS::IsAcceptableThis test, JS::NativeImpl impl);
 };
 
 // Components specific policy
@@ -86,6 +96,9 @@ struct ComponentsObjectPolicy : public Policy {
 
     static bool deny(JSContext *cx, jsid id, js::Wrapper::Action act) {
         AccessCheck::deny(cx, id);
+        return false;
+    }
+    static bool allowNativeCall(JSContext *cx, JS::IsAcceptableThis test, JS::NativeImpl impl) {
         return false;
     }
 };

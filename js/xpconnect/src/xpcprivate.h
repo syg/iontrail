@@ -2618,8 +2618,15 @@ public:
       static NS_METHOD RootImpl(void *p) { return NS_OK; }
       static NS_METHOD UnlinkImpl(void *p);
       static NS_METHOD UnrootImpl(void *p) { return NS_OK; }
+      static nsXPCOMCycleCollectionParticipant* GetParticipant()
+      {
+        static const CCParticipantVTable<NS_CYCLE_COLLECTION_CLASSNAME(XPCWrappedNative)>
+          ::Type participant =
+          { NS_IMPL_CYCLE_COLLECTION_VTABLE(NS_CYCLE_COLLECTION_CLASSNAME(XPCWrappedNative)) };
+        return NS_PARTICIPANT_AS(nsXPCOMCycleCollectionParticipant,
+                                 &participant);
+      }
     };
-    NS_CYCLE_COLLECTION_PARTICIPANT_INSTANCE
     NS_DECL_CYCLE_COLLECTION_UNMARK_PURPLE_STUB(XPCWrappedNative)
 
     nsIPrincipal* GetObjectPrincipal() const;
@@ -2791,7 +2798,6 @@ public:
                            JSObject* aNewParent,
                            nsISupports* aCOMObj);
 
-    bool IsOrphan();
     nsresult RescueOrphans(XPCCallContext& ccx);
 
     void FlatJSObjectFinalized();

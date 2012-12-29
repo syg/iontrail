@@ -20,6 +20,7 @@
 #include "FilteringWrapper.h"
 
 #include "jsfriendapi.h"
+#include "mozilla/dom/BindingUtils.h"
 
 using namespace mozilla;
 using namespace js;
@@ -50,6 +51,12 @@ AccessCheck::subsumes(JSCompartment *a, JSCompartment *b)
     NS_ENSURE_SUCCESS(rv, false);
 
     return subsumes;
+}
+
+bool
+AccessCheck::subsumes(JSObject *a, JSObject *b)
+{
+    return subsumes(js::GetObjectCompartment(a), js::GetObjectCompartment(b));
 }
 
 // Same as above, but ignoring document.domain.
@@ -222,15 +229,6 @@ AccessCheck::isCrossOriginAccessPermitted(JSContext *cx, JSObject *wrapper, jsid
 }
 
 bool
-AccessCheck::callerIsXBL(JSContext *cx)
-{
-    JSScript *script;
-    if (!JS_DescribeScriptedCaller(cx, &script, nullptr) || !script)
-        return false;
-    return JS_GetScriptUserBit(script);
-}
-
-bool
 AccessCheck::isSystemOnlyAccessPermitted(JSContext *cx)
 {
     MOZ_ASSERT(cx == nsContentUtils::GetCurrentJSContext());
@@ -240,6 +238,10 @@ AccessCheck::isSystemOnlyAccessPermitted(JSContext *cx)
 bool
 AccessCheck::needsSystemOnlyWrapper(JSObject *obj)
 {
+    JSObject* wrapper = obj;
+    if (dom::GetSameCompartmentWrapperForDOMBinding(wrapper))
+        return wrapper != obj;
+
     if (!IS_WN_WRAPPER(obj))
         return false;
 
@@ -302,6 +304,13 @@ IsInSandbox(JSContext *cx, JSObject *obj)
     JSAutoCompartment ac(cx, obj);
     JSObject *global = JS_GetGlobalForObject(cx, obj);
     return !strcmp(js::GetObjectJSClass(global)->name, "Sandbox");
+}
+
+static void
+EnterAndThrow(JSContext *cx, JSObject *wrapper, const char *msg)
+{
+    JSAutoCompartment ac(cx, wrapper);
+    JS_ReportError(cx, msg);
 }
 
 bool
@@ -369,11 +378,16 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
         return false;
 
     if (!exposedProps.isObject()) {
-        JS_ReportError(cx, "__exposedProps__ must be undefined, null, or an Object");
+        EnterAndThrow(cx, wrapper, "__exposedProps__ must be undefined, null, or an Object");
         return false;
     }
 
     JSObject *hallpass = &exposedProps.toObject();
+
+    if (!AccessCheck::subsumes(js::UnwrapObject(hallpass), wrappedObject)) {
+        EnterAndThrow(cx, wrapper, "Invalid __exposedProps__");
+        return false;
+    }
 
     Access access = NO_ACCESS;
 
@@ -385,7 +399,7 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
         return false;
 
     if (!JSVAL_IS_STRING(desc.value)) {
-        JS_ReportError(cx, "property must be a string");
+        EnterAndThrow(cx, wrapper, "property must be a string");
         return false;
     }
 
@@ -399,7 +413,7 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
         switch (chars[i]) {
         case 'r':
             if (access & READ) {
-                JS_ReportError(cx, "duplicate 'readable' property flag");
+                EnterAndThrow(cx, wrapper, "duplicate 'readable' property flag");
                 return false;
             }
             access = Access(access | READ);
@@ -407,20 +421,20 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
 
         case 'w':
             if (access & WRITE) {
-                JS_ReportError(cx, "duplicate 'writable' property flag");
+                EnterAndThrow(cx, wrapper, "duplicate 'writable' property flag");
                 return false;
             }
             access = Access(access | WRITE);
             break;
 
         default:
-            JS_ReportError(cx, "properties can only be readable or read and writable");
+            EnterAndThrow(cx, wrapper, "properties can only be readable or read and writable");
             return false;
         }
     }
 
     if (access == NO_ACCESS) {
-        JS_ReportError(cx, "specified properties must have a permission bit set");
+        EnterAndThrow(cx, wrapper, "specified properties must have a permission bit set");
         return false;
     }
 
@@ -430,6 +444,13 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
     }
 
     return true;
+}
+
+bool
+ExposedPropertiesOnly::allowNativeCall(JSContext *cx, JS::IsAcceptableThis test,
+                                       JS::NativeImpl impl)
+{
+    return js::IsReadOnlyDateMethod(test, impl) || js::IsTypedArrayThisCheck(test);
 }
 
 bool

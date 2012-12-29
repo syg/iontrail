@@ -268,6 +268,9 @@ MOCHITEST_FILES_A = \
 		test_bug282547.html \
 		bug282547.sjs \
 		test_domparser_null_char.html \
+		test_bug811701.html \
+		test_bug811701.xhtml \
+		test_bug820909.html \
 		$(NULL)
 
 MOCHITEST_FILES_B = \
@@ -595,6 +598,7 @@ MOCHITEST_FILES_B = \
 		file_bug804395.jar \
 		test_bug804395.html \
 		test_bug809003.html \
+		test_bug810494.html \
 		test_textnode_split_in_selection.html \
 		test_textnode_normalize_in_selection.html \
 		test_xhr_send_readystate.html \

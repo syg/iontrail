@@ -3,10 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include <string.h>
-#include <stdio.h>
 #include <algorithm>
+#include <stdio.h>
+#include <string.h>
+
+#include "mozilla/DebugOnly.h"
 
 #include "prlink.h"
 #include "prenv.h"
@@ -21,9 +22,10 @@
 #include "gfxUtils.h"
 
 #include "mozilla/Preferences.h"
-#include "mozilla/Util.h" // for DebugOnly
 
 #include "GLTextureImage.h"
+
+#include "nsIMemoryReporter.h"
 
 using namespace mozilla::gfx;
 
@@ -87,6 +89,33 @@ static const char *sExtensionNames[] = {
     "GL_EXT_packed_depth_stencil",
     nullptr
 };
+
+static int64_t sTextureMemoryUsage = 0;
+
+static int64_t
+GetTextureMemoryUsage()
+{
+    return sTextureMemoryUsage;
+}
+
+void
+GLContext::UpdateTextureMemoryUsage(MemoryUse action, GLenum format, GLenum type, uint16_t tileSize)
+{
+    uint32_t bytesPerTexel = mozilla::gl::GetBitsPerTexel(format, type) / 8;
+    int64_t bytes = (int64_t)(tileSize * tileSize * bytesPerTexel);
+    if (action == MemoryFreed) {
+        sTextureMemoryUsage -= bytes;
+    } else {
+        sTextureMemoryUsage += bytes;
+    }
+}
+
+NS_MEMORY_REPORTER_IMPLEMENT(TextureMemoryUsage,
+    "gfx-textures",
+    KIND_OTHER,
+    UNITS_BYTES,
+    GetTextureMemoryUsage,
+    "Memory used for storing GL textures.")
 
 /*
  * XXX - we should really know the ARB/EXT variants of these
@@ -295,7 +324,8 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 "NVIDIA",
                 "ATI",
                 "Qualcomm",
-                "Imagination"
+                "Imagination",
+                "nouveau"
         };
         mVendor = VendorOther;
         for (int i = 0; i < VendorOther; ++i) {
@@ -495,7 +525,8 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 { (PRFuncPtr*) &mSymbols.fGetTexLevelParameteriv, { "GetTexLevelParameteriv", nullptr } },
                 { nullptr, { nullptr } },
         };
-        LoadSymbols(&auxSymbols[0], trygl, prefix);
+        bool warnOnFailures = DebugMode();
+        LoadSymbols(&auxSymbols[0], trygl, prefix, warnOnFailures);
     }
 
     if (mInitialized) {
@@ -514,11 +545,20 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
 #ifdef XP_MACOSX
         if (mWorkAroundDriverBugs &&
             mVendor == VendorIntel) {
-            // see bug 737182 for 2D textures, bug 684822 for cube map textures.
+            // see bug 737182 for 2D textures, bug 684882 for cube map textures.
             mMaxTextureSize        = NS_MIN(mMaxTextureSize,        4096);
             mMaxCubeMapTextureSize = NS_MIN(mMaxCubeMapTextureSize, 512);
             // for good measure, we align renderbuffers on what we do for 2D textures
             mMaxRenderbufferSize   = NS_MIN(mMaxRenderbufferSize,   4096);
+            mNeedsTextureSizeChecks = true;
+        }
+#endif
+#ifdef MOZ_X11
+        if (mWorkAroundDriverBugs &&
+            mVendor == VendorNouveau) {
+            // see bug 814716. Clamp MaxCubeMapTextureSize at 2K for Nouveau.
+            mMaxCubeMapTextureSize = NS_MIN(mMaxCubeMapTextureSize, 2048);
+            mNeedsTextureSizeChecks = true;
         }
 #endif
 
@@ -554,6 +594,16 @@ GLContext::InitExtensions()
 #endif
 
     mAvailableExtensions.Load(extensions, sExtensionNames, firstRun && DebugMode());
+
+#ifdef XP_MACOSX
+    // The Mac Nvidia driver, for versions up to and including 10.8, don't seem
+    // to properly support this.  See 814839
+    if (WorkAroundDriverBugs() &&
+        Vendor() == gl::GLContext::VendorNVIDIA)
+    {
+        MarkExtensionUnsupported(gl::GLContext::EXT_packed_depth_stencil);
+    }
+#endif
 
 #ifdef DEBUG
     firstRun = false;
@@ -634,6 +684,7 @@ void
 GLContext::PlatformStartup()
 {
   CacheCanUploadNPOT();
+  NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(TextureMemoryUsage));
 }
 
 void

@@ -11,6 +11,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import("resource://gre/modules/PermissionsInstaller.jsm");
+Cu.import("resource://gre/modules/PermissionsTable.jsm");
 Cu.import("resource://gre/modules/PermissionSettings.jsm");
 
 this.EXPORTED_SYMBOLS = ["SystemMessagePermissionsChecker",
@@ -76,8 +77,17 @@ this.SystemMessagePermissionsTable = {
   "sms-received": {
     "sms": []
   },
+  "sms-sent": {
+    "sms": []
+  },
   "telephony-new-call": {
     "telephony": []
+  },
+  "telephony-call-ended": {
+    "telephony": []
+  },
+  "ussd-received": {
+    "mobileconnection": []
   }
 };
 
@@ -187,8 +197,7 @@ this.SystemMessagePermissionsChecker = {
       // app's manifest and the ones needed for system message.
       let expandedPermNames =
         expandPermissions(permName,
-                          newManifest.permissions[permName].access,
-                          newManifest.permissions[permName].channels);
+                          newManifest.permissions[permName].access);
 
       let permNamesWithAccess = permNames[permName];
 

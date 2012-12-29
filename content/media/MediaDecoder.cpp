@@ -23,6 +23,10 @@
 #include <cstdlib> // for std::abs(int/long)
 #include <cmath> // for std::abs(float/double)
 
+#ifdef MOZ_WMF
+#include "WMFDecoder.h"
+#endif
+
 using namespace mozilla::layers;
 using namespace mozilla::dom;
 
@@ -283,6 +287,7 @@ double MediaDecoder::GetDuration()
 
 int64_t MediaDecoder::GetMediaDuration()
 {
+  NS_ENSURE_TRUE(GetStateMachine(), -1);
   return GetStateMachine()->GetDuration();
 }
 
@@ -429,6 +434,7 @@ nsresult MediaDecoder::Load(MediaResource* aResource,
 nsresult MediaDecoder::InitializeStateMachine(MediaDecoder* aCloneDonor)
 {
   MOZ_ASSERT(NS_IsMainThread());
+  NS_ASSERTION(mDecoderStateMachine, "Cannot initialize null state machine!");
 
   MediaDecoder* cloneDonor = static_cast<MediaDecoder*>(aCloneDonor);
   if (NS_FAILED(mDecoderStateMachine->Init(cloneDonor ?
@@ -925,6 +931,10 @@ void MediaDecoder::NotifySuspendedStatusChanged()
 void MediaDecoder::NotifyBytesDownloaded()
 {
   MOZ_ASSERT(NS_IsMainThread());
+  {
+    ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+    UpdatePlaybackRate();
+  }
   UpdateReadyStateForData();
   Progress(false);
 }
@@ -964,6 +974,7 @@ void MediaDecoder::NotifyPrincipalChanged()
 
 void MediaDecoder::NotifyBytesConsumed(int64_t aBytes)
 {
+  NS_ENSURE_TRUE_VOID(mDecoderStateMachine);
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   MOZ_ASSERT(OnStateMachineThread() || mDecoderStateMachine->OnDecodeThread());
   if (!mIgnoreProgressData) {
@@ -1195,6 +1206,7 @@ void MediaDecoder::SetDuration(double aDuration)
 
 void MediaDecoder::SetMediaDuration(int64_t aDuration)
 {
+  NS_ENSURE_TRUE_VOID(GetStateMachine());
   GetStateMachine()->SetDuration(aDuration);
 }
 
@@ -1225,6 +1237,7 @@ bool MediaDecoder::IsTransportSeekable()
 
 bool MediaDecoder::IsMediaSeekable()
 {
+  NS_ENSURE_TRUE(GetStateMachine(), false);
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   MOZ_ASSERT(OnDecodeThread() || NS_IsMainThread());
   return mMediaSeekable;
@@ -1240,13 +1253,8 @@ nsresult MediaDecoder::GetSeekable(nsTimeRanges* aSeekable)
   // server supports range requests, etc.)
   if (!IsMediaSeekable()) {
     return NS_OK;
-  } else if (!IsTransportSeekable()){
-    if (mDecoderStateMachine &&
-        mDecoderStateMachine->IsSeekableInBufferedRanges()) {
-      return GetBuffered(aSeekable);
-    } else {
-      return NS_OK;
-    }
+  } else if (!IsTransportSeekable()) {
+    return GetBuffered(aSeekable);
   } else {
     double end = IsInfinite() ? std::numeric_limits<double>::infinity()
                               : initialTime + GetDuration();
@@ -1266,6 +1274,7 @@ void MediaDecoder::SetFragmentEndTime(double aTime)
 
 void MediaDecoder::SetMediaEndTime(int64_t aTime)
 {
+  NS_ENSURE_TRUE_VOID(GetStateMachine());
   GetStateMachine()->SetMediaEndTime(aTime);
 }
 
@@ -1368,6 +1377,7 @@ void MediaDecoder::SetPreservesPitch(bool aPreservesPitch)
 }
 
 bool MediaDecoder::OnDecodeThread() const {
+  NS_ENSURE_TRUE(mDecoderStateMachine, false);
   return mDecoderStateMachine->OnDecodeThread();
 }
 
@@ -1427,10 +1437,12 @@ MediaDecoderStateMachine* MediaDecoder::GetStateMachine() const {
 }
 
 bool MediaDecoder::IsShutdown() const {
+  NS_ENSURE_TRUE(GetStateMachine(), true);
   return GetStateMachine()->IsShutdown();
 }
 
 int64_t MediaDecoder::GetEndMediaTime() const {
+  NS_ENSURE_TRUE(GetStateMachine(), -1);
   return GetStateMachine()->GetEndMediaTime();
 }
 
@@ -1630,6 +1642,14 @@ bool
 MediaDecoder::IsDASHEnabled()
 {
   return Preferences::GetBool("media.dash.enabled");
+}
+#endif
+
+#ifdef MOZ_WMF
+bool
+MediaDecoder::IsWMFEnabled()
+{
+  return WMFDecoder::IsEnabled();
 }
 #endif
 

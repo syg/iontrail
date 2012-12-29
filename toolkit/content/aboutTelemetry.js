@@ -1,3 +1,4 @@
+#filter substitution
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -21,7 +22,15 @@ const TelemetryPing = Cc["@mozilla.org/base/telemetry-ping;1"].
 // Maximum height of a histogram bar (in em)
 const MAX_BAR_HEIGHT = 18;
 const PREF_TELEMETRY_SERVER_OWNER = "toolkit.telemetry.server_owner";
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+const PREF_TELEMETRY_ENABLED = "toolkit.telemetry.enabledPreRelease";
+const PREF_TELEMETRY_DISPLAYED = "toolkit.telemetry.notifiedOptOut";
+#else
 const PREF_TELEMETRY_ENABLED = "toolkit.telemetry.enabled";
+const PREF_TELEMETRY_DISPLAYED = "toolkit.telemetry.prompted";
+#endif
+const PREF_TELEMETRY_REJECTED  = "toolkit.telemetry.rejected";
+const TELEMETRY_DISPLAY_REV = @MOZ_TELEMETRY_DISPLAY_REV@;
 const PREF_DEBUG_SLOW_SQL = "toolkit.telemetry.debugSlowSql";
 const PREF_SYMBOL_SERVER_URI = "profiler.symbolicationUrl";
 const DEFAULT_SYMBOL_SERVER_URI = "http://symbolapi.mozilla.org";
@@ -75,6 +84,10 @@ let observer = {
   observe: function observe(aSubject, aTopic, aData) {
     if (aData == PREF_TELEMETRY_ENABLED) {
       this.updatePrefStatus();
+      Services.prefs.setBoolPref(PREF_TELEMETRY_REJECTED,
+                                 !getPref(PREF_TELEMETRY_ENABLED, false));
+      Services.prefs.setIntPref(PREF_TELEMETRY_DISPLAYED,
+                                TELEMETRY_DISPLAY_REV);
     }
   },
 
@@ -205,13 +218,59 @@ let SlowSQL = {
   }
 };
 
-let ChromeHangs = {
+/**
+ * Removes child elements from the supplied div
+ *
+ * @param aDiv Element to be cleared
+ */
+function clearDivData(aDiv) {
+  while (aDiv.hasChildNodes()) {
+    aDiv.removeChild(aDiv.lastChild);
+  }
+};
 
-  symbolRequest: null,
+let StackRenderer = {
 
   stackTitle: bundle.GetStringFromName("stackTitle"),
 
   memoryMapTitle: bundle.GetStringFromName("memoryMapTitle"),
+
+  /**
+   * Outputs the memory map associated with this hang report
+   *
+   * @param aDiv Output div
+   */
+  renderMemoryMap: function StackRenderer_renderMemoryMap(aDiv, memoryMap) {
+    aDiv.appendChild(document.createTextNode(this.memoryMapTitle));
+    aDiv.appendChild(document.createElement("br"));
+
+    for (let currentModule of memoryMap) {
+      aDiv.appendChild(document.createTextNode(currentModule.join(" ")));
+      aDiv.appendChild(document.createElement("br"));
+    }
+
+    aDiv.appendChild(document.createElement("br"));
+  },
+
+  /**
+   * Outputs the raw PCs from the hang's stack
+   *
+   * @param aDiv Output div
+   * @param aStack Array of PCs from the hang stack
+   */
+  renderStack: function StackRenderer_renderStack(aDiv, aStack) {
+    aDiv.appendChild(document.createTextNode(this.stackTitle));
+    let stackText = " " + aStack.join(" ");
+    aDiv.appendChild(document.createTextNode(stackText));
+
+    aDiv.appendChild(document.createElement("br"));
+    aDiv.appendChild(document.createElement("br"));
+  }
+};
+
+let ChromeHangs = {
+
+  symbolRequest: null,
 
   errorMessage: bundle.GetStringFromName("errorFetchingSymbols"),
 
@@ -220,7 +279,7 @@ let ChromeHangs = {
    */
   render: function ChromeHangs_render() {
     let hangsDiv = document.getElementById("chrome-hangs-data");
-    this.clearHangData(hangsDiv);
+    clearDivData(hangsDiv);
     document.getElementById("fetch-symbols").classList.remove("hidden");
     document.getElementById("hide-symbols").classList.add("hidden");
 
@@ -231,13 +290,14 @@ let ChromeHangs = {
       return;
     }
 
-    this.renderMemoryMap(hangsDiv);
+    let memoryMap = hangs.memoryMap;
+    StackRenderer.renderMemoryMap(hangsDiv, memoryMap);
 
     let durations = hangs.durations;
     for (let i = 0; i < stacks.length; ++i) {
       let stack = stacks[i];
       this.renderHangHeader(hangsDiv, i + 1, durations[i]);
-      this.renderStack(hangsDiv, stack)
+      StackRenderer.renderStack(hangsDiv, stack)
     }
   },
 
@@ -257,40 +317,6 @@ let ChromeHangs = {
     titleElement.appendChild(document.createTextNode(titleText));
 
     aDiv.appendChild(titleElement);
-    aDiv.appendChild(document.createElement("br"));
-  },
-
-  /**
-   * Outputs the raw PCs from the hang's stack
-   *
-   * @param aDiv Output div
-   * @param aStack Array of PCs from the hang stack
-   */
-  renderStack: function ChromeHangs_renderStack(aDiv, aStack) {
-    aDiv.appendChild(document.createTextNode(this.stackTitle));
-    let stackText = " " + aStack.join(" ");
-    aDiv.appendChild(document.createTextNode(stackText));
-
-    aDiv.appendChild(document.createElement("br"));
-    aDiv.appendChild(document.createElement("br"));
-  },
-
-  /**
-   * Outputs the memory map associated with this hang report
-   *
-   * @param aDiv Output div
-   */
-  renderMemoryMap: function ChromeHangs_renderMemoryMap(aDiv) {
-    aDiv.appendChild(document.createTextNode(this.memoryMapTitle));
-    aDiv.appendChild(document.createElement("br"));
-
-    let hangs = Telemetry.chromeHangs;
-    let memoryMap = hangs.memoryMap;
-    for (let currentModule of memoryMap) {
-      aDiv.appendChild(document.createTextNode(currentModule.join(" ")));
-      aDiv.appendChild(document.createElement("br"));
-    }
-
     aDiv.appendChild(document.createElement("br"));
   },
 
@@ -330,7 +356,7 @@ let ChromeHangs = {
     document.getElementById("hide-symbols").classList.remove("hidden");
 
     let hangsDiv = document.getElementById("chrome-hangs-data");
-    this.clearHangData(hangsDiv);
+    clearDivData(hangsDiv);
 
     if (this.symbolRequest.status != 200) {
       hangsDiv.appendChild(document.createTextNode(this.errorMessage));
@@ -358,17 +384,6 @@ let ChromeHangs = {
         hangsDiv.appendChild(document.createElement("br"));
       }
       hangsDiv.appendChild(document.createElement("br"));
-    }
-  },
-
-  /**
-   * Removes child elements from the supplied div
-   *
-   * @param aDiv Element to be cleared
-   */
-  clearHangData: function ChromeHangs_clearHangData(aDiv) {
-    while (aDiv.hasChildNodes()) {
-      aDiv.removeChild(aDiv.lastChild);
     }
   }
 };
@@ -667,6 +682,20 @@ function onLoad() {
   // Set up event listeners
   setupListeners();
 
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+  /**
+   * When telemetry is opt-out, verify if the user explicitly rejected the
+   * telemetry prompt, and if so reflect his choice in the current preference
+   * value. This doesn't cover the case where the user refused telemetry in the
+   * prompt but later enabled it in preferences in builds before the fix for
+   * bug 737600.
+   */
+  if (getPref(PREF_TELEMETRY_ENABLED, false) &&
+      getPref(PREF_TELEMETRY_REJECTED, false)) {
+    Services.prefs.setBoolPref(PREF_TELEMETRY_ENABLED, false);
+  }
+#endif
+
   // Show slow SQL stats
   SlowSQL.render();
 
@@ -684,7 +713,22 @@ function onLoad() {
     showEmptySectionMessage("histograms-section");
   }
 
+  // Show addon histogram data
+  histograms = Telemetry.addonHistogramSnapshots;
+  if (Object.keys(histograms).length) {
+    let addonDiv = document.getElementById("addon-histograms");
+    for (let [name, hgram] of Iterator(histograms)) {
+      Histogram.render(addonDiv, "ADDON_" + name, hgram);
+    }
+  } else {
+    showEmptySectionMessage("addon-histograms-section");
+  }
+
   // Get the Telemetry Ping payload
+  Telemetry.asyncFetchTelemetryData(displayPingData);
+}
+
+function displayPingData() {
   let ping = TelemetryPing.getPayload();
 
   // Show simple measurements
@@ -699,17 +743,6 @@ function onLoad() {
     KeyValueTable.render("system-info-table", ping.info);
   } else {
     showEmptySectionMessage("system-info-section");
-  }
-
-  // Show addon histogram data
-  histograms = Telemetry.addonHistogramSnapshots;
-  if (Object.keys(histograms).length) {
-    let addonDiv = document.getElementById("addon-histograms");
-    for (let [name, hgram] of Iterator(histograms)) {
-      Histogram.render(addonDiv, "ADDON_" + name, hgram);
-    }
-  } else {
-    showEmptySectionMessage("addon-histograms-section");
   }
 }
 

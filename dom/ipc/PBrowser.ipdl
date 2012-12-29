@@ -20,6 +20,7 @@ include "gfxMatrix.h";
 include "FrameMetrics.h";
 include "IPC/nsGUIEventIPC.h";
 include "mozilla/dom/TabMessageUtils.h";
+include "mozilla/dom/ScreenOrientation.h";
 include "mozilla/dom/PermissionMessageUtils.h";
 include "mozilla/layout/RenderFrameUtils.h";
 
@@ -47,6 +48,7 @@ using nsSelectionEvent;
 using nsTextEvent;
 using nsTouchEvent;
 using RemoteDOMEvent;
+using mozilla::dom::ScreenOrientation;
 
 namespace mozilla {
 namespace dom {
@@ -291,7 +293,7 @@ child:
 
     LoadURL(nsCString uri);
 
-    UpdateDimensions(nsRect rect, nsIntSize size) compress;
+    UpdateDimensions(nsRect rect, nsIntSize size, ScreenOrientation orientation) compress;
 
     UpdateFrame(FrameMetrics frame) compress;
 
@@ -381,6 +383,20 @@ child:
                       nsString bgcolor,
                       uint32_t renderFlags, bool flushLayout,
                       nsIntSize renderSize);
+
+    /**
+     * Send the child its app type.  The app type identifies the kind of app
+     * shown in this PBrowser.  Currently, the only recognized app type is
+     * "homescreen".
+     *
+     * The value here corresponds to the "mozapptype" attribute on iframes.  For
+     * example, <iframe mozbrowser mozapp="..." mozapptype="homescreen">.
+     *
+     * Only app frames (i.e., frames with an app-id) should have a non-empty app
+     * type.  If you try to SetAppType() with a non-empty app type on a non-app
+     * PBrowserChild, we may assert.
+     */
+    SetAppType(nsString appType);
 
     /**
      * Sent by the chrome process when it no longer wants this remote

@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/DebugOnly.h"
 
 #include "mozIStorageService.h"
 #include "nsIAlertsService.h"
@@ -2327,7 +2327,7 @@ NS_IMETHODIMP
 nsDownloadManager::OnVisit(nsIURI *aURI, int64_t aVisitID, PRTime aTime,
                            int64_t aSessionID, int64_t aReferringID,
                            uint32_t aTransitionType, const nsACString& aGUID,
-                           uint32_t *aAdded)
+                           bool aHidden)
 {
   return NS_OK;
 }

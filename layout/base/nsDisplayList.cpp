@@ -10,6 +10,11 @@
  * used during painting and hit testing
  */
 
+// include PBrowserChild explicitly because TabChild won't include it
+// because we're in layout :(
+#include "mozilla/dom/PBrowserChild.h"
+#include "mozilla/dom/TabChild.h"
+
 #include "mozilla/layers/PLayers.h"
 
 #include "nsDisplayList.h"
@@ -44,12 +49,14 @@
 #include "nsIViewManager.h"
 #include "ImageLayers.h"
 #include "ImageContainer.h"
+#include "nsCanvasFrame.h"
 
 #include "mozilla/StandardInteger.h"
 
 using namespace mozilla;
 using namespace mozilla::css;
 using namespace mozilla::layers;
+using namespace mozilla::dom;
 typedef FrameMetrics::ViewID ViewID;
 
 static void AddTransformFunctions(nsCSSValueList* aList,
@@ -247,6 +254,18 @@ static void AddTransformFunctions(nsCSSValueList* aList,
         aFunctions.AppendElement(TransformMatrix(matrix));
         break;
       }
+      case eCSSKeyword_interpolatematrix:
+      {
+        gfx3DMatrix matrix;
+        nsStyleTransformMatrix::ProcessInterpolateMatrix(matrix, array,
+                                                         aContext,
+                                                         aPresContext,
+                                                         canStoreInRuleTree,
+                                                         aBounds,
+                                                         aAppUnitsPerPixel);
+        aFunctions.AppendElement(TransformMatrix(matrix));
+        break;
+      }
       case eCSSKeyword_perspective:
       {
         aFunctions.AppendElement(Perspective(array->Item(1).GetFloatValue()));
@@ -406,7 +425,10 @@ AddAnimationsAndTransitionsToLayer(Layer* aLayer, nsDisplayListBuilder* aBuilder
 
       AddAnimationsForProperty(frame, aProperty, &anim,
                                aLayer, data);
+
+      pt->mIsRunningOnCompositor = true;
     }
+    aLayer->SetAnimationGeneration(et->mAnimationGeneration);
   }
 
   if (ea) {
@@ -419,6 +441,7 @@ AddAnimationsAndTransitionsToLayer(Layer* aLayer, nsDisplayListBuilder* aBuilder
       AddAnimationsForProperty(frame, aProperty, anim,
                                aLayer, data);
     }
+    aLayer->SetAnimationGeneration(ea->mAnimationGeneration);
   }
 }
 
@@ -529,11 +552,8 @@ static bool ForceVisiblityForFixedItem(nsDisplayListBuilder* aBuilder,
 
 void nsDisplayListBuilder::SetDisplayPort(const nsRect& aDisplayPort)
 {
-    static bool fixedPositionLayersEnabled = getenv("MOZ_ENABLE_FIXED_POSITION_LAYERS") != 0;
-    if (fixedPositionLayersEnabled) {
-      mHasDisplayPort = true;
-      mDisplayPort = aDisplayPort;
-    }
+    mHasDisplayPort = true;
+    mDisplayPort = aDisplayPort;
 }
 
 void nsDisplayListBuilder::MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame,
@@ -644,6 +664,9 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
   metrics.mScrollId = aScrollId;
 
   nsIPresShell* presShell = presContext->GetPresShell();
+  if (TabChild *tc = GetTabChildFrom(presShell)) {
+    metrics.mZoom = tc->GetZoom();
+  }
   metrics.mResolution = gfxSize(presShell->GetXResolution(), presShell->GetYResolution());
 
   metrics.mDevPixelsPerCSSPixel = auPerCSSPixel / auPerDevPixel;
@@ -1525,8 +1548,7 @@ nsDisplayBackgroundImage::nsDisplayBackgroundImage(nsDisplayListBuilder* aBuilde
     }
 
     // Check if this background layer is attachment-fixed
-    if (!mBackgroundStyle->mLayers[mLayer].mImage.IsEmpty() &&
-        mBackgroundStyle->mLayers[mLayer].mAttachment == NS_STYLE_BG_ATTACHMENT_FIXED) {
+    if (mBackgroundStyle->mLayers[mLayer].mAttachment == NS_STYLE_BG_ATTACHMENT_FIXED) {
       aBuilder->SetHasFixedItems();
     }
   }
@@ -1570,11 +1592,31 @@ nsDisplayBackgroundImage::AppendBackgroundItemsToTop(nsDisplayListBuilder* aBuil
   aList->AppendNewToTop(
       new (aBuilder) nsDisplayBackgroundColor(aBuilder, aFrame, bg,
                                               drawBackgroundColor ? color : NS_RGBA(0, 0, 0, 0)));
+
+  if (isThemed) {
+    nsDisplayBackgroundImage* bgItem =
+      new (aBuilder) nsDisplayBackgroundImage(aBuilder, aFrame, 0, isThemed, nullptr);
+    nsresult rv = aList->AppendNewToTop(bgItem);
+    if (rv != NS_OK) {
+      return rv;
+    }
+    if (aBackground) {
+      *aBackground = bgItem;
+    }
+    return NS_OK;
+  }
+
+  if (!bg) {
+    return NS_OK;
+  }
  
   // Passing bg == nullptr in this macro will result in one iteration with
   // i = 0.
   bool backgroundSet = !aBackground;
   NS_FOR_VISIBLE_BACKGROUND_LAYERS_BACK_TO_FRONT(i, bg) {
+    if (bg->mLayers[i].mImage.IsEmpty()) {
+      continue;
+    }
     nsDisplayBackgroundImage* bgItem =
       new (aBuilder) nsDisplayBackgroundImage(aBuilder, aFrame, i, isThemed, bg);
     nsresult rv = aList->AppendNewToTop(bgItem);
@@ -1690,6 +1732,9 @@ nsDisplayBackgroundImage::IsSingleFixedPositionImage(nsDisplayListBuilder* aBuil
                                                      gfxRect* aDestRect)
 {
   if (mIsThemed || !mBackgroundStyle)
+    return false;
+
+  if (mBackgroundStyle->mLayers.Length() != 1)
     return false;
 
   nsPresContext* presContext = mFrame->PresContext();
@@ -1978,10 +2023,6 @@ nsDisplayBackgroundImage::IsUniform(nsDisplayListBuilder* aBuilder, nscolor* aCo
     *aColor = NS_RGBA(0,0,0,0);
     return true;
   }
-  if (mBackgroundStyle->mLayers[mLayer].mImage.IsEmpty()) {
-    *aColor = NS_RGBA(0,0,0,0);
-    return true;
-  }
   return false;
 }
 
@@ -2060,14 +2101,22 @@ static void CheckForBorderItem(nsDisplayItem *aItem, uint32_t& aFlags)
 void
 nsDisplayBackgroundImage::Paint(nsDisplayListBuilder* aBuilder,
                                 nsRenderingContext* aCtx) {
+  PaintInternal(aBuilder, aCtx, mVisibleRect, nullptr);
+}
 
+void
+nsDisplayBackgroundImage::PaintInternal(nsDisplayListBuilder* aBuilder,
+                                        nsRenderingContext* aCtx, const nsRect& aBounds,
+                                        nsRect* aClipRect) {
   nsPoint offset = ToReferenceFrame();
   uint32_t flags = aBuilder->GetBackgroundPaintFlags();
   CheckForBorderItem(this, flags);
+
   nsCSSRendering::PaintBackground(mFrame->PresContext(), *aCtx, mFrame,
-                                  mVisibleRect,
+                                  aBounds,
                                   nsRect(offset, mFrame->GetSize()),
-                                  flags, nullptr, mLayer);
+                                  flags, aClipRect, mLayer);
+
 }
 
 void nsDisplayBackgroundImage::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
@@ -2126,6 +2175,10 @@ nsDisplayBackgroundImage::GetBoundsInternal() {
   }
 
   nsRect borderBox = nsRect(ToReferenceFrame(), mFrame->GetSize());
+  if (mFrame->GetType() == nsGkAtoms::canvasFrame) {
+    nsCanvasFrame* frame = static_cast<nsCanvasFrame*>(mFrame);
+    borderBox = frame->CanvasArea() + ToReferenceFrame();
+  }
   const nsStyleBackground::Layer& layer = mBackgroundStyle->mLayers[mLayer];
   return nsCSSRendering::GetBackgroundLayerRect(presContext, mFrame,
                                                 borderBox, *mBackgroundStyle, layer);
@@ -2384,7 +2437,13 @@ nsDisplayBoxShadowOuter::Paint(nsDisplayListBuilder* aBuilder,
 nsRect
 nsDisplayBoxShadowOuter::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) {
   *aSnap = false;
-  return mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+  return mBounds;
+}
+
+nsRect
+nsDisplayBoxShadowOuter::GetBoundsInternal() {
+  return nsLayoutUtils::GetBoxShadowRectForFrame(mFrame, mFrame->GetSize()) +
+         ToReferenceFrame();
 }
 
 bool
@@ -3902,6 +3961,8 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(nsDisplayListBuilder *aBu
   // so we never need to explicitely unset this flag.
   if (mFrame->Preserves3D() || mFrame->Preserves3DChildren()) {
     container->SetContentFlags(container->GetContentFlags() | Layer::CONTENT_PRESERVE_3D);
+  } else {
+    container->SetContentFlags(container->GetContentFlags() & ~Layer::CONTENT_PRESERVE_3D);
   }
 
   AddAnimationsAndTransitionsToLayer(container, aBuilder,
@@ -3909,8 +3970,10 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(nsDisplayListBuilder *aBu
   if (ShouldPrerenderTransformedContent(aBuilder, mFrame, false)) {
     container->SetUserData(nsIFrame::LayerIsPrerenderedDataKey(),
                            /*the value is irrelevant*/nullptr);
+    container->SetContentFlags(container->GetContentFlags() | Layer::CONTENT_MAY_CHANGE_TRANSFORM);
   } else {
     container->RemoveUserData(nsIFrame::LayerIsPrerenderedDataKey());
+    container->SetContentFlags(container->GetContentFlags() & ~Layer::CONTENT_MAY_CHANGE_TRANSFORM);
   }
   return container.forget();
 }

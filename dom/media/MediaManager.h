@@ -4,6 +4,7 @@
 
 #include "MediaEngine.h"
 #include "mozilla/Services.h"
+#include "nsIMediaManager.h"
 
 #include "nsHashKeys.h"
 #include "nsGlobalWindow.h"
@@ -14,6 +15,7 @@
 #include "nsPIDOMWindow.h"
 #include "nsIDOMNavigatorUserMedia.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/StaticPtr.h"
 #include "prlog.h"
 
 namespace mozilla {
@@ -254,24 +256,30 @@ public:
     mSource = aSource;
     mType.Assign(NS_LITERAL_STRING("video"));
     mSource->GetName(mName);
-  };
+    mSource->GetUUID(mID);
+  }
   MediaDevice(MediaEngineAudioSource* aSource) {
     mSource = aSource;
     mType.Assign(NS_LITERAL_STRING("audio"));
     mSource->GetName(mName);
-  };
-  virtual ~MediaDevice() {};
+    mSource->GetUUID(mID);
+  }
+  virtual ~MediaDevice() {}
 
   MediaEngineSource* GetSource();
 private:
   nsString mName;
   nsString mType;
+  nsString mID;
   nsRefPtr<MediaEngineSource> mSource;
 };
 
-class MediaManager MOZ_FINAL : public nsIObserver
+class MediaManager MOZ_FINAL : public nsIMediaManagerService,
+                               public nsIObserver
 {
 public:
+  static already_AddRefed<MediaManager> GetInstance();
+
   static MediaManager* Get() {
     if (!sSingleton) {
       sSingleton = new MediaManager();
@@ -293,6 +301,7 @@ public:
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
+  NS_DECL_NSIMEDIAMANAGERSERVICE
 
   MediaEngine* GetBackend();
   StreamListeners *GetWindowListeners(uint64_t aWindowId) {
@@ -317,7 +326,7 @@ private:
   WindowTable *GetActiveWindows() {
     NS_ASSERTION(NS_IsMainThread(), "Only access windowlist on main thread");
     return &mActiveWindows;
-  };
+  }
 
   // Make private because we want only one instance of this class
   MediaManager()
@@ -326,11 +335,11 @@ private:
   , mBackend(nullptr) {
     mActiveWindows.Init();
     mActiveCallbacks.Init();
-  };
+  }
 
   ~MediaManager() {
     delete mBackend;
-  };
+  }
 
   // ONLY access from MainThread so we don't need to lock
   WindowTable mActiveWindows;
@@ -342,7 +351,7 @@ private:
   // protected with mMutex:
   MediaEngine* mBackend;
 
-  static nsRefPtr<MediaManager> sSingleton;
+  static StaticRefPtr<MediaManager> sSingleton;
 };
 
 } // namespace mozilla

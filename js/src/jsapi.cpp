@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=4 sw=4 et tw=99 ft=cpp:
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -751,7 +751,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     jaegerRuntime_(NULL),
 #endif
     ionRuntime_(NULL),
-    selfHostedGlobal_(NULL),
+    selfHostingGlobal_(NULL),
     nativeStackBase(0),
     nativeStackQuota(0),
     interpreterFrames(NULL),
@@ -773,6 +773,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcMaxBytes(0),
     gcMaxMallocBytes(0),
     gcNumArenasFreeCommitted(0),
+    gcMarker(this),
     gcVerifyPreData(NULL),
     gcVerifyPostData(NULL),
     gcChunkAllocationSinceLastGC(false),
@@ -812,6 +813,9 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcSweepCompartment(NULL),
     gcSweepKindIndex(0),
     gcArenasAllocatedDuringSweep(NULL),
+#ifdef DEBUG
+    gcMarkingValidator(NULL),
+#endif
     gcInterFrameGC(0),
     gcSliceBudget(SliceBudget::Unlimited),
     gcIncrementalEnabled(true),
@@ -954,7 +958,7 @@ JSRuntime::init(uint32_t maxbytes)
         return false;
 
 #ifdef JS_THREADSAFE
-    if (!sourceCompressorThread.init())
+    if (useHelperThreads() && !sourceCompressorThread.init())
         return false;
 #endif
 
@@ -1067,12 +1071,14 @@ JSRuntime::abortIfWrongThread() const
         MOZ_CRASH();
 }
 
+#ifdef DEBUG
 JS_FRIEND_API(void)
 JSRuntime::assertValidThread() const
 {
     JS_ASSERT(ownerThread_ == PR_GetCurrentThread());
     JS_ASSERT(js::TlsPerThreadData.get()->associatedWith(this));
 }
+#endif  /* DEBUG */
 #endif  /* JS_THREADSAFE */
 
 JS_PUBLIC_API(JSRuntime *)
@@ -1529,6 +1535,14 @@ JS_WrapValue(JSContext *cx, jsval *vp)
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     return cx->compartment->wrap(cx, vp);
+}
+
+JS_PUBLIC_API(JSBool)
+JS_WrapId(JSContext *cx, jsid *idp)
+{
+  AssertHeapIsIdle(cx);
+  CHECK_REQUEST(cx);
+  return cx->compartment->wrapId(cx, idp);
 }
 
 /*
@@ -3422,8 +3436,13 @@ JS_NewObject(JSContext *cx, JSClass *jsclasp, JSObject *protoArg, JSObject *pare
     JSObject *obj = NewObjectWithClassProto(cx, clasp, proto, parent);
     AutoAssertNoGC nogc;
     if (obj) {
+        TypeObjectFlags flags = 0;
         if (clasp->ext.equality)
-            MarkTypeObjectFlags(cx, obj, OBJECT_FLAG_SPECIAL_EQUALITY);
+            flags |= OBJECT_FLAG_SPECIAL_EQUALITY;
+        if (clasp->emulatesUndefined())
+            flags |= OBJECT_FLAG_EMULATES_UNDEFINED;
+        if (flags)
+            MarkTypeObjectFlags(cx, obj, flags);
     }
 
     JS_ASSERT_IF(obj, obj->getParent());
@@ -3650,8 +3669,7 @@ JS_HasPropertyById(JSContext *cx, JSObject *objArg, jsid idArg, JSBool *foundp)
     RootedId id(cx, idArg);
     RootedObject obj2(cx);
     RootedShape prop(cx);
-    JSBool ok = LookupPropertyById(cx, obj, id, JSRESOLVE_QUALIFIED | JSRESOLVE_DETECTING,
-                                   &obj2, &prop);
+    JSBool ok = LookupPropertyById(cx, obj, id, JSRESOLVE_QUALIFIED, &obj2, &prop);
     *foundp = (prop != NULL);
     return ok;
 }
@@ -3697,10 +3715,8 @@ JS_AlreadyHasOwnPropertyById(JSContext *cx, JSObject *objArg, jsid id_, JSBool *
         RootedObject obj2(cx);
         RootedShape prop(cx);
 
-        if (!LookupPropertyById(cx, obj, id, JSRESOLVE_QUALIFIED | JSRESOLVE_DETECTING,
-                                &obj2, &prop)) {
+        if (!LookupPropertyById(cx, obj, id, JSRESOLVE_QUALIFIED, &obj2, &prop))
             return JS_FALSE;
-        }
         *foundp = (obj == obj2);
         return JS_TRUE;
     }
@@ -3825,8 +3841,8 @@ DefinePropertyById(JSContext *cx, HandleObject obj, HandleId id, HandleValue val
 
     JSAutoResolveFlags rf(cx, JSRESOLVE_QUALIFIED);
     if (flags != 0 && obj->isNative()) {
-        return !!DefineNativeProperty(cx, obj, id, value, getter, setter,
-                                      attrs, flags, tinyid);
+        return DefineNativeProperty(cx, obj, id, value, getter, setter,
+                                    attrs, flags, tinyid);
     }
     return JSObject::defineGeneric(cx, obj, id, value, getter, setter, attrs);
 }
@@ -4473,15 +4489,15 @@ JS_DeleteProperty(JSContext *cx, JSObject *objArg, const char *name)
     return JS_DeleteProperty2(cx, objArg, name, &junk);
 }
 
-static Shape *
+static UnrootedShape
 LastConfigurableShape(JSObject *obj)
 {
     for (Shape::Range r(obj->lastProperty()->all()); !r.empty(); r.popFront()) {
-        Shape *shape = &r.front();
+        UnrootedShape shape = &r.front();
         if (shape->configurable())
             return shape;
     }
-    return NULL;
+    return UnrootedShape(NULL);
 }
 
 JS_PUBLIC_API(void)
@@ -4498,18 +4514,20 @@ JS_ClearNonGlobalObject(JSContext *cx, JSObject *objArg)
         return;
 
     /* Remove all configurable properties from obj. */
-    while (Shape *shape = LastConfigurableShape(obj)) {
+    RootedShape shape(cx);
+    while ((shape = LastConfigurableShape(obj))) {
         if (!obj->removeProperty(cx, shape->propid()))
             return;
     }
 
     /* Set all remaining writable plain data properties to undefined. */
     for (Shape::Range r(obj->lastProperty()->all()); !r.empty(); r.popFront()) {
-        Shape *shape = &r.front();
+        UnrootedShape shape = &r.front();
         if (shape->isDataDescriptor() &&
             shape->writable() &&
             shape->hasDefaultSetter() &&
-            shape->hasSlot()) {
+            shape->hasSlot())
+        {
             obj->nativeSetSlot(shape->slot(), UndefinedValue());
         }
     }
@@ -4552,7 +4570,7 @@ JS_Enumerate(JSContext *cx, JSObject *objArg)
  * XXX reverse iterator for properties, unreverse and meld with jsinterp.c's
  *     prop_iterator_class somehow...
  * + preserve the obj->enumerate API while optimizing the native object case
- * + native case here uses a Shape *, but that iterates in reverse!
+ * + native case here uses a JSShape *, but that iterates in reverse!
  * + so we make non-native match, by reverse-iterating after JS_Enumerating
  */
 const uint32_t JSSLOT_ITER_INDEX = 0;
@@ -4584,7 +4602,7 @@ prop_iter_trace(JSTracer *trc, RawObject obj)
          * barrier here because the pointer is updated via setPrivate, which
          * always takes a barrier.
          */
-        Shape *tmp = (Shape *)pdata;
+        UnrootedShape tmp = static_cast<RawShape>(pdata);
         MarkShapeUnbarriered(trc, &tmp, "prop iter shape");
         obj->setPrivateUnbarriered(tmp);
     } else {
@@ -4649,18 +4667,15 @@ JS_NextProperty(JSContext *cx, JSObject *iterobjArg, jsid *idp)
 {
     RootedObject iterobj(cx, iterobjArg);
     AutoAssertNoGC nogc;
-    int32_t i;
-    Shape *shape;
-    JSIdArray *ida;
 
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, iterobj);
-    i = iterobj->getSlot(JSSLOT_ITER_INDEX).toInt32();
+    int32_t i = iterobj->getSlot(JSSLOT_ITER_INDEX).toInt32();
     if (i < 0) {
         /* Native case: private data is a property tree node pointer. */
         JS_ASSERT(iterobj->getParent()->isNative());
-        shape = (Shape *) iterobj->getPrivate();
+        UnrootedShape shape = static_cast<RawShape>(iterobj->getPrivate());
 
         while (shape->previous() && !shape->enumerable())
             shape = shape->previous();
@@ -4669,12 +4684,12 @@ JS_NextProperty(JSContext *cx, JSObject *iterobjArg, jsid *idp)
             JS_ASSERT(shape->isEmptyShape());
             *idp = JSID_VOID;
         } else {
-            iterobj->setPrivateGCThing(const_cast<Shape *>(shape->previous().get()));
+            iterobj->setPrivateGCThing(const_cast<RawShape>(shape->previous().get()));
             *idp = shape->propid();
         }
     } else {
         /* Non-native case: use the ida enumerated when iterobj was created. */
-        ida = (JSIdArray *) iterobj->getPrivate();
+        JSIdArray *ida = (JSIdArray *) iterobj->getPrivate();
         JS_ASSERT(i <= ida->length);
         STATIC_ASSUME(i <= ida->length);
         if (i == 0) {
@@ -5026,7 +5041,7 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
          * in. Self-hosted functions can access each other via their names,
          * but not via the builtin classes they get installed into.
          */
-        if (fs->selfHostedName && cx->runtime->isSelfHostedGlobal(cx->global()))
+        if (fs->selfHostedName && cx->runtime->isSelfHostingGlobal(cx->global()))
             return JS_TRUE;
 
         /*
@@ -5221,6 +5236,7 @@ JS::CompileOptions::CompileOptions(JSContext *cx)
       compileAndGo(cx->hasRunOption(JSOPTION_COMPILE_N_GO)),
       noScriptRval(cx->hasRunOption(JSOPTION_NO_SCRIPT_RVAL)),
       selfHostingMode(false),
+      userBit(false),
       sourcePolicy(SAVE_SOURCE)
 {
 }
@@ -6179,14 +6195,6 @@ JS_ConcatStrings(JSContext *cx, JSString *left, JSString *right)
     return js_ConcatStrings(cx, lstr, rstr);
 }
 
-JS_PUBLIC_API(const jschar *)
-JS_UndependString(JSContext *cx, JSString *str)
-{
-    AssertHeapIsIdle(cx);
-    CHECK_REQUEST(cx);
-    return str->getCharsZ(cx);
-}
-
 JS_PUBLIC_API(JSBool)
 JS_DecodeBytes(JSContext *cx, const char *src, size_t srclen, jschar *dst, size_t *dstlenp)
 {
@@ -6541,7 +6549,7 @@ JS_ReportErrorNumberVA(JSContext *cx, JSErrorCallback errorCallback,
 {
     AssertHeapIsIdle(cx);
     js_ReportErrorNumberVA(cx, JSREPORT_ERROR, errorCallback, userRef,
-                           errorNumber, JS_TRUE, ap);
+                           errorNumber, ArgumentsAreASCII, ap);
 }
 
 JS_PUBLIC_API(void)
@@ -6553,7 +6561,7 @@ JS_ReportErrorNumberUC(JSContext *cx, JSErrorCallback errorCallback,
     AssertHeapIsIdle(cx);
     va_start(ap, errorNumber);
     js_ReportErrorNumberVA(cx, JSREPORT_ERROR, errorCallback, userRef,
-                           errorNumber, JS_FALSE, ap);
+                           errorNumber, ArgumentsAreUnicode, ap);
     va_end(ap);
 }
 
@@ -6591,7 +6599,7 @@ JS_ReportErrorFlagsAndNumber(JSContext *cx, unsigned flags,
     AssertHeapIsIdle(cx);
     va_start(ap, errorNumber);
     ok = js_ReportErrorNumberVA(cx, flags, errorCallback, userRef,
-                                errorNumber, JS_TRUE, ap);
+                                errorNumber, ArgumentsAreASCII, ap);
     va_end(ap);
     return ok;
 }
@@ -6607,7 +6615,7 @@ JS_ReportErrorFlagsAndNumberUC(JSContext *cx, unsigned flags,
     AssertHeapIsIdle(cx);
     va_start(ap, errorNumber);
     ok = js_ReportErrorNumberVA(cx, flags, errorCallback, userRef,
-                                errorNumber, JS_FALSE, ap);
+                                errorNumber, ArgumentsAreUnicode, ap);
     va_end(ap);
     return ok;
 }
@@ -6742,8 +6750,10 @@ JS_ExecuteRegExp(JSContext *cx, JSObject *objArg, JSObject *reobjArg, jschar *ch
     CHECK_REQUEST(cx);
 
     RegExpStatics *res = obj->asGlobal().getRegExpStatics();
-    return ExecuteRegExp(cx, res, reobj->asRegExp(), NullPtr(), StableCharPtr(chars, length),
-                         length, indexp, test ? RegExpTest : RegExpExec, rval);
+    StableCharPtr charPtr(chars, length);
+
+    return ExecuteRegExpLegacy(cx, res, reobj->asRegExp(), NullPtr(),
+                               charPtr, length, indexp, test, rval);
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -6777,8 +6787,9 @@ JS_ExecuteRegExpNoStatics(JSContext *cx, JSObject *objArg, jschar *chars, size_t
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
-    return ExecuteRegExp(cx, NULL, obj->asRegExp(), NullPtr(), StableCharPtr(chars, length),
-                         length, indexp, test ? RegExpTest : RegExpExec, rval);
+    StableCharPtr charPtr(chars, length);
+    return ExecuteRegExpLegacy(cx, NULL, obj->asRegExp(), NullPtr(),
+                               charPtr, length, indexp, test, rval);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -7145,7 +7156,7 @@ JS::AssertArgumentsAreSane(JSContext *cx, const JS::Value &value)
 #endif /* DEBUG */
 
 JS_PUBLIC_API(void *)
-JS_EncodeScript(JSContext *cx, JSRawScript scriptArg, uint32_t *lengthp)
+JS_EncodeScript(JSContext *cx, RawScript scriptArg, uint32_t *lengthp)
 {
     XDREncoder encoder(cx);
     RootedScript script(cx, scriptArg);

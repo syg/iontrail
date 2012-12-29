@@ -541,15 +541,6 @@ nsSVGGlyphFrame::ReflowSVG()
               PresContext()->AppUnitsPerCSSPixel());
   }
 
-  // We only invalidate if we are dirty, if our outer-<svg> has already had its
-  // initial reflow (since if it hasn't, its entire area will be invalidated
-  // when it gets that initial reflow), and if our parent is not dirty (since
-  // if it is, then it will invalidate its entire new area, which will include
-  // our new area).
-  bool invalidate = (mState & NS_FRAME_IS_DIRTY) &&
-    !(GetParent()->GetStateBits() &
-       (NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY));
-
   nsRect overflow = nsRect(nsPoint(0,0), mRect.Size());
   nsOverflowAreas overflowAreas(overflow, overflow);
   FinishAndStoreOverflow(overflowAreas, mRect.Size());
@@ -557,11 +548,12 @@ nsSVGGlyphFrame::ReflowSVG()
   mState &= ~(NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY |
               NS_FRAME_HAS_DIRTY_CHILDREN);
 
-  if (invalidate) {
-    // XXXSDL Let FinishAndStoreOverflow do this.
-    nsSVGUtils::InvalidateBounds(this, true);
+  // Invalidate, but only if this is not our first reflow (since if it is our
+  // first reflow then we haven't had our first paint yet).
+  if (!(GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
+    InvalidateFrame();
   }
-}  
+}
 
 void
 nsSVGGlyphFrame::NotifySVGChanged(uint32_t aFlags)
@@ -1349,7 +1341,7 @@ nsSVGGlyphFrame::SetGlyphPosition(gfxPoint *aPosition, bool aForceGlobalTransfor
 
 nsresult
 nsSVGGlyphFrame::GetStartPositionOfChar(uint32_t charnum,
-                                        nsIDOMSVGPoint **_retval)
+                                        nsISupports **_retval)
 {
   *_retval = nullptr;
 
@@ -1363,7 +1355,7 @@ nsSVGGlyphFrame::GetStartPositionOfChar(uint32_t charnum,
 
 nsresult
 nsSVGGlyphFrame::GetEndPositionOfChar(uint32_t charnum,
-                                      nsIDOMSVGPoint **_retval)
+                                      nsISupports **_retval)
 {
   *_retval = nullptr;
 
@@ -1608,11 +1600,9 @@ nsSVGGlyphFrame::GetSubStringLength(uint32_t charnum, uint32_t fragmentChars)
 }
 
 int32_t
-nsSVGGlyphFrame::GetCharNumAtPosition(nsIDOMSVGPoint *point)
+nsSVGGlyphFrame::GetCharNumAtPosition(DOMSVGPoint *point)
 {
-  float xPos, yPos;
-  point->GetX(&xPos);
-  point->GetY(&yPos);
+  float xPos = point->X(), yPos = point->Y();
 
   nsRefPtr<gfxContext> tmpCtx = MakeTmpCtx();
   CharacterIterator iter(this, false);

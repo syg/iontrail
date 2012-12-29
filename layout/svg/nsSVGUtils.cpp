@@ -560,19 +560,6 @@ nsSVGUtils::ScheduleReflowSVG(nsIFrame *aFrame)
     outerSVGFrame, nsIPresShell::eResize, dirtyBit);
 }
 
-void
-nsSVGUtils::InvalidateAndScheduleReflowSVG(nsIFrame *aFrame)
-{
-  // If this is triggered, the callers should be fixed to call us much
-  // earlier. If we try to mark dirty bits on frames while we're in the
-  // process of removing them, things will get messed up.
-  NS_ASSERTION(!OuterSVGIsCallingReflowSVG(aFrame),
-               "Must not call under nsISVGChildFrame::ReflowSVG!");
-
-  InvalidateBounds(aFrame, false);
-  ScheduleReflowSVG(aFrame);
-}
-
 bool
 nsSVGUtils::NeedsReflowSVG(nsIFrame *aFrame)
 {
@@ -1863,4 +1850,42 @@ nsSVGUtils::SetupCairoStroke(nsIFrame* aFrame, gfxContext* aContext,
   SetupCairoStrokeHitGeometry(aFrame, aContext, aObjectPaint);
 
   return SetupCairoStrokePaint(aFrame, aContext, aObjectPaint);
+}
+
+bool
+nsSVGUtils::PaintSVGGlyph(Element* aElement, gfxContext* aContext,
+                          gfxFont::DrawMode aDrawMode,
+                          gfxTextObjectPaint* aObjectPaint)
+{
+  nsIFrame* frame = aElement->GetPrimaryFrame();
+  nsISVGChildFrame* svgFrame = do_QueryFrame(frame);
+  MOZ_ASSERT(!frame || svgFrame, "Non SVG frame for SVG glyph");
+  if (svgFrame) {
+    nsRenderingContext context;
+    context.Init(frame->PresContext()->DeviceContext(), aContext);
+    context.AddUserData(&gfxTextObjectPaint::sUserDataKey, aObjectPaint, nullptr);
+    nsresult rv = svgFrame->PaintSVG(&context, nullptr);
+    if (NS_SUCCEEDED(rv)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool
+nsSVGUtils::GetSVGGlyphExtents(Element* aElement,
+                               const gfxMatrix& aSVGToAppSpace,
+                               gfxRect* aResult)
+{
+  nsIFrame* frame = aElement->GetPrimaryFrame();
+  nsISVGChildFrame* svgFrame = do_QueryFrame(frame);
+  MOZ_ASSERT(!frame || svgFrame, "Non SVG frame for SVG glyph");
+  if (svgFrame) {
+    *aResult = svgFrame->GetBBoxContribution(aSVGToAppSpace,
+      nsSVGUtils::eBBoxIncludeFill | nsSVGUtils::eBBoxIncludeFillGeometry |
+      nsSVGUtils::eBBoxIncludeStroke | nsSVGUtils::eBBoxIncludeStrokeGeometry |
+      nsSVGUtils::eBBoxIncludeMarkers);
+    return true;
+  }
+  return false;
 }

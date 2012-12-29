@@ -5,7 +5,12 @@
 
 /* rendering object for textual content of elements */
 
-#include "mozilla/Util.h"
+#include <cmath> // for std::abs(float/double)
+#include <cstdlib> // for std::abs(int/long)
+
+#include "mozilla/Attributes.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
 
 #include "nsCOMPtr.h"
 #include "nsHTMLParts.h"
@@ -70,13 +75,8 @@
 #include "gfxContext.h"
 #include "gfxImageSurface.h"
 
-#include "mozilla/Attributes.h"
 #include "mozilla/dom/Element.h"
-#include "mozilla/Likely.h"
 #include "mozilla/LookAndFeel.h"
-#include "mozilla/Util.h" // for DebugOnly
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
 
 #include "sampler.h"
 
@@ -3898,11 +3898,11 @@ nsTextFrame::AccessibleType()
     nsAutoString renderedWhitespace;
     GetRenderedText(&renderedWhitespace, nullptr, nullptr, 0, 1);
     if (renderedWhitespace.IsEmpty()) {
-      return a11y::eNoAccessible;
+      return a11y::eNoType;
     }
   }
 
-  return a11y::eTextLeafAccessible;
+  return a11y::eTextLeafType;
 }
 #endif
 

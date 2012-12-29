@@ -76,6 +76,10 @@ WebrtcVideoConduit::~WebrtcVideoConduit()
     mPtrViEBase->Release();
   }
 
+  if (mPtrRTP)
+  {
+    mPtrRTP->Release();
+  }
   if(mVideoEngine)
   {
     webrtc::VideoEngine::Delete(mVideoEngine);
@@ -96,42 +100,56 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
      return kMediaConduitSessionNotInited;
   }
 
-#if 0
-  // TRACING
-  mVideoEngine->SetTraceFilter(webrtc::kTraceAll);
-  mVideoEngine->SetTraceFile( "Vievideotrace.out" );
-#endif
+  PRLogModuleInfo *logs = GetWebRTCLogInfo();
+  if (!gWebrtcTraceLoggingOn && logs && logs->level > 0) {
+    // no need to a critical section or lock here
+    gWebrtcTraceLoggingOn = 1;
+
+    const char *file = PR_GetEnv("WEBRTC_TRACE_FILE");
+    if (!file) {
+      file = "WebRTC.log";
+    }
+    CSFLogDebug(logTag,  "%s Logging webrtc to %s level %d", __FUNCTION__,
+                file, logs->level);
+    mVideoEngine->SetTraceFilter(logs->level);
+    mVideoEngine->SetTraceFile(file);
+  }
 
   if( !(mPtrViEBase = ViEBase::GetInterface(mVideoEngine)))
   {
-    CSFLogError(logTag, "%s Unable to create video engine ", __FUNCTION__);
+    CSFLogError(logTag, "%s Unable to get video base interface ", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
 
   if( !(mPtrViECapture = ViECapture::GetInterface(mVideoEngine)))
   {
-    CSFLogError(logTag, "%s Unable to create video engine ", __FUNCTION__);
+    CSFLogError(logTag, "%s Unable to get video capture interface", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
 
   if( !(mPtrViECodec = ViECodec::GetInterface(mVideoEngine)))
   {
-    CSFLogError(logTag, "%s Unable to create video engine ", __FUNCTION__);
+    CSFLogError(logTag, "%s Unable to get video codec interface ", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
 
   if( !(mPtrViENetwork = ViENetwork::GetInterface(mVideoEngine)))
   {
-    CSFLogError(logTag, "%s Unable to create video engine ", __FUNCTION__);
+    CSFLogError(logTag, "%s Unable to get video network interface ", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
 
   if( !(mPtrViERender = ViERender::GetInterface(mVideoEngine)))
   {
-    CSFLogError(logTag, "%s Unable to create video engine ", __FUNCTION__);
+    CSFLogError(logTag, "%s Unable to get video render interface ", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
 
+  if( !(mPtrRTP = webrtc::ViERTP_RTCP::GetInterface(mVideoEngine)))
+  {
+    CSFLogError(logTag, "%s Unable to get video RTCP interface ", __FUNCTION__);
+    return kMediaConduitSessionNotInited;
+  }
 
   CSFLogDebug(logTag, "%s Engine Created: Init'ng the interfaces ",__FUNCTION__);
 
@@ -182,8 +200,35 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
     CSFLogError(logTag, "%s Failed to added external renderer ", __FUNCTION__);
     return kMediaConduitInvalidRenderer;
   }
-
-
+  // Set up some parameters, per juberti. Set MTU.
+  if(mPtrViENetwork->SetMTU(mChannel, 1200) != 0)
+  {
+    CSFLogError(logTag,  "%s MTU Failed %d ", __FUNCTION__,
+                mPtrViEBase->LastError());
+    return kMediaConduitMTUError;
+  }
+  // Turn on RTCP and loss feedback reporting.
+  if(mPtrRTP->SetRTCPStatus(mChannel, webrtc::kRtcpCompound_RFC4585) != 0)
+  {
+    CSFLogError(logTag,  "%s RTCPStatus Failed %d ", __FUNCTION__,
+                mPtrViEBase->LastError());
+    return kMediaConduitRTCPStatusError;
+  }
+  // Enable pli as key frame request method.
+  if(mPtrRTP->SetKeyFrameRequestMethod(mChannel,
+                                    webrtc::kViEKeyFrameRequestPliRtcp) != 0)
+  {
+    CSFLogError(logTag,  "%s KeyFrameRequest Failed %d ", __FUNCTION__,
+                mPtrViEBase->LastError());
+    return kMediaConduitKeyFrameRequestError;
+  }
+  // Enable lossless transport
+  if (mPtrRTP->SetNACKStatus(mChannel, true) != 0)
+  {
+    CSFLogError(logTag,  "%s NACKStatus Failed %d ", __FUNCTION__,
+                mPtrViEBase->LastError());
+    return kMediaConduitNACKStatusError;
+  }
   CSFLogError(logTag, "%s Initialization Done", __FUNCTION__);
   return kMediaConduitNoError;
 }
@@ -326,6 +371,8 @@ WebrtcVideoConduit::ConfigureSendMediaCodec(const VideoCodecConfig* codecConfig)
                                               codecConfig->mWidth,
                                               codecConfig->mHeight);
 
+  mPtrRTP->SetRembStatus(mChannel, true, false);
+
   // by now we should be successfully started the transmission
   mEngineTransmitting = true;
   return kMediaConduitNoError;
@@ -426,6 +473,7 @@ WebrtcVideoConduit::ConfigureRecvMediaCodecs(
   }
 
   // by now we should be successfully started the reception
+  mPtrRTP->SetRembStatus(mChannel, false, true);
   mEngineReceiving = true;
   DumpCodecDB();
   return kMediaConduitNoError;

@@ -3,6 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Attributes.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
+
 #include "nsView.h"
 #include "nsIWidget.h"
 #include "nsWidgetsCID.h"
@@ -12,9 +16,6 @@
 #include "nsIComponentManager.h"
 #include "nsGfxCIID.h"
 #include "nsIInterfaceRequestor.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/Likely.h"
-#include "mozilla/Util.h"
 #include "nsXULPopupManager.h"
 #include "nsIWidgetListener.h"
 
@@ -283,19 +284,19 @@ void nsView::DoResetWidgetBounds(bool aMoveOnly,
 
   if (changedPos) {
     if (changedSize && !aMoveOnly) {
-      mWindow->ResizeClient(NSToIntRound(newBounds.x * invScale),
-                            NSToIntRound(newBounds.y * invScale),
-                            NSToIntRound(newBounds.width * invScale),
-                            NSToIntRound(newBounds.height * invScale),
+      mWindow->ResizeClient(newBounds.x * invScale,
+                            newBounds.y * invScale,
+                            newBounds.width * invScale,
+                            newBounds.height * invScale,
                             aInvalidateChangedSize);
     } else {
-      mWindow->MoveClient(NSToIntRound(newBounds.x * invScale),
-                          NSToIntRound(newBounds.y * invScale));
+      mWindow->MoveClient(newBounds.x * invScale,
+                          newBounds.y * invScale);
     }
   } else {
     if (changedSize && !aMoveOnly) {
-      mWindow->ResizeClient(NSToIntRound(newBounds.width * invScale),
-                            NSToIntRound(newBounds.height * invScale),
+      mWindow->ResizeClient(newBounds.width * invScale,
+                            newBounds.height * invScale,
                             aInvalidateChangedSize);
     } // else do nothing!
   }
@@ -1051,10 +1052,17 @@ nsView::WillPaintWindow(nsIWidget* aWidget, bool aWillSendDidPaint)
 bool
 nsView::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion, uint32_t aFlags)
 {
+  NS_ASSERTION(this == nsView::GetViewFor(aWidget), "wrong view for widget?");
+
   mInAlternatePaint = aFlags & PAINT_IS_ALTERNATE;
   nsCOMPtr<nsViewManager> vm = mViewManager;
   bool result = vm->PaintWindow(aWidget, aRegion, aFlags);
-  mInAlternatePaint = false;
+  // PaintWindow can destroy this via WillPaintWindow notification, so we have
+  // to re-get the view from the widget.
+  nsView* view = nsView::GetViewFor(aWidget);
+  if (view) {
+    view->mInAlternatePaint = false;
+  }
   return result;
 }
 
@@ -1063,6 +1071,15 @@ nsView::DidPaintWindow()
 {
   nsCOMPtr<nsViewManager> vm = mViewManager;
   vm->DidPaintWindow();
+}
+
+void
+nsView::RequestRepaint()
+{
+  nsIPresShell* presShell = mViewManager->GetPresShell();
+  if (presShell) {
+    presShell->ScheduleViewManagerFlush();
+  }
 }
 
 nsEventStatus

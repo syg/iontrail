@@ -430,15 +430,8 @@ BluetoothService::SetEnabled(bool aEnabled)
    * aEnabled: expected status of bluetooth
    */
   if (mEnabled == aEnabled) {
-    /**
-     * The process of toggling should be over here, so we set gToggleInProgress
-     * back to false here. Note that, we don't fire onenabled/ondisabled in
-     * this case.
-     */
-    NS_WARNING("Bluetooth has already been enabled/disabled before.\
-                Skip fire onenabled/ondisabled events here.");
-    gToggleInProgress = false;
-    return;
+    NS_WARNING("Bluetooth has already been enabled/disabled before\
+                or the toggling is failed.");
   }
 
   mEnabled = aEnabled;
@@ -703,7 +696,7 @@ BluetoothService::Observe(nsISupports* aSubject, const char* aTopic,
 void
 BluetoothService::Notify(const BluetoothSignal& aData)
 {
-  InfallibleTArray<BluetoothNamedValue> arr = aData.value().get_ArrayOfBluetoothNamedValue();
+  InfallibleTArray<BluetoothNamedValue> arr(aData.value().get_ArrayOfBluetoothNamedValue());
   nsString type;
 
   JSContext* cx = nsContentUtils::GetSafeJSContext();

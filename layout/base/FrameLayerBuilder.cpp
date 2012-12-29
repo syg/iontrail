@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "FrameLayerBuilder.h"
 
 #include "nsDisplayList.h"
@@ -113,7 +115,7 @@ FrameLayerBuilder::DisplayItemData::UpdateContents(Layer* aLayer, LayerState aSt
     return;
   }
 
-  nsAutoTArray<nsIFrame*, 4> copy = mFrameList;
+  nsAutoTArray<nsIFrame*, 4> copy(mFrameList);
   if (!copy.RemoveElement(aItem->GetUnderlyingFrame())) {
     AddFrame(aItem->GetUnderlyingFrame());
   }
@@ -273,7 +275,8 @@ public:
    */
   void ProcessDisplayItems(const nsDisplayList& aList,
                            FrameLayerBuilder::Clip& aClip,
-                           uint32_t aFlags);
+                           uint32_t aFlags,
+                           const nsIFrame* aForceActiveScrolledRoot = nullptr);
   /**
    * This finalizes all the open ThebesLayers by popping every element off
    * mThebesLayerDataStack, then sets the children of the container layer
@@ -558,6 +561,9 @@ protected:
    */
   void SetupMaskLayer(Layer *aLayer, const FrameLayerBuilder::Clip& aClip,
                       uint32_t aRoundedRectClipCount = UINT32_MAX);
+
+  bool ChooseActiveScrolledRoot(const nsDisplayList& aList,
+                                const nsIFrame **aActiveScrolledRoot);
 
   nsDisplayListBuilder*            mBuilder;
   LayerManager*                    mManager;
@@ -971,52 +977,29 @@ FrameLayerBuilder::WillEndTransaction()
     (mRetainingManager->GetUserData(&gLayerManagerUserData));
   NS_ASSERTION(data, "Must have data!");
   // Update all the frames that used to have layers.
-  data->mDisplayItems.EnumerateEntries(UpdateDisplayItemDataForFrame, nullptr);
+  data->mDisplayItems.EnumerateEntries(ProcessRemovedDisplayItems, this);
   data->mInvalidateAllLayers = false;
 }
-
-struct ProcessRemovedDisplayItemsData
-{
-  ProcessRemovedDisplayItemsData(Layer* aLayer, FrameLayerBuilder* aLayerBuilder)
-    : mLayer(aLayer)
-    , mLayerBuilder(aLayerBuilder)
-  {}
-
-  Layer *mLayer;
-  FrameLayerBuilder *mLayerBuilder;
-};
-
 
 /* static */ PLDHashOperator
 FrameLayerBuilder::ProcessRemovedDisplayItems(nsRefPtrHashKey<DisplayItemData>* aEntry,
                                               void* aUserArg)
 {
-  ProcessRemovedDisplayItemsData *userData =
-    static_cast<ProcessRemovedDisplayItemsData*>(aUserArg);
-  Layer* layer = userData->mLayer;
-  FrameLayerBuilder* layerBuilder = userData->mLayerBuilder;
-
-  DisplayItemData* item = aEntry->GetKey();
-  ThebesLayer* t = item->mLayer->AsThebesLayer();
-  if (!item->mUsed && t && (t == layer)) {
-#ifdef DEBUG_INVALIDATIONS
-    printf("Invalidating unused display item (%i) belonging to frame %p from layer %p\n", item->mDisplayItemKey, item->mFrameList[0], t);
-#endif
-    InvalidatePostTransformRegion(t, 
-                                  item->mGeometry->ComputeInvalidationRegion(), 
-                                  item->mClip, 
-                                  layerBuilder->GetLastPaintOffset(t));
-  }
-  return PL_DHASH_NEXT;
-}
-
-/* static */ PLDHashOperator
-FrameLayerBuilder::UpdateDisplayItemDataForFrame(nsRefPtrHashKey<DisplayItemData>* aEntry,
-                                                 void* aUserArg)
-{
   DisplayItemData* data = aEntry->GetKey();
   if (!data->mUsed) {
     // This item was visible, but isn't anymore.
+    FrameLayerBuilder* layerBuilder = static_cast<FrameLayerBuilder*>(aUserArg);
+
+    ThebesLayer* t = data->mLayer->AsThebesLayer();
+    if (t) {
+#ifdef DEBUG_INVALIDATIONS
+      printf("Invalidating unused display item (%i) belonging to frame %p from layer %p\n", data->mDisplayItemKey, data->mFrameList[0], t);
+#endif
+      InvalidatePostTransformRegion(t,
+                                    data->mGeometry->ComputeInvalidationRegion(),
+                                    data->mClip,
+                                    layerBuilder->GetLastPaintOffset(t));
+    }
     return PL_DHASH_REMOVE;
   }
 
@@ -2019,55 +2002,39 @@ PaintInactiveLayer(nsDisplayListBuilder* aBuilder,
 }
 
 /**
- * Checks if aAncestor is an ancestor of aFrame
- */
-static bool IsFrameAncestorOf(const nsIFrame *aAncestor, const nsIFrame *aFrame)
-{
-  if (!aFrame) {
-    return false;
-  }
-  for (const nsIFrame* f = aFrame; f; f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
-    if (f == aAncestor) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * Chooses a single active scrolled root for the entire display list, used
  * when we are flattening layers.
  */
-static bool ChooseActiveScrolledRoot(nsDisplayListBuilder *aBuilder,
-                                     const nsDisplayList& aList,
-                                     const nsIFrame **aActiveScrolledRoot)
+bool
+ContainerState::ChooseActiveScrolledRoot(const nsDisplayList& aList,
+                                         const nsIFrame **aActiveScrolledRoot)
 {
   for (nsDisplayItem* item = aList.GetBottom(); item; item = item->GetAbove()) {
     nsDisplayItem::Type type = item->GetType();
     if (type == nsDisplayItem::TYPE_CLIP ||
         type == nsDisplayItem::TYPE_CLIP_ROUNDED_RECT) {
-      if (!ChooseActiveScrolledRoot(aBuilder,
-                                    *item->GetSameCoordinateSystemChildren(),
-                                    aActiveScrolledRoot)) {
-        return false;
+      if (ChooseActiveScrolledRoot(*item->GetSameCoordinateSystemChildren(),
+                                   aActiveScrolledRoot)) {
+        return true;
       }
       continue;
     }
 
-    if (!*aActiveScrolledRoot) {
-      // Try using the actual active scrolled root of the backmost item, as that
-      // should result in the least invalidation when scrolling.
-      aBuilder->IsFixedItem(item, aActiveScrolledRoot);
-    } else if (!IsFrameAncestorOf(*aActiveScrolledRoot, item->GetUnderlyingFrame())) {
-      // If there are items that aren't descendants of the background's active scrolled
-      // root, then give up and just use the container's reference frame instead.
-      return false;
+    LayerState layerState = item->GetLayerState(mBuilder, mManager, mParameters);
+    // Don't use an item that won't be part of any ThebesLayers to pick the
+    // active scrolled root.
+    if (layerState == LAYER_ACTIVE_FORCE) {
+      continue;
+    }
+
+    // Try using the actual active scrolled root of the backmost item, as that
+    // should result in the least invalidation when scrolling.
+    mBuilder->IsFixedItem(item, aActiveScrolledRoot);
+    if (*aActiveScrolledRoot) {
+      return true;
     }
   }
-  if (!*aActiveScrolledRoot) {
-    return false;
-  }
-  return true;
+  return false;
 }
 
 /*
@@ -2087,7 +2054,8 @@ static bool ChooseActiveScrolledRoot(nsDisplayListBuilder *aBuilder,
 void
 ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
                                     FrameLayerBuilder::Clip& aClip,
-                                    uint32_t aFlags)
+                                    uint32_t aFlags,
+                                    const nsIFrame* aForceActiveScrolledRoot)
 {
   SAMPLE_LABEL("ContainerState", "ProcessDisplayItems");
 
@@ -2098,7 +2066,9 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
   // layer, so we need to choose which active scrolled root to use for all
   // items.
   if (aFlags & NO_COMPONENT_ALPHA) {
-    if (!ChooseActiveScrolledRoot(mBuilder, aList, &lastActiveScrolledRoot)) {
+    if (aForceActiveScrolledRoot) {
+      lastActiveScrolledRoot = aForceActiveScrolledRoot;
+    } else if (!ChooseActiveScrolledRoot(aList, &lastActiveScrolledRoot)) {
       lastActiveScrolledRoot = mContainerReferenceFrame;
     }
 
@@ -2110,7 +2080,7 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
     if (type == nsDisplayItem::TYPE_CLIP ||
         type == nsDisplayItem::TYPE_CLIP_ROUNDED_RECT) {
       FrameLayerBuilder::Clip childClip(aClip, item);
-      ProcessDisplayItems(*item->GetSameCoordinateSystemChildren(), childClip, aFlags);
+      ProcessDisplayItems(*item->GetSameCoordinateSystemChildren(), childClip, aFlags, lastActiveScrolledRoot);
       continue;
     }
 
@@ -2348,6 +2318,7 @@ ContainerState::InvalidateForLayerChange(nsDisplayItem* aItem,
             GetTranslationForThebesLayer(newThebesLayer));
       }
     }
+    aItem->NotifyRenderingChanged();
     return;
   } 
   if (!aNewLayer) {
@@ -2410,6 +2381,7 @@ ContainerState::InvalidateForLayerChange(nsDisplayItem* aItem,
 #endif
   }
   if (!combined.IsEmpty()) {
+    aItem->NotifyRenderingChanged();
     InvalidatePostTransformRegion(newThebesLayer,
         combined.ScaleToOutsidePixels(data->mXScale, data->mYScale, mAppUnitsPerDevPixel),
         GetTranslationForThebesLayer(newThebesLayer));
@@ -2680,11 +2652,6 @@ ContainerState::Finish(uint32_t* aTextContentFlags, LayerManagerData* aData)
     Layer* prevChild = i == 0 ? nullptr : mNewChildLayers[i - 1].get();
     layer = mNewChildLayers[i];
   
-    if (aData) {
-      ProcessRemovedDisplayItemsData data(layer, mLayerBuilder);
-      aData->mDisplayItems.EnumerateEntries(FrameLayerBuilder::ProcessRemovedDisplayItems, &data);
-    } 
-      
     if (!layer->GetVisibleRegion().IsEmpty()) {
       textContentFlags |= layer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA;
     }
@@ -2755,9 +2722,7 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
         int32_t(NSAppUnitsToDoublePixels(appUnitOffset.x, appUnitsPerDevPixel)*aIncomingScale.mXScale),
         int32_t(NSAppUnitsToDoublePixels(appUnitOffset.y, appUnitsPerDevPixel)*aIncomingScale.mYScale));
   }
-  transform = gfx3DMatrix::Translation(aIncomingScale.mOffset.x, aIncomingScale.mOffset.y, 0) * 
-              transform * 
-              gfx3DMatrix::Translation(offset.x, offset.y, 0);
+  transform = transform * gfx3DMatrix::Translation(offset.x + aIncomingScale.mOffset.x, offset.y + aIncomingScale.mOffset.y, 0);
 
 
   bool canDraw2D = transform.CanDraw2D(&transform2d);
@@ -2767,33 +2732,42 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
   // it only matters for retained layers
   // XXX Should we do something for 3D transforms?
   if (canDraw2D && isRetained) {
-    //Scale factors are normalized to a power of 2 to reduce the number of resolution changes
-    scale = transform2d.ScaleFactors(true);
-    // For frames with a changing transform that's not just a translation,
-    // round scale factors up to nearest power-of-2 boundary so that we don't
-    // keep having to redraw the content as it scales up and down. Rounding up to nearest
-    // power-of-2 boundary ensures we never scale up, only down --- avoiding
-    // jaggies. It also ensures we never scale down by more than a factor of 2,
-    // avoiding bad downscaling quality.
-    gfxMatrix frameTransform;
-    if (aContainerFrame->AreLayersMarkedActive(nsChangeHint_UpdateTransformLayer) &&
-        aTransform &&
-        (!aTransform->Is2D(&frameTransform) || frameTransform.HasNonTranslationOrFlip())) {
-      // Don't clamp the scale factor when the new desired scale factor matches the old one
-      // or it was previously unscaled.
-      bool clamp = true;
-      gfxMatrix oldFrameTransform2d;
-      if (aLayer->GetTransform().Is2D(&oldFrameTransform2d)) {
-        gfxSize oldScale = oldFrameTransform2d.ScaleFactors(true);
-        if (oldScale == scale || oldScale == gfxSize(1.0, 1.0))
-          clamp = false;
-      }
-      if (clamp) {
-        scale.width = gfxUtils::ClampToScaleFactor(scale.width);
-        scale.height = gfxUtils::ClampToScaleFactor(scale.height);
-      }
+    // If the container's transform is animated off main thread, then use the
+    // maximum scale.
+    if (aContainerFrame->GetContent() &&
+        nsLayoutUtils::HasAnimationsForCompositor(
+          aContainerFrame->GetContent(), eCSSProperty_transform)) {
+      scale = nsLayoutUtils::GetMaximumAnimatedScale(aContainerFrame->GetContent());
     } else {
-      // XXX Do we need to move nearly-integer values to integers here?
+      //Scale factors are normalized to a power of 2 to reduce the number of resolution changes
+      scale = transform2d.ScaleFactors(true);
+      // For frames with a changing transform that's not just a translation,
+      // round scale factors up to nearest power-of-2 boundary so that we don't
+      // keep having to redraw the content as it scales up and down. Rounding up to nearest
+      // power-of-2 boundary ensures we never scale up, only down --- avoiding
+      // jaggies. It also ensures we never scale down by more than a factor of 2,
+      // avoiding bad downscaling quality.
+      gfxMatrix frameTransform;
+      if (aContainerFrame->AreLayersMarkedActive(nsChangeHint_UpdateTransformLayer) &&
+          aTransform &&
+          (!aTransform->Is2D(&frameTransform) || frameTransform.HasNonTranslationOrFlip())) {
+        // Don't clamp the scale factor when the new desired scale factor matches the old one
+        // or it was previously unscaled.
+        bool clamp = true;
+        gfxMatrix oldFrameTransform2d;
+        if (aLayer->GetBaseTransform().Is2D(&oldFrameTransform2d)) {
+          gfxSize oldScale = oldFrameTransform2d.ScaleFactors(true);
+          if (oldScale == scale || oldScale == gfxSize(1.0, 1.0)) {
+            clamp = false;
+          }
+        }
+        if (clamp) {
+          scale.width = gfxUtils::ClampToScaleFactor(scale.width);
+          scale.height = gfxUtils::ClampToScaleFactor(scale.height);
+        }
+      } else {
+        // XXX Do we need to move nearly-integer values to integers here?
+      }
     }
     // If the scale factors are too small, just use 1.0. The content is being
     // scaled out of sight anyway.
@@ -3747,7 +3721,7 @@ ContainerState::SetupMaskLayer(Layer *aLayer, const FrameLayerBuilder::Clip& aCl
   imageTransform.Scale(mParameters.mXScale, mParameters.mYScale);
 
   nsAutoPtr<MaskLayerImageCache::MaskLayerImageKey> newKey(
-    new MaskLayerImageCache::MaskLayerImageKey(aLayer->Manager()->GetBackendType()));
+    new MaskLayerImageCache::MaskLayerImageKey());
 
   // copy and transform the rounded rects
   for (uint32_t i = 0; i < newData.mRoundedClipRects.Length(); ++i) {

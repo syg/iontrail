@@ -80,7 +80,8 @@ nsSVGTSpanFrame::AttributeChanged(int32_t         aNameSpaceID,
        aAttribute == nsGkAtoms::dx ||
        aAttribute == nsGkAtoms::dy ||
        aAttribute == nsGkAtoms::rotate)) {
-    nsSVGUtils::InvalidateAndScheduleReflowSVG(this);
+    nsSVGUtils::InvalidateBounds(this, false);
+    nsSVGUtils::ScheduleReflowSVG(this);
     NotifyGlyphMetricsChange();
   }
 
@@ -125,7 +126,7 @@ nsSVGTSpanFrame::GetSubStringLength(uint32_t charnum, uint32_t nchars)
 }
 
 int32_t
-nsSVGTSpanFrame::GetCharNumAtPosition(nsIDOMSVGPoint *point)
+nsSVGTSpanFrame::GetCharNumAtPosition(mozilla::DOMSVGPoint *point)
 {
   return nsSVGTSpanFrameBase::GetCharNumAtPosition(point);
 }

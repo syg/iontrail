@@ -174,7 +174,8 @@ pref("content.sink.perf_parse_time", 50000000);
 
 // Maximum scripts runtime before showing an alert
 pref("dom.max_chrome_script_run_time", 0); // disable slow script dialog for chrome
-pref("dom.max_script_run_time", 20);
+// Bug 817230 - disable the dialog until we implement its checkbox properly
+pref("dom.max_script_run_time", 0);
 
 // plugins
 pref("plugin.disable", true);
@@ -234,16 +235,25 @@ pref("editor.singleLine.pasteNewlines", 2);
 pref("ui.dragThresholdX", 25);
 pref("ui.dragThresholdY", 25);
 
-// Layers Acceleration
-pref("layers.acceleration.disabled", false);
-#ifndef XP_WIN
-//TODO: turn this on for Windows in bug 808016
+// Layers Acceleration.  We can only have nice things on gonk, because
+// they're not maintained anywhere else.
+#ifndef MOZ_WIDGET_GONK
+pref("dom.ipc.tabs.disabled", true);
+pref("layers.offmainthreadcomposition.enabled", false);
+pref("layers.offmainthreadcomposition.animate-opacity", false);
+pref("layers.offmainthreadcomposition.animate-transform", false);
+pref("layers.offmainthreadcomposition.throttle-animations", false);
+pref("layers.async-video.enabled", false);
+#else
+pref("dom.ipc.tabs.disabled", false);
 pref("layers.offmainthreadcomposition.enabled", true);
-#endif
+pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.animate-opacity", true);
 pref("layers.offmainthreadcomposition.animate-transform", true);
+pref("layers.offmainthreadcomposition.throttle-animations", true);
 pref("layers.async-video.enabled", true);
 pref("layers.async-pan-zoom.enabled", true);
+#endif
 
 // Web Notifications
 pref("notification.feature.enabled", true);
@@ -323,7 +333,7 @@ pref("urlclassifier.gethashtables", "goog-phish-shavar,goog-malware-shavar");
 // If an urlclassifier table has not been updated in this number of seconds,
 // a gethash request will be forced to check that the result is still in
 // the database.
-pref("urlclassifier.confirm-age", 2700);
+pref("urlclassifier.max-complete-age", 2700);
 
 // URL for checking the reason for a malware warning.
 pref("browser.safebrowsing.malware.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
@@ -379,7 +389,6 @@ pref("dom.mozBrowserFramesEnabled", true);
 // We'll run out of PIDs on UNIX-y systems before we hit this limit.
 pref("dom.ipc.processCount", 100000);
 
-pref("dom.ipc.tabs.disabled", false);
 pref("dom.ipc.browser_frames.oop_by_default", false);
 
 // Temporary permission hack for WebSMS
@@ -395,6 +404,7 @@ pref("dom.mozAlarms.enabled", true);
 // NetworkStats
 #ifdef MOZ_B2G_RIL
 pref("dom.mozNetworkStats.enabled", true);
+pref("ril.lastKnownMcc", 724);
 #endif
 
 // WebSettings
@@ -451,9 +461,6 @@ pref("shutdown.watchdog.timeoutSecs", 5);
 pref("b2g.update.apply-prompt-timeout", 60000); // milliseconds
 // Amount of time to wait after the user is idle before prompting to apply an update
 pref("b2g.update.apply-idle-timeout", 600000); // milliseconds
-// Amount of time the updater waits for the process to exit cleanly before
-// forcefully exiting the process
-pref("b2g.update.self-destruct-timeout", 5000); // milliseconds
 
 pref("app.update.enabled", true);
 pref("app.update.auto", false);
@@ -471,6 +478,14 @@ pref("app.update.channel", "@MOZ_UPDATE_CHANNEL@");
 pref("app.update.interval", 86400); // 1 day
 // Don't throttle background updates.
 pref("app.update.download.backgroundInterval", 0);
+
+// Retry update socket connections every 30 seconds in the cases of certain kinds of errors
+pref("app.update.socket.retryTimeout", 30000);
+
+// Max of 20 consecutive retries (total 10 minutes) before giving up and marking
+// the update download as failed.
+// Note: Offline errors will always retry when the network comes online.
+pref("app.update.socket.maxErrors", 20);
 
 // Enable update logging for now, to diagnose growing pains in the
 // field.
@@ -536,6 +551,8 @@ pref("hal.processPriorityManager.gonk.masterOomScoreAdjust", 0);
 pref("hal.processPriorityManager.gonk.masterKillUnderMB", 1);
 pref("hal.processPriorityManager.gonk.foregroundOomScoreAdjust", 67);
 pref("hal.processPriorityManager.gonk.foregroundKillUnderMB", 4);
+pref("hal.processPriorityManager.gonk.backgroundHomescreenOomScoreAdjust", 200);
+pref("hal.processPriorityManager.gonk.backgroundHomescreenKillUnderMB", 5);
 pref("hal.processPriorityManager.gonk.backgroundOomScoreAdjust", 400);
 pref("hal.processPriorityManager.gonk.backgroundKillUnderMB", 8);
 pref("hal.processPriorityManager.gonk.notifyLowMemUnderMB", 10);
@@ -595,3 +612,6 @@ pref("memory.free_dirty_pages", true);
 // UAProfile settings
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
+
+// Wait up to this much milliseconds when orientation changed
+pref("layers.orientation.sync.timeout", 1000);

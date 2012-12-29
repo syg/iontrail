@@ -73,6 +73,7 @@
 #include "nsIDOMCharacterData.h"
 #endif
 
+#include "mozilla/Assertions.h"
 #include "mozilla/unused.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/Element.h"
@@ -145,8 +146,9 @@ Accessible::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 
 Accessible::Accessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsAccessNodeWrap(aContent, aDoc),
-  mParent(nullptr), mIndexInParent(-1), mFlags(eChildrenUninitialized),
-  mIndexOfEmbeddedChild(-1), mRoleMapEntry(nullptr)
+  mParent(nullptr), mIndexInParent(-1), mChildrenFlags(eChildrenUninitialized),
+  mStateFlags(0), mType(0), mGenericTypes(0), mIndexOfEmbeddedChild(-1),
+  mRoleMapEntry(nullptr)
 {
 #ifdef NS_DEBUG_X
    {
@@ -1587,17 +1589,44 @@ Accessible::GetValue(nsAString& aValue)
 void
 Accessible::Value(nsString& aValue)
 {
-  if (mRoleMapEntry) {
-    if (mRoleMapEntry->valueRule == eNoValue)
-      return;
+  if (!mRoleMapEntry)
+    return;
 
-    // aria-valuenow is a number, and aria-valuetext is the optional text equivalent
-    // For the string value, we will try the optional text equivalent first
+  if (mRoleMapEntry->valueRule != eNoValue) {
+    // aria-valuenow is a number, and aria-valuetext is the optional text
+    // equivalent. For the string value, we will try the optional text
+    // equivalent first.
     if (!mContent->GetAttr(kNameSpaceID_None,
                            nsGkAtoms::aria_valuetext, aValue)) {
       mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_valuenow,
                         aValue);
     }
+    return;
+  }
+
+  // Value of combobox is a text of current or selected item.
+  if (mRoleMapEntry->Is(nsGkAtoms::combobox)) {
+    Accessible* option = CurrentItem();
+    if (!option) {
+      Accessible* listbox = nullptr;
+      IDRefsIterator iter(mDoc, mContent, nsGkAtoms::aria_owns);
+      while ((listbox = iter.Next()) && !listbox->IsListControl());
+
+      if (!listbox) {
+        uint32_t childCount = ChildCount();
+        for (uint32_t idx = 0; idx < childCount; idx++) {
+          Accessible* child = mChildren.ElementAt(idx);
+          if (child->IsListControl())
+            listbox = child;
+        }
+      }
+
+      if (listbox)
+        option = listbox->GetSelectedItem(0);
+    }
+
+    if (option)
+      nsTextEquivUtils::GetNameFromSubtree(option, aValue);
   }
 }
 
@@ -2162,10 +2191,8 @@ Accessible::ScrollToPoint(uint32_t aCoordinateType, int32_t aX, int32_t aY)
   if (!frame)
     return NS_ERROR_FAILURE;
 
-  nsIntPoint coords;
-  nsresult rv = nsAccUtils::ConvertToScreenCoords(aX, aY, aCoordinateType,
-                                                  this, &coords);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsIntPoint coords = nsAccUtils::ConvertToScreenCoords(aX, aY, aCoordinateType,
+                                                        this);
 
   nsIFrame *parentFrame = frame;
   while ((parentFrame = parentFrame->GetParent()))
@@ -2430,7 +2457,7 @@ Accessible::Shutdown()
 {
   // Mark the accessible as defunct, invalidate the child count and pointers to 
   // other accessibles, also make sure none of its children point to this parent
-  mFlags |= eIsDefunct;
+  mStateFlags |= eIsDefunct;
 
   InvalidateChildren();
   if (mParent)
@@ -3173,6 +3200,19 @@ Accessible::GetLevelInternal()
   }
 
   return level;
+}
+
+void
+Accessible::StaticAsserts() const
+{
+  MOZ_STATIC_ASSERT(eLastChildrenFlag <= (2 << kChildrenFlagsBits) - 1,
+                    "Accessible::mChildrenFlags was oversized by eLastChildrenFlag!");
+  MOZ_STATIC_ASSERT(eLastStateFlag <= (2 << kStateFlagsBits) - 1,
+                    "Accessible::mStateFlags was oversized by eLastStateFlag!");
+  MOZ_STATIC_ASSERT(eLastAccType <= (2 << kTypeBits) - 1,
+                    "Accessible::mType was oversized by eLastAccType!");
+  MOZ_STATIC_ASSERT(eLastAccGenericType <= (2 << kGenericTypesBits) - 1,
+                    "Accessible::mGenericType was oversized by eLastAccGenericType!");
 }
 
 

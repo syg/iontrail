@@ -75,9 +75,9 @@ enum FlipStyle {
 #define POPUPALIGNMENT_BOTTOMRIGHT -2
 
 #define POPUPALIGNMENT_LEFTCENTER 16
-#define POPUPALIGNMENT_RIGHTCENTER 17
-#define POPUPALIGNMENT_TOPCENTER 18
-#define POPUPALIGNMENT_BOTTOMCENTER 19
+#define POPUPALIGNMENT_RIGHTCENTER -16
+#define POPUPALIGNMENT_TOPCENTER 17
+#define POPUPALIGNMENT_BOTTOMCENTER 18
 
 #define INC_TYP_INTERVAL  1000  // 1s. If the interval between two keypresses is shorter than this, 
                                 //   treat as a continue typing

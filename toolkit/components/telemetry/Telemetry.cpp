@@ -4,6 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <algorithm>
+
+#include "mozilla/Attributes.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
+
 #include "base/histogram.h"
 #include "base/pickle.h"
 #include "nsIComponentManager.h"
@@ -24,12 +29,14 @@
 #include "nsBaseHashtable.h"
 #include "nsXULAppAPI.h"
 #include "nsThreadUtils.h"
+#include "nsNetCID.h"
+#include "plstr.h"
+#include "nsAppDirectoryServiceDefs.h"
 #include "mozilla/ProcessedStack.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/FileUtils.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/Likely.h"
+#include "mozilla/mozPoisonWrite.h"
 
 namespace {
 
@@ -313,6 +320,11 @@ private:
   HangReports mHangReports;
   Mutex mHangReportsMutex;
   nsIMemoryReporter *mMemoryReporter;
+
+  bool mCachedTelemetryData;
+  uint32_t mLastShutdownTime;
+  std::vector<nsCOMPtr<nsIFetchTelemetryDataCallback> > mCallbacks;
+  friend class nsFetchTelemetryData;
 };
 
 TelemetryImpl*  TelemetryImpl::sTelemetry = NULL;
@@ -680,11 +692,153 @@ WrapAndReturnHistogram(Histogram *h, JSContext *cx, jsval *ret)
   return NS_OK;
 }
 
+static uint32_t
+ReadLastShutdownDuration(const char *filename) {
+  FILE *f = fopen(filename, "r");
+  if (!f) {
+    return 0;
+  }
+
+  int shutdownTime;
+  int r = fscanf(f, "%d\n", &shutdownTime);
+  fclose(f);
+  if (r != 1) {
+    return 0;
+  }
+
+  return shutdownTime;
+}
+
+class nsFetchTelemetryData : public nsRunnable
+{
+public:
+  nsFetchTelemetryData(const char *aFilename) :
+    mFilename(aFilename), mTelemetry(TelemetryImpl::sTelemetry) {
+  }
+
+private:
+  const char *mFilename;
+  nsCOMPtr<TelemetryImpl> mTelemetry;
+
+public:
+  void MainThread() {
+    mTelemetry->mCachedTelemetryData = true;
+    for (unsigned int i = 0, n = mTelemetry->mCallbacks.size(); i < n; ++i) {
+      mTelemetry->mCallbacks[i]->Complete();
+    }
+    mTelemetry->mCallbacks.clear();
+  }
+
+  NS_IMETHOD Run() {
+    mTelemetry->mLastShutdownTime = ReadLastShutdownDuration(mFilename);
+    nsCOMPtr<nsIRunnable> e =
+      NS_NewRunnableMethod(this, &nsFetchTelemetryData::MainThread);
+    NS_ENSURE_STATE(e);
+    NS_DispatchToMainThread(e, NS_DISPATCH_NORMAL);
+    return NS_OK;
+  }
+};
+
+static TimeStamp gRecordedShutdownStartTime;
+static bool gAlreadyFreedShutdownTimeFileName = false;
+static char *gRecordedShutdownTimeFileName = nullptr;
+
+static char *
+GetShutdownTimeFileName()
+{
+  if (gAlreadyFreedShutdownTimeFileName) {
+    return nullptr;
+  }
+
+  if (!gRecordedShutdownTimeFileName) {
+    nsCOMPtr<nsIFile> mozFile;
+    NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(mozFile));
+    if (!mozFile)
+      return nullptr;
+
+    mozFile->AppendNative(NS_LITERAL_CSTRING("Telemetry.ShutdownTime.txt"));
+    nsAutoCString nativePath;
+    nsresult rv = mozFile->GetNativePath(nativePath);
+    if (!NS_SUCCEEDED(rv))
+      return nullptr;
+
+    gRecordedShutdownTimeFileName = PL_strdup(nativePath.get());
+  }
+
+  return gRecordedShutdownTimeFileName;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetLastShutdownDuration(uint32_t *aResult)
+{
+  // The user must call AsyncFetchTelemetryData first. We return zero instead of
+  // reporting a failure so that the rest of telemetry can uniformly handle
+  // the read not being available yet.
+  if (!mCachedTelemetryData) {
+    *aResult = 0;
+    return NS_OK;
+  }
+
+  *aResult = mLastShutdownTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
+{
+  // We have finished reading the data already, just call the callback.
+  if (mCachedTelemetryData) {
+    aCallback->Complete();
+    return NS_OK;
+  }
+
+  // We already have a read request running, just remember the callback.
+  if (!mCallbacks.empty()) {
+    mCallbacks.push_back(aCallback);
+    return NS_OK;
+  }
+
+  // We make this check so that GetShutdownTimeFileName() doesn't get
+  // called; calling that function without telemetry enabled violates
+  // assumptions that the write-the-shutdown-timestamp machinery makes.
+  if (!Telemetry::CanRecord()) {
+    mCachedTelemetryData = true;
+    aCallback->Complete();
+    return NS_OK;
+  }
+
+  // Send the read to a background thread provided by the stream transport
+  // service to avoid a read in the main thread.
+  nsCOMPtr<nsIEventTarget> targetThread =
+    do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
+  if (!targetThread) {
+    mCachedTelemetryData = true;
+    aCallback->Complete();
+    return NS_OK;
+  }
+
+  // We have to get the filename from the main thread.
+  const char *filename = GetShutdownTimeFileName();
+  if (!filename) {
+    mCachedTelemetryData = true;
+    aCallback->Complete();
+    return NS_OK;
+  }
+
+  mCallbacks.push_back(aCallback);
+  nsCOMPtr<nsIRunnable> event = new nsFetchTelemetryData(filename);
+
+  targetThread->Dispatch(event, NS_DISPATCH_NORMAL);
+  return NS_OK;
+}
+
 TelemetryImpl::TelemetryImpl():
 mHistogramMap(Telemetry::HistogramCount),
 mCanRecord(XRE_GetProcessType() == GeckoProcessType_Default),
 mHashMutex("Telemetry::mHashMutex"),
-mHangReportsMutex("Telemetry::mHangReportsMutex")
+mHangReportsMutex("Telemetry::mHangReportsMutex"),
+mCachedTelemetryData(false),
+mLastShutdownTime(0)
 {
   // A whitelist to prevent Telemetry reporting on Addon & Thunderbird DBs
   const char *trackedDBs[] = {
@@ -1673,6 +1827,53 @@ const Module kTelemetryModule = {
 } // anonymous namespace
 
 namespace mozilla {
+void
+RecordShutdownStartTimeStamp() {
+  if (!Telemetry::CanRecord())
+    return;
+
+  gRecordedShutdownStartTime = TimeStamp::Now();
+
+  GetShutdownTimeFileName();
+}
+
+void
+RecordShutdownEndTimeStamp() {
+  if (!gRecordedShutdownTimeFileName || gAlreadyFreedShutdownTimeFileName)
+    return;
+
+  nsCString name(gRecordedShutdownTimeFileName);
+  PL_strfree(gRecordedShutdownTimeFileName);
+  gRecordedShutdownTimeFileName = nullptr;
+  gAlreadyFreedShutdownTimeFileName = true;
+
+  nsCString tmpName = name;
+  tmpName += ".tmp";
+  FILE *f = fopen(tmpName.get(), "w");
+  if (!f)
+    return;
+  // On a normal release build this should be called just before
+  // calling _exit, but on a debug build or when the user forces a full
+  // shutdown this is called as late as possible, so we have to
+  // white list this write as write poisoning will be enabled.
+  int fd = fileno(f);
+  MozillaRegisterDebugFD(fd);
+
+  TimeStamp now = TimeStamp::Now();
+  MOZ_ASSERT(now >= gRecordedShutdownStartTime);
+  TimeDuration diff = now - gRecordedShutdownStartTime;
+  uint32_t diff2 = diff.ToMilliseconds();
+  int written = fprintf(f, "%d\n", diff2);
+  MozillaUnRegisterDebugFILE(f);
+  int rv = fclose(f);
+  if (written < 0 || rv != 0) {
+    PR_Delete(tmpName.get());
+    return;
+  }
+  PR_Delete(name.get());
+  PR_Rename(tmpName.get(), name.get());
+}
+
 namespace Telemetry {
 
 void

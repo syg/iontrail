@@ -358,7 +358,7 @@ HTMLTextFieldAccessible::Value(nsString& aValue)
     textArea->GetValue(aValue);
     return;
   }
-  
+
   nsHTMLInputElement* input = nsHTMLInputElement::FromContent(mContent);
   if (input)
     input->GetValue(aValue);
@@ -532,7 +532,7 @@ HTMLFileInputAccessible::
 HTMLFileInputAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   HyperTextAccessibleWrap(aContent, aDoc)
 {
-  mFlags |= eHTMLFileInputAccessible;
+  mType = eHTMLFileInputType;
 }
 
 role

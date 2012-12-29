@@ -736,37 +736,37 @@ nsBaseWidget::AutoLayerManagerSetup::AutoLayerManagerSetup(
     BufferMode aDoubleBuffering, ScreenRotation aRotation)
   : mWidget(aWidget)
 {
-  BasicLayerManager* manager =
-    static_cast<BasicLayerManager*>(mWidget->GetLayerManager());
-  if (manager) {
-    NS_ASSERTION(manager->GetBackendType() == LAYERS_BASIC,
+  mLayerManager = static_cast<BasicLayerManager*>(mWidget->GetLayerManager());
+  if (mLayerManager) {
+    NS_ASSERTION(mLayerManager->GetBackendType() == LAYERS_BASIC,
       "AutoLayerManagerSetup instantiated for non-basic layer backend!");
-    manager->SetDefaultTarget(aTarget);
-    manager->SetDefaultTargetConfiguration(aDoubleBuffering, aRotation);
+    mLayerManager->SetDefaultTarget(aTarget);
+    mLayerManager->SetDefaultTargetConfiguration(aDoubleBuffering, aRotation);
   }
 }
 
 nsBaseWidget::AutoLayerManagerSetup::~AutoLayerManagerSetup()
 {
-  BasicLayerManager* manager =
-    static_cast<BasicLayerManager*>(mWidget->GetLayerManager());
-  if (manager) {
-    NS_ASSERTION(manager->GetBackendType() == LAYERS_BASIC,
+  if (mLayerManager) {
+    NS_ASSERTION(mLayerManager->GetBackendType() == LAYERS_BASIC,
       "AutoLayerManagerSetup instantiated for non-basic layer backend!");
-    manager->SetDefaultTarget(nullptr);
-    manager->SetDefaultTargetConfiguration(mozilla::layers::BUFFER_NONE, ROTATION_0);
+    mLayerManager->SetDefaultTarget(nullptr);
+    mLayerManager->SetDefaultTargetConfiguration(mozilla::layers::BUFFER_NONE, ROTATION_0);
   }
 }
 
 nsBaseWidget::AutoUseBasicLayerManager::AutoUseBasicLayerManager(nsBaseWidget* aWidget)
   : mWidget(aWidget)
 {
+  mPreviousTemporarilyUseBasicLayerManager =
+    mWidget->mTemporarilyUseBasicLayerManager;
   mWidget->mTemporarilyUseBasicLayerManager = true;
 }
 
 nsBaseWidget::AutoUseBasicLayerManager::~AutoUseBasicLayerManager()
 {
-  mWidget->mTemporarilyUseBasicLayerManager = false;
+  mWidget->mTemporarilyUseBasicLayerManager =
+    mPreviousTemporarilyUseBasicLayerManager;
 }
 
 bool
@@ -990,7 +990,7 @@ NS_METHOD nsBaseWidget::SetWindowClass(const nsAString& xulWinType)
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_METHOD nsBaseWidget::MoveClient(int32_t aX, int32_t aY)
+NS_METHOD nsBaseWidget::MoveClient(double aX, double aY)
 {
   nsIntPoint clientOffset(GetClientOffset());
   aX -= clientOffset.x;
@@ -998,8 +998,8 @@ NS_METHOD nsBaseWidget::MoveClient(int32_t aX, int32_t aY)
   return Move(aX, aY);
 }
 
-NS_METHOD nsBaseWidget::ResizeClient(int32_t aWidth,
-                                     int32_t aHeight,
+NS_METHOD nsBaseWidget::ResizeClient(double aWidth,
+                                     double aHeight,
                                      bool aRepaint)
 {
   NS_ASSERTION((aWidth >=0) , "Negative width passed to ResizeClient");
@@ -1013,10 +1013,10 @@ NS_METHOD nsBaseWidget::ResizeClient(int32_t aWidth,
   return Resize(aWidth, aHeight, aRepaint);
 }
 
-NS_METHOD nsBaseWidget::ResizeClient(int32_t aX,
-                                     int32_t aY,
-                                     int32_t aWidth,
-                                     int32_t aHeight,
+NS_METHOD nsBaseWidget::ResizeClient(double aX,
+                                     double aY,
+                                     double aWidth,
+                                     double aHeight,
                                      bool aRepaint)
 {
   NS_ASSERTION((aWidth >=0) , "Negative width passed to ResizeClient");

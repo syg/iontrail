@@ -69,15 +69,10 @@ this.ResponsiveUIManager = {
           this.toggle(aWindow, aTab);
       default:
     }
-  },
-
-  get events() {
-    if (!this._eventEmitter) {
-      this._eventEmitter = new EventEmitter();
-    }
-    return this._eventEmitter;
-  },
+  }
 }
+
+EventEmitter.decorate(ResponsiveUIManager);
 
 let presets = [
   // Phones
@@ -163,9 +158,6 @@ function ResponsiveUI(aWindow, aTab)
   this.buildUI();
   this.checkMenus();
 
-  let target = TargetFactory.forTab(this.tab);
-  this.toolboxWasOpen = !!gDevTools.getToolboxForTarget(target);
-
   try {
     if (Services.prefs.getBoolPref("devtools.responsiveUI.rotate")) {
       this.rotate();
@@ -175,7 +167,7 @@ function ResponsiveUI(aWindow, aTab)
   if (this._floatingScrollbars)
     switchToFloatingScrollbars(this.tab);
 
-  ResponsiveUIManager.events.emit("on", this.tab, this);
+  ResponsiveUIManager.emit("on", this.tab, this);
 }
 
 ResponsiveUI.prototype = {
@@ -232,7 +224,7 @@ ResponsiveUI.prototype = {
     this.stack.removeAttribute("responsivemode");
 
     delete this.tab.__responsiveUI;
-    ResponsiveUIManager.events.emit("off", this.tab, this);
+    ResponsiveUIManager.emit("off", this.tab, this);
   },
 
   /**
@@ -244,17 +236,9 @@ ResponsiveUI.prototype = {
     if (aEvent.keyCode == this.mainWindow.KeyEvent.DOM_VK_ESCAPE &&
         this.mainWindow.gBrowser.selectedBrowser == this.browser) {
 
-      // If the toolbox wasn't open at first but is open now,
-      // we don't want to close the Responsive Mode on Escape.
-      // We let the toolbox close first.
-
-      let target = TargetFactory.forTab(this.tab);
-      let isToolboxOpen =  !!gDevTools.getToolboxForTarget(target);
-      if (this.toolboxWasOpen || !isToolboxOpen) {
-        aEvent.preventDefault();
-        aEvent.stopPropagation();
-        this.close();
-      }
+      aEvent.preventDefault();
+      aEvent.stopPropagation();
+      this.close();
     }
   },
 
@@ -608,8 +592,8 @@ ResponsiveUI.prototype = {
     this._resizing = true;
     this.stack.setAttribute("notransition", "true");
 
-    this.lastClientX = aEvent.clientX;
-    this.lastClientY = aEvent.clientY;
+    this.lastScreenX = aEvent.screenX;
+    this.lastScreenY = aEvent.screenY;
 
     this.ignoreY = (aEvent.target === this.resizeBar);
 
@@ -622,8 +606,8 @@ ResponsiveUI.prototype = {
    * @param aEvent
    */
   onDrag: function RUI_onDrag(aEvent) {
-    let deltaX = aEvent.clientX - this.lastClientX;
-    let deltaY = aEvent.clientY - this.lastClientY;
+    let deltaX = aEvent.screenX - this.lastScreenX;
+    let deltaY = aEvent.screenY - this.lastScreenY;
 
     if (this.ignoreY)
       deltaY = 0;
@@ -634,13 +618,13 @@ ResponsiveUI.prototype = {
     if (width < MIN_WIDTH) {
         width = MIN_WIDTH;
     } else {
-        this.lastClientX = aEvent.clientX;
+        this.lastScreenX = aEvent.screenX;
     }
 
     if (height < MIN_HEIGHT) {
         height = MIN_HEIGHT;
     } else {
-        this.lastClientY = aEvent.clientY;
+        this.lastScreenY = aEvent.screenY;
     }
 
     this.setSize(width, height);

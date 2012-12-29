@@ -150,6 +150,9 @@ pref("media.cache_size", 512000);
 // Master HTML5 media volume scale.
 pref("media.volume_scale", "1.0");
 
+#ifdef MOZ_WMF
+pref("media.windows-media-foundation.enabled", false);
+#endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
@@ -347,7 +350,11 @@ pref("toolkit.scrollbox.horizontalScrollDistance", 5);
 pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
 
 // Telemetry
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+pref("toolkit.telemetry.enabledPreRelease", true);
+#else
 pref("toolkit.telemetry.enabled", false);
+#endif
 pref("toolkit.telemetry.server", "https://data.mozilla.com");
 // Telemetry server owner. Please change if you set toolkit.telemetry.server to a different server
 pref("toolkit.telemetry.server_owner", "Mozilla");
@@ -712,12 +719,12 @@ pref("javascript.options.strict.debug",     true);
 pref("javascript.options.methodjit.content", true);
 pref("javascript.options.methodjit.chrome",  true);
 pref("javascript.options.ion.content",      true);
-pref("javascript.options.ion.parallel_compilation", false);
+pref("javascript.options.ion.parallel_compilation", true);
 pref("javascript.options.pccounts.content", false);
 pref("javascript.options.pccounts.chrome",  false);
 pref("javascript.options.methodjit_always", false);
 pref("javascript.options.xml.content", false);
-pref("javascript.options.xml.chrome", true);
+pref("javascript.options.xml.chrome", false);
 pref("javascript.options.jit_hardening", true);
 pref("javascript.options.typeinference", true);
 // This preference limits the memory usage of javascript.
@@ -765,6 +772,9 @@ pref("security.fileuri.strict_origin_policy", true);
 // telemetry is also enabled as otherwise there is no way to report
 // the results
 pref("network.allow-experiments", true);
+
+// Turn off interprocess security checks. Needed to run xpcshell tests.
+pref("network.disable.ipc.security", false);
 
 // Default action for unlisted external protocol handlers
 pref("network.protocol-handler.external-default", true);      // OK to load
@@ -1277,7 +1287,6 @@ pref("intl.charsetmenu.browser.more2",      "ISO-8859-4, ISO-8859-13, windows-12
 pref("intl.charsetmenu.browser.more3",      "GB2312, gbk, gb18030, HZ-GB-2312, ISO-2022-CN, Big5, Big5-HKSCS, x-euc-tw, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR, x-johab, ISO-2022-KR");
 pref("intl.charsetmenu.browser.more4",      "armscii-8, TIS-620, ISO-8859-11, windows-874, IBM857, ISO-8859-9, x-mac-turkish, windows-1254, x-viet-tcvn5712, VISCII, x-viet-vps, windows-1258, x-mac-devanagari, x-mac-gujarati, x-mac-gurmukhi");
 pref("intl.charsetmenu.browser.more5",      "ISO-8859-6, windows-1256, ISO-8859-8-I, windows-1255, ISO-8859-8, IBM862");
-pref("intl.charsetmenu.browser.unicode",    "UTF-8, UTF-16LE, UTF-16BE");
 pref("intl.charsetmenu.mailedit",           "chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.cache",      "");
 pref("intl.charsetmenu.mailview.cache",     "");
@@ -1444,6 +1453,17 @@ pref("mousewheel.with_control.action", 3);
 pref("mousewheel.with_meta.action", 1);  // command key on Mac
 pref("mousewheel.with_shift.action", 1);
 pref("mousewheel.with_win.action", 1);
+
+// mousewheel.*.action.override_x will override the action
+// when the mouse wheel is rotated along the x direction.
+// -1: Don't override the action.
+// 0 to 3: Override the action with the specified value.
+pref("mousewheel.default.action.override_x", -1);
+pref("mousewheel.with_alt.action.override_x", -1);
+pref("mousewheel.with_control.action.override_x", -1);
+pref("mousewheel.with_meta.action.override_x", -1);  // command key on Mac
+pref("mousewheel.with_shift.action.override_x", -1);
+pref("mousewheel.with_win.action.override_x", -1);
 
 // mousewheel.*.delta_multiplier_* can specify the value muliplied by the delta
 // value.  The values will be used after divided by 100.  I.e., 100 means 1.0,
@@ -1618,17 +1638,35 @@ pref("layout.css.dpi", -1);
 // of a CSS "px". This is only used for windows on the screen, not for printing.
 pref("layout.css.devPixelsPerPx", "-1.0");
 
+// Is support for CSS Masking features enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.masking.enabled", false);
+#else
+pref("layout.css.masking.enabled", true);
+#endif
+
 // Is support for the the @supports rule enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.supports-rule.enabled", false);
+#else
 pref("layout.css.supports-rule.enabled", true);
+#endif
 
 // Is support for CSS Flexbox enabled?
-pref("layout.css.flexbox.enabled", false);
+pref("layout.css.flexbox.enabled", true);
 
 // Are sets of prefixed properties supported?
 pref("layout.css.prefixes.border-image", true);
 pref("layout.css.prefixes.transforms", true);
 pref("layout.css.prefixes.transitions", true);
 pref("layout.css.prefixes.animations", true);
+
+// Is support for the :scope selector enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.scope-pseudo.enabled", false);
+#else
+pref("layout.css.scope-pseudo.enabled", true);
+#endif
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -1724,9 +1762,11 @@ pref("dom.ipc.plugins.processLaunchTimeoutSecs", 0);
 pref("dom.ipc.plugins.parentTimeoutSecs", 0);
 #endif
 
-// Disable oopp for standard java. They run their own process isolation (which
-// conflicts with our implementation, at least on Windows).
+#ifdef XP_WIN
+// Disable oopp for java on windows. They run their own
+// process isolation which conflicts with our implementation.
 pref("dom.ipc.plugins.java.enabled", false);
+#endif
 
 pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
 
@@ -3665,6 +3705,7 @@ pref("webgl.msaa-force", false);
 pref("webgl.prefer-16bpp", false);
 pref("webgl.default-no-alpha", false);
 pref("webgl.force-layers-readback", false);
+pref("webgl.lose-context-on-heap-minimize", false);
 
 // Stagefright prefs
 pref("stagefright.force-enabled", false);
