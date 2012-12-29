@@ -101,23 +101,24 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
     return InliningStatus_NotInlined;
 }
 
+static MDefinition *
+UnwrapAndDiscardPassArg(MPassArg *passArg)
+{
+    MBasicBlock *block = passArg->block();
+    MDefinition *wrapped = passArg->getArgument();
+    passArg->replaceAllUsesWith(wrapped);
+    block->discard(passArg);
+    return wrapped;
+}
+
 bool
 IonBuilder::discardCallArgs(uint32_t argc, MDefinitionVector &argv, MBasicBlock *bb)
 {
     if (!argv.resizeUninitialized(argc + 1))
         return false;
 
-    for (int32_t i = argc; i >= 0; i--) {
-        // Unwrap each MPassArg, replacing it with its contents.
-        MPassArg *passArg = bb->pop()->toPassArg();
-        MBasicBlock *block = passArg->block();
-        MDefinition *wrapped = passArg->getArgument();
-        passArg->replaceAllUsesWith(wrapped);
-        block->discard(passArg);
-
-        // Remember contents in vector.
-        argv[i] = wrapped;
-    }
+    for (int32_t i = argc; i >= 0; i--)
+        argv[i] = UnwrapAndDiscardPassArg(bb->pop()->toPassArg());
 
     return true;
 }
@@ -1102,6 +1103,11 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, HandleFunction target, MDefin
     MPrepareCall *start = new MPrepareCall;
     oldThis->block()->insertBefore(oldThis, start);
     call->initPrepareCall(start);
+
+    // Discard the old |this| and extra arguments.
+    for (int32_t i = 0; i < discards; i++)
+        UnwrapAndDiscardPassArg(args[i]);
+    UnwrapAndDiscardPassArg(oldThis);
 
     // Create the MIR to allocate the new parallel array.  Take the type
     // object is taken from the prediction set.
