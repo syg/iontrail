@@ -1,5 +1,3 @@
-// |jit-test| error: expected success but found disqualified
-
 load(libdir + "parallelarray-helpers.js");
 
 function test() {
@@ -11,8 +9,9 @@ function test() {
   }
   var x = new ParallelArray(range(0, 2048));
 
-  // Note: in fact, a bailout occurs due to throwing an exception.
-  x.map(inc, {mode: "par", expect: "success"});
+  // the disqualification occurs because all parallel executions throw
+  // exceptions:
+  x.map(inc, {mode: "par", expect: "disqualified"});
 }
 test();
 
