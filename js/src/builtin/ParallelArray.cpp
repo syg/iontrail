@@ -34,6 +34,8 @@ using namespace js::ion;
 // Debug spew
 //
 
+#ifdef DEBUG
+
 static const char *
 ExecutionStatusToString(ExecutionStatus status)
 {
@@ -47,8 +49,6 @@ ExecutionStatusToString(ExecutionStatus status)
     }
     return "(unknown status)";
 }
-
-#ifdef DEBUG
 
 static const char *
 MethodStatusToString(MethodStatus status)
