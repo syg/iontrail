@@ -102,7 +102,9 @@ ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
         if (execModeInt == 0)
             printTrace("BAILOUT", cached);
         else
-            SpewBailoutIR(cached->lirOpName, cached->mirOpName, cached->script, cached->pc);
+            SpewBailoutIR(cached->bblock, cached->lir,
+                          cached->lirOpName, cached->mirOpName,
+                          cached->script, cached->pc);
     }
 
     cached->bblock = bblock;

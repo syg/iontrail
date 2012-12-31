@@ -270,7 +270,8 @@ class ParallelSpewer
              script->filename, PCToLineNumber(script, mir->trackedPc()));
     }
 
-    void spewBailoutIR(const char *lir, const char *mir, JSScript *script, jsbytecode *pc) {
+    void spewBailoutIR(uint32_t bblockId, uint32_t lirId,
+                       const char *lir, const char *mir, JSScript *script, jsbytecode *pc) {
         if (!active[SpewBailouts])
             return;
 
@@ -278,8 +279,10 @@ class ParallelSpewer
         // bailout, don't bother printing anything since we've printed it
         // elsewhere.
         if (mir && script) {
-            spew(SpewBailouts, "%sBailout%s: %s / %s%s%s (%s:%u)", yellow(), reset(),
-                 lir, cyan(), mir, reset(), script->filename, PCToLineNumber(script, pc));
+            spew(SpewBailouts, "%sBailout%s: %s / %s%s%s (block %d lir %d) (%s:%u)", yellow(), reset(),
+                 lir, cyan(), mir, reset(),
+                 bblockId, lirId,
+                 script->filename, PCToLineNumber(script, pc));
         }
     }
 };
@@ -344,9 +347,11 @@ parallel::SpewMIR(MDefinition *mir, const char *fmt, ...)
 }
 
 void
-parallel::SpewBailoutIR(const char *lir, const char *mir, JSScript *script, jsbytecode *pc)
+parallel::SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
+                        const char *lir, const char *mir,
+                        JSScript *script, jsbytecode *pc)
 {
-    spewer.spewBailoutIR(lir, mir, script, pc);
+    spewer.spewBailoutIR(bblockId, lirId, lir, mir, script, pc);
 }
 
 #endif // DEBUG
