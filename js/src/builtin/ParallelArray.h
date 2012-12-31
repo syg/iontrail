@@ -16,58 +16,6 @@
 #include "ion/Ion.h"
 
 namespace js {
-namespace parallel {
-
-enum ExecutionStatus {
-    // Parallel or seq execution terminated in a fatal way, operation failed
-    ExecutionFatal,
-
-    // Parallel exec failed and so we fell back to sequential
-    ExecutionSequential,
-
-    // Parallel exec was successful after some number of bailouts
-    ExecutionParallel
-};
-
-bool Do(JSContext *cx, CallArgs &args);
-
-enum SpewChannel {
-    SpewOps,
-    SpewCompile,
-    SpewBailouts,
-    NumSpewChannels
-};
-
-#ifdef DEBUG
-
-bool SpewEnabled(SpewChannel channel);
-void Spew(SpewChannel channel, const char *fmt, ...);
-void SpewBeginOp(JSContext *cx, const char *name);
-void SpewBailout(uint32_t count);
-ExecutionStatus SpewEndOp(ExecutionStatus status);
-void SpewBeginCompile(HandleFunction fun);
-ion::MethodStatus SpewEndCompile(ion::MethodStatus status);
-void SpewMIR(ion::MDefinition *mir, const char *fmt, ...);
-void SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
-                   const char *lir, const char *mir, JSScript *script, jsbytecode *pc);
-
-#else
-
-static inline bool SpewEnabled(SpewChannel channel) { return false; }
-static inline void Spew(SpewChannel channel, const char *fmt, ...) { }
-static inline void SpewBeginOp(JSContext *cx, const char *name) { }
-static inline void SpewBailout(uint32_t count) {}
-static inline ExecutionStatus SpewEndOp(ExecutionStatus status) { return status; }
-static inline void SpewBeginCompile(HandleFunction fun) { }
-static inline ion::MethodStatus SpewEndCompile(ion::MethodStatus status) { return status; }
-static inline void SpewMIR(ion::MDefinition *mir, const char *fmt, ...) { }
-static inline void SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
-                                 const char *lir, const char *mir,
-                                 JSScript *script, jsbytecode *pc) { }
-
-#endif // DEBUG
-
-} // namespace parallel
 
 class ParallelArrayObject : public JSObject
 {

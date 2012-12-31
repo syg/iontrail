@@ -13,12 +13,15 @@
 
 #include "gc/Marking.h"
 
+#include "vm/ParallelDo.h"
+#include "vm/ForkJoin.h"
+#include "vm/ThreadPool.h"
+
 #include "builtin/ParallelArray.h"
 
 #include "jsfuninlines.h"
 #include "jstypedarrayinlines.h"
 
-#include "vm/ForkJoin.h"
 #include "vm/BooleanObject-inl.h"
 #include "vm/NumberObject-inl.h"
 #include "vm/RegExpObject-inl.h"

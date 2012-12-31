@@ -8,7 +8,7 @@
 #include "UnreachableCodeElimination.h"
 #include "IonAnalysis.h"
 
-#include "builtin/ParallelArray.h"
+#include "vm/ParallelDo.h"
 
 #include "vm/Stack.h"
 

@@ -130,6 +130,7 @@ CPPSRCS		= \
 		FoldConstants.cpp \
 		Intl.cpp \
 		NameFunctions.cpp \
+		ParallelDo.cpp \
 		ParallelArray.cpp \
 		ParseMaps.cpp \
 		ParseNode.cpp \

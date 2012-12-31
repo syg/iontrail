@@ -13,7 +13,7 @@
 #include "jscompartmentinlines.h"
 #include "jsarrayinlines.h"
 
-#include "builtin/ParallelArray.h"
+#include "vm/ParallelDo.h"
 
 #include "vm/ForkJoin-inl.h"
 
