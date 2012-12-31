@@ -142,7 +142,9 @@ class ParallelArrayVisitor : public MInstructionVisitor
     CUSTOM_OP(CheckOverRecursed)
     DROP_OP(RecompileCheck)
     UNSAFE_OP(DefVar)
+    UNSAFE_OP(DefFun)
     UNSAFE_OP(CreateThis)
+    UNSAFE_OP(CreateThisWithTemplate)
     SAFE_OP(PrepareCall)
     SAFE_OP(PassArg)
     CUSTOM_OP(Call)
@@ -257,15 +259,12 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(Pow)
     UNSAFE_OP(PowHalf)
     UNSAFE_OP(RegExpTest)
-
     UNSAFE_OP(CallInstanceOf)
     UNSAFE_OP(FunctionBoundary)
     UNSAFE_OP(GuardString)
-    UNSAFE_OP(CallsiteCloneCache)
-
+    UNSAFE_OP(NewDeclEnvObject)
     UNSAFE_OP(In)
     UNSAFE_OP(InArray)
-
     SAFE_OP(ParWriteGuard)
     SAFE_OP(ParCheckInterrupt)
     SAFE_OP(ParCheckOverRecursed)
