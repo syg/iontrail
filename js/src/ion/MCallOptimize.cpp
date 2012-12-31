@@ -879,6 +879,12 @@ IonBuilder::inlineUnsafeSetElement(uint32_t argc, bool constructing)
     if (!discardCall(argc, argv, current))
         return InliningStatus_Error;
 
+    // Push the result first so that the stack depth matches up for
+    // the potential bailouts that will occur in the stores below.
+    MConstant *udef = MConstant::New(UndefinedValue());
+    current->add(udef);
+    current->push(udef);
+
     for (uint32_t base = 0; base < argc; base += 3) {
         uint32_t arri = base + 1;
         uint32_t idxi = base + 2;
@@ -901,10 +907,6 @@ IonBuilder::inlineUnsafeSetElement(uint32_t argc, bool constructing)
 
         JS_NOT_REACHED("Element access not dense array nor typed array");
     }
-
-    MConstant *udef = MConstant::New(UndefinedValue());
-    current->add(udef);
-    current->push(udef);
 
     return InliningStatus_Inlined;
 }
