@@ -161,7 +161,15 @@ namespace ion {
  MIR_OPCODE_LIST(FORWARD_DECLARE)
 #undef FORWARD_DECLARE
 
-class MInstructionVisitor
+class MInstructionVisitor // interface i.e. pure abstract class
+{
+  public:
+#define VISIT_INS(op) virtual bool visit##op(M##op *) = 0;
+    MIR_OPCODE_LIST(VISIT_INS)
+#undef VISIT_INS
+};
+
+class MInstructionVisitorWithDefaults : public MInstructionVisitor
 {
   public:
 #define VISIT_INS(op) virtual bool visit##op(M##op *) { JS_NOT_REACHED("NYI: " #op); return false; }
