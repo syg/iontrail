@@ -240,8 +240,6 @@ function ParallelArrayBuild(self, shape, f, m) {
 
     var chunks = ComputeNumChunks(length);
     var numSlices = ParallelSlices();
-    if (chunks < numSlices)
-      break parallel;
     var info = ComputeAllSliceBounds(chunks, numSlices);
     ParallelDo(constructSlice, CheckParallel(m));
     return;
@@ -331,14 +329,6 @@ function ParallelArrayMap(f, m) {
 
     var chunks = ComputeNumChunks(length);
     var numSlices = ParallelSlices();
-
-    // At the moment, there must be at least one chunk per slice or
-    // warmup sometimes fails, leading to the fill fn to be
-    // permanently excluded from parallel compilation. This is really
-    // a bug in our handling of failed compilation though.
-    if (chunks < numSlices)
-      break parallel;
-
     var info = ComputeAllSliceBounds(chunks, numSlices);
     ParallelDo(mapSlice, CheckParallel(m));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
