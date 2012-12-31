@@ -6,6 +6,7 @@
 #include "ParallelArrayAnalysis.h"
 #include "IonSpewer.h"
 #include "UnreachableCodeElimination.h"
+#include "IonAnalysis.h"
 
 #include "builtin/ParallelArray.h"
 
@@ -348,9 +349,8 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &grap
                 marked++;
 
                 // Block consists of only safe instructions.  Visit its successors.
-                for (uint32_t i = 0; i < block->numSuccessors(); i++) {
+                for (uint32_t i = 0; i < block->numSuccessors(); i++)
                     block->getSuccessor(i)->mark();
-                }
             } else {
                 // Block contains an unsafe instruction.  That means that once
                 // we enter this block, we are guaranteed to bailout.
@@ -381,11 +381,70 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &grap
     IonSpewPass("ParallelArrayAnalysis");
 
     UnreachableCodeElimination uce(mir, graph);
-    uce.removeUnmarkedBlocks(marked);
-
+    if (!uce.removeUnmarkedBlocks(marked))
+        return false;
     IonSpewPass("UCEAfterParallelArrayAnalysis");
+    AssertExtendedGraphCoherency(graph);
+
+    if (!removeResumePointOperands(mir, graph))
+        return false;
+    IonSpewPass("RemoveResumePointOperands");
+    AssertExtendedGraphCoherency(graph);
+
+    if (!EliminateDeadCode(mir, graph))
+        return false;
+    IonSpewPass("DCEAfterParallelArrayAnalysis");
+    AssertExtendedGraphCoherency(graph);
 
     return true;
+}
+
+bool
+ParallelCompileContext::removeResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
+{
+    // In parallel exec mode, nothing is effectful, therefore we do
+    // not need to reconstruct interpreter state and can simply
+    // bailout by returning a special code.  Ideally we'd either
+    // remove the unused resume points or else never generate them in
+    // the first place, but I encountered various assertions and
+    // crashes attempting to do that, so for the time being I simply
+    // replace their operands with undefined.  This prevents them from
+    // interfering with DCE and other optimizations.  It is also *necessary*
+    // to handle cases like this:
+    //
+    //     foo(a, b, c.bar())
+    //
+    // where `foo` was deemed to be an unsafe function to call.  This
+    // is because without neutering the ResumePoints, they would still
+    // refer to the MPassArg nodes generated for the call to foo().
+    // But the call to foo() is dead and has been removed, leading to
+    // an inconsistent IR and assertions at codegen time.
+
+    MConstant *udef = NULL;
+    for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
+        if (udef)
+            replaceOperandsOnResumePoint(block->entryResumePoint(), udef);
+
+        for (MInstructionIterator ins(block->begin()); ins != block->end(); ins++) {
+            if (ins->isStart()) {
+                JS_ASSERT(udef == NULL);
+                udef = MConstant::New(UndefinedValue());
+                block->insertAfter(*ins, udef);
+            } else if (udef) {
+                if (MResumePoint *resumePoint = ins->resumePoint())
+                    replaceOperandsOnResumePoint(resumePoint, udef);
+            }
+        }
+    }
+    return true;
+}
+
+void
+ParallelCompileContext::replaceOperandsOnResumePoint(MResumePoint *resumePoint,
+                                                     MDefinition *withDef)
+{
+    for (size_t i = 0; i < resumePoint->numOperands(); i++)
+        resumePoint->replaceOperand(i, withDef);
 }
 
 bool

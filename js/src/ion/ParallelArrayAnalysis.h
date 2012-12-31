@@ -66,6 +66,9 @@ class ParallelCompileContext
     // Is a function compilable for parallel execution?
     bool analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &graph);
 
+    bool removeResumePointOperands(MIRGenerator *mir, MIRGraph &graph);
+    void replaceOperandsOnResumePoint(MResumePoint *resumePoint, MDefinition *withDef);
+
   public:
     ParallelCompileContext(JSContext *cx)
       : cx_(cx),
