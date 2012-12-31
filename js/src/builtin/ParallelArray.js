@@ -247,6 +247,8 @@ function ParallelArrayBuild(self, shape, f, m) {
     return;
   }
 
+  // Sequential fallback:
+  CHECK_SEQUENTIAL(m);
   computefunc(0, length);
   return;
 
@@ -343,6 +345,7 @@ function ParallelArrayMap(f, m) {
   }
 
   // Sequential fallback:
+  CHECK_SEQUENTIAL(m);
   for (var i = 0; i < length; i++)
     buffer[i] = f(self.get(i), i, self);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
@@ -394,6 +397,7 @@ function ParallelArrayReduce(f, m) {
   }
 
   // Sequential fallback:
+  CHECK_SEQUENTIAL(m);
   var acc = self.get(0);
   for (var i = 1; i < length; i++)
     acc = f(acc, self.get(i));
@@ -485,6 +489,7 @@ function ParallelArrayScan(f, m) {
   }
 
   // Sequential fallback:
+  CHECK_SEQUENTIAL(m);
   scan(self.get(0), 0, length);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
@@ -677,6 +682,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
   }
 
   // Sequential fallback:
+  CHECK_SEQUENTIAL(m);
   return seq();
 
   function forceDivideScatterVector() {
@@ -878,6 +884,7 @@ function ParallelArrayFilter(func, m) {
   }
 
   // Sequential fallback:
+  CHECK_SEQUENTIAL(m);
   var buffer = [], count = 0;
   for (var i = 0; i < length; i++) {
     var elem = self.get(i);
@@ -1083,8 +1090,15 @@ function ParallelArrayToString() {
   return result;
 }
 
+function CheckSequential(m) {
+  if (!m || m.mode === "seq")
+    return;
+
+  ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, "par", "seq");
+}
+
 function CheckParallel(m) {
-  if (!m)
+  if (!m || !ParallelTestsShouldPass())
     return null;
 
   return function(bailouts) {

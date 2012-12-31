@@ -358,6 +358,29 @@ js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static JSBool
+intrinsic_ParallelTestsShouldPass(JSContext *cx, unsigned argc, Value *vp)
+{
+    // Usage: ParallelTestsShouldPass()
+    //
+    // Returns false if we are running in a mode (such as --ion-eager)
+    // that is known to cause additional bailouts or disqualifications
+    // for parallel array tests.
+    //
+    // This is needed because the parallel tests generally assert
+    // that, under normal conditions, they will run without bailouts
+    // or compilation failures, but this does not hold under
+    // "stress-testing" conditions like --ion-eager or --no-ti.
+    // However, running the tests under those conditions HAS exposed
+    // bugs and thus we do not wish to disable them entirely.
+    // Instead, we simply disable the assertions that state that no
+    // bailouts etc should occur.
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(!ion::js_IonOptions.eagerCompilation &&
+                           cx->typeInferenceEnabled());
+    return true;
+}
+
 JSBool
 js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -366,13 +389,7 @@ js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
     // Returns true if parallel ops should take the sequential fallback path.
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setBoolean(cx->runtime->warmup ||
-                           ForkJoinSlice::InParallelSection() ||
-
-                           // These testing modes cause parallel
-                           // compilation to bailout and so forth,
-                           // triggering test failures.
-                           ion::js_IonOptions.eagerCompilation ||
-                           !cx->typeInferenceEnabled());
+                           ForkJoinSlice::InParallelSection());
     return true;
 }
 
@@ -391,6 +408,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("DenseArray",           intrinsic_DenseArray,           1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
     JS_FN("ForceSequential",      intrinsic_ForceSequential,      0,0),
+    JS_FN("ParallelTestsShouldPass", intrinsic_ParallelTestsShouldPass, 0,0),
 
 #ifdef DEBUG
     JS_FN("Dump",                 intrinsic_Dump,                 1,0),
