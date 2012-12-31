@@ -366,7 +366,13 @@ js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
     // Returns true if parallel ops should take the sequential fallback path.
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setBoolean(cx->runtime->warmup ||
-                           ForkJoinSlice::InParallelSection());
+                           ForkJoinSlice::InParallelSection() ||
+
+                           // These testing modes cause parallel
+                           // compilation to bailout and so forth,
+                           // triggering test failures.
+                           ion::js_IonOptions.eagerCompilation ||
+                           !cx->typeInferenceEnabled());
     return true;
 }
 
