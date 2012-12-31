@@ -592,8 +592,6 @@ DocAccessible::Shutdown()
     logging::DocDestroy("document shutdown", mDocumentNode, this);
 #endif
 
-  mPresShell->SetDocAccessible(nullptr);
-
   if (mNotificationController) {
     mNotificationController->Shutdown();
     mNotificationController = nullptr;
@@ -629,6 +627,7 @@ DocAccessible::Shutdown()
     mVirtualCursor = nullptr;
   }
 
+  mPresShell->SetDocAccessible(nullptr);
   mPresShell = nullptr;  // Avoid reentrancy
 
   mDependentIDsHash.Clear();
@@ -1470,9 +1469,11 @@ DocAccessible::NotifyOfLoading(bool aIsReloading)
 void
 DocAccessible::DoInitialUpdate()
 {
+  if (nsCoreUtils::IsTabDocument(mDocumentNode))
+    mDocFlags |= eTabDocument;
+
   // We provide a virtual cursor if this is a root doc or if it's a tab doc.
-  if (!(mDocumentNode->GetParentDocument()) ||
-      nsCoreUtils::IsTabDocument(mDocumentNode))
+  if (!mDocumentNode->GetParentDocument() || (mDocFlags & eTabDocument))
     mDocFlags |= eCursorable;
 
   mLoadState |= eTreeConstructed;

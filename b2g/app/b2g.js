@@ -356,13 +356,6 @@ pref("content.ime.strict_policy", true);
 // $ adb shell start
 pref("browser.dom.window.dump.enabled", false);
 
-
-
-// Temporarily relax file:// origin checks so that we can use <img>s
-// from other dirs as webgl textures and more.  Remove me when we have
-// installable apps or wifi support.
-pref("security.fileuri.strict_origin_policy", false);
-
 // Default Content Security Policy to apply to privileged and certified apps
 pref("security.apps.privileged.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
 pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self'");
@@ -597,6 +590,13 @@ pref("browser.prompt.allowNative", false);
 // they are handled separately. This pref is only read once at startup:
 // a restart is required to enable a new value.
 pref("network.activity.blipIntervalMilliseconds", 250);
+
+// By default we want the NetworkManager service to manage Gecko's offline
+// status for us according to the state of Wifi/cellular data connections.
+// In some environments, such as the emulator or hardware with other network
+// connectivity, this is not desireable, however, in which case this pref
+// can be flipped to false.
+pref("network.gonk.manage-offline-status", true);
 
 pref("jsloader.reuseGlobal", true);
 

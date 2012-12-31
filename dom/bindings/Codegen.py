@@ -3212,7 +3212,7 @@ def getWrapTemplateForType(type, descriptorProvider, result, successCode,
         if not callWrapValue:
             tail = successCode
         else:
-            tail = ("if (!MaybeWrapValue(cx, ${obj}, ${jsvalPtr})) {\n" +
+            tail = ("if (!MaybeWrapValue(cx, ${jsvalPtr})) {\n" +
                     ("%s\n" % exceptionCodeIndented.define()) +
                     "}\n" +
                     successCode)
@@ -5836,7 +5836,7 @@ class CGDOMJSProxyHandler_getOwnPropertyDescriptor(ClassMethod):
 
         return setOrIndexedGet + """JSObject* expando;
 if (!xpc::WrapperFactory::IsXrayWrapper(proxy) && (expando = GetExpandoObject(proxy))) {
-  unsigned flags = (set ? JSRESOLVE_ASSIGNING : 0) | JSRESOLVE_QUALIFIED;
+  unsigned flags = (set ? JSRESOLVE_ASSIGNING : 0);
   if (!JS_GetPropertyDescriptorById(cx, expando, id, flags, desc)) {
     return false;
   }

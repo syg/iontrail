@@ -4681,7 +4681,7 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
     RootedShape shape(cx);
     RootedId id(cx, NameToId(name));
     bool res = LookupPropertyWithFlags(cx, templateObject, id,
-                                       JSRESOLVE_QUALIFIED, &holder, &shape);
+                                       0, &holder, &shape);
     if (!res)
         return false;
 
