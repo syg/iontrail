@@ -283,7 +283,7 @@ IonBuilder::canInlineTarget(JSFunction *target)
         return false;
     }
 
-    IonSpew(IonSpew_Inlining, "Inlining good to go #%u:%s:%d at #%u:%s:%d!", inlineScript->id(), inlineScript->filename, inlineScript->lineno, script()->id(), script()->filename, PCToLineNumber(script(), pc));
+    IonSpew(IonSpew_Inlining, "Inlining good to go!");
     return true;
 }
 
