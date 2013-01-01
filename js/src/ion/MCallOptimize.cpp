@@ -1015,7 +1015,8 @@ IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
 
     types::StackTypeSet *ctorTypes = getInlineArgTypeSet(argc, 1);
     RootedFunction target(cx);
-    if (!getSingleCallTarget(ctorTypes, &target))
+    RootedFunction dummy(cx);
+    if (!getSingleCallTarget(ctorTypes, &target, &dummy))
         return InliningStatus_Error;
     MDefinition *ctor = current->peek(-(argc + 1))->toPassArg()->getArgument();
     if (anyFunctionIsCloneAtCallsite(ctorTypes))

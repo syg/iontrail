@@ -4491,12 +4491,20 @@ class InlinePropertyTable : public TempObject
         return entries_[i]->func;
     }
 
-    void trimToTargets(AutoObjectVector &targets) {
+    void trimToTargets(AutoObjectVector &targets, AutoObjectVector &originals) {
         size_t i = 0;
         while (i < numEntries()) {
             bool foundFunc = false;
-            for (size_t j = 0; j < targets.length(); j++) {
-                if (entries_[i]->func == targets[j]) {
+            // Compare using originals, but if we find a matching function,
+            // patch it to the target, which might be a clone.
+            for (size_t j = 0; j < originals.length(); j++) {
+                if (entries_[i]->func == originals[j]) {
+                    if (entries_[i]->func != targets[j]) {
+                        Entry *origEntry = entries_[i];
+                        entries_.insert(&origEntry, new Entry(origEntry->typeObj,
+                                                              targets[j]->toFunction()));
+                        entries_.erase(&origEntry);
+                    }
                     foundFunc = true;
                     break;
                 }

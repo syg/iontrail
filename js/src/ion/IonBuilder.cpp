@@ -152,29 +152,27 @@ IonBuilder::CFGState::LookupSwitch(jsbytecode *exitpc)
 
 bool
 IonBuilder::getSingleCallTarget(uint32_t argc, jsbytecode *pc, MutableHandleFunction target,
-                                bool *isClone)
+                                MutableHandleFunction original)
 {
     types::StackTypeSet *calleeTypes = oracle->getCallTarget(script(), argc, pc);
     if (!calleeTypes) {
         target.set(NULL);
-        if (isClone)
-            *isClone = false;
+        original.set(NULL);
         return true;
     }
 
-    return getSingleCallTarget(calleeTypes, target, isClone);
+    return getSingleCallTarget(calleeTypes, target, original);
 
 }
 
 bool
 IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
-                                bool *isClone)
+                                MutableHandleFunction original)
 {
     JS_ASSERT(calleeTypes);
 
     target.set(NULL);
-    if (isClone)
-        *isClone = false;
+    original.set(NULL);
 
     if (calleeTypes->baseFlags() != 0 || calleeTypes->getObjectCount() != 1)
         return true;
@@ -184,15 +182,14 @@ IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleF
         return true;
 
     if (obj->toFunction()->isCloneAtCallsite()) {
-        if (isClone)
-            *isClone = true;
-        RootedFunction fun(cx, obj->toFunction());
+        original.set(obj->toFunction());
         RootedScript scriptRoot(cx, script());
-        target.set(CloneFunctionAtCallsite(cx, fun, scriptRoot, pc));
+        target.set(CloneFunctionAtCallsite(cx, original, scriptRoot, pc));
         if (!target)
             return false;
     } else {
         target.set(obj->toFunction());
+        original.set(obj->toFunction());
     }
 
     return true;
@@ -200,26 +197,20 @@ IonBuilder::getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleF
 
 bool
 IonBuilder::getPolyCallTargets(uint32_t argc, jsbytecode *pc, AutoObjectVector &targets,
-                               uint32_t maxTargets, bool *hasClones)
+                               AutoObjectVector &originals, uint32_t maxTargets)
 {
     types::StackTypeSet *calleeTypes = oracle->getCallTarget(script(), argc, pc);
-    if (!calleeTypes) {
-        if (hasClones)
-            *hasClones = false;
+    if (!calleeTypes)
         return true;
-    }
 
-    return getPolyCallTargets(calleeTypes, targets, maxTargets, hasClones);
+    return getPolyCallTargets(calleeTypes, targets, originals, maxTargets);
 }
 
 bool
 IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVector &targets,
-                               uint32_t maxTargets, bool *hasClones)
+                               AutoObjectVector &originals, uint32_t maxTargets)
 {
     JS_ASSERT(calleeTypes);
-
-    if (hasClones)
-        *hasClones = false;
 
     if (calleeTypes->baseFlags() != 0)
         return true;
@@ -233,12 +224,14 @@ IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVecto
     RootedScript scriptRoot(cx, script());
     for(unsigned i = 0; i < objCount; i++) {
         RawObject obj = calleeTypes->getSingleObject(i);
-        if (!obj || !obj->isFunction())
+        if (!obj || !obj->isFunction()) {
+            JS_ASSERT(targets.length() == originals.length());
             return true;
+        }
         fun = obj->toFunction();
+        if (!originals.append(fun))
+            return false;
         if (fun->isCloneAtCallsite()) {
-            if (hasClones)
-                *hasClones = true;
             fun = CloneFunctionAtCallsite(cx, fun, scriptRoot, pc);
             if (!fun)
                 return false;
@@ -247,6 +240,7 @@ IonBuilder::getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVecto
             return false;
     }
 
+    JS_ASSERT(targets.length() == originals.length());
     return true;
 }
 
@@ -289,7 +283,7 @@ IonBuilder::canInlineTarget(JSFunction *target)
         return false;
     }
 
-    IonSpew(IonSpew_Inlining, "Inlining good to go!");
+    IonSpew(IonSpew_Inlining, "Inlining good to go #%u:%s:%d at #%u:%s:%d!", inlineScript->id(), inlineScript->filename, inlineScript->lineno, script()->id(), script()->filename, PCToLineNumber(script(), pc));
     return true;
 }
 
@@ -3419,8 +3413,7 @@ IonBuilder::checkInlineableGetPropertyCache(uint32_t argc)
 }
 
 MPolyInlineDispatch *
-IonBuilder::makePolyInlineDispatch(JSContext *cx, AutoObjectVector &targets, int argc,
-                                   MGetPropertyCache *getPropCache,
+IonBuilder::makePolyInlineDispatch(JSContext *cx, int argc, MGetPropertyCache *getPropCache,
                                    types::StackTypeSet *types, types::StackTypeSet *barrier,
                                    MBasicBlock *bottom,
                                    Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns)
@@ -3560,7 +3553,8 @@ IonBuilder::makePolyInlineDispatch(JSContext *cx, AutoObjectVector &targets, int
 }
 
 bool
-IonBuilder::inlineScriptedCall(AutoObjectVector &targets, uint32_t argc, bool constructing,
+IonBuilder::inlineScriptedCall(AutoObjectVector &targets, AutoObjectVector &originals,
+                               uint32_t argc, bool constructing,
                                types::StackTypeSet *types, types::StackTypeSet *barrier)
 {
 #ifdef DEBUG
@@ -3600,7 +3594,7 @@ IonBuilder::inlineScriptedCall(AutoObjectVector &targets, uint32_t argc, bool co
             int numCases = inlinePropTable->numEntries();
             IonSpew(IonSpew_Inlining, "Got inlineable property cache with %d cases", numCases);
 
-            inlinePropTable->trimToTargets(targets);
+            inlinePropTable->trimToTargets(targets, originals);
 
             // Trim the cases based on those that match the targets at this call site.
             IonSpew(IonSpew_Inlining, "%d inlineable cases left after trimming to %d targets",
@@ -3650,14 +3644,18 @@ IonBuilder::inlineScriptedCall(AutoObjectVector &targets, uint32_t argc, bool co
         // In the polymorphic case, we end the current block with a MPolyInlineDispatch instruction.
 
         // Create a PolyInlineDispatch instruction for this call site
-        MPolyInlineDispatch *disp = makePolyInlineDispatch(cx, targets, argc, getPropCache,
-                                                           types, barrier, bottom, retvalDefns);
+        MPolyInlineDispatch *disp = makePolyInlineDispatch(cx, argc, getPropCache, types, barrier,
+                                                           bottom, retvalDefns);
         if (!disp)
             return false;
+
+        // It's guaranteed that targets.length() == originals.length()
         for (size_t i = 0; i < targets.length(); i++) {
-            // Create an MConstant for the function
-            JSFunction *func = targets[i]->toFunction();
-            RootedFunction target(cx, func);
+            // Create an MConstant for the function. Note that we guard on the
+            // original function pointer, even if we have a clone, as we only
+            // clone at the callsite, so guarding on the clone would be
+            // guaranteed to fail.
+            JSFunction *func = originals[i]->toFunction();
             MConstant *constFun = MConstant::New(ObjectValue(*func));
 
             // Create new entry block for the inlined callee graph.
@@ -4046,14 +4044,15 @@ IonBuilder::jsop_funcall(uint32_t argc)
 
     // If |Function.prototype.call| may be overridden, don't optimize callsite.
     RootedFunction native(cx);
-    if (!getSingleCallTarget(argc, pc, &native))
+    RootedFunction dummy(cx);
+    if (!getSingleCallTarget(argc, pc, &native, &dummy))
         return false;
     if (!native || !native->isNative() || native->native() != &js_fun_call)
         return makeCall(native, argc, false, anyFunctionIsCloneAtCallsite(funTypes));
 
     // Extract call target.
     RootedFunction target(cx);
-    if (!getSingleCallTarget(funTypes, &target))
+    if (!getSingleCallTarget(funTypes, &target, &dummy))
         return false;
 
     // Unwrap the (JSFunction *) parameter.
@@ -4089,7 +4088,8 @@ bool
 IonBuilder::jsop_funapply(uint32_t argc)
 {
     RootedFunction native(cx);
-    if (!getSingleCallTarget(argc, pc, &native))
+    RootedFunction dummy(cx);
+    if (!getSingleCallTarget(argc, pc, &native, &dummy))
         return false;
 
     // Get the possible callees.
@@ -4130,9 +4130,9 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes)
     // argc+2: The native 'apply' function.
 
     // Extract call target.
-    bool isClone;
     RootedFunction target(cx);
-    if (!getSingleCallTarget(funTypes, &target, &isClone))
+    RootedFunction original(cx);
+    if (!getSingleCallTarget(funTypes, &target, &original))
         return false;
 
     // Vp
@@ -4199,7 +4199,20 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes)
     // Pop apply function.
     current->pop();
 
-    return makeCall(target, false, isClone, argFunc, thisArg, args);
+    return makeCall(target, false, target == original, argFunc, thisArg, args);
+}
+
+static bool
+PointwiseEqual(AutoObjectVector &v1, AutoObjectVector &v2)
+{
+    if (v1.length() != v2.length())
+        return false;
+
+    for (uint32_t i = 0; i < v1.length(); i++) {
+        if (v1[i] != v2[i])
+            return false;
+    }
+    return true;
 }
 
 bool
@@ -4209,8 +4222,8 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
 
     // Acquire known call target if existent.
     AutoObjectVector targets(cx);
-    bool hasClones;
-    if (!getPolyCallTargets(argc, pc, targets, 4, &hasClones))
+    AutoObjectVector originals(cx);
+    if (!getPolyCallTargets(argc, pc, targets, originals, 4))
         return false;
     uint32_t numTargets = targets.length();
     types::StackTypeSet *barrier;
@@ -4232,14 +4245,14 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
         }
 
         if (numTargets > 0 && makeInliningDecision(targets, argc))
-            return inlineScriptedCall(targets, argc, constructing, types, barrier);
+            return inlineScriptedCall(targets, originals, argc, constructing, types, barrier);
     }
 
     RootedFunction target(cx, NULL);
     if (numTargets == 1)
         target = targets[0]->toFunction();
 
-    return makeCallBarrier(target, argc, constructing, hasClones, types, barrier);
+    return makeCallBarrier(target, argc, constructing, PointwiseEqual(targets, originals), types, barrier);
 }
 
 MDefinition *
