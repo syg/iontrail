@@ -3594,7 +3594,7 @@ IonBuilder::inlineScriptedCall(AutoObjectVector &targets, AutoObjectVector &orig
             int numCases = inlinePropTable->numEntries();
             IonSpew(IonSpew_Inlining, "Got inlineable property cache with %d cases", numCases);
 
-            inlinePropTable->trimToTargets(targets, originals);
+            inlinePropTable->trimToAndMaybePatchTargets(targets, originals);
 
             // Trim the cases based on those that match the targets at this call site.
             IonSpew(IonSpew_Inlining, "%d inlineable cases left after trimming to %d targets",
