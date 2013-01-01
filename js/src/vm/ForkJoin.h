@@ -212,10 +212,12 @@ struct ForkJoinSlice
     static unsigned ThreadPrivateIndex;
 #endif
 
+#ifdef JS_THREADSAFE
     // Sets the abort flag and adjusts ionStackLimit so as to cause
     // the overrun check to fail.  This should lead to the operation
     // as a whole aborting.
     void triggerAbort();
+#endif
 
     ForkJoinShared *const shared;
 };
