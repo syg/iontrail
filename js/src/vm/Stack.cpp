@@ -25,6 +25,7 @@
 #include "jsopcode.h"
 
 #include "Stack-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 /* Includes to get to low-level memory-mapping functionality. */
 #ifdef XP_WIN

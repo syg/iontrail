@@ -61,6 +61,8 @@
 #include "jsscriptinlines.h"
 #include "ion/Ion.h"
 
+#include "vm/ForkJoin-inl.h"
+
 #ifdef XP_UNIX
 #include <unistd.h>
 #include <sys/types.h>

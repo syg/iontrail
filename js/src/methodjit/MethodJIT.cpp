@@ -27,6 +27,8 @@
 #include "jsgcinlines.h"
 #include "jsinterpinlines.h"
 
+#include "vm/ForkJoin-inl.h"
+
 #if JS_TRACE_LOGGING
 #include "TraceLogging.h"
 #endif

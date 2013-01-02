@@ -58,6 +58,7 @@
 #include "vm/ArgumentsObject-inl.h"
 #include "vm/ScopeObject-inl.h"
 #include "vm/Stack-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 #ifdef JS_ION
 #include "ion/Ion.h"

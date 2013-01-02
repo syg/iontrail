@@ -61,6 +61,7 @@
 #include "vm/RegExpStatics-inl.h"
 #include "vm/StringObject-inl.h"
 #include "vm/String-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 using namespace js::gc;

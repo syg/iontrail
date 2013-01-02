@@ -20,6 +20,7 @@
 
 #include "vm/Stack.h"
 #include "IonFrames-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 using namespace js::ion;

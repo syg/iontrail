@@ -66,6 +66,7 @@
 #include "builtin/Iterator-inl.h"
 #include "vm/Stack-inl.h"
 #include "vm/String-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 #if JS_HAS_XML_SUPPORT
 #include "jsxml.h"

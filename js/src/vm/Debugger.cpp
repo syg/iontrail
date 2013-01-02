@@ -26,6 +26,7 @@
 
 #include "gc/FindSCCs-inl.h"
 #include "vm/Stack-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 

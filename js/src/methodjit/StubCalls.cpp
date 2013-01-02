@@ -41,6 +41,7 @@
 #include "StubCalls-inl.h"
 #include "vm/RegExpObject-inl.h"
 #include "vm/String-inl.h"
+#include "vm/ForkJoin-inl.h"
 
 #ifdef JS_ION
 #include "ion/Ion.h"
