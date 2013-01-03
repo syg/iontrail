@@ -4252,7 +4252,8 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     if (numTargets == 1)
         target = targets[0]->toFunction();
 
-    return makeCallBarrier(target, argc, constructing, !PointwiseEqual(targets, originals), types, barrier);
+    return makeCallBarrier(target, argc, constructing, !PointwiseEqual(targets, originals),
+                           types, barrier);
 }
 
 MDefinition *
@@ -6105,13 +6106,14 @@ IonBuilder::jsop_not()
 
 inline bool
 IonBuilder::TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types, HandleId id,
-                               JSFunction **funcp, bool isGetter, bool *isDOM,
-                               MDefinition **guardOut)
+                               MutableHandleFunction funcp, MutableHandleFunction original,
+                               bool isGetter, bool *isDOM, MDefinition **guardOut)
 {
     JSObject *found = NULL;
     JSObject *foundProto = NULL;
 
-    *funcp = NULL;
+    funcp.set(NULL);
+    original.set(NULL);
     *isDOM = false;
 
     bool thinkDOM = true;
@@ -6302,7 +6304,17 @@ IonBuilder::TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types, Handle
         }
     }
 
-    *funcp = found->toFunction();
+    if (found->toFunction()->isCloneAtCallsite()) {
+        original.set(found->toFunction());
+        RootedScript scriptRoot(cx, script());
+        funcp.set(CloneFunctionAtCallsite(cx, original, scriptRoot, pc));
+        if (!funcp)
+            return false;
+    } else {
+        funcp.set(found->toFunction());
+        original.set(found->toFunction());
+    }
+
     *isDOM = thinkDOM;
 
     return true;
@@ -6617,11 +6629,12 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, HandleId id, types::StackTypeS
                                    types::StackTypeSet *types, TypeOracle::UnaryTypes unaryTypes)
 {
     JS_ASSERT(*emitted == false);
-    JSFunction *commonGetter;
+    RootedFunction commonGetter(cx);
+    RootedFunction originalGetter(cx);
     bool isDOM;
     MDefinition *guard;
 
-    if (!TestCommonPropFunc(cx, unaryTypes.inTypes, id, &commonGetter, true,
+    if (!TestCommonPropFunc(cx, unaryTypes.inTypes, id, &commonGetter, &originalGetter, true,
                             &isDOM, &guard))
     {
         return false;
@@ -6630,10 +6643,9 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, HandleId id, types::StackTypeS
         return true;
 
     MDefinition *obj = current->pop();
-    RootedFunction getter(cx, commonGetter);
 
-    if (isDOM && TestShouldDOMCall(cx, unaryTypes.inTypes, getter, JSJitInfo::Getter)) {
-        const JSJitInfo *jitinfo = getter->jitInfo();
+    if (isDOM && TestShouldDOMCall(cx, unaryTypes.inTypes, commonGetter, JSJitInfo::Getter)) {
+        const JSJitInfo *jitinfo = commonGetter->jitInfo();
         MGetDOMProperty *get = MGetDOMProperty::New(jitinfo, obj, guard);
         current->add(get);
         current->push(get);
@@ -6648,14 +6660,13 @@ IonBuilder::getPropTryCommonGetter(bool *emitted, HandleId id, types::StackTypeS
     }
 
     // Spoof stack to expected state for call.
-    pushConstant(ObjectValue(*commonGetter));
+    pushConstant(ObjectValue(*originalGetter));
 
     MPassArg *wrapper = MPassArg::New(obj);
     current->add(wrapper);
     current->push(wrapper);
 
-    // TODO: Callsite-cloned accessors.
-    if (!makeCallBarrier(getter, 0, false, false, types, barrier))
+    if (!makeCallBarrier(commonGetter, 0, false, commonGetter != originalGetter, types, barrier))
         return false;
 
     *emitted = true;
@@ -6784,14 +6795,14 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
     RootedId id(cx, NameToId(name));
     types::StackTypeSet *types = binaryTypes.lhsTypes;
 
-    JSFunction *commonSetter;
+    RootedFunction commonSetter(cx);
+    RootedFunction originalSetter(cx);
     bool isDOM;
-    if (!TestCommonPropFunc(cx, types, id, &commonSetter, false, &isDOM, NULL))
+    if (!TestCommonPropFunc(cx, types, id, &commonSetter, &originalSetter, false, &isDOM, NULL))
         return false;
     if (!monitored && commonSetter) {
-        RootedFunction setter(cx, commonSetter);
-        if (isDOM && TestShouldDOMCall(cx, types, setter, JSJitInfo::Setter)) {
-            MSetDOMProperty *set = MSetDOMProperty::New(setter->jitInfo()->op, obj, value);
+        if (isDOM && TestShouldDOMCall(cx, types, commonSetter, JSJitInfo::Setter)) {
+            MSetDOMProperty *set = MSetDOMProperty::New(commonSetter->jitInfo()->op, obj, value);
             if (!set)
                 return false;
 
@@ -6802,7 +6813,7 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
         }
 
         // Dummy up the stack, as in getprop
-        pushConstant(ObjectValue(*setter));
+        pushConstant(ObjectValue(*originalSetter));
 
         MPassArg *wrapper = MPassArg::New(obj);
         current->push(wrapper);
@@ -6814,8 +6825,7 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
 
         // Call the setter. Note that we have to push the original value, not
         // the setter's return value.
-        // TODO: Callsite-cloned accessors.
-        MCall *call = makeCallHelper(setter, 1, false, false);
+        MCall *call = makeCallHelper(commonSetter, 1, false, commonSetter != originalSetter);
         if (!call)
             return false;
 

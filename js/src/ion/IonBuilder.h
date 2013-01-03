@@ -484,10 +484,9 @@ class IonBuilder : public MIRGenerator
     bool makeCall(HandleFunction target, bool constructing, bool cloneAtCallsite,
                   MDefinition *fun, MPassArg *thisArg, Vector<MPassArg *> &args);
 
-    inline bool TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types,
-                                   HandleId id, JSFunction **funcp,
-                                   bool isGetter, bool *isDOM,
-                                   MDefinition **guardOut);
+    inline bool TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types, HandleId id,
+                                   MutableHandleFunction funcp, MutableHandleFunction original,
+                                   bool isGetter, bool *isDOM, MDefinition **guardOut);
 
     bool annotateGetPropertyCache(JSContext *cx, MDefinition *obj, MGetPropertyCache *getPropCache,
                                   types::StackTypeSet *objTypes, types::StackTypeSet *pushedTypes);
