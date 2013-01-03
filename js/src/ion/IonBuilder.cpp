@@ -3302,7 +3302,7 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
             allFunctionsAreSmall = false;
 
         if (calleeUses * js_IonOptions.inlineUseCountRatio < callerUses) {
-            IonSpew(IonSpew_Inlining, "Not inlining, callee %p is not hot %d", target.get(), calleeUses);
+            IonSpew(IonSpew_Inlining, "Not inlining, callee is not hot");
             return false;
         }
     }

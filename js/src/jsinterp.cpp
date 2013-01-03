@@ -2362,7 +2362,7 @@ BEGIN_CASE(JSOP_FUNCALL)
     bool isFunction = IsFunctionObject(args.calleev(), fun.address());
 
     /*
-     * Some builtins are marked as clone-at-call-site to increase precision of
+     * Some builtins are marked as clone-at-callsite to increase precision of
      * TI and JITs.
      */
     if (isFunction) {

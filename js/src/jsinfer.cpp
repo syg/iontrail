@@ -1256,8 +1256,8 @@ TypeConstraintSetElement::newType(JSContext *cx, TypeSet *source, Type type)
     }
 }
 
-static inline JSFunction *
-CloneCallee(JSContext *cx, JSFunction *fun_, HandleScript script, jsbytecode *pc)
+static inline RawFunction
+CloneCallee(JSContext *cx, RawFunction fun_, HandleScript script, jsbytecode *pc)
 {
     /*
      * To avoid computing the callee PC at the callsite when we clone to
@@ -1384,8 +1384,6 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
     }
 
     RootedScript calleeScript(cx, callee->nonLazyScript());
-    if (!calleeScript)
-        return;
     if (!calleeScript->ensureHasTypes(cx))
         return;
 
@@ -1451,7 +1449,6 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         RootedObject object(cx, type.singleObject());
         if (!object->isFunction() || !object->toFunction()->isInterpreted())
             return;
-
         callee = object->toFunction();
     } else if (type.isTypeObject()) {
         TypeObject *object = type.typeObject();

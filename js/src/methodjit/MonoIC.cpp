@@ -603,8 +603,7 @@ class CallCompiler : public BaseCompiler
         RegisterID ionScript = regs.takeAnyReg().reg();
         Address scriptAddr(funObjReg, JSFunction::offsetOfNativeOrScript());
         masm.loadPtr(scriptAddr, ionScript);
-        masm.loadPtr(Address(ionScript, offsetof(JSScript, ion)),
-                     ionScript);
+        masm.loadPtr(Address(ionScript, offsetof(JSScript, ion)), ionScript);
 
         /* Guard that the ion pointer is valid. */
         Jump noIonCode = masm.branchPtr(Assembler::BelowOrEqual, ionScript,

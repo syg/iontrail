@@ -63,7 +63,6 @@ class MNode;
 class MUse;
 class MIRGraph;
 class MResumePoint;
-class MCall;
 
 static inline bool isOSRLikeValue (MDefinition *def);
 
