@@ -321,7 +321,12 @@ struct PerThreadDataFriendFields
     // way.
     struct RuntimeDummy : RuntimeFriendFields
     {
-        void *perThread;
+        struct PerThreadDummy {
+            void *foo;
+#ifdef DEBUG
+            uint64_t bar;
+#endif
+        } mainThread;
     };
 
   public:
@@ -339,7 +344,7 @@ struct PerThreadDataFriendFields
     /* Limit pointer for checking native stack consumption. */
     uintptr_t nativeStackLimit;
 
-    static const size_t RuntimeMainThreadOffset = offsetof(RuntimeDummy, perThread);
+    static const size_t RuntimeMainThreadOffset = offsetof(RuntimeDummy, mainThread);
 
     static inline PerThreadDataFriendFields *get(js::PerThreadData *pt) {
         return reinterpret_cast<PerThreadDataFriendFields *>(pt);
