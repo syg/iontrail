@@ -555,9 +555,6 @@ class ParallelDo : public ForkJoinOp
     }
 
     virtual bool parallel(ForkJoinSlice &slice) {
-        // Setting maximum argc at 10, since it is more than we
-        // actually use in practice.  If you add parameters, you may
-        // have to adjust this.
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);
         FastestIonInvoke<3> fii(cx_, fun, 3);
