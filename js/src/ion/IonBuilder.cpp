@@ -4199,7 +4199,7 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes)
     // Pop apply function.
     current->pop();
 
-    return makeCall(target, false, target == original, argFunc, thisArg, args);
+    return makeCall(target, false, target != original, argFunc, thisArg, args);
 }
 
 static bool
@@ -4252,7 +4252,7 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     if (numTargets == 1)
         target = targets[0]->toFunction();
 
-    return makeCallBarrier(target, argc, constructing, PointwiseEqual(targets, originals), types, barrier);
+    return makeCallBarrier(target, argc, constructing, !PointwiseEqual(targets, originals), types, barrier);
 }
 
 MDefinition *
