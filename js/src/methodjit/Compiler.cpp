@@ -4659,26 +4659,14 @@ mjit::Compiler::inlineScriptedFunction(uint32_t argc, bool callingNew)
 
     /* We already know which frames we are inlining at each PC, so scan the list of inline frames. */
     bool calleeMultipleReturns = false;
-
-    /* The callees we're inlining. These may be callsite clones. */
     Vector<JSScript *> inlineCallees(CompilerAllocPolicy(cx, *this));
-
-    /* The original callees. These may never be callsite clones. */
-    Vector<JSScript *> originalCallees(CompilerAllocPolicy(cx, *this));
-
-    RootedFunction fun(cx);
     for (unsigned i = 0; i < ssa.numFrames(); i++) {
         if (ssa.iterFrame(i).parent == a->inlineIndex && ssa.iterFrame(i).parentpc == PC) {
             JSScript *script_ = ssa.iterFrame(i).script;
-            originalCallees.append(script_);
 
-            fun = script_->function();
-            if (fun->isCloneAtCallsite()) {
-                fun = CloneFunctionAtCallsite(cx, fun, this->script_, PC);
-                if (!fun)
-                    return Compile_Error;
-                script_ = fun->nonLazyScript();
-            }
+            /* Don't inline if any of the callees should be cloned at callsite. */
+            if (script_->function()->isCloneAtCallsite())
+                return Compile_InlineAbort;
 
             inlineCallees.append(script_);
             if (script_->analysis()->numReturnSites() > 1)
@@ -4747,7 +4735,6 @@ mjit::Compiler::inlineScriptedFunction(uint32_t argc, bool callingNew)
             frame.restoreFromSnapshot(entrySnapshot);
 
         JSScript *script = inlineCallees[i];
-        JSScript *original = originalCallees[i];
         CompileStatus status;
 
         status = pushActiveFrame(script, argc);
@@ -4765,15 +4752,9 @@ mjit::Compiler::inlineScriptedFunction(uint32_t argc, bool callingNew)
         }
 
         if (i + 1 != inlineCallees.length()) {
-            /*
-             * Guard on the callee, except when this object must be the
-             * callee.
-             *
-             * Note that we must guard on the original function instead of the
-             * possible clone.
-             */
+            /* Guard on the callee, except when this object must be the callee. */
             JS_ASSERT(calleeReg.isSet());
-            calleePrevious = masm.branchPtr(Assembler::NotEqual, calleeReg.reg(), ImmPtr(original->function()));
+            calleePrevious = masm.branchPtr(Assembler::NotEqual, calleeReg.reg(), ImmPtr(script->function()));
         }
 
         a->returnJumps = &returnJumps;
