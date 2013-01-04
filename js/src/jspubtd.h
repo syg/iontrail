@@ -322,9 +322,10 @@ struct PerThreadDataFriendFields
     struct RuntimeDummy : RuntimeFriendFields
     {
         struct PerThreadDummy {
-            void *foo;
+            void *field1;
+            uintptr_t field2;
 #ifdef DEBUG
-            uint64_t bar;
+            uint64_t field3;
 #endif
         } mainThread;
     };
