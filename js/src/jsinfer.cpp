@@ -1260,12 +1260,11 @@ static inline RawFunction
 CloneCallee(JSContext *cx, RawFunction fun_, HandleScript script, jsbytecode *pc)
 {
     /*
-     * To avoid computing the callee PC at the callsite when we clone to
-     * propagate the cloned function type to this point, we do not monitor in
-     * the interpreter and simply clone again when doing analysis.
+     * Clone called functions at appropriate callsites to match interpreter
+     * behavior.
      */
     RootedFunction fun(cx, fun_);
-    JSFunction *callee = CloneFunctionAtCallsite(cx, fun, script, pc);
+    RawFunction callee = CloneFunctionAtCallsite(cx, fun, script, pc);
     if (!callee)
         return NULL;
 

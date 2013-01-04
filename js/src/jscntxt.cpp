@@ -290,6 +290,7 @@ IsCloneSpewActive(CloneSpewChannel channel)
 RawFunction
 js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
+    JS_ASSERT(fun->isCloneAtCallsite());
     JS_ASSERT(types::UseNewTypeForClone(fun));
     JS_ASSERT(!fun->nonLazyScript()->enclosingStaticScope());
 
