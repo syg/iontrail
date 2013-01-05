@@ -817,12 +817,15 @@ fun_toSource(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js_fun_call(JSContext *cx, unsigned argc, Value *vp)
 {
-    Value fval = vp[1];
+    RootedValue fval(cx, vp[1]);
 
     if (!js_IsCallable(fval)) {
         ReportIncompatibleMethod(cx, CallReceiverFromVp(vp), &FunctionClass);
         return false;
     }
+
+    if (!MaybeCloneCalleeAtCaller(cx, &fval))
+        return false;
 
     Value *argv = vp + 2;
     Value thisv;
@@ -864,6 +867,9 @@ js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
     /* Step 2. */
     if (argc < 2 || vp[3].isNullOrUndefined())
         return js_fun_call(cx, (argc > 0) ? 1 : 0, vp);
+
+    if (!MaybeCloneCalleeAtCaller(cx, &fval))
+        return false;
 
     InvokeArgsGuard args;
 
