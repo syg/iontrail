@@ -3809,7 +3809,6 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_DEBUGGER:
       case JSOP_SETCALL:
       case JSOP_TABLESWITCH:
-      case JSOP_LOOKUPSWITCH:
       case JSOP_TRY:
       case JSOP_LABEL:
         break;
@@ -5886,10 +5885,10 @@ JSObject::hasNewType(TypeObject *type)
 }
 #endif /* DEBUG */
 
-bool
-JSObject::setNewTypeUnknown(JSContext *cx)
+/* static */ bool
+JSObject::setNewTypeUnknown(JSContext *cx, HandleObject obj)
 {
-    if (!setFlag(cx, js::BaseShape::NEW_TYPE_UNKNOWN))
+    if (!obj->setFlag(cx, js::BaseShape::NEW_TYPE_UNKNOWN))
         return false;
 
     /*
@@ -5899,7 +5898,7 @@ JSObject::setNewTypeUnknown(JSContext *cx)
      */
     TypeObjectSet &table = cx->compartment->newTypeObjects;
     if (table.initialized()) {
-        if (TypeObjectSet::Ptr p = table.lookup(this))
+        if (TypeObjectSet::Ptr p = table.lookup(obj.get()))
             MarkTypeObjectUnknownProperties(cx, *p);
     }
 

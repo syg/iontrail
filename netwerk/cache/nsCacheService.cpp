@@ -1080,7 +1080,7 @@ NS_THREADSAFE_MEMORY_REPORTER_IMPLEMENT(NetworkMemoryCache,
     nsCacheService::MemoryDeviceSize,
     "Memory used by the network memory cache.")
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(NetworkDiskCacheSizeOfFun, "network-disk-cache")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(NetworkDiskCacheMallocSizeOf)
 
 static nsCOMPtr<nsIMemoryReporter> DiskCacheReporter = nullptr;
 
@@ -1462,8 +1462,7 @@ nsCacheService::IsStorageEnabledForPolicy_Locked(nsCacheStoragePolicy  storagePo
     }
     if (gService->mEnableDiskDevice &&
         (storagePolicy == nsICache::STORE_ANYWHERE ||
-         storagePolicy == nsICache::STORE_ON_DISK  ||
-         storagePolicy == nsICache::STORE_ON_DISK_AS_FILE)) {
+         storagePolicy == nsICache::STORE_ON_DISK)) {
         return true;
     }
     if (gService->mEnableOfflineDevice &&
@@ -2215,7 +2214,6 @@ nsCacheService::EnsureEntryHasDevice(nsCacheEntry * entry)
         if (mDiskDevice) {
             // Bypass the cache if Content-Length says the entry will be too big
             if (predictedDataSize != -1 &&
-                entry->StoragePolicy() != nsICache::STORE_ON_DISK_AS_FILE &&
                 mDiskDevice->EntryIsTooBig(predictedDataSize)) {
                 DebugOnly<nsresult> rv = nsCacheService::DoomEntry(entry);
                 NS_ASSERTION(NS_SUCCEEDED(rv),"DoomEntry() failed.");
@@ -2288,7 +2286,7 @@ nsCacheService::DiskDeviceHeapSize()
 {
     nsCacheServiceAutoLock lock(LOCK_TELEM(NSCACHESERVICE_DISKDEVICEHEAPSIZE));
     nsDiskCacheDevice *diskDevice = GlobalInstance()->mDiskDevice;
-    return (int64_t)(diskDevice ? diskDevice->SizeOfIncludingThis(NetworkDiskCacheSizeOfFun) : 0);
+    return (int64_t)(diskDevice ? diskDevice->SizeOfIncludingThis(NetworkDiskCacheMallocSizeOf) : 0);
 }
 
 nsresult

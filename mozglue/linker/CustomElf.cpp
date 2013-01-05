@@ -102,7 +102,7 @@ private:
 TemporaryRef<LibHandle>
 CustomElf::Load(Mappable *mappable, const char *path, int flags)
 {
-  debug("CustomElf::Load(\"%s\", %x) = ...", path, flags);
+  debug("CustomElf::Load(\"%s\", 0x%x) = ...", path, flags);
   if (!mappable)
     return NULL;
   /* Keeping a RefPtr of the CustomElf is going to free the appropriate
@@ -219,7 +219,7 @@ CustomElf::Load(Mappable *mappable, const char *path, int flags)
     return NULL;
 
   elf->stats("oneLibLoaded");
-  debug("CustomElf::Load(\"%s\", %x) = %p", path, flags,
+  debug("CustomElf::Load(\"%s\", 0x%x) = %p", path, flags,
         static_cast<void *>(elf));
   return elf;
 }
@@ -439,7 +439,7 @@ CustomElf::LoadSegment(const Phdr *pt_load) const
   if (pt_load->p_memsz > pt_load->p_filesz) {
     Addr file_end = pt_load->p_vaddr + pt_load->p_filesz;
     Addr mem_end = pt_load->p_vaddr + pt_load->p_memsz;
-    Addr next_page = (file_end & ~(PAGE_SIZE - 1)) + PAGE_SIZE;
+    Addr next_page = (file_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     if (mem_end > next_page) {
       if (mprotect(GetPtr(next_page), mem_end - next_page, prot) < 0) {
         log("%s: Failed to mprotect", GetPath());

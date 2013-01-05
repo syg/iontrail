@@ -705,16 +705,20 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
             props->SetPropertyAsBool(NS_LITERAL_STRING("abnormal"), true);
 
 #ifdef MOZ_CRASHREPORTER
-            MOZ_ASSERT(ManagedPCrashReporterParent().Length() > 0);
-            CrashReporterParent* crashReporter =
+            // There's a window in which child processes can crash
+            // after IPC is established, but before a crash reporter
+            // is created.
+            if (ManagedPCrashReporterParent().Length() > 0) {
+                CrashReporterParent* crashReporter =
                     static_cast<CrashReporterParent*>(ManagedPCrashReporterParent()[0]);
 
-            crashReporter->AnnotateCrashReport(NS_LITERAL_CSTRING("URL"),
-                                               NS_ConvertUTF16toUTF8(mAppManifestURL));
-            crashReporter->GenerateCrashReport(this, NULL);
+                crashReporter->AnnotateCrashReport(NS_LITERAL_CSTRING("URL"),
+                                                   NS_ConvertUTF16toUTF8(mAppManifestURL));
+                crashReporter->GenerateCrashReport(this, NULL);
 
-            nsAutoString dumpID(crashReporter->ChildDumpID());
-            props->SetPropertyAsAString(NS_LITERAL_STRING("dumpID"), dumpID);
+                nsAutoString dumpID(crashReporter->ChildDumpID());
+                props->SetPropertyAsAString(NS_LITERAL_STRING("dumpID"), dumpID);
+            }
 #endif
         }
         obs->NotifyObservers((nsIPropertyBag2*) props, "ipc:content-shutdown", nullptr);
@@ -1943,49 +1947,8 @@ ContentParent::RecvAsyncMessage(const nsString& aMsg,
 }
 
 bool
-ContentParent::RecvAddGeolocationListener(const IPC::Principal& aPrincipal)
+ContentParent::RecvAddGeolocationListener()
 {
-#ifdef MOZ_PERMISSIONS
-
-  nsIPrincipal* principal = aPrincipal;
-  uint32_t principalAppId;
-  nsresult rv = principal->GetAppId(&principalAppId);
-  if (NS_FAILED(rv)) {
-    return true;
-  }
-
-  bool found = false;
-  const InfallibleTArray<PBrowserParent*>& browsers = ManagedPBrowserParent();
-  for (uint32_t i = 0; i < browsers.Length(); ++i) {
-  
-      TabParent* tab = static_cast<TabParent*>(browsers[i]);
-      nsCOMPtr<mozIApplication> app = tab->GetOwnOrContainingApp();
-      uint32_t appId;
-      app->GetLocalId(&appId);
-      if (appId == principalAppId) {
-          found = true;
-          break;
-      }
-  }
-
-  if (!found) {
-    return true;
-  }
-
-  // We need to ensure that this permission has been set.
-  // If it hasn't, just noop
-  nsCOMPtr<nsIPermissionManager> pm = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
-  if (!pm) {
-    return false;
-  }
-  uint32_t permission = nsIPermissionManager::UNKNOWN_ACTION;
-  rv = pm->TestPermissionFromPrincipal(principal, "geolocation", &permission);
-  if (NS_FAILED(rv) || permission != nsIPermissionManager::ALLOW_ACTION) {
-    KillHard();
-    return true;
-  }
-#endif
-
   if (mGeolocationWatchID == -1) {
     nsCOMPtr<nsIDOMGeoGeolocation> geo = do_GetService("@mozilla.org/geolocation;1");
     if (!geo) {

@@ -164,8 +164,7 @@ public class TabsPanel extends TabHost
         mAddTab = (ImageButton) mToolbar.findViewById(R.id.add_tab);
         mAddTab.setOnClickListener(new Button.OnClickListener() {
             public void onClick(View v) {
-                mActivity.addTab();
-                mActivity.autoHideTabs();
+                TabsPanel.this.addTab();
             }
         });
 
@@ -186,6 +185,15 @@ public class TabsPanel extends TabHost
         });
 
         mPopupMenu.setAnchor(mMenuButton);
+    }
+
+    public void addTab() {
+        if (mCurrentPanel == Panel.NORMAL_TABS)
+           mActivity.addTab();
+        else
+           mActivity.addPrivateTab();
+
+        mActivity.autoHideTabs();
     }
 
     public void openTabsMenu() {
@@ -247,6 +255,7 @@ public class TabsPanel extends TabHost
                 for (Tab tab : Tabs.getInstance().getTabsInOrder()) {
                     Tabs.getInstance().closeTab(tab);
                 }
+                autoHidePanel();
                 return true;
 
             case R.id.new_tab:
@@ -394,6 +403,11 @@ public class TabsPanel extends TabHost
 
         mPanel = (PanelView) getTabContentView().getChildAt(index);
         mPanel.show();
+
+        if (mCurrentPanel == Panel.REMOTE_TABS)
+            mAddTab.setVisibility(View.INVISIBLE);
+        else
+            mAddTab.setVisibility(View.VISIBLE);
 
         if (isSideBar()) {
             if (showAnimation)

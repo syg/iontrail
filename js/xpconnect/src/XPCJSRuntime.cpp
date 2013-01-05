@@ -322,8 +322,7 @@ void XPCJSRuntime::TraceBlackJS(JSTracer* trc, void* data)
             static_cast<XPCJSObjectHolder*>(e)->TraceJS(trc);
     }
 
-    dom::TraceBlackJS(trc);
-
+    dom::TraceBlackJS(trc, JS_GetGCParameter(self->GetJSRuntime(), JSGC_NUMBER));
 }
 
 // static
@@ -1482,7 +1481,7 @@ NS_MEMORY_REPORTER_IMPLEMENT(XPConnectJSUserCompartmentCount,
         rtTotal += amount;                                                    \
     } while (0)
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsMallocSizeOf, "js")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsMallocSizeOf)
 
 namespace xpc {
 
@@ -1979,16 +1978,16 @@ NS_IMPL_THREADSAFE_ISUPPORTS1(JSCompartmentsMultiReporter
                               , nsIMemoryMultiReporter
                               )
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(OrphanSizeOf, "orphans")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(OrphanMallocSizeOf)
 
 namespace xpc {
 
 static size_t
 SizeOfTreeIncludingThis(nsINode *tree)
 {       
-    size_t n = tree->SizeOfIncludingThis(OrphanSizeOf);
+    size_t n = tree->SizeOfIncludingThis(OrphanMallocSizeOf);
     for (nsIContent* child = tree->GetFirstChild(); child; child = child->GetNextNode(tree)) {
-        n += child->SizeOfIncludingThis(OrphanSizeOf);
+        n += child->SizeOfIncludingThis(OrphanMallocSizeOf);
     }   
     return n;
 }
