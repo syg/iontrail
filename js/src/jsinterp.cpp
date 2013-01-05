@@ -286,6 +286,14 @@ js::ValueToCallable(JSContext *cx, const Value *vp, MaybeConstruct construct)
     return NULL;
 }
 
+#ifdef DEBUG
+static inline bool
+CanCloneAtCallsite(JSContext *cx)
+{
+    return cx->typeInferenceEnabled() && !!cx->stack.currentScript();
+}
+#endif
+
 bool
 js::RunScript(JSContext *cx, HandleScript script, StackFrame *fp)
 {
@@ -294,6 +302,8 @@ js::RunScript(JSContext *cx, HandleScript script, StackFrame *fp)
     JS_ASSERT(fp->script() == script);
     JS_ASSERT_IF(!fp->isGeneratorFrame(), cx->regs().pc == script->code);
     JS_ASSERT_IF(fp->isEvalFrame(), script->isActiveEval);
+    JS_ASSERT_IF(CanCloneAtCallsite(cx) && script->function(),
+                 !script->function()->isCloneAtCallsite());
 #ifdef JS_METHODJIT_SPEW
     JMCheckLogging();
 #endif
@@ -390,6 +400,8 @@ js::InvokeKernel(JSContext *cx, CallArgs args, MaybeConstruct construct)
     JS_ASSERT_IF(construct, !fun->isNativeConstructor());
     if (fun->isNative())
         return CallJSNative(cx, fun->native(), args);
+
+    JS_ASSERT_IF(CanCloneAtCallsite(cx), !fun->isCloneAtCallsite());
 
     RootedScript script(cx, fun->getOrCreateScript(cx));
     if (!script)
