@@ -412,6 +412,8 @@ class ParallelDo : public ForkJoinOp
     HeapPtrObject fun_;
 
   public:
+    // For tests, make sure to keep this in sync with minItemsTestingThreshold.
+    const static uint32_t max_bailouts = 3;
     uint32_t bailouts;
     Vector<JSScript *> pendingInvalidations;
 
@@ -433,7 +435,7 @@ class ParallelDo : public ForkJoinOp
 
         // Try to execute in parallel.  If a bailout occurs, re-warmup
         // and then try again.  Repeat this a few times.
-        while (bailouts < 3) {
+        while (bailouts < max_bailouts) {
             MethodStatus status = compileForParallelExecution();
             if (status == Method_Error)
                 return SpewEndOp(ExecutionFatal);

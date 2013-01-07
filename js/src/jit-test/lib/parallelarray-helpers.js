@@ -2,6 +2,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// Explanation of minItemsTestingThreshold:
+//
+// If the volume of input items in a test is small, then all of them
+// may be processed during warmup alone, and the parallel-invocation
+// will trivially succeed even if we are intentionally trying to
+// detect a failure.
+//
+// The maximum number of items processed by sequential warmups for
+// ParallelArrayBuild is:
+//      maxSeqItems = maxBailouts * numSlices * CHUNK_SIZE
+//
+// For maxBailouts = 3, maxSeqItems == 3 * 8 * 32 == 768
+// For maxBailouts = 5, maxSeqItems == 5 * 8 * 32 == 1280
+//
+// Our test code does not have access to the values of these constants
+// (maxBailouts, numSlices, CHUNK_SIZE).  Therefore, the value of
+// minItemsTestingThreshold should be kept in sync with some value
+// greater than maxSeqItems as calculated above.
+//
+// This is still imperfect since it assumes numSlices <= 8, but
+// numSlices is machine-dependent.
+// (TODO: consider exposing numSlices via builtin/TestingFunctions.cpp)
+
+var minItemsTestingThreshold = 1024;
+
 function build(n, f) {
   var result = [];
   for (var i = 0; i < n; i++)
