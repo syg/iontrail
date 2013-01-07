@@ -96,7 +96,6 @@
 #include "gc/FindSCCs-inl.h"
 #include "vm/ScopeObject-inl.h"
 #include "vm/String-inl.h"
-#include "vm/ForkJoin-inl.h"
 
 #ifdef XP_WIN
 # include "jswin.h"

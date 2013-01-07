@@ -34,8 +34,6 @@
 #include "jscntxtinlines.h"
 #include "jsatominlines.h"
 
-#include "vm/ForkJoin-inl.h"
-
 #include "StubCalls-inl.h"
 
 #include "jsautooplen.h"

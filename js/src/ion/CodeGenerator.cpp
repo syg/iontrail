@@ -22,7 +22,6 @@
 #include "ExecutionModeInlines.h"
 
 #include "vm/StringObject-inl.h"
-#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 using namespace js::ion;

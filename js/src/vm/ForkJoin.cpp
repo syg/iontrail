@@ -12,7 +12,6 @@
 #include "vm/Monitor.h"
 #include "gc/Marking.h"
 
-#include "vm/ForkJoin-inl.h"
 #include "jsinferinlines.h"
 
 #ifdef JS_THREADSAFE

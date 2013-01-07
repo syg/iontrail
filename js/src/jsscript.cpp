@@ -45,7 +45,6 @@
 
 #include "frontend/SharedContext-inl.h"
 #include "vm/RegExpObject-inl.h"
-#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 using namespace js::gc;

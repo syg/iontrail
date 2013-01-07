@@ -236,4 +236,20 @@ struct ForkJoinOp
 
 } // namespace js
 
+/* static */ inline js::ForkJoinSlice *
+js::ForkJoinSlice::Current()
+{
+#ifdef JS_THREADSAFE
+    return (ForkJoinSlice*) PR_GetThreadPrivate(ThreadPrivateIndex);
+#else
+    return NULL;
+#endif
+}
+
+/* static */ inline bool
+js::ForkJoinSlice::InParallelSection()
+{
+    return Current() != NULL;
+}
+
 #endif // ForkJoin_h__

@@ -67,7 +67,6 @@
 #include "vm/BooleanObject-inl.h"
 #include "vm/NumberObject-inl.h"
 #include "vm/StringObject-inl.h"
-#include "vm/ForkJoin-inl.h"
 
 #include "jsautooplen.h"
 

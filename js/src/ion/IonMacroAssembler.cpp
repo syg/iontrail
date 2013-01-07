@@ -12,8 +12,6 @@
 #include "Bailouts.h"
 #include "vm/ForkJoin.h"
 
-#include "vm/ForkJoin-inl.h"
-
 using namespace js;
 using namespace js::ion;
 

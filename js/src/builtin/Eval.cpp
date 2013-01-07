@@ -14,7 +14,6 @@
 #include "vm/GlobalObject.h"
 
 #include "jsinterpinlines.h"
-#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 

@@ -46,7 +46,6 @@
 #include "jsscriptinlines.h"
 
 #include "vm/Stack-inl.h"
-#include "vm/ForkJoin-inl.h"
 
 #include "jsautooplen.h"
 
