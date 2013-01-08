@@ -293,13 +293,7 @@ Shape::get(JSContext* cx, HandleObject receiver, JSObject* obj, JSObject *pobj, 
     JS_ASSERT(!hasDefaultGetter());
 
     if (hasGetterValue()) {
-        RootedValue fval(cx, getterValue());
-        /*
-         * |js_NativeGetInline| already does a pc computation; maybe we can use
-         * that somehow?
-         */
-        if (!MaybeCloneCalleeAtCaller(cx, &fval))
-            return false;
+        Value fval = getterValue();
         return InvokeGetterOrSetter(cx, receiver, fval, 0, 0, vp.address());
     }
 
@@ -317,9 +311,7 @@ Shape::set(JSContext* cx, HandleObject obj, HandleObject receiver, bool strict, 
     JS_ASSERT_IF(hasDefaultSetter(), hasGetterValue());
 
     if (attrs & JSPROP_SETTER) {
-        RootedValue fval(cx, setterValue());
-        if (!MaybeCloneCalleeAtCaller(cx, &fval))
-            return false;
+        Value fval = setterValue();
         return InvokeGetterOrSetter(cx, receiver, fval, 1, vp.address(), vp.address());
     }
 

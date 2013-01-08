@@ -475,34 +475,6 @@ CallSetter(JSContext *cx, HandleObject obj, HandleId id, StrictPropertyOp op, un
     return CallJSPropertyOpSetter(cx, op, obj, nid, strict, vp);
 }
 
-/* Clone a function at the caller's callsite; for use from within natives. */
-inline bool
-MaybeCloneCalleeAtCaller(JSContext *cx, MutableHandleValue callee)
-{
-    if (cx->typeInferenceEnabled() && callee.isObject() && callee.toObject().isFunction()) {
-        if (callee.toObject().toFunction()->isInterpretedLazy() &&
-            !callee.toObject().toFunction()->initializeLazyScript(cx))
-        {
-            return false;
-        }
-
-        if (callee.toObject().toFunction()->isCloneAtCallsite()) {
-            jsbytecode *pc;
-            RootedScript script(cx, cx->stack.currentScript(&pc));
-            if (!script)
-                return true;
-
-            RootedFunction original(cx, callee.toObject().toFunction());
-            RawFunction clone = CloneFunctionAtCallsite(cx, original, script, pc);
-            if (!clone)
-                return false;
-            callee.setObject(*clone);
-        }
-    }
-
-    return true;
-}
-
 }  /* namespace js */
 
 inline JSVersion
