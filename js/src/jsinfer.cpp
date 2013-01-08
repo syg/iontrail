@@ -689,6 +689,7 @@ class TypeConstraintCall : public TypeConstraint
     const char *kind() { return "call"; }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+    bool newTypeTail(JSContext *cx, HandleFunction callee, HandleScript script);
 };
 
 void
@@ -772,6 +773,7 @@ class TypeConstraintPropagateThis : public TypeConstraint
     const char *kind() { return "propagatethis"; }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+    bool newTypeTail(JSContext *cx, HandleFunction callee);
 };
 
 void
@@ -1257,13 +1259,12 @@ TypeConstraintSetElement::newType(JSContext *cx, TypeSet *source, Type type)
 }
 
 static inline RawFunction
-CloneCallee(JSContext *cx, RawFunction fun_, HandleScript script, jsbytecode *pc)
+CloneCallee(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
     /*
      * Clone called functions at appropriate callsites to match interpreter
      * behavior.
      */
-    RootedFunction fun(cx, fun_);
     RawFunction callee = CloneFunctionAtCallsite(cx, fun, script, pc);
     if (!callee)
         return NULL;
@@ -1272,6 +1273,55 @@ CloneCallee(JSContext *cx, RawFunction fun_, HandleScript script, jsbytecode *pc
               script->id(), pc - script->code, TypeString(Type::ObjectType(callee)));
 
     return callee;
+}
+
+bool
+TypeConstraintCall::newTypeTail(JSContext *cx, HandleFunction callee, HandleScript script)
+{
+    RootedScript calleeScript(cx, callee->nonLazyScript());
+    if (!calleeScript->ensureHasTypes(cx))
+        return false;
+
+    unsigned nargs = callee->nargs;
+
+    /* Add bindings for the arguments of the call. */
+    for (unsigned i = 0; i < callsite->argumentCount && i < nargs; i++) {
+        StackTypeSet *argTypes = callsite->argumentTypes[i];
+        StackTypeSet *types = TypeScript::ArgTypes(calleeScript, i);
+        argTypes->addSubsetBarrier(cx, script, callsite->pc, types);
+    }
+
+    /* Add void type for any formals in the callee not supplied at the call site. */
+    for (unsigned i = callsite->argumentCount; i < nargs; i++) {
+        TypeSet *types = TypeScript::ArgTypes(calleeScript, i);
+        types->addType(cx, Type::UndefinedType());
+    }
+
+    StackTypeSet *thisTypes = TypeScript::ThisTypes(calleeScript);
+    HeapTypeSet *returnTypes = TypeScript::ReturnTypes(calleeScript);
+
+    if (callsite->isNew) {
+        /*
+         * If the script does not return a value then the pushed value is the
+         * new object (typical case). Note that we don't model construction of
+         * the new value, which is done dynamically; we don't keep track of the
+         * possible 'new' types for a given prototype type object.
+         */
+        thisTypes->addSubset(cx, returnTypes);
+        returnTypes->addFilterPrimitives(cx, callsite->returnTypes);
+    } else {
+        /*
+         * Add a binding for the return value of the call. We don't add a
+         * binding for the receiver object, as this is done with PropagateThis
+         * constraints added by the original JSOP_CALL* op. The type sets we
+         * manipulate here have lost any correlations between particular types
+         * in the 'this' and 'callee' sets, which we want to maintain for
+         * polymorphic JSOP_CALLPROP invocations.
+         */
+        returnTypes->addSubset(cx, callsite->returnTypes);
+    }
+
+    return true;
 }
 
 void
@@ -1290,7 +1340,7 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
         return;
     }
 
-    JSFunction *callee = NULL;
+    RootedFunction callee(cx);
 
     if (type.isSingleObject()) {
         RootedObject obj(cx, type.singleObject());
@@ -1376,54 +1426,34 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
     if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx))
         return;
 
+    /*
+     * As callsite cloning is a hint, we must propagate to both the original
+     * and the clone.
+     */
     if (callee->isCloneAtCallsite()) {
-        callee = CloneCallee(cx, callee, script, pc);
-        if (!callee)
+        RootedFunction clone(cx, CloneCallee(cx, callee, script, pc));
+        if (!clone)
+            return;
+        if (!newTypeTail(cx, clone, script))
             return;
     }
 
-    RootedScript calleeScript(cx, callee->nonLazyScript());
-    if (!calleeScript->ensureHasTypes(cx))
-        return;
+    newTypeTail(cx, callee, script);
+}
 
-    unsigned nargs = callee->nargs;
+bool
+TypeConstraintPropagateThis::newTypeTail(JSContext *cx, HandleFunction callee)
+{
+    if (!callee->nonLazyScript()->ensureHasTypes(cx))
+        return false;
 
-    /* Add bindings for the arguments of the call. */
-    for (unsigned i = 0; i < callsite->argumentCount && i < nargs; i++) {
-        StackTypeSet *argTypes = callsite->argumentTypes[i];
-        StackTypeSet *types = TypeScript::ArgTypes(calleeScript, i);
-        argTypes->addSubsetBarrier(cx, script, pc, types);
-    }
+    TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript());
+    if (this->types)
+        this->types->addSubset(cx, thisTypes);
+    else
+        thisTypes->addType(cx, this->type);
 
-    /* Add void type for any formals in the callee not supplied at the call site. */
-    for (unsigned i = callsite->argumentCount; i < nargs; i++) {
-        TypeSet *types = TypeScript::ArgTypes(calleeScript, i);
-        types->addType(cx, Type::UndefinedType());
-    }
-
-    StackTypeSet *thisTypes = TypeScript::ThisTypes(calleeScript);
-    HeapTypeSet *returnTypes = TypeScript::ReturnTypes(calleeScript);
-
-    if (callsite->isNew) {
-        /*
-         * If the script does not return a value then the pushed value is the
-         * new object (typical case). Note that we don't model construction of
-         * the new value, which is done dynamically; we don't keep track of the
-         * possible 'new' types for a given prototype type object.
-         */
-        thisTypes->addSubset(cx, returnTypes);
-        returnTypes->addFilterPrimitives(cx, callsite->returnTypes);
-    } else {
-        /*
-         * Add a binding for the return value of the call. We don't add a
-         * binding for the receiver object, as this is done with PropagateThis
-         * constraints added by the original JSOP_CALL* op. The type sets we
-         * manipulate here have lost any correlations between particular types
-         * in the 'this' and 'callee' sets, which we want to maintain for
-         * polymorphic JSOP_CALLPROP invocations.
-         */
-        returnTypes->addSubset(cx, callsite->returnTypes);
-    }
+    return true;
 }
 
 void
@@ -1442,7 +1472,7 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
     }
 
     /* Ignore calls to natives, these will be handled by TypeConstraintCall. */
-    JSFunction *callee = NULL;
+    RootedFunction callee(cx);
 
     if (type.isSingleObject()) {
         RootedObject object(cx, type.singleObject());
@@ -1464,19 +1494,14 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
 
     if (callee->isCloneAtCallsite()) {
         RootedScript script(cx, script_);
-        callee = CloneCallee(cx, callee, script, callpc);
-        if (!callee)
+        RootedFunction clone(cx, CloneCallee(cx, callee, script, callpc));
+        if (!clone)
+            return;
+        if (!newTypeTail(cx, clone))
             return;
     }
 
-    if (!callee->nonLazyScript()->ensureHasTypes(cx))
-        return;
-
-    TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript());
-    if (this->types)
-        this->types->addSubset(cx, thisTypes);
-    else
-        thisTypes->addType(cx, this->type);
+    newTypeTail(cx, callee);
 }
 
 void

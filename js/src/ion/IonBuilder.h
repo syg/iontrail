@@ -187,14 +187,9 @@ class IonBuilder : public MIRGenerator
         return js_IonOptions.inlining;
     }
 
-    bool getSingleCallTarget(uint32_t argc, jsbytecode *pc, MutableHandleFunction target,
-                             MutableHandleFunction original);
-    bool getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
-                             MutableHandleFunction original);
-    bool getPolyCallTargets(uint32_t argc, jsbytecode *pc, AutoObjectVector &targets,
-                            AutoObjectVector &originals, uint32_t maxTargets);
-    bool getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVector &targets,
-                            AutoObjectVector &originals, uint32_t maxTargets);
+    JSFunction *getSingleCallTarget(uint32_t argc, jsbytecode *pc);
+    unsigned getPolyCallTargets(uint32_t argc, jsbytecode *pc,
+                                AutoObjectVector &targets, uint32_t maxTargets);
     bool canInlineTarget(JSFunction *target);
 
     void popCfgStack();
@@ -330,7 +325,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_notearg();
     bool jsop_funcall(uint32_t argc);
     bool jsop_funapply(uint32_t argc);
-    bool jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes);
+    bool jsop_funapplyarguments(uint32_t argc);
     bool jsop_call(uint32_t argc, bool constructing);
     bool jsop_ifeq(JSOp op);
     bool jsop_condswitch();

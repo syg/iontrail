@@ -1047,13 +1047,12 @@ IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
         return InliningStatus_NotInlined;
 
     types::StackTypeSet *ctorTypes = getInlineArgTypeSet(argc, 1);
+    RawObject targetObj = ctorTypes->getSingleton();
     RootedFunction target(cx);
-    RootedFunction dummy(cx);
-    if (!getSingleCallTarget(ctorTypes, &target, &dummy))
-        return InliningStatus_Error;
-    MDefinition *ctor = current->peek(-(argc + 1))->toPassArg()->getArgument();
-    if (anyFunctionIsCloneAtCallsite(ctorTypes))
-        ctor = makeCallsiteClone(target, ctor);
+    if (targetObj && targetObj->isFunction())
+        target = targetObj->toFunction();
+    MDefinition *ctor = makeCallsiteClone(target,
+                                          current->peek(-(argc + 1))->toPassArg()->getArgument());
 
     // Discard the function.
     return inlineParallelArrayTail(argc, target, ctor, target ? NULL : ctorTypes, 1);

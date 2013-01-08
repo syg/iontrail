@@ -321,12 +321,13 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     }
 
     RootedObject parent(cx, fun->environment());
-    RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
+    RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent,
+                                                 JSFunction::ExtendedFinalizeKind));
     if (!clone)
         return NULL;
 
-    // Clear the callsite clone bit on the clone.
-    clone->flags &= ~JSFunction::CALLSITE_CLONE;
+    // Store a link back to the original for function.caller.
+    clone->setExtendedSlot(0, ObjectValue(*fun));
 
     if (!table.add(p, key, clone.get()))
         return NULL;
