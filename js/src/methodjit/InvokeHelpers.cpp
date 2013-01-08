@@ -130,22 +130,6 @@ FindExceptionHandler(JSContext *cx)
  * Clean up a frame and return.
  */
 
-static inline bool
-MaybeCloneAndPatchCallee(JSContext *cx, CallArgs args, HandleScript script, jsbytecode *pc)
-{
-    if (cx->typeInferenceEnabled() &&
-        args.callee().isFunction() && args.callee().toFunction()->isCloneAtCallsite())
-    {
-        RootedFunction fun(cx, args.callee().toFunction());
-        fun = CloneFunctionAtCallsite(cx, fun, script, pc);
-        if (!fun)
-            return false;
-        args.setCallee(ObjectValue(*fun));
-    }
-
-    return true;
-}
-
 void JS_FASTCALL
 stubs::SlowCall(VMFrame &f, uint32_t argc)
 {
@@ -153,13 +137,11 @@ stubs::SlowCall(VMFrame &f, uint32_t argc)
         THROW();
 
     CallArgs args = CallArgsFromSp(argc, f.regs.sp);
-    RootedScript fscript(f.cx, f.script());
 
-    if (!MaybeCloneAndPatchCallee(f.cx, args, fscript, f.pc()))
-        THROW();
     if (!InvokeKernel(f.cx, args))
         THROW();
 
+    RootedScript fscript(f.cx, f.script());
     types::TypeScript::Monitor(f.cx, fscript, f.pc(), args.rval());
 }
 
@@ -167,13 +149,11 @@ void JS_FASTCALL
 stubs::SlowNew(VMFrame &f, uint32_t argc)
 {
     CallArgs args = CallArgsFromSp(argc, f.regs.sp);
-    RootedScript fscript(f.cx, f.script());
 
-    if (!MaybeCloneAndPatchCallee(f.cx, args, fscript, f.pc()))
-        THROW();
     if (!InvokeConstructorKernel(f.cx, args))
         THROW();
 
+    RootedScript fscript(f.cx, f.script());
     types::TypeScript::Monitor(f.cx, fscript, f.pc(), args.rval());
 }
 
