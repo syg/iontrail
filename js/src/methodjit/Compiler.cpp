@@ -957,8 +957,7 @@ IonGetsFirstChance(JSContext *cx, JSScript *script, CompileRequest request)
         return false;
 
     // If we cannot enter Ion because bailouts are expected, let JM take over.
-    if (script->hasIonScript() &&
-        script->ion->bailoutExpected())
+    if (script->hasIonScript() && script->ion->bailoutExpected())
         return false;
 
     // If ion compilation is pending or in progress on another thread, continue
