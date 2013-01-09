@@ -53,8 +53,6 @@ function MediaStreamPlayback(mediaElement, mediaStream) {
 
       is(self.mediaElement.paused, false,
         "Media element should be playing");
-      is(self.mediaElement.ended, false,
-        "Media element should not have ended");
       is(self.mediaElement.duration, Number.POSITIVE_INFINITY,
         "Duration should be infinity");
 
@@ -69,14 +67,6 @@ function MediaStreamPlayback(mediaElement, mediaStream) {
          "Seekable length shall be zero");
       is(self.mediaElement.buffered.length, 0,
          "Buffered length shall be zero");
-      is(self.mediaElement.played.length, 1, "Played length shall be one");
-
-      if(self.mediaElement.played.length > 0) {
-        is(self.mediaElement.played.start(0), 0,
-          "Played start shall be zero");
-        is(self.mediaElement.played.end(0), self.mediaElement.currentTime,
-          "End shall be current time");
-      }
 
       is(self.mediaElement.seeking, false,
          "MediaElement is not seekable with MediaStream");
@@ -91,15 +81,13 @@ function MediaStreamPlayback(mediaElement, mediaStream) {
       var timeUpdateFired = false;
 
       var timeUpdateCallback = function() {
-        timeUpdateFired = true;
-        self.mediaElement.removeEventListener('timeupdate', timeUpdateCallback,
-          false);
-
-        ok(self.mediaStream.currentTime > 0,
-           "Stream's time should be greater than zero");
-        ok(self.mediaElement.currentTime > 0,
-           "MediaElement time shall be greater than zero");
-        onSuccess();
+        if(self.mediaStream.currentTime > 0 &&
+           self.mediaElement.currentTime > 0) {
+          timeUpdateFired = true;
+          self.mediaElement.removeEventListener('timeupdate', timeUpdateCallback,
+            false);
+          onSuccess();
+        }
       };
 
       // When timeupdate fires, we validate time has passed and move
@@ -110,6 +98,8 @@ function MediaStreamPlayback(mediaElement, mediaStream) {
       // If timeupdate doesn't fire in enough time, we fail the test
       setTimeout(function() {
         if(!timeUpdateFired) {
+          self.mediaElement.removeEventListener('timeupdate',
+            timeUpdateCallback, false);
           ok(false, "timeUpdate event never fired");
           onError();
         }
@@ -128,6 +118,8 @@ function MediaStreamPlayback(mediaElement, mediaStream) {
     // If canplaythrough doesn't fire in enough time, we fail the test
     setTimeout(function() {
       if(!canPlayThroughFired) {
+        self.mediaElement.removeEventListener('canplaythrough',
+          canPlayThroughCallback, false);
         ok(false, "canplaythrough event never fired");
         onError();
       }

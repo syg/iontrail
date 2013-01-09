@@ -84,7 +84,7 @@ class ParallelCompileContext
 
     // Defined in Ion.cpp, so that they can make use of static fns defined there
     MethodStatus compileTransitively();
-    bool compile(IonBuilder *builder, MIRGraph *graph, AutoDestroyAllocator &autoDestroy);
+    AbortReason compile(IonBuilder *builder, MIRGraph *graph, AutoDestroyAllocator &autoDestroy);
 };
 
 

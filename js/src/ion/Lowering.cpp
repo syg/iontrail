@@ -288,17 +288,18 @@ LIRGenerator::visitCreateThisWithTemplate(MCreateThisWithTemplate *ins)
 }
 
 bool
+LIRGenerator::visitCreateThisWithProto(MCreateThisWithProto *ins)
+{
+    LCreateThisWithProto *lir =
+        new LCreateThisWithProto(useRegisterOrConstantAtStart(ins->getCallee()),
+                                 useRegisterOrConstantAtStart(ins->getPrototype()));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitCreateThis(MCreateThis *ins)
 {
-    if (ins->needNativeCheck()) {
-        JS_ASSERT(ins->type() == MIRType_Value);
-        LCreateThisV *lir = new LCreateThisV(useRegisterAtStart(ins->getCallee()),
-                                             useRegisterOrConstantAtStart(ins->getPrototype()));
-        return defineReturn(lir, ins) && assignSafepoint(lir, ins);
-    }
-
-    LCreateThisO *lir = new LCreateThisO(useRegisterOrConstantAtStart(ins->getCallee()),
-                                         useRegisterOrConstantAtStart(ins->getPrototype()));
+    LCreateThis *lir = new LCreateThis(useRegisterOrConstantAtStart(ins->getCallee()));
     return defineReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
@@ -345,9 +346,20 @@ LIRGenerator::visitCall(MCall *call)
     // Call known functions.
     if (target) {
         if (target->isNative()) {
-            LCallNative *lir = new LCallNative(argslot, tempFixed(CallTempReg0),
-                                               tempFixed(CallTempReg1), tempFixed(CallTempReg2),
-                                               tempFixed(CallTempReg3));
+            Register cxReg, numReg, vpReg, tmpReg;
+            GetTempRegForIntArg(0, 0, &cxReg);
+            GetTempRegForIntArg(1, 0, &numReg);
+            GetTempRegForIntArg(2, 0, &vpReg);
+
+            // Even though this is just a temp reg, use the same API to avoid
+            // register collisions.
+            mozilla::DebugOnly<bool> ok = GetTempRegForIntArg(3, 0, &tmpReg);
+            MOZ_ASSERT(ok, "How can we not have four temp registers?");
+
+            LCallNative *lir = new LCallNative(argslot, tempFixed(cxReg),
+                                               tempFixed(numReg),
+                                               tempFixed(vpReg),
+                                               tempFixed(tmpReg));
             return (defineReturn(lir, call) && assignSafepoint(lir, call));
         }
 

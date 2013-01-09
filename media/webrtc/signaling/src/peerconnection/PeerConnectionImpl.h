@@ -115,7 +115,6 @@ public:
   NS_DECL_IPEERCONNECTION
 
   static PeerConnectionImpl* CreatePeerConnection();
-  static void Shutdown();
   static nsresult ConvertConstraints(
     const JS::Value& aConstraints, MediaConstraints* aObj, JSContext* aCx);
   static nsresult MakeMediaStream(uint32_t aHint, nsIDOMMediaStream** aStream);
@@ -138,7 +137,7 @@ public:
   // DataConnection observers
   void NotifyConnection();
   void NotifyClosedConnection();
-  void NotifyDataChannel(mozilla::DataChannel *aChannel);
+  void NotifyDataChannel(already_AddRefed<mozilla::DataChannel> aChannel);
 
   // Get the media object
   const nsRefPtr<PeerConnectionMedia>& media() const {

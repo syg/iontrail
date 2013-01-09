@@ -56,8 +56,10 @@ private:
   virtual void OnDisconnect() MOZ_OVERRIDE;
 
   int mCurrentVgs;
+  int mCurrentVgm;
   int mCurrentCallIndex;
   bool mCLIP;
+  bool mCMER;
   bool mReceiveVgsFlag;
   nsString mDevicePath;
   nsString mMsisdn;

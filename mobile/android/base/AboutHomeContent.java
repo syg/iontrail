@@ -24,6 +24,7 @@ import org.json.JSONObject;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.accounts.OnAccountsUpdateListener;
+import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -38,11 +39,15 @@ import android.graphics.Path;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
 import android.text.SpannableString;
 import android.text.TextUtils;
 import android.text.style.StyleSpan;
+import android.text.style.TextAppearanceSpan;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.SparseArray;
@@ -116,6 +121,9 @@ public class AboutHomeContent extends ScrollView
 
     private View.OnClickListener mRemoteTabClickListener;
 
+    private static Rect sIconBounds;
+    private static TextAppearanceSpan sSubTitleSpan;
+
     public interface UriLoadCallback {
         public void callback(String uriSpec);
     }
@@ -137,6 +145,10 @@ public class AboutHomeContent extends ScrollView
     }
 
     public void init() {
+        int iconSize = mContext.getResources().getDimensionPixelSize(R.dimen.abouthome_addon_icon_size);
+        sIconBounds = new Rect(0, 0, iconSize, iconSize); 
+        sSubTitleSpan = new TextAppearanceSpan(mContext, R.style.AboutHome_TextAppearance_SubTitle);
+
         inflate();
 
         mAccountManager = AccountManager.get(mContext);
@@ -151,7 +163,10 @@ public class AboutHomeContent extends ScrollView
         mRemoteTabClickListener = new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Tabs.getInstance().loadUrl((String) v.getTag(), Tabs.LOADURL_NEW_TAB);
+                int flags = Tabs.LOADURL_NEW_TAB;
+                if (Tabs.getInstance().getSelectedTab().isPrivate())
+                    flags |= Tabs.LOADURL_PRIVATE;
+                Tabs.getInstance().loadUrl((String) v.getTag(), flags);
             }
         };
 
@@ -191,13 +206,13 @@ public class AboutHomeContent extends ScrollView
                 // If nothing is pinned at all, hide both clear items
                 TopSitesCursorWrapper cursor = (TopSitesCursorWrapper)mTopSitesAdapter.getCursor();
                 if (!cursor.hasPinnedSites()) {
-                    menu.findItem(R.id.abouthome_topsites_clearall).setVisible(false);
-                    menu.findItem(R.id.abouthome_topsites_clear).setVisible(false);
+                    menu.findItem(R.id.abouthome_topsites_unpinall).setVisible(false);
+                    menu.findItem(R.id.abouthome_topsites_unpin).setVisible(false);
                 } else {
                     // If there's nothing pinned here, hide the clear item
                     PinnedSite site = cursor.getPinnedSite(info.position);
                     if (site == null) {
-                        menu.findItem(R.id.abouthome_topsites_clear).setVisible(false);
+                        menu.findItem(R.id.abouthome_topsites_unpin).setVisible(false);
                     }
                 }
             }
@@ -242,10 +257,11 @@ public class AboutHomeContent extends ScrollView
             mAccountListener = null;
         }
 
-        Cursor cursor = mTopSitesAdapter.getCursor();
-        if (cursor != null && !cursor.isClosed())
-            cursor.close();
-
+        if (mTopSitesAdapter != null) {
+            Cursor cursor = mTopSitesAdapter.getCursor();
+            if (cursor != null && !cursor.isClosed())
+                cursor.close();
+        }
     }
 
     void setLastTabsVisibility(boolean visible) {
@@ -583,10 +599,19 @@ public class AboutHomeContent extends ScrollView
 
                     for (int i = 0; i < array.length(); i++) {
                         JSONObject jsonobj = array.getJSONObject(i);
+                        String name = jsonobj.getString("name");
+                        String version = jsonobj.getString("version");
+                        String text = name + " " + version;
 
-                        final View row = mInflater.inflate(R.layout.abouthome_addon_row, mAddons.getItemsContainer(), false);
-                        ((TextView) row.findViewById(R.id.addon_title)).setText(jsonobj.getString("name"));
-                        ((TextView) row.findViewById(R.id.addon_version)).setText(jsonobj.getString("version"));
+                        SpannableString spannable = new SpannableString(text);
+                        spannable.setSpan(sSubTitleSpan, name.length() + 1, text.length(), 0);
+
+                        final TextView row = (TextView) mInflater.inflate(R.layout.abouthome_addon_row, mAddons.getItemsContainer(), false);
+                        row.setText(spannable, TextView.BufferType.SPANNABLE);
+
+                        Drawable drawable = mContext.getResources().getDrawable(R.drawable.ic_addons_empty);
+                        drawable.setBounds(sIconBounds);
+                        row.setCompoundDrawables(drawable, null, null, null);
 
                         String iconUrl = jsonobj.getString("iconURL");
                         String pageUrl = getPageUrlFromIconUrl(iconUrl);
@@ -604,8 +629,9 @@ public class AboutHomeContent extends ScrollView
                                     new Favicons.OnFaviconLoadedListener() {
                             public void onFaviconLoaded(String url, Bitmap favicon) {
                                 if (favicon != null) {
-                                    ImageView icon = (ImageView) row.findViewById(R.id.addon_icon);
-                                    icon.setImageBitmap(favicon);
+                                    Drawable drawable = new BitmapDrawable(favicon);
+                                    drawable.setBounds(sIconBounds);
+                                    row.setCompoundDrawables(drawable, null, null, null);
                                 }
                             }
                         });
@@ -653,7 +679,10 @@ public class AboutHomeContent extends ScrollView
 
                         container.setOnClickListener(new View.OnClickListener() {
                             public void onClick(View v) {
-                                Tabs.getInstance().loadUrlInTab(url);
+                                int flags = Tabs.LOADURL_NEW_TAB;
+                                if (Tabs.getInstance().getSelectedTab().isPrivate())
+                                    flags |= Tabs.LOADURL_PRIVATE;
+                                Tabs.getInstance().loadUrl(url, flags);
                             }
                         });
 
@@ -671,8 +700,11 @@ public class AboutHomeContent extends ScrollView
                         mLastTabs.showMoreText();
                         mLastTabs.setOnMoreTextClickListener(new View.OnClickListener() {
                             public void onClick(View v) {
+                                int flags = Tabs.LOADURL_NEW_TAB;
+                                if (Tabs.getInstance().getSelectedTab().isPrivate())
+                                    flags |= Tabs.LOADURL_PRIVATE;
                                 for (String url : lastTabUrlsList) {
-                                    Tabs.getInstance().loadUrlInTab(url);
+                                    Tabs.getInstance().loadUrl(url, flags);
                                 }
                             }
                         });
@@ -716,8 +748,8 @@ public class AboutHomeContent extends ScrollView
             else if (!TextUtils.equals(client, tab.name))
                 break;
 
-            final RelativeLayout row = (RelativeLayout) mInflater.inflate(R.layout.abouthome_remote_tab_row, mRemoteTabs.getItemsContainer(), false);
-            ((TextView) row.findViewById(R.id.remote_tab_title)).setText(TextUtils.isEmpty(tab.title) ? tab.url : tab.title);
+            final TextView row = (TextView) mInflater.inflate(R.layout.abouthome_remote_tab_row, mRemoteTabs.getItemsContainer(), false);
+            row.setText(TextUtils.isEmpty(tab.title) ? tab.url : tab.title);
             row.setTag(tab.url);
             mRemoteTabs.addItem(row);
             row.setOnClickListener(mRemoteTabClickListener);
@@ -893,7 +925,7 @@ public class AboutHomeContent extends ScrollView
         holder.thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
     }
 
-    public void clearAllSites() {
+    public void unpinAllSites() {
         final ContentResolver resolver = mActivity.getContentResolver();
 
         // Clear the view quickly to make things appear responsive
@@ -918,7 +950,7 @@ public class AboutHomeContent extends ScrollView
         }).execute();
     }
 
-    public void clearSite() {
+    public void unpinSite() {
         final int position = mTopSitesGrid.getSelectedPosition();
         View v = mTopSitesGrid.getChildAt(position);
         TopSitesViewHolder holder = (TopSitesViewHolder) v.getTag();
@@ -940,9 +972,32 @@ public class AboutHomeContent extends ScrollView
         }).execute();
     }
 
+    public void pinSite() {
+        final int position = mTopSitesGrid.getSelectedPosition();
+        View v = mTopSitesGrid.getChildAt(position);
+
+        TopSitesViewHolder holder = (TopSitesViewHolder) v.getTag();
+        final String url = holder.url;
+        final String title = holder.titleView.getText().toString();
+        // update the database on a background thread
+        (new GeckoAsyncTask<Void, Void, Void>(GeckoApp.mAppContext, GeckoAppShell.getHandler()) {
+            @Override
+            public Void doInBackground(Void... params) {
+                final ContentResolver resolver = mActivity.getContentResolver();
+                BrowserDB.pinSite(resolver, url, (title == null || TextUtils.isEmpty(title) ? url : title), position);
+                return null;
+            }
+
+            @Override
+            public void onPostExecute(Void v) {
+                update(EnumSet.of(UpdateFlags.TOP_SITES));
+            }
+        }).execute();
+    }
+
     public void editSite() {
         int position = mTopSitesGrid.getSelectedPosition();
-       View v = mTopSitesGrid.getChildAt(position);
+        View v = mTopSitesGrid.getChildAt(position);
 
         TopSitesViewHolder holder = (TopSitesViewHolder) v.getTag();
         editSite(holder.url, position);
@@ -959,6 +1014,9 @@ public class AboutHomeContent extends ScrollView
 
         int requestCode = GeckoAppShell.sActivityHelper.makeRequestCode(new ActivityResultHandler() {
             public void onActivityResult(int resultCode, Intent data) {
+                if (resultCode == Activity.RESULT_CANCELED || data == null)
+                    return;
+
                 final String title = data.getStringExtra(AwesomeBar.TITLE_KEY);
                 final String url = data.getStringExtra(AwesomeBar.URL_KEY);
 
@@ -967,7 +1025,6 @@ public class AboutHomeContent extends ScrollView
                     @Override
                     public Void doInBackground(Void... params) {
                         final ContentResolver resolver = mActivity.getContentResolver();
-                        Log.i(LOGTAG, "Pin : " + url + " and " + title);
                         BrowserDB.pinSite(resolver, url, (title == null ? url : title), position);
                         return null;
                     }

@@ -41,6 +41,8 @@ MOCHITEST_FILES = \
   importScripts_worker_imported4.js \
   test_instanceof.html \
   instanceof_worker.js \
+  test_resolveWorker.html \
+  test_resolveWorker-assignment.html \
   test_json.html \
   json_worker.js \
   test_location.html \
@@ -104,6 +106,8 @@ MOCHITEST_FILES = \
   transferable_worker.js \
   test_errorwarning.html \
   errorwarning_worker.js \
+  test_contentWorker.html \
+  content_worker.js \
   $(NULL)
 
 _SUBDIRMOCHITEST_FILES = \

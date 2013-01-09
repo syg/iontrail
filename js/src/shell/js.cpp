@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/GuardObjects.h"
 #include "mozilla/Util.h"
 
 #include "jstypes.h"
@@ -1476,7 +1477,7 @@ ValueToScript(JSContext *cx, jsval v, JSFunction **funp = NULL)
         return UnrootedScript(NULL);
 
     RootedScript script(cx);
-    fun->maybeGetOrCreateScript(cx, &script);
+    JSFunction::maybeGetOrCreateScript(cx, fun, &script);
     if (!script)
         JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_SCRIPTS_ONLY);
 
@@ -1733,14 +1734,6 @@ UpdateSwitchTableBounds(JSContext *cx, HandleScript script, unsigned offset,
         n = high - low + 1;
         break;
 
-      case JSOP_LOOKUPSWITCH:
-        jmplen = JUMP_OFFSET_LEN;
-        pc += jmplen;
-        n = GET_UINT16(pc);
-        pc += UINT16_LEN;
-        jmplen += JUMP_OFFSET_LEN;
-        break;
-
       default:
         /* [condswitch] switch does not have any jump or lookup tables. */
         JS_ASSERT(op == JSOP_CONDSWITCH);
@@ -1941,9 +1934,9 @@ DisassembleScript(JSContext *cx, HandleScript script, JSFunction *fun, bool line
             RawObject obj = objects->vector[i];
             if (obj->isFunction()) {
                 Sprint(sp, "\n");
-                RawFunction fun = obj->toFunction();
+                RootedFunction fun(cx, obj->toFunction());
                 RootedScript script(cx);
-                fun->maybeGetOrCreateScript(cx, &script);
+                JSFunction::maybeGetOrCreateScript(cx, fun, &script);
                 if (!DisassembleScript(cx, script, fun, lines, recursive, sp))
                     return false;
             }
@@ -2547,7 +2540,7 @@ sandbox_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
         return false;
 
     JS_ValueToBoolean(cx, v, &b);
-    if (b && (flags & JSRESOLVE_ASSIGNING) == 0) {
+    if (b) {
         if (!JS_ResolveStandardClass(cx, obj, id, &resolved))
             return false;
         if (resolved) {
@@ -2768,7 +2761,7 @@ CopyProperty(JSContext *cx, HandleObject obj, HandleObject referent, HandleId id
         propFlags = shape->getFlags();
     } else if (IsProxy(referent)) {
         PropertyDescriptor desc;
-        if (!Proxy::getOwnPropertyDescriptor(cx, referent, id, false, &desc))
+        if (!Proxy::getOwnPropertyDescriptor(cx, referent, id, &desc, 0))
             return false;
         if (!desc.obj)
             return true;
@@ -3303,14 +3296,17 @@ Parse(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-struct FreeOnReturn {
+struct FreeOnReturn
+{
     JSContext *cx;
     const char *ptr;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
-    FreeOnReturn(JSContext *cx, const char *ptr = NULL JS_GUARD_OBJECT_NOTIFIER_PARAM)
-      : cx(cx), ptr(ptr) {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
+    FreeOnReturn(JSContext *cx, const char *ptr = NULL
+                 MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : cx(cx), ptr(ptr)
+    {
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     void init(const char *ptr) {
@@ -4611,9 +4607,6 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
     JSString *valstr;
     const char *name, *value;
 
-    if (flags & JSRESOLVE_ASSIGNING)
-        return true;
-
     IdStringifier idstr(cx, id, true);
     if (idstr.threw())
         return false;
@@ -5012,12 +5005,17 @@ BindScriptArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     return true;
 }
 
+// This function is currently only called from "#if defined(JS_ION)" chunks,
+// so we're guarding the function definition with an #ifdef, too, to avoid
+// build warning for unused function in non-ion-enabled builds:
+#if defined(JS_ION)
 static int
 OptionFailure(const char *option, const char *str)
 {
     fprintf(stderr, "Unrecognized option for %s: %s\n", option, str);
     return EXIT_FAILURE;
 }
+#endif /* JS_ION */
 
 static int
 ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)

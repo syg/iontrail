@@ -12,11 +12,16 @@ let Cu = Components.utils;
 let Ci = Components.interfaces;
 let Cc = Components.classes;
 
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/DownloadUtils.jsm");
 Cu.import("resource:///modules/DownloadsCommon.jsm");
 Cu.import("resource://gre/modules/PlacesUtils.jsm");
+Cu.import("resource://gre/modules/osfile.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
+                                  "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 const nsIDM = Ci.nsIDownloadManager;
 
@@ -28,7 +33,7 @@ const DOWNLOAD_VIEW_SUPPORTED_COMMANDS =
  ["cmd_delete", "cmd_copy", "cmd_paste", "cmd_selectAll",
   "downloadsCmd_pauseResume", "downloadsCmd_cancel",
   "downloadsCmd_open", "downloadsCmd_show", "downloadsCmd_retry",
-  "downloadsCmd_openReferrer"];
+  "downloadsCmd_openReferrer", "downloadsCmd_clearDownloads"];
 
 const NOT_AVAILABLE = Number.MAX_VALUE;
 
@@ -73,7 +78,7 @@ function DownloadElementShell(aDataItem, aPlacesNode, aAnnotations) {
   this._element.classList.add("download");
   this._element.classList.add("download-state");
 
- if (aAnnotations)
+  if (aAnnotations)
     this._annotations = aAnnotations;
   if (aDataItem)
     this.dataItem = aDataItem;
@@ -85,21 +90,45 @@ DownloadElementShell.prototype = {
   // The richlistitem for the download
   get element() this._element,
 
+  /**
+   * Manages the "active" state of the shell.  By default all the shells
+   * without a dataItem are inactive, thus their UI is not updated.  They must
+   * be activated when entering the visible area.  Session downloads are
+   * always active since they always have a dataItem.
+   */
+  ensureActive: function DES_ensureActive() {
+    if (this._active)
+      return;
+    this._active = true;
+    this._element.setAttribute("active", true);
+    this._updateStatusUI();
+    this._fetchTargetFileInfo();
+  },
+  get active() !!this._active,
+
   // The data item for the download
   _dataItem: null,
   get dataItem() this._dataItem,
 
   set dataItem(aValue) {
-    if ((this._dataItem = aValue)) {
+    this._dataItem = aValue;
+    if (this._dataItem) {
+      this._active = true;
       this._wasDone = this._dataItem.done;
       this._wasInProgress = this._dataItem.inProgress;
+      this._targetFileInfoFetched = false;
+      this._fetchTargetFileInfo();
     }
     else if (this._placesNode) {
       this._wasInProgress = false;
       this._wasDone = this.getDownloadState(true) == nsIDM.DOWNLOAD_FINISHED;
+      this._targetFileInfoFetched = false;
+      if (this.active)
+        this._fetchTargetFileInfo();
     }
 
-    this._updateStatusUI();
+    it (this.active)
+      this._updateStatusUI();
     return aValue;
   },
 
@@ -113,10 +142,17 @@ DownloadElementShell.prototype = {
         this._annotations = new Map();
       }
       this._placesNode = aNode;
+
+      // We don't need to update the UI if we had a data item, because
+      // the places information isn't used in this case.
       if (!this._dataItem && this._placesNode) {
         this._wasInProgress = false;
         this._wasDone = this.getDownloadState(true) == nsIDM.DOWNLOAD_FINISHED;
-        this._updateStatusUI();
+        this._targetFileInfoFetched = false;
+        if (this.active) {
+          this._updateStatusUI();
+          this._fetchTargetFileInfo();
+        }
       }
     }
     return aNode;
@@ -140,8 +176,13 @@ DownloadElementShell.prototype = {
   get _icon() {
     if (this._targetFileURI)
       return "moz-icon://" + this._targetFileURI + "?size=32";
-    if (this._placesNode)
-      return this.placesNode.icon;
+    if (this._placesNode) {
+      // Try to extract an extension from the uri.
+      let ext = this._downloadURIObj.QueryInterface(Ci.nsIURL).fileExtension;
+      if (ext)
+        return "moz-icon://." + ext + "?size=32";
+      return this._placesNode.icon || "moz-icon://.unknown?size=32";
+    }
     if (this._dataItem)
       throw new Error("Session-download items should always have a target file uri");
     throw new Error("Unexpected download element state");
@@ -177,14 +218,6 @@ DownloadElementShell.prototype = {
     return value;
   },
 
-  // The uri (as a string) of the target file, if any.
-  get _targetFileURI() {
-    if (this._dataItem)
-      return this._dataItem.file;
-
-    return this._getAnnotation(DESTINATION_FILE_URI_ANNO, "");
-  },
-
   // The label for the download
   get _displayName() {
     if (this._dataItem)
@@ -199,43 +232,72 @@ DownloadElementShell.prototype = {
     return this._placesNode.title || this.downloadURI;
   },
 
-  // If there's a target file for the download, this is its nsIFile object.
-  get _file() {
-    if (!("__file" in this)) {
-      if (this._dataItem) {
-        this.__file = this._dataItem.localFile;
-      }
-      else {
-        this.__file = this._targetFileURI ?
-          GetFileForFileURI(this._targetFileURI) : null;
-      }
-    }
-    return this.__file;
+  // The uri (as a string) of the target file, if any.
+  get _targetFileURI() {
+    if (this._dataItem)
+      return this._dataItem.file;
+
+    return this._getAnnotation(DESTINATION_FILE_URI_ANNO, "");
   },
 
-  // The target's file size in bytes. If there's no target file, or If we
-  // cannot determine its size, 0 is returned.
-  get _fileSize() {
-    if (!("__fileSize" in this)) {
-      if (!this._file || !this._file.exists())
-        this.__fileSize = 0;
-      try {
-        this.__fileSize = this._file.fileSize;
-      }
-      catch(ex) {
-        Cu.reportError(ex);
-        this.__fileSize = 0;
-      }
+  get _targetFilePath() {
+    let fileURI = this._targetFileURI;
+    if (fileURI)
+      return GetFileForFileURI(fileURI).path;
+    return "";
+  },
+
+  _fetchTargetFileInfo: function DES__fetchTargetFileInfo() {
+    if (this._targetFileInfoFetched)
+      throw new Error("_fetchTargetFileInfo should not be called if the information was already fetched");
+    if (!this.active)
+      throw new Error("Trying to _fetchTargetFileInfo on an inactive download shell");
+
+    let path = this._targetFilePath;
+
+    // In previous version, the target file annotations were not set,
+    // so we cannot where is the file.
+    if (!path) {
+      this._targetFileInfoFetched = true;
+      this._targetFileExists = false;
+      return;
     }
-    return this.__fileSize;
+
+    OS.File.stat(path).then(
+      function onSuccess(fileInfo) {
+        this._targetFileInfoFetched = true;
+        this._targetFileExists = true;
+        this._targetFileSize = fileInfo.size;
+        delete this._state;
+        this._updateDownloadStatusUI();
+      }.bind(this),
+
+      function onFailure(aReason) {
+        if (reason instanceof OS.File.Error && reason.becauseNoSuchFile) {
+          this._targetFileInfoFetched = true;
+          this._targetFileExists = false;
+        }
+        else {
+          Cu.reportError("Could not fetch info for target file (reason: " +
+                         aReason + ")");
+        }
+
+        this._updateDownloadStatusUI();
+      }.bind(this)
+    );
   },
 
   /**
-   * Get the state of the download
+   * Get the state of the download (see nsIDownloadManager).
+   * For past downloads, for which we don't know the state at first,
+   * |undefined| is returned until we have info for the target file,
+   * indicating the state is unknown. |undefined| is also returned
+   * if the file was not found at last.
+   *
    * @param [optional] aForceUpdate
    *        Whether to force update the cached download state. Default: false.
+   * @return the download state if available, |undefined| otherwise.
    */
-  // The download state (see nsIDownloadManager).
   getDownloadState: function DES_getDownloadState(aForceUpdate = false) {
     if (aForceUpdate || !("_state" in this)) {
       if (this._dataItem) {
@@ -246,19 +308,12 @@ DownloadElementShell.prototype = {
           this._state = this._getAnnotation(DOWNLOAD_STATE_ANNO);
         }
         catch (ex) {
-          // The state annotation didn't exist in past releases.
-          if (!this._file) {
+          if (!this._targetFileInfoFetched || !this._targetFileExists)
+            this._state = undefined;
+          else if (this._targetFileSize > 0)
+            this._state = nsIDM.DOWNLOAD_FINISHED;
+          else
             this._state = nsIDM.DOWNLOAD_FAILED;
-          }
-          else if (this._file.exists()) {
-            this._state = this._fileSize > 0 ?
-              nsIDM.DOWNLOAD_FINISHED : nsIDM.DOWNLOAD_FAILED;
-          }
-          else {
-            // XXXmano I'm not sure if this right. We should probably show no
-            // status text at all in this case.
-            this._state = nsIDM.DOWNLOAD_CANCELED;
-          }
         }
       }
     }
@@ -266,7 +321,7 @@ DownloadElementShell.prototype = {
   },
 
   // The status text for the download
-  get _statusText() {
+  _getStatusText: function DES__getStatusText() {
     let s = DownloadsCommon.strings;
     if (this._dataItem && this._dataItem.inProgress) {
       if (this._dataItem.paused) {
@@ -316,15 +371,15 @@ DownloadElementShell.prototype = {
         return s.stateDirty;
       case nsIDM.DOWNLOAD_FINISHED:{
         // For completed downloads, show the file size (e.g. "1.5 MB")
-        if (this._fileSize > 0) {
-          let [size, unit] = DownloadUtils.convertByteUnits(this._fileSize);
+        if (this._targetFileInfoFetched && this._targetFileExists) {
+          let [size, unit] = DownloadUtils.convertByteUnits(this._targetFileSize);
           return s.sizeWithUnits(size, unit);
         }
         break;
       }
     }
 
-    return "";
+    return s.sizeUnknown;
   },
 
   // The progressmeter element for the download
@@ -342,8 +397,11 @@ DownloadElementShell.prototype = {
   // appropriate buttons and context menu items), the status text label,
   // and the progress meter.
   _updateDownloadStatusUI: function  DES__updateDownloadStatusUI() {
-    this._element.setAttribute("state", this.getDownloadState(true));
-    this._element.setAttribute("status", this._statusText);
+    let state = this.getDownloadState(true);
+    if (state !== undefined)
+      this._element.setAttribute("state", state);
+
+    this._element.setAttribute("status", this._getStatusText());
 
     // For past-downloads, we're done. For session-downloads, we may also need
     // to update the progress-meter.
@@ -374,14 +432,14 @@ DownloadElementShell.prototype = {
       event.initEvent("ValueChange", true, true);
       this._progressElement.dispatchEvent(event);
     }
-
-    goUpdateDownloadCommands();
   },
 
   _updateStatusUI: function DES__updateStatusUI() {
-    this._updateDownloadStatusUI();
-    this._element.setAttribute("image", this._icon);
+    if (!this.active)
+      throw new Error("Trying to _updateStatusUI on an inactive download shell");
     this._element.setAttribute("displayName", this._displayName);
+    this._element.setAttribute("image", this._icon);
+    this._updateDownloadStatusUI();
   },
 
   placesNodeIconChanged: function DES_placesNodeIconChanged() {
@@ -406,15 +464,22 @@ DownloadElementShell.prototype = {
       }
       else if (aAnnoName == DOWNLOAD_STATE_ANNO) {
         this._updateDownloadStatusUI();
+        if (this._element.selected)
+          goUpdateDownloadCommands();
       }
     }
   },
 
   /* DownloadView */
   onStateChange: function DES_onStateChange() {
-    // See comment in DVI_onStateChange in downloads.js (the panel-view)
-    if (!this._wasDone && this._dataItem.done)
+    if (!this._wasDone && this._dataItem.done) {
+      // See comment in DVI_onStateChange in downloads.js (the panel-view)
       this._element.setAttribute("image", this._icon + "&state=normal");
+
+      this._targetFileInfoFetched = false;
+      if (this.active)
+        this._fetchTargetFileInfo();
+    }
 
     this._wasDone = this._dataItem.done;
 
@@ -427,6 +492,8 @@ DownloadElementShell.prototype = {
     this._wasInProgress = this._dataItem.inProgress;
 
     this._updateDownloadStatusUI();
+    if (this._element.selected)
+      goUpdateDownloadCommands();
   },
 
   /* DownloadView */
@@ -436,20 +503,42 @@ DownloadElementShell.prototype = {
 
   /* nsIController */
   isCommandEnabled: function DES_isCommandEnabled(aCommand) {
+    // The only valid command for inactive elements is cmd_delete.
+    if (!this.active && aCommand != "cmd_delete")
+      return false;
     switch (aCommand) {
       case "downloadsCmd_open": {
-        return this._file.exists() &&
-               ((this._dataItem && this._dataItem.openable) ||
-                (this.getDownloadState() == nsIDM.DOWNLOAD_FINISHED));
+        // We cannot open a session dowload file unless it's done ("openable").
+        // If it's finished, we need to make sure the file was not removed,
+        // as we do for past downloads.
+        if (this._dataItem && !this._dataItem.openable)
+          return false;
+
+        // Disable the command until we can yet tell whether
+        // or not the file is there.
+        if (!this._targetFileInfoFetched)
+          return false;
+
+        return this._targetFileExists;
       }
       case "downloadsCmd_show": {
-        return this._getTargetFileOrPartFileIfExists() != null;
+        // TODO: Bug 827010 - Handle part-file asynchronously. 
+        if (this._dataItem &&
+            this._dataItem.partFile && this._dataItem.partFile.exists())
+          return true;
+
+        // Disable the command until we can yet tell whether
+        // or not the file is there.
+        if (!this._targetFileInfoFetched)
+          return false;
+
+        return this._targetFileExists;
       }
       case "downloadsCmd_pauseResume":
         return this._dataItem && this._dataItem.inProgress && this._dataItem.resumable;
       case "downloadsCmd_retry":
-        return ((this._dataItem && this._dataItem.canRetry) ||
-                (!this._dataItem && this._file))
+        // Disable the retry command for past downloads until it's fully implemented.
+        return this._dataItem && this._dataItem.canRetry;
       case "downloadsCmd_openReferrer":
         return this._dataItem && !!this._dataItem.referrer;
       case "cmd_delete":
@@ -461,15 +550,6 @@ DownloadElementShell.prototype = {
         return this._dataItem != null;
     }
     return false;
-  },
-
-  _getTargetFileOrPartFileIfExists: function DES__getTargetFileOrPartFileIfExists() {
-    if (this._file && this._file.exists())
-      return this._file;
-    if (this._dataItem &&
-        this._dataItem.partFile && this._dataItem.partFile.exists())
-      return this._dataItem.partFile;
-    return null;
   },
 
   _retryAsHistoryDownload: function DES__retryAsHistoryDownload() {
@@ -484,14 +564,16 @@ DownloadElementShell.prototype = {
         if (this._dateItem)
           this._dataItem.openLocalFile(window);
         else
-          DownloadsCommon.openDownloadedFile(this._file, null, window);
+          DownloadsCommon.openDownloadedFile(
+            GetFileForFileURI(this._targetFileURI), null, window);
         break;
       }
       case "downloadsCmd_show": {
         if (this._dataItem)
           this._dataItem.showLocalFile();
         else
-          DownloadsCommon.showDownloadedFile(this._getTargetFileOrPartFileIfExists());
+          DownloadsCommon.showDownloadedFile(
+            GetFileForFileURI(this._targetFileURI));
         break;
       }
       case "downloadsCmd_openReferrer": {
@@ -527,7 +609,8 @@ DownloadElementShell.prototype = {
   // show up in the search results for the given term.  Both the display
   // name for the download and the url are searched.
   matchesSearchTerm: function DES_matchesSearchTerm(aTerm) {
-    // Stub implemention until we figure out something better
+    if (!aTerm)
+      return true;
     aTerm = aTerm.toLowerCase();
     return this._displayName.toLowerCase().indexOf(aTerm) != -1 ||
            this.downloadURI.toLowerCase().indexOf(aTerm) != -1;
@@ -576,7 +659,7 @@ DownloadElementShell.prototype = {
  * as they exist they "collapses" their history "counterpart" (So we don't show two
  * items for every download).
  */
-function DownloadsPlacesView(aRichListBox) {
+function DownloadsPlacesView(aRichListBox, aActive = true) {
   this._richlistbox = aRichListBox;
   this._richlistbox._placesView = this;
   this._richlistbox.controllers.appendController(this);
@@ -593,6 +676,8 @@ function DownloadsPlacesView(aRichListBox) {
 
   this._searchTerm = "";
 
+  this._active = aActive;
+
   // Register as a downloads view. The places data will be initialized by
   // the places setter.
   let downloadsData = DownloadsCommon.getData(window.opener || window);
@@ -604,10 +689,22 @@ function DownloadsPlacesView(aRichListBox) {
     downloadsData.removeView(this);
     this.result = null;
   }.bind(this), true);
+  // Resizing the window may change items visibility.
+  window.addEventListener("resize", function() {
+    this._ensureVisibleElementsAreActive();
+  }.bind(this), true);
 }
 
 DownloadsPlacesView.prototype = {
   get associatedElement() this._richlistbox,
+
+  get active() this._active,
+  set active(val) {
+    this._active = val;
+    if (this._active)
+      this._ensureVisibleElementsAreActive();
+    return this._active;
+  },
 
   _forEachDownloadElementShellForURI:
   function DPV__forEachDownloadElementShellForURI(aURI, aCallback) {
@@ -764,6 +861,11 @@ DownloadsPlacesView.prototype = {
           !newOrUpdatedShell.element._shell.matchesSearchTerm(this.searchTerm);
       }
     }
+
+    // If aDocumentFragment is defined this is a batch change, so it's up to
+    // the caller to append the fragment and activate the visible shells.
+    if (!aDocumentFragment)
+      this._ensureVisibleElementsAreActive();
   },
 
   _removeElement: function DPV__removeElement(aElement) {
@@ -776,6 +878,7 @@ DownloadsPlacesView.prototype = {
       this._richlistbox.selectItem(aElement.nextSibling);
     }
     this._richlistbox.removeChild(aElement);
+    this._ensureVisibleElementsAreActive();
   },
 
   _removeHistoryDownloadFromView:
@@ -826,10 +929,42 @@ DownloadsPlacesView.prototype = {
       }
       else {
         let before = this._lastSessionDownloadElement ?
-          this._lastSessionDownloadElement.nextSibling : this._richlistbox.firstchild;
+          this._lastSessionDownloadElement.nextSibling : this._richlistbox.firstChild;
         this._richlistbox.insertBefore(shell.element, before);
       }
     }
+  },
+
+  _ensureVisibleElementsAreActive:
+  function DPV__ensureVisibleElementsAreActive() {
+    if (!this.active || this._ensureVisibleTimer || !this._richlistbox.firstChild)
+      return;
+
+    this._ensureVisibleTimer = setTimeout(function() {
+      delete this._ensureVisibleTimer;
+
+      let rlRect = this._richlistbox.getBoundingClientRect();
+      let fcRect = this._richlistbox.firstChild.getBoundingClientRect();
+      // For simplicity assume border and padding are the same across all sides.
+      // This works as far as there isn't an horizontal scrollbar since fcRect
+      // is relative to the scrolled area.
+      let offset = fcRect.left - rlRect.left + 1;
+
+      let firstVisible = document.elementFromPoint(fcRect.left, rlRect.top + offset);
+      if (!firstVisible || firstVisible.localName != "richlistitem")
+        throw new Error("_ensureVisibleElementsAreActive invoked on the wrong view");
+
+      let lastVisible = document.elementFromPoint(fcRect.left, rlRect.bottom - offset);
+      // If the last visible child found is not a richlistitem, then there are
+      // less items than the available space, thus just proceed to the last child.
+      if (!lastVisible || lastVisible.localName != "richlistitem")
+        lastVisible = this._richlistbox.lastChild;
+
+      for (let elt = firstVisible; elt != lastVisible.nextSibling; elt = elt.nextSibling) {
+        if (elt._shell)
+          elt._shell.ensureActive();
+      }
+    }.bind(this), 10);
   },
 
   _place: "",
@@ -928,6 +1063,7 @@ DownloadsPlacesView.prototype = {
     }
 
     this._richlistbox.appendChild(elementsToAppendFragment);
+    this._ensureVisibleElementsAreActive();
   },
 
   nodeInserted: function DPV_nodeInserted(aParent, aPlacesNode) {
@@ -965,6 +1101,7 @@ DownloadsPlacesView.prototype = {
   sortingChanged: function() {},
   nodeMoved: function() {},
   nodeURIChanged: function() {},
+  batching: function() {},
 
   get controller() this._richlistbox.controller,
 
@@ -974,6 +1111,7 @@ DownloadsPlacesView.prototype = {
       for (let element of this._richlistbox.childNodes) {
         element.hidden = !element._shell.matchesSearchTerm(aValue);
       }
+      this._ensureVisibleElementsAreActive();
     }
     return this._searchTerm = aValue;
   },
@@ -1012,6 +1150,8 @@ DownloadsPlacesView.prototype = {
         return true;
       case "cmd_paste":
         return this._canDownloadClipboardURL();
+      case "downloadsCmd_clearDownloads":
+        return !!this._richlistbox.firstChild;
       default:
         return Array.every(selectedElements, function(element) {
           return element._shell.isCommandEnabled(aCommand);
@@ -1073,6 +1213,18 @@ DownloadsPlacesView.prototype = {
       case "cmd_paste":
         this._downloadURLFromClipboard();
         break;
+      case "downloadsCmd_clearDownloads":
+        if (PrivateBrowsingUtils.isWindowPrivate(window)) {
+          Services.downloads.cleanUpPrivate();
+        } else {
+          Services.downloads.cleanUp();
+        }
+        if (this.result) {
+          Cc["@mozilla.org/browser/download-history;1"]
+            .getService(Ci.nsIDownloadHistory)
+            .removeAllDownloads();
+        }
+        break;
       default: {
         let selectedElements = this._richlistbox.selectedItems;
         for (let element of selectedElements) {
@@ -1092,7 +1244,12 @@ DownloadsPlacesView.prototype = {
 
     // Set the state attribute so that only the appropriate items are displayed.
     let contextMenu = document.getElementById("downloadsContextMenu");
-    contextMenu.setAttribute("state", element._shell.getDownloadState());
+    let state = element._shell.getDownloadState();
+    if (state !== undefined)
+      contextMenu.setAttribute("state", state);
+    else
+      contextMenu.removeAttribute("state");
+
     return true;
   },
 
@@ -1118,6 +1275,23 @@ DownloadsPlacesView.prototype = {
           element._shell.doCommand("downloadsCmd_pauseResume");
       }
     }
+  },
+
+  onDoubleClick: function DPV_onDoubleClick(aEvent) {
+    if (aEvent.button != 0)
+      return;
+
+    let selectedElements = this._richlistbox.selectedItems;
+    if (!selectedElements || selectedElements.length != 1)
+      return;
+
+    let element = selectedElements[0];
+    if (element._shell)
+      element._shell.doDefaultCommand();
+  },
+
+  onScroll: function DPV_onScroll() {
+    this._ensureVisibleElementsAreActive();
   }
 };
 

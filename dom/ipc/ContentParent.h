@@ -26,6 +26,7 @@
 #include "nsCOMArray.h"
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
+#include "PermissionMessageUtils.h"
 
 #define CHILD_PROCESS_SHUTDOWN_MESSAGE NS_LITERAL_STRING("child-process-shutdown")
 
@@ -101,6 +102,7 @@ public:
     virtual bool DoSendAsyncMessage(const nsAString& aMessage,
                                     const mozilla::dom::StructuredCloneData& aData);
     virtual bool CheckPermission(const nsAString& aPermission);
+    virtual bool CheckManifestURL(const nsAString& aManifestURL);
 
     /** Notify that a tab was destroyed during normal operation. */
     void NotifyTabDestroyed(PBrowserParent* aTab);
@@ -300,8 +302,9 @@ private:
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData);
 
-    virtual bool RecvAddGeolocationListener();
+    virtual bool RecvAddGeolocationListener(const IPC::Principal& aPrincipal);
     virtual bool RecvRemoveGeolocationListener();
+    virtual bool RecvSetGeolocationHigherAccuracy(const bool& aEnable);
 
     virtual bool RecvConsoleMessage(const nsString& aMessage);
     virtual bool RecvScriptError(const nsString& aMessage,
@@ -317,11 +320,15 @@ private:
     virtual bool RecvFirstIdle();
 
     virtual bool RecvAudioChannelGetMuted(const AudioChannelType& aType,
-                                          const bool& aMozHidden,
+                                          const bool& aElementHidden,
+                                          const bool& aElementWasHidden,
                                           bool* aValue);
 
     virtual bool RecvAudioChannelRegisterType(const AudioChannelType& aType);
-    virtual bool RecvAudioChannelUnregisterType(const AudioChannelType& aType);
+    virtual bool RecvAudioChannelUnregisterType(const AudioChannelType& aType,
+                                                const bool& aElementHidden);
+
+    virtual bool RecvAudioChannelChangedNotification();
 
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 

@@ -6,11 +6,13 @@ DEPTH = @DEPTH@
 topsrcdir = @top_srcdir@
 srcdir = @srcdir@
 VPATH = @srcdir@
-FAIL_ON_WARNINGS := 1
 
 include $(DEPTH)/config/autoconf.mk
 
 MODULE = dom
+ifndef _MSC_VER
+FAIL_ON_WARNINGS := 1
+endif # !_MSC_VER
 
 EXPORTS_NAMESPACES = mozilla
 
@@ -92,6 +94,12 @@ ifeq (WINNT,$(OS_ARCH))
 CPPSRCS += \
   COMMessageFilter.cpp \
   PluginSurfaceParent.cpp \
+  MiniShmParent.cpp \
+  PluginHangUIParent.cpp \
+  $(NULL)
+
+DEFINES += \
+  -DMOZ_HANGUI_PROCESS_NAME=\"plugin-hang-ui$(BIN_SUFFIX)\" \
   $(NULL)
 
 EXPORTS_mozilla/plugins += \
@@ -118,6 +126,13 @@ LOCAL_INCLUDES = \
   -I$(srcdir)/../base \
   -I$(topsrcdir)/xpcom/base/ \
   $(NULL)
+
+ifeq (WINNT,$(OS_ARCH))
+LOCAL_INCLUDES += \
+  -I$(srcdir)/hangui \
+  -I$(topsrcdir)/widget/shared \
+  $(NULL)
+endif
 
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk

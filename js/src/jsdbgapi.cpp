@@ -326,7 +326,7 @@ JS_ClearAllWatchPoints(JSContext *cx)
 /************************************************************************/
 
 JS_PUBLIC_API(unsigned)
-JS_PCToLineNumber(JSContext *cx, JSScript *script, jsbytecode *pc)
+JS_PCToLineNumber(JSContext *cx, RawScript script, jsbytecode *pc)
 {
     return js::PCToLineNumber(script, pc);
 }
@@ -452,10 +452,11 @@ JS_GetFunctionScript(JSContext *cx, JSFunction *fun)
 {
     if (fun->isNative())
         return NULL;
-    RawScript script;
+    UnrootedScript script;
     if (fun->isInterpretedLazy()) {
-       AutoCompartment funCompartment(cx, fun);
-       script = fun->getOrCreateScript(cx);
+        RootedFunction rootedFun(cx, fun);
+        AutoCompartment funCompartment(cx, rootedFun);
+        script = JSFunction::getOrCreateScript(cx, rootedFun);
         if (!script)
             MOZ_CRASH();
     } else {

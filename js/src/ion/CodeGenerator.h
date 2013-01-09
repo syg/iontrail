@@ -110,9 +110,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitParNewDenseArray(LParNewDenseArray *lir);
     bool visitParBailout(LParBailout *lir);
     bool visitInitProp(LInitProp *lir);
-    bool emitCreateThisVM(LInstruction *lir, const LAllocation *proto, const LAllocation *callee);
-    bool visitCreateThisV(LCreateThisV *lir);
-    bool visitCreateThisO(LCreateThisO *lir);
+    bool visitCreateThis(LCreateThis *lir);
+    bool visitCreateThisWithProto(LCreateThisWithProto *lir);
     bool visitCreateThisWithTemplate(LCreateThisWithTemplate *lir);
     bool visitReturnFromCtor(LReturnFromCtor *lir);
     bool visitArrayLength(LArrayLength *lir);

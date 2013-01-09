@@ -167,24 +167,26 @@ let SlowSQL = {
 
   /**
    * Creates a header row for a Slow SQL table
+   * Tabs & newlines added to cells to make it easier to copy-paste.
    *
    * @param aTable Parent table element
    * @param aTitle Table's title
    */
   renderTableHeader: function SlowSQL_renderTableHeader(aTable, aTitle) {
     let caption = document.createElement("caption");
-    caption.appendChild(document.createTextNode(aTitle));
+    caption.appendChild(document.createTextNode(aTitle + "\n"));
     aTable.appendChild(caption);
 
     let headings = document.createElement("tr");
-    this.appendColumn(headings, "th", this.slowSqlHits);
-    this.appendColumn(headings, "th", this.slowSqlAverage);
-    this.appendColumn(headings, "th", this.slowSqlStatement);
+    this.appendColumn(headings, "th", this.slowSqlHits + "\t");
+    this.appendColumn(headings, "th", this.slowSqlAverage + "\t");
+    this.appendColumn(headings, "th", this.slowSqlStatement + "\n");
     aTable.appendChild(headings);
   },
 
   /**
    * Fills out the table body
+   * Tabs & newlines added to cells to make it easier to copy-paste.
    *
    * @param aTable Parent table element
    * @param aSql SQL stats object
@@ -195,9 +197,9 @@ let SlowSQL = {
 
       let sqlRow = document.createElement("tr");
 
-      this.appendColumn(sqlRow, "td", hitCount);
-      this.appendColumn(sqlRow, "td", averageTime.toFixed(0));
-      this.appendColumn(sqlRow, "td", sql);
+      this.appendColumn(sqlRow, "td", hitCount + "\t");
+      this.appendColumn(sqlRow, "td", averageTime.toFixed(0) + "\t");
+      this.appendColumn(sqlRow, "td", sql + "\n");
 
       aTable.appendChild(sqlRow);
     }
@@ -212,8 +214,8 @@ let SlowSQL = {
    */
   appendColumn: function SlowSQL_appendColumn(aRowElement, aColType, aColText) {
     let colElement = document.createElement(aColType);
-    let aColTextElement = document.createTextNode(aColText);
-    colElement.appendChild(aColTextElement);
+    let colTextElement = document.createTextNode(aColText);
+    colElement.appendChild(colTextElement);
     aRowElement.appendChild(colElement);
   }
 };
@@ -529,6 +531,7 @@ let KeyValueTable = {
 
   /**
    * Create the table header
+   * Tabs & newlines added to cells to make it easier to copy-paste.
    *
    * @param aTable Table element
    */
@@ -537,9 +540,9 @@ let KeyValueTable = {
     aTable.appendChild(headerRow);
 
     let keysColumn = document.createElement("th");
-    keysColumn.appendChild(document.createTextNode(this.keysHeader));
+    keysColumn.appendChild(document.createTextNode(this.keysHeader + "\t"));
     let valuesColumn = document.createElement("th");
-    valuesColumn.appendChild(document.createTextNode(this.valuesHeader));
+    valuesColumn.appendChild(document.createTextNode(this.valuesHeader + "\n"));
 
     headerRow.appendChild(keysColumn);
     headerRow.appendChild(valuesColumn);
@@ -547,6 +550,7 @@ let KeyValueTable = {
 
   /**
    * Create the table body
+   * Tabs & newlines added to cells to make it easier to copy-paste.
    *
    * @param aTable Table element
    * @param aMeasurements Key/value map
@@ -561,11 +565,11 @@ let KeyValueTable = {
       aTable.appendChild(newRow);
 
       let keyField = document.createElement("td");
-      keyField.appendChild(document.createTextNode(key));
+      keyField.appendChild(document.createTextNode(key + "\t"));
       newRow.appendChild(keyField);
 
       let valueField = document.createElement("td");
-      valueField.appendChild(document.createTextNode(value));
+      valueField.appendChild(document.createTextNode(value + "\n"));
       newRow.appendChild(valueField);
     }
   }
@@ -730,7 +734,29 @@ function onLoad() {
 
   // Get the Telemetry Ping payload
   Telemetry.asyncFetchTelemetryData(displayPingData);
-}
+};
+
+let LateWritesSingleton = {
+  renderLateWrites: function LateWritesSingleton_renderLateWrites(lateWrites) {
+    let writesDiv = document.getElementById("late-writes-data");
+    clearDivData(writesDiv);
+    // FIXME: Add symbolication support. Refactor with the chrome hang one.
+
+    let stacks = lateWrites.stacks;
+    if (stacks.length == 0) {
+      showEmptySectionMessage("late-writes-section");
+      return;
+    }
+
+    let memoryMap = lateWrites.memoryMap;
+    StackRenderer.renderMemoryMap(writesDiv, memoryMap);
+
+    for (let i = 0; i < stacks.length; ++i) {
+      let stack = stacks[i];
+      StackRenderer.renderStack(writesDiv, stack);
+    }
+  }
+};
 
 function displayPingData() {
   let ping = TelemetryPing.getPayload();
@@ -741,6 +767,8 @@ function displayPingData() {
   } else {
     showEmptySectionMessage("simple-measurements-section");
   }
+
+  LateWritesSingleton.renderLateWrites(ping.lateWrites);
 
   // Show basic system info gathered
   if (Object.keys(ping.info).length) {

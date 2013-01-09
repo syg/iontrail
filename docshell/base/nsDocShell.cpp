@@ -65,8 +65,8 @@
 #include "nsWidgetsCID.h"
 #include "nsDOMJSUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIView.h"
-#include "nsIViewManager.h"
+#include "nsView.h"
+#include "nsViewManager.h"
 #include "nsIScriptChannel.h"
 #include "nsIOfflineCacheUpdate.h"
 #include "nsITimedChannel.h"
@@ -193,7 +193,10 @@
 #include "mozilla/Telemetry.h"
 #include "nsISecurityUITelemetry.h"
 
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+#include "nsIAppShellService.h"
+#include "nsAppShellCID.h"
+#else
 #include "nsIPrivateBrowsingService.h"
 #endif
 
@@ -217,6 +220,13 @@ static int32_t gDocShellCount = 0;
 
 // Global count of docshells with the private attribute set
 static uint32_t gNumberOfPrivateDocShells = 0;
+
+// Global count of private docshells which will always remain open
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+static uint32_t gNumberOfAlwaysOpenPrivateDocShells = 0; // the private hidden window
+#else
+static const uint32_t gNumberOfAlwaysOpenPrivateDocShells = 0;
+#endif
 
 // Global reference to the URI fixup service.
 nsIURIFixup *nsDocShell::sURIFixup = 0;
@@ -682,10 +692,26 @@ ConvertLoadTypeToNavigationType(uint32_t aLoadType)
 static nsISHEntry* GetRootSHEntry(nsISHEntry *entry);
 
 static void
+AdjustAlwaysOpenPrivateDocShellCount()
+{
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+    nsCOMPtr<nsIAppShellService> appShell
+      (do_GetService(NS_APPSHELLSERVICE_CONTRACTID));
+    bool hasHiddenPrivateWindow = false;
+    if (appShell) {
+      appShell->GetHasHiddenPrivateWindow(&hasHiddenPrivateWindow);
+    }
+    gNumberOfAlwaysOpenPrivateDocShells = hasHiddenPrivateWindow ? 1 : 0;
+#endif
+}
+
+static void
 IncreasePrivateDocShellCount()
 {
+    AdjustAlwaysOpenPrivateDocShellCount();
+
     gNumberOfPrivateDocShells++;
-    if (gNumberOfPrivateDocShells > 1 ||
+    if (gNumberOfPrivateDocShells > gNumberOfAlwaysOpenPrivateDocShells + 1 ||
         XRE_GetProcessType() != GeckoProcessType_Content) {
         return;
     }
@@ -697,9 +723,11 @@ IncreasePrivateDocShellCount()
 static void
 DecreasePrivateDocShellCount()
 {
+    AdjustAlwaysOpenPrivateDocShellCount();
+
     MOZ_ASSERT(gNumberOfPrivateDocShells > 0);
     gNumberOfPrivateDocShells--;
-    if (!gNumberOfPrivateDocShells)
+    if (gNumberOfPrivateDocShells == gNumberOfAlwaysOpenPrivateDocShells)
     {
         if (XRE_GetProcessType() == GeckoProcessType_Content) {
             mozilla::dom::ContentChild* cc = mozilla::dom::ContentChild::GetSingleton();
@@ -1037,9 +1065,8 @@ NS_IMETHODIMP nsDocShell::GetInterface(const nsIID & aIID, void **aSink)
         return NS_OK;
     }
     else if (aIID.Equals(NS_GET_IID(nsISelectionDisplay))) {
-      nsCOMPtr<nsIPresShell> shell;
-      nsresult rv = GetPresShell(getter_AddRefs(shell));
-      if (NS_SUCCEEDED(rv) && shell)
+      nsIPresShell* shell = GetPresShell();
+      if (shell)
         return shell->QueryInterface(aIID,aSink);    
     }
     else if (aIID.Equals(NS_GET_IID(nsIDocShellTreeOwner))) {
@@ -1733,22 +1760,12 @@ nsDocShell::GetPresContext(nsPresContext ** aPresContext)
     return mContentViewer->GetPresContext(aPresContext);
 }
 
-NS_IMETHODIMP
-nsDocShell::GetPresShell(nsIPresShell ** aPresShell)
+NS_IMETHODIMP_(nsIPresShell*)
+nsDocShell::GetPresShell()
 {
-    nsresult rv = NS_OK;
-
-    NS_ENSURE_ARG_POINTER(aPresShell);
-    *aPresShell = nullptr;
-
     nsRefPtr<nsPresContext> presContext;
     (void) GetPresContext(getter_AddRefs(presContext));
-
-    if (presContext) {
-        NS_IF_ADDREF(*aPresShell = presContext->GetPresShell());
-    }
-
-    return rv;
+    return presContext ? presContext->GetPresShell() : nullptr;
 }
 
 NS_IMETHODIMP
@@ -1869,8 +1886,7 @@ nsDocShell::GetCharset(char** aCharset)
     NS_ENSURE_ARG_POINTER(aCharset);
     *aCharset = nullptr; 
 
-    nsCOMPtr<nsIPresShell> presShell;
-    GetPresShell(getter_AddRefs(presShell));
+    nsIPresShell* presShell = GetPresShell();
     NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
     nsIDocument *doc = presShell->GetDocument();
     NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
@@ -3246,8 +3262,7 @@ PrintDocTree(nsIDocShellTreeItem * aParentNode, int aLevel)
   nsCOMPtr<nsIDocShell> parentAsDocShell(do_QueryInterface(aParentNode));
   int32_t type;
   aParentNode->GetItemType(&type);
-  nsCOMPtr<nsIPresShell> presShell;
-  parentAsDocShell->GetPresShell(getter_AddRefs(presShell));
+  nsCOMPtr<nsIPresShell> presShell = parentAsDocShell->GetPresShell();
   nsRefPtr<nsPresContext> presContext;
   parentAsDocShell->GetPresContext(getter_AddRefs(presContext));
   nsIDocument *doc = presShell->GetDocument();
@@ -3255,7 +3270,7 @@ PrintDocTree(nsIDocShellTreeItem * aParentNode, int aLevel)
   nsCOMPtr<nsIDOMWindow> domwin(doc->GetWindow());
 
   nsCOMPtr<nsIWidget> widget;
-  nsIViewManager* vm = presShell->GetViewManager();
+  nsViewManager* vm = presShell->GetViewManager();
   if (vm) {
     vm->GetWidget(getter_AddRefs(widget));
   }
@@ -5051,14 +5066,13 @@ nsDocShell::DoGetPositionAndSize(int32_t * x, int32_t * y, int32_t * cx,
 NS_IMETHODIMP
 nsDocShell::Repaint(bool aForce)
 {
-    nsCOMPtr<nsIPresShell> presShell;
-    GetPresShell(getter_AddRefs(presShell));
+    nsCOMPtr<nsIPresShell> presShell =GetPresShell();
     NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
 
-    nsIViewManager* viewManager = presShell->GetViewManager();
+    nsViewManager* viewManager = presShell->GetViewManager();
     NS_ENSURE_TRUE(viewManager, NS_ERROR_FAILURE);
 
-    NS_ENSURE_SUCCESS(viewManager->InvalidateAllViews(), NS_ERROR_FAILURE);
+    viewManager->InvalidateAllViews();
     return NS_OK;
 }
 
@@ -5117,17 +5131,16 @@ nsDocShell::GetVisibility(bool * aVisibility)
     if (!mContentViewer)
         return NS_OK;
 
-    nsCOMPtr<nsIPresShell> presShell;
-    GetPresShell(getter_AddRefs(presShell));
+    nsCOMPtr<nsIPresShell> presShell = GetPresShell();
     if (!presShell)
         return NS_OK;
 
     // get the view manager
-    nsIViewManager* vm = presShell->GetViewManager();
+    nsViewManager* vm = presShell->GetViewManager();
     NS_ENSURE_TRUE(vm, NS_ERROR_FAILURE);
 
     // get the root view
-    nsIView *view = vm->GetRootView(); // views are not ref counted
+    nsView *view = vm->GetRootView(); // views are not ref counted
     NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
 
     // if our root view is hidden, we are not visible
@@ -5143,11 +5156,10 @@ nsDocShell::GetVisibility(bool * aVisibility)
     treeItem->GetParent(getter_AddRefs(parentItem));
     while (parentItem) {
         nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(treeItem));
-        docShell->GetPresShell(getter_AddRefs(presShell));
+        presShell = docShell->GetPresShell();
 
         nsCOMPtr<nsIDocShell> parentDS = do_QueryInterface(parentItem);
-        nsCOMPtr<nsIPresShell> pPresShell;
-        parentDS->GetPresShell(getter_AddRefs(pPresShell));
+        nsCOMPtr<nsIPresShell> pPresShell = parentDS->GetPresShell();
 
         // Null-check for crash in bug 267804
         if (!pPresShell) {
@@ -5208,8 +5220,7 @@ nsDocShell::SetIsActive(bool aIsActive)
   mIsActive = aIsActive;
 
   // Tell the PresShell about it.
-  nsCOMPtr<nsIPresShell> pshell;
-  GetPresShell(getter_AddRefs(pshell));
+  nsCOMPtr<nsIPresShell> pshell = GetPresShell();
   if (pshell)
     pshell->SetIsActive(aIsActive);
 
@@ -7393,15 +7404,14 @@ nsDocShell::RestoreFromHistory()
     // new content viewer's root view at the same position.  Also save the
     // bounds of the root view's widget.
 
-    nsIView *rootViewSibling = nullptr, *rootViewParent = nullptr;
+    nsView *rootViewSibling = nullptr, *rootViewParent = nullptr;
     nsIntRect newBounds(0, 0, 0, 0);
 
-    nsCOMPtr<nsIPresShell> oldPresShell;
-    nsDocShell::GetPresShell(getter_AddRefs(oldPresShell));
+    nsCOMPtr<nsIPresShell> oldPresShell = GetPresShell();
     if (oldPresShell) {
-        nsIViewManager *vm = oldPresShell->GetViewManager();
+        nsViewManager *vm = oldPresShell->GetViewManager();
         if (vm) {
-            nsIView *oldRootView = vm->GetRootView();
+            nsView *oldRootView = vm->GetRootView();
 
             if (oldRootView) {
                 rootViewSibling = oldRootView->GetNextSibling();
@@ -7618,11 +7628,10 @@ nsDocShell::RestoreFromHistory()
         NS_ENSURE_SUCCESS(rv, rv);
     }
 
-    nsCOMPtr<nsIPresShell> shell;
-    nsDocShell::GetPresShell(getter_AddRefs(shell));
+    nsCOMPtr<nsIPresShell> shell = GetPresShell();
 
-    nsIViewManager *newVM = shell ? shell->GetViewManager() : nullptr;
-    nsIView *newRootView = newVM ? newVM->GetRootView() : nullptr;
+    nsViewManager *newVM = shell ? shell->GetViewManager() : nullptr;
+    nsView *newRootView = newVM ? newVM->GetRootView() : nullptr;
 
     // Insert the new root view at the correct location in the view tree.
     if (container) {
@@ -7637,7 +7646,7 @@ nsDocShell::RestoreFromHistory()
         rootViewSibling = nullptr;
     }
     if (rootViewParent && newRootView && newRootView->GetParent() != rootViewParent) {
-        nsIViewManager *parentVM = rootViewParent->GetViewManager();
+        nsViewManager *parentVM = rootViewParent->GetViewManager();
         if (parentVM) {
             // InsertChild(parent, child, sib, true) inserts the child after
             // sib in content order, which is before sib in view order. BUT
@@ -7899,8 +7908,7 @@ nsDocShell::CreateContentViewer(const char *aContentType,
     // the ID can be used to distinguish it from the other parts.
     nsCOMPtr<nsIMultiPartChannel> multiPartChannel(do_QueryInterface(request));
     if (multiPartChannel) {
-      nsCOMPtr<nsIPresShell> shell;
-      rv = GetPresShell(getter_AddRefs(shell));
+      nsCOMPtr<nsIPresShell> shell = GetPresShell();
       if (NS_SUCCEEDED(rv) && shell) {
         nsIDocument *doc = shell->GetDocument();
         if (doc) {
@@ -8663,6 +8671,8 @@ nsDocShell::InternalLoad(nsIURI * aURI,
     if (mIsBeingDestroyed) {
         return NS_ERROR_FAILURE;
     }
+
+    NS_ENSURE_STATE(!HasUnloadedParent());
 
     rv = CheckLoadingPermissions();
     if (NS_FAILED(rv)) {
@@ -9605,12 +9615,11 @@ nsDocShell::ScrollToAnchor(nsACString & aCurHash, nsACString & aNewHash,
         return NS_OK;
     }
 
-    nsCOMPtr<nsIPresShell> shell;
-    nsresult rv = GetPresShell(getter_AddRefs(shell));
-    if (NS_FAILED(rv) || !shell) {
+    nsCOMPtr<nsIPresShell> shell = GetPresShell();
+    if (!shell) {
         // If we failed to get the shell, or if there is no shell,
         // nothing left to do here.
-        return rv;
+        return NS_OK;
     }
 
     // If we have no new anchor, we do not want to scroll, unless there is a
@@ -9652,7 +9661,7 @@ nsDocShell::ScrollToAnchor(nsACString & aCurHash, nsACString & aNewHash,
         // conversion will fail and give us an empty Unicode string.
         // In that case, we should just fall through to using the
         // page's charset.
-        rv = NS_ERROR_FAILURE;
+        nsresult rv = NS_ERROR_FAILURE;
         NS_ConvertUTF8toUTF16 uStr(str);
         if (!uStr.IsEmpty()) {
             rv = shell->GoToAnchor(NS_ConvertUTF8toUTF16(str), scroll);
@@ -10635,9 +10644,8 @@ NS_IMETHODIMP nsDocShell::PersistLayoutHistoryState()
     nsresult  rv = NS_OK;
     
     if (mOSHE) {
-        nsCOMPtr<nsIPresShell> shell;
-        rv = GetPresShell(getter_AddRefs(shell));
-        if (NS_SUCCEEDED(rv) && shell) {
+        nsCOMPtr<nsIPresShell> shell = GetPresShell();
+        if (shell) {
             nsCOMPtr<nsILayoutHistoryState> layoutState;
             rv = shell->CaptureHistoryState(getter_AddRefs(layoutState));
         }
@@ -11283,8 +11291,7 @@ nsDocShell::GetChildOffset(nsIDOMNode * aChild, nsIDOMNode * aParent,
 nsIScrollableFrame *
 nsDocShell::GetRootScrollFrame()
 {
-    nsCOMPtr<nsIPresShell> shell;
-    NS_ENSURE_SUCCESS(GetPresShell(getter_AddRefs(shell)), nullptr);
+    nsCOMPtr<nsIPresShell> shell = GetPresShell();
     NS_ENSURE_TRUE(shell, nullptr);
 
     return shell->GetRootScrollFrameAsScrollableExternal();
@@ -12455,4 +12462,24 @@ nsDocShell::GetAsyncPanZoomEnabled(bool* aOut)
     }
     *aOut = false;
     return NS_OK;
+}
+
+bool
+nsDocShell::HasUnloadedParent()
+{
+    nsCOMPtr<nsIDocShellTreeItem> currentTreeItem = this;
+    while (currentTreeItem) {
+        nsCOMPtr<nsIDocShellTreeItem> parentTreeItem;
+        currentTreeItem->GetParent(getter_AddRefs(parentTreeItem));
+        nsCOMPtr<nsIDocShell> parent = do_QueryInterface(parentTreeItem);
+        if (parent) {
+            bool inUnload = false;
+            parent->GetIsInUnload(&inUnload);
+            if (inUnload) {
+                return true;
+            }
+        }
+        currentTreeItem.swap(parentTreeItem);
+    }
+    return false;
 }

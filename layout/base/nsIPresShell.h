@@ -44,8 +44,8 @@ class nsIDocument;
 class nsIFrame;
 class nsPresContext;
 class nsStyleSet;
-class nsIViewManager;
-class nsIView;
+class nsViewManager;
+class nsView;
 class nsRenderingContext;
 class nsIPageSequenceFrame;
 class nsAString;
@@ -176,7 +176,7 @@ protected:
 public:
   virtual NS_HIDDEN_(nsresult) Init(nsIDocument* aDocument,
                                    nsPresContext* aPresContext,
-                                   nsIViewManager* aViewManager,
+                                   nsViewManager* aViewManager,
                                    nsStyleSet* aStyleSet,
                                    nsCompatibility aCompatMode) = 0;
 
@@ -272,7 +272,7 @@ public:
 
   nsPresContext* GetPresContext() const { return mPresContext; }
 
-  nsIViewManager* GetViewManager() const { return mViewManager; }
+  nsViewManager* GetViewManager() const { return mViewManager; }
 
 #ifdef ACCESSIBILITY
   /**
@@ -1095,7 +1095,7 @@ public:
    * widget, otherwise the PresContext default background color. This color is
    * only visible if the contents of the view as a whole are translucent.
    */
-  virtual nscolor ComputeBackstopColor(nsIView* aDisplayRoot) = 0;
+  virtual nscolor ComputeBackstopColor(nsView* aDisplayRoot) = 0;
 
   void ObserveNativeAnonMutationsForPrint(bool aObserve)
   {
@@ -1236,7 +1236,7 @@ public:
     PAINT_COMPOSITE = 0x02,
     PAINT_WILL_SEND_DID_PAINT = 0x80
   };
-  virtual void Paint(nsIView* aViewToPaint, const nsRegion& aDirtyRegion,
+  virtual void Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
                      uint32_t aFlags) = 0;
   virtual nsresult HandleEvent(nsIFrame*       aFrame,
                                nsGUIEvent*     aEvent,
@@ -1269,7 +1269,7 @@ public:
    * manager flush on the next tick.
    */
   virtual void ScheduleViewManagerFlush() = 0;
-  virtual void ClearMouseCaptureOnView(nsIView* aView) = 0;
+  virtual void ClearMouseCaptureOnView(nsView* aView) = 0;
   virtual bool IsVisible() = 0;
   virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange) = 0;
 
@@ -1381,7 +1381,7 @@ protected:
   nsPresContext*            mPresContext;   // [STRONG]
   nsStyleSet*               mStyleSet;      // [OWNS]
   nsCSSFrameConstructor*    mFrameConstructor; // [OWNS]
-  nsIViewManager*           mViewManager;   // [WEAK] docViewer owns it so I don't have to
+  nsViewManager*           mViewManager;   // [WEAK] docViewer owns it so I don't have to
   nsPresArena               mFrameArena;
   nsFrameSelection*         mSelection;
   // Pointer into mFrameConstructor - this is purely so that FrameManager() and
@@ -1424,6 +1424,9 @@ protected:
   // re-use old pixels.
   RenderFlags               mRenderFlags;
 
+  // Indicates that the whole document must be restyled.  Changes to scoped
+  // style sheets are recorded in mChangedScopeStyleRoots rather than here
+  // in mStylesHaveChanged.
   bool                      mStylesHaveChanged : 1;
   bool                      mDidInitialize : 1;
   bool                      mIsDestroying : 1;
@@ -1446,6 +1449,15 @@ protected:
 
   bool                      mSuppressInterruptibleReflows : 1;
   bool                      mScrollPositionClampingScrollPortSizeSet : 1;
+
+  // List of subtrees rooted at style scope roots that need to be restyled.
+  // When a change to a scoped style sheet is made, we add the style scope
+  // root to this array rather than setting mStylesHaveChanged = true, since
+  // we know we don't need to restyle the whole document.  However, if in the
+  // same update block we have already had other changes that require
+  // the whole document to be restyled (i.e., mStylesHaveChanged is already
+  // true), then we don't bother adding the scope root here.
+  nsAutoTArray<nsRefPtr<mozilla::dom::Element>,1> mChangedScopeStyleRoots;
 
   static nsIContent*        gKeyDownTarget;
 

@@ -207,7 +207,7 @@ struct ForkJoinSlice
 
 #ifdef JS_THREADSAFE
     // Initialized by Initialize()
-    static PRUintn ThreadPrivateIndex;
+    static unsigned ThreadPrivateIndex;
 #endif
 
     // Sets the abort flag and adjusts ionStackLimit so as to cause

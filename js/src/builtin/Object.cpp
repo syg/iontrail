@@ -137,12 +137,11 @@ obj_toSource(JSContext *cx, unsigned argc, Value *vp)
     if (!buf.append('{'))
         return false;
 
-    Value val[2];
-    PodArrayZero(val);
-    AutoArrayRooter tvr2(cx, ArrayLength(val), val);
+    RootedValue v0(cx), v1(cx);
+    MutableHandleValue val[2] = {&v0, &v1};
 
-    JSString *gsop[2];
-    SkipRoot skipGsop(cx, &gsop, 2);
+    RootedString str0(cx), str1(cx);
+    MutableHandleString gsop[2] = {&str0, &str1};
 
     AutoIdVector idv(cx);
     if (!GetPropertyNames(cx, obj, JSITER_OWNONLY, &idv))
@@ -164,22 +163,21 @@ obj_toSource(JSContext *cx, unsigned argc, Value *vp)
                 unsigned attrs = shape->attributes();
                 if (attrs & JSPROP_GETTER) {
                     doGet = false;
-                    val[valcnt] = shape->getterValue();
-                    gsop[valcnt] = cx->names().get;
+                    val[valcnt].set(shape->getterValue());
+                    gsop[valcnt].set(cx->names().get);
                     valcnt++;
                 }
                 if (attrs & JSPROP_SETTER) {
                     doGet = false;
-                    val[valcnt] = shape->setterValue();
-                    gsop[valcnt] = cx->names().set;
+                    val[valcnt].set(shape->setterValue());
+                    gsop[valcnt].set(cx->names().set);
                     valcnt++;
                 }
             }
             if (doGet) {
                 valcnt = 1;
-                gsop[0] = NULL;
-                MutableHandleValue vp = MutableHandleValue::fromMarkedLocation(&val[0]);
-                if (!JSObject::getGeneric(cx, obj, obj, id, vp))
+                gsop[0].set(NULL);
+                if (!JSObject::getGeneric(cx, obj, obj, id, val[0]))
                     return false;
             }
         }
@@ -252,7 +250,7 @@ obj_toSource(JSContext *cx, unsigned argc, Value *vp)
                         vchars++;
                     vlength = end - vchars - parenChomp;
                 } else {
-                    gsop[j] = NULL;
+                    gsop[j].set(NULL);
                     vchars = start;
                 }
             }
@@ -446,7 +444,7 @@ obj_lookupGetter(JSContext *cx, unsigned argc, Value *vp)
         // native. Handle proxies separately.
         args.rval().setUndefined();
         AutoPropertyDescriptorRooter desc(cx);
-        if (!Proxy::getPropertyDescriptor(cx, obj, id, false, &desc))
+        if (!Proxy::getPropertyDescriptor(cx, obj, id, &desc, 0))
             return JS_FALSE;
         if (desc.obj && (desc.attrs & JSPROP_GETTER) && desc.getter)
             args.rval().set(CastAsObjectJsval(desc.getter));
@@ -482,7 +480,7 @@ obj_lookupSetter(JSContext *cx, unsigned argc, Value *vp)
         // native. Handle proxies separately.
         args.rval().setUndefined();
         AutoPropertyDescriptorRooter desc(cx);
-        if (!Proxy::getPropertyDescriptor(cx, obj, id, false, &desc))
+        if (!Proxy::getPropertyDescriptor(cx, obj, id, &desc, 0))
             return JS_FALSE;
         if (desc.obj && (desc.attrs & JSPROP_SETTER) && desc.setter)
             args.rval().set(CastAsObjectJsval(desc.setter));

@@ -45,8 +45,8 @@
 #include "nsIDOMDocumentXBL.h"
 #include "mozilla/dom/Element.h"
 #include "nsGenericHTMLElement.h"
-#include "nsIDOMCDATASection.h"
-#include "nsIDOMProcessingInstruction.h"
+#include "mozilla/dom/CDATASection.h"
+#include "mozilla/dom/ProcessingInstruction.h"
 #include "nsDOMString.h"
 #include "nsNodeUtils.h"
 #include "nsLayoutUtils.h" // for GetFrameForPoint
@@ -170,7 +170,6 @@
 #include "mozilla/dom/DOMImplementation.h"
 #include "mozilla/dom/Comment.h"
 #include "nsTextNode.h"
-#include "nsXMLProcessingInstruction.h"
 #include "mozilla/dom/Link.h"
 #include "nsXULAppAPI.h"
 #include "nsDOMTouchEvent.h"
@@ -184,6 +183,7 @@
 #include "nsIAppsService.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/DocumentFragment.h"
+#include "mozilla/dom/UndoManager.h"
 #include "nsFrame.h" 
 #include "nsDOMCaretPosition.h"
 #include "nsIDOMHTMLTextAreaElement.h"
@@ -1679,6 +1679,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOriginalDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCachedEncoder)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStateObjectCached)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUndoManager)
 
   // Traverse all our nsCOMArrays.
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheets)
@@ -1736,6 +1737,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mImageMaps)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mOriginalDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedEncoder)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mUndoManager)
 
   tmp->mParentDocument = nullptr;
 
@@ -2025,6 +2027,25 @@ nsDocument::ResetToURI(nsIURI *aURI, nsILoadGroup *aLoadGroup,
 }
 
 void
+nsDocument::RemoveDocStyleSheetsFromStyleSets()
+{
+  // The stylesheets should forget us
+  int32_t indx = mStyleSheets.Count();
+  while (--indx >= 0) {
+    nsIStyleSheet* sheet = mStyleSheets[indx];
+    sheet->SetOwningDocument(nullptr);
+
+    if (sheet->IsApplicable()) {
+      nsCOMPtr<nsIPresShell> shell = GetShell();
+      if (shell) {
+        shell->StyleSet()->RemoveDocStyleSheet(sheet);
+      }
+    }
+    // XXX Tell observers?
+  }
+}
+
+void
 nsDocument::RemoveStyleSheetsFromStyleSets(nsCOMArray<nsIStyleSheet>& aSheets, nsStyleSet::sheetType aType)
 {
   // The stylesheets should forget us
@@ -2051,7 +2072,7 @@ nsDocument::ResetStylesheetsToURI(nsIURI* aURI)
   NS_PRECONDITION(aURI, "Null URI passed to ResetStylesheetsToURI");
 
   mozAutoDocUpdate upd(this, UPDATE_STYLE, true);
-  RemoveStyleSheetsFromStyleSets(mStyleSheets, nsStyleSet::eDocSheet);
+  RemoveDocStyleSheetsFromStyleSets();
   RemoveStyleSheetsFromStyleSets(mCatalogSheets, nsStyleSet::eAgentSheet);
   RemoveStyleSheetsFromStyleSets(mAdditionalSheets[eAgentSheet], nsStyleSet::eAgentSheet);
   RemoveStyleSheetsFromStyleSets(mAdditionalSheets[eUserSheet], nsStyleSet::eUserSheet);
@@ -2640,6 +2661,22 @@ nsDocument::GetAllowPlugins(bool * aAllowPlugins)
   return NS_OK;
 }
 
+already_AddRefed<UndoManager>
+nsDocument::GetUndoManager()
+{
+  Element* rootElement = GetRootElement();
+  if (!rootElement) {
+    return nullptr;
+  }
+
+  if (!mUndoManager) {
+    mUndoManager = new UndoManager(rootElement);
+  }
+
+  nsRefPtr<UndoManager> undoManager = mUndoManager;
+  return undoManager.forget();
+}
+
 /* Return true if the document is in the focused top-level window, and is an
  * ancestor of the focused DOMWindow. */
 NS_IMETHODIMP
@@ -3100,7 +3137,7 @@ nsDocument::TryChannelCharset(nsIChannel *aChannel,
 }
 
 nsresult
-nsDocument::CreateShell(nsPresContext* aContext, nsIViewManager* aViewManager,
+nsDocument::CreateShell(nsPresContext* aContext, nsViewManager* aViewManager,
                         nsStyleSet* aStyleSet,
                         nsIPresShell** aInstancePtrResult)
 {
@@ -3113,7 +3150,7 @@ nsDocument::CreateShell(nsPresContext* aContext, nsIViewManager* aViewManager,
 
 nsresult
 nsDocument::doCreateShell(nsPresContext* aContext,
-                          nsIViewManager* aViewManager, nsStyleSet* aStyleSet,
+                          nsViewManager* aViewManager, nsStyleSet* aStyleSet,
                           nsCompatibility aCompatMode,
                           nsIPresShell** aInstancePtrResult)
 {
@@ -3484,7 +3521,7 @@ nsDocument::RemoveStyleSheetFromStyleSets(nsIStyleSheet* aSheet)
 {
   nsCOMPtr<nsIPresShell> shell = GetShell();
   if (shell) {
-    shell->StyleSet()->RemoveStyleSheet(nsStyleSet::eDocSheet, aSheet);
+    shell->StyleSet()->RemoveDocStyleSheet(aSheet);
   }
 }
 
@@ -4591,7 +4628,7 @@ nsDocument::CreateCDATASection(const nsAString& aData,
   return rv.ErrorCode();
 }
 
-already_AddRefed<nsIDOMCDATASection>
+already_AddRefed<CDATASection>
 nsIDocument::CreateCDATASection(const nsAString& aData,
                                 ErrorResult& rv)
 {
@@ -4616,8 +4653,7 @@ nsIDocument::CreateCDATASection(const nsAString& aData,
   // Don't notify; this node is still being created.
   content->SetText(aData, false);
 
-  nsCOMPtr<nsIDOMCDATASection> section = do_QueryInterface(content);
-  return section.forget();
+  return static_cast<CDATASection*>(content.forget().get());
 }
 
 NS_IMETHODIMP
@@ -4630,7 +4666,7 @@ nsDocument::CreateProcessingInstruction(const nsAString& aTarget,
   return rv.ErrorCode();
 }
 
-already_AddRefed<nsXMLProcessingInstruction>
+already_AddRefed<ProcessingInstruction>
 nsIDocument::CreateProcessingInstruction(const nsAString& aTarget,
                                          const nsAString& aData,
                                          mozilla::ErrorResult& rv) const
@@ -4654,7 +4690,7 @@ nsIDocument::CreateProcessingInstruction(const nsAString& aTarget,
     return nullptr;
   }
 
-  return static_cast<nsXMLProcessingInstruction*>(content.forget().get());
+  return static_cast<ProcessingInstruction*>(content.forget().get());
 }
 
 NS_IMETHODIMP
@@ -8676,10 +8712,21 @@ nsDocument::CreateTouchList(nsIVariant* aPoints,
 }
 
 already_AddRefed<nsIDOMTouchList>
-nsIDocument::CreateTouchList(nsIDOMTouch* aTouch)
+nsIDocument::CreateTouchList()
+{
+  nsRefPtr<nsDOMTouchList> retval = new nsDOMTouchList();
+  return retval.forget();
+}
+
+already_AddRefed<nsIDOMTouchList>
+nsIDocument::CreateTouchList(nsIDOMTouch* aTouch,
+                             const Sequence<nsRefPtr<nsIDOMTouch> >& aTouches)
 {
   nsRefPtr<nsDOMTouchList> retval = new nsDOMTouchList();
   retval->Append(aTouch);
+  for (uint32_t i = 0; i < aTouches.Length(); ++i) {
+    retval->Append(aTouches[i]);
+  }
   return retval.forget();
 }
 
@@ -8823,32 +8870,29 @@ ResetFullScreen(nsIDocument* aDocument, void* aData)
   return true;
 }
 
-NS_IMETHODIMP
-nsDocument::CaretPositionFromPoint(float aX, float aY, nsISupports** aCaretPos)
+already_AddRefed<nsDOMCaretPosition>
+nsIDocument::CaretPositionFromPoint(float aX, float aY)
 {
-  NS_ENSURE_ARG_POINTER(aCaretPos);
-  *aCaretPos = nullptr;
-
   nscoord x = nsPresContext::CSSPixelsToAppUnits(aX);
   nscoord y = nsPresContext::CSSPixelsToAppUnits(aY);
   nsPoint pt(x, y);
 
   nsIPresShell *ps = GetShell();
   if (!ps) {
-    return NS_OK;
+    return nullptr;
   }
 
   nsIFrame *rootFrame = ps->GetRootFrame();
 
   // XUL docs, unlike HTML, have no frame tree until everything's done loading
   if (!rootFrame) {
-    return NS_OK; // return null to premature XUL callers as a reminder to wait
+    return nullptr;
   }
 
   nsIFrame *ptFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, pt, true,
                                                       false);
   if (!ptFrame) {
-    return NS_OK;
+    return nullptr;
   }
 
   // GetContentOffsetsFromPoint requires frame-relative coordinates, so we need
@@ -8876,8 +8920,15 @@ nsDocument::CaretPositionFromPoint(float aX, float aY, nsISupports** aCaretPos)
     }
   }
 
-  *aCaretPos = new nsDOMCaretPosition(node, offset);
-  NS_ADDREF(*aCaretPos);
+  nsRefPtr<nsDOMCaretPosition> aCaretPos = new nsDOMCaretPosition(node, offset);
+  return aCaretPos.forget();
+}
+
+NS_IMETHODIMP
+nsDocument::CaretPositionFromPoint(float aX, float aY, nsISupports** aCaretPos)
+{
+  NS_ENSURE_ARG_POINTER(aCaretPos);
+  *aCaretPos = nsIDocument::CaretPositionFromPoint(aX, aY).get();
   return NS_OK;
 }
 

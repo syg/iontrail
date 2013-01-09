@@ -322,8 +322,7 @@ void XPCJSRuntime::TraceBlackJS(JSTracer* trc, void* data)
             static_cast<XPCJSObjectHolder*>(e)->TraceJS(trc);
     }
 
-    dom::TraceBlackJS(trc);
-
+    dom::TraceBlackJS(trc, JS_GetGCParameter(self->GetJSRuntime(), JSGC_NUMBER));
 }
 
 // static
@@ -432,11 +431,12 @@ CanSkipWrappedJS(nsXPCWrappedJS *wrappedJS)
     // If traversing wrappedJS wouldn't release it, nor
     // cause any other objects to be added to the graph, no
     // need to add it to the graph at all.
+    bool isRootWrappedJS = wrappedJS->GetRootWrapper() == wrappedJS;
     if (nsCCUncollectableMarker::sGeneration &&
         (!obj || !xpc_IsGrayGCThing(obj)) &&
         !wrappedJS->IsSubjectToFinalization() &&
-        wrappedJS->GetRootWrapper() == wrappedJS) {
-        if (!wrappedJS->IsAggregatedToNative()) {
+        (isRootWrappedJS || CanSkipWrappedJS(wrappedJS->GetRootWrapper()))) {
+        if (!wrappedJS->IsAggregatedToNative() || !isRootWrappedJS) {
             return true;
         } else {
             nsISupports* agg = wrappedJS->GetAggregatedNativeObject();
@@ -466,7 +466,12 @@ XPCJSRuntime::AddXPConnectRoots(nsCycleCollectionTraversalCallback &cb)
 
     JSContext *iter = nullptr, *acx;
     while ((acx = JS_ContextIterator(GetJSRuntime(), &iter))) {
-        cb.NoteNativeRoot(acx, nsXPConnect::JSContextParticipant());
+        // Add the context to the CC graph only if traversing it would
+        // end up doing something.
+        JSObject* global = JS_GetGlobalObject(acx);
+        if (global && xpc_IsGrayGCThing(global)) {
+            cb.NoteNativeRoot(acx, nsXPConnect::JSContextParticipant());
+        }
     }
 
     XPCAutoLock lock(mMapLock);
@@ -1482,7 +1487,7 @@ NS_MEMORY_REPORTER_IMPLEMENT(XPConnectJSUserCompartmentCount,
         rtTotal += amount;                                                    \
     } while (0)
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsMallocSizeOf, "js")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsMallocSizeOf)
 
 namespace xpc {
 
@@ -1979,16 +1984,16 @@ NS_IMPL_THREADSAFE_ISUPPORTS1(JSCompartmentsMultiReporter
                               , nsIMemoryMultiReporter
                               )
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(OrphanSizeOf, "orphans")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(OrphanMallocSizeOf)
 
 namespace xpc {
 
 static size_t
 SizeOfTreeIncludingThis(nsINode *tree)
 {       
-    size_t n = tree->SizeOfIncludingThis(OrphanSizeOf);
+    size_t n = tree->SizeOfIncludingThis(OrphanMallocSizeOf);
     for (nsIContent* child = tree->GetFirstChild(); child; child = child->GetNextNode(tree)) {
-        n += child->SizeOfIncludingThis(OrphanSizeOf);
+        n += child->SizeOfIncludingThis(OrphanMallocSizeOf);
     }   
     return n;
 }
@@ -1996,15 +2001,16 @@ SizeOfTreeIncludingThis(nsINode *tree)
 class OrphanReporter : public JS::ObjectPrivateVisitor
 {
 public:
-    OrphanReporter()
+    OrphanReporter(GetISupportsFun aGetISupports)
+      : JS::ObjectPrivateVisitor(aGetISupports)
     {
         mAlreadyMeasuredOrphanTrees.Init();
     }
 
-    virtual size_t sizeOfIncludingThis(void *aSupports)
+    virtual size_t sizeOfIncludingThis(nsISupports *aSupports)
     {
         size_t n = 0;
-        nsCOMPtr<nsINode> node = do_QueryInterface(static_cast<nsISupports*>(aSupports));
+        nsCOMPtr<nsINode> node = do_QueryInterface(aSupports);
         // https://bugzilla.mozilla.org/show_bug.cgi?id=773533#c11 explains
         // that we have to skip XBL elements because they violate certain
         // assumptions.  Yuk.
@@ -2066,15 +2072,15 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
                     cJSPathPrefix.AppendLiteral("/js/");
                 } else {
                     cJSPathPrefix.AssignLiteral("explicit/js-non-window/compartments/unknown-window-global/");
-                    cDOMPathPrefix.AssignLiteral("explicit/dom/?!/");
+                    cDOMPathPrefix.AssignLiteral("explicit/dom/unknown-window-global?!/");
                 }
             } else {
                 cJSPathPrefix.AssignLiteral("explicit/js-non-window/compartments/non-window-global/");
-                cDOMPathPrefix.AssignLiteral("explicit/dom/?!/");
+                cDOMPathPrefix.AssignLiteral("explicit/dom/non-window-global?!/");
             }
         } else {
             cJSPathPrefix.AssignLiteral("explicit/js-non-window/compartments/no-global/");
-            cDOMPathPrefix.AssignLiteral("explicit/dom/?!/");
+            cDOMPathPrefix.AssignLiteral("explicit/dom/no-global?!/");
         }
 
         cJSPathPrefix += NS_LITERAL_CSTRING("compartment(") + cName + NS_LITERAL_CSTRING(")/");
@@ -2109,7 +2115,7 @@ JSMemoryMultiReporter::CollectReports(WindowPaths *windowPaths,
     // stats seems like a bad idea.
 
     XPCJSRuntimeStats rtStats(windowPaths);
-    OrphanReporter orphanReporter;
+    OrphanReporter orphanReporter(XPCConvert::GetISupportsFromJSObject);
     if (!JS::CollectRuntimeStats(xpcrt->GetJSRuntime(), &rtStats, &orphanReporter))
         return NS_ERROR_FAILURE;
 

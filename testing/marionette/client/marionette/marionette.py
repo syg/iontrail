@@ -150,9 +150,8 @@ class Marionette(object):
 
         if emulator:
             self.emulator.setup(self, gecko_path=gecko_path,
-                                load_early=load_early)
-            if busybox:
-                self.emulator.install_busybox(busybox)
+                                load_early=load_early,
+                                busybox=busybox)
 
     def __del__(self):
         if self.emulator:
@@ -210,10 +209,6 @@ class Marionette(object):
             self.session = None
             self.window = None
             self.client.close()
-            if self.emulator:
-                port = self.emulator.restart(self.local_port)
-                if port is not None:
-                    self.port = self.client.port = port
             raise TimeoutException(message='socket.timeout', status=ErrorCodes.TIMEOUT, stacktrace=None)
 
         # Process any emulator commands that are sent from a script
@@ -296,7 +291,7 @@ class Marionette(object):
             # should be here.
             pass
         if returncode is not None:
-            print ('TEST-UNEXPECTED-FAIL - PROCESS CRASH - %s has terminated with exit code %d' %
+            print ('PROCESS-CRASH | %s | abnormal termination with exit code %d' %
                 (name, returncode))
         return returncode is not None
 

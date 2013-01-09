@@ -145,6 +145,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(DefFun)
     UNSAFE_OP(CreateThis)
     UNSAFE_OP(CreateThisWithTemplate)
+    UNSAFE_OP(CreateThisWithProto)
     SAFE_OP(PrepareCall)
     SAFE_OP(PassArg)
     CUSTOM_OP(Call)

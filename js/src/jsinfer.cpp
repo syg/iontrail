@@ -1291,7 +1291,7 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
         return;
     }
 
-    JSFunction *callee = NULL;
+    RootedFunction callee(cx);
 
     if (type.isSingleObject()) {
         RootedObject obj(cx, type.singleObject());
@@ -1432,6 +1432,8 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
 void
 TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
 {
+    AssertCanGC();
+
     if (type.isUnknown() || type.isAnyObject()) {
         /*
          * The callee is unknown, make sure the call is monitored so we pick up
@@ -1445,7 +1447,7 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
     }
 
     /* Ignore calls to natives, these will be handled by TypeConstraintCall. */
-    JSFunction *callee = NULL;
+    RootedFunction callee(cx);
 
     if (type.isSingleObject()) {
         RootedObject object(cx, type.singleObject());
@@ -3647,9 +3649,11 @@ TypeObject::clearNewScript(JSContext *cx)
 void
 TypeObject::print()
 {
+    TaggedProto tagged(proto);
     printf("%s : %s",
            TypeObjectString(this),
-           proto ? TypeString(Type::ObjectType(proto)) : "(null)");
+           tagged.isObject() ? TypeString(Type::ObjectType(proto))
+                            : (tagged.isLazy() ? "(lazy)" : "(null)"));
 
     if (unknownProperties()) {
         printf(" unknown");
@@ -3813,7 +3817,6 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_DEBUGGER:
       case JSOP_SETCALL:
       case JSOP_TABLESWITCH:
-      case JSOP_LOOKUPSWITCH:
       case JSOP_TRY:
       case JSOP_LABEL:
         break;
@@ -5800,7 +5803,8 @@ JSObject::makeLazyType(JSContext *cx)
     RootedObject self(cx, this);
     /* De-lazification of functions can GC, so we need to do it up here. */
     if (self->isFunction() && self->toFunction()->isInterpretedLazy()) {
-        if (!self->toFunction()->initializeLazyScript(cx))
+        RootedFunction fun(cx, self->toFunction());
+        if (!JSFunction::getOrCreateScript(cx, fun))
             return NULL;
     }
     JSProtoKey key = JSCLASS_CACHED_PROTO_KEY(getClass());
@@ -5890,10 +5894,10 @@ JSObject::hasNewType(TypeObject *type)
 }
 #endif /* DEBUG */
 
-bool
-JSObject::setNewTypeUnknown(JSContext *cx)
+/* static */ bool
+JSObject::setNewTypeUnknown(JSContext *cx, HandleObject obj)
 {
-    if (!setFlag(cx, js::BaseShape::NEW_TYPE_UNKNOWN))
+    if (!obj->setFlag(cx, js::BaseShape::NEW_TYPE_UNKNOWN))
         return false;
 
     /*
@@ -5903,7 +5907,7 @@ JSObject::setNewTypeUnknown(JSContext *cx)
      */
     TypeObjectSet &table = cx->compartment->newTypeObjects;
     if (table.initialized()) {
-        if (TypeObjectSet::Ptr p = table.lookup(this))
+        if (TypeObjectSet::Ptr p = table.lookup(obj.get()))
             MarkTypeObjectUnknownProperties(cx, *p);
     }
 
@@ -5987,6 +5991,18 @@ JSCompartment::getNewType(JSContext *cx, TaggedProto proto_, JSFunction *fun_, b
         if (obj->isXML() && !type->unknownProperties())
             type->flags |= OBJECT_FLAG_UNKNOWN_MASK;
 #endif
+
+        if (obj->isRegExp()) {
+            AddTypeProperty(cx, type, "source", types::Type::StringType());
+            AddTypeProperty(cx, type, "global", types::Type::BooleanType());
+            AddTypeProperty(cx, type, "ignoreCase", types::Type::BooleanType());
+            AddTypeProperty(cx, type, "multiline", types::Type::BooleanType());
+            AddTypeProperty(cx, type, "sticky", types::Type::BooleanType());
+            AddTypeProperty(cx, type, "lastIndex", types::Type::Int32Type());
+        }
+
+        if (obj->isString())
+            AddTypeProperty(cx, type, "length", Type::Int32Type());
     }
 
     /*

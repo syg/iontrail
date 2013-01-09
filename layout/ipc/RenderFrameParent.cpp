@@ -725,6 +725,7 @@ RenderFrameParent::BuildLayer(nsDisplayListBuilder* aBuilder,
     ClearContainer(mContainer);
     mContainer->SetPreScale(1.0f, 1.0f);
     mContainer->SetPostScale(1.0f, 1.0f);
+    mContainer->SetInheritedScale(1.0f, 1.0f);
   }
 
   ContainerLayer* shadowRoot = GetRootLayer();
@@ -825,6 +826,15 @@ RenderFrameParent::RecvCancelDefaultPanZoom()
 {
   if (mPanZoomController) {
     mPanZoomController->CancelDefaultPanZoom();
+  }
+  return true;
+}
+
+bool
+RenderFrameParent::RecvDetectScrollableSubframe()
+{
+  if (mPanZoomController) {
+    mPanZoomController->DetectScrollableSubframe();
   }
   return true;
 }

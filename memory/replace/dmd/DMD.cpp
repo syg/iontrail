@@ -15,10 +15,8 @@
 #include <string.h>
 
 #ifdef XP_WIN
-#error "Windows not supported yet, sorry."
-// XXX: This will be needed when Windows is supported (bug 819839).
-//#include <process.h>
-//#define getpid _getpid
+#include <windows.h>
+#include <process.h>
 #else
 #include <unistd.h>
 #endif
@@ -42,7 +40,21 @@
 // PAGE_SIZE.  Nb: sysconf() is expensive, but it's only used for (the obsolete
 // and rarely used) valloc.
 #define MOZ_REPLACE_ONLY_MEMALIGN 1
+#ifdef XP_WIN
+#define PAGE_SIZE GetPageSize()
+static long GetPageSize()
+{
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  return si.dwPageSize;
+}
+static void* valloc(size_t size)
+{
+  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+#else
 #define PAGE_SIZE sysconf(_SC_PAGESIZE)
+#endif
 #include "replace_malloc.h"
 #undef MOZ_REPLACE_ONLY_MEMALIGN
 #undef PAGE_SIZE
@@ -275,8 +287,6 @@ static const size_t kNoSize = size_t(-1);
 // MutexBase implements the platform-specific parts of a mutex.
 #ifdef XP_WIN
 
-#include <windows.h>
-
 class MutexBase
 {
   CRITICAL_SECTION mCS;
@@ -407,9 +417,9 @@ public:
 #ifdef XP_WIN
 
 #define DMD_TLS_INDEX_TYPE              DWORD
-#define DMD_CREATE_TLS_INDEX(i_)        PR_BEGIN_MACRO                        \
+#define DMD_CREATE_TLS_INDEX(i_)        do {                                  \
                                           (i_) = TlsAlloc();                  \
-                                        PR_END_MACRO
+                                        } while (0)
 #define DMD_DESTROY_TLS_INDEX(i_)       TlsFree((i_))
 #define DMD_GET_TLS_DATA(i_)            TlsGetValue((i_))
 #define DMD_SET_TLS_DATA(i_, v_)        TlsSetValue((i_), (v_))
@@ -697,10 +707,10 @@ public:
 
 class StackTrace
 {
-  static const uint32_t MaxDepth = 24;
+  static const uint32_t MaxFrames = 24;
 
   uint32_t mLength;             // The number of PCs.
-  void* mPcs[MaxDepth];         // The PCs themselves.
+  void* mPcs[MaxFrames];        // The PCs themselves.
 
 public:
   StackTrace() : mLength(0) {}
@@ -741,13 +751,9 @@ private:
   static void StackWalkCallback(void* aPc, void* aSp, void* aClosure)
   {
     StackTrace* st = (StackTrace*) aClosure;
-
-    // Only fill to MaxDepth.
-    // XXX: bug 818793 will allow early bailouts.
-    if (st->mLength < MaxDepth) {
-      st->mPcs[st->mLength] = aPc;
-      st->mLength++;
-    }
+    MOZ_ASSERT(st->mLength < MaxFrames);
+    st->mPcs[st->mLength] = aPc;
+    st->mLength++;
   }
 
   static int QsortCmp(const void* aA, const void* aB)
@@ -764,17 +770,14 @@ typedef js::HashSet<StackTrace*, StackTrace, InfallibleAllocPolicy>
         StackTraceTable;
 static StackTraceTable* gStackTraceTable = nullptr;
 
+// We won't GC the stack trace table until it this many elements.
+static uint32_t gGCStackTraceTableWhenSizeExceeds = 4 * 1024;
+
 void
 StackTrace::Print(const Writer& aWriter, LocationService* aLocService) const
 {
   if (mLength == 0) {
-    W("   (empty)\n");
-    return;
-  }
-
-  if (gMode == Test) {
-    // Don't print anything because there's too much variation.
-    W("   (stack omitted due to test mode)\n");
+    W("   (empty)\n");  // StackTrace::Get() must have failed
     return;
   }
 
@@ -796,17 +799,33 @@ StackTrace::Get(Thread* aT)
   // https://bugzilla.mozilla.org/show_bug.cgi?id=374829#c8
   // On Linux, something similar can happen;  see bug 824340.
   // So let's just release it on all platforms.
+  nsresult rv;
   StackTrace tmp;
   {
     AutoUnlockState unlock;
-    // In normal operation, skip=3 gets us past various malloc wrappers into
-    // more interesting stuff.  But in test mode we need to skip a bit less to
-    // sufficiently differentiate some similar stacks.
-    uint32_t skip = (gMode == Test) ? 2 : 3;
-    nsresult rv = NS_StackWalk(StackWalkCallback, skip, &tmp, 0, nullptr);
-    if (NS_FAILED(rv) || tmp.mLength == 0) {
-      tmp.mLength = 0;
-    }
+    uint32_t skipFrames = 2;
+    rv = NS_StackWalk(StackWalkCallback, skipFrames, MaxFrames, &tmp, 0,
+                      nullptr);
+  }
+
+  if (rv == NS_OK) {
+    // Handle the common case first.  All is ok.  Nothing to do.
+  } else if (rv == NS_ERROR_NOT_IMPLEMENTED || rv == NS_ERROR_FAILURE) {
+    tmp.mLength = 0;
+  } else if (rv == NS_ERROR_UNEXPECTED) {
+    // XXX: This |rv| only happens on Mac, and it indicates that we're handling
+    // a call to malloc that happened inside a mutex-handling function.  Any
+    // attempt to create a semaphore (which can happen in printf) could
+    // deadlock.
+    //
+    // However, the most complex thing DMD does after Get() returns is to put
+    // something in a hash table, which might call
+    // InfallibleAllocPolicy::malloc_.  I'm not yet sure if this needs special
+    // handling, hence the forced abort.  Sorry.  If you hit this, please file
+    // a bug and CC nnethercote.
+    MOZ_CRASH();
+  } else {
+    MOZ_CRASH();  // should be impossible
   }
 
   StackTraceTable::AddPtr p = gStackTraceTable->lookupForAdd(&tmp);
@@ -1001,6 +1020,61 @@ public:
 typedef js::HashSet<Block, Block, InfallibleAllocPolicy> BlockTable;
 static BlockTable* gBlockTable = nullptr;
 
+typedef js::HashSet<const StackTrace*, js::DefaultHasher<const StackTrace*>,
+                    InfallibleAllocPolicy>
+        StackTraceSet;
+
+// Add a pointer to each live stack trace into the given StackTraceSet.  (A
+// stack trace is live if it's used by one of the live blocks.)
+static void
+GatherUsedStackTraces(StackTraceSet& aStackTraces)
+{
+  MOZ_ASSERT(gStateLock->IsLocked());
+  MOZ_ASSERT(Thread::Fetch()->InterceptsAreBlocked());
+
+  aStackTraces.finish();
+  aStackTraces.init(1024);
+
+  for (BlockTable::Range r = gBlockTable->all(); !r.empty(); r.popFront()) {
+    const Block& b = r.front();
+    aStackTraces.put(b.AllocStackTrace());
+    aStackTraces.put(b.ReportStackTrace1());
+    aStackTraces.put(b.ReportStackTrace2());
+  }
+
+  // Any of the stack traces added above may have been null.  For the sake of
+  // cleanliness, don't leave the null pointer in the set.
+  aStackTraces.remove(nullptr);
+}
+
+// Delete stack traces that we aren't using, and compact our hashtable.
+static void
+GCStackTraces()
+{
+  MOZ_ASSERT(gStateLock->IsLocked());
+  MOZ_ASSERT(Thread::Fetch()->InterceptsAreBlocked());
+
+  StackTraceSet usedStackTraces;
+  GatherUsedStackTraces(usedStackTraces);
+
+  // Delete all unused stack traces from gStackTraceTable.  The Enum destructor
+  // will automatically rehash and compact the table.
+  for (StackTraceTable::Enum e(*gStackTraceTable);
+       !e.empty();
+       e.popFront()) {
+    StackTrace* const& st = e.front();
+
+    if (!usedStackTraces.has(st)) {
+      e.removeFront();
+      InfallibleAllocPolicy::delete_(st);
+    }
+  }
+
+  // Schedule a GC when we have twice as many stack traces as we had right after
+  // this GC finished.
+  gGCStackTraceTableWhenSizeExceeds = 2 * gStackTraceTable->count();
+}
+
 //---------------------------------------------------------------------------
 // malloc/free callbacks
 //---------------------------------------------------------------------------
@@ -1054,6 +1128,10 @@ FreeCallback(void* aPtr, Thread* aT)
   AutoBlockIntercepts block(aT);
 
   gBlockTable->remove(aPtr);
+
+  if (gStackTraceTable->count() > gGCStackTraceTableWhenSizeExceeds) {
+    GCStackTraces();
+  }
 }
 
 //---------------------------------------------------------------------------
@@ -1569,7 +1647,7 @@ NopStackWalkCallback(void* aPc, void* aSp, void* aClosure)
 
 // Note that fopen() can allocate.
 static FILE*
-OpenTestOrStressFile(const char* aFilename)
+OpenOutputFile(const char* aFilename)
 {
   FILE* fp = fopen(aFilename, "w");
   if (!fp) {
@@ -1666,7 +1744,8 @@ Init(const malloc_table_t* aMallocTable)
   // StackWalkInitCriticalAddress() isn't exported from xpcom/, so instead we
   // just call NS_StackWalk, because that calls StackWalkInitCriticalAddress().
   // See the comment above StackWalkInitCriticalAddress() for more details.
-  (void)NS_StackWalk(NopStackWalkCallback, 0, nullptr, 0, nullptr);
+  (void)NS_StackWalk(NopStackWalkCallback, /* skipFrames */ 0,
+                     /* maxFrames */ 1, nullptr, 0, nullptr);
 #endif
 
   gStateLock = InfallibleAllocPolicy::new_<Mutex>();
@@ -1682,10 +1761,10 @@ Init(const malloc_table_t* aMallocTable)
   gBlockTable->init(8192);
 
   if (gMode == Test) {
-    // OpenTestOrStressFile() can allocate.  So do this before setting
+    // OpenOutputFile() can allocate.  So do this before setting
     // gIsDMDRunning so those allocations don't show up in our results.  Once
     // gIsDMDRunning is set we are intercepting malloc et al. in earnest.
-    FILE* fp = OpenTestOrStressFile("test.dmd");
+    FILE* fp = OpenOutputFile("test.dmd");
     gIsDMDRunning = true;
 
     StatusMsg("running test mode...\n");
@@ -1696,7 +1775,7 @@ Init(const malloc_table_t* aMallocTable)
   }
 
   if (gMode == Stress) {
-    FILE* fp = OpenTestOrStressFile("stress.dmd");
+    FILE* fp = OpenOutputFile("stress.dmd");
     gIsDMDRunning = true;
 
     StatusMsg("running stress mode...\n");
@@ -1817,12 +1896,6 @@ PrintSortedTraceAndFrameRecords(const Writer& aWriter,
   PrintSortedRecords(aWriter, aLocService, aStr, astr, aTraceRecordTable,
                      aCategoryUsableSize, aTotalUsableSize);
 
-  // Frame records are totally dependent on vagaries of stack traces, so we
-  // can't show them in test mode.
-  if (gMode == Test) {
-    return;
-  }
-
   FrameRecordTable frameRecordTable;
   (void)frameRecordTable.init(2048);
   for (TraceRecordTable::Range r = aTraceRecordTable.all();
@@ -1875,16 +1948,8 @@ SizeOfInternal(Sizes* aSizes)
     return;
   }
 
-  js::HashSet<const StackTrace*, js::DefaultHasher<const StackTrace*>,
-              InfallibleAllocPolicy> usedStackTraces;
-  usedStackTraces.init(1024);
-
-  for(BlockTable::Range r = gBlockTable->all(); !r.empty(); r.popFront()) {
-    const Block& b = r.front();
-    usedStackTraces.put(b.AllocStackTrace());
-    usedStackTraces.put(b.ReportStackTrace1());
-    usedStackTraces.put(b.ReportStackTrace2());
-  }
+  StackTraceSet usedStackTraces;
+  GatherUsedStackTraces(usedStackTraces);
 
   for (StackTraceTable::Range r = gStackTraceTable->all();
        !r.empty();
@@ -1918,11 +1983,12 @@ SizeOf(Sizes* aSizes)
   SizeOfInternal(aSizes);
 }
 
-static void
-ClearGlobalState()
+MOZ_EXPORT void
+ClearReports()
 {
-  // Unreport all blocks, except those that were reported on allocation,
-  // because they need to keep their reported marking.
+  // Unreport all blocks that were marked reported by a memory reporter.  This
+  // excludes those that were reported on allocation, because they need to keep
+  // their reported marking.
   for (BlockTable::Range r = gBlockTable->all(); !r.empty(); r.popFront()) {
     r.front().UnreportIfNotReportedOnAlloc();
   }
@@ -2116,7 +2182,7 @@ Dump(Writer aWriter)
 
   InfallibleAllocPolicy::delete_(locService);
 
-  ClearGlobalState();
+  ClearReports();
 
   StatusMsg("}\n");
 }

@@ -2918,8 +2918,10 @@ fsmdef_ev_createoffer (sm_event_t *event) {
        msg->data.session.constraints = 0;
     }
 
-    vcmGetIceParams(dcb->peerconnection, &ufrag, &ice_pwd);
-    if (!ufrag || !ice_pwd) {
+    vcm_res = vcmGetIceParams(dcb->peerconnection, &ufrag, &ice_pwd);
+    if (vcm_res) {
+    	FSM_DEBUG_SM(DEB_F_PREFIX"vcmGetIceParams returned an error\n",
+            DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
       ui_create_offer(evCreateOfferError, line, call_id,
           dcb->caller_id.call_instance_id, strlib_empty());
       return (fsmdef_release(fcb, cause, FALSE));
@@ -2959,7 +2961,6 @@ fsmdef_ev_createoffer (sm_event_t *event) {
 
     cause = gsmsdp_encode_sdp_and_update_version(dcb, &msg_body);
     if (cause != CC_CAUSE_OK) {
-        cc_free_msg_body_parts(&msg_body);
         ui_create_offer(evCreateOfferError, line, call_id,
             dcb->caller_id.call_instance_id, strlib_empty());
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
@@ -3025,8 +3026,10 @@ fsmdef_ev_createanswer (sm_event_t *event) {
        msg->data.session.constraints = 0;
     }
 
-    vcmGetIceParams(dcb->peerconnection, &ufrag, &ice_pwd);
-    if (!ufrag || !ice_pwd) {
+    vcm_res = vcmGetIceParams(dcb->peerconnection, &ufrag, &ice_pwd);
+    if (vcm_res) {
+    	FSM_DEBUG_SM(DEB_F_PREFIX"vcmGetIceParams returned an error\n",
+            DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
       ui_create_offer(evCreateAnswerError, line, call_id,
           dcb->caller_id.call_instance_id, strlib_empty());
       return (fsmdef_release(fcb, cause, FALSE));
@@ -3092,7 +3095,6 @@ fsmdef_ev_createanswer (sm_event_t *event) {
 
     cause = gsmsdp_encode_sdp_and_update_version(dcb, &msg_body);
     if (cause != CC_CAUSE_OK) {
-        cc_free_msg_body_parts(&msg_body);
         ui_create_answer(evCreateAnswerError, line, call_id,
             dcb->caller_id.call_instance_id, strlib_empty());
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
@@ -3147,7 +3149,6 @@ fsmdef_ev_setlocaldesc(sm_event_t *event) {
     if (JSEP_OFFER == action) {
         cause = gsmsdp_encode_sdp(dcb->sdp, &msg_body);
         if (cause != CC_CAUSE_OK) {
-            cc_free_msg_body_parts(&msg_body);
             FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
             ui_set_local_description(evSetLocalDescError, line, call_id,
                 dcb->caller_id.call_instance_id, strlib_empty(),
@@ -3172,7 +3173,6 @@ fsmdef_ev_setlocaldesc(sm_event_t *event) {
         /* compare SDP generated from CreateAnswer */
         cause = gsmsdp_encode_sdp(dcb->sdp, &msg_body);
         if (cause != CC_CAUSE_OK) {
-            cc_free_msg_body_parts(&msg_body);
             FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
             ui_set_local_description(evSetLocalDescError, line, call_id,
                 dcb->caller_id.call_instance_id, strlib_empty(),

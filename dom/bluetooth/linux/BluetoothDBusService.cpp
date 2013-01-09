@@ -2001,6 +2001,14 @@ BluetoothDBusService::SetProperty(BluetoothObjectType aType,
 {
   NS_ASSERTION(NS_IsMainThread(), "Must be called from main thread!");
 
+  if (!IsReady()) {
+    BluetoothValue v;
+    nsString errorStr;
+    errorStr.AssignLiteral("Bluetooth service is not ready yet!");
+    DispatchBluetoothReply(aRunnable, v, errorStr);
+    return NS_OK;
+  }
+
   MOZ_ASSERT(aType < ArrayLength(sBluetoothDBusIfaces));
   const char* interface = sBluetoothDBusIfaces[aType];
 
@@ -2489,7 +2497,7 @@ BluetoothDBusService::IsConnected(const uint16_t aProfileId)
     return hfp->GetConnectionStatus() == SocketConnectionStatus::SOCKET_CONNECTED;
   } else if (aProfileId == BluetoothServiceClass::OBJECT_PUSH) {
     BluetoothOppManager* opp = BluetoothOppManager::Get();
-    return opp->GetConnectionStatus() == SocketConnectionStatus::SOCKET_CONNECTED;
+    return opp->IsTransferring();
   }
 
   return false;

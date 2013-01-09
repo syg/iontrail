@@ -11,6 +11,7 @@
 #include <stddef.h>
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/GuardObjects.h"
 #include "mozilla/HashFunctions.h"
 
 #include "js/Utility.h"
@@ -234,7 +235,7 @@ class SPSProfiler
                          mjit::JITChunk *chunk, void* address);
     bool registerICCode(mjit::JITChunk *chunk, UnrootedScript script, jsbytecode* pc,
                         void *start, size_t size);
-    jsbytecode *ipToPC(UnrootedScript script, size_t ip);
+    jsbytecode *ipToPC(RawScript script, size_t ip);
 
   private:
     JMChunkInfo *registerScript(mjit::JSActiveFrame *frame,
@@ -243,7 +244,7 @@ class SPSProfiler
     void unregisterScript(UnrootedScript script, mjit::JITChunk *chunk);
   public:
 #else
-    jsbytecode *ipToPC(UnrootedScript script, size_t ip) { return NULL; }
+    jsbytecode *ipToPC(RawScript script, size_t ip) { return NULL; }
 #endif
 
     void setProfilingStack(ProfileEntry *stack, uint32_t *size, uint32_t max);
@@ -262,12 +263,15 @@ class SPSProfiler
  */
 class SPSEntryMarker
 {
+  public:
+    SPSEntryMarker(JSRuntime *rt
+                   MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+    ~SPSEntryMarker();
+
+  private:
     SPSProfiler *profiler;
     mozilla::DebugOnly<uint32_t> size_before;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-  public:
-    SPSEntryMarker(JSRuntime *rt JS_GUARD_OBJECT_NOTIFIER_PARAM);
-    ~SPSEntryMarker();
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 /*

@@ -484,7 +484,8 @@ public:
   void LogSelf(const char* aPrefix="");
 
   void StartFrameTimeRecording();
-  void StopFrameTimeRecording(nsTArray<float>& aTimes);
+  void SetPaintStartTime(TimeStamp& aTime);
+  void StopFrameTimeRecording(nsTArray<float>& aFrameTimes, nsTArray<float>& aProcessingTimes);
 
   void PostPresent();
 
@@ -516,7 +517,9 @@ protected:
   bool mInTransaction;
 private:
   TimeStamp mLastFrameTime;
-  nsTArray<float> mFrameTimes;
+  TimeStamp mPaintStartTime;
+  nsTArray<float> mFrameIntervals;
+  nsTArray<float> mPaintTimes;
   TimeStamp mTabSwitchStart;
 };
 
@@ -1311,8 +1314,20 @@ public:
     if (mPreXScale == aXScale && mPreYScale == aYScale) {
       return;
     }
+
     mPreXScale = aXScale;
     mPreYScale = aYScale;
+    Mutated();
+  }
+
+  void SetInheritedScale(float aXScale, float aYScale)
+  { 
+    if (mInheritedXScale == aXScale && mInheritedYScale == aYScale) {
+      return;
+    }
+
+    mInheritedXScale = aXScale;
+    mInheritedYScale = aYScale;
     Mutated();
   }
 
@@ -1329,6 +1344,8 @@ public:
   const FrameMetrics& GetFrameMetrics() { return mFrameMetrics; }
   float GetPreXScale() { return mPreXScale; }
   float GetPreYScale() { return mPreYScale; }
+  float GetInheritedXScale() { return mInheritedXScale; }
+  float GetInheritedYScale() { return mInheritedYScale; }
 
   MOZ_LAYER_DECL_NAME("ContainerLayer", TYPE_CONTAINER)
 
@@ -1381,6 +1398,8 @@ protected:
       mLastChild(nullptr),
       mPreXScale(1.0f),
       mPreYScale(1.0f),
+      mInheritedXScale(1.0f),
+      mInheritedYScale(1.0f),
       mUseIntermediateSurface(false),
       mSupportsComponentAlphaChildren(false),
       mMayHaveReadbackChild(false)
@@ -1406,6 +1425,10 @@ protected:
   FrameMetrics mFrameMetrics;
   float mPreXScale;
   float mPreYScale;
+  // The resolution scale inherited from the parent layer. This will already
+  // be part of mTransform.
+  float mInheritedXScale;
+  float mInheritedYScale;
   bool mUseIntermediateSurface;
   bool mSupportsComponentAlphaChildren;
   bool mMayHaveReadbackChild;

@@ -16,13 +16,10 @@
  */
 
 interface Attr;
-interface CDATASection;
 interface Comment;
 interface NodeIterator;
-interface ProcessingInstruction;
 interface Range;
 interface StyleSheetList;
-interface Text;
 interface Touch;
 interface TouchList;
 interface TreeWalker;
@@ -377,8 +374,18 @@ http://dev.w3.org/csswg/cssom-view/#extensions-to-the-document-interface
 partial interface Document {
 */
     Element? elementFromPoint (float x, float y);
-    //(Not implemented)CaretPosition? caretPositionFromPoint (float x, float y);
-/*};
+
+    CaretPosition? caretPositionFromPoint (float x, float y);
+/*
+};
+
+http://dvcs.w3.org/hg/undomanager/raw-file/tip/undomanager.html
+partial interface Document {
+*/
+    [Pref="dom.undo_manager.enabled"]
+    readonly attribute UndoManager? undoManager;
+/*
+};
 
 http://dev.w3.org/2006/webapi/selectors-api2/#interface-definitions
 partial interface Document {
@@ -443,8 +450,17 @@ partial interface Document {
                     optional long radiusY = 0,
                     optional float rotationAngle = 0,
                     optional float force = 0);
+  // XXXbz a hack to get around the fact that we don't support variadics as
+  // distinguishing arguments yet.  Once this hack is removed. we can also
+  // remove the corresponding overload on nsIDocument, since Touch... and
+  // sequence<Touch> look the same in the C++.
   [Creator, Pref="dom.w3c_touch_events.expose"]
-  TouchList createTouchList(Touch touch);
+  TouchList createTouchList(Touch touch, Touch... touches);
+  // XXXbz and another hack for the fact that we can't usefully have optional
+  // distinguishing arguments but need a working zero-arg form of
+  // createTouchList().
+  [Creator, Pref="dom.w3c_touch_events.expose"]
+  TouchList createTouchList();
   [Creator, Pref="dom.w3c_touch_events.expose"]
   TouchList createTouchList(sequence<Touch> touches);
   */

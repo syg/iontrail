@@ -74,7 +74,8 @@ private:
                            const nsAString &aNewValue,                  \
                            const nsACString &aGUID);                    \
   NS_IMETHOD OnDeleteVisits(nsIURI* aURI, PRTime aVisitTime,            \
-                            const nsACString& aGUID, uint16_t aReason);
+                            const nsACString& aGUID, uint16_t aReason,  \
+                            uint32_t aTransitionType);
 
 // The internal version has an output aAdded parameter, it is incremented by
 // query nodes when the visited uri belongs to them. If no such query exists,
@@ -381,6 +382,9 @@ public:
 
   // Hidden status of the page.  Valid only for URI nodes.
   bool mHidden;
+
+  // Transition type used when this node represents a single visit.
+  int32_t mTransitionType;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryResultNode, NS_NAVHISTORYRESULTNODE_IID)
@@ -748,6 +752,9 @@ public:
   nsresult NotifyIfTagsChanged(nsIURI* aURI);
 
   uint32_t mBatchChanges;
+
+  // Tracks transition type filters shared by all mQueries.
+  nsTArray<uint32_t> mTransitions;
 };
 
 
