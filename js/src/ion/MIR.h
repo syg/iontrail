@@ -63,7 +63,6 @@ class MNode;
 class MUse;
 class MIRGraph;
 class MResumePoint;
-class MCall;
 
 static inline bool isOSRLikeValue (MDefinition *def);
 
@@ -4528,12 +4527,16 @@ class InlinePropertyTable : public TempObject
         return entries_[i]->func;
     }
 
-    void trimToTargets(AutoObjectVector &targets) {
+    void trimToAndMaybePatchTargets(AutoObjectVector &targets, AutoObjectVector &originals) {
         size_t i = 0;
         while (i < numEntries()) {
             bool foundFunc = false;
-            for (size_t j = 0; j < targets.length(); j++) {
-                if (entries_[i]->func == targets[j]) {
+            // Compare using originals, but if we find a matching function,
+            // patch it to the target, which might be a clone.
+            for (size_t j = 0; j < originals.length(); j++) {
+                if (entries_[i]->func == originals[j]) {
+                    if (entries_[i]->func != targets[j])
+                        entries_[i] = new Entry(entries_[i]->typeObj, targets[j]->toFunction());
                     foundFunc = true;
                     break;
                 }

@@ -957,8 +957,7 @@ IonGetsFirstChance(JSContext *cx, JSScript *script, CompileRequest request)
         return false;
 
     // If we cannot enter Ion because bailouts are expected, let JM take over.
-    if (script->hasIonScript() &&
-        script->ion->bailoutExpected())
+    if (script->hasIonScript() && script->ion->bailoutExpected())
         return false;
 
     // If ion compilation is pending or in progress on another thread, continue
@@ -4632,6 +4631,11 @@ mjit::Compiler::inlineScriptedFunction(uint32_t argc, bool callingNew)
     for (unsigned i = 0; i < ssa.numFrames(); i++) {
         if (ssa.iterFrame(i).parent == a->inlineIndex && ssa.iterFrame(i).parentpc == PC) {
             JSScript *script_ = ssa.iterFrame(i).script;
+
+            /* Don't inline if any of the callees should be cloned at callsite. */
+            if (script_->function()->isCloneAtCallsite())
+                return Compile_InlineAbort;
+
             inlineCallees.append(script_);
             if (script_->analysis()->numReturnSites() > 1)
                 calleeMultipleReturns = true;

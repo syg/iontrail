@@ -85,6 +85,13 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
     RootedFunction fun(cx, obj->toFunction());
 
     /*
+     * Callsite clones should never escape to script, so get the original
+     * function.
+     */
+    if (fun->isCallsiteClone())
+        fun = fun->getExtendedSlot(0).toObject().toFunction();
+
+    /*
      * Mark the function's script as uninlineable, to expand any of its
      * frames on the stack before we go looking for them. This allows the
      * below walk to only check each explicit frame rather than needing to

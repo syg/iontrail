@@ -187,14 +187,9 @@ class IonBuilder : public MIRGenerator
         return js_IonOptions.inlining;
     }
 
-    bool getSingleCallTarget(uint32_t argc, jsbytecode *pc, MutableHandleFunction target,
-                             bool *isClone = NULL);
-    bool getSingleCallTarget(types::StackTypeSet *calleeTypes, MutableHandleFunction target,
-                             bool *isClone = NULL);
-    bool getPolyCallTargets(uint32_t argc, jsbytecode *pc, AutoObjectVector &targets,
-                            uint32_t maxTargets, bool *hasClones = NULL);
-    bool getPolyCallTargets(types::StackTypeSet *calleeTypes, AutoObjectVector &targets,
-                            uint32_t maxTargets, bool *hasClones = NULL);
+    JSFunction *getSingleCallTarget(uint32_t argc, jsbytecode *pc);
+    unsigned getPolyCallTargets(uint32_t argc, jsbytecode *pc,
+                                AutoObjectVector &targets, uint32_t maxTargets);
     bool canInlineTarget(JSFunction *target);
 
     void popCfgStack();
@@ -329,7 +324,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_notearg();
     bool jsop_funcall(uint32_t argc);
     bool jsop_funapply(uint32_t argc);
-    bool jsop_funapplyarguments(uint32_t argc, types::StackTypeSet *funTypes);
+    bool jsop_funapplyarguments(uint32_t argc);
     bool jsop_call(uint32_t argc, bool constructing);
     bool jsop_ifeq(JSOp op);
     bool jsop_condswitch();
@@ -444,7 +439,8 @@ class IonBuilder : public MIRGenerator
     bool jsop_call_inline(HandleFunction callee, uint32_t argc, bool constructing,
                           MConstant *constFun, MBasicBlock *bottom,
                           Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns);
-    bool inlineScriptedCall(AutoObjectVector &targets, uint32_t argc, bool constructing,
+    bool inlineScriptedCall(AutoObjectVector &targets, AutoObjectVector &originals,
+                            uint32_t argc, bool constructing,
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
     bool makeInliningDecision(AutoObjectVector &targets, uint32_t argc);
 
@@ -477,7 +473,7 @@ class IonBuilder : public MIRGenerator
     MGetPropertyCache *checkInlineableGetPropertyCache(uint32_t argc);
 
     MPolyInlineDispatch *
-    makePolyInlineDispatch(JSContext *cx, AutoObjectVector &targets, int argc,
+    makePolyInlineDispatch(JSContext *cx, int argc,
                            MGetPropertyCache *getPropCache,
                            types::StackTypeSet *types, types::StackTypeSet *barrier,
                            MBasicBlock *bottom,

@@ -67,8 +67,8 @@ struct UncachedCallResult {
     UncachedCallResult(JSContext *cx) : fun(cx), original(cx) {}
 
     void init() {
-        original = NULL;
         fun = NULL;
+        original = NULL;
         codeAddr = NULL;
         unjittable = false;
     }
