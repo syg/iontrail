@@ -257,12 +257,15 @@ ForkJoinShared::execute()
     while (uncompleted_ > 0)
         lock.wait();
 
+    bool gcWasRequested = gcRequested_; // transfer clears gcRequested_ flag.
     transferArenasToCompartmentAndProcessGCRequests();
 
     // Check if any of the workers failed.
     if (abort_) {
         if (fatal_)
             return TP_FATAL;
+        else if (gcWasRequested)
+            return TP_RETRY_AFTER_GC;
         else
             return TP_RETRY_SEQUENTIALLY;
     }
