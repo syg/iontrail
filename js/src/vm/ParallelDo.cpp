@@ -444,7 +444,11 @@ class ParallelDo : public ForkJoinOp
 
             ParallelResult result = js::ExecuteForkJoinOp(cx_, *this);
             switch (result) {
+              case TP_RETRY_AFTER_GC:
+                Spew(SpewBailouts, "Bailout due to GC request");
+                break;
               case TP_RETRY_SEQUENTIALLY:
+                Spew(SpewBailouts, "Bailout not categorized");
                 break;
 
               case TP_SUCCESS:

@@ -130,7 +130,7 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     void requestCompartmentGC(JSCompartment *compartment, gcreason::Reason reason);
 
     // Requests that computation abort.
-    void abort();
+    void setAbortFlag();
 
     JSRuntime *runtime() { return cx_->runtime; }
 };
@@ -257,12 +257,15 @@ ForkJoinShared::execute()
     while (uncompleted_ > 0)
         lock.wait();
 
+    bool gcWasRequested = gcRequested_; // transfer clears gcRequested_ flag.
     transferArenasToCompartmentAndProcessGCRequests();
 
     // Check if any of the workers failed.
     if (abort_) {
         if (fatal_)
             return TP_FATAL;
+        else if (gcWasRequested)
+            return TP_RETRY_AFTER_GC;
         else
             return TP_RETRY_SEQUENTIALLY;
     }
@@ -325,7 +328,7 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
     AutoSetForkJoinSlice autoContext(&slice);
 
     if (!op_.parallel(slice))
-        abort();
+        setAbortFlag();
 }
 
 bool
@@ -333,7 +336,7 @@ ForkJoinShared::setFatal()
 {
     // Might as well set the abort flag to true, as it will make propagation
     // faster.
-    abort();
+    setAbortFlag();
     fatal_ = true;
     return false;
 }
@@ -358,7 +361,7 @@ ForkJoinShared::check(ForkJoinSlice &slice)
             // AutoRendezvous autoRendezvous(slice);
             // if (!js_HandleExecutionInterrupt(cx_))
             //     return setFatal();
-            abort();
+            setAbortFlag();
             return false;
         }
     } else if (rendezvous_) {
@@ -450,7 +453,7 @@ ForkJoinShared::endRendezvous(ForkJoinSlice &slice)
 }
 
 void
-ForkJoinShared::abort()
+ForkJoinShared::setAbortFlag()
 {
     abort_ = true;
 }
@@ -575,7 +578,7 @@ ForkJoinSlice::requestCompartmentGC(JSCompartment *compartment,
 void
 ForkJoinSlice::triggerAbort()
 {
-    shared->abort();
+    shared->setAbortFlag();
 
     // set iontracklimit to -1 so that on next entry to a function,
     // the thread will trigger the overrecursedcheck.  If the thread
