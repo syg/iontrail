@@ -4509,7 +4509,6 @@ CodeGenerator::visitOutOfLineCallsiteCloneCache(OutOfLineCache *ool)
                                 callee, mir->block()->info().script(), mir->callPc(), output);
 
     JS_ASSERT(!mir->resumePoint());
-    cache.setIdempotent();
 
     size_t cacheIndex = allocateCache(cache);
 

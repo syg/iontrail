@@ -689,7 +689,7 @@ class TypeConstraintCall : public TypeConstraint
     const char *kind() { return "call"; }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
-    bool newTypeTail(JSContext *cx, HandleFunction callee, HandleScript script);
+    bool newCallee(JSContext *cx, HandleFunction callee, HandleScript script);
 };
 
 void
@@ -773,7 +773,7 @@ class TypeConstraintPropagateThis : public TypeConstraint
     const char *kind() { return "propagatethis"; }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
-    bool newTypeTail(JSContext *cx, HandleFunction callee);
+    bool newCallee(JSContext *cx, HandleFunction callee);
 };
 
 void
@@ -1276,7 +1276,7 @@ CloneCallee(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *
 }
 
 bool
-TypeConstraintCall::newTypeTail(JSContext *cx, HandleFunction callee, HandleScript script)
+TypeConstraintCall::newCallee(JSContext *cx, HandleFunction callee, HandleScript script)
 {
     RootedScript calleeScript(cx, callee->nonLazyScript());
     if (!calleeScript->ensureHasTypes(cx))
@@ -1434,15 +1434,15 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
         RootedFunction clone(cx, CloneCallee(cx, callee, script, pc));
         if (!clone)
             return;
-        if (!newTypeTail(cx, clone, script))
+        if (!newCallee(cx, clone, script))
             return;
     }
 
-    newTypeTail(cx, callee, script);
+    newCallee(cx, callee, script);
 }
 
 bool
-TypeConstraintPropagateThis::newTypeTail(JSContext *cx, HandleFunction callee)
+TypeConstraintPropagateThis::newCallee(JSContext *cx, HandleFunction callee)
 {
     if (!callee->nonLazyScript()->ensureHasTypes(cx))
         return false;
@@ -1499,11 +1499,11 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         RootedFunction clone(cx, CloneCallee(cx, callee, script, callpc));
         if (!clone)
             return;
-        if (!newTypeTail(cx, clone))
+        if (!newCallee(cx, clone))
             return;
     }
 
-    newTypeTail(cx, callee);
+    newCallee(cx, callee);
 }
 
 void

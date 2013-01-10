@@ -153,7 +153,6 @@ IonBuilder::getSingleCallTarget(uint32_t argc, jsbytecode *pc)
     return obj->toFunction();
 }
 
-
 uint32_t
 IonBuilder::getPolyCallTargets(uint32_t argc, jsbytecode *pc,
                                AutoObjectVector &targets, uint32_t maxTargets)
@@ -3207,7 +3206,7 @@ IonBuilder::makePolyInlineDispatch(JSContext *cx, int argc, MGetPropertyCache *g
     fallbackBlock->end(MGoto::New(fallbackEndBlock));
 
     // Create Call
-    MCall *call = MCall::New(NULL, argc + 1, argc, false, pc,
+    MCall *call = MCall::New(NULL, argc + 1, argc, false,
                              oracle->getCallTarget(script(), argc, pc));
     if (!call)
         return NULL;
@@ -4087,7 +4086,7 @@ IonBuilder::makeCallHelper(HandleFunction target, bool constructing, bool cloneA
     if (target && !target->isNative())
         targetArgs = Max<uint32_t>(target->nargs, argc);
 
-    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing, pc,
+    MCall *call = MCall::New(target, targetArgs + 1, argc, constructing,
                              target ? NULL : oracle->getCallTarget(script(), argc, pc));
     if (!call)
         return NULL;
