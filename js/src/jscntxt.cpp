@@ -330,7 +330,7 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     // Store a link back to the original for function.caller.
     clone->setExtendedSlot(0, ObjectValue(*fun));
 
-    if (!table.add(p, key, clone.get()))
+    if (!table.relookupOrAdd(p, key, clone.get()))
         return NULL;
 
 #ifdef DEBUG
