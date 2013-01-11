@@ -133,7 +133,7 @@ FindExceptionHandler(JSContext *cx)
 static inline bool
 MaybeCloneAndPatchCallee(JSContext *cx, CallArgs args, HandleScript script, jsbytecode *pc)
 {
-    if (cx->typeInferenceEnabled() &&
+    if (cx->typeInferenceEnabled() && !args.calleev().isPrimitive() &&
         args.callee().isFunction() && args.callee().toFunction()->isCloneAtCallsite())
     {
         RootedFunction fun(cx, args.callee().toFunction());
