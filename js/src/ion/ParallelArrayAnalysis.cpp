@@ -379,8 +379,10 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &grap
                 // If this is the entry block, then there is no point
                 // in even trying to execute this function as it will
                 // always bailout.
-                if (*block == graph.entryBlock())
+                if (*block == graph.entryBlock()) {
+                    Spew(SpewCompile, "Entry block contains unsafe MIR");
                     return false;
+                }
 
                 // Otherwise, create a replacement that will.
                 if (!visitor.convertToBailout(*block, instr))

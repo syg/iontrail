@@ -1111,6 +1111,7 @@ public:
         return SequentialExecution;
     }
 
+    MethodStatus checkScriptSize(JSContext *cx, UnrootedScript script);
     AbortReason compile(IonBuilder *builder, MIRGraph *graph,
                         AutoDestroyAllocator &autoDestroy);
 };
@@ -1385,8 +1386,8 @@ CheckScript(UnrootedScript script)
     return true;
 }
 
-static MethodStatus
-CheckScriptSize(JSContext *cx, UnrootedScript script)
+MethodStatus
+SequentialCompileContext::checkScriptSize(JSContext *cx, UnrootedScript script)
 {
     if (!js_IonOptions.limitScriptSize)
         return Method_Compiled;
@@ -1446,7 +1447,7 @@ Compile(JSContext *cx, HandleScript script, HandleFunction fun, jsbytecode *osrP
         return Method_CantCompile;
     }
 
-    MethodStatus status = CheckScriptSize(cx, script);
+    MethodStatus status = compileContext.checkScriptSize(cx, script);
     if (status != Method_Compiled) {
         IonSpew(IonSpew_Abort, "Aborted compilation of %s:%d", script->filename, script->lineno);
         return status;
@@ -1578,6 +1579,31 @@ ion::CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType)
 }
 
 MethodStatus
+ParallelCompileContext::checkScriptSize(JSContext *cx, UnrootedScript script)
+{
+    if (!js_IonOptions.limitScriptSize)
+        return Method_Compiled;
+
+    // When compiling for parallel execution we don't have off-thread
+    // compilation. We also up the max script size of the kernels.
+    static const uint32_t MAX_SCRIPT_SIZE = 5000;
+    static const uint32_t MAX_LOCALS_AND_ARGS = 256;
+
+    if (script->length > MAX_SCRIPT_SIZE) {
+        IonSpew(IonSpew_Abort, "Script too large (%u bytes)", script->length);
+        return Method_CantCompile;
+    }
+
+    uint32_t numLocalsAndArgs = analyze::TotalSlots(script);
+    if (numLocalsAndArgs > MAX_LOCALS_AND_ARGS) {
+        IonSpew(IonSpew_Abort, "Too many locals and arguments (%u)", numLocalsAndArgs);
+        return Method_CantCompile;
+    }
+
+    return Method_Compiled;
+}
+
+MethodStatus
 ParallelCompileContext::compileTransitively()
 {
     using parallel::SpewBeginCompile;
@@ -1663,8 +1689,9 @@ ParallelCompileContext::compile(IonBuilder *builder,
         return AbortReason_Disable;
     }
 
-    if (!analyzeAndGrowWorklist(builder, *graph))
+    if (!analyzeAndGrowWorklist(builder, *graph)) {
         return AbortReason_Disable;
+    }
 
     CodeGenerator *codegen = GenerateLIR(builder);
     if (!codegen)  {
