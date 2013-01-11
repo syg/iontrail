@@ -816,157 +816,157 @@ OptimizeMIR(MIRGenerator *mir)
     MIRGraph &graph = mir->graph();
 
     if (mir->shouldCancel("Start"))
-        return NULL;
+        return false;
 
     if (!SplitCriticalEdges(graph))
-        return NULL;
+        return false;
     IonSpewPass("Split Critical Edges");
     AssertGraphCoherency(graph);
 
     if (mir->shouldCancel("Split Critical Edges"))
-        return NULL;
+        return false;
 
     if (!RenumberBlocks(graph))
-        return NULL;
+        return false;
     IonSpewPass("Renumber Blocks");
     AssertGraphCoherency(graph);
 
     if (mir->shouldCancel("Renumber Blocks"))
-        return NULL;
+        return false;
 
     if (!BuildDominatorTree(graph))
-        return NULL;
+        return false;
     // No spew: graph not changed.
 
     if (mir->shouldCancel("Dominator Tree"))
-        return NULL;
+        return false;
 
     // This must occur before any code elimination.
     if (!EliminatePhis(mir, graph, AggressiveObservability))
-        return NULL;
+        return false;
     IonSpewPass("Eliminate phis");
     AssertGraphCoherency(graph);
 
     if (mir->shouldCancel("Eliminate phis"))
-        return NULL;
+        return false;
 
     if (!BuildPhiReverseMapping(graph))
-        return NULL;
+        return false;
     AssertExtendedGraphCoherency(graph);
     // No spew: graph not changed.
 
     if (mir->shouldCancel("Phi reverse mapping"))
-        return NULL;
+        return false;
 
     // This pass also removes copies.
     if (!ApplyTypeInformation(mir, graph))
-        return NULL;
+        return false;
     IonSpewPass("Apply types");
     AssertExtendedGraphCoherency(graph);
 
     if (mir->shouldCancel("Apply types"))
-        return NULL;
+        return false;
 
     // Alias analysis is required for LICM and GVN so that we don't move
     // loads across stores.
     if (js_IonOptions.licm || js_IonOptions.gvn) {
         AliasAnalysis analysis(mir, graph);
         if (!analysis.analyze())
-            return NULL;
+            return false;
         IonSpewPass("Alias analysis");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("Alias analysis"))
-            return NULL;
+            return false;
 
         // Eliminating dead resume point operands requires basic block
         // instructions to be numbered. Reuse the numbering computed during
         // alias analysis.
         if (!EliminateDeadResumePointOperands(mir, graph))
-            return NULL;
+            return false;
 
         if (mir->shouldCancel("Eliminate dead resume point operands"))
-            return NULL;
+            return false;
     }
 
     if (js_IonOptions.edgeCaseAnalysis) {
         EdgeCaseAnalysis edgeCaseAnalysis(mir, graph);
         if (!edgeCaseAnalysis.analyzeEarly())
-            return NULL;
+            return false;
         IonSpewPass("Edge Case Analysis (Early)");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("Edge Case Analysis (Early)"))
-            return NULL;
+            return false;
     }
 
     if (js_IonOptions.gvn) {
         ValueNumberer gvn(mir, graph, js_IonOptions.gvnIsOptimistic);
         if (!gvn.analyze())
-            return NULL;
+            return false;
         IonSpewPass("GVN");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("GVN"))
-            return NULL;
+            return false;
     }
 
     if (js_IonOptions.uce) {
         UnreachableCodeElimination uce(mir, graph);
         if (!uce.analyze())
-            return NULL;
+            return false;
         IonSpewPass("UCE");
         AssertExtendedGraphCoherency(graph);
     }
 
     if (mir->shouldCancel("UCE"))
-        return NULL;
+        return false;
 
     if (js_IonOptions.licm) {
         LICM licm(mir, graph);
         if (!licm.analyze())
-            return NULL;
+            return false;
         IonSpewPass("LICM");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("LICM"))
-            return NULL;
+            return false;
     }
 
     if (js_IonOptions.rangeAnalysis) {
         RangeAnalysis r(graph);
         if (!r.addBetaNobes())
-            return NULL;
+            return false;
         IonSpewPass("Beta");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("RA Beta"))
-            return NULL;
+            return false;
 
         if (!r.analyze())
-            return NULL;
+            return false;
         IonSpewPass("Range Analysis");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("Range Analysis"))
-            return NULL;
+            return false;
 
         if (!r.removeBetaNobes())
-            return NULL;
+            return false;
         IonSpewPass("De-Beta");
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("RA De-Beta"))
-            return NULL;
+            return false;
     }
 
     if (!EliminateDeadCode(mir, graph))
-        return NULL;
+        return false;
     IonSpewPass("DCE");
     AssertExtendedGraphCoherency(graph);
 
     if (mir->shouldCancel("DCE"))
-        return NULL;
+        return false;
 
     // Passes after this point must not move instructions; these analyses
     // depend on knowing the final order in which instructions will execute.
@@ -974,12 +974,12 @@ OptimizeMIR(MIRGenerator *mir)
     if (js_IonOptions.edgeCaseAnalysis) {
         EdgeCaseAnalysis edgeCaseAnalysis(mir, graph);
         if (!edgeCaseAnalysis.analyzeLate())
-            return NULL;
+            return false;
         IonSpewPass("Edge Case Analysis (Late)");
         AssertGraphCoherency(graph);
 
         if (mir->shouldCancel("Edge Case Analysis (Late)"))
-            return NULL;
+            return false;
     }
 
     // Note: check elimination has to run after all other passes that move
@@ -987,7 +987,7 @@ OptimizeMIR(MIRGenerator *mir)
     // motion after this pass could incorrectly move a load or store before its
     // bounds check.
     if (!EliminateRedundantChecks(graph))
-        return NULL;
+        return false;
     IonSpewPass("Bounds Check Elimination");
     AssertGraphCoherency(graph);
 
