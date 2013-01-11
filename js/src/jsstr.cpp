@@ -49,7 +49,6 @@
 #include "vm/NumericConversions.h"
 #include "vm/RegExpObject.h"
 #include "vm/StringBuffer.h"
-#include "vm/ForkJoin-inl.h"
 
 #include "jsinferinlines.h"
 #include "jsinterpinlines.h"

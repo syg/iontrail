@@ -26,8 +26,6 @@
 #include "jsobjinlines.h"
 #include "jsarrayinlines.h"
 
-#include "vm/ForkJoin-inl.h"
-
 using namespace js;
 
 //

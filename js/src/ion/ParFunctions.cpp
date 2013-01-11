@@ -15,8 +15,6 @@
 
 #include "vm/ParallelDo.h"
 
-#include "vm/ForkJoin-inl.h"
-
 using namespace js;
 using namespace ion;
 

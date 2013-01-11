@@ -19,7 +19,6 @@
 #include "vm/ForkJoin.h"
 
 #include "vm/Stack-inl.h"
-#include "vm/ForkJoin-inl.h"
 
 using namespace js;
 using namespace JS;

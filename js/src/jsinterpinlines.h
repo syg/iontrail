@@ -26,7 +26,6 @@
 #include "jsopcodeinlines.h"
 #include "jspropertycacheinlines.h"
 #include "jstypedarrayinlines.h"
-#include "vm/ForkJoin-inl.h"
 
 #ifdef JS_ION
 #include "ion/Ion.h"

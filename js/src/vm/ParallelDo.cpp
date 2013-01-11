@@ -19,7 +19,6 @@
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 #include "jsarrayinlines.h"
-#include "vm/ForkJoin-inl.h"
 
 #include "ion/Ion.h"
 #include "ion/MIR.h"
