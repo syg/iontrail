@@ -232,6 +232,10 @@ stubs::FixupArity(VMFrame &f, uint32_t nactual)
 
     /* Reserve enough space for a callee frame. */
     CallArgs args = CallArgsFromSp(nactual, f.regs.sp);
+    if (fun->isCallsiteClone()) {
+        JS_ASSERT(args.callee().toFunction() == fun->getExtendedSlot(0).toObject().toFunction());
+        args.setCallee(ObjectValue(*fun));
+    }
     StackFrame *fp = cx->stack.getFixupFrame(cx, DONT_REPORT_ERROR, args, fun,
                                              script, ncode, initial, &f.stackLimit);
 

@@ -1250,11 +1250,6 @@ class CallCompiler : public BaseCompiler
         // Load the clone.
         masm.move(ImmPtr(fun), ic.funObjReg);
 
-        // Patch up the callee on the stack.
-        CallArgs args = CallArgsFromSp(fun->nargs, f.regs.sp);
-        uint32_t vpOffset = (uint32_t) ((char *) args.base() - (char *) f.fp());
-        masm.storeValue(ObjectValue(*fun), Address(JSFrameReg, vpOffset));
-
         // Jump back to the first fun guard.
         Jump done = masm.jump();
 
