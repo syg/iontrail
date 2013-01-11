@@ -236,7 +236,6 @@ ion::CheckLogging()
             "  pools      Literal Pools (ARM only for now)\n"
             "  cacheflush Instruction Cache flushes (ARM only for now)\n"
             "  logs       C1 and JSON visualization logging\n"
-            "  pararr     ParallelArray logging\n"
             "  trace      Generate calls to js::ion::Trace() for effectful instructions\n"
             "  all        Everything\n"
             "\n"

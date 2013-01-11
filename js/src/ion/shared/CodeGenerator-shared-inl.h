@@ -126,7 +126,6 @@ CodeGeneratorShared::saveLive(LInstruction *ins)
 {
     JS_ASSERT(!ins->isCall());
     LSafepoint *safepoint = ins->safepoint();
-    JS_ASSERT(safepoint != NULL);
     masm.PushRegsInMask(safepoint->liveRegs());
 }
 
@@ -135,7 +134,6 @@ CodeGeneratorShared::restoreLive(LInstruction *ins)
 {
     JS_ASSERT(!ins->isCall());
     LSafepoint *safepoint = ins->safepoint();
-    JS_ASSERT(safepoint != NULL);
     masm.PopRegsInMask(safepoint->liveRegs());
 }
 
@@ -144,7 +142,6 @@ CodeGeneratorShared::restoreLiveIgnore(LInstruction *ins, RegisterSet ignore)
 {
     JS_ASSERT(!ins->isCall());
     LSafepoint *safepoint = ins->safepoint();
-    JS_ASSERT(safepoint != NULL);
     masm.PopRegsInMaskIgnore(safepoint->liveRegs(), ignore);
 }
 

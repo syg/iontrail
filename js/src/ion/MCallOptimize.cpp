@@ -370,7 +370,7 @@ IonBuilder::inlineArrayConcat(uint32_t argc, bool constructing)
     if (types::ArrayPrototypeHasIndexedProperty(cx, script))
         return InliningStatus_NotInlined;
 
-    // Require the |this| types to have a specific type matching the current
+    // Require the 'this' types to have a specific type matching the current
     // global, so we can create the result object inline.
     if (thisTypes->getObjectCount() != 1)
         return InliningStatus_NotInlined;

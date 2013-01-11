@@ -353,8 +353,8 @@ StringFromMIRType(MIRType type)
       return "Elements";
     case MIRType_StackFrame:
       return "StackFrame";
-    case MIRType_ThreadContext:
-      return "ThreadContext";
+    case MIRType_ForkJoinSlice:
+      return "ForkJoinSlice";
     default:
       JS_NOT_REACHED("Unknown MIRType.");
       return "";

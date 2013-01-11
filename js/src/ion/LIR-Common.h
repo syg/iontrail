@@ -3797,6 +3797,7 @@ class LFunctionBoundary : public LInstructionHelper<0, 0, 1>
     }
 };
 
+
 } // namespace ion
 } // namespace js
 

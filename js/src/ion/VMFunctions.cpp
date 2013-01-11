@@ -321,8 +321,7 @@ ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 {
     JS_ASSERT(obj->isDenseArray());
 
-    AutoDetectInvalidation adi(cx, rval.address(),
-                               GetTopIonJSScript(cx)->ionScript());
+    AutoDetectInvalidation adi(cx, rval.address());
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj) };
     AutoValueArray ava(cx, argv, 2);
@@ -356,8 +355,7 @@ ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 {
     JS_ASSERT(obj->isDenseArray());
 
-    AutoDetectInvalidation adi(cx, rval.address(),
-                               GetTopIonJSScript(cx)->ionScript());
+    AutoDetectInvalidation adi(cx, rval.address());
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj) };
     AutoValueArray ava(cx, argv, 2);

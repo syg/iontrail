@@ -3140,8 +3140,8 @@ class MParCheckOverRecursed : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(ParCheckOverRecursed);
 
-    MParCheckOverRecursed(MDefinition *parThreadContext)
-      : MUnaryInstruction(parThreadContext)
+    MParCheckOverRecursed(MDefinition *parForkJoinSlice)
+      : MUnaryInstruction(parForkJoinSlice)
     {
         setResultType(MIRType_None);
         setGuard();
@@ -3159,8 +3159,8 @@ class MParCheckInterrupt : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(ParCheckInterrupt);
 
-    MParCheckInterrupt(MDefinition *parThreadContext)
-      : MUnaryInstruction(parThreadContext)
+    MParCheckInterrupt(MDefinition *parForkJoinSlice)
+      : MUnaryInstruction(parForkJoinSlice)
     {
         setResultType(MIRType_None);
         setGuard();
@@ -5037,8 +5037,8 @@ class MFunctionEnvironment
     }
 };
 
-// Load's the current js::ThreadContext*.
-// Only applicable in COMPILE_MODE_PAR.
+// Load's the current js::ForkJoinSlice*.
+// Only applicable in ParallelExecution.
 class MParSlice
   : public MNullaryInstruction
 {
@@ -5046,7 +5046,7 @@ class MParSlice
     MParSlice()
         : MNullaryInstruction()
     {
-        setResultType(MIRType_ThreadContext);
+        setResultType(MIRType_ForkJoinSlice);
     }
 
     INSTRUCTION_HEADER(ParSlice);

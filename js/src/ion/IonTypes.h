@@ -69,7 +69,7 @@ enum MIRType
     MIRType_Elements,     // An elements vector
     MIRType_StackFrame,   // StackFrame pointer for OSR.
     MIRType_Shape,        // A Shape pointer.
-    MIRType_ThreadContext // js::ThreadContext*
+    MIRType_ForkJoinSlice // js::ForkJoinSlice*
 };
 
 #ifdef DEBUG
