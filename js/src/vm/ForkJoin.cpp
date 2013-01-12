@@ -30,8 +30,9 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     JSContext *const cx_;          // Current context
     ThreadPool *const threadPool_; // The thread pool.
     ForkJoinOp &op_;               // User-defined operations to be perf. in par.
-    const uint32_t numSlices_;    // Total number of threads.
+    const uint32_t numSlices_;     // Total number of threads.
     PRCondVar *rendezvousEnd_;     // Cond. var used to signal end of rendezvous.
+    PRLock *cxLock_;               // Locks cx_ for parallel VM calls.
 
     /////////////////////////////////////////////////////////////////////////
     // Per-thread arenas
@@ -132,6 +133,8 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     void setAbortFlag();
 
     JSRuntime *runtime() { return cx_->runtime; }
+    JSContext *acquireContext() { PR_Lock(cxLock_); return cx_; }
+    void releaseContext() { PR_Unlock(cxLock_); }
 };
 
 class js::AutoRendezvous
@@ -208,6 +211,10 @@ ForkJoinShared::init()
 
     rendezvousEnd_ = PR_NewCondVar(lock_);
     if (!rendezvousEnd_)
+        return false;
+
+    cxLock_ = PR_NewLock();
+    if (!cxLock_)
         return false;
 
     for (unsigned i = 0; i < numSlices_; i++) {
@@ -521,6 +528,24 @@ ForkJoinSlice::runtime()
     return shared->runtime();
 #else
     return NULL;
+#endif
+}
+
+JSContext *
+ForkJoinSlice::acquireContext()
+{
+#ifdef JS_THREADSAFE
+    return shared->acquireContext();
+#else
+    return NULL;
+#endif
+}
+
+void
+ForkJoinSlice::releaseContext()
+{
+#ifdef JS_THREADSAFE
+    return shared->releaseContext();
 #endif
 }
 
