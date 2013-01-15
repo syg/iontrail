@@ -24,7 +24,6 @@
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
-#include "jsarrayinlines.h"
 
 using namespace js;
 

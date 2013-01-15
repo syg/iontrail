@@ -150,6 +150,7 @@ function MarionetteDriverActor(aConnection)
   this.curBrowser = null; // points to current browser
   this.context = "content";
   this.scriptTimeout = null;
+  this.pageTimeout = null;
   this.timer = null;
   this.marionetteLog = new MarionetteLogObj();
   this.marionettePerf = new MarionettePerfData();
@@ -940,19 +941,32 @@ MarionetteDriverActor.prototype = {
     let command_id = this.command_id = this.getCommandId();
     if (this.context != "chrome") {
       aRequest.command_id = command_id;
+      aRequest.pageTimeout = this.pageTimeout;
       this.sendAsync("goUrl", aRequest);
       return;
     }
 
     this.getCurrentWindow().location.href = aRequest.value;
     let checkTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+    let start = new Date().getTime();
+    let end = null;
     function checkLoad() { 
-      if (curWindow.document.readyState == "complete") { 
-        sendOk(command_id);
+      end = new Date().getTime();
+      let elapse = end - start;
+      if (this.pageTimeout == null || elapse <= this.pageTimeout){
+        if (curWindow.document.readyState == "complete") { 
+          sendOk(command_id);
+          return;
+        }
+        else{ 
+          checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
+        }
+      }
+      else{
+        sendError("Error loading page", 13, null, command_id);
         return;
-      } 
-      checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
-    }
+      }
+    }//end
     checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
   },
 
@@ -1206,6 +1220,37 @@ MarionetteDriverActor.prototype = {
     }
   },
 
+/**
+   * Set timeout for page loading, searching and scripts
+   *
+   * @param object aRequest
+   *        'type' hold the type of timeout
+   *        'ms' holds the timeout in milliseconds
+   */
+  timeouts: function MDA_timeouts(aRequest){
+    /*setTimeout*/
+    this.command_id = this.getCommandId();
+    let timeout_type = aRequest.timeoutType;
+    let timeout = parseInt(aRequest.ms);
+    if (isNaN(timeout)) {
+      this.sendError("Not a Number", 500, null, this.command_id);
+    }
+    else {
+      if (timeout_type == "implicit") {
+        aRequest.value = aRequest.ms;
+        this.setSearchTimeout(aRequest);
+      }
+      else if (timeout_type == "script") {
+        aRequest.value = aRequest.ms;
+        this.setScriptTimeout(aRequest);
+      }
+      else {
+        this.pageTimeout = timeout;
+        this.sendOk(this.command_id);
+      }
+    }
+  },
+
   /**
    * Find an element using the indicated search strategy.
    *
@@ -1276,8 +1321,16 @@ MarionetteDriverActor.prototype = {
   },
 
   /**
+   * Return the active element on the page
+   */
+  getActiveElement: function MDA_getActiveElement(){
+    let command_id = this.command_id = this.getCommandId();
+    this.sendAsync("getActiveElement", {command_id: command_id});
+  },
+
+  /**
    * Send click event to element
-   * 
+   *
    * @param object aRequest
    *        'element' member holds the reference id to
    *        the element that will be clicked
@@ -1928,6 +1981,7 @@ MarionetteDriverActor.prototype.requestTypes = {
   "setContext": MarionetteDriverActor.prototype.setContext,
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
+  "timeouts": MarionetteDriverActor.prototype.timeouts,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeWithCallback,
   "executeJSScript": MarionetteDriverActor.prototype.executeJSScript,
   "setSearchTimeout": MarionetteDriverActor.prototype.setSearchTimeout,
@@ -1965,7 +2019,8 @@ MarionetteDriverActor.prototype.requestTypes = {
   "addCookie": MarionetteDriverActor.prototype.addCookie,
   "getAllCookies": MarionetteDriverActor.prototype.getAllCookies,
   "deleteAllCookies": MarionetteDriverActor.prototype.deleteAllCookies,
-  "deleteCookie": MarionetteDriverActor.prototype.deleteCookie
+  "deleteCookie": MarionetteDriverActor.prototype.deleteCookie,
+  "getActiveElement": MarionetteDriverActor.prototype.getActiveElement
 };
 
 /**

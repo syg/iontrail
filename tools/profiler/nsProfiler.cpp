@@ -11,24 +11,72 @@
 #include "sampler.h"
 #include "nsProfiler.h"
 #include "nsMemory.h"
-#include "shared-libraries.h"
 #include "nsString.h"
+#include "mozilla/Services.h"
+#include "nsIObserverService.h"
+#include "nsIInterfaceRequestor.h"
+#include "nsILoadContext.h"
+#include "nsIWebNavigation.h"
+#include "nsIInterfaceRequestorUtils.h"
+#include "shared-libraries.h"
 #include "jsapi.h"
 
 using std::string;
 
 NS_IMPL_ISUPPORTS1(nsProfiler, nsIProfiler)
 
-
 nsProfiler::nsProfiler()
+  : mLockedForPrivateBrowsing(false)
 {
 }
 
+nsProfiler::~nsProfiler()
+{
+  nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
+  if (observerService) {
+    observerService->RemoveObserver(this, "chrome-document-global-created");
+    observerService->RemoveObserver(this, "last-pb-context-exited");
+  }
+}
+
+nsresult
+nsProfiler::Init() {
+  nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
+  if (observerService) {
+    observerService->AddObserver(this, "chrome-document-global-created", false);
+    observerService->AddObserver(this, "last-pb-context-exited", false);
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsProfiler::Observe(nsISupports *aSubject,
+                    const char *aTopic,
+                    const PRUnichar *aData)
+{
+  if (strcmp(aTopic, "chrome-document-global-created") == 0) {
+    nsCOMPtr<nsIInterfaceRequestor> requestor = do_QueryInterface(aSubject);
+    nsCOMPtr<nsIWebNavigation> parentWebNav = do_GetInterface(requestor);
+    nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(parentWebNav);
+    if (loadContext && loadContext->UsePrivateBrowsing() && !mLockedForPrivateBrowsing) {
+      mLockedForPrivateBrowsing = true;
+      mozilla_sampler_lock();
+    }
+  } else if (strcmp(aTopic, "last-pb-context-exited") == 0) {
+    mLockedForPrivateBrowsing = false;
+    mozilla_sampler_unlock();
+  }
+  return NS_OK;
+}
 
 NS_IMETHODIMP
 nsProfiler::StartProfiler(uint32_t aEntries, uint32_t aInterval,
                           const char** aFeatures, uint32_t aFeatureCount)
 {
+  if (mLockedForPrivateBrowsing) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   SAMPLER_START(aEntries, aInterval, aFeatures, aFeatureCount);
 #ifdef MOZ_INSTRUMENT_EVENT_LOOP
   mozilla::InitEventTracing();
@@ -73,10 +121,28 @@ AddSharedLibraryInfoToStream(std::ostream& aStream, const SharedLibrary& aLib)
   aStream << ",\"end\":" << aLib.GetEnd();
   aStream << ",\"offset\":" << aLib.GetOffset();
   aStream << ",\"name\":\"" << aLib.GetName() << "\"";
+  const std::string &breakpadId = aLib.GetBreakpadId();
+  aStream << ",\"breakpadId\":\"" << breakpadId << "\"";
 #ifdef XP_WIN
-  aStream << ",\"pdbSignature\":\"" << aLib.GetPdbSignature().ToString() << "\"";
-  aStream << ",\"pdbAge\":" << aLib.GetPdbAge();
-  aStream << ",\"pdbName\":\"" << aLib.GetPdbName() << "\"";
+  // FIXME: remove this XP_WIN code when the profiler plugin has switched to
+  // using breakpadId.
+  std::string pdbSignature = breakpadId.substr(0, 32);
+  std::string pdbAgeStr = breakpadId.substr(32,  breakpadId.size() - 1);
+
+  std::stringstream stream;
+  stream << std::hex << pdbAgeStr;
+  unsigned pdbAge;
+  stream >> pdbAge;
+
+#ifdef DEBUG
+  std::ostringstream oStream;
+  oStream << pdbSignature << std::hex << pdbAge;
+  MOZ_ASSERT(breakpadId == oStream.str());
+#endif
+
+  aStream << ",\"pdbSignature\":\"" << pdbSignature << "\"";
+  aStream << ",\"pdbAge\":" << pdbAge;
+  aStream << ",\"pdbName\":\"" << aLib.GetName() << "\"";
 #endif
   aStream << "}";
 }
@@ -107,8 +173,6 @@ nsProfiler::GetSharedLibraryInformation(nsAString& aOutString)
   aOutString.Assign(NS_ConvertUTF8toUTF16(GetSharedLibraryInfoString().c_str()));
   return NS_OK;
 }
-
-
 
 NS_IMETHODIMP nsProfiler::GetProfileData(JSContext* aCx, jsval* aResult)
 {

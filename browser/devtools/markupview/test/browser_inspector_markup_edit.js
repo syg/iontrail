@@ -37,10 +37,10 @@ function test() {
   function editField(aField, aValue)
   {
     aField.focus();
-    EventUtils.sendKey("return");
+    EventUtils.sendKey("return", inspector.panelWin);
     let input = inplaceEditor(aField).input;
     input.value = aValue;
-    input.blur();
+    EventUtils.sendKey("return", inspector.panelWin);
   }
 
   function assertAttributes(aElement, aAttributes)
@@ -62,7 +62,8 @@ function test() {
           class: "node1"
         });
       },
-      execute: function() {
+      execute: function(after) {
+        inspector.once("markupmutation", after);
         let editor = markup.getContainer(doc.querySelector("#node1")).editor;
         let attr = editor.attrs["class"].querySelector(".editable");
         editField(attr, 'class="changednode1"');
@@ -83,10 +84,11 @@ function test() {
           class: "unchanged"
         });
       },
-      execute: function() {
+      execute: function(after) {
         let editor = markup.getContainer(doc.querySelector("#node22")).editor;
         let attr = editor.attrs["class"].querySelector(".editable");
         editField(attr, 'class="""');
+        executeSoon(after);
       },
       after: function() {
         assertAttributes(doc.querySelector("#node22"), {
@@ -104,7 +106,8 @@ function test() {
           class: "node4"
         });
       },
-      execute: function() {
+      execute: function(after) {
+        inspector.once("markupmutation", after);
         let editor = markup.getContainer(doc.querySelector("#node4")).editor;
         let attr = editor.attrs["class"].querySelector(".editable");
         editField(attr, '');
@@ -123,7 +126,8 @@ function test() {
           id: "node14",
         });
       },
-      execute: function() {
+      execute: function(after) {
+        inspector.once("markupmutation", after);
         let editor = markup.getContainer(doc.querySelector("#node14")).editor;
         let attr = editor.newAttr;
         editField(attr, 'class="newclass" style="color:green"');
@@ -144,10 +148,11 @@ function test() {
           id: "node23",
         });
       },
-      execute: function() {
+      execute: function(after) {
         let editor = markup.getContainer(doc.querySelector("#node23")).editor;
         let attr = editor.newAttr;
         editField(attr, 'class="newclass" style="""');
+        executeSoon(after);
       },
       after: function() {
         assertAttributes(doc.querySelector("#node23"), {
@@ -163,10 +168,11 @@ function test() {
           id: "node24",
         });
       },
-      execute: function() {
+      execute: function(after) {
         let editor = markup.getContainer(doc.querySelector("#node24")).editor;
         let attr = editor.attrs["id"].querySelector(".editable");
         editField(attr, attr.textContent + ' class="""');
+        executeSoon(after);
       },
       after: function() {
         assertAttributes(doc.querySelector("#node24"), {
@@ -181,7 +187,8 @@ function test() {
         let node = doc.querySelector('.node6').firstChild;
         is(node.nodeValue, "line6", "Text should be unchanged");
       },
-      execute: function() {
+      execute: function(after) {
+        inspector.once("markupmutation", after);
         let node = doc.querySelector('.node6').firstChild;
         let editor = markup.getContainer(node).editor;
         let field = editor.elt.querySelector("pre");
@@ -222,23 +229,37 @@ function test() {
     let startNode = doc.documentElement.cloneNode();
     markup = inspector.markup;
     markup.expandAll();
-    for (let step of edits) {
-      info("START " + step.desc);
-      if (step.setup) {
-        step.setup();
-      }
-      step.before();
-      step.execute();
-      step.after();
-      ok(markup.undo.canUndo(), "Should be able to undo.");
-      markup.undo.undo();
-      step.before();
-      ok(markup.undo.canRedo(), "Should be able to redo.");
-      markup.undo.redo();
-      step.after();
-      info("END " + step.desc);
+
+    let cursor = 0;
+
+    function nextEditTest() {
+      executeSoon(function() {
+        if (cursor >= edits.length) {
+          addAttributes();
+        } else {
+          let step = edits[cursor++];
+          info("START " + step.desc);
+          if (step.setup) {
+            step.setup();
+          }
+          step.before();
+          info("before execute");
+          step.execute(function() {
+            info("after execute");
+            step.after();
+            ok(markup.undo.canUndo(), "Should be able to undo.");
+            markup.undo.undo();
+            step.before();
+            ok(markup.undo.canRedo(), "Should be able to redo.");
+            markup.undo.redo();
+            step.after();
+            info("END " + step.desc);
+            nextEditTest();
+          });
+        }
+      });
     }
-    addAttributes();
+    nextEditTest();
   }
 
   function addAttributes() {
@@ -255,7 +276,12 @@ function test() {
         is(inspector.highlighter.nodeInfo.classesBox.textContent, "",
           "No classes in the infobar before edit.");
       },
-      execute: function() {
+      execute: function(after) {
+        inspector.once("markupmutation", function() {
+          // needed because we need to make sure the infobar is updated
+          // not just the markupview (which happens in this event loop)
+          executeSoon(after);
+        });
         let editor = markup.getContainer(doc.querySelector("#node18")).editor;
         let attr = editor.attrs["id"].querySelector(".editable");
         editField(attr, attr.textContent + ' class="newclass" style="color:green"');
@@ -289,7 +315,8 @@ function test() {
         is(doc.querySelector("#retag-me-2").parentNode, node,
           "retag-me-2 should be a child of the old element.");
       },
-      execute: function() {
+      execute: function(after) {
+        inspector.once("markupmutation", after);
         let node = doc.querySelector("#retag-me");
         let editor = markup.getContainer(node).editor;
         let field = editor.tag;
@@ -318,7 +345,7 @@ function test() {
         inspector.selection.setNode(doc.querySelector("#node18"));
       },
       executeCont: function() {
-        EventUtils.sendKey("delete");
+        EventUtils.sendKey("delete", inspector.panelWin);
       },
       after: function() {
         ok(!doc.querySelector("#node18"), "Node 18 should not exist.")
@@ -346,9 +373,10 @@ function test() {
 
     inspector.selection.once("new-node", function BIMET_testAsyncSetupNewNode() {
       test.before();
-      test.execute();
-      test.after();
-      undoRedo(test, callback);
+      test.execute(function() {
+        test.after();
+        undoRedo(test, callback);
+      });
     });
     executeSoon(function BIMET_setNode2() {
       test.setup();

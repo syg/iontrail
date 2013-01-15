@@ -669,7 +669,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             /* Code the nested function's enclosing scope. */
             uint32_t funEnclosingScopeIndex = 0;
             if (mode == XDR_ENCODE) {
-                StaticScopeIter ssi((*objp)->toFunction()->nonLazyScript()->enclosingStaticScope());
+                RootedObject staticScope(cx, (*objp)->toFunction()->nonLazyScript()->enclosingStaticScope());
+                StaticScopeIter ssi(cx, staticScope);
                 if (ssi.done() || ssi.type() == StaticScopeIter::FUNCTION) {
                     JS_ASSERT(ssi.done() == !fun);
                     funEnclosingScopeIndex = UINT32_MAX;
@@ -2221,8 +2222,8 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
                 clone = CloneStaticBlockObject(cx, enclosingScope, innerBlock);
             } else if (obj->isFunction()) {
                 RootedFunction innerFun(cx, obj->toFunction());
-
-                StaticScopeIter ssi(innerFun->nonLazyScript()->enclosingStaticScope());
+                RootedObject staticScope(cx, innerFun->nonLazyScript()->enclosingStaticScope());
+                StaticScopeIter ssi(cx, staticScope);
                 RootedObject enclosingScope(cx);
                 if (!ssi.done() && ssi.type() == StaticScopeIter::BLOCK)
                     enclosingScope = objects[FindBlockIndex(src, ssi.block())];
@@ -2701,7 +2702,7 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
      *    assumption of !script->needsArgsObj();
      *  - type inference data for the script assuming script->needsArgsObj; and
      */
-    for (AllFramesIter i(cx->stack.space()); !i.done(); ++i) {
+    for (AllFramesIter i(cx->runtime); !i.done(); ++i) {
         /*
          * We cannot reliably create an arguments object for Ion activations of
          * this script.  To maintain the invariant that "script->needsArgsObj
@@ -2713,9 +2714,9 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
          */
         if (i.isIon())
             continue;
-        StackFrame *fp = i.interpFrame();
-        if (fp->isFunctionFrame() && fp->script() == script) {
-            ArgumentsObject *argsobj = ArgumentsObject::createExpected(cx, fp);
+        TaggedFramePtr frame = i.taggedFramePtr();
+        if (frame.isFunctionFrame() && frame.script() == script) {
+            ArgumentsObject *argsobj = ArgumentsObject::createExpected(cx, frame);
             if (!argsobj) {
                 /*
                  * We can't leave stack frames with script->needsArgsObj but no
@@ -2727,8 +2728,8 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
             }
 
             /* Note: 'arguments' may have already been overwritten. */
-            if (fp->unaliasedLocal(var).isMagic(JS_OPTIMIZED_ARGUMENTS))
-                fp->unaliasedLocal(var) = ObjectValue(*argsobj);
+            if (frame.unaliasedLocal(var).isMagic(JS_OPTIMIZED_ARGUMENTS))
+                frame.unaliasedLocal(var) = ObjectValue(*argsobj);
         }
     }
 

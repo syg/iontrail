@@ -95,6 +95,9 @@ class Marionette(object):
 
     CONTEXT_CHROME = 'chrome'
     CONTEXT_CONTENT = 'content'
+    TIMEOUT_SEARCH = 'implicit'
+    TIMEOUT_SCRIPT = 'script'
+    TIMEOUT_PAGE = 'page load'
 
     def __init__(self, host='localhost', port=2828, bin=None, profile=None,
                  emulator=None, sdcard=None, emulatorBinary=None,
@@ -386,6 +389,11 @@ class Marionette(object):
         response = self._send_message('goUrl', 'ok', value=url)
         return response
 
+    def timeouts(self, timeout_type, ms):
+        assert(timeout_type == self.TIMEOUT_SEARCH or timeout_type == self.TIMEOUT_SCRIPT or timeout_type == self.TIMEOUT_PAGE)
+        response = self._send_message('timeouts', 'ok', timeoutType=timeout_type, ms=ms)
+        return response
+
     def go_back(self):
         response = self._send_message('goBack', 'ok')
         return response
@@ -487,6 +495,10 @@ class Marionette(object):
         for x in response:
             elements.append(HTMLElement(self, x))
         return elements
+
+    def get_active_element(self):
+        response = self._send_message('getActiveElement', 'value')
+        return HTMLElement(self, response)
 
     def log(self, msg, level=None):
         return self._send_message('log', 'ok', value=msg, level=level)

@@ -102,6 +102,7 @@ function startListeners() {
   addMessageListenerId("Marionette:refresh", refresh);
   addMessageListenerId("Marionette:findElementContent", findElementContent);
   addMessageListenerId("Marionette:findElementsContent", findElementsContent);
+  addMessageListenerId("Marionette:getActiveElement", getActiveElement);
   addMessageListenerId("Marionette:clickElement", clickElement);
   addMessageListenerId("Marionette:getElementAttribute", getElementAttribute);
   addMessageListenerId("Marionette:getElementText", getElementText);
@@ -188,6 +189,7 @@ function deleteSession(msg) {
   removeMessageListenerId("Marionette:refresh", refresh);
   removeMessageListenerId("Marionette:findElementContent", findElementContent);
   removeMessageListenerId("Marionette:findElementsContent", findElementsContent);
+  removeMessageListenerId("Marionette:getActiveElement", getActiveElement);
   removeMessageListenerId("Marionette:clickElement", clickElement);
   removeMessageListenerId("Marionette:getElementAttribute", getElementAttribute);
   removeMessageListenerId("Marionette:getElementTagName", getElementTagName);
@@ -544,23 +546,32 @@ function setSearchTimeout(msg) {
  */
 function goUrl(msg) {
   let command_id = msg.json.command_id;
-  addEventListener("DOMContentLoaded", function onDOMContentLoaded(event) {
-    // Prevent DOMContentLoaded events from frames from invoking this code,
-    // unless the event is coming from the frame associated with the current
-    // window (i.e., someone has used switch_to_frame).
-    if (!event.originalTarget.defaultView.frameElement || 
-        event.originalTarget.defaultView.frameElement == curWindow.frameElement) {
+  // Prevent DOMContentLoaded events from frames from invoking this code,
+  // unless the event is coming from the frame associated with the current
+  // window (i.e., someone has used switch_to_frame).
+  let onDOMContentLoaded = function onDOMContentLoaded(event){
+    if (msg.json.pageTimeout != null){
+      checkTimer.cancel();
+    }
+    if (!event.originalTarget.defaultView.frameElement ||
+      event.originalTarget.defaultView.frameElement == curWindow.frameElement) {
       removeEventListener("DOMContentLoaded", onDOMContentLoaded, false);
-
       let errorRegex = /about:.+(error)|(blocked)\?/;
       if (curWindow.document.readyState == "interactive" && errorRegex.exec(curWindow.document.baseURI)) {
         sendError("Error loading page", 13, null, command_id);
         return;
       }
-
       sendOk(command_id);
     }
-  }, false);
+  };
+  function timerFunc(){
+    sendError("Error loading page", 13, null, command_id);
+    removeEventListener("DOMContentLoaded", onDOMContentLoaded, false);
+  }
+  if (msg.json.pageTimeout != null){
+    checkTimer.initWithCallback(timerFunc, msg.json.pageTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
+  }
+  addEventListener("DOMContentLoaded", onDOMContentLoaded, false);
   curWindow.location = msg.json.value;
 }
 
@@ -644,6 +655,16 @@ function findElementsContent(msg) {
   catch (e) {
     sendError(e.message, e.code, e.stack, command_id);
   }
+}
+
+/**
+ * Find and return the active element on the page
+ */
+function getActiveElement(msg) {
+  let command_id = msg.json.command_id;
+  var element = curWindow.document.activeElement;
+  var id = elementManager.addToKnownElements(element);
+  sendResponse({value: id}, command_id);
 }
 
 /**

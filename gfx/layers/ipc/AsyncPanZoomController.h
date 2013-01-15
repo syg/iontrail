@@ -68,7 +68,7 @@ public:
    * accidentally processing taps as touch moves, and from very short/accidental
    * touches moving the screen.
    */
-  static const float TOUCH_START_TOLERANCE;
+  static float GetTouchStartTolerance();
 
   AsyncPanZoomController(GeckoContentController* aController,
                          GestureBehavior aGestures = DEFAULT_GESTURES);
@@ -239,12 +239,13 @@ public:
    */
   void SendAsyncScrollEvent();
 
-protected:
   /**
-   * Internal handler for ReceiveInputEvent(). Does all the actual work.
+   * Handler for events which should not be intercepted by the touch listener.
+   * Does the work for ReceiveInputEvent().
    */
   nsEventStatus HandleInputEvent(const InputData& aEvent);
 
+protected:
   /**
    * Helper method for touches beginning. Sets everything up for panning and any
    * multitouch gestures.

@@ -4568,6 +4568,7 @@ cairo-qt)
     TK_LIBS='$(MOZ_QT_LIBS)'
     AC_DEFINE(MOZ_WIDGET_QT)
     MOZ_PDF_PRINTING=1
+    AC_DEFINE(QT_NO_KEYWORDS)
     ;;
 
 cairo-os2)
@@ -8717,6 +8718,15 @@ if test "$MOZ_TELEMETRY_REPORTING"; then
         "$MOZ_UPDATE_CHANNEL" = "aurora"; then
         AC_DEFINE(MOZ_TELEMETRY_ON_BY_DEFAULT)
     fi
+fi
+
+dnl If we have any service that uploads data (and requires data submission
+dnl policy alert), set MOZ_DATA_REPORTING.
+dnl We need SUBST for build system and DEFINE for xul preprocessor.
+if test -n "$MOZ_TELEMETRY_REPORTING" || test -n "$MOZ_SERVICES_HEALTHREPORT" || test -n "MOZ_CRASHREPORTER"; then
+  MOZ_DATA_REPORTING=1
+  AC_DEFINE(MOZ_DATA_REPORTING)
+  AC_SUBST(MOZ_DATA_REPORTING)
 fi
 
 dnl win32 options

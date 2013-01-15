@@ -40,7 +40,7 @@ function toolRegistered(event, toolId)
 {
   is(toolId, "test-tool", "tool-registered event handler sent tool id");
 
-  ok(gDevTools.getToolDefinitions().has(toolId), "tool added to map");
+  ok(gDevTools.getToolDefinitionMap().has(toolId), "tool added to map");
 
   // test that it appeared in the UI
   let doc = toolbox.frame.contentDocument;
@@ -53,6 +53,8 @@ function toolRegistered(event, toolId)
   for (let win of getAllBrowserWindows()) {
     let command = win.document.getElementById("Tools:" + toolId);
     ok(command, "command for new tool added to every browser window");
+    let menuitem = win.document.getElementById("menuitem_" + toolId);
+    ok(menuitem, "menu item of new tool added to every browser window");
   }
 
   // then unregister it
@@ -79,7 +81,7 @@ function toolUnregistered(event, toolId)
 {
   is(toolId, "test-tool", "tool-unregistered event handler sent tool id");
 
-  ok(!gDevTools.getToolDefinitions().has(toolId), "tool removed from map");
+  ok(!gDevTools.getToolDefinitionMap().has(toolId), "tool removed from map");
 
   // test that it disappeared from the UI
   let doc = toolbox.frame.contentDocument;
@@ -92,6 +94,8 @@ function toolUnregistered(event, toolId)
   for (let win of getAllBrowserWindows()) {
     let command = win.document.getElementById("Tools:" + toolId);
     ok(!command, "command removed from every browser window");
+    let menuitem = win.document.getElementById("menuitem_" + toolId);
+    ok(!menuitem, "menu item removed from every browser window");
   }
 
   cleanup();

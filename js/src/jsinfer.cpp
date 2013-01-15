@@ -1275,55 +1275,6 @@ CloneCallee(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *
     return callee;
 }
 
-bool
-TypeConstraintCall::newCallee(JSContext *cx, HandleFunction callee, HandleScript script)
-{
-    RootedScript calleeScript(cx, callee->nonLazyScript());
-    if (!calleeScript->ensureHasTypes(cx))
-        return false;
-
-    unsigned nargs = callee->nargs;
-
-    /* Add bindings for the arguments of the call. */
-    for (unsigned i = 0; i < callsite->argumentCount && i < nargs; i++) {
-        StackTypeSet *argTypes = callsite->argumentTypes[i];
-        StackTypeSet *types = TypeScript::ArgTypes(calleeScript, i);
-        argTypes->addSubsetBarrier(cx, script, callsite->pc, types);
-    }
-
-    /* Add void type for any formals in the callee not supplied at the call site. */
-    for (unsigned i = callsite->argumentCount; i < nargs; i++) {
-        TypeSet *types = TypeScript::ArgTypes(calleeScript, i);
-        types->addType(cx, Type::UndefinedType());
-    }
-
-    StackTypeSet *thisTypes = TypeScript::ThisTypes(calleeScript);
-    HeapTypeSet *returnTypes = TypeScript::ReturnTypes(calleeScript);
-
-    if (callsite->isNew) {
-        /*
-         * If the script does not return a value then the pushed value is the
-         * new object (typical case). Note that we don't model construction of
-         * the new value, which is done dynamically; we don't keep track of the
-         * possible 'new' types for a given prototype type object.
-         */
-        thisTypes->addSubset(cx, returnTypes);
-        returnTypes->addFilterPrimitives(cx, callsite->returnTypes);
-    } else {
-        /*
-         * Add a binding for the return value of the call. We don't add a
-         * binding for the receiver object, as this is done with PropagateThis
-         * constraints added by the original JSOP_CALL* op. The type sets we
-         * manipulate here have lost any correlations between particular types
-         * in the 'this' and 'callee' sets, which we want to maintain for
-         * polymorphic JSOP_CALLPROP invocations.
-         */
-        returnTypes->addSubset(cx, callsite->returnTypes);
-    }
-
-    return true;
-}
-
 void
 TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
 {
@@ -1423,7 +1374,7 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
         return;
     }
 
-    if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx))
+    if (callee->isInterpretedLazy() && !JSFunction::getOrCreateScript(cx, callee))
         return;
 
     /*
@@ -1442,16 +1393,50 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
 }
 
 bool
-TypeConstraintPropagateThis::newCallee(JSContext *cx, HandleFunction callee)
+TypeConstraintCall::newCallee(JSContext *cx, HandleFunction callee, HandleScript script)
 {
-    if (!callee->nonLazyScript()->ensureHasTypes(cx))
+    RootedScript calleeScript(cx, callee->nonLazyScript());
+    if (!calleeScript->ensureHasTypes(cx))
         return false;
 
-    TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript());
-    if (this->types)
-        this->types->addSubset(cx, thisTypes);
-    else
-        thisTypes->addType(cx, this->type);
+    unsigned nargs = callee->nargs;
+
+    /* Add bindings for the arguments of the call. */
+    for (unsigned i = 0; i < callsite->argumentCount && i < nargs; i++) {
+        StackTypeSet *argTypes = callsite->argumentTypes[i];
+        StackTypeSet *types = TypeScript::ArgTypes(calleeScript, i);
+        argTypes->addSubsetBarrier(cx, script, callsite->pc, types);
+    }
+
+    /* Add void type for any formals in the callee not supplied at the call site. */
+    for (unsigned i = callsite->argumentCount; i < nargs; i++) {
+        TypeSet *types = TypeScript::ArgTypes(calleeScript, i);
+        types->addType(cx, Type::UndefinedType());
+    }
+
+    StackTypeSet *thisTypes = TypeScript::ThisTypes(calleeScript);
+    HeapTypeSet *returnTypes = TypeScript::ReturnTypes(calleeScript);
+
+    if (callsite->isNew) {
+        /*
+         * If the script does not return a value then the pushed value is the
+         * new object (typical case). Note that we don't model construction of
+         * the new value, which is done dynamically; we don't keep track of the
+         * possible 'new' types for a given prototype type object.
+         */
+        thisTypes->addSubset(cx, returnTypes);
+        returnTypes->addFilterPrimitives(cx, callsite->returnTypes);
+    } else {
+        /*
+         * Add a binding for the return value of the call. We don't add a
+         * binding for the receiver object, as this is done with PropagateThis
+         * constraints added by the original JSOP_CALL* op. The type sets we
+         * manipulate here have lost any correlations between particular types
+         * in the 'this' and 'callee' sets, which we want to maintain for
+         * polymorphic JSOP_CALLPROP invocations.
+         */
+        returnTypes->addSubset(cx, callsite->returnTypes);
+    }
 
     return true;
 }
@@ -1461,6 +1446,7 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
 {
     AssertCanGC();
 
+    RootedScript script(cx, script_);
     if (type.isUnknown() || type.isAnyObject()) {
         /*
          * The callee is unknown, make sure the call is monitored so we pick up
@@ -1468,7 +1454,6 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
          * CALLPROP, for other calls we are past the type barrier and a
          * TypeConstraintCall will also monitor the call.
          */
-        RootedScript script(cx, script_);
         cx->compartment->types.monitorBytecode(cx, script, callpc - script->code);
         return;
     }
@@ -1491,11 +1476,14 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
         return;
     }
 
-    if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx))
+    if (callee->isInterpretedLazy() && !JSFunction::getOrCreateScript(cx, callee))
         return;
 
+    /*
+     * As callsite cloning is a hint, we must propagate to both the original
+     * and the clone.
+     */
     if (callee->isCloneAtCallsite()) {
-        RootedScript script(cx, script_);
         RootedFunction clone(cx, CloneCallee(cx, callee, script, callpc));
         if (!clone)
             return;
@@ -1504,6 +1492,21 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
     }
 
     newCallee(cx, callee);
+}
+
+bool
+TypeConstraintPropagateThis::newCallee(JSContext *cx, HandleFunction callee)
+{
+    if (!callee->nonLazyScript()->ensureHasTypes(cx))
+        return false;
+
+    TypeSet *thisTypes = TypeScript::ThisTypes(callee->nonLazyScript());
+    if (this->types)
+        this->types->addSubset(cx, thisTypes);
+    else
+        thisTypes->addType(cx, this->type);
+
+    return true;
 }
 
 void
@@ -3037,16 +3040,16 @@ TypeCompartment::fixArrayType(JSContext *cx, HandleObject obj)
      * If the array is heterogenous, keep the existing type object, which has
      * unknown properties.
      */
-    JS_ASSERT(obj->isDenseArray());
+    JS_ASSERT(obj->isArray());
 
-    unsigned len = obj->getDenseArrayInitializedLength();
+    unsigned len = obj->getDenseInitializedLength();
     if (len == 0)
         return;
 
-    Type type = GetValueTypeForTable(cx, obj->getDenseArrayElement(0));
+    Type type = GetValueTypeForTable(cx, obj->getDenseElement(0));
 
     for (unsigned i = 1; i < len; i++) {
-        Type ntype = GetValueTypeForTable(cx, obj->getDenseArrayElement(i));
+        Type ntype = GetValueTypeForTable(cx, obj->getDenseElement(i));
         if (ntype != type) {
             if (NumberTypes(type, ntype))
                 type = Type::DoubleType();
@@ -3317,11 +3320,10 @@ TypeObject::addProperty(JSContext *cx, jsid id, Property **pprop)
 
     if (singleton) {
         /*
-         * Fill the property in with any type the object already has in an
-         * own property. We are only interested in plain native properties
-         * which don't go through a barrier when read by the VM or jitcode.
-         * We don't need to handle arrays or other JIT'ed non-natives as
-         * these are not (yet) singletons.
+         * Fill the property in with any type the object already has in an own
+         * property. We are only interested in plain native properties and
+         * dense elements which don't go through a barrier when read by the VM
+         * or jitcode.
          */
 
         RootedObject rSingleton(cx, singleton);
@@ -3332,6 +3334,16 @@ TypeObject::addProperty(JSContext *cx, jsid id, Property **pprop)
                 if (JSID_IS_VOID(MakeTypeId(cx, shape->propid())))
                     UpdatePropertyType(cx, &base->types, rSingleton, shape, true);
                 shape = shape->previous();
+            }
+
+            /* Also get values of any dense elements in the object. */
+            for (size_t i = 0; i < singleton->getDenseInitializedLength(); i++) {
+                const Value &value = singleton->getDenseElement(i);
+                if (!value.isMagic(JS_ELEMENTS_HOLE)) {
+                    Type type = GetValueType(cx, value);
+                    base->types.setOwnProperty(cx, false);
+                    base->types.addType(cx, type);
+                }
             }
         } else if (!JSID_IS_EMPTY(id) && singleton->isNative()) {
             UnrootedShape shape = singleton->nativeLookup(cx, id);
@@ -5878,11 +5890,14 @@ JSObject::makeLazyType(JSContext *cx)
      * looking at the class prototype key.
      */
 
-    if (self->isSlowArray())
-        type->flags |= OBJECT_FLAG_NON_DENSE_ARRAY | OBJECT_FLAG_NON_PACKED_ARRAY;
-
     if (IsTypedArrayProtoClass(self->getClass()))
         type->flags |= OBJECT_FLAG_NON_TYPED_ARRAY;
+
+    /* Don't track whether singletons are packed. */
+    type->flags |= OBJECT_FLAG_NON_PACKED_ARRAY;
+
+    if (self->isArray() && (self->isIndexed() || self->getArrayLength() > INT32_MAX))
+        type->flags |= OBJECT_FLAG_NON_DENSE_ARRAY;
 
     self->type_ = type;
 

@@ -36,7 +36,7 @@ stubs::UncachedCallResult::setFunction(JSContext *cx, CallArgs &args,
     if (!IsFunctionObject(args.calleev(), fun.address()))
         return true;
 
-    if (fun->isInterpretedLazy() && !fun->initializeLazyScript(cx))
+    if (fun->isInterpretedLazy() && !JSFunction::getOrCreateScript(cx, fun))
         return false;
 
     if (cx->typeInferenceEnabled() && fun->isCloneAtCallsite()) {

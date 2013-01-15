@@ -190,6 +190,7 @@ public:
                                   const mozilla::dom::StructuredCloneData& aData);
   virtual bool CheckPermission(const nsAString& aPermission);
   virtual bool CheckManifestURL(const nsAString& aManifestURL);
+  virtual bool CheckAppHasPermission(const nsAString& aPermission);
 
   /**
    * Called from the layout frame associated with this frame loader;
@@ -356,12 +357,11 @@ private:
   NS_HIDDEN_(void) GetURL(nsString& aURL);
 
   // Properly retrieves documentSize of any subdocument type.
-  NS_HIDDEN_(nsIntSize) GetSubDocumentSize(const nsIFrame *aIFrame);
   nsresult GetWindowDimensions(nsRect& aRect);
 
   // Updates the subdocument position and size. This gets called only
   // when we have our own in-process DocShell.
-  NS_HIDDEN_(nsresult) UpdateBaseWindowPositionAndSize(nsIFrame *aIFrame);
+  NS_HIDDEN_(nsresult) UpdateBaseWindowPositionAndSize(nsSubDocumentFrame *aIFrame);
   nsresult CheckURILoad(nsIURI* aURI);
   void FireErrorEvent();
   nsresult ReallyStartLoadingInternal();
@@ -370,7 +370,8 @@ private:
   bool TryRemoteBrowser();
 
   // Tell the remote browser that it's now "virtually visible"
-  bool ShowRemoteFrame(const nsIntSize& size);
+  bool ShowRemoteFrame(const nsIntSize& size,
+                       nsSubDocumentFrame *aFrame = nullptr);
 
   bool AddTreeItemToTreeOwner(nsIDocShellTreeItem* aItem,
                               nsIDocShellTreeOwner* aOwner,

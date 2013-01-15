@@ -469,14 +469,16 @@
 @BINPATH@/components/AitcComponents.manifest
 @BINPATH@/components/Aitc.js
 #endif
-#ifdef MOZ_SERVICES_HEALTHREPORT
-@BINPATH@/components/HealthReportComponents.manifest
-@BINPATH@/components/HealthReportService.js
+#ifdef MOZ_DATA_REPORTING
+@BINPATH@/components/DataReporting.manifest
+@BINPATH@/components/DataReportingService.js
 #endif
 #ifdef MOZ_SERVICES_SYNC
 @BINPATH@/components/SyncComponents.manifest
 @BINPATH@/components/Weave.js
 #endif
+@BINPATH@/components/servicesComponents.manifest
+@BINPATH@/components/cryptoComponents.manifest
 @BINPATH@/components/TelemetryPing.js
 @BINPATH@/components/TelemetryPing.manifest
 @BINPATH@/components/messageWakeupService.js

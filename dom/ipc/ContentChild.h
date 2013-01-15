@@ -17,6 +17,7 @@
 
 struct ChromePackage;
 class nsIDOMBlob;
+class nsDOMFileBase;
 class nsIObserver;
 struct ResourceMapping;
 struct OverrideMapping;
@@ -41,7 +42,6 @@ class PStorageChild;
 class ClonedMessageData;
 
 class ContentChild : public PContentChild
-                   , public TabContext
 {
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
     typedef mozilla::ipc::OptionalURIParams OptionalURIParams;
@@ -183,7 +183,10 @@ public:
     virtual bool RecvLastPrivateDocShellDestroyed();
 
     virtual bool RecvFilePathUpdate(const nsString& type, const nsString& path, const nsCString& reason);
-    virtual bool RecvFileSystemUpdate(const nsString& aFsName, const nsString& aName, const int32_t& aState);
+    virtual bool RecvFileSystemUpdate(const nsString& aFsName,
+                                      const nsString& aName,
+                                      const int32_t& aState,
+                                      const int32_t& aMountGeneration);
 
 #ifdef ANDROID
     gfxIntSize GetScreenSize() { return mScreenSize; }
@@ -195,6 +198,11 @@ public:
 
     uint64_t GetID() { return mID; }
 
+    bool IsForApp() { return mIsForApp; }
+    bool IsForBrowser() { return mIsForBrowser; }
+
+    bool GetParamsForBlob(nsDOMFileBase* aBlob,
+                          BlobConstructorParams* aOutParams);
     BlobChild* GetOrCreateActorForBlob(nsIDOMBlob* aBlob);
 
 private:

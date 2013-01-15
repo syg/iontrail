@@ -74,6 +74,7 @@ class nsTextNode;
 class nsWindowSizes;
 class nsSmallVoidArray;
 class nsDOMCaretPosition;
+class nsViewportInfo;
 
 namespace mozilla {
 class ErrorResult;
@@ -90,6 +91,7 @@ class DocumentFragment;
 class DocumentType;
 class DOMImplementation;
 class Element;
+class HTMLBodyElement;
 class Link;
 class ProcessingInstruction;
 class UndoManager;
@@ -563,6 +565,10 @@ public:
    */
   Element* GetRootElement() const;
 
+  virtual nsViewportInfo GetViewportInfo(uint32_t aDisplayWidth,
+                                         uint32_t aDisplayHeight) = 0;
+
+
 protected:
   virtual Element *GetRootElementInternal() const = 0;
 
@@ -575,9 +581,7 @@ public:
   Element* GetHtmlChildElement(nsIAtom* aTag);
   // Get the canonical <body> element, or return null if there isn't one (e.g.
   // if the root isn't <html> or if the <body> isn't there)
-  Element* GetBodyElement() {
-    return GetHtmlChildElement(nsGkAtoms::body);
-  }
+  mozilla::dom::HTMLBodyElement* GetBodyElement();
   // Get the canonical <head> element, or return null if there isn't one (e.g.
   // if the root isn't <html> or if the <head> isn't there)
   Element* GetHeadElement() {

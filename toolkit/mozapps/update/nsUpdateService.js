@@ -74,8 +74,16 @@ const KEY_GRED            = "GreD";
 #define USE_UPDROOT
 #endif
 
+#ifdef MOZ_WIDGET_GONK
+#define USE_UPDATE_ARCHIVE_DIR
+#endif
+
 #ifdef USE_UPDROOT
 const KEY_UPDROOT         = "UpdRootD";
+#endif
+
+#ifdef USE_UPDATE_ARCHIVE_DIR
+const KEY_UPDATE_ARCHIVE_DIR = "UpdArchD"
 #endif
 
 #ifdef XP_WIN
@@ -99,7 +107,8 @@ const FILE_UPDATE_ARCHIVE = "update.apk";
 #else
 const FILE_UPDATE_ARCHIVE = "update.mar";
 #endif
-const FILE_UPDATE_LOG     = "update.log"
+const FILE_UPDATE_LINK    = "update.link";
+const FILE_UPDATE_LOG     = "update.log";
 const FILE_UPDATES_DB     = "updates.xml";
 const FILE_UPDATE_ACTIVE  = "active-update.xml";
 const FILE_PERMS_TEST     = "update.test";
@@ -155,6 +164,10 @@ const CERT_ATTR_CHECK_FAILED_NO_UPDATE  = 100;
 const CERT_ATTR_CHECK_FAILED_HAS_UPDATE = 101;
 const BACKGROUNDCHECK_MULTIPLE_FAILURES = 110;
 const NETWORK_ERROR_OFFLINE             = 111;
+const FILE_ERROR_TOO_BIG                = 112;
+
+// Error codes should be < 1000. Errors above 1000 represent http status codes
+const HTTP_ERROR_OFFSET                 = 1000;
 
 const DOWNLOAD_CHUNK_SIZE           = 300000; // bytes
 const DOWNLOAD_BACKGROUND_INTERVAL  = 600;    // seconds
@@ -174,6 +187,14 @@ const DEFAULT_SOCKET_MAX_ERRORS = 10;
 const DEFAULT_UPDATE_RETRY_TIMEOUT = 2000;
 
 var gLocale     = null;
+#ifdef MOZ_B2G
+var gVolumeMountLock = null;
+XPCOMUtils.defineLazyGetter(this, "gExtStorage", function aus_gExtStorage() {
+    return Services.env.get("EXTERNAL_STORAGE");
+});
+
+var gSDCardMountLock = null;
+#endif
 
 XPCOMUtils.defineLazyModuleGetter(this, "UpdateChannel",
                                   "resource://gre/modules/UpdateChannel.jsm");
@@ -380,7 +401,7 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
         // Don't allow any exception to be propagated.
         Components.utils.reportError(e);
       }
-  } 
+  }
 
   try {
     var updateTestFile = getUpdateFile([FILE_PERMS_TEST]);
@@ -421,7 +442,7 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
       }
       catch (ex) {
         // When the installation directory is not under Program Files,
-        // fall through to checking if write access to the 
+        // fall through to checking if write access to the
         // installation directory is available.
         LOG("gCanApplyUpdates - on Vista, appDir is not under Program Files");
       }
@@ -431,7 +452,7 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
 #      On Windows, we no longer store the update under the app dir.
 #
 #      If we are on Windows (including Vista, if we can't elevate) we need to
-#      to check that we can create and remove files from the actual app 
+#      to check that we can create and remove files from the actual app
 #      directory (like C:\Program Files\Mozilla Firefox).  If we can't
 #      (because this user is not an adminstrator, for example) canUpdate()
 #      should return false.
@@ -442,7 +463,7 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
 #      1) the installation directory is not under Program Files
 #         (e.g. C:\Program Files)
 #      2) UAC is turned off
-#      3) UAC is turned on and the user is not an admin 
+#      3) UAC is turned on and the user is not an admin
 #         (e.g. the user does not have a split token)
 #      4) UAC is turned on and the user is already elevated, so they can't be
 #         elevated again
@@ -731,6 +752,97 @@ function writeStatusFile(dir, state) {
   writeStringToFile(statusFile, state);
 }
 
+#ifdef MOZ_WIDGET_GONK
+/**
+ * Reads the link file specified in the update.link file in the
+ * specified directory and returns the nsIFile for the
+ * corresponding file.
+ * @param   dir
+ *          The dir to look for an update.link file in
+ * @return  A nsIFile for the file path specified in the
+ *          update.link file or null if the update.link file
+ *          doesn't exist.
+ */
+function getFileFromUpdateLink(dir) {
+  var linkFile = dir.clone();
+  linkFile.append(FILE_UPDATE_LINK);
+  var link = readStringFromFile(linkFile);
+  LOG("getFileFromUpdateLink linkFile.path: " + linkFile.path + ", link: " + link);
+  if (!link) {
+    return null;
+  }
+  let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  file.initWithPath(link);
+  return file;
+}
+
+/**
+ * Creates a link file, which allows the actual patch to live in
+ * a directory different from the update directory.
+ * @param   dir
+ *          The patch directory where the update.link file
+ *          should be written.
+ * @param   patchFile
+ *          The fully qualified filename of the patchfile.
+ */
+function writeLinkFile(dir, patchFile) {
+  var linkFile = dir.clone();
+  linkFile.append(FILE_UPDATE_LINK);
+  writeStringToFile(linkFile, patchFile.path);
+  if (patchFile.path.indexOf(gExtStorage) == 0) {
+    // The patchfile is being stored on external storage. Try to lock it
+    // so that it doesn't get shared with the PC while we're downloading
+    // to it.
+    acquireSDCardMountLock();
+  }
+}
+
+/**
+ * Acquires a VolumeMountLock for the sdcard volume.
+ *
+ * This prevents the SDCard from being shared with the PC while
+ * we're downloading the update.
+ */
+function acquireSDCardMountLock() {
+  let volsvc = Cc["@mozilla.org/telephony/volume-service;1"].
+                    getService(Ci.nsIVolumeService);
+  if (volsvc) {
+    gSDCardMountLock = volsvc.createMountLock("sdcard");
+  }
+}
+
+/**
+ * Determines if the state corresponds to an interrupted update.
+ * This could either be because the download was interrupted, or
+ * because staging the update was interrupted.
+ *
+ * @return true if the state corresponds to an interrupted
+ *         update.
+ */
+function isInterruptedUpdate(status) {
+  return (status == STATE_DOWNLOADING) ||
+         (status == STATE_PENDING) ||
+         (status == STATE_APPLYING);
+}
+#endif // MOZ_WIDGET_GONK
+
+/**
+ * Releases any SDCard mount lock that we might have.
+ *
+ * This once again allows the SDCard to be shared with the PC. 
+ *  
+ * This function was placed outside the #ifdef so that we didn't 
+ * need to put #ifdefs around the callers
+ */
+function releaseSDCardMountLock() {
+#ifdef MOZ_WIDGET_GONK
+  if (gSDCardMountLock) {
+    gSDCardMountLock.unlock();
+    gSDCardMountLock = null;
+  }
+#endif
+}
+
 /**
  * Determines if the service should be used to attempt an update
  * or not.  For now this is only when PREF_APP_UPDATE_SERVICE_ENABLED
@@ -740,7 +852,7 @@ function writeStatusFile(dir, state) {
  */
 function shouldUseService() {
 #ifdef MOZ_MAINTENANCE_SERVICE
-  return getPref("getBoolPref", 
+  return getPref("getBoolPref",
                  PREF_APP_UPDATE_SERVICE_ENABLED, false);
 #else
   return false;
@@ -899,6 +1011,7 @@ function cleanUpUpdatesDir(aBackgroundUpdate) {
       LOG("cleanUpUpdatesDir - failed to remove file " + f.path);
     }
   }
+  releaseSDCardMountLock();
 }
 
 /**
@@ -1040,7 +1153,7 @@ function handleUpdateFailure(update, errorCode) {
     return true;
   }
 
-  if (update.errorCode == WRITE_ERROR || 
+  if (update.errorCode == WRITE_ERROR ||
       update.errorCode == WRITE_ERROR_ACCESS_DENIED ||
       update.errorCode == WRITE_ERROR_SHARING_VIOLATION_SIGNALED ||
       update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPROCESSFORPID ||
@@ -1070,10 +1183,10 @@ function handleUpdateFailure(update, errorCode) {
       update.errorCode == SERVICE_COULD_NOT_LOCK_UPDATER ||
       update.errorCode == SERVICE_INSTALLDIR_ERROR) {
 
-    var failCount = getPref("getIntPref", 
+    var failCount = getPref("getIntPref",
                             PREF_APP_UPDATE_SERVICE_ERRORS, 0);
-    var maxFail = getPref("getIntPref", 
-                          PREF_APP_UPDATE_SERVICE_MAX_ERRORS, 
+    var maxFail = getPref("getIntPref",
+                          PREF_APP_UPDATE_SERVICE_MAX_ERRORS,
                           DEFAULT_SERVICE_MAX_ERRORS);
 
     // As a safety, when the service reaches maximum failures, it will
@@ -1084,14 +1197,14 @@ function handleUpdateFailure(update, errorCode) {
       Services.prefs.clearUserPref(PREF_APP_UPDATE_SERVICE_ERRORS);
     } else {
       failCount++;
-      Services.prefs.setIntPref(PREF_APP_UPDATE_SERVICE_ERRORS, 
+      Services.prefs.setIntPref(PREF_APP_UPDATE_SERVICE_ERRORS,
                                 failCount);
     }
 
     writeStatusFile(getUpdatesDir(), update.state = STATE_PENDING);
     return true;
   }
-  
+
   return false;
 }
 
@@ -1671,6 +1784,29 @@ UpdateService.prototype = {
 
     var um = Cc["@mozilla.org/updates/update-manager;1"].
              getService(Ci.nsIUpdateManager);
+
+#ifdef MOZ_WIDGET_GONK
+    // This code is called very early in the boot process, before we've even
+    // had a chance to setup the UI so we can give feedback to the user.
+    //
+    // Since the download may be occuring over a link which has associated
+    // cost, we want to require user-consent before resuming the download.
+    // Also, applying an already downloaded update now is undesireable,
+    // since the phone will look dead while the update is being applied.
+    // Applying the update can take several minutes. Instead we wait until
+    // the UI is initialized so it is possible to give feedback to and get
+    // consent to update from the user.
+    //
+    // We clear um.activeUpdate (so _selectAndInstallUpdate doesn't return
+    // early), and leave the files so that an interrupted download can resume
+    // where it left off.
+    if (isInterruptedUpdate(status)) {
+      LOG("UpdateService:_postUpdateProcessing - interrupted update detected - wait for user consent");
+      um.activeUpdate = null;
+      return;
+    }
+#endif
+
     var update = um.activeUpdate;
 
     if (status == STATE_DOWNLOADING) {
@@ -1822,7 +1958,7 @@ UpdateService.prototype = {
     try {
       // The getPref is already wrapped in a try/catch but we never
       // want telemetry pings breaking app update so we just put it
-      // inside the try to be safe. 
+      // inside the try to be safe.
       let val = getPref("getBoolPref", pref, false);
       Services.telemetry.getHistogramById(histogram).add(+val);
     } catch(e) {
@@ -1881,7 +2017,7 @@ UpdateService.prototype = {
     try {
       // The getPref is already wrapped in a try/catch but we never
       // want telemetry pings breaking app update so we just put it
-      // inside the try to be safe. 
+      // inside the try to be safe.
       let val = getPref("getIntPref", pref, 0);
       Services.telemetry.getHistogramById(histogram).add(val);
     } catch(e) {
@@ -1960,8 +2096,8 @@ UpdateService.prototype = {
   },
 
   onError: function AUS_onError(request, update) {
-    LOG("UpdateService:onError - error during background update: " +
-        update.statusText);
+    LOG("UpdateService:onError - error during background update. error code: " +
+        update.errorCode + ", status text: " + update.statusText);
 
     var maxErrors;
     var errCount;
@@ -2013,7 +2149,7 @@ UpdateService.prototype = {
       if (status == STATE_NONE) {
         cleanupActiveUpdate();
       }
-      return; 
+      return;
     }
 
     this.backgroundChecker.checkForUpdates(this, false);
@@ -2028,7 +2164,7 @@ UpdateService.prototype = {
     // If a download is in progress or the patch has been staged do nothing.
     if (this.isDownloading ||
         this._downloader && this._downloader.patchIsStaged) {
-      return; 
+      return;
     }
 
     this.backgroundChecker.checkForUpdates(this, false);
@@ -2798,6 +2934,8 @@ UpdateManager.prototype = {
       var prompter = Cc["@mozilla.org/updates/update-prompt;1"].
                      createInstance(Ci.nsIUpdatePrompt);
       prompter.showUpdateDownloaded(update, true);
+    } else {
+      releaseSDCardMountLock();
     }
   },
 
@@ -2988,6 +3126,10 @@ Checker.prototype = {
     return status;
   },
 
+  _isHttpStatusCode: function UC__isHttpStatusCode(status) {
+    return status >= 100 && status <= 599;
+  },
+
   /**
    * The XMLHttpRequest succeeded and the document was loaded.
    * @param   event
@@ -3027,7 +3169,12 @@ Checker.prototype = {
       var status = this._getChannelStatus(request);
       LOG("Checker:onLoad - request.status: " + status);
       var update = new Update(null);
+      update.errorCode = status;
       update.statusText = getStatusTextFromCode(status, 404);
+
+      if (this._isHttpStatusCode(status)) {
+        update.errorCode = HTTP_ERROR_OFFSET + status;
+      }
       if (e.result == Cr.NS_ERROR_ILLEGAL_VALUE) {
         update.errorCode = updates[0] ? CERT_ATTR_CHECK_FAILED_HAS_UPDATE
                                       : CERT_ATTR_CHECK_FAILED_NO_UPDATE;
@@ -3053,10 +3200,14 @@ Checker.prototype = {
     // just use the 200 message from above, which means everything
     // "looks" fine but there was probably an XML error or a bogus file.
     var update = new Update(null);
+    update.errorCode = status;
     update.statusText = getStatusTextFromCode(status, 200);
+
     if (status == Cr.NS_ERROR_OFFLINE) {
       // We use a separate constant here because nsIUpdate.errorCode is signed
       update.errorCode = NETWORK_ERROR_OFFLINE;
+    } else if (this._isHttpStatusCode(status)) {
+      update.errorCode = HTTP_ERROR_OFFSET + status;
     }
 
     this._callback.onError(request, update);
@@ -3146,6 +3297,7 @@ Downloader.prototype = {
     if (this._request && this._request instanceof Ci.nsIRequest) {
       this._request.cancel(cancelError);
     }
+    releaseSDCardMountLock();
   },
 
   /**
@@ -3317,6 +3469,28 @@ Downloader.prototype = {
   },
 
   /**
+   * Get the nsIFile to use for downloading the active update's selected patch
+   */
+  _getUpdateArchiveFile: function Downloader__getUpdateArchiveFile() {
+    var updateArchive;
+#ifdef USE_UPDATE_ARCHIVE_DIR
+    try {
+      updateArchive = FileUtils.getDir(KEY_UPDATE_ARCHIVE_DIR, [], true);
+    } catch (e) {
+      if (e == Cr.NS_ERROR_FILE_TOO_BIG) {
+        this._update.errorCode = FILE_ERROR_TOO_BIG;
+      }
+      return null;
+    }
+#else
+    updateArchive = getUpdatesDir().clone();
+#endif
+
+    updateArchive.append(FILE_UPDATE_ARCHIVE);
+    return updateArchive;
+  },
+
+  /**
    * Download and stage the given update.
    * @param   update
    *          A nsIUpdate object to download a patch for. Cannot be null.
@@ -3339,8 +3513,70 @@ Downloader.prototype = {
     }
     this.isCompleteUpdate = this._patch.type == "complete";
 
-    var patchFile = updateDir.clone();
-    patchFile.append(FILE_UPDATE_ARCHIVE);
+    var patchFile = null;
+
+#ifdef MOZ_WIDGET_GONK
+    let status = readStatusFile(updateDir);
+LOG("status read " + status);
+    if (isInterruptedUpdate(status)) {
+      LOG("Downloader:downloadUpdate - interruptted update");
+      // The update was interrupted. Try to locate the existing patch file.
+      // For an interrupted download, this allows a resume rather than a
+      // re-download.
+      patchFile = getFileFromUpdateLink(updateDir);
+      if (!patchFile) {
+        // No link file. We'll just assume that the update.mar is in the
+        // update directory.
+        patchFile = updateDir.clone();
+        patchFile.append(FILE_UPDATE_ARCHIVE);
+      }
+      if (patchFile.exists()) {
+        LOG("Downloader:downloadUpdate - resuming with patchFile " + patchFile.path);
+      } else {
+        LOG("Downloader:downloadUpdate - patchFile " + patchFile.path + " doesn't exist - performing full download");
+        // The patchfile doesn't exist, we might as well treat this like
+        // a new download.
+        patchFile = null;
+      }
+      if (patchFile && (status != STATE_DOWNLOADING)) {
+        // It looks like the patch was downloaded, but got interrupted while
+        // it was being applied. So we'll fake the downloading portion.
+
+        writeStatusFile(updateDir, STATE_PENDING);
+
+        // Since the code expects the onStopRequest callback to happen
+        // asynchronously (And you have to call AUS_addDownloadListener
+        // after calling AUS_downloadUpdate) we need to defer this.
+
+        this._downloadTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+        this._downloadTimer.initWithCallback(function() {
+          this._downloadTimer = null;
+          // Send a fake onStopRequest. Filling in the destination allows
+          // _verifyDownload to work, and then the update will be applied.
+          this._request = {destination: patchFile};
+          this.onStopRequest(this._request, null, Cr.NS_OK);
+        }.bind(this), 0, Ci.nsITimer.TYPE_ONE_SHOT);
+
+        // Returning STATE_DOWNLOADING makes UpdatePrompt think we're
+        // downloading. The onStopRequest that we spoofed above will make it
+        // look like the download finished.
+        return STATE_DOWNLOADING;
+      }
+    }
+#endif
+    if (!patchFile) {
+      // Find a place to put the patchfile that we're going to download.
+      patchFile = this._getUpdateArchiveFile();
+    }
+    if (!patchFile) {
+      return STATE_NONE;
+    }
+
+    if (patchFile.path.indexOf(updateDir.path) != 0) {
+      // The patchFile is in a directory which is different from the
+      // updateDir, create a link file.
+      writeLinkFile(updateDir, patchFile);
+    }
 
     var uri = Services.io.newURI(this._patch.URL, null, null);
 

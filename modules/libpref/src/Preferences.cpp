@@ -151,6 +151,7 @@ struct CacheData {
     bool defaultValueBool;
     int32_t defaultValueInt;
     uint32_t defaultValueUint;
+    float defaultValueFloat;
   };
 };
 
@@ -176,6 +177,8 @@ SizeOfObserverEntryExcludingThis(ValueObserverHashKey* aKey,
 int64_t
 Preferences::GetPreferencesMemoryUsed()
 {
+  NS_ENSURE_TRUE(InitStaticMembers(), 0);
+
   size_t n = 0;
   n += PreferencesMallocSizeOf(sPreferences);
   if (gHashTable.ops) {
@@ -208,6 +211,18 @@ NS_MEMORY_REPORTER_IMPLEMENT(Preferences,
   Preferences::GetPreferencesMemoryUsed,
   "Memory used by the preferences system.")
 
+namespace {
+class AddPreferencesMemoryReporterRunnable : public nsRunnable
+{
+  NS_IMETHOD Run()
+  {
+    nsCOMPtr<nsIMemoryReporter> reporter =
+      new NS_MEMORY_REPORTER_NAME(Preferences);
+    return NS_RegisterMemoryReporter(reporter);
+  }
+};
+} // anonymous namespace
+
 // static
 Preferences*
 Preferences::GetInstanceForService()
@@ -238,8 +253,13 @@ Preferences::GetInstanceForService()
   gObserverTable = new nsRefPtrHashtable<ValueObserverHashKey, ValueObserver>();
   gObserverTable->Init();
 
-  nsCOMPtr<nsIMemoryReporter> reporter(new NS_MEMORY_REPORTER_NAME(Preferences));
-  NS_RegisterMemoryReporter(reporter);
+  // Preferences::GetInstanceForService() can be called from GetService(), and
+  // NS_RegisterMemoryReporter calls GetService(nsIMemoryReporter).  To avoid a
+  // potential recursive GetService() call, we can't register the memory
+  // reporter here; instead, do it off a runnable.
+  nsRefPtr<AddPreferencesMemoryReporterRunnable> runnable =
+    new AddPreferencesMemoryReporterRunnable();
+  NS_DispatchToMainThread(runnable);
 
   NS_ADDREF(sPreferences);
   return sPreferences;
@@ -1555,6 +1575,29 @@ Preferences::AddUintVarCache(uint32_t* aCache,
   data->defaultValueUint = aDefault;
   gCacheData->AppendElement(data);
   return RegisterCallback(UintVarChanged, aPref, data);
+}
+
+static int FloatVarChanged(const char* aPref, void* aClosure)
+{
+  CacheData* cache = static_cast<CacheData*>(aClosure);
+  *((float*)cache->cacheLocation) =
+    Preferences::GetFloat(aPref, cache->defaultValueFloat);
+  return 0;
+}
+
+// static
+nsresult
+Preferences::AddFloatVarCache(float* aCache,
+                             const char* aPref,
+                             float aDefault)
+{
+  NS_ASSERTION(aCache, "aCache must not be NULL");
+  *aCache = Preferences::GetFloat(aPref, aDefault);
+  CacheData* data = new CacheData();
+  data->cacheLocation = aCache;
+  data->defaultValueFloat = aDefault;
+  gCacheData->AppendElement(data);
+  return RegisterCallback(FloatVarChanged, aPref, data);
 }
 
 // static

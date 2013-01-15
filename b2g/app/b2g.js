@@ -530,6 +530,9 @@ pref("javascript.options.mem.gc_low_frequency_heap_growth", 105);
 pref("javascript.options.mem.high_water_mark", 6);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 3);
 
+// Allocation Threshold for workers
+pref("dom.workers.mem.gc_allocation_threshold_mb", 3);
+
 // Show/Hide scrollbars when active/inactive
 pref("ui.showHideScrollbars", 1);
 
@@ -625,3 +628,8 @@ pref("layers.orientation.sync.timeout", 1000);
 // Don't discard WebGL contexts for foreground apps on memory
 // pressure.
 pref("webgl.can-lose-context-in-foreground", false);
+
+// Allow nsMemoryInfoDumper to create a fifo in the temp directory.  We use
+// this fifo to trigger about:memory dumps, among other things.
+pref("memory_info_dumper.watch_fifo.enabled", true);
+pref("memory_info_dumper.watch_fifo.directory", "/data/local");

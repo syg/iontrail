@@ -19,7 +19,7 @@
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
 #include "nsINodeInfo.h"
-#include "nsIDocument.h"
+#include "nsIDocumentInlines.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
@@ -227,9 +227,9 @@ nsIContent::GetEditingHost()
   }
 
   nsIContent* content = this;
-  for (dom::Element* parent = GetElementParent();
+  for (dom::Element* parent = GetParentElement();
        parent && parent->HasFlag(NODE_IS_EDITABLE);
-       parent = content->GetElementParent()) {
+       parent = content->GetParentElement()) {
     content = parent;
   }
   return content->AsElement();

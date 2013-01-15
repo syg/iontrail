@@ -819,8 +819,8 @@ MDiv::analyzeEdgeCasesBackward()
 void
 MDiv::analyzeTruncateBackward()
 {
-    if (!isTruncated() && js::ion::EdgeCaseAnalysis::AllUsesTruncate(this))
-        setTruncated(true);
+    if (!isTruncated())
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
 }
 
 bool
@@ -830,7 +830,10 @@ MDiv::updateForReplacement(MDefinition *ins_)
     MDiv *ins = ins_->toDiv();
     // Since EdgeCaseAnalysis is not being run before GVN, its information does
     // not need to be merged here.
-    setTruncated(isTruncated() && ins->isTruncated());
+    if (isTruncated() && ins->isTruncated())
+        setTruncated(Max(isTruncated(), ins->isTruncated()));
+    else
+        setTruncated(0);
     return true;
 }
 
@@ -857,8 +860,22 @@ MMod::foldsTo(bool useValueNumbers)
 void
 MAdd::analyzeTruncateBackward()
 {
-    if (!isTruncated() && js::ion::EdgeCaseAnalysis::AllUsesTruncate(this))
-        setTruncated(true);
+    if (!isTruncated()) {
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
+    }
+    if (isTruncated() && isTruncated() < 20) {
+        // Super obvious optimization... If this operation is a double
+        // BUT it happens to look like a large precision int that eventually
+        // gets truncated, then just call it an int.
+        // This can arise if we have x+y | 0, and x and y are both INT_MAX,
+        // TI will observe an overflow, thus marking the addition as double-like
+        // but we'll have MTruncate(MAddD(toDouble(x), toDouble(y))), which we know
+        // we'll be able to convert to MAddI(x,y)
+        if (isBigInt_ && type() == MIRType_Double) {
+            specialization_ = MIRType_Int32;
+            setResultType(MIRType_Int32);
+        }
+    }
 }
 
 bool
@@ -866,21 +883,31 @@ MAdd::updateForReplacement(MDefinition *ins_)
 {
     JS_ASSERT(ins_->isAdd());
     MAdd *ins = ins_->toAdd();
-    setTruncated(isTruncated() && ins->isTruncated());
+    if (isTruncated() && ins->isTruncated())
+        setTruncated(Max(isTruncated(), ins->isTruncated()));
+    else
+        setTruncated(0);
     return true;
 }
 
 bool
 MAdd::fallible()
 {
-    return !isTruncated() && (!range() || !range()->isFinite());
+    // the add is fallible if range analysis does not say that it is finite, AND
+    // either the truncation analysis shows that there are non-truncated uses, or
+    // there are more than 20 operations before it gets truncated. 20 was chosen
+    // for two reasons. First, it is a nice sane number. Second, the largest int32
+    // can be (about) 2^31. The smallest integer that cannot be exactly represented
+    // as a double is 2^53 + 1  by doing something simple, like x = x + x, it takes
+    // 23 additions toget from 2^31 to 2^53 + 1. 20 is simply a conservative estimate of that.
+    return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isFinite());
 }
 
 void
 MSub::analyzeTruncateBackward()
 {
-    if (!isTruncated() && js::ion::EdgeCaseAnalysis::AllUsesTruncate(this))
-        setTruncated(true);
+    if (!isTruncated())
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
 }
 
 bool
@@ -888,14 +915,18 @@ MSub::updateForReplacement(MDefinition *ins_)
 {
     JS_ASSERT(ins_->isSub());
     MSub *ins = ins_->toSub();
-    setTruncated(isTruncated() && ins->isTruncated());
+    if (isTruncated() && ins->isTruncated())
+        setTruncated(Max(isTruncated(), ins->isTruncated()));
+    else
+        setTruncated(0);
     return true;
 }
 
 bool
 MSub::fallible()
 {
-    return !isTruncated() && (!range() || !range()->isFinite());
+    // see comment in MAdd::fallible()
+    return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isFinite());
 }
 
 MDefinition *

@@ -368,6 +368,11 @@ pref("browser.search.update.interval", 21600);
 // enable search suggestions by default
 pref("browser.search.suggest.enabled", true);
 
+#ifdef MOZ_OFFICIAL_BRANDING
+// {moz:official} expands to "official"
+pref("browser.search.official", true);
+#endif
+
 pref("browser.sessionhistory.max_entries", 50);
 
 // handle links targeting new windows
@@ -853,6 +858,10 @@ pref("breakpad.reportURL", "http://crash-stats.mozilla.com/report/index/");
 // Override submission of plugin hang reports to a different processing server
 pref("toolkit.crashreporter.pluginHangSubmitURL",
      "https://hang-reports.mozilla.org/submit");
+
+// URL for "Learn More" for Crash Reporter
+pref("toolkit.crashreporter.infoURL",
+     "http://www.mozilla.com/legal/privacy/firefox.html#crash-reporter");
 
 // base URL for web-based support pages
 pref("app.support.baseURL", "http://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/");
