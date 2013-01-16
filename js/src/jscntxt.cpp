@@ -327,6 +327,8 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     if (!clone)
         return NULL;
 
+    clone->setIsCallsiteClone();
+
     // Store a link back to the original for function.caller.
     clone->setExtendedSlot(0, ObjectValue(*fun));
 

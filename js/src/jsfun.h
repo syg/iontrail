@@ -49,7 +49,8 @@ class JSFunction : public JSObject
          * needed for ParallelArray selfhosted code until type information can
          * be made context sensitive. See discussion in bug 826148.
          */
-        CALLSITE_CLONE   = 0x2000,
+        CLONE_AT_CALLSITE = 0x2000,
+        CALLSITE_CLONE    = 0x4000,
 
         /* Derived Flags values for convenience: */
         NATIVE_FUN = 0,
@@ -105,11 +106,8 @@ class JSFunction : public JSObject
     bool isSelfHostedConstructor()  const { return flags & SELF_HOSTED_CTOR; }
     bool hasRest()                  const { return flags & HAS_REST; }
     bool hasDefaults()              const { return flags & HAS_DEFAULTS; }
-
-    /* Original functions that should be cloned are not extended. */
-    bool isCloneAtCallsite()        const { return (flags & CALLSITE_CLONE) && !isExtended(); }
-    /* Cloned functions keep a backlink to the original in extended slot 0. */
-    bool isCallsiteClone()          const { return (flags & CALLSITE_CLONE) && isExtended(); }
+    bool isCloneAtCallsite()        const { return flags & CLONE_AT_CALLSITE; }
+    bool isCallsiteClone()          const { return flags & CALLSITE_CLONE; }
 
     /* Compound attributes: */
     bool isBuiltin() const {
@@ -153,6 +151,10 @@ class JSFunction : public JSObject
     }
 
     void setIsCloneAtCallsite() {
+        flags |= CLONE_AT_CALLSITE;
+    }
+
+    void setIsCallsiteClone() {
         flags |= CALLSITE_CLONE;
     }
 
