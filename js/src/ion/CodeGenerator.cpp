@@ -3674,7 +3674,6 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         // (Also, outside of the VM call mechanism, it's very hard to
         // pass in a Value to a C function!)
         masm.bind(&indexWouldExceedCapacity);
-        //masm.breakpoint();
 
         SaveLiveRegs regs(*this, ins);
         Label abort;

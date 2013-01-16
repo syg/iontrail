@@ -625,6 +625,10 @@ JSObject::parExtendDenseElements(js::Allocator *alloc, js::Value *v, uint32_t ex
             return edr;
     }
 
+    // Watch out lest the header has been reallocated by
+    // extendDenseElements():
+    header = getElementsHeader();
+
     js::HeapSlot *sp = elements + initializedLength;
     if (v) {
         for (uint32_t i = 0; i < extra; i++)

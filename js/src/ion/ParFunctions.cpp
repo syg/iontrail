@@ -166,14 +166,18 @@ ion::ParPush(ParPushArgs *args)
     // just fetch it from TLS.  Extending the array is kind of the
     // slow path anyhow as it reallocates the elements vector.
     ForkJoinSlice *slice = js::ForkJoinSlice::Current();
-    return (args->object->parExtendDenseElements(slice->allocator,
-                                                 &args->value, 1) == JSObject::ED_OK);
+    JSObject::EnsureDenseResult res =
+        args->object->parExtendDenseElements(slice->allocator,
+                                             &args->value, 1);
+    return res == JSObject::ED_OK;
 }
 
 JSObject *
 ion::ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length)
 {
-    if (array->parExtendDenseElements(slice->allocator, NULL, length) != JSObject::ED_OK)
+    JSObject::EnsureDenseResult res =
+        array->parExtendDenseElements(slice->allocator, NULL, length);
+    if (res != JSObject::ED_OK)
         return NULL;
     return array;
 }
