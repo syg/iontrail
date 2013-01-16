@@ -601,42 +601,14 @@ struct JSObject : public js::ObjectImpl
      * index + extra elements. It returns ED_OK on success, ED_FAILED on
      * failure to grow the array, ED_SPARSE when the object is too sparse to
      * grow (this includes the case of index + extra overflow). In the last
-<<<<<<< HEAD
-     * two cases the array is kept intact.
-     *
-     * |parExtendDenseArray()| handles only the common case of
-     * appending values to |this|, so long as the following conditions
-     * hold:
-     *
-     * - the new values are to be written starting at
-     *   index |i| where |i| is the initialized length;
-     * - we are in parallel execution mode, and hence no GC is possible.
-     *
-     * The number of values to be appended is |extra| and the values
-     * can be found in the array |v|.  If the array |v| is NULL,
-     * then the initial values are set to holes. Unlike
-     * |ensureDenseArrayElements()|, there is no |index| argument
-     * because its value is implied to be the initialized length of
-     * |this|.  If the result of |parExtendDenseArray()| is |ED_OK|,
-     * then the capacity of |this| will have been grown (if needed) and the new
-     * entries will be filled in with |extra| new values from |v|.
-     * Any other result indicates no changes have been made.
-||||||| merged common ancestors
-     * two cases the array is kept intact.
-=======
      * two cases the object is kept intact.
->>>>>>> mozilla/master
      */
     enum EnsureDenseResult { ED_OK, ED_FAILED, ED_SPARSE };
-<<<<<<< HEAD
-    inline EnsureDenseResult ensureDenseArrayElements(JSContext *cx, unsigned index, unsigned extra);
-    inline EnsureDenseResult parExtendDenseArray(js::Allocator *alloc, js::Value *v,
-                                                 uint32_t extra);
-||||||| merged common ancestors
-    inline EnsureDenseResult ensureDenseArrayElements(JSContext *cx, unsigned index, unsigned extra);
-=======
     inline EnsureDenseResult ensureDenseElements(JSContext *cx, unsigned index, unsigned extra);
->>>>>>> mozilla/master
+    inline EnsureDenseResult parExtendDenseElements(js::Allocator *alloc, js::Value *v,
+                                                    uint32_t extra);
+    template<typename CONTEXT>
+    inline EnsureDenseResult extendDenseElements(CONTEXT *cx, unsigned requiredCapacity, unsigned extra);
 
     /* Convert a single dense element to a sparse property. */
     static bool sparsifyDenseElement(JSContext *cx, js::HandleObject obj, unsigned index);

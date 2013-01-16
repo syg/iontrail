@@ -2517,7 +2517,6 @@ JSObject::willBeSparseElements(unsigned requiredCapacity, unsigned newElementsHi
 bool
 JSObject::growElements(JSContext *cx, unsigned newcap)
 {
-<<<<<<< HEAD
     size_t oldSize = Probes::objectResizeActive() ? computedSizeOfThisSlotsElements() : 0;
 
     if (!growElements(&cx->compartment->allocator, newcap)) {
@@ -2534,18 +2533,14 @@ JSObject::growElements(JSContext *cx, unsigned newcap)
 bool
 JSObject::growElements(js::Allocator *alloc, unsigned newcap)
 {
-    // NB: This version of |growElements()|, which takes a
-    // |js::Allocator*| as opposed to a |JSContext*|, is intended to
-    // run either during sequential or parallel execution.  As per
-    // convention, since it does not take a JSContext*, it does not
-    // report an error on out of memory but simply returns false.
-
-    JS_ASSERT(isDenseArray());
-||||||| merged common ancestors
-    JS_ASSERT(isDenseArray());
-=======
+    /*
+     * This version of |growElements()|, which takes a
+     * |js::Allocator*| as opposed to a |JSContext*|, is intended to
+     * run either during sequential or parallel execution.  As per
+     * convention, since it does not take a JSContext*, it does not
+     * report an error on out of memory but simply returns false.
+     */
     JS_ASSERT(isExtensible());
->>>>>>> mozilla/master
 
     /*
      * When an object with CAPACITY_DOUBLING_MAX or fewer elements needs to

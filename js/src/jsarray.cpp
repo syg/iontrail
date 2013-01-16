@@ -1413,7 +1413,7 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
                 result = vec.begin() + n;
             }
         } else {
-            // note: currently, array.sort() cannot be used from parallel code
+            /* array.sort() cannot currently be used from parallel code */
             JS_ASSERT(!ForkJoinSlice::InParallelSection());
             FastInvokeGuard fig(cx, fval);
             if (!MergeSort(vec.begin(), n, vec.begin() + n,
