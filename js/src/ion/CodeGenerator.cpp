@@ -4571,6 +4571,10 @@ typedef bool (*GetPropertyCacheFn)(JSContext *, size_t, HandleObject, MutableHan
 static const VMFunction GetPropertyCacheInfo =
     FunctionInfo<GetPropertyCacheFn>(GetPropertyCache);
 
+typedef bool (*ParGetPropertyCacheFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
+static const VMFunction ParGetPropertyCacheInfo =
+    FunctionInfo<ParGetPropertyCacheFn>(LockedVMFunction<GetPropertyCacheFn>::Wrap<GetPropertyCache>);
+
 bool
 CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
 {
@@ -4623,8 +4627,18 @@ CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
 
     pushArg(objReg);
     pushArg(Imm32(cacheIndex));
-    if (!callVM(GetPropertyCacheInfo, ins))
-        return false;
+
+    // TODO: reals
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
+        if (!callVM(GetPropertyCacheInfo, ins))
+            return false;
+        break;
+      case ParallelExecution:
+        if (!callVM(ParGetPropertyCacheInfo, ins))
+            return false;
+        break;
+    }
 
     masm.storeCallResultValue(output);
     restoreLive(ins);

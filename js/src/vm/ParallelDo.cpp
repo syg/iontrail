@@ -394,7 +394,7 @@ class FastestIonInvoke
         IonCode *code = ion->method();
         jitcode_ = code->raw();
         enter_ = cx->compartment->ionCompartment()->enterJIT();
-        calleeToken_ = CalleeToToken(callee);
+        calleeToken_ = ParCalleeToToken(callee);
     }
 
     bool invoke() {

@@ -8,6 +8,7 @@
 #ifndef ForkJoin_h__
 #define ForkJoin_h__
 
+#include "jscntxt.h"
 #include "vm/ThreadPool.h"
 
 // ForkJoin
@@ -243,15 +244,24 @@ class LockedJSContext
 {
     ForkJoinSlice *slice_;
     JSContext *cx_;
+    uint8_t *savedIonTop_;
 
   public:
     LockedJSContext(ForkJoinSlice *slice)
       : slice_(slice),
-        cx_(slice->acquireContext())
-    { }
+        cx_(slice->acquireContext()),
+        savedIonTop_(cx_->runtime->mainThread.ionTop)
+    {
+        // Switch out main thread data for the local thread data.
+        fprintf(stderr, "Locking context for parallel VM call\n");
+        cx_->runtime->mainThread.ionTop = slice_->perThreadData->ionTop;
+    }
 
     ~LockedJSContext() {
         slice_->releaseContext();
+
+        // Restore saved main thread data.
+        cx_->runtime->mainThread.ionTop = savedIonTop_;
     }
 
     operator JSContext *() { return cx_; }

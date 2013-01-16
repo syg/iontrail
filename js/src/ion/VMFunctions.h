@@ -9,6 +9,7 @@
 #define jsion_vm_functions_h__
 
 #include "jspubtd.h"
+#include "vm/ForkJoin.h"
 
 namespace js {
 namespace ion {
@@ -88,6 +89,9 @@ struct VMFunction
     // arguments of the VM wrapper.
     uint64_t argumentRootTypes;
 
+    // Does this function take a ForkJoinSlice * instead of a JSContext *?
+    bool parallel;
+
     uint32_t argc() const {
         // JSContext * + args + (OutParam? *)
         return 1 + explicitArgc() + ((outParam == Type_Void) ? 0 : 1);
@@ -155,18 +159,20 @@ struct VMFunction
         explicitArgs(0),
         argumentProperties(0),
         outParam(Type_Void),
-        returnType(Type_Void)
+        returnType(Type_Void),
+        parallel(false)
     {
     }
 
     VMFunction(void *wrapped, uint32_t explicitArgs, uint32_t argumentProperties, uint64_t argRootTypes,
-               DataType outParam, DataType returnType)
+               DataType outParam, DataType returnType, bool parallel = false)
       : wrapped(wrapped),
         explicitArgs(explicitArgs),
         argumentProperties(argumentProperties),
         outParam(outParam),
         returnType(returnType),
-        argumentRootTypes(argRootTypes)
+        argumentRootTypes(argRootTypes),
+        parallel(parallel)
     {
         // Check for valid failure/return type.
         JS_ASSERT_IF(outParam != Type_Void, returnType == Type_Bool);
@@ -282,7 +288,7 @@ template <> struct OutParamToDataType<MutableHandleValue> { static const DataTyp
 #define SEP_OR(_) |
 #define NOTHING(_)
 
-#define FUNCTION_INFO_STRUCT_BODY(ForEachNb)                                            \
+#define FUNCTION_INFO_STRUCT_BODY(ForEachNb, IsPar)                                     \
     static inline DataType returnType() {                                               \
         return TypeToDataType<R>::result;                                               \
     }                                                                                   \
@@ -295,16 +301,16 @@ template <> struct OutParamToDataType<MutableHandleValue> { static const DataTyp
     static inline size_t explicitArgs() {                                               \
         return NbArgs() - (outParam() != Type_Void ? 1 : 0);                            \
     }                                                                                   \
-    static inline uint32_t argumentProperties() {                                         \
+    static inline uint32_t argumentProperties() {                                       \
         return ForEachNb(COMPUTE_ARG_PROP, SEP_OR, NOTHING);                            \
     }                                                                                   \
-    static inline uint64_t argumentRootTypes() {                                          \
+    static inline uint64_t argumentRootTypes() {                                        \
         return ForEachNb(COMPUTE_ARG_ROOT, SEP_OR, NOTHING);                            \
     }                                                                                   \
     FunctionInfo(pf fun)                                                                \
         : VMFunction(JS_FUNC_TO_DATA_PTR(void *, fun), explicitArgs(),                  \
                      argumentProperties(),argumentRootTypes(),                          \
-                     outParam(), returnType())                                          \
+                     outParam(), returnType(), IsPar)                                   \
     { }
 
 template <typename Fun>
@@ -338,36 +344,95 @@ struct FunctionInfo<R (*)(JSContext *)> : public VMFunction {
     { }
 };
 
+// VMFunction wrapper for calling from parallel execution with no explicit
+// arguments.
+template <class R>
+struct FunctionInfo<R (*)(ForkJoinSlice *)> : public VMFunction {
+    typedef R (*pf)(ForkJoinSlice *);
+
+    static inline DataType returnType() {
+        return TypeToDataType<R>::result;
+    }
+    static inline DataType outParam() {
+        return Type_Void;
+    }
+    static inline size_t explicitArgs() {
+        return 0;
+    }
+    static inline uint32_t argumentProperties() {
+        return 0;
+    }
+    static inline uint64_t argumentRootTypes() {
+        return 0;
+    }
+    FunctionInfo(pf fun)
+      : VMFunction(JS_FUNC_TO_DATA_PTR(void *, fun), explicitArgs(),
+                   argumentProperties(), argumentRootTypes(),
+                   outParam(), returnType(), true)
+    { }
+};
+
 // Specialize the class for each number of argument used by VMFunction.
 // Keep it verbose unless you find a readable macro for it.
 template <class R, class A1>
 struct FunctionInfo<R (*)(JSContext *, A1)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1, false)
 };
 
 template <class R, class A1, class A2>
 struct FunctionInfo<R (*)(JSContext *, A1, A2)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2, false)
 };
 
 template <class R, class A1, class A2, class A3>
 struct FunctionInfo<R (*)(JSContext *, A1, A2, A3)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3, false)
 };
 
 template <class R, class A1, class A2, class A3, class A4>
 struct FunctionInfo<R (*)(JSContext *, A1, A2, A3, A4)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3, A4);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4, false)
 };
 
 template <class R, class A1, class A2, class A3, class A4, class A5>
     struct FunctionInfo<R (*)(JSContext *, A1, A2, A3, A4, A5)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3, A4, A5);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5, false)
+};
+
+// Parallel versions.
+template <class R, class A1>
+struct FunctionInfo<R (*)(ForkJoinSlice *, A1)> : public VMFunction {
+    typedef R (*pf)(ForkJoinSlice *, A1);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1, true)
+};
+
+template <class R, class A1, class A2>
+struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2)> : public VMFunction {
+    typedef R (*pf)(ForkJoinSlice *, A1, A2);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2, true)
+};
+
+template <class R, class A1, class A2, class A3>
+struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2, A3)> : public VMFunction {
+    typedef R (*pf)(ForkJoinSlice *, A1, A2, A3);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3, true)
+};
+
+template <class R, class A1, class A2, class A3, class A4>
+struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2, A3, A4)> : public VMFunction {
+    typedef R (*pf)(ForkJoinSlice *, A1, A2, A3, A4);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4, true)
+};
+
+template <class R, class A1, class A2, class A3, class A4, class A5>
+    struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2, A3, A4, A5)> : public VMFunction {
+    typedef R (*pf)(ForkJoinSlice *, A1, A2, A3, A4, A5);
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5, true)
 };
 
 #undef FUNCTION_INFO_STRUCT_BODY

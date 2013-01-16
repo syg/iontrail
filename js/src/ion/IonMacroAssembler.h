@@ -18,6 +18,9 @@
 #include "ion/IonCompartment.h"
 #include "ion/IonInstrumentation.h"
 #include "ion/TypeOracle.h"
+#include "ion/ParFunctions.h"
+
+#include "vm/ForkJoin.h"
 
 #include "jsscope.h"
 #include "jstypedarray.h"
@@ -510,6 +513,22 @@ class MacroAssembler : public MacroAssemblerSpecific
         linkExitFrame();
         Push(ImmWord(uintptr_t(codeVal)));
         Push(ImmWord(uintptr_t(NULL)));
+    }
+    void enterParExitFrame(const VMFunction *f, Register slice, Register scratch) {
+        // Load the current ForkJoinSlice *. If we need a parallel exit frame,
+        // chances are we are about to do something very slow anyways, so just
+        // call ParForkJoinSlice again instead of using the cached version.
+        setupUnalignedABICall(0, scratch);
+        callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParForkJoinSlice));
+        if (ReturnReg != slice)
+            movePtr(ReturnReg, slice);
+        // Load the PerThreadData from from the slice.
+        loadPtr(Address(slice, offsetof(ForkJoinSlice, perThreadData)), scratch);
+        linkParExitFrame(scratch);
+        // Push the ioncode.
+        exitCodePatch_ = PushWithPatch(ImmWord(-1));
+        // Push the VMFunction pointer, to mark arguments.
+        Push(ImmWord(f));
     }
 
     void leaveExitFrame() {

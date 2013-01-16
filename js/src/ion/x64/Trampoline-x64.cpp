@@ -384,6 +384,12 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Wrapper register set is a superset of Volatile register set.
     JS_STATIC_ASSERT((Register::Codes::VolatileMask & ~Register::Codes::WrapperMask) == 0);
 
+    // Scratch register.
+    Register temp = regs.getAny();
+
+    // The context is the first argument.
+    Register cxreg = IntArgReg0;
+
     // Stack is:
     //    ... frame ...
     //  +12 [args]
@@ -391,14 +397,17 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     //  +0  returnAddress
     //
     // We're aligned to an exit frame, so link it up.
-    masm.enterExitFrame(&f);
+    if (f.parallel)
+        masm.enterParExitFrame(&f, cxreg, temp);
+    else
+        masm.enterExitFrame(&f);
 
     // Save the current stack pointer as the base for copying arguments.
     Register argsBase = InvalidReg;
     if (f.explicitArgs) {
         argsBase = r10;
         regs.take(argsBase);
-        masm.lea(Operand(rsp,IonExitFrameLayout::SizeWithFooter()), argsBase);
+        masm.lea(Operand(rsp, IonExitFrameLayout::SizeWithFooter()), argsBase);
     }
 
     // Reserve space for the outparameter.
@@ -427,12 +436,13 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
     }
 
-    Register temp = regs.getAny();
     masm.setupUnalignedABICall(f.argc(), temp);
 
-    // Initialize the context parameter.
-    Register cxreg = IntArgReg0;
-    masm.loadJSContext(cxreg);
+    // Initialize the context parameter if sequential. For parallel execution,
+    // we've already loaded the context earlier in entering the parallel exit
+    // frame.
+    if (!f.parallel)
+        masm.loadJSContext(cxreg);
     masm.passABIArg(cxreg);
 
     size_t argDisp = 0;
@@ -497,11 +507,15 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         JS_ASSERT(f.outParam == Type_Void);
         break;
     }
+
     masm.leaveExitFrame();
     masm.retn(Imm32(sizeof(IonExitFrameLayout) + f.explicitStackSlots() * sizeof(void *)));
 
     masm.bind(&exception);
-    masm.handleException();
+    if (f.parallel)
+        masm.handleParException();
+    else
+        masm.handleException();
 
     Linker linker(masm);
     IonCode *wrapper = linker.newCode(cx);

@@ -5057,7 +5057,7 @@ class MFunctionEnvironment
     }
 };
 
-// Load's the current js::ForkJoinSlice*.
+// Loads the current js::ForkJoinSlice*.
 // Only applicable in ParallelExecution.
 class MParSlice
   : public MNullaryInstruction

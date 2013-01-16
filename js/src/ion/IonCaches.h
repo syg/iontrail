@@ -8,6 +8,8 @@
 #ifndef jsion_caches_h__
 #define jsion_caches_h__
 
+#include "vm/ForkJoin.h"
+
 #include "IonCode.h"
 #include "TypeOracle.h"
 #include "Registers.h"
@@ -477,6 +479,9 @@ class IonCacheCallsiteClone : public IonCache
 
 bool
 GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
+bool
+ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
+                    MutableHandleValue vp);
 
 bool
 SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value,
