@@ -291,7 +291,7 @@ js::intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
         return false;
     buffer->setType(newtype);
 
-    JSObject::EnsureDenseResult edr = buffer->ensureDenseArrayElements(cx, length, 0);
+    JSObject::EnsureDenseResult edr = buffer->ensureDenseElements(cx, length, 0);
     switch (edr) {
       case JSObject::ED_OK:
         args.rval().setObject(*buffer);
@@ -338,16 +338,16 @@ js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
         uint32_t elemi = base+2;
 
         JS_ASSERT(args[arri].isObject());
-        JS_ASSERT(args[arri].toObject().isDenseArray() ||
+        JS_ASSERT(args[arri].toObject().isNative() ||
                   args[arri].toObject().isTypedArray());
         JS_ASSERT(args[idxi].isInt32());
 
         RootedObject arrobj(cx, &args[arri].toObject());
         uint32_t idx = args[idxi].toInt32();
 
-        if (arrobj->isDenseArray()) {
-            JS_ASSERT(idx < arrobj->getDenseArrayInitializedLength());
-            JSObject::setDenseArrayElementWithType(cx, arrobj, idx, args[elemi]);
+        if (arrobj->isNative()) {
+            JS_ASSERT(idx < arrobj->getDenseInitializedLength());
+            JSObject::setDenseElementWithType(cx, arrobj, idx, args[elemi]);
         } else {
             JS_ASSERT(idx < TypedArray::length(arrobj));
             RootedValue tmp(cx, args[elemi]);

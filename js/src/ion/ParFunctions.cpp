@@ -11,7 +11,6 @@
 
 #include "jsinterpinlines.h"
 #include "jscompartmentinlines.h"
-#include "jsarrayinlines.h"
 
 #include "vm/ParallelDo.h"
 
@@ -167,14 +166,14 @@ ion::ParPush(ParPushArgs *args)
     // just fetch it from TLS.  Extending the array is kind of the
     // slow path anyhow as it reallocates the elements vector.
     ForkJoinSlice *slice = js::ForkJoinSlice::Current();
-    return (args->object->parExtendDenseArray(slice->allocator,
-                                              &args->value, 1) == JSObject::ED_OK);
+    return (args->object->parExtendDenseElements(slice->allocator,
+                                                 &args->value, 1) == JSObject::ED_OK);
 }
 
 JSObject *
 ion::ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length)
 {
-    if (array->parExtendDenseArray(slice->allocator, NULL, length) != JSObject::ED_OK)
+    if (array->parExtendDenseElements(slice->allocator, NULL, length) != JSObject::ED_OK)
         return NULL;
     return array;
 }
