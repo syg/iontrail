@@ -378,8 +378,12 @@ intrinsic_ParallelTestsShouldPass(JSContext *cx, unsigned argc, Value *vp)
     // Instead, we simply disable the assertions that state that no
     // bailouts etc should occur.
     CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef JS_THREADSAFE
     args.rval().setBoolean(!ion::js_IonOptions.eagerCompilation &&
                            cx->typeInferenceEnabled());
+#else
+    args.rval().setBoolean(false);
+#endif
     return true;
 }
 

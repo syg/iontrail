@@ -35,8 +35,7 @@ class CodeGeneratorShared : public LInstructionVisitor
 {
     js::Vector<OutOfLineCode *, 0, SystemAllocPolicy> outOfLineCode_;
     OutOfLineCode *oolIns;
-    OutOfLineParallelAbort *oolParallelAbort;
-    uint32_t parallelBailoutIndex;
+    OutOfLineParallelAbort *oolParallelAbort_;
 
   public:
     MacroAssembler masm;
@@ -304,7 +303,6 @@ class CodeGeneratorShared : public LInstructionVisitor
     bool maybeCallTrace(uint32_t blockIndex, LInstruction *lir, const char *bailoutName = NULL);
 
   protected:
-    OutOfLineParallelAbort *outOfLineParallelAbort;
     bool ensureOutOfLineParallelAbort(Label **result);
 };
 
@@ -559,10 +557,7 @@ CodeGeneratorShared::visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo>
 class OutOfLineParallelAbort : public OutOfLineCode
 {
   public:
-    uint32_t index;
-
-    OutOfLineParallelAbort(uint32_t index)
-        : index(index)
+    OutOfLineParallelAbort()
     { }
 
     bool generate(CodeGeneratorShared *codegen);

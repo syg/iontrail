@@ -5596,6 +5596,20 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
     }
 }
 
+bool
+CodeGenerator::visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool)
+{
+    JS_ASSERT(current);
+    masm.movePtr(ImmWord((void *) current->mir()->info().script()), CallTempReg0);
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.passABIArg(CallTempReg0);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParallelAbort));
+
+    masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
+    masm.jump(returnLabel_);
+    return true;
+}
+
 } // namespace ion
 } // namespace js
 

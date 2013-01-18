@@ -27,8 +27,7 @@ namespace ion {
 
 CodeGeneratorShared::CodeGeneratorShared(MIRGenerator *gen, LIRGraph *graph)
   : oolIns(NULL),
-    oolParallelAbort(NULL),
-    parallelBailoutIndex(0),
+    oolParallelAbort_(NULL),
     masm(&sps_),
     gen(gen),
     graph(*graph),
@@ -508,13 +507,13 @@ CodeGeneratorShared::markArgumentSlots(LSafepoint *safepoint)
 bool
 CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 {
-    if (!oolParallelAbort) {
-        oolParallelAbort = new OutOfLineParallelAbort(parallelBailoutIndex++);
-        if (!addOutOfLineCode(oolParallelAbort))
+    if (!oolParallelAbort_) {
+        oolParallelAbort_ = new OutOfLineParallelAbort();
+        if (!addOutOfLineCode(oolParallelAbort_))
             return false;
     }
 
-    *result = oolParallelAbort->entry();
+    *result = oolParallelAbort_->entry();
     return true;
 }
 

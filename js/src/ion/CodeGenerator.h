@@ -225,6 +225,8 @@ class CodeGenerator : public CodeGeneratorSpecific
 
     bool visitOutOfLineParNewGCThing(OutOfLineParNewGCThing *ool);
 
+    bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool);
+
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
         return visitCache(ins);
     }
