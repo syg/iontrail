@@ -51,6 +51,9 @@
 // before calling |check()|, that's fine too.  We assume that you do not do
 // unbounded work without invoking |check()|.
 //
+// For more details on how operation callbacks and so forth are signaled,
+// see the section below on Signaling Abort and Interrupts.
+//
 // Sequential Fallback:
 //
 // It is assumed that anyone using this API must be prepared for a sequential
@@ -88,7 +91,42 @@
 //
 // In the future, it should be possible to lift the restriction that
 // we must block until inc. GC has completed and also to permit GC
-// during parallel exeution. But we're not there yet.
+// during parallel execution. But we're not there yet.
+//
+// Signaling Aborts and Interrupts:
+//
+// Parallel execution needs to periodically "check in" to determine
+// whether an interrupt has been signaled or whether one of the other
+// threads has requested an abort.  This is done by checking two flags
+// on the runtime (runtime->parallelAbort and runtime->interrupt).  If
+// either flag is true, then the check() method is invoked. This design
+// seems to be non-ideal---as it would be nice to check a single flag, and
+// it would be nice if the parallelAbort flag were a member of ForkJoinShared
+// rather than the runtime---but there are several constraining factors:
+//
+// - We need to be able to distinguish a user-requested interrupt from an
+//   internal parallel abort. I considered setting the interrupt flag for both,
+//   but that would potentially lead to extra calls to the operation callback.
+//   Moreover, because the user requests an interrupt asynchronously, we must be
+//   prepared for the situation that both an interrupt *and* an abort have been
+//   requested.
+//
+// - Placing the flags in the JSRuntime* means that we can bake the
+//   pointer into the generated code, which is more efficient than
+//   dereferencing the per-thread-data (only one load).
+//
+// - In normal ion code, on entry to a function we check the stack
+//   limit and on backedges we check the interrupt flag.  This is
+//   sufficient because when an interrupt is signaled we clear the
+//   stack limit.  But this doesn't work in the parallel setting
+//   because we'd have to clear the stack limits for all threads.
+//   This is not possible since the interrupt code runs asynchronously
+//   and doesn't have access to all the stacks.  Moreover, the other
+//   threads may be in the process of terminating, etc, so that would
+//   be tricky.  Instead we just check the interrupt and parallelAbort
+//   flags on entry to the function as well.
+//
+// - Anyway, perhaps the details of this design will change in the future.
 //
 // Current Limitations:
 //
@@ -99,6 +137,7 @@
 // - No load balancing is performed between worker threads.  That means that
 //   the fork-join system is best suited for problems that can be slice into
 //   uniform bits.
+
 
 namespace js {
 
@@ -169,15 +208,6 @@ struct ForkJoinSlice
     // True if this is the main thread, false if it is one of the parallel workers.
     bool isMainThread();
 
-    // Generally speaking, if a thread returns false, that is interpreted as a
-    // "bailout"---meaning, a recoverable error.  If however you call this
-    // function before returning false, then the error will be interpreted as
-    // *fatal*.  This doesn't strike me as the most elegant solution here but
-    // I don't know what'd be better.
-    //
-    // For convenience, *always* returns false.
-    bool setFatal();
-
     // When the code would normally trigger a GC, we don't trigger it
     // immediately but instead record that request here.  This will
     // cause |ExecuteForkJoinOp()| to invoke |TriggerGC()| or
@@ -188,11 +218,16 @@ struct ForkJoinSlice
     void requestGC(gcreason::Reason reason);
     void requestCompartmentGC(JSCompartment *compartment, gcreason::Reason reason);
 
-    // During the parallel phase, this method should be invoked periodically,
-    // for example on every backedge, similar to the interrupt check.  If it
-    // returns false, then the parallel phase has been aborted and so you
-    // should bailout.  The function may also rendesvous to perform GC or do
-    // other similar things.
+    // During the parallel phase, this method should be invoked
+    // periodically, for example on every backedge, similar to the
+    // interrupt check.  If it returns false, then the parallel phase
+    // has been aborted and so you should bailout.  The function may
+    // also rendesvous to perform GC or do other similar things.
+    //
+    // This function is guaranteed to have no effect if both
+    // runtime()->parallelAbort and runtime()->interrupt are zero.
+    // Ion-generated code takes advantage of this by inlining the
+    // checks on those flags before actually calling this function.
     bool check();
 
     // Be wary, the runtime is shared between all threads!
@@ -211,6 +246,8 @@ struct ForkJoinSlice
   private:
     friend class AutoRendezvous;
     friend class AutoSetForkJoinSlice;
+
+    bool checkOutOfLine();
 
 #ifdef JS_THREADSAFE
     // Initialized by Initialize()

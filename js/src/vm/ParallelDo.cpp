@@ -360,8 +360,8 @@ class AutoEnterWarmup
     JSRuntime *runtime_;
 
   public:
-    AutoEnterWarmup(JSRuntime *runtime) : runtime_(runtime) { runtime_->warmup++; }
-    ~AutoEnterWarmup() { runtime_->warmup--; }
+    AutoEnterWarmup(JSRuntime *runtime) : runtime_(runtime) { runtime_->parallelWarmup++; }
+    ~AutoEnterWarmup() { runtime_->parallelWarmup--; }
 };
 
 // Can only enter callees with a valid IonScript.
@@ -551,7 +551,7 @@ class ParallelDo : public ForkJoinOp
             args.setThis(UndefinedValue());
             args[0].setInt32(i);
             args[1].setInt32(numSlices);
-            args[2].setBoolean(!!cx_->runtime->warmup);
+            args[2].setBoolean(!!cx_->runtime->parallelWarmup);
             if (!fig.invoke(cx_))
                 return false;
         }

@@ -1077,7 +1077,14 @@ struct JSRuntime : js::RuntimeFriendFields
 
     // Non-zero if this is a parallel warmup execution.  See
     // js::parallel::Do() for more information.
-    uint32_t warmup;
+    uint32_t parallelWarmup;
+
+    // This flag is set to true when a parallel section wishes to
+    // bailout.  The flag is volatile because any of the various
+    // worker threads can set it asynchronously. THIS FIELD SHOULD NOT
+    // BE DIRECTLY MANIPULATED; it belongs to the code in
+    // vm/ForkJoin.cpp.
+    volatile uint32_t parallelAbort;
 
   private:
     // In certain cases, we want to optimize certain opcodes to typed instructions,

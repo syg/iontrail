@@ -430,6 +430,23 @@ MacroAssembler::initGCThing(const Register &obj, JSObject *templateObject)
 }
 
 void
+MacroAssembler::parCheckInterruptFlags(const Register &tempReg,
+                                       Label *fail)
+{
+    JSCompartment *compartment = GetIonContext()->compartment;
+
+    void *interrupt = (void*)&compartment->rt->interrupt;
+    movePtr(ImmWord(interrupt), tempReg);
+    load32(Address(tempReg, 0), tempReg);
+    branchTest32(Assembler::NonZero, tempReg, tempReg, fail);
+
+    void *parallelAbort = (void*)&compartment->rt->parallelAbort;
+    movePtr(ImmWord(parallelAbort), tempReg);
+    load32(Address(tempReg, 0), tempReg);
+    branchTest32(Assembler::NonZero, tempReg, tempReg, fail);
+}
+
+void
 MacroAssembler::maybeRemoveOsrFrame(Register scratch)
 {
     // Before we link an exit frame, check for an OSR frame, which is
