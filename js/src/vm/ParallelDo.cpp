@@ -366,7 +366,7 @@ class AutoEnterWarmup
 
 // Can only enter callees with a valid IonScript.
 template <uint32_t maxArgc>
-class FastestIonInvoke
+class ParallelIonInvoke
 {
     EnterIonCode enter_;
     void *jitcode_;
@@ -377,7 +377,7 @@ class FastestIonInvoke
   public:
     Value *args;
 
-    FastestIonInvoke(JSContext *cx, HandleObject fun, uint32_t argc)
+    ParallelIonInvoke(JSContext *cx, HandleObject fun, uint32_t argc)
       : argc_(argc),
         args(argv_ + 2)
     {
@@ -395,6 +395,7 @@ class FastestIonInvoke
         jitcode_ = code->raw();
         enter_ = cx->compartment->ionCompartment()->enterJIT();
         calleeToken_ = ParCalleeToToken(callee);
+        printf("%p: %p\n", (void*)callee, (void *)calleeToken_);
     }
 
     bool invoke() {
@@ -561,7 +562,7 @@ class ParallelDo : public ForkJoinOp
     virtual bool parallel(ForkJoinSlice &slice) {
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);
-        FastestIonInvoke<3> fii(cx_, fun, 3);
+        ParallelIonInvoke<3> fii(cx_, fun, 3);
 
         fii.args[0] = Int32Value(slice.sliceId);
         fii.args[1] = Int32Value(slice.numSlices);

@@ -24,10 +24,6 @@ enum FrameType
     // functon activation. OptimizedJS frames are used by the optimizing compiler.
     IonFrame_OptimizedJS,
 
-    // A JS frame that is identical in layout to OptimizeJS, differing only
-    // that we expect the callee to have a parallel IonScript instead.
-    IonFrame_ParJS,
-
     // The entry frame is the initial prologue block transitioning from the VM
     // into the Ion world.
     IonFrame_Entry,
@@ -124,6 +120,7 @@ class IonFrameIterator
         return type_ == IonFrame_Entry;
     }
     bool isFunctionFrame() const;
+    bool isParFunctionFrame() const;
 
     bool isConstructing() const;
 

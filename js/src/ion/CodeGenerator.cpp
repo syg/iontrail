@@ -631,6 +631,7 @@ CodeGenerator::visitCallee(LCallee *lir)
     Address ptr(StackPointer, frameSize() + IonJSFrameLayout::offsetOfCalleeToken());
 
     masm.loadPtr(ptr, callee);
+    masm.clearCalleeTag(callee, gen->info().executionMode());
     return true;
 }
 
@@ -1134,6 +1135,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     // Construct the IonFramePrefix.
     uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_OptimizedJS);
+    masm.tagCallee(calleereg, executionMode);
     masm.Push(Imm32(call->numActualArgs()));
     masm.Push(calleereg);
     masm.Push(Imm32(descriptor));
@@ -1277,6 +1279,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
 
     // Construct the IonFramePrefix.
     uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_OptimizedJS);
+    masm.tagCallee(calleereg, executionMode);
     masm.Push(Imm32(call->numActualArgs()));
     masm.Push(calleereg);
     masm.Push(Imm32(descriptor));

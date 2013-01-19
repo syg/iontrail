@@ -611,6 +611,33 @@ class MacroAssembler : public MacroAssemblerSpecific
         return ret;
     }
 
+    void tagCallee(Register callee, ExecutionMode mode) {
+        switch (mode) {
+          case SequentialExecution:
+            // CalleeToken_Function is untagged, so we don't need to do anything.
+            return;
+          case ParallelExecution:
+            orPtr(Imm32(CalleeToken_ParFunction), callee);
+            return;
+          default:
+            JS_NOT_REACHED("unknown execution mode");
+        }
+    }
+
+    void clearCalleeTag(Register callee, ExecutionMode mode) {
+        switch (mode) {
+          case SequentialExecution:
+            // CalleeToken_Function is untagged, so we don't need to do anything.
+            return;
+          case ParallelExecution:
+            andPtr(Imm32(~0x3), callee);
+            return;
+          default:
+            JS_NOT_REACHED("unknown execution mode");
+        }
+    }
+
+
   private:
     // These two functions are helpers used around call sites throughout the
     // assembler. They are called from the above call wrappers to emit the

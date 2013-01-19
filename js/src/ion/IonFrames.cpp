@@ -60,8 +60,16 @@ IonFrameIterator::checkInvalidation(IonScript **ionScriptOut) const
     RawScript script = this->script();
     // N.B. the current IonScript is not the same as the frame's
     // IonScript if the frame has since been invalidated.
-    IonScript *currentIonScript = script->ion;
-    bool invalidated = !script->hasIonScript() ||
+    IonScript *currentIonScript;
+    bool hasIonScript;
+    if (isParFunctionFrame()) {
+        currentIonScript = script->parallelIon;
+        hasIonScript = script->hasParallelIonScript();
+    } else {
+        currentIonScript = script->ion;
+        hasIonScript = script->hasIonScript();
+    }
+    bool invalidated = !hasIonScript ||
         !currentIonScript->containsReturnAddress(returnAddr);
     if (!invalidated)
         return false;
@@ -84,8 +92,11 @@ JSFunction *
 IonFrameIterator::callee() const
 {
     if (isScripted()) {
-        JS_ASSERT(isFunctionFrame());
-        return CalleeTokenToFunction(calleeToken());
+        JS_ASSERT(isFunctionFrame() || isParFunctionFrame());
+        if (isFunctionFrame())
+            return CalleeTokenToFunction(calleeToken());
+        else
+            return CalleeTokenToParFunction(calleeToken());
     }
 
     JS_ASSERT(isNative());
@@ -95,7 +106,7 @@ IonFrameIterator::callee() const
 JSFunction *
 IonFrameIterator::maybeCallee() const
 {
-    if ((isScripted() && isFunctionFrame()) || isNative())
+    if ((isScripted() && (isFunctionFrame() || isParFunctionFrame())) || isNative())
         return callee();
     return NULL;
 }
@@ -136,6 +147,12 @@ bool
 IonFrameIterator::isFunctionFrame() const
 {
     return js::ion::CalleeTokenIsFunction(calleeToken());
+}
+
+bool
+IonFrameIterator::isParFunctionFrame() const
+{
+    return GetCalleeTokenTag(calleeToken()) == CalleeToken_ParFunction;
 }
 
 bool
@@ -858,7 +875,15 @@ IonFrameIterator::ionScript() const
     IonScript *ionScript;
     if (checkInvalidation(&ionScript))
         return ionScript;
-    return script()->ionScript();
+    switch (GetCalleeTokenTag(calleeToken())) {
+      case CalleeToken_Function:
+      case CalleeToken_Script:
+        return script()->ionScript();
+      case CalleeToken_ParFunction:
+        return script()->parallelIonScript();
+      default:
+        JS_NOT_REACHED("unknown callee token type");
+    }
 }
 
 const SafepointIndex *
