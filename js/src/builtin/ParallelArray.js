@@ -188,6 +188,11 @@ function ParallelArrayView(shape, buffer, offset) {
     case 3: this.get = ParallelArrayGet3; break;
     default: this.get = ParallelArrayGetN; break;
   }
+
+  // Due to inlining of NewParallelArray, the return type of this function
+  // gets recorded as the return type of NewParallelArray at inlined sites, so
+  // we must take care to return the same thing.
+  return this;
 }
 
 function ParallelArrayBuild(self, shape, f, m) {

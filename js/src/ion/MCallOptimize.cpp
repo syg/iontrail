@@ -1051,6 +1051,12 @@ IonBuilder::inlineNewParallelArray(uint32_t argc, bool constructing)
     RootedFunction target(cx);
     if (targetObj && targetObj->isFunction())
         target = targetObj->toFunction();
+    if (target && target->isCloneAtCallsite()) {
+        RootedScript scriptRoot(cx, script());
+        target = CloneFunctionAtCallsite(cx, target, scriptRoot, pc);
+        if (!target)
+            return InliningStatus_Error;
+    }
     MDefinition *ctor = makeCallsiteClone(target,
                                           current->peek(-(argc + 1))->toPassArg()->getArgument());
 
