@@ -930,14 +930,27 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
     return true;
 }
 
+static bool
+GetProperty(JSContext *cx, jsbytecode *pc, HandleObject obj, HandleId id, MutableHandleValue vp)
+{
+    if (obj->getOps()->getProperty) {
+        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), obj, id, vp))
+            return false;
+    } else {
+        if (!GetPropertyHelper(cx, obj, id, 0, vp))
+            return false;
+    }
+    return true;
+}
+
 bool
 js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp)
 {
     AutoFlushCache afc ("GetPropertyCache");
     const SafepointIndex *safepointIndex;
     void *returnAddr;
-    RootedScript topScript(cx, GetTopIonJSScript(cx, &safepointIndex, &returnAddr));
-    IonScript *ion = topScript->ionScript();
+    IonScript *ion;
+    RootedScript topScript(cx, GetTopIonJSScript(cx, &ion, &safepointIndex, &returnAddr));
 
     IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
     RootedPropertyName name(cx, cache.name());
@@ -945,6 +958,19 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     RootedScript script(cx);
     jsbytecode *pc;
     cache.getScriptedLocation(&script, &pc);
+
+    // If we're inside parallel code, check if the last object we locked on is
+    // the current one, and if so, just get the property and return without
+    // attaching a duplicate stub.
+    if (ForkJoinSlice::InParallelSection()) {
+        if (cache.lastLockedObject() == obj) {
+            RootedId id(cx, NameToId(name));
+            if (!GetProperty(cx, pc, obj, id, vp))
+                return false;
+            return true;
+        }
+        cache.setLastLockedObject(obj);
+    }
 
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, vp.address(), ion);
@@ -996,13 +1022,8 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     }
 
     RootedId id(cx, NameToId(name));
-    if (obj->getOps()->getProperty) {
-        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), obj, id, vp))
-            return false;
-    } else {
-        if (!GetPropertyHelper(cx, obj, id, 0, vp))
-            return false;
-    }
+    if (!GetProperty(cx, pc, obj, id, vp))
+        return false;
 
     if (!cache.idempotent()) {
         // If the cache is idempotent, the property exists so we don't have to
@@ -1508,8 +1529,8 @@ js::ion::SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Ha
 
     void *returnAddr;
     const SafepointIndex *safepointIndex;
-    RootedScript script(cx, GetTopIonJSScript(cx, &safepointIndex, &returnAddr));
-    IonScript *ion = script->ion;
+    IonScript *ion;
+    RootedScript script(cx, GetTopIonJSScript(cx, &ion, &safepointIndex, &returnAddr));
     IonCacheSetProperty &cache = ion->getCache(cacheIndex).toSetProperty();
     RootedPropertyName name(cx, cache.name());
     RootedId id(cx, AtomToId(name));

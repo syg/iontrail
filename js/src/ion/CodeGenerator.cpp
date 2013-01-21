@@ -1135,9 +1135,11 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     // Construct the IonFramePrefix.
     uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_OptimizedJS);
-    masm.tagCallee(calleereg, executionMode);
     masm.Push(Imm32(call->numActualArgs()));
+    masm.tagCallee(calleereg, executionMode);
     masm.Push(calleereg);
+    // Clear the tag after pushing it, as we load nargs below.
+    masm.clearCalleeTag(calleereg, executionMode);
     masm.Push(Imm32(descriptor));
 
     // Check whether the provided arguments satisfy target argc.
@@ -4576,7 +4578,8 @@ static const VMFunction GetPropertyCacheInfo =
 
 typedef bool (*ParGetPropertyCacheFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
 static const VMFunction ParGetPropertyCacheInfo =
-    FunctionInfo<ParGetPropertyCacheFn>(LockedVMFunction<GetPropertyCacheFn>::Wrap<GetPropertyCache>);
+    FunctionInfo<ParGetPropertyCacheFn>(
+        LockedVMFunction<GetPropertyCacheFn>::Wrap<GetPropertyCache>);
 
 bool
 CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
@@ -4631,7 +4634,6 @@ CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
     pushArg(objReg);
     pushArg(Imm32(cacheIndex));
 
-    // TODO: reals
     switch (gen->info().executionMode()) {
       case SequentialExecution:
         if (!callVM(GetPropertyCacheInfo, ins))

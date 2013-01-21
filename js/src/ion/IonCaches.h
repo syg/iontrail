@@ -114,6 +114,7 @@ class IonCache
     union {
         struct {
             Register object;
+            JSObject *lastLockedObject;
             PropertyName *name;
             TypedOrValueRegisterSpace output;
             bool allowGetters : 1;
@@ -285,6 +286,7 @@ class IonCacheGetProperty : public IonCache
     {
         init(GetProperty, liveRegs, initialJump, rejoinLabel, cacheLabel);
         u.getprop.object = object;
+        u.getprop.lastLockedObject = NULL;
         u.getprop.name = name;
         u.getprop.output.data() = output;
         u.getprop.allowGetters = allowGetters;
@@ -293,12 +295,14 @@ class IonCacheGetProperty : public IonCache
     }
 
     Register object() const { return u.getprop.object; }
+    JSObject *lastLockedObject() const { return u.getprop.lastLockedObject; }
     PropertyName *name() const { return u.getprop.name; }
     TypedOrValueRegister output() const { return u.getprop.output.data(); }
     bool allowGetters() const { return u.getprop.allowGetters; }
     bool hasArrayLengthStub() const { return u.getprop.hasArrayLengthStub; }
     bool hasTypedArrayLengthStub() const { return u.getprop.hasTypedArrayLengthStub; }
 
+    void setLastLockedObject(JSObject *obj) { u.getprop.lastLockedObject = obj; }
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,

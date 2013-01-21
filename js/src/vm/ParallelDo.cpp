@@ -395,7 +395,6 @@ class ParallelIonInvoke
         jitcode_ = code->raw();
         enter_ = cx->compartment->ionCompartment()->enterJIT();
         calleeToken_ = ParCalleeToToken(callee);
-        printf("%p: %p\n", (void*)callee, (void *)calleeToken_);
     }
 
     bool invoke() {
@@ -560,6 +559,10 @@ class ParallelDo : public ForkJoinOp
     }
 
     virtual bool parallel(ForkJoinSlice &slice) {
+        // Make a new IonContext for the slice, which is needed if we need to
+        // re-enter the VM.
+        IonContext icx(cx_, cx_->compartment, NULL);
+
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);
         ParallelIonInvoke<3> fii(cx_, fun, 3);

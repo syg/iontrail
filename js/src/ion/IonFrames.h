@@ -79,15 +79,19 @@ CalleeTokenToScript(CalleeToken token)
 }
 
 static inline UnrootedScript
-ScriptFromCalleeToken(CalleeToken token)
+ScriptFromCalleeToken(CalleeToken token, CalleeTokenTag *tag = NULL)
 {
     AutoAssertNoGC nogc;
-    switch (GetCalleeTokenTag(token)) {
+    CalleeTokenTag tag_ = GetCalleeTokenTag(token);
+    if (tag)
+        *tag = tag_;
+    switch (tag_) {
       case CalleeToken_Script:
         return CalleeTokenToScript(token);
       case CalleeToken_Function:
-      case CalleeToken_ParFunction:
         return CalleeTokenToFunction(token)->nonLazyScript();
+      case CalleeToken_ParFunction:
+        return CalleeTokenToParFunction(token)->nonLazyScript();
     }
     JS_NOT_REACHED("invalid callee token tag");
     return UnrootedScript(NULL);
@@ -286,6 +290,7 @@ namespace ion {
 
 UnrootedScript
 GetTopIonJSScript(JSContext *cx,
+                  IonScript **ion = NULL,
                   const SafepointIndex **safepointIndexOut = NULL,
                   void **returnAddrOut = NULL);
 

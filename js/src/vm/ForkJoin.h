@@ -253,7 +253,6 @@ class LockedJSContext
         savedIonTop_(cx_->runtime->mainThread.ionTop)
     {
         // Switch out main thread data for the local thread data.
-        fprintf(stderr, "Locking context for parallel VM call\n");
         cx_->runtime->mainThread.ionTop = slice_->perThreadData->ionTop;
     }
 
