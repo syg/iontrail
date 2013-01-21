@@ -367,8 +367,9 @@ CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Regi
 {
     AssertCanGC();
 
-    // Calls into the VM are not considered safe for parallel execution.
-    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
+    // Different execution modes have different sets of VM functions.
+    JS_ASSERT_IF(fun.parallel, gen->info().executionMode() == ParallelExecution);
+    JS_ASSERT_IF(!fun.parallel, gen->info().executionMode() == SequentialExecution);
 
 #ifdef DEBUG
     if (ins->mirRaw()) {

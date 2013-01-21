@@ -8,6 +8,7 @@
 #ifndef ForkJoin_h__
 #define ForkJoin_h__
 
+#include "jscntxt.h"
 #include "vm/ThreadPool.h"
 
 // ForkJoin
@@ -197,6 +198,10 @@ struct ForkJoinSlice
     // Be wary, the runtime is shared between all threads!
     JSRuntime *runtime();
 
+    // Acquire and release the JSContext from the runtime.
+    JSContext *acquireContext();
+    void releaseContext();
+
     // Check the current state of parallel execution.
     static inline ForkJoinSlice *Current();
     static inline bool InParallelSection();
@@ -232,6 +237,34 @@ struct ForkJoinOp
     //
     // Returns true on success, false to halt parallel execution.
     virtual bool parallel(ForkJoinSlice &slice) = 0;
+};
+
+// Locks a JSContext for its scope.
+class LockedJSContext
+{
+    ForkJoinSlice *slice_;
+    JSContext *cx_;
+    uint8_t *savedIonTop_;
+
+  public:
+    LockedJSContext(ForkJoinSlice *slice)
+      : slice_(slice),
+        cx_(slice->acquireContext()),
+        savedIonTop_(cx_->runtime->mainThread.ionTop)
+    {
+        // Switch out main thread data for the local thread data.
+        cx_->runtime->mainThread.ionTop = slice_->perThreadData->ionTop;
+    }
+
+    ~LockedJSContext() {
+        slice_->releaseContext();
+
+        // Restore saved main thread data.
+        cx_->runtime->mainThread.ionTop = savedIonTop_;
+    }
+
+    operator JSContext *() { return cx_; }
+    JSContext *operator->() { return cx_; }
 };
 
 } // namespace js

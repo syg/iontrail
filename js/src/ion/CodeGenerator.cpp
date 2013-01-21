@@ -631,6 +631,7 @@ CodeGenerator::visitCallee(LCallee *lir)
     Address ptr(StackPointer, frameSize() + IonJSFrameLayout::offsetOfCalleeToken());
 
     masm.loadPtr(ptr, callee);
+    masm.clearCalleeTag(callee, gen->info().executionMode());
     return true;
 }
 
@@ -1135,7 +1136,10 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     // Construct the IonFramePrefix.
     uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_OptimizedJS);
     masm.Push(Imm32(call->numActualArgs()));
+    masm.tagCallee(calleereg, executionMode);
     masm.Push(calleereg);
+    // Clear the tag after pushing it, as we load nargs below.
+    masm.clearCalleeTag(calleereg, executionMode);
     masm.Push(Imm32(descriptor));
 
     // Check whether the provided arguments satisfy target argc.
@@ -1277,6 +1281,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
 
     // Construct the IonFramePrefix.
     uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_OptimizedJS);
+    masm.tagCallee(calleereg, executionMode);
     masm.Push(Imm32(call->numActualArgs()));
     masm.Push(calleereg);
     masm.Push(Imm32(descriptor));
@@ -4571,6 +4576,11 @@ typedef bool (*GetPropertyCacheFn)(JSContext *, size_t, HandleObject, MutableHan
 static const VMFunction GetPropertyCacheInfo =
     FunctionInfo<GetPropertyCacheFn>(GetPropertyCache);
 
+typedef bool (*ParGetPropertyCacheFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
+static const VMFunction ParGetPropertyCacheInfo =
+    FunctionInfo<ParGetPropertyCacheFn>(
+        LockedVMFunction<GetPropertyCacheFn>::Wrap<GetPropertyCache>);
+
 bool
 CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
 {
@@ -4623,8 +4633,17 @@ CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
 
     pushArg(objReg);
     pushArg(Imm32(cacheIndex));
-    if (!callVM(GetPropertyCacheInfo, ins))
-        return false;
+
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
+        if (!callVM(GetPropertyCacheInfo, ins))
+            return false;
+        break;
+      case ParallelExecution:
+        if (!callVM(ParGetPropertyCacheInfo, ins))
+            return false;
+        break;
+    }
 
     masm.storeCallResultValue(output);
     restoreLive(ins);

@@ -8,6 +8,8 @@
 #ifndef jsion_caches_h__
 #define jsion_caches_h__
 
+#include "vm/ForkJoin.h"
+
 #include "IonCode.h"
 #include "TypeOracle.h"
 #include "Registers.h"
@@ -112,6 +114,7 @@ class IonCache
     union {
         struct {
             Register object;
+            JSObject *lastLockedObject;
             PropertyName *name;
             TypedOrValueRegisterSpace output;
             bool allowGetters : 1;
@@ -283,6 +286,7 @@ class IonCacheGetProperty : public IonCache
     {
         init(GetProperty, liveRegs, initialJump, rejoinLabel, cacheLabel);
         u.getprop.object = object;
+        u.getprop.lastLockedObject = NULL;
         u.getprop.name = name;
         u.getprop.output.data() = output;
         u.getprop.allowGetters = allowGetters;
@@ -291,12 +295,14 @@ class IonCacheGetProperty : public IonCache
     }
 
     Register object() const { return u.getprop.object; }
+    JSObject *lastLockedObject() const { return u.getprop.lastLockedObject; }
     PropertyName *name() const { return u.getprop.name; }
     TypedOrValueRegister output() const { return u.getprop.output.data(); }
     bool allowGetters() const { return u.getprop.allowGetters; }
     bool hasArrayLengthStub() const { return u.getprop.hasArrayLengthStub; }
     bool hasTypedArrayLengthStub() const { return u.getprop.hasTypedArrayLengthStub; }
 
+    void setLastLockedObject(JSObject *obj) { u.getprop.lastLockedObject = obj; }
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
@@ -477,6 +483,9 @@ class IonCacheCallsiteClone : public IonCache
 
 bool
 GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
+bool
+ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
+                    MutableHandleValue vp);
 
 bool
 SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value,

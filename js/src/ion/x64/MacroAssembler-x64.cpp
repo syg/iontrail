@@ -197,6 +197,15 @@ MacroAssemblerX64::handleException()
     ret();
 }
 
+void
+MacroAssemblerX64::handleParException()
+{
+    // In parallel execution we don't need to call the exception handler, so
+    // just return error.
+    moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
+    ret();
+}
+
 Assembler::Condition
 MacroAssemblerX64::testNegativeZero(const FloatRegister &reg, const Register &scratch)
 {

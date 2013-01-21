@@ -28,14 +28,15 @@ typedef void * CalleeToken;
 enum CalleeTokenTag
 {
     CalleeToken_Function = 0x0, // untagged
-    CalleeToken_Script = 0x1
+    CalleeToken_Script = 0x1,
+    CalleeToken_ParFunction = 0x2
 };
 
 static inline CalleeTokenTag
 GetCalleeTokenTag(CalleeToken token)
 {
     CalleeTokenTag tag = CalleeTokenTag(uintptr_t(token) & 0x3);
-    JS_ASSERT(tag <= CalleeToken_Script);
+    JS_ASSERT(tag <= CalleeToken_ParFunction);
     return tag;
 }
 static inline CalleeToken
@@ -48,6 +49,11 @@ CalleeToToken(RawScript script)
 {
     return CalleeToken(uintptr_t(script) | uintptr_t(CalleeToken_Script));
 }
+static inline CalleeToken
+ParCalleeToToken(JSFunction *fun)
+{
+    return CalleeToken(uintptr_t(fun) | uintptr_t(CalleeToken_ParFunction));
+}
 static inline bool
 CalleeTokenIsFunction(CalleeToken token)
 {
@@ -59,6 +65,12 @@ CalleeTokenToFunction(CalleeToken token)
     JS_ASSERT(CalleeTokenIsFunction(token));
     return (JSFunction *)token;
 }
+static inline RawFunction
+CalleeTokenToParFunction(CalleeToken token)
+{
+    JS_ASSERT(GetCalleeTokenTag(token) == CalleeToken_ParFunction);
+    return (RawFunction)(uintptr_t(token) & ~uintptr_t(0x3));
+}
 static inline UnrootedScript
 CalleeTokenToScript(CalleeToken token)
 {
@@ -67,14 +79,19 @@ CalleeTokenToScript(CalleeToken token)
 }
 
 static inline UnrootedScript
-ScriptFromCalleeToken(CalleeToken token)
+ScriptFromCalleeToken(CalleeToken token, CalleeTokenTag *tag = NULL)
 {
     AutoAssertNoGC nogc;
-    switch (GetCalleeTokenTag(token)) {
+    CalleeTokenTag tag_ = GetCalleeTokenTag(token);
+    if (tag)
+        *tag = tag_;
+    switch (tag_) {
       case CalleeToken_Script:
         return CalleeTokenToScript(token);
       case CalleeToken_Function:
         return CalleeTokenToFunction(token)->nonLazyScript();
+      case CalleeToken_ParFunction:
+        return CalleeTokenToParFunction(token)->nonLazyScript();
     }
     JS_NOT_REACHED("invalid callee token tag");
     return UnrootedScript(NULL);
@@ -273,6 +290,7 @@ namespace ion {
 
 UnrootedScript
 GetTopIonJSScript(JSContext *cx,
+                  IonScript **ion = NULL,
                   const SafepointIndex **safepointIndexOut = NULL,
                   void **returnAddrOut = NULL);
 
