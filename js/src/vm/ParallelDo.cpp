@@ -15,6 +15,7 @@
 #include "vm/GlobalObject.h"
 #include "vm/ThreadPool.h"
 #include "vm/ForkJoin.h"
+#include "vm/StackExtents.h"
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
@@ -562,6 +563,11 @@ class ParallelDo : public ForkJoinOp
         // Make a new IonContext for the slice, which is needed if we need to
         // re-enter the VM.
         IonContext icx(cx_, cx_->compartment, NULL);
+        uintptr_t *myStackTop = (uintptr_t*)&icx;
+
+        // This works in concert with ForkJoinSlice::recordStackExtent
+        // to establish the stack extent for this slice.
+        slice.recordStackBase(myStackTop);
 
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);

@@ -510,6 +510,13 @@ struct JSRuntime : js::RuntimeFriendFields
      */
     js::PerThreadData mainThread;
 
+    /* If non-null, then points to a collection of stack extents that
+     * belong to the worker threads in parallel sections.  These are
+     * to be used, for example, as additional ranges to scan when the GC
+     * is conservatively scanning for roots.
+     */
+    js::gc::StackExtents *extraExtents;
+
     /* Default compartment. */
     JSCompartment       *atomsCompartment;
 
@@ -946,6 +953,9 @@ struct JSRuntime : js::RuntimeFriendFields
 
     /* Always preserve JIT code during GCs, for testing. */
     bool                alwaysPreserveCode;
+
+    /* Always preserve JIT code during GCs while in StopTheWorld ParallelDo. */
+    bool                preserveCodeDueToParallelDo;
 
     /* Had an out-of-memory error which did not populate an exception. */
     bool                hadOutOfMemory;

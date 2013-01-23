@@ -24,6 +24,7 @@
 #endif
 #include "js/HashTable.h"
 #include "vm/Debugger.h"
+#include "vm/StackExtents.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
@@ -261,16 +262,19 @@ MarkRangeConservatively(JSTracer *trc, const uintptr_t *begin, const uintptr_t *
 }
 
 #ifndef JSGC_USE_EXACT_ROOTING
-static void
-MarkRangeConservativelyAndSkipIon(JSTracer *trc, JSRuntime *rt, const uintptr_t *begin, const uintptr_t *end)
+static const uintptr_t *
+MarkIonFramesIfPresent(JSTracer *trc, const uintptr_t *begin, uint8_t *ionTop, ion::IonActivation *ionActivation)
 {
+    /* Caller should pass in stackMin, and use the value this returns
+     * as an 'updated' stackMin.
+     */
     const uintptr_t *i = begin;
 
 #if JS_STACK_GROWTH_DIRECTION < 0 && defined(JS_ION)
     // Walk only regions in between Ion activations. Note that non-volatile
     // registers are spilled to the stack before the entry Ion frame, ensuring
     // that the conservative scanner will still see them.
-    for (ion::IonActivationIterator ion(rt); ion.more(); ++ion) {
+    for (ion::IonActivationIterator ion(ionTop, ionActivation); ion.more(); ++ion) {
         uintptr_t *ionMin, *ionEnd;
         ion.ionStackRange(ionMin, ionEnd);
 
@@ -279,8 +283,35 @@ MarkRangeConservativelyAndSkipIon(JSTracer *trc, JSRuntime *rt, const uintptr_t 
     }
 #endif
 
+    return i;
+}
+static const uintptr_t *
+MarkIonFramesIfPresent(JSTracer *trc, const uintptr_t *begin, JSRuntime *rt)
+{
+    return MarkIonFramesIfPresent(trc, begin, rt->mainThread.ionTop, rt->mainThread.ionActivation);
+}
+
+static void
+MarkRangeConservativelyAndSkipIon(JSTracer *trc, JSRuntime *rt, const uintptr_t *begin, const uintptr_t *end)
+{
+    const uintptr_t *i = MarkIonFramesIfPresent(trc, begin, rt);
+
     // Mark everything after the most recent Ion activation.
     MarkRangeConservatively(trc, i, end);
+}
+
+static void
+MarkRangeConservativelyAndSkipIon(JSTracer *trc, gc::StackExtent *extent)
+{
+    JS_ASSERT(extent->stackMin <= extent->stackEnd);
+
+    const uintptr_t *i = extent->stackMin;
+#if defined(JS_ION)
+    i = MarkIonFramesIfPresent(trc, i, extent->ionTop, extent->ionActivation);
+#endif
+
+    // Mark everything after the most recent Ion activation.
+    MarkRangeConservatively(trc, i, extent->stackEnd);
 }
 
 static JS_NEVER_INLINE void
@@ -323,6 +354,16 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
 
     JS_ASSERT(stackMin <= stackEnd);
     MarkRangeConservativelyAndSkipIon(trc, rt, stackMin, stackEnd);
+
+    // Mark additional stack extents from (paused) non-main threads.
+    if (rt->extraExtents) {
+        gc::StackExtent *extraExtents = rt->extraExtents->head;
+        while (extraExtents) {
+            MarkRangeConservativelyAndSkipIon(trc, extraExtents);
+            extraExtents = extraExtents->next;
+        }
+    }
+
     MarkRangeConservatively(trc, cgcd->registerSnapshot.words,
                             ArrayEnd(cgcd->registerSnapshot.words));
 }

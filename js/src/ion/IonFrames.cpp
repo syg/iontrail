@@ -390,6 +390,13 @@ IonActivationIterator::IonActivationIterator(JSRuntime *rt)
     settle();
 }
 
+IonActivationIterator::IonActivationIterator(uint8_t *top, IonActivation *activation)
+  : top_(top),
+    activation_(activation)
+{
+    settle();
+}
+
 IonActivationIterator &
 IonActivationIterator::operator++()
 {

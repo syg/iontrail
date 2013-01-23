@@ -24,9 +24,13 @@ function testMap() {
   // observed targets.
   MyClass.prototype.getA = function() {
     return 222;
-  }
-  p.map(function(e) { return e.getA(); },
-        {mode: "par", expect: "disqualified"});
+  };
+
+  var r = p.map(function(e) { return e.getA(); },
+                {mode: "par", expect: "disqualified"});
+  print(r);
+  assertEq(r.get(0), 222);
+  assertEq(r.get(1), 222);
 }
 
 testMap();

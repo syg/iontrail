@@ -1406,7 +1406,7 @@ RunLastDitchGC(JSContext *cx, JSCompartment *comp, AllocKind thingKind)
     // section.  Of course we could modify the `runGC` flag below but
     // since that path is quite hot is was deemed better to offload
     // the access to thread-local data into this function.
-    if (ForkJoinSlice::InParallelSection())
+    if (ForkJoinSlice::InGarbageCollectionDisallowedSection())
         return NULL;
 
     PrepareCompartmentForGC(comp);
@@ -1871,7 +1871,7 @@ js::TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 {
     // Wait till end of parallel section to trigger GC.
     ForkJoinSlice *slice = ForkJoinSlice::Current();
-    if (slice != NULL) {
+    if (slice != NULL && !slice->InWorldStoppedForGCSection()) {
         slice->requestGC(reason);
         return;
     }
@@ -1890,7 +1890,7 @@ js::TriggerCompartmentGC(JSCompartment *comp, gcreason::Reason reason)
 {
     // Wait till end of parallel section to trigger GC.
     ForkJoinSlice *slice = ForkJoinSlice::Current();
-    if (slice != NULL) {
+    if (slice != NULL && !slice->InWorldStoppedForGCSection()) {
         slice->requestCompartmentGC(comp, reason);
         return;
     }
@@ -2505,6 +2505,8 @@ ShouldPreserveJITCode(JSCompartment *c, int64_t currentTime)
         return false;
 
     if (c->rt->alwaysPreserveCode)
+        return true;
+    if (c->rt->preserveCodeDueToParallelDo)
         return true;
     if (c->lastAnimationTime + PRMJ_USEC_PER_SEC >= currentTime &&
         c->lastCodeRelease + (PRMJ_USEC_PER_SEC * 300) >= currentTime) {
@@ -3562,7 +3564,7 @@ BeginSweepPhase(JSRuntime *rt)
     gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP);
 
 #ifdef JS_THREADSAFE
-    rt->gcSweepOnBackgroundThread = rt->hasContexts() && rt->useHelperThreads();
+    rt->gcSweepOnBackgroundThread = false && rt->hasContexts() && rt->useHelperThreads();
 #endif
 
 #ifdef DEBUG
@@ -4255,7 +4257,7 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
         JSGCInvocationKind gckind, gcreason::Reason reason)
 {
     // GC shouldn't be running in par. exec. mode
-    JS_ASSERT(!ForkJoinSlice::InParallelSection());
+    JS_ASSERT(!ForkJoinSlice::InGarbageCollectionDisallowedSection());
 
     JS_AbortIfWrongThread(rt);
 
@@ -4719,7 +4721,11 @@ ArenaLists::adoptArenas(JSRuntime *rt, ArenaLists *fromArenaLists)
             *bfs = BFS_DONE;
             break;
           default:
-            JS_ASSERT(!"Background finalization in progress, but it should not be.");
+            // (Disabling below assertion since it is not clear
+            //  whether background finalization is fundamentally
+            //  incompatible or if this assertion was just
+            //  belt-and-suspenders code.)
+            JS_ASSERT(true || !"Background finalization in progress, but it should not be.");
             break;
         }
 #endif /* JS_THREADSAFE */
@@ -4733,6 +4739,12 @@ ArenaLists::adoptArenas(JSRuntime *rt, ArenaLists *fromArenaLists)
 
             toList->insert(fromHeader);
         }
+    }
+
+    // Should this be part of purge?  For some discussion, see
+    //   http://logbot.glob.com.au/?c=mozilla%23jsapi&s=16+Jan+2013&e=17+Jan+2013#c103052
+    for (size_t thingKind = 0; thingKind != FINALIZE_LIMIT; thingKind++) {
+        fromArenaLists->arenaLists[thingKind].clear();
     }
 }
 
