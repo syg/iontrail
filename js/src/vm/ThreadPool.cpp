@@ -206,9 +206,9 @@ ThreadPool::init()
     else
         numWorkers_ = 0;
 
-# ifdef DEBUG
-    if (char *pathreads = getenv("PATHREADS"))
-        numWorkers_ = strtol(pathreads, NULL, 10);
+# ifdef JS_MANUAL_THREADS
+    if (char *jsthreads = getenv("JSTHREADS"))
+        numWorkers_ = strtol(jsthreads, NULL, 10);
 # endif
 #endif
 
