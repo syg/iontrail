@@ -79,13 +79,10 @@ CalleeTokenToScript(CalleeToken token)
 }
 
 static inline UnrootedScript
-ScriptFromCalleeToken(CalleeToken token, CalleeTokenTag *tag = NULL)
+ScriptFromCalleeToken(CalleeToken token)
 {
     AutoAssertNoGC nogc;
-    CalleeTokenTag tag_ = GetCalleeTokenTag(token);
-    if (tag)
-        *tag = tag_;
-    switch (tag_) {
+    switch (GetCalleeTokenTag(token)) {
       case CalleeToken_Script:
         return CalleeTokenToScript(token);
       case CalleeToken_Function:
@@ -290,7 +287,6 @@ namespace ion {
 
 UnrootedScript
 GetTopIonJSScript(JSContext *cx,
-                  IonScript **ion = NULL,
                   const SafepointIndex **safepointIndexOut = NULL,
                   void **returnAddrOut = NULL);
 

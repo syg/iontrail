@@ -246,23 +246,15 @@ class LockedJSContext
 {
     ForkJoinSlice *slice_;
     JSContext *cx_;
-    uint8_t *savedIonTop_;
 
   public:
     LockedJSContext(ForkJoinSlice *slice)
       : slice_(slice),
-        cx_(slice->acquireContext()),
-        savedIonTop_(cx_->runtime->mainThread.ionTop)
-    {
-        // Switch out main thread data for the local thread data.
-        cx_->runtime->mainThread.ionTop = slice_->perThreadData->ionTop;
-    }
+        cx_(slice->acquireContext())
+    { }
 
     ~LockedJSContext() {
         slice_->releaseContext();
-
-        // Restore saved main thread data.
-        cx_->runtime->mainThread.ionTop = savedIonTop_;
     }
 
     operator JSContext *() { return cx_; }
