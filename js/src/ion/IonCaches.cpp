@@ -963,13 +963,17 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     // the current one, and if so, just get the property and return without
     // attaching a duplicate stub.
     if (ForkJoinSlice::InParallelSection()) {
-        if (cache.lastLockedObject() == obj) {
+        if (!cache.initStubbedObjects(cx))
+            return false;
+        ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
+        if (p) {
             RootedId id(cx, NameToId(name));
             if (!GetProperty(cx, pc, obj, id, vp))
                 return false;
             return true;
         }
-        cache.setLastLockedObject(obj);
+        if (!cache.stubbedObjects()->add(p, obj))
+            return false;
     }
 
     // Override the return value if we are invalidated (bug 728188).
