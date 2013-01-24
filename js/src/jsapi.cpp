@@ -890,7 +890,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     threadPool(this),
     ctypesActivityCallback(NULL),
     parallelWarmup(0),
-    parallelAbort(0),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     useHelperThreads_(useHelperThreads),
     requestedHelperThreadCount(-1),

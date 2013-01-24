@@ -22,30 +22,6 @@ using namespace js;
 
 #ifdef JS_THREADSAFE
 
-class AutoClearParallelAbort
-{
-    JSRuntime *runtime;
-
-  public:
-    AutoClearParallelAbort(JSRuntime *runtime)
-      : runtime(runtime)
-    {
-        // when we begin with a parallel section, the flag should
-        // always have been cleared
-        JS_ASSERT(runtime->parallelAbort == false);
-    }
-
-    bool aborted() {
-        return runtime->parallelAbort != 0;
-    }
-
-    ~AutoClearParallelAbort()
-    {
-        // clear flag as we exit the parallel section
-        runtime->parallelAbort = false;
-    }
-};
-
 class js::ForkJoinShared : public TaskExecutor, public Monitor
 {
     /////////////////////////////////////////////////////////////////////////
@@ -82,6 +58,9 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     //
     // These can be read without the lock (hence the |volatile| declaration).
     // All fields should be *written with the lock*, however.
+
+    // Set to true when parallel execution should abort.
+    volatile bool abort_;
 
     // Set to true when a worker bails for a fatal reason.
     volatile bool fatal_;
@@ -203,6 +182,7 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
     gcRequested_(false),
     gcReason_(gcreason::NUM_REASONS),
     gcCompartment_(NULL),
+    abort_(false),
     fatal_(false),
     rendezvous_(false)
 {
@@ -257,8 +237,6 @@ ForkJoinShared::~ForkJoinShared()
 ParallelResult
 ForkJoinShared::execute()
 {
-    AutoClearParallelAbort abort(cx_->runtime);
-
     // Sometimes a GC request occurs *just before* we enter into the
     // parallel section.  Rather than enter into the parallel section
     // and then abort, we just check here and abort early.
@@ -284,7 +262,7 @@ ForkJoinShared::execute()
     transferArenasToCompartmentAndProcessGCRequests();
 
     // Check if any of the workers failed.
-    if (abort.aborted()) {
+    if (abort_) {
         if (fatal_)
             return TP_FATAL;
         else if (gcWasRequested)
@@ -357,7 +335,9 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
 bool
 ForkJoinShared::check(ForkJoinSlice &slice)
 {
-    if (cx_->runtime->parallelAbort)
+    JS_ASSERT(cx_->runtime->interrupt);
+
+    if (abort_)
         return false;
 
     if (slice.isMainThread()) {
@@ -418,6 +398,7 @@ ForkJoinShared::initiateRendezvous(ForkJoinSlice &slice)
 
     JS_ASSERT(slice.isMainThread());
     JS_ASSERT(!rendezvous_ && blocked_ == 0);
+    JS_ASSERT(cx_->runtime->interrupt);
 
     AutoLockMonitor lock(*this);
 
@@ -470,8 +451,10 @@ ForkJoinShared::setAbortFlag(bool fatal)
 {
     AutoLockMonitor lock(*this);
 
-    cx_->runtime->parallelAbort = true;
+    abort_ = true;
     fatal_ = fatal_ || fatal;
+
+    cx_->runtime->triggerOperationCallback();
 }
 
 void
@@ -563,7 +546,10 @@ bool
 ForkJoinSlice::check()
 {
 #ifdef JS_THREADSAFE
-    return shared->check(*this);
+    if (runtime()->interrupt)
+        return shared->check(*this);
+    else
+        return true;
 #else
     return false;
 #endif

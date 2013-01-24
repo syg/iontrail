@@ -51,9 +51,6 @@
 // before calling |check()|, that's fine too.  We assume that you do not do
 // unbounded work without invoking |check()|.
 //
-// For more details on how operation callbacks and so forth are signaled,
-// see the section below on Signaling Abort and Interrupts.
-//
 // Sequential Fallback:
 //
 // It is assumed that anyone using this API must be prepared for a sequential
@@ -92,41 +89,6 @@
 // In the future, it should be possible to lift the restriction that
 // we must block until inc. GC has completed and also to permit GC
 // during parallel execution. But we're not there yet.
-//
-// Signaling Aborts and Interrupts:
-//
-// Parallel execution needs to periodically "check in" to determine
-// whether an interrupt has been signaled or whether one of the other
-// threads has requested an abort.  This is done by checking two flags
-// on the runtime (runtime->parallelAbort and runtime->interrupt).  If
-// either flag is true, then the check() method is invoked. This design
-// seems to be non-ideal---as it would be nice to check a single flag, and
-// it would be nice if the parallelAbort flag were a member of ForkJoinShared
-// rather than the runtime---but there are several constraining factors:
-//
-// - We need to be able to distinguish a user-requested interrupt from an
-//   internal parallel abort. I considered setting the interrupt flag for both,
-//   but that would potentially lead to extra calls to the operation callback.
-//   Moreover, because the user requests an interrupt asynchronously, we must be
-//   prepared for the situation that both an interrupt *and* an abort have been
-//   requested.
-//
-// - Placing the flags in the JSRuntime* means that we can bake the
-//   pointer into the generated code, which is more efficient than
-//   dereferencing the per-thread-data (only one load).
-//
-// - In normal ion code, on entry to a function we check the stack
-//   limit and on backedges we check the interrupt flag.  This is
-//   sufficient because when an interrupt is signaled we clear the
-//   stack limit.  But this doesn't work in the parallel setting
-//   because we'd have to clear the stack limits for all threads.
-//   This is not possible since the interrupt code runs asynchronously
-//   and doesn't have access to all the stacks.  Moreover, the other
-//   threads may be in the process of terminating, etc, so that would
-//   be tricky.  Instead we just check the interrupt and parallelAbort
-//   flags on entry to the function as well.
-//
-// - Anyway, perhaps the details of this design will change in the future.
 //
 // Current Limitations:
 //
@@ -225,9 +187,12 @@ struct ForkJoinSlice
     // also rendesvous to perform GC or do other similar things.
     //
     // This function is guaranteed to have no effect if both
-    // runtime()->parallelAbort and runtime()->interrupt are zero.
-    // Ion-generated code takes advantage of this by inlining the
-    // checks on those flags before actually calling this function.
+    // runtime()->interrupt is zero.  Ion-generated code takes
+    // advantage of this by inlining the checks on those flags before
+    // actually calling this function.  If this function ends up
+    // getting called a lot from outside ion code, we can refactor
+    // it into an inlined version with this check that calls a slower
+    // version.
     bool check();
 
     // Be wary, the runtime is shared between all threads!

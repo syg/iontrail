@@ -439,11 +439,6 @@ MacroAssembler::parCheckInterruptFlags(const Register &tempReg,
     movePtr(ImmWord(interrupt), tempReg);
     load32(Address(tempReg, 0), tempReg);
     branchTest32(Assembler::NonZero, tempReg, tempReg, fail);
-
-    void *parallelAbort = (void*)&compartment->rt->parallelAbort;
-    movePtr(ImmWord(parallelAbort), tempReg);
-    load32(Address(tempReg, 0), tempReg);
-    branchTest32(Assembler::NonZero, tempReg, tempReg, fail);
 }
 
 void
