@@ -1,34 +1,63 @@
 DEFAULT_WARMUP = 10
 DEFAULT_MEASURE = 3
+MODE = MODE || "compare" // MODE is often set on the command-line by run.sh
 
 function benchmark(label, w, m, seq, par) {
-  print("Warming up sequential runs");
-  warmup(w, seq);
+  var SEQ = 1
+  var PAR = 2
+  var bits = 0
+  if (MODE === "seq") { bits = SEQ; }
+  else if (MODE === "par") { bits = PAR; }
+  else {
+    if (MODE !== "compare") {
+      print("Invalid MODE, expected seq|par|compare: ", MODE);
+    }
+    bits = SEQ|PAR;
+  }
 
-  print("Measuring sequential runs");
-  var [seqTimes, seqResult] = measureN(m, seq);
+  if (mode(SEQ)) {
+    print("Warming up sequential runs");
+    warmup(w, seq);
 
-  print("Measuring parallel runs");
-  var [parTimes, parResult] = measureN(m, par);
+    print("Measuring sequential runs");
+    var [seqTimes, seqResult] = measureN(m, seq);
+  }
 
-  // Check correctness
-  print("Checking correctness");
-  assertStructuralEq(seqResult, parResult);
+  if (mode(PAR)) {
+    print("Measuring parallel runs");
+    var [parTimes, parResult] = measureN(m, par);
+  }
 
-  var seqAvg = average(seqTimes);
-  var parAvg = average(parTimes);
+  if (mode(SEQ|PAR)) {
+    // Check correctness
+    print("Checking correctness");
+    assertStructuralEq(seqResult, parResult);
+  }
 
-  for (var i = 0; i < seqTimes.length; i++)
-    print(label + " SEQUENTIAL MEASUREMENT " + i + ": " + seqTimes[i]);
-  for (var i = 0; i < parTimes.length; i++)
-    print(label + " PARALLEL MEASUREMENT " + i + ": " + parTimes[i]);
+  if (mode(SEQ)) {
+    var seqAvg = average(seqTimes);
+    for (var i = 0; i < seqTimes.length; i++)
+      print(label + " SEQUENTIAL MEASUREMENT " + i + ": " + seqTimes[i]);
+    print(label + " SEQUENTIAL AVERAGE: " + seqAvg);
+  }
 
-  print(label + " SEQUENTIAL AVERAGE: " + seqAvg);
-  print(label + " PARALLEL AVERAGE  : " + parAvg);
-  print(label + " SEQ/PAR RATIO     : " + seqAvg/parAvg);
-  print(label + " PAR/SEQ RATIO     : " + parAvg/seqAvg);
-  print(label + " SPEEDUP           : " +
-        (((seqAvg - parAvg) / seqAvg * 100.0) | 0) + "%");
+  if (mode(PAR)) {
+    var parAvg = average(parTimes);
+    for (var i = 0; i < parTimes.length; i++)
+      print(label + " PARALLEL MEASUREMENT " + i + ": " + parTimes[i]);
+    print(label + " PARALLEL AVERAGE  : " + parAvg);
+  }
+
+  if (mode(SEQ|PAR)) {
+    print(label + " SEQ/PAR RATIO     : " + seqAvg/parAvg);
+    print(label + " PAR/SEQ RATIO     : " + parAvg/seqAvg);
+    print(label + " SPEEDUP           : " +
+          (((seqAvg - parAvg) / seqAvg * 100.0) | 0) + "%");
+  }
+
+  function mode(m) {
+    return (bits & m) === m;
+  }
 }
 
 function measure1(f) {
