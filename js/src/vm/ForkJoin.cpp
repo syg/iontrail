@@ -359,6 +359,10 @@ ForkJoinShared::execute()
 void
 ForkJoinShared::transferArenasToCompartmentAndProcessGCRequests()
 {
+    // stop-the-world GC may still be sweeping; let that finish so
+    // that we do not upset the state of compartments being swept.
+    cx_->runtime->gcHelperThread.waitBackgroundSweepEnd();
+
     JSCompartment *comp = cx_->compartment;
     for (unsigned i = 0; i < numSlices_; i++)
         comp->adoptWorkerAllocator(allocators_[i]);
@@ -473,8 +477,6 @@ ForkJoinShared::check(ForkJoinSlice &slice)
             {
                 AutoRendezvous autoRendezvous(slice);
                 AutoMarkWorldStoppedForGC autoMarkSTWFlag(slice);
-
-                // transferArenasToCompartmentAndProcessGCRequests();
 
                 slice.recordStackExtent();
                 AutoInstallForkJoinStackExtents extents(cx_->runtime, &stackExtents_[0]);
