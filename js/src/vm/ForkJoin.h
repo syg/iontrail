@@ -126,6 +126,7 @@ class PerThreadData;
 class ForkJoinShared;
 class AutoRendezvous;
 class AutoSetForkJoinSlice;
+class AutoMarkWorldStoppedForGC;
 
 #ifdef DEBUG
 struct IonTraceData {
@@ -166,7 +167,7 @@ struct ForkJoinSlice
 
     ForkJoinSlice(PerThreadData *perThreadData, uint32_t sliceId, uint32_t numSlices,
                   Allocator *arenaLists, ForkJoinShared *shared);
-
+    ~ForkJoinSlice();
     // True if this is the main thread, false if it is one of the parallel workers.
     bool isMainThread();
 
@@ -205,12 +206,15 @@ struct ForkJoinSlice
     // Check the current state of parallel execution.
     static inline ForkJoinSlice *Current();
     static inline bool InParallelSection();
+    static inline bool InGarbageCollectionDisallowedSection();
+    bool InWorldStoppedForGCSection();
 
     static bool Initialize();
 
   private:
     friend class AutoRendezvous;
     friend class AutoSetForkJoinSlice;
+    friend class AutoMarkWorldStoppedForGC;
 
     bool checkOutOfLine();
 
@@ -227,6 +231,17 @@ struct ForkJoinSlice
 #endif
 
     ForkJoinShared *const shared;
+
+private:
+    // Stack base and tip of this slice's thread, for Stop-The-World GC.
+    gc::StackExtent *extent;
+
+public:
+    // Establishes tip for stack scan; call before yielding to GC.
+    void recordStackExtent();
+
+    // Establishes base for stack scan; call before entering parallel code.
+    void recordStackBase(uintptr_t *baseAddr);
 };
 
 // Generic interface for specifying divisible operations that can be
@@ -277,6 +292,12 @@ js::ForkJoinSlice::Current()
 js::ForkJoinSlice::InParallelSection()
 {
     return Current() != NULL;
+}
+
+/* static */ inline bool
+js::ForkJoinSlice::InGarbageCollectionDisallowedSection()
+{
+    return (Current() != NULL) && !Current()->InWorldStoppedForGCSection();
 }
 
 #endif // ForkJoin_h__

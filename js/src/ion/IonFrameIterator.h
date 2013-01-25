@@ -184,6 +184,7 @@ class IonActivationIterator
   public:
     IonActivationIterator(JSContext *cx);
     IonActivationIterator(JSRuntime *rt);
+    IonActivationIterator(uint8_t *ionTop, IonActivation *activation_);
 
     IonActivationIterator &operator++();
 
