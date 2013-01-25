@@ -1406,7 +1406,7 @@ RunLastDitchGC(JSContext *cx, JSCompartment *comp, AllocKind thingKind)
     // section.  Of course we could modify the `runGC` flag below but
     // since that path is quite hot is was deemed better to offload
     // the access to thread-local data into this function.
-    if (ForkJoinSlice::InParallelSection())
+    if (ForkJoinSlice::InGarbageCollectionDisallowedSection())
         return NULL;
 
     PrepareCompartmentForGC(comp);
@@ -1871,7 +1871,7 @@ js::TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 {
     // Wait till end of parallel section to trigger GC.
     ForkJoinSlice *slice = ForkJoinSlice::Current();
-    if (slice != NULL) {
+    if (slice != NULL && !slice->InWorldStoppedForGCSection()) {
         slice->requestGC(reason);
         return;
     }
@@ -1890,7 +1890,7 @@ js::TriggerCompartmentGC(JSCompartment *comp, gcreason::Reason reason)
 {
     // Wait till end of parallel section to trigger GC.
     ForkJoinSlice *slice = ForkJoinSlice::Current();
-    if (slice != NULL) {
+    if (slice != NULL && !slice->InWorldStoppedForGCSection()) {
         slice->requestCompartmentGC(comp, reason);
         return;
     }
@@ -2505,6 +2505,8 @@ ShouldPreserveJITCode(JSCompartment *c, int64_t currentTime)
         return false;
 
     if (c->rt->alwaysPreserveCode)
+        return true;
+    if (c->rt->preserveCodeDueToParallelDo)
         return true;
     if (c->lastAnimationTime + PRMJ_USEC_PER_SEC >= currentTime &&
         c->lastCodeRelease + (PRMJ_USEC_PER_SEC * 300) >= currentTime) {
@@ -4255,7 +4257,7 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
         JSGCInvocationKind gckind, gcreason::Reason reason)
 {
     // GC shouldn't be running in par. exec. mode
-    JS_ASSERT(!ForkJoinSlice::InParallelSection());
+    JS_ASSERT(!ForkJoinSlice::InGarbageCollectionDisallowedSection());
 
     JS_AbortIfWrongThread(rt);
 

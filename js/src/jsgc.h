@@ -472,6 +472,9 @@ const size_t INITIAL_CHUNK_CAPACITY = 16 * 1024 * 1024 / ChunkSize;
 /* The number of GC cycles an empty chunk can survive before been released. */
 const size_t MAX_EMPTY_CHUNK_AGE = 4;
 
+struct StackExtent;
+struct StackExtents;
+
 } /* namespace gc */
 
 struct GCPtrHasher
