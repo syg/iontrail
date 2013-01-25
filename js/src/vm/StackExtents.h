@@ -12,12 +12,14 @@ namespace js {
 
 namespace gc {
 
-// One link in this chain of linked stack extents.  Each StackExtent
-// is intended to be embedded in some (per-thread allocated)
-// meta-data object.
-//
-// This is not managed in a thread-safe manner; thus one must
-// construct/destruct from main thread alone.
+/*
+ * One link in a chain of linked stack extents.  Each StackExtent
+ * is intended to be embedded in some (per-thread allocated)
+ * meta-data object.
+ *
+ * This is not managed in a thread-safe manner; thus one must
+ * construct/destruct from main thread alone.
+ */
 struct StackExtent {
     StackExtent *next;
 
@@ -48,6 +50,9 @@ struct StackExtent {
     }
 };
 
+/*
+ * A collection of stack extents.
+ */
 struct StackExtents
 {
     StackExtent *head;

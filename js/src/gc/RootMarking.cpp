@@ -265,7 +265,8 @@ MarkRangeConservatively(JSTracer *trc, const uintptr_t *begin, const uintptr_t *
 static const uintptr_t *
 MarkIonFramesIfPresent(JSTracer *trc, const uintptr_t *begin, uint8_t *ionTop, ion::IonActivation *ionActivation)
 {
-    /* Caller should pass in stackMin, and use the value this returns
+    /*
+     * Caller should pass in stackMin, and use the value this returns
      * as an 'updated' stackMin.
      */
     const uintptr_t *i = begin;

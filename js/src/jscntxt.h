@@ -510,7 +510,8 @@ struct JSRuntime : js::RuntimeFriendFields
      */
     js::PerThreadData mainThread;
 
-    /* If non-null, then points to a collection of stack extents that
+    /*
+     * If non-null, then points to a collection of stack extents that
      * belong to the worker threads in parallel sections.  These are
      * to be used, for example, as additional ranges to scan when the GC
      * is conservatively scanning for roots.
