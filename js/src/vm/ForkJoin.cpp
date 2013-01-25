@@ -434,10 +434,19 @@ struct AutoInstallForkJoinStackExtents : public gc::StackExtents
         : StackExtents(head), rt(rt)
     {
         rt->extraExtents = this;
+        JS_ASSERT(wellFormed());
     }
 
     ~AutoInstallForkJoinStackExtents() {
         rt->extraExtents = NULL;
+    }
+
+    bool wellFormed() {
+        for (gc::StackExtent *l = head; l != NULL; l = l->next) {
+            if (l->stackMin > l->stackEnd)
+                return false;
+        }
+        return true;
     }
 
     JSRuntime *rt;
@@ -480,15 +489,6 @@ ForkJoinShared::check(ForkJoinSlice &slice)
 
                 slice.recordStackExtent();
                 AutoInstallForkJoinStackExtents extents(cx_->runtime, &stackExtents_[0]);
-
-                {
-                    gc::StackExtent *extentList =
-                        cx_->runtime->extraExtents->head;
-                    while (extentList) {
-                        JS_ASSERT(extentList->stackMin <= extentList->stackEnd);
-                        extentList = extentList->next;
-                    }
-                }
 
                 if (gcCompartment_ == NULL || gcCompartment_ == cx_->runtime->atomsCompartment) {
                     PrepareForFullGC(cx_->runtime);
