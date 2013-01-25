@@ -4721,11 +4721,7 @@ ArenaLists::adoptArenas(JSRuntime *rt, ArenaLists *fromArenaLists)
             *bfs = BFS_DONE;
             break;
           default:
-            // (Disabling below assertion since it is not clear
-            //  whether background finalization is fundamentally
-            //  incompatible or if this assertion was just
-            //  belt-and-suspenders code.)
-            JS_ASSERT(true || !"Background finalization in progress, but it should not be.");
+            JS_ASSERT(!"Background finalization in progress, but it should not be.");
             break;
         }
 #endif /* JS_THREADSAFE */
@@ -4739,12 +4735,6 @@ ArenaLists::adoptArenas(JSRuntime *rt, ArenaLists *fromArenaLists)
 
             toList->insert(fromHeader);
         }
-    }
-
-    // Should this be part of purge?  For some discussion, see
-    //   http://logbot.glob.com.au/?c=mozilla%23jsapi&s=16+Jan+2013&e=17+Jan+2013#c103052
-    for (size_t thingKind = 0; thingKind != FINALIZE_LIMIT; thingKind++) {
-        fromArenaLists->arenaLists[thingKind].clear();
     }
 }
 
