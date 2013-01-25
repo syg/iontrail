@@ -1507,8 +1507,14 @@ LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
 bool
 LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 {
-    return add(new LParCheckInterrupt(useFixed(ins->parSlice(), CallTempReg0),
-                                      tempFixed(CallTempReg1)));
+    LParCheckOverRecursed *lir = new LParCheckOverRecursed(
+        useRegister(ins->parSlice()),
+        temp());
+    if (!add(lir))
+        return false;
+    if (!assignSafepoint(lir, ins))
+        return false;
+    return true;
 }
 
 bool

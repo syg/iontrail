@@ -538,7 +538,7 @@ class LParCheckOverRecursed : public LInstructionHelper<0, 1, 1>
     }
 };
 
-class LParCheckInterrupt : public LCallInstructionHelper<0, 1, 1>
+class LParCheckInterrupt : public LInstructionHelper<0, 1, 1>
 {
   public:
     LIR_HEADER(ParCheckInterrupt);

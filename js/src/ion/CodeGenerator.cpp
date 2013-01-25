@@ -20,6 +20,7 @@
 #include "jsinterpinlines.h"
 #include "ParFunctions.h"
 #include "ExecutionModeInlines.h"
+#include "vm/ForkJoin.h"
 
 #include "vm/StringObject-inl.h"
 
@@ -1737,20 +1738,25 @@ class ParCheckOverRecursedFailure : public OutOfLineCodeBase<CodeGenerator>
 bool
 CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
 {
-    // See above: the only difference between this code and
-    // visitCheckOverRecursed() is that this code runs in parallel mode
-    // and hence uses the ionStackLimit from the current thread state
-    Register parSliceReg = ToRegister(lir->parSlice());
-    Register limitReg = ToRegister(lir->getTempReg());
+    // See above: unlike visitCheckOverRecursed(), this code runs in
+    // parallel mode and hence uses the ionStackLimit from the current
+    // thread state.  Also, we must check the interrupt flags because
+    // on interrupt or abort, only the stack limit for the main thread
+    // is reset, not the worker threads.  See comment in vm/ForkJoin.h
+    // for more details.
 
-    masm.loadPtr(Address(parSliceReg, offsetof(ForkJoinSlice, perThreadData)), limitReg);
-    masm.loadPtr(Address(limitReg, offsetof(PerThreadData, ionStackLimit)), limitReg);
+    Register parSliceReg = ToRegister(lir->parSlice());
+    Register tempReg = ToRegister(lir->getTempReg());
+
+    masm.loadPtr(Address(parSliceReg, offsetof(ForkJoinSlice, perThreadData)), tempReg);
+    masm.loadPtr(Address(tempReg, offsetof(PerThreadData, ionStackLimit)), tempReg);
 
     // Conditional forward (unlikely) branch to failure.
     ParCheckOverRecursedFailure *ool = new ParCheckOverRecursedFailure(lir);
     if (!addOutOfLineCode(ool))
         return false;
-    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, limitReg, ool->entry());
+    masm.branchPtr(Assembler::BelowOrEqual, StackPointer, tempReg, ool->entry());
+    masm.parCheckInterruptFlags(tempReg, ool->entry());
     masm.bind(ool->rejoin());
 
     return true;
@@ -1835,22 +1841,62 @@ CodeGenerator::visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool
     return true;
 }
 
+// Out-of-line path to report over-recursed error and fail.
+class OutOfLineParCheckInterrupt : public OutOfLineCodeBase<CodeGenerator>
+{
+  public:
+    LParCheckInterrupt *const lir;
+
+    OutOfLineParCheckInterrupt(LParCheckInterrupt *lir)
+      : lir(lir)
+    { }
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineParCheckInterrupt(this);
+    }
+};
+
 bool
 CodeGenerator::visitParCheckInterrupt(LParCheckInterrupt *lir)
 {
-    JS_ASSERT(gen->info().executionMode() == ParallelExecution);
-    const Register parSliceReg = ToRegister(lir->parSlice());
-    const Register tempReg = ToRegister(lir->getTempReg());
-    masm.setupUnalignedABICall(1, tempReg);
-    masm.passABIArg(parSliceReg);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
+    // First check for slice->shared->interrupt_.
+    OutOfLineParCheckInterrupt *ool = new OutOfLineParCheckInterrupt(lir);
+    if (!addOutOfLineCode(ool))
+        return false;
 
+    // We must check two flags:
+    // - runtime->interrupt
+    // - runtime->parallelAbort
+    // See vm/ForkJoin.h for discussion on why we use this design.
+
+    Register tempReg = ToRegister(lir->getTempReg());
+    masm.parCheckInterruptFlags(tempReg, ool->entry());
+    masm.bind(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineParCheckInterrupt(OutOfLineParCheckInterrupt *ool)
+{
+    SaveLiveRegs regs(*this, ool->lir);
+    Label abort;
+
+    regs.save();
+    masm.movePtr(ToRegister(ool->lir->parSlice()), CallTempReg0);
+    masm.setupUnalignedABICall(1, CallTempReg1);
+    masm.passABIArg(CallTempReg0);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
+    masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, &abort);
+    regs.restore();
+    masm.jump(ool->rejoin());
+
+    masm.bind(&abort);
+    regs.fixStack();
     Label *bail;
     if (!ensureOutOfLineParallelAbort(&bail))
         return false;
+    masm.jump(bail);
 
-    // branch to the OOL failure code if false is returned
-    masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, bail);
     return true;
 }
 

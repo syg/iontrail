@@ -495,6 +495,11 @@ class MacroAssembler : public MacroAssemblerSpecific
                        Label *fail);
     void initGCThing(const Register &obj, JSObject *templateObject);
 
+    // Checks the flags that signal that parallel code may need to interrupt or
+    // abort.  Branches to fail in that case.
+    void parCheckInterruptFlags(const Register &tempReg,
+                                Label *fail);
+
     // If the IonCode that created this assembler needs to transition into the VM,
     // we want to store the IonCode on the stack in order to mark it during a GC.
     // This is a reference to a patch location where the IonCode* will be written.

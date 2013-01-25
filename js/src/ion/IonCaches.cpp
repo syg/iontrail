@@ -950,7 +950,15 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     const SafepointIndex *safepointIndex;
     void *returnAddr;
     IonScript *ion;
-    RootedScript topScript(cx, GetTopIonJSScript(cx, &ion, &safepointIndex, &returnAddr));
+    RootedScript topScript(cx);
+    ForkJoinSlice *slice = ForkJoinSlice::Current();
+    if (slice) {
+        topScript = GetTopIonJSScript(slice->perThreadData, &safepointIndex, &returnAddr);
+        ion = topScript->parallelIonScript();
+    } else {
+        topScript = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
+        ion = topScript->ionScript();
+    }
 
     IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
     RootedPropertyName name(cx, cache.name());
@@ -962,14 +970,20 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     // If we're inside parallel code, check if the last object we locked on is
     // the current one, and if so, just get the property and return without
     // attaching a duplicate stub.
-    if (ForkJoinSlice::InParallelSection()) {
-        if (cache.lastLockedObject() == obj) {
+    if (slice) {
+        if (!cache.initStubbedObjects(cx))
+            return false;
+        ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
+        if (p) {
+            printf("old %p\n", obj.get());
             RootedId id(cx, NameToId(name));
             if (!GetProperty(cx, pc, obj, id, vp))
                 return false;
             return true;
         }
-        cache.setLastLockedObject(obj);
+        printf("new %p\n", obj.get());
+        if (!cache.stubbedObjects()->add(p, obj))
+            return false;
     }
 
     // Override the return value if we are invalidated (bug 728188).
@@ -1529,8 +1543,8 @@ js::ion::SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Ha
 
     void *returnAddr;
     const SafepointIndex *safepointIndex;
-    IonScript *ion;
-    RootedScript script(cx, GetTopIonJSScript(cx, &ion, &safepointIndex, &returnAddr));
+    RootedScript script(cx, GetTopIonJSScript(cx, &safepointIndex, &returnAddr));
+    IonScript *ion = script->ionScript();
     IonCacheSetProperty &cache = ion->getCache(cacheIndex).toSetProperty();
     RootedPropertyName name(cx, cache.name());
     RootedId id(cx, AtomToId(name));

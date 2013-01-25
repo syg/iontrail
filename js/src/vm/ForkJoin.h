@@ -88,7 +88,7 @@
 //
 // In the future, it should be possible to lift the restriction that
 // we must block until inc. GC has completed and also to permit GC
-// during parallel exeution. But we're not there yet.
+// during parallel execution. But we're not there yet.
 //
 // Current Limitations:
 //
@@ -99,6 +99,7 @@
 // - No load balancing is performed between worker threads.  That means that
 //   the fork-join system is best suited for problems that can be slice into
 //   uniform bits.
+
 
 namespace js {
 
@@ -170,15 +171,6 @@ struct ForkJoinSlice
     // True if this is the main thread, false if it is one of the parallel workers.
     bool isMainThread();
 
-    // Generally speaking, if a thread returns false, that is interpreted as a
-    // "bailout"---meaning, a recoverable error.  If however you call this
-    // function before returning false, then the error will be interpreted as
-    // *fatal*.  This doesn't strike me as the most elegant solution here but
-    // I don't know what'd be better.
-    //
-    // For convenience, *always* returns false.
-    bool setFatal();
-
     // When the code would normally trigger a GC, we don't trigger it
     // immediately but instead record that request here.  This will
     // cause |ExecuteForkJoinOp()| to invoke |TriggerGC()| or
@@ -189,11 +181,19 @@ struct ForkJoinSlice
     void requestGC(gcreason::Reason reason);
     void requestCompartmentGC(JSCompartment *compartment, gcreason::Reason reason);
 
-    // During the parallel phase, this method should be invoked periodically,
-    // for example on every backedge, similar to the interrupt check.  If it
-    // returns false, then the parallel phase has been aborted and so you
-    // should bailout.  The function may also rendesvous to perform GC or do
-    // other similar things.
+    // During the parallel phase, this method should be invoked
+    // periodically, for example on every backedge, similar to the
+    // interrupt check.  If it returns false, then the parallel phase
+    // has been aborted and so you should bailout.  The function may
+    // also rendesvous to perform GC or do other similar things.
+    //
+    // This function is guaranteed to have no effect if both
+    // runtime()->interrupt is zero.  Ion-generated code takes
+    // advantage of this by inlining the checks on those flags before
+    // actually calling this function.  If this function ends up
+    // getting called a lot from outside ion code, we can refactor
+    // it into an inlined version with this check that calls a slower
+    // version.
     bool check();
 
     // Be wary, the runtime is shared between all threads!
@@ -215,6 +215,8 @@ struct ForkJoinSlice
     friend class AutoRendezvous;
     friend class AutoSetForkJoinSlice;
     friend class AutoMarkWorldStoppedForGC;
+
+    bool checkOutOfLine();
 
 #ifdef JS_THREADSAFE
     // Initialized by Initialize()
@@ -259,23 +261,15 @@ class LockedJSContext
 {
     ForkJoinSlice *slice_;
     JSContext *cx_;
-    uint8_t *savedIonTop_;
 
   public:
     LockedJSContext(ForkJoinSlice *slice)
       : slice_(slice),
-        cx_(slice->acquireContext()),
-        savedIonTop_(cx_->runtime->mainThread.ionTop)
-    {
-        // Switch out main thread data for the local thread data.
-        cx_->runtime->mainThread.ionTop = slice_->perThreadData->ionTop;
-    }
+        cx_(slice->acquireContext())
+    { }
 
     ~LockedJSContext() {
         slice_->releaseContext();
-
-        // Restore saved main thread data.
-        cx_->runtime->mainThread.ionTop = savedIonTop_;
     }
 
     operator JSContext *() { return cx_; }

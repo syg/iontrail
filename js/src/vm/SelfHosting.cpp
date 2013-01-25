@@ -395,7 +395,7 @@ js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
     // Returns true if parallel ops should take the sequential fallback path.
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_THREADSAFE
-    args.rval().setBoolean(cx->runtime->warmup ||
+    args.rval().setBoolean(cx->runtime->parallelWarmup ||
                            ForkJoinSlice::InParallelSection());
 #else
     args.rval().setBoolean(true);

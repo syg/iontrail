@@ -1088,7 +1088,7 @@ struct JSRuntime : js::RuntimeFriendFields
 
     // Non-zero if this is a parallel warmup execution.  See
     // js::parallel::Do() for more information.
-    uint32_t warmup;
+    uint32_t parallelWarmup;
 
   private:
     // In certain cases, we want to optimize certain opcodes to typed instructions,
