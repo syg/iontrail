@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <vector>
 #include <string>
-#include <string.h>
 #include <stdlib.h>
 #include <mozilla/StandardInteger.h>
 #include <nsID.h>
@@ -25,13 +24,13 @@ public:
   SharedLibrary(unsigned long aStart,
                 unsigned long aEnd,
                 unsigned long aOffset,
-                const std::string &aBreakpadId,
-                const char *aName)
+                const std::string& aBreakpadId,
+                const std::string& aName)
     : mStart(aStart)
     , mEnd(aEnd)
     , mOffset(aOffset)
     , mBreakpadId(aBreakpadId)
-    , mName(strdup(aName))
+    , mName(aName)
   {}
 
   SharedLibrary(const SharedLibrary& aEntry)
@@ -39,7 +38,7 @@ public:
     , mEnd(aEntry.mEnd)
     , mOffset(aEntry.mOffset)
     , mBreakpadId(aEntry.mBreakpadId)
-    , mName(strdup(aEntry.mName))
+    , mName(aEntry.mName)
   {}
 
   SharedLibrary& operator=(const SharedLibrary& aEntry)
@@ -51,9 +50,7 @@ public:
     mEnd = aEntry.mEnd;
     mOffset = aEntry.mOffset;
     mBreakpadId = aEntry.mBreakpadId;
-    if (mName)
-      free(mName);
-    mName = strdup(aEntry.mName);
+    mName = aEntry.mName;
     return *this;
   }
 
@@ -62,30 +59,24 @@ public:
     return (mStart == other.mStart) &&
            (mEnd == other.mEnd) &&
            (mOffset == other.mOffset) &&
-           (mName && other.mName && (strcmp(mName, other.mName) == 0)) &&
+           (mName == other.mName) &&
            (mBreakpadId == other.mBreakpadId);
-  }
-
-  ~SharedLibrary()
-  {
-    free(mName);
-    mName = NULL;
   }
 
   uintptr_t GetStart() const { return mStart; }
   uintptr_t GetEnd() const { return mEnd; }
   uintptr_t GetOffset() const { return mOffset; }
   const std::string &GetBreakpadId() const { return mBreakpadId; }
-  char* GetName() const { return mName; }
+  const std::string &GetName() const { return mName; }
 
 private:
-  explicit SharedLibrary() {}
+  SharedLibrary() {}
 
   uintptr_t mStart;
   uintptr_t mEnd;
   uintptr_t mOffset;
   std::string mBreakpadId;
-  char *mName;
+  std::string mName;
 };
 
 static bool

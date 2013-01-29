@@ -21,6 +21,11 @@
 #include "gfxPlatform.h"
 #include "gfxTeeSurface.h"
 #include "sampler.h"
+#include <algorithm>
+
+#if CAIRO_HAS_DWRITE_FONT
+#include "gfxWindowsPlatform.h"
+#endif
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -745,10 +750,10 @@ gfxContext::UserToDevice(const gfxRect& rect) const
     ymax = ymin;
     for (int i = 0; i < 3; i++) {
         cairo_user_to_device(mCairo, &x[i], &y[i]);
-        xmin = NS_MIN(xmin, x[i]);
-        xmax = NS_MAX(xmax, x[i]);
-        ymin = NS_MIN(ymin, y[i]);
-        ymax = NS_MAX(ymax, y[i]);
+        xmin = std::min(xmin, x[i]);
+        xmax = std::max(xmax, x[i]);
+        ymin = std::min(ymin, y[i]);
+        ymax = std::max(ymax, y[i]);
     }
 
     return gfxRect(xmin, ymin, xmax - xmin, ymax - ymin);
@@ -799,9 +804,9 @@ gfxContext::UserToDevicePixelSnapped(gfxRect& rect, bool ignoreScale) const
       p1.Round();
       p3.Round();
 
-      rect.MoveTo(gfxPoint(NS_MIN(p1.x, p3.x), NS_MIN(p1.y, p3.y)));
-      rect.SizeTo(gfxSize(NS_MAX(p1.x, p3.x) - rect.X(),
-                          NS_MAX(p1.y, p3.y) - rect.Y()));
+      rect.MoveTo(gfxPoint(std::min(p1.x, p3.x), std::min(p1.y, p3.y)));
+      rect.SizeTo(gfxSize(std::max(p1.x, p3.x) - rect.X(),
+                          std::max(p1.y, p3.y) - rect.Y()));
       return true;
   }
 
@@ -2186,8 +2191,8 @@ gfxContext::PushNewDT(gfxASurface::gfxContentType content)
   Rect clipBounds = GetAzureDeviceSpaceClipBounds();
   clipBounds.RoundOut();
 
-  clipBounds.width = NS_MAX(1.0f, clipBounds.width);
-  clipBounds.height = NS_MAX(1.0f, clipBounds.height);
+  clipBounds.width = std::max(1.0f, clipBounds.width);
+  clipBounds.height = std::max(1.0f, clipBounds.height);
 
   RefPtr<DrawTarget> newDT =
     mDT->CreateSimilarDrawTarget(IntSize(int32_t(clipBounds.width), int32_t(clipBounds.height)),
@@ -2199,4 +2204,78 @@ gfxContext::PushNewDT(gfxASurface::gfxContentType content)
   CurrentState().deviceOffset = clipBounds.TopLeft();
 
   mDT = newDT;
+}
+
+/**
+ * Work out whether cairo will snap inter-glyph spacing to pixels.
+ *
+ * Layout does not align text to pixel boundaries, so, with font drawing
+ * backends that snap glyph positions to pixels, it is important that
+ * inter-glyph spacing within words is always an integer number of pixels.
+ * This ensures that the drawing backend snaps all of the word's glyphs in the
+ * same direction and so inter-glyph spacing remains the same.
+ */
+void
+gfxContext::GetRoundOffsetsToPixels(bool *aRoundX, bool *aRoundY)
+{
+    *aRoundX = false;
+    // Could do something fancy here for ScaleFactors of
+    // AxisAlignedTransforms, but we leave things simple.
+    // Not much point rounding if a matrix will mess things up anyway.
+    // Also return false for non-cairo contexts.
+    if (CurrentMatrix().HasNonTranslation() || mDT) {
+        *aRoundY = false;
+        return;
+    }
+
+    // All raster backends snap glyphs to pixels vertically.
+    // Print backends set CAIRO_HINT_METRICS_OFF.
+    *aRoundY = true;
+
+    cairo_t *cr = GetCairo();
+    cairo_scaled_font_t *scaled_font = cairo_get_scaled_font(cr);
+    // Sometimes hint metrics gets set for us, most notably for printing.
+    cairo_font_options_t *font_options = cairo_font_options_create();
+    cairo_scaled_font_get_font_options(scaled_font, font_options);
+    cairo_hint_metrics_t hint_metrics =
+        cairo_font_options_get_hint_metrics(font_options);
+    cairo_font_options_destroy(font_options);
+
+    switch (hint_metrics) {
+    case CAIRO_HINT_METRICS_OFF:
+        *aRoundY = false;
+        return;
+    case CAIRO_HINT_METRICS_DEFAULT:
+        // Here we mimic what cairo surface/font backends do.  Printing
+        // surfaces have already been handled by hint_metrics.  The
+        // fallback show_glyphs implementation composites pixel-aligned
+        // glyph surfaces, so we just pick surface/font combinations that
+        // override this.
+        switch (cairo_scaled_font_get_type(scaled_font)) {
+#if CAIRO_HAS_DWRITE_FONT // dwrite backend is not in std cairo releases yet
+        case CAIRO_FONT_TYPE_DWRITE:
+            // show_glyphs is implemented on the font and so is used for
+            // all surface types; however, it may pixel-snap depending on
+            // the dwrite rendering mode
+            if (!cairo_dwrite_scaled_font_get_force_GDI_classic(scaled_font) &&
+                gfxWindowsPlatform::GetPlatform()->DWriteMeasuringMode() ==
+                    DWRITE_MEASURING_MODE_NATURAL) {
+                return;
+            }
+#endif
+        case CAIRO_FONT_TYPE_QUARTZ:
+            // Quartz surfaces implement show_glyphs for Quartz fonts
+            if (cairo_surface_get_type(cairo_get_target(cr)) ==
+                CAIRO_SURFACE_TYPE_QUARTZ) {
+                return;
+            }
+        default:
+            break;
+        }
+        // fall through:
+    case CAIRO_HINT_METRICS_ON:
+        break;
+    }
+    *aRoundX = true;
+    return;
 }

@@ -285,7 +285,7 @@ class Assembler : public AssemblerX86Shared
 
     // The buffer is about to be linked, make sure any constant pools or excess
     // bookkeeping has been flushed to the instruction stream.
-    void flush();
+    void finish();
 
     // Copy the assembly code to the given buffer, and perform any pending
     // relocations relying on the target address.
@@ -556,6 +556,15 @@ class Assembler : public AssemblerX86Shared
     void call(IonCode *target) {
         JmpSrc src = masm.call();
         addPendingJump(src, target->raw(), Relocation::IONCODE);
+    }
+
+    // Emit a CALL or CMP (nop) instruction. ToggleCall can be used to patch
+    // this instruction.
+    CodeOffsetLabel toggledCall(IonCode *target, bool enabled) {
+        CodeOffsetLabel offset(size());
+        JmpSrc src = enabled ? masm.call() : masm.cmp_eax();
+        addPendingJump(src, target->raw(), Relocation::IONCODE);
+        return offset;
     }
 
     // Do not mask shared implementations.

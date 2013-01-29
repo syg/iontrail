@@ -52,12 +52,13 @@ else
 endif
 endif
 endif
-endif
-
-# -pedantic causes warnings that we don't care about
-# so turn it off
+else
+ifeq (ppc,$(CPU_ARCH))
 ifdef GNU_CC
-OS_CFLAGS := $(filter-out -pedantic,$(OS_CFLAGS))
+	CSRCS += transform-altivec.c
+	ALTIVEC_FLAGS=-maltivec
+endif
+endif
 endif
 
 FORCE_STATIC_LIB = 1
@@ -75,3 +76,5 @@ endif # GNU_CC
 transform-sse1.$(OBJ_SUFFIX): COMPILE_CFLAGS += $(SSE1_FLAGS)
 
 transform-sse2.$(OBJ_SUFFIX): COMPILE_CFLAGS += $(SSE2_FLAGS)
+
+transform-altivec.$(OBJ_SUFFIX): COMPILE_CFLAGS += $(ALTIVEC_FLAGS)

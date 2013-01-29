@@ -29,6 +29,10 @@
 
 namespace mozilla {
 
+#ifdef LOG
+#undef LOG
+#endif
+
 #ifdef PR_LOGGING
 PRLogModuleInfo*
 GetMediaManagerLog()
@@ -957,9 +961,9 @@ MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
   if (picture) {
     // ShowFilePickerForMimeType() must run on the Main Thread! (on Android)
     NS_DispatchToMainThread(gUMRunnable);
+    return NS_OK;
   }
-  // XXX No support for Audio or Video in Android yet
-#else
+#endif
   // XXX No full support for picture in Desktop yet (needs proper UI)
   if (aPrivileged || fake) {
     mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
@@ -1001,7 +1005,6 @@ MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
     nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
     obs->NotifyObservers(aParams, "getUserMedia:request", data.get());
   }
-#endif
 
   return NS_OK;
 }

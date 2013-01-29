@@ -29,8 +29,6 @@ InsertElementTxn::InsertElementTxn()
 {
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(InsertElementTxn)
-
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(InsertElementTxn, EditTxn)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mNode)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
@@ -95,7 +93,7 @@ NS_IMETHODIMP InsertElementTxn::DoTransaction(void)
   }
 
   // note, it's ok for refContent to be null.  that means append
-  nsIContent* refContent = parent->GetChildAt(mOffset);
+  nsCOMPtr<nsIContent> refContent = parent->GetChildAt(mOffset);
 
   mEditor->MarkNodeDirty(mNode);
 

@@ -25,6 +25,7 @@
 #include "mozilla/Likely.h"
 
 #include "zlib.h"
+#include <algorithm>
 
 /* Bug 341128 - w32api defines min/max which causes problems with <bitset> */
 #ifdef __MINGW32__
@@ -119,7 +120,7 @@ public:
         // first block, check bits
         if ((block = mBlocks[startBlock])) {
             start = aStart;
-            end = NS_MIN(aEnd, ((startBlock+1) << BLOCK_INDEX_SHIFT) - 1);
+            end = std::min(aEnd, ((startBlock+1) << BLOCK_INDEX_SHIFT) - 1);
             for (i = start; i <= end; i++) {
                 if ((block->mBits[(i>>3) & (BLOCK_SIZE - 1)]) & (1 << (i & 0x7)))
                     return true;
@@ -202,7 +203,7 @@ public:
             }
 
             const uint32_t start = aStart > blockFirstBit ? aStart - blockFirstBit : 0;
-            const uint32_t end = NS_MIN<uint32_t>(aEnd - blockFirstBit, BLOCK_SIZE_BITS - 1);
+            const uint32_t end = std::min<uint32_t>(aEnd - blockFirstBit, BLOCK_SIZE_BITS - 1);
 
             for (uint32_t bit = start; bit <= end; ++bit) {
                 block->mBits[bit>>3] |= 1 << (bit & 0x7);
@@ -246,7 +247,7 @@ public:
             }
 
             const uint32_t start = aStart > blockFirstBit ? aStart - blockFirstBit : 0;
-            const uint32_t end = NS_MIN<uint32_t>(aEnd - blockFirstBit, BLOCK_SIZE_BITS - 1);
+            const uint32_t end = std::min<uint32_t>(aEnd - blockFirstBit, BLOCK_SIZE_BITS - 1);
 
             for (uint32_t bit = start; bit <= end; ++bit) {
                 block->mBits[bit>>3] &= ~(1 << (bit & 0x7));
@@ -739,8 +740,8 @@ public:
     MakeEOTHeader(const uint8_t *aFontData, uint32_t aFontDataLength,
                   FallibleTArray<uint8_t> *aHeader, FontDataOverlay *aOverlay);
 
-    // determine whether a font (which has already passed ValidateSFNTHeaders)
-    // is CFF format rather than TrueType
+    // determine whether a font (which has already been sanitized, so is known
+    // to be a valid sfnt) is CFF format rather than TrueType
     static bool
     IsCffFont(const uint8_t* aFontData, bool& hasVertical);
 
@@ -750,14 +751,6 @@ public:
     static gfxUserFontType
     DetermineFontDataType(const uint8_t *aFontData, uint32_t aFontDataLength);
 
-    // checks for valid SFNT table structure, returns true if valid
-    // does *not* guarantee that all font data is valid, though it does
-    // check that key tables such as 'name' are present and readable.
-    // XXX to be removed if/when we eliminate the option to disable OTS,
-    // which does more thorough validation.
-    static bool
-    ValidateSFNTHeaders(const uint8_t *aFontData, uint32_t aFontDataLength);
-    
     // Read the fullname from the sfnt data (used to save the original name
     // prior to renaming the font for installation).
     // This is called with sfnt data that has already been validated,

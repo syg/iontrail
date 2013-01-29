@@ -35,10 +35,10 @@ CPPSRCS		= \
 		DOMSVGTransformList.cpp \
 		nsDOMSVGZoomEvent.cpp \
 		nsDOMSVGEvent.cpp \
+		nsISVGPoint.cpp \
 		nsSVGAngle.cpp \
 		nsSVGBoolean.cpp \
 		nsSVGClass.cpp \
-		nsSVGClipPathElement.cpp \
 		nsSVGDataParser.cpp \
 		nsSVGElement.cpp \
 		nsSVGElementFactory.cpp \
@@ -50,24 +50,21 @@ CPPSRCS		= \
 		nsSVGIntegerPair.cpp \
 		nsSVGLength2.cpp \
 		nsSVGMarkerElement.cpp \
-		nsSVGMaskElement.cpp \
 		nsSVGNumber2.cpp \
 		nsSVGNumberPair.cpp \
 		nsSVGPathDataParser.cpp \
 		nsSVGPathGeometryElement.cpp \
-		nsSVGPatternElement.cpp \
 		nsSVGPolyElement.cpp \
 		nsSVGString.cpp \
 		nsSVGRect.cpp \
-		nsSVGSymbolElement.cpp \
 		nsSVGUnknownElement.cpp \
-		nsSVGUseElement.cpp \
 		nsSVGViewBox.cpp \
 		SVGAElement.cpp \
 		SVGAltGlyphElement.cpp \
 		SVGAngle.cpp \
 		SVGAnimatedAngle.cpp \
 		SVGAnimatedBoolean.cpp \
+		SVGAnimatedLength.cpp \
 		SVGAnimatedLengthList.cpp \
 		SVGAnimatedNumberList.cpp \
 		SVGAnimatedPathSegList.cpp \
@@ -79,6 +76,7 @@ CPPSRCS		= \
 		SVGAnimateMotionElement.cpp \
 		SVGAnimationElement.cpp \
 		SVGAttrValueWrapper.cpp \
+		SVGClipPathElement.cpp \
 		SVGCircleElement.cpp \
 		SVGContentUtils.cpp \
 		SVGDefsElement.cpp \
@@ -96,6 +94,7 @@ CPPSRCS		= \
 		SVGLengthListSMILType.cpp \
 		SVGLineElement.cpp \
 		SVGLocatableElement.cpp \
+		SVGMaskElement.cpp \
 		SVGMatrix.cpp \
 		SVGMetadataElement.cpp \
 		SVGMotionSMILType.cpp \
@@ -111,6 +110,7 @@ CPPSRCS		= \
 		SVGPathElement.cpp \
 		SVGPathSegUtils.cpp \
 		SVGPathSegListSMILType.cpp \
+		SVGPatternElement.cpp \
 		SVGPointList.cpp \
 		SVGPointListSMILType.cpp \
 		SVGPolygonElement.cpp \
@@ -122,6 +122,7 @@ CPPSRCS		= \
 		SVGStopElement.cpp \
 		SVGStringList.cpp \
 		SVGStyleElement.cpp \
+		SVGSymbolElement.cpp \
 		SVGSVGElement.cpp \
 		SVGSwitchElement.cpp \
 		SVGTextContentElement.cpp \
@@ -135,6 +136,7 @@ CPPSRCS		= \
 		SVGTransformListParser.cpp \
 		SVGTransformListSMILType.cpp \
 		SVGTSpanElement.cpp \
+		SVGUseElement.cpp \
 		SVGViewBoxSMILType.cpp \
 		SVGViewElement.cpp \
 		$(NULL)
@@ -158,10 +160,12 @@ EXPORTS_mozilla/dom = \
 	SVGAngle.h \
 	SVGAnimatedAngle.h \
 	SVGAnimatedBoolean.h \
+	SVGAnimatedLength.h \
 	SVGAnimateElement.h \
 	SVGAnimateTransformElement.h \
 	SVGAnimateMotionElement.h \
 	SVGAnimationElement.h \
+	SVGClipPathElement.h \
 	SVGCircleElement.h \
 	SVGDefsElement.h \
 	SVGDescElement.h \
@@ -173,10 +177,12 @@ EXPORTS_mozilla/dom = \
 	SVGImageElement.h \
 	SVGLineElement.h \
 	SVGLocatableElement.h \
+	SVGMaskElement.h \
 	SVGMatrix.h \
 	SVGMetadataElement.h \
 	SVGMPathElement.h \
 	SVGPathElement.h \
+	SVGPatternElement.h \
 	SVGPolygonElement.h \
 	SVGPolylineElement.h \
 	SVGRectElement.h \
@@ -184,6 +190,7 @@ EXPORTS_mozilla/dom = \
 	SVGSetElement.h \
 	SVGStopElement.h \
 	SVGStyleElement.h \
+	SVGSymbolElement.h \
 	SVGSVGElement.h \
 	SVGSwitchElement.h \
 	SVGTextContentElement.h \
@@ -193,6 +200,7 @@ EXPORTS_mozilla/dom = \
 	SVGTitleElement.h \
 	SVGTransformableElement.h \
 	SVGTSpanElement.h \
+	SVGUseElement.h \
 	SVGViewElement.h \
 	$(NULL)
 

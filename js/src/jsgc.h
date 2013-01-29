@@ -416,13 +416,16 @@ struct ArenaLists {
         return freeLists[thingKind].allocate(thingSize);
     }
 
+    template <AllowGC allowGC>
     static void *refillFreeList(JSContext *cx, AllocKind thingKind);
 
-    /* Moves all arenas from |fromArenaLists| into |this|.  In
+    /*
+     * Moves all arenas from |fromArenaLists| into |this|.  In
      * parallel blocks, we temporarily create one ArenaLists per
      * parallel thread.  When the parallel block ends, we move
      * whatever allocations may have been performed back into the
-     * compartment's main arena list using this function. */
+     * compartment's main arena list using this function.
+     */
     void adoptArenas(JSRuntime *runtime, ArenaLists *fromArenaLists);
 
     /* True if the ArenaHeader in question is found in this ArenaLists */
@@ -448,10 +451,12 @@ struct ArenaLists {
     bool foregroundFinalize(FreeOp *fop, AllocKind thingKind, SliceBudget &sliceBudget);
     static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead, bool onBackgroundThread);
 
-    // Invoked from IonMonkey-compiled parallel worker threads to
-    // perform an allocation.  In this case, |this| will be
-    // thread-local, but the compartment |comp| is shared between all
-    // threads.
+    /*
+     * Invoked from IonMonkey-compiled parallel worker threads to
+     * perform an allocation.  In this case, |this| will be
+     * thread-local, but the compartment |comp| is shared between all
+     * threads.
+     */
     void *parallelAllocate(JSCompartment *comp, AllocKind thingKind, size_t thingSize);
 
   private:
@@ -459,7 +464,7 @@ struct ArenaLists {
     inline void queueForForegroundSweep(FreeOp *fop, AllocKind thingKind);
     inline void queueForBackgroundSweep(FreeOp *fop, AllocKind thingKind);
 
-    inline void *allocateFromArena(JSCompartment *comp, AllocKind thingKind);
+    inline void *allocateFromArena(JS::Zone *zone, AllocKind thingKind);
 };
 
 /*
@@ -542,13 +547,10 @@ TriggerGC(JSRuntime *rt, js::gcreason::Reason reason);
 
 /* Must be called with GC lock taken. */
 extern void
-TriggerCompartmentGC(JSCompartment *comp, js::gcreason::Reason reason);
+TriggerZoneGC(Zone *zone, js::gcreason::Reason reason);
 
 extern void
 MaybeGC(JSContext *cx);
-
-extern void
-ShrinkGCBuffers(JSRuntime *rt);
 
 extern void
 ReleaseAllJITCode(FreeOp *op);
@@ -578,6 +580,11 @@ GCDebugSlice(JSRuntime *rt, bool limit, int64_t objCount);
 
 extern void
 PrepareForDebugGC(JSRuntime *rt);
+
+#ifdef JS_GC_ZEAL
+extern void
+SetGCZeal(JSRuntime *rt, uint8_t zeal, uint32_t frequency);
+#endif
 
 /* Functions for managing cross compartment gray pointers. */
 
@@ -1058,13 +1065,13 @@ struct GCMarker : public JSTracer {
 
   private:
 #ifdef DEBUG
-    void checkCompartment(void *p);
+    void checkZone(void *p);
 #else
-    void checkCompartment(void *p) {}
+    void checkZone(void *p) {}
 #endif
 
     void pushTaggedPtr(StackTag tag, void *ptr) {
-        checkCompartment(ptr);
+        checkZone(ptr);
         uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
         JS_ASSERT(!(addr & StackTagMask));
         if (!stack.push(addr | uintptr_t(tag)))
@@ -1072,7 +1079,7 @@ struct GCMarker : public JSTracer {
     }
 
     void pushValueArray(JSObject *obj, void *start, void *end) {
-        checkCompartment(obj);
+        checkZone(obj);
 
         JS_ASSERT(start <= end);
         uintptr_t tagged = reinterpret_cast<uintptr_t>(obj) | GCMarker::ValueArrayTag;
@@ -1188,6 +1195,7 @@ const int ZealIncrementalMultipleSlices = 10;
 const int ZealVerifierPostValue = 11;
 const int ZealFrameVerifierPostValue = 12;
 const int ZealPurgeAnalysisValue = 13;
+const int ZealLimit = 13;
 
 enum VerifierType {
     PreBarrierVerifier,
@@ -1216,21 +1224,6 @@ MaybeVerifyBarriers(JSContext *cx, bool always = false)
 }
 
 #endif
-
-/*
- * Instances of this class set the |JSRuntime::suppressGC| flag for the duration
- * that they are live. Use of this class is highly discouraged. Please carefully
- * read the comment in jscntxt.h above |suppressGC| and take all appropriate
- * precautions before instantiating this class.
- */
-class AutoSuppressGC
-{
-    int32_t &suppressGC_;
-
-  public:
-    AutoSuppressGC(JSContext *cx);
-    ~AutoSuppressGC();
-};
 
 } /* namespace gc */
 

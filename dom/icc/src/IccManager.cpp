@@ -23,8 +23,6 @@ namespace icc {
 const char* kStkCommandTopic     = "icc-manager-stk-command";
 const char* kStkSessionEndTopic  = "icc-manager-stk-session-end";
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(IccManager)
-
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IccManager,
                                                   nsDOMEventTargetHelper)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -37,7 +35,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(IccManager)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozIccManager)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMMozIccManager)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(MozIccManager)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 

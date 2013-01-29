@@ -28,7 +28,7 @@ class SharedPluginTexture;
 #include "mozilla/TimeStamp.h"
 #include "mozilla/PluginLibrary.h"
 
-struct JSObject;
+class JSObject;
 
 class nsPluginStreamListenerPeer; // browser-initiated stream class
 class nsNPAPIPluginStreamListener; // plugin-initiated stream class
@@ -207,6 +207,8 @@ public:
 
   void SetInverted(bool aInverted);
   bool Inverted() { return mInverted; }
+
+  static nsNPAPIPluginInstance* GetFromNPP(NPP npp);
 #endif
 
   nsresult NewStreamListener(const char* aURL, void* notifyData,

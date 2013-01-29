@@ -2,8 +2,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import datetime
 import socket
 import sys
+import time
 import traceback
 
 from client import MarionetteClient
@@ -103,7 +105,7 @@ class Marionette(object):
                  emulator=None, sdcard=None, emulatorBinary=None,
                  emulatorImg=None, emulator_res='480x800', gecko_path=None,
                  connectToRunningEmulator=False, homedir=None, baseurl=None,
-                 noWindow=False, logcat_dir=None, busybox=None, load_early=False):
+                 noWindow=False, logcat_dir=None, busybox=None):
         self.host = host
         self.port = self.local_port = port
         self.bin = bin
@@ -127,7 +129,7 @@ class Marionette(object):
             self.instance = GeckoInstance(host=self.host, port=self.port,
                                           bin=self.bin, profile=self.profile)
             self.instance.start()
-            assert(self.instance.wait_for_port())
+            assert(self.wait_for_port())
 
         if emulator:
             self.emulator = Emulator(homedir=homedir,
@@ -152,8 +154,8 @@ class Marionette(object):
         self.client = MarionetteClient(self.host, self.port)
 
         if emulator:
-            self.emulator.setup(self, gecko_path=gecko_path,
-                                load_early=load_early,
+            self.emulator.setup(self,
+                                gecko_path=gecko_path,
                                 busybox=busybox)
 
     def __del__(self):
@@ -195,6 +197,22 @@ class Marionette(object):
             # Exit without a normal exception to prevent mozharness from
             # flagging the error.
             sys.exit()
+
+    def wait_for_port(self, timeout=3000):
+        starttime = datetime.datetime.now()
+        while datetime.datetime.now() - starttime < datetime.timedelta(seconds=timeout):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((self.host, self.port))
+                data = sock.recv(16)
+                sock.close()
+                if '"from"' in data:
+                    time.sleep(5)
+                    return True
+            except socket.error:
+                pass
+            time.sleep(1)
+        return False
 
     def _send_message(self, command, response_key, **kwargs):
         if not self.session and command not in ('newSession', 'getStatus'):

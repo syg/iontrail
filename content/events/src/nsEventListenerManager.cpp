@@ -151,8 +151,6 @@ nsEventListenerManager::Shutdown()
   nsDOMEvent::Shutdown();
 }
 
-NS_IMPL_CYCLE_COLLECTION_NATIVE_CLASS(nsEventListenerManager)
-
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsEventListenerManager, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(nsEventListenerManager, Release)
 
@@ -751,6 +749,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
                "What is there to compile?");
 
   nsIScriptContext *context = listener->GetEventContext();
+  JSContext *cx = context->GetNativeContext();
   nsScriptObjectHolder<JSObject> handler(context);
 
   nsCOMPtr<nsPIDOMWindow> win; // Will end up non-null if mTarget is a window
@@ -819,7 +818,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
     }
 
     nsCxPusher pusher;
-    if (aNeedsCxPush && !pusher.Push(context->GetNativeContext())) {
+    if (aNeedsCxPush && !pusher.Push(cx)) {
       return NS_ERROR_FAILURE;
     }
 
@@ -835,18 +834,20 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
                                      aListenerStruct->mTypeAtom,
                                      &argCount, &argNames);
 
-    result = context->CompileEventHandler(aListenerStruct->mTypeAtom,
-                                          argCount, argNames,
-                                          *body,
-                                          url.get(), lineNo,
-                                          SCRIPTVERSION_DEFAULT, // for now?
-                                          /* aIsXBL = */ false,
-                                          handler);
-    if (result == NS_ERROR_ILLEGAL_VALUE) {
-      NS_WARNING("Probably a syntax error in the event handler!");
-      return NS_SUCCESS_LOSS_OF_INSIGNIFICANT_DATA;
-    }
+    JSAutoRequest ar(cx);
+    JSAutoCompartment ac(cx, context->GetNativeGlobal());
+    JS::CompileOptions options(cx);
+    options.setFileAndLine(url.get(), lineNo)
+           .setVersion(SCRIPTVERSION_DEFAULT);
+
+    js::RootedObject rootedNull(cx, nullptr); // See bug 781070.
+    JSObject *handlerFun = nullptr;
+    result = nsJSUtils::CompileFunction(cx, rootedNull, options,
+                                        nsAtomCString(aListenerStruct->mTypeAtom),
+                                        argCount, argNames, *body, &handlerFun);
     NS_ENSURE_SUCCESS(result, result);
+    handler.set(handlerFun);
+    NS_ENSURE_TRUE(handler, NS_ERROR_FAILURE);
   }
 
   if (handler) {

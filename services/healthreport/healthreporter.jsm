@@ -38,7 +38,8 @@ const DEFAULT_DATABASE_NAME = "healthreport.sqlite";
  * lower-level components (such as collection and submission) together.
  *
  * An instance of this type is created as an XPCOM service. See
- * HealthReportService.js and HealthReportComponents.manifest.
+ * DataReportingService.js and
+ * DataReporting.manifest/HealthReportComponents.manifest.
  *
  * It is theoretically possible to have multiple instances of this running
  * in the application. For example, this type may one day handle submission
@@ -83,7 +84,7 @@ const DEFAULT_DATABASE_NAME = "healthreport.sqlite";
  * @param policy
  *        (HealthReportPolicy) Policy driving execution of HealthReporter.
  */
-function HealthReporter(branch, policy) {
+function HealthReporter(branch, policy, sessionRecorder) {
   if (!branch.endsWith(".")) {
     throw new Error("Branch must end with a period (.): " + branch);
   }
@@ -95,6 +96,7 @@ function HealthReporter(branch, policy) {
   this._log = Log4Moz.repository.getLogger("Services.HealthReport.HealthReporter");
   this._log.info("Initializing health reporter instance against " + branch);
 
+  this._branch = branch;
   this._prefs = new Preferences(branch);
 
   if (!this.serverURI) {
@@ -106,6 +108,7 @@ function HealthReporter(branch, policy) {
   }
 
   this._policy = policy;
+  this.sessionRecorder = sessionRecorder;
 
   this._dbName = this._prefs.get("dbName") || DEFAULT_DATABASE_NAME;
 
@@ -304,6 +307,9 @@ HealthReporter.prototype = Object.freeze({
     this._log.info("HealthReporter started.");
     this._initialized = true;
     Services.obs.addObserver(this, "idle-daily", false);
+
+    // Clean up caches and reduce memory usage.
+    this._storage.compact();
     this._initializedDeferred.resolve(this);
   },
 
@@ -357,9 +363,11 @@ HealthReporter.prototype = Object.freeze({
     // could occur.
     this._shutdownInitiated = true;
 
-    if (this._initialized) {
+    // We may not have registered the observer yet. If not, this will
+    // throw.
+    try {
       Services.obs.removeObserver(this, "idle-daily");
-    }
+    } catch (ex) { }
 
     // If we have collectors, we need to shut down providers.
     if (this._collector) {
@@ -479,7 +487,7 @@ HealthReporter.prototype = Object.freeze({
    * Register a `Metrics.Provider` with this instance.
    *
    * This needs to be called or no data will be collected. See also
-   * registerProvidersFromCategoryManager`.
+   * `registerProvidersFromCategoryManager`.
    *
    * @param provider
    *        (Metrics.Provider) The provider to register for collection.
@@ -537,6 +545,8 @@ HealthReporter.prototype = Object.freeze({
         Cu.import(uri, ns);
 
         let provider = new ns[entry]();
+        provider.initPreferences(this._branch + "provider.");
+        provider.healthReporter = this;
         promises.push(this.registerProvider(provider));
       } catch (ex) {
         this._log.warn("Error registering provider from category manager: " +
@@ -620,10 +630,12 @@ HealthReporter.prototype = Object.freeze({
       };
 
       for (let [measurementKey, measurement] of provider.measurements) {
-        let name = providerName + "." + measurement.name + "." + measurement.version;
+        let name = providerName + "." + measurement.name;
 
         let serializer;
         try {
+          // The measurement is responsible for returning a serializer which
+          // is aware of the measurement version.
           serializer = measurement.serializer(measurement.SERIALIZE_JSON);
         } catch (ex) {
           this._log.warn("Error obtaining serializer for measurement: " + name +
@@ -634,7 +646,7 @@ HealthReporter.prototype = Object.freeze({
 
         let data;
         try {
-          data = yield this._storage.getMeasurementValues(measurement.id);
+          data = yield measurement.getValues();
         } catch (ex) {
           this._log.warn("Error obtaining data for measurement: " +
                          name + ": " + CommonUtils.exceptionStr(ex));
@@ -686,6 +698,7 @@ HealthReporter.prototype = Object.freeze({
       o.errors = errors;
     }
 
+    this._storage.compact();
     throw new Task.Result(JSON.stringify(o));
   },
 

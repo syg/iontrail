@@ -630,6 +630,17 @@ class nsTSubstring_CharT
       size_t SizeOfIncludingThisIfUnshared(nsMallocSizeOfFun mallocSizeOf)
         const;
 
+        /**
+         * WARNING: Only use these functions if you really know what you are
+         * doing, because they can easily lead to double-counting strings.  If
+         * you do use them, please explain clearly in a comment why it's safe
+         * and won't lead to double-counting.
+         */
+      size_t SizeOfExcludingThisEvenIfShared(nsMallocSizeOfFun mallocSizeOf)
+        const;
+      size_t SizeOfIncludingThisEvenIfShared(nsMallocSizeOfFun mallocSizeOf)
+        const;
+
     protected:
 
       friend class nsTObsoleteAStringThunk_CharT;
@@ -710,7 +721,7 @@ class nsTSubstring_CharT
       bool ReplacePrep(index_type cutStart, size_type cutLength,
                        size_type newLength) NS_WARN_UNUSED_RESULT
       {
-        cutLength = NS_MIN(cutLength, mLength - cutStart);
+        cutLength = XPCOM_MIN(cutLength, mLength - cutStart);
         uint32_t newTotalLen = mLength - cutLength + newLength;
         if (cutStart == mLength && Capacity() > newTotalLen) {
           mFlags &= ~F_VOIDED;

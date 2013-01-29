@@ -15,6 +15,7 @@
 #include "nsJSUtils.h"
 #include "nsContentUtils.h"
 #include "nsIScriptError.h"
+#include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -94,7 +95,7 @@ nsDOMMultipartFile::CreateSlice(uint64_t aStart, uint64_t aLength,
     NS_ENSURE_SUCCESS(rv, nullptr);
 
     if (skipStart < l) {
-      uint64_t upperBound = NS_MIN<uint64_t>(l - skipStart, length);
+      uint64_t upperBound = std::min<uint64_t>(l - skipStart, length);
 
       nsCOMPtr<nsIDOMBlob> firstBlob;
       rv = blob->Slice(skipStart, skipStart + upperBound,
@@ -133,7 +134,7 @@ nsDOMMultipartFile::CreateSlice(uint64_t aStart, uint64_t aLength,
     } else {
       blobs.AppendElement(blob);
     }
-    length -= NS_MIN<uint64_t>(l, length);
+    length -= std::min<uint64_t>(l, length);
   }
 
   // we can create our blob now
@@ -280,7 +281,6 @@ nsDOMMultipartFile::InitFile(JSContext* aCx,
 
   NS_ENSURE_TRUE(aArgc > 0, NS_ERROR_UNEXPECTED);
 
-  bool nativeEOL = false;
   if (aArgc > 1) {
     FilePropertyBag d;
     if (!d.Init(aCx, nullptr, aArgv[1])) {
@@ -288,7 +288,6 @@ nsDOMMultipartFile::InitFile(JSContext* aCx,
     }
     mName = d.mName;
     mContentType = d.mType;
-    nativeEOL = d.mEndings == EndingTypesValues::Native;
   }
 
   // We expect to get a path to represent as a File object,

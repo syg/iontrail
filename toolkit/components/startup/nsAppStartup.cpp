@@ -309,9 +309,6 @@ nsAppStartup::Quit(uint32_t aMode)
   if (mShuttingDown)
     return NS_OK;
 
-  SAMPLE_MARKER("Shutdown start");
-  mozilla::RecordShutdownStartTimeStamp();
-
   // If we're considering quitting, we will only do so if:
   if (ferocity == eConsiderQuit) {
 #ifdef XP_MACOSX
@@ -382,6 +379,8 @@ nsAppStartup::Quit(uint32_t aMode)
       }
     }
 
+    SAMPLE_MARKER("Shutdown start");
+    mozilla::RecordShutdownStartTimeStamp();
     mShuttingDown = true;
     if (!mRestart) {
       mRestart = (aMode & eRestart) != 0;

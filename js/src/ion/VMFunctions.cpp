@@ -54,23 +54,23 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
     AssertCanGC();
 
     RootedFunction fun(cx, fun0);
-
-    // In order to prevent massive bouncing between Ion and JM, see if we keep
-    // hitting functions that are uncompilable.
     if (fun->isInterpreted()) {
-        if (fun->isInterpretedLazy() && !JSFunction::getOrCreateScript(cx, fun))
+        if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
             return false;
 
+        // Clone function at call site if needed.
         if (fun->isCloneAtCallsite()) {
             RootedScript script(cx);
             jsbytecode *pc;
-            types::TypeScript::GetPcScript(cx, &script, &pc);
+            types::TypeScript::GetPcScript(cx, script.address(), &pc);
             fun = CloneFunctionAtCallsite(cx, fun0, script, pc);
             if (!fun)
                 return false;
         }
 
-        if (!fun->nonLazyScript()->canIonCompile()) {
+        // In order to prevent massive bouncing between Ion and JM, see if we keep
+        // hitting functions that are uncompilable.
+        if (cx->methodJitEnabled && !fun->nonLazyScript()->canIonCompile()) {
             UnrootedScript script = GetTopIonJSScript(cx);
             if (script->hasIonScript() &&
                 ++script->ion->slowCallCount >= js_IonOptions.slowCallLimit)
@@ -100,8 +100,15 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
     Value thisv = argv[0];
     Value *argvWithoutThis = argv + 1;
 
-    // Run the function in the interpreter.
-    bool ok = Invoke(cx, thisv, ObjectValue(*fun), argc, argvWithoutThis, rval);
+    // For constructing functions, |this| is constructed at caller side and we can just call Invoke.
+    // When creating this failed / is impossible at caller site, i.e. MagicValue(JS_IS_CONSTRUCTING),
+    // we use InvokeConstructor that creates it at the callee side.
+    bool ok;
+    if (thisv.isMagic(JS_IS_CONSTRUCTING))
+        ok = InvokeConstructor(cx, ObjectValue(*fun), argc, argvWithoutThis, rval);
+    else
+        ok = Invoke(cx, thisv, ObjectValue(*fun), argc, argvWithoutThis, rval);
+
     if (ok && needsMonitor)
         types::TypeScript::Monitor(cx, *rval);
 
@@ -111,7 +118,7 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
 JSObject *
 NewGCThing(JSContext *cx, gc::AllocKind allocKind, size_t thingSize)
 {
-    return gc::NewGCThing<JSObject>(cx, allocKind, thingSize);
+    return gc::NewGCThing<JSObject, CanGC>(cx, allocKind, thingSize);
 }
 
 bool
@@ -162,7 +169,7 @@ InitProp(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue v
 
 template<bool Equal>
 bool
-LooselyEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
+LooselyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
 {
     bool equal;
     if (!js::LooselyEqual(cx, lhs, rhs, &equal))
@@ -171,12 +178,12 @@ LooselyEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
     return true;
 }
 
-template bool LooselyEqual<true>(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res);
-template bool LooselyEqual<false>(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res);
+template bool LooselyEqual<true>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
+template bool LooselyEqual<false>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
 
 template<bool Equal>
 bool
-StrictlyEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
+StrictlyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
 {
     bool equal;
     if (!js::StrictlyEqual(cx, lhs, rhs, &equal))
@@ -185,11 +192,11 @@ StrictlyEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
     return true;
 }
 
-template bool StrictlyEqual<true>(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res);
-template bool StrictlyEqual<false>(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res);
+template bool StrictlyEqual<true>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
+template bool StrictlyEqual<false>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
 
 bool
-LessThan(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
+LessThan(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
 {
     bool cond;
     if (!LessThanOperation(cx, lhs, rhs, &cond))
@@ -199,7 +206,7 @@ LessThan(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
 }
 
 bool
-LessThanOrEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
+LessThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
 {
     bool cond;
     if (!LessThanOrEqualOperation(cx, lhs, rhs, &cond))
@@ -209,7 +216,7 @@ LessThanOrEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
 }
 
 bool
-GreaterThan(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
+GreaterThan(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
 {
     bool cond;
     if (!GreaterThanOperation(cx, lhs, rhs, &cond))
@@ -219,7 +226,7 @@ GreaterThan(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
 }
 
 bool
-GreaterThanOrEqual(JSContext *cx, HandleValue lhs, HandleValue rhs, JSBool *res)
+GreaterThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
 {
     bool cond;
     if (!GreaterThanOrEqualOperation(cx, lhs, rhs, &cond))
@@ -412,8 +419,7 @@ StringFromCharCode(JSContext *cx, int32_t code)
     if (StaticStrings::hasUnit(c))
         return cx->runtime->staticStrings.getUnit(c);
 
-    return js_NewStringCopyN(cx, &c, 1);
-
+    return js_NewStringCopyN<CanGC>(cx, &c, 1);
 }
 
 bool

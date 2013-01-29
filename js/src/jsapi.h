@@ -2532,7 +2532,7 @@ extern JS_PUBLIC_DATA(jsid) JS_DEFAULT_XML_NAMESPACE_ID;
  */
 
 static JS_ALWAYS_INLINE JSBool
-JSID_IS_VOID(jsid id)
+JSID_IS_VOID(const js::RawId id)
 {
     JS_ASSERT_IF(((size_t)JSID_BITS(id) & JSID_TYPE_MASK) == JSID_TYPE_VOID,
                  JSID_BITS(id) == JSID_TYPE_VOID);
@@ -2540,7 +2540,7 @@ JSID_IS_VOID(jsid id)
 }
 
 static JS_ALWAYS_INLINE JSBool
-JSID_IS_EMPTY(jsid id)
+JSID_IS_EMPTY(const js::RawId id)
 {
     return ((size_t)JSID_BITS(id) == JSID_TYPE_OBJECT);
 }
@@ -3317,7 +3317,6 @@ class JS_PUBLIC_API(JSAutoCompartment)
   public:
     JSAutoCompartment(JSContext *cx, JSRawObject target);
     JSAutoCompartment(JSContext *cx, JSScript *target);
-    JSAutoCompartment(JSContext *cx, JSStackFrame *target);
     JSAutoCompartment(JSContext *cx, JSString *target);
     ~JSAutoCompartment();
 };
@@ -3538,12 +3537,6 @@ JS_THIS(JSContext *cx, jsval *vp)
  * created.
  */
 #define JS_THIS_VALUE(cx,vp)    ((vp)[1])
-
-extern JS_PUBLIC_API(void)
-JS_MallocInCompartment(JSCompartment *comp, size_t nbytes);
-
-extern JS_PUBLIC_API(void)
-JS_FreeInCompartment(JSCompartment *comp, size_t nbytes);
 
 extern JS_PUBLIC_API(void *)
 JS_malloc(JSContext *cx, size_t nbytes);
@@ -4016,7 +4009,10 @@ typedef enum JSGCParamKey {
     JSGC_ANALYSIS_PURGE_TRIGGER = 19,
 
     /* Lower limit after which we limit the heap growth. */
-    JSGC_ALLOCATION_THRESHOLD = 20
+    JSGC_ALLOCATION_THRESHOLD = 20,
+
+    /* Enable the generational GC. */
+    JSGC_ENABLE_GENERATIONAL = 21
 } JSGCParamKey;
 
 typedef enum JSGCMode {
@@ -5554,7 +5550,7 @@ JS_GetStringEncodingLength(JSContext *cx, JSString *str);
  * written into the buffer.
  */
 JS_PUBLIC_API(size_t)
-JS_EncodeStringToBuffer(JSString *str, char *buffer, size_t length);
+JS_EncodeStringToBuffer(JSContext *cx, JSString *str, char *buffer, size_t length);
 
 class JSAutoByteString
 {

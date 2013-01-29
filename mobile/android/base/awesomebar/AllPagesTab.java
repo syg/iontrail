@@ -305,7 +305,12 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
         }
 
         public void filter(String searchTerm) {
+            boolean changed = !mSearchTerm.equals(searchTerm);
             mSearchTerm = searchTerm;
+
+            if (changed)
+                mCursorAdapter.notifyDataSetChanged();
+
             getFilter().filter(searchTerm);
         }
 
@@ -397,7 +402,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
             if (type == ROW_SEARCH || type == ROW_SUGGEST) {
                 SearchEntryViewHolder viewHolder = null;
 
-                if (convertView == null) {
+                if (convertView == null || !(convertView.getTag() instanceof SearchEntryViewHolder)) {
                     convertView = getInflater().inflate(R.layout.awesomebar_suggestion_row, getListView(), false);
 
                     viewHolder = new SearchEntryViewHolder();
@@ -415,7 +420,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
             } else {
                 AwesomeEntryViewHolder viewHolder = null;
 
-                if (convertView == null) {
+                if (convertView == null || !(convertView.getTag() instanceof AwesomeEntryViewHolder)) {
                     convertView = getInflater().inflate(R.layout.awesomebar_row, null);
 
                     viewHolder = new AwesomeEntryViewHolder();
@@ -566,7 +571,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
             boolean suggestionsPrompted = suggest.getBoolean("prompted");
             JSONArray engines = data.getJSONArray("searchEngines");
 
-            mSearchEngines = new ArrayList<SearchEngine>();
+            ArrayList<SearchEngine> searchEngines = new ArrayList<SearchEngine>();
             for (int i = 0; i < engines.length(); i++) {
                 JSONObject engineJSON = engines.getJSONObject(i);
                 String name = engineJSON.getString("name");
@@ -574,12 +579,21 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                 Bitmap icon = BitmapUtils.getBitmapFromDataURI(iconURI);
                 if (name.equals(suggestEngine) && suggestTemplate != null) {
                     // suggest engine should be at the front of the list
-                    mSearchEngines.add(0, new SearchEngine(name, icon));
-                    mSuggestClient = new SuggestClient(GeckoApp.mAppContext, suggestTemplate, SUGGESTION_TIMEOUT, SUGGESTION_MAX);
+                    searchEngines.add(0, new SearchEngine(name, icon));
+
+                    // The only time Tabs.getInstance().getSelectedTab() should
+                    // be null is when we're restoring after a crash. We should
+                    // never restore private tabs when that happens, so it
+                    // should be safe to assume that null means non-private.
+                    Tab tab = Tabs.getInstance().getSelectedTab();
+                    if (tab == null || !tab.isPrivate())
+                        mSuggestClient = new SuggestClient(GeckoApp.mAppContext, suggestTemplate, SUGGESTION_TIMEOUT, SUGGESTION_MAX);
                 } else {
-                    mSearchEngines.add(new SearchEngine(name, icon));
+                    searchEngines.add(new SearchEngine(name, icon));
                 }
             }
+
+            mSearchEngines = searchEngines;
             mCursorAdapter.notifyDataSetChanged();
 
             // show suggestions opt-in if user hasn't been prompted
@@ -620,6 +634,14 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
     }
 
     private void setSuggestionsEnabled(final boolean enabled) {
+        // Clicking the yes/no buttons quickly can cause the click events be
+        // queued before the listeners are removed above, so it's possible
+        // setSuggestionsEnabled() can be called twice. mSuggestionsOptInPrompt
+        // can be null if this happens (bug 828480).
+        if (mSuggestionsOptInPrompt == null) {
+            return;
+        }
+
         // Make suggestions appear immediately after the user opts in
         primeSuggestions();
 

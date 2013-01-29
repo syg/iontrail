@@ -223,6 +223,7 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
     return kMediaConduitKeyFrameRequestError;
   }
   // Enable lossless transport
+  // XXX Note: We may want to disable this or limit it
   if (mPtrRTP->SetNACKStatus(mChannel, true) != 0)
   {
     CSFLogError(logTag,  "%s NACKStatus Failed %d ", __FUNCTION__,
@@ -563,7 +564,7 @@ WebrtcVideoConduit::ReceivedRTCPPacket(const void *data, int len)
   CSFLogError(logTag, " %s Channel %d, Len %d ", __FUNCTION__, mChannel, len);
 
   //Media Engine should be receiving already
-  if(mEngineReceiving)
+  if(mEngineTransmitting)
   {
     //let the engine know of RTCP packet to decode.
     if(mPtrViENetwork->ReceivedRTCPPacket(mChannel,data,len) == -1)
@@ -591,7 +592,7 @@ int WebrtcVideoConduit::SendPacket(int channel, const void* data, int len)
   if(mTransport && (mTransport->SendRtpPacket(data, len) == NS_OK))
   {
     CSFLogDebug(logTag, "%s Sent RTP Packet ", __FUNCTION__);
-    return 0;
+    return len;
   } else {
     CSFLogError(logTag, "%s  Failed", __FUNCTION__);
     return -1;
@@ -602,10 +603,12 @@ int WebrtcVideoConduit::SendRTCPPacket(int channel, const void* data, int len)
 {
   CSFLogError(logTag,  "%s : channel %d , len %d ", __FUNCTION__, channel,len);
 
-  if(mTransport && (mTransport->SendRtcpPacket(data, len) == NS_OK))
+  // can't enable this assertion, because we do.  Suppress it
+  // NS_ASSERTION(mEngineReceiving,"We shouldn't send RTCP on the receiver side");
+  if(mEngineReceiving && mTransport && (mTransport->SendRtcpPacket(data, len) == NS_OK))
    {
       CSFLogDebug(logTag, "%s Sent RTCP Packet ", __FUNCTION__);
-      return 0;
+      return len;
    } else {
       CSFLogError(logTag, "%s Failed", __FUNCTION__);
       return -1;
@@ -659,7 +662,7 @@ WebrtcVideoConduit::CodecConfigToWebRTCCodec(const VideoCodecConfig* codecInfo,
   cinst.plType  = codecInfo->mType;
   cinst.width   = codecInfo->mWidth;
   cinst.height  = codecInfo->mHeight;
-  cinst.minBitrate = 50;
+  cinst.minBitrate = 200;
   cinst.startBitrate = 300;
   cinst.maxBitrate = 2000;
 }

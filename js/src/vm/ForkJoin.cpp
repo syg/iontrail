@@ -64,7 +64,7 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
 
     // Fields related to asynchronously-read gcRequested_ flag
     gcreason::Reason gcReason_;    // Reason given to request GC
-    JSCompartment *gcCompartment_; // Compartment for GC, or NULL for full
+    Zone *gcZone_; // Zone for GC, or NULL for full
 
     /////////////////////////////////////////////////////////////////////////
     // Asynchronous Flags
@@ -132,18 +132,18 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     // Invoked from parallel worker threads:
     virtual void executeFromWorker(uint32_t threadId, uintptr_t stackLimit);
 
-    // Moves all the per-thread arenas into the main compartment and
+    // Moves all the per-thread arenas into the main zone and
     // processes any pending requests for a GC.  This can only safely
     // be invoked on the main thread, either during a rendezvous or
     // after the workers have completed.
-    void transferArenasToCompartmentAndProcessGCRequests();
+    void transferArenasToZoneAndProcessGCRequests();
 
     // Invoked during processing by worker threads to "check in".
     bool check(ForkJoinSlice &threadCx);
 
-    // Requests a GC, either full or specific to a compartment.
+    // Requests a GC, either full or specific to a zone.
     void requestGC(gcreason::Reason reason);
-    void requestCompartmentGC(JSCompartment *compartment, gcreason::Reason reason);
+    void requestZoneGC(Zone *zone, gcreason::Reason reason);
 
     // Requests that computation abort.
     void setAbortFlag(bool fatal);
@@ -203,7 +203,7 @@ class js::AutoMarkWorldStoppedForGC
         : threadCx(threadCx)
     {
         threadCx.shared->worldStoppedForGC_ = true;
-        threadCx.shared->cx_->runtime->mainThread.suppressGC--;
+        threadCx.shared->cx_->mainThread().suppressGC--;
         JS_ASSERT(!threadCx.shared->cx_->runtime->preserveCodeDueToParallelDo);
         threadCx.shared->cx_->runtime->preserveCodeDueToParallelDo = true;
     }
@@ -211,7 +211,7 @@ class js::AutoMarkWorldStoppedForGC
     ~AutoMarkWorldStoppedForGC()
     {
         threadCx.shared->worldStoppedForGC_ = false;
-        threadCx.shared->cx_->runtime->mainThread.suppressGC++;
+        threadCx.shared->cx_->mainThread().suppressGC++;
         threadCx.shared->cx_->runtime->preserveCodeDueToParallelDo = false;
     }
 
@@ -237,7 +237,7 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
     blocked_(0),
     rendezvousIndex_(0),
     gcReason_(gcreason::NUM_REASONS),
-    gcCompartment_(NULL),
+    gcZone_(NULL),
     abort_(false),
     fatal_(false),
     rendezvous_(false),
@@ -254,10 +254,10 @@ ForkJoinShared::init()
     // parallel code.
     //
     // Note: you might think (as I did, initially) that we could use
-    // compartment |Allocator| for the main thread.  This is not true,
+    // zone |Allocator| for the main thread.  This is not true,
     // because when executing parallel code we sometimes check what
     // arena list an object is in to decide if it is writable.  If we
-    // used the compartment |Allocator| for the main thread, then the
+    // used the zone |Allocator| for the main thread, then the
     // main thread would be permitted to write to any object it wants.
 
     if (!Monitor::init())
@@ -274,7 +274,7 @@ ForkJoinShared::init()
     if (!stackExtents_.resize(numSlices_))
         return false;
     for (unsigned i = 0; i < numSlices_; i++) {
-        Allocator *allocator = cx_->runtime->new_<Allocator>(cx_->compartment);
+        Allocator *allocator = cx_->runtime->new_<Allocator>(cx_->zone());
         if (!allocator)
             return false;
 
@@ -334,7 +334,7 @@ ForkJoinShared::execute()
         lock.wait();
 
     bool gcWasRequested = gcRequested_; // transfer clears gcRequested_ flag.
-    transferArenasToCompartmentAndProcessGCRequests();
+    transferArenasToZoneAndProcessGCRequests();
 
     // Check if any of the workers failed.
     if (abort_) {
@@ -351,24 +351,23 @@ ForkJoinShared::execute()
 }
 
 void
-ForkJoinShared::transferArenasToCompartmentAndProcessGCRequests()
+ForkJoinShared::transferArenasToZoneAndProcessGCRequests()
 {
     // stop-the-world GC may still be sweeping; let that finish so
     // that we do not upset the state of compartments being swept.
     cx_->runtime->gcHelperThread.waitBackgroundSweepEnd();
 
-    JSCompartment *comp = cx_->compartment;
+    Zone *zone = cx_->zone();
     for (unsigned i = 0; i < numSlices_; i++)
-        comp->adoptWorkerAllocator(allocators_[i]);
+        zone->adoptWorkerAllocator(allocators_[i]);
 
     if (gcRequested_) {
-        if (!gcCompartment_) {
+        if (!gcZone_)
             TriggerGC(cx_->runtime, gcReason_);
-        } else {
-            TriggerCompartmentGC(gcCompartment_, gcReason_);
-        }
+        else
+            TriggerZoneGC(gcZone_, gcReason_);
         gcRequested_ = false;
-        gcCompartment_ = NULL;
+        gcZone_ = NULL;
     }
 }
 
@@ -396,7 +395,7 @@ ForkJoinShared::executeFromWorker(uint32_t workerId, uintptr_t stackLimit)
 void
 ForkJoinShared::executeFromMainThread()
 {
-    executePortion(&cx_->runtime->mainThread, numSlices_ - 1);
+    executePortion(&cx_->mainThread(), numSlices_ - 1);
 }
 
 void
@@ -445,10 +444,12 @@ ForkJoinShared::check(ForkJoinSlice &slice)
         return false;
 
     if (slice.isMainThread()) {
+        JS_ASSERT(!cx_->runtime->gcIsNeeded);
+
         if (cx_->runtime->interrupt) {
             // The GC Needed flag should not be set during parallel
             // execution.  Instead, one of the requestGC() or
-            // requestCompartmentGC() methods should be invoked.
+            // requestZoneGC() methods should be invoked.
             JS_ASSERT(!cx_->runtime->gcIsNeeded);
 
             // If interrupt is requested, bring worker threads to a halt,
@@ -476,12 +477,12 @@ ForkJoinShared::check(ForkJoinSlice &slice)
                 slice.recordStackExtent();
                 AutoInstallForkJoinStackExtents extents(cx_->runtime, &stackExtents_[0]);
 
-                if (gcCompartment_ == NULL || gcCompartment_ == cx_->runtime->atomsCompartment) {
+                if (gcZone_ == NULL || gcZone_ == cx_->runtime->atomsCompartment->zone()) {
                     PrepareForFullGC(cx_->runtime);
-                    GCSlice(cx_->runtime, GC_NORMAL, gcreason::PAUSE_PARALLEL_BLOCK);
+                    GCSlice(cx_->runtime, GC_NORMAL, gcReason_);
                 } else {
-                    PrepareCompartmentForGC(gcCompartment_);
-                    GCSlice(cx_->runtime, GC_NORMAL, gcreason::PAUSE_PARALLEL_BLOCK);
+                    PrepareZoneForGC(gcZone_);
+                    GCSlice(cx_->runtime, GC_NORMAL, gcReason_);
                 }
                 gcRequested_ = false;
             }
@@ -592,26 +593,26 @@ ForkJoinShared::requestGC(gcreason::Reason reason)
 {
     AutoLockMonitor lock(*this);
 
-    gcCompartment_ = NULL;
+    gcZone_ = NULL;
     gcReason_ = reason;
     gcRequested_ = true;
 }
 
 void
-ForkJoinShared::requestCompartmentGC(JSCompartment *compartment,
+ForkJoinShared::requestZoneGC(Zone *zone,
                                      gcreason::Reason reason)
 {
     AutoLockMonitor lock(*this);
 
-    if (gcRequested_ && gcCompartment_ != compartment) {
-        // If a full GC has been requested, or a GC for another compartment,
+    if (gcRequested_ && gcZone_ != zone) {
+        // If a full GC has been requested, or a GC for another zone,
         // issue a request for a full GC.
-        gcCompartment_ = NULL;
+        gcZone_ = NULL;
         gcReason_ = reason;
         gcRequested_ = true;
     } else {
-        // Otherwise, just GC this compartment.
-        gcCompartment_ = compartment;
+        // Otherwise, just GC this zone.
+        gcZone_ = zone;
         gcReason_ = reason;
         gcRequested_ = true;
     }
@@ -771,12 +772,12 @@ ForkJoinSlice::requestGC(gcreason::Reason reason)
 }
 
 void
-ForkJoinSlice::requestCompartmentGC(JSCompartment *compartment,
-                                    gcreason::Reason reason)
+ForkJoinSlice::requestZoneGC(Zone *zone,
+                             gcreason::Reason reason)
 {
     recordStackExtent();
 #ifdef JS_THREADSAFE
-    shared->requestCompartmentGC(compartment, reason);
+    shared->requestZoneGC(zone, reason);
     if (!shared->useStopTheWorldGC())
         triggerAbort();
 #endif
@@ -812,7 +813,7 @@ class AutoEnterParallelSection
   public:
     AutoEnterParallelSection(JSContext *cx)
       : cx_(cx),
-        prevIonTop_(cx->runtime->mainThread.ionTop)
+        prevIonTop_(cx->mainThread().ionTop)
     {
         // Note: we do not allow GC during parallel sections.
         // Moreover, we do not wish to worry about making
@@ -821,14 +822,14 @@ class AutoEnterParallelSection
 
         if (IsIncrementalGCInProgress(cx->runtime)) {
             PrepareForIncrementalGC(cx->runtime);
-            FinishIncrementalGC(cx->runtime, gcreason::START_PARALLEL_BLOCK);
+            FinishIncrementalGC(cx->runtime, gcreason::API);
         }
 
         cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
     }
 
     ~AutoEnterParallelSection() {
-        cx_->runtime->mainThread.ionTop = prevIonTop_;
+        cx_->mainThread().ionTop = prevIonTop_;
     }
 };
 }

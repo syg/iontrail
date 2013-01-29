@@ -8,17 +8,13 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 
-#include "jsscope.h"
-#include "jsobjinlines.h"
-
-#include "js/TemplateLib.h"
-
-#include "Debugger.h"
-#include "ObjectImpl.h"
-
 #include "gc/Barrier-inl.h"
+#include "js/TemplateLib.h"
+#include "vm/Debugger.h"
+#include "vm/ObjectImpl.h"
 
-#include "ObjectImpl-inl.h"
+#include "vm/ObjectImpl-inl.h"
+#include "vm/Shape-inl.h"
 
 using namespace js;
 
@@ -223,25 +219,25 @@ js::ObjectImpl::checkShapeConsistency()
 void
 js::ObjectImpl::initSlotRange(uint32_t start, const Value *vector, uint32_t length)
 {
-    JSCompartment *comp = compartment();
+    JS::Zone *zone = this->zone();
     HeapSlot *fixedStart, *fixedEnd, *slotsStart, *slotsEnd;
     getSlotRange(start, length, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
     for (HeapSlot *sp = fixedStart; sp < fixedEnd; sp++)
-        sp->init(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->init(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
     for (HeapSlot *sp = slotsStart; sp < slotsEnd; sp++)
-        sp->init(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->init(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
 }
 
 void
 js::ObjectImpl::copySlotRange(uint32_t start, const Value *vector, uint32_t length)
 {
-    JSCompartment *comp = compartment();
+    JS::Zone *zone = this->zone();
     HeapSlot *fixedStart, *fixedEnd, *slotsStart, *slotsEnd;
     getSlotRange(start, length, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
     for (HeapSlot *sp = fixedStart; sp < fixedEnd; sp++)
-        sp->set(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->set(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
     for (HeapSlot *sp = slotsStart; sp < slotsEnd; sp++)
-        sp->set(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->set(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
 }
 
 #ifdef DEBUG
@@ -264,20 +260,12 @@ js::ObjectImpl::slotInRange(uint32_t slot, SentinelAllowed sentinel) const
 MOZ_NEVER_INLINE
 #endif
 UnrootedShape
-js::ObjectImpl::nativeLookup(JSContext *cx, jsid idArg)
+js::ObjectImpl::nativeLookup(JSContext *cx, jsid id)
 {
-    AssertCanGC();
+    AutoAssertNoGC nogc;
     MOZ_ASSERT(isNative());
     Shape **spp;
-    RootedId id(cx, idArg);
     return Shape::search(cx, lastProperty(), id, &spp);
-}
-
-UnrootedShape
-js::ObjectImpl::nativeLookupNoAllocation(jsid id)
-{
-    MOZ_ASSERT(isNative());
-    return Shape::searchNoAllocation(lastProperty(), id);
 }
 
 void
@@ -287,7 +275,7 @@ js::ObjectImpl::markChildren(JSTracer *trc)
 
     MarkShape(trc, &shape_, "shape");
 
-    Class *clasp = shape_->getObjectClass();
+    Class *clasp = type_->clasp;
     JSObject *obj = asObjectPtr();
     if (clasp->trace)
         clasp->trace(trc, obj);

@@ -110,8 +110,6 @@ nsAnonymousContentList::~nsAnonymousContentList()
   delete mElements;
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsAnonymousContentList)
-
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsAnonymousContentList)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsAnonymousContentList)
 
@@ -419,8 +417,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsBindingManager)
   // No need to traverse mProcessAttachedQueueEvent, since it'll just
   // fire at some point or become revoke and drop its ref to us.
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsBindingManager)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsBindingManager)
   NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
@@ -839,29 +835,7 @@ nsBindingManager::GetSingleInsertionPoint(nsIContent* aParent,
 }
 
 nsresult
-nsBindingManager::AddLayeredBinding(nsIContent* aContent, nsIURI* aURL,
-                                    nsIPrincipal* aOriginPrincipal)
-{
-  // First we need to load our binding.
-  nsXBLService* xblService = nsXBLService::GetInstance();
-  if (!xblService)
-    return NS_ERROR_FAILURE;
-
-  // Load the bindings.
-  nsRefPtr<nsXBLBinding> binding;
-  bool dummy;
-  xblService->LoadBindings(aContent, aURL, aOriginPrincipal, true,
-                           getter_AddRefs(binding), &dummy);
-  if (binding) {
-    AddToAttachedQueue(binding);
-    ProcessAttachedQueue();
-  }
-
-  return NS_OK;
-}
-
-nsresult
-nsBindingManager::RemoveLayeredBinding(nsIContent* aContent, nsIURI* aURL)
+nsBindingManager::ClearBinding(nsIContent* aContent)
 {
   // Hold a ref to the binding so it won't die when we remove it from our table
   nsRefPtr<nsXBLBinding> binding = GetBinding(aContent);
@@ -872,11 +846,6 @@ nsBindingManager::RemoveLayeredBinding(nsIContent* aContent, nsIURI* aURL)
 
   // For now we can only handle removing a binding if it's the only one
   NS_ENSURE_FALSE(binding->GetBaseBinding(), NS_ERROR_FAILURE);
-
-  // Make sure that the binding has the URI that is requested to be removed
-  if (!binding->PrototypeBinding()->CompareBindingURI(aURL)) {
-    return NS_OK;
-  }
 
   // Make sure it isn't a style binding
   if (binding->IsStyleBinding()) {

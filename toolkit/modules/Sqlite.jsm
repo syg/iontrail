@@ -8,7 +8,7 @@ this.EXPORTED_SYMBOLS = [
   "Sqlite",
 ];
 
-const {interfaces: Ci, utils: Cu} = Components;
+const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/commonjs/promise/core.js");
 Cu.import("resource://gre/modules/osfile.jsm");
@@ -43,6 +43,13 @@ let connectionCounters = {};
  *       to obtain a lock, possibly making database access slower. Defaults to
  *       true.
  *
+ *   shrinkMemoryOnConnectionIdleMS -- (integer) If defined, the connection
+ *       will attempt to minimize its memory usage after this many
+ *       milliseconds of connection idle. The connection is idle when no
+ *       statements are executing. There is no default value which means no
+ *       automatic memory minimization will occur. Please note that this is
+ *       *not* a timer on the idle service and this could fire while the
+ *       application is active.
  *
  * FUTURE options to control:
  *
@@ -69,6 +76,18 @@ function openConnection(options) {
   let sharedMemoryCache = "sharedMemoryCache" in options ?
                             options.sharedMemoryCache : true;
 
+  let openedOptions = {};
+
+  if ("shrinkMemoryOnConnectionIdleMS" in options) {
+    if (!Number.isInteger(options.shrinkMemoryOnConnectionIdleMS)) {
+      throw new Error("shrinkMemoryOnConnectionIdleMS must be an integer. " +
+                      "Got: " + options.shrinkMemoryOnConnectionIdleMS);
+    }
+
+    openedOptions.shrinkMemoryOnConnectionIdleMS =
+      options.shrinkMemoryOnConnectionIdleMS;
+  }
+
   let file = FileUtils.File(path);
   let openDatabaseFn = sharedMemoryCache ?
                          Services.storage.openDatabase :
@@ -92,7 +111,8 @@ function openConnection(options) {
       return Promise.reject(new Error("Connection is not ready."));
     }
 
-    return Promise.resolve(new OpenedConnection(connection, basename, number));
+    return Promise.resolve(new OpenedConnection(connection, basename, number,
+                                                openedOptions));
   } catch (ex) {
     log.warn("Could not open database: " + CommonUtils.exceptionStr(ex));
     return Promise.reject(ex);
@@ -143,9 +163,19 @@ function openConnection(options) {
  *        (string) The basename of this database name. Used for logging.
  * @param number
  *        (Number) The connection number to this database.
+ * @param options
+ *        (object) Options to control behavior of connection. See
+ *        `openConnection`.
  */
-function OpenedConnection(connection, basename, number) {
+function OpenedConnection(connection, basename, number, options) {
   let log = Log4Moz.repository.getLogger("Sqlite.Connection." + basename);
+
+  // getLogger() returns a shared object. We can't modify the functions on this
+  // object since they would have effect on all instances and last write would
+  // win. So, we create a "proxy" object with our custom functions. Everything
+  // else is proxied back to the shared logger instance via prototype
+  // inheritance.
+  let logProxy = {__proto__: log};
 
   // Automatically prefix all log messages with the identifier.
   for (let level in Log4Moz.Level) {
@@ -154,12 +184,12 @@ function OpenedConnection(connection, basename, number) {
     }
 
     let lc = level.toLowerCase();
-    log[lc] = function (msg) {
-      return Log4Moz.Logger.prototype[lc].call(log, "Conn #" + number + ": " + msg);
-    }
+    logProxy[lc] = function (msg) {
+      return log[lc].call(log, "Conn #" + number + ": " + msg);
+    };
   }
 
-  this._log = log;
+  this._log = logProxy;
 
   this._log.info("Opened");
 
@@ -169,16 +199,31 @@ function OpenedConnection(connection, basename, number) {
   this._cachedStatements = new Map();
   this._anonymousStatements = new Map();
   this._anonymousCounter = 0;
-  this._inProgressStatements = new Map();
-  this._inProgressCounter = 0;
+
+  // A map from statement index to mozIStoragePendingStatement, to allow for
+  // canceling prior to finalizing the mozIStorageStatements.
+  this._pendingStatements = new Map();
+
+  // Increments for each executed statement for the life of the connection.
+  this._statementCounter = 0;
 
   this._inProgressTransaction = null;
+
+  this._idleShrinkMS = options.shrinkMemoryOnConnectionIdleMS;
+  if (this._idleShrinkMS) {
+    this._idleShrinkTimer = Cc["@mozilla.org/timer;1"]
+                              .createInstance(Ci.nsITimer);
+    // We wait for the first statement execute to start the timer because
+    // shrinking now would not do anything.
+  }
 }
 
 OpenedConnection.prototype = Object.freeze({
-  TRANSACTION_DEFERRED: Ci.mozIStorageConnection.TRANSACTION_DEFERRED,
-  TRANSACTION_IMMEDIATE: Ci.mozIStorageConnection.TRANSACTION_IMMEDIATE,
-  TRANSACTION_EXCLUSIVE: Ci.mozIStorageConnection.TRANSACTION_EXCLUSIVE,
+  TRANSACTION_DEFERRED: "DEFERRED",
+  TRANSACTION_IMMEDIATE: "IMMEDIATE",
+  TRANSACTION_EXCLUSIVE: "EXCLUSIVE",
+
+  TRANSACTION_TYPES: ["DEFERRED", "IMMEDIATE", "EXCLUSIVE"],
 
   get connectionReady() {
     return this._open && this._connection.connectionReady;
@@ -249,26 +294,43 @@ OpenedConnection.prototype = Object.freeze({
       return Promise.resolve();
     }
 
-    this._log.debug("Closing.");
+    this._log.debug("Request to close connection.");
+    this._clearIdleShrinkTimer();
+    let deferred = Promise.defer();
 
-    // Abort in-progress transaction.
-    if (this._inProgressTransaction) {
-      this._log.warn("Transaction in progress at time of close.");
-      try {
-        this._connection.rollbackTransaction();
-      } catch (ex) {
-        this._log.warn("Error rolling back transaction: " +
-                       CommonUtils.exceptionStr(ex));
-      }
-      this._inProgressTransaction.reject(new Error("Connection being closed."));
-      this._inProgressTransaction = null;
+    // We need to take extra care with transactions during shutdown.
+    //
+    // If we don't have a transaction in progress, we can proceed with shutdown
+    // immediately.
+    if (!this._inProgressTransaction) {
+      this._finalize(deferred);
+      return deferred.promise;
     }
 
-    // Cancel any in-progress statements.
-    for (let [k, statement] of this._inProgressStatements) {
+    // Else if we do have a transaction in progress, we forcefully roll it
+    // back. This is an async task, so we wait on it to finish before
+    // performing finalization.
+    this._log.warn("Transaction in progress at time of close. Rolling back.");
+
+    let onRollback = this._finalize.bind(this, deferred);
+
+    this.execute("ROLLBACK TRANSACTION").then(onRollback, onRollback);
+    this._inProgressTransaction.reject(new Error("Connection being closed."));
+    this._inProgressTransaction = null;
+
+    return deferred.promise;
+  },
+
+  _finalize: function (deferred) {
+    this._log.debug("Finalizing connection.");
+    // Cancel any pending statements.
+    for (let [k, statement] of this._pendingStatements) {
       statement.cancel();
     }
-    this._inProgressStatements.clear();
+    this._pendingStatements.clear();
+
+    // We no longer need to track these.
+    this._statementCounter = 0;
 
     // Next we finalize all active statements.
     for (let [k, statement] of this._anonymousStatements) {
@@ -285,8 +347,6 @@ OpenedConnection.prototype = Object.freeze({
     // function and asyncClose() finishing. See also bug 726990.
     this._open = false;
 
-    let deferred = Promise.defer();
-
     this._log.debug("Calling asyncClose().");
     this._connection.asyncClose({
       complete: function () {
@@ -295,8 +355,6 @@ OpenedConnection.prototype = Object.freeze({
         deferred.resolve();
       }.bind(this),
     });
-
-    return deferred.promise;
   },
 
   /**
@@ -370,7 +428,27 @@ OpenedConnection.prototype = Object.freeze({
       this._cachedStatements.set(sql, statement);
     }
 
-    return this._executeStatement(sql, statement, params, onRow);
+    this._clearIdleShrinkTimer();
+
+    let deferred = Promise.defer();
+
+    try {
+      this._executeStatement(sql, statement, params, onRow).then(
+        function onResult(result) {
+          this._startIdleShrinkTimer();
+          deferred.resolve(result);
+        }.bind(this),
+        function onError(error) {
+          this._startIdleShrinkTimer();
+          deferred.reject(error);
+        }.bind(this)
+      );
+    } catch (ex) {
+      this._startIdleShrinkTimer();
+      throw ex;
+    }
+
+    return deferred.promise;
   },
 
   /**
@@ -399,22 +477,32 @@ OpenedConnection.prototype = Object.freeze({
     let index = this._anonymousCounter++;
 
     this._anonymousStatements.set(index, statement);
+    this._clearIdleShrinkTimer();
+
+    let onFinished = function () {
+      this._anonymousStatements.delete(index);
+      statement.finalize();
+      this._startIdleShrinkTimer();
+    }.bind(this);
 
     let deferred = Promise.defer();
 
-    this._executeStatement(sql, statement, params, onRow).then(
-      function onResult(rows) {
-        this._anonymousStatements.delete(index);
-        statement.finalize();
-        deferred.resolve(rows);
-      }.bind(this),
+    try {
+      this._executeStatement(sql, statement, params, onRow).then(
+        function onResult(rows) {
+          onFinished();
+          deferred.resolve(rows);
+        }.bind(this),
 
-      function onError(error) {
-        this._anonymousStatements.delete(index);
-        statement.finalize();
-        deferred.reject(error);
-      }.bind(this)
-    );
+        function onError(error) {
+          onFinished();
+          deferred.reject(error);
+        }.bind(this)
+      );
+    } catch (ex) {
+      onFinished();
+      throw ex;
+    }
 
     return deferred.promise;
   },
@@ -423,7 +511,7 @@ OpenedConnection.prototype = Object.freeze({
    * Whether a transaction is currently in progress.
    */
   get transactionInProgress() {
-    return this._open && this._connection.transactionInProgress;
+    return this._open && !!this._inProgressTransaction;
   },
 
   /**
@@ -450,34 +538,76 @@ OpenedConnection.prototype = Object.freeze({
    *        One of the TRANSACTION_* constants attached to this type.
    */
   executeTransaction: function (func, type=this.TRANSACTION_DEFERRED) {
+    if (this.TRANSACTION_TYPES.indexOf(type) == -1) {
+      throw new Error("Unknown transaction type: " + type);
+    }
+
     this._ensureOpen();
 
-    if (this.transactionInProgress) {
+    if (this._inProgressTransaction) {
       throw new Error("A transaction is already active. Only one transaction " +
                       "can be active at a time.");
     }
 
     this._log.debug("Beginning transaction");
-    this._connection.beginTransactionAs(type);
-
     let deferred = Promise.defer();
     this._inProgressTransaction = deferred;
+    Task.spawn(function doTransaction() {
+      // It's tempting to not yield here and rely on the implicit serial
+      // execution of issued statements. However, the yield serves an important
+      // purpose: catching errors in statement execution.
+      yield this.execute("BEGIN " + type + " TRANSACTION");
 
-    Task.spawn(func(this)).then(
-      function onSuccess (result) {
-        this._connection.commitTransaction();
+      let result;
+      try {
+        result = yield Task.spawn(func(this));
+      } catch (ex) {
+        // It's possible that a request to close the connection caused the
+        // error.
+        // Assertion: close() will unset this._inProgressTransaction when
+        // called.
+        if (!this._inProgressTransaction) {
+          this._log.warn("Connection was closed while performing transaction. " +
+                         "Received error should be due to closed connection: " +
+                         CommonUtils.exceptionStr(ex));
+          throw ex;
+        }
+
+        this._log.warn("Error during transaction. Rolling back: " +
+                       CommonUtils.exceptionStr(ex));
+        try {
+          yield this.execute("ROLLBACK TRANSACTION");
+        } catch (inner) {
+          this._log.warn("Could not roll back transaction. This is weird: " +
+                         CommonUtils.exceptionStr(inner));
+        }
+
+        throw ex;
+      }
+
+      // See comment above about connection being closed during transaction.
+      if (!this._inProgressTransaction) {
+        this._log.warn("Connection was closed while performing transaction. " +
+                       "Unable to commit.");
+        throw new Error("Connection closed before transaction committed.");
+      }
+
+      try {
+        yield this.execute("COMMIT TRANSACTION");
+      } catch (ex) {
+        this._log.warn("Error committing transaction: " +
+                       CommonUtils.exceptionStr(ex));
+        throw ex;
+      }
+
+      throw new Task.Result(result);
+    }.bind(this)).then(
+      function onSuccess(result) {
         this._inProgressTransaction = null;
-        this._log.debug("Transaction committed.");
-
         deferred.resolve(result);
       }.bind(this),
-
-      function onError (error) {
-        this._log.warn("Error during transaction. Rolling back: " +
-                       CommonUtils.exceptionStr(error));
-        this._connection.rollbackTransaction();
+      function onError(error) {
         this._inProgressTransaction = null;
-
         deferred.reject(error);
       }.bind(this)
     );
@@ -525,6 +655,40 @@ OpenedConnection.prototype = Object.freeze({
     );
   },
 
+  /**
+   * Free up as much memory from the underlying database connection as possible.
+   *
+   * @return Promise<>
+   */
+  shrinkMemory: function () {
+    this._log.info("Shrinking memory usage.");
+
+    let onShrunk = this._clearIdleShrinkTimer.bind(this);
+
+    return this.execute("PRAGMA shrink_memory").then(onShrunk, onShrunk);
+  },
+
+  /**
+   * Discard all cached statements.
+   *
+   * Note that this relies on us being non-interruptible between
+   * the insertion or retrieval of a statement in the cache and its
+   * execution: we finalize all statements, which is only safe if
+   * they will not be executed again.
+   *
+   * @return (integer) the number of statements discarded.
+   */
+  discardCachedStatements: function () {
+    let count = 0;
+    for (let [k, statement] of this._cachedStatements) {
+      ++count;
+      statement.finalize();
+    }
+    this._cachedStatements.clear();
+    this._log.debug("Discarded " + count + " cached statements.");
+    return count;
+  },
+
   _executeStatement: function (sql, statement, params, onRow) {
     if (statement.state != statement.MOZ_STORAGE_STATEMENT_READY) {
       throw new Error("Statement is not ready for execution.");
@@ -547,7 +711,7 @@ OpenedConnection.prototype = Object.freeze({
                       "object. Got: " + params);
     }
 
-    let index = this._inProgressCounter++;
+    let index = this._statementCounter++;
 
     let deferred = Promise.defer();
     let userCancelled = false;
@@ -598,8 +762,8 @@ OpenedConnection.prototype = Object.freeze({
       },
 
       handleCompletion: function (reason) {
-        self._log.debug("Stmt #" + index + " finished");
-        self._inProgressStatements.delete(index);
+        self._log.debug("Stmt #" + index + " finished.");
+        self._pendingStatements.delete(index);
 
         switch (reason) {
           case Ci.mozIStorageStatementCallback.REASON_FINISHED:
@@ -634,8 +798,7 @@ OpenedConnection.prototype = Object.freeze({
       },
     });
 
-    this._inProgressStatements.set(index, pending);
-
+    this._pendingStatements.set(index, pending);
     return deferred.promise;
   },
 
@@ -643,6 +806,24 @@ OpenedConnection.prototype = Object.freeze({
     if (!this._open) {
       throw new Error("Connection is not open.");
     }
+  },
+
+  _clearIdleShrinkTimer: function () {
+    if (!this._idleShrinkTimer) {
+      return;
+    }
+
+    this._idleShrinkTimer.cancel();
+  },
+
+  _startIdleShrinkTimer: function () {
+    if (!this._idleShrinkTimer) {
+      return;
+    }
+
+    this._idleShrinkTimer.initWithCallback(this.shrinkMemory.bind(this),
+                                           this._idleShrinkMS,
+                                           this._idleShrinkTimer.TYPE_ONE_SHOT);
   },
 });
 

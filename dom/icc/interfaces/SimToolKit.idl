@@ -119,6 +119,14 @@ dictionary MozStkInput
   DOMString text;
 
   /**
+   * The length of time for which the ME shall display the dialog. This field
+   * is used only for GET INKEY.
+   *
+   * @see TS 11.14, clause 11.8, duration, GET INKEY T.C 27.22.4.2.8.4.2
+   */
+  jsval duration;
+
+  /**
    * Minimum length of response.
    */
   unsigned short minLength;
@@ -582,4 +590,16 @@ dictionary MozStkLocalInfo
    * @see ISO 639-1, Alpha-2 code
    */
   DOMString language;
+};
+
+dictionary MozStkGeneralEvent
+{
+  /**
+   * The type of this event, MozStkGeneralEvent can be used for all Stk Event
+   * requires no more parameter than event type, including
+   * nsIDOMMozIccManager.STK_EVENT_TYPE_USER_ACTIVITY
+   * nsIDOMMozIccManager.STK_EVENT_TYPE_IDLE_SCREEN_AVAILABLE
+   * HCI Connectivity Event(Not defined in interface yet)
+   */
+  unsigned short eventType;
 };

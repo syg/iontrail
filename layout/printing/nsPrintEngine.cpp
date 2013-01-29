@@ -20,6 +20,7 @@
 
 #include "nsView.h"
 #include "nsAsyncDOMEvent.h"
+#include <algorithm>
 
 // Print Options
 #include "nsIPrintSettings.h"
@@ -123,10 +124,6 @@ static const char kPrintingPromptService[] = "@mozilla.org/embedcomp/printingpro
 #include "nsIURIFixup.h"
 #include "mozilla/dom/Element.h"
 #include "nsContentList.h"
-
-#ifdef MOZ_CRASHREPORTER
-#include "nsExceptionHandler.h"
-#endif
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -238,7 +235,8 @@ nsPrintEngine::nsPrintEngine() :
   mOldPrtPreview(nullptr),
   mDebugFile(nullptr),
   mLoadCounter(0),
-  mDidLoadDataForPrinting(false)
+  mDidLoadDataForPrinting(false),
+  mIsDestroying(false)
 {
 }
 
@@ -251,6 +249,11 @@ nsPrintEngine::~nsPrintEngine()
 //-------------------------------------------------------
 void nsPrintEngine::Destroy()
 {
+  if (mIsDestroying) {
+    return;
+  }
+  mIsDestroying = true;
+
   if (mPrt) {
     delete mPrt;
     mPrt = nullptr;
@@ -276,8 +279,9 @@ void nsPrintEngine::Destroy()
 void nsPrintEngine::DestroyPrintingData()
 {
   if (mPrt) {
-    delete mPrt;
+    nsPrintData* data = mPrt;
     mPrt = nullptr;
+    delete data;
   }
 }
 
@@ -1538,9 +1542,6 @@ nsresult nsPrintEngine::CleanupOnFailure(nsresult aResult, bool aIsPrinting)
     ShowPrintErrorDialog(aResult, aIsPrinting);
   }
 
-#ifdef MOZ_CRASHREPORTER
-  CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("Unsuccessful print.\n"));
-#endif
   FirePrintCompletionEvent();
 
   return aResult;
@@ -2559,13 +2560,13 @@ nsPrintEngine::DoPrint(nsPrintObject * aPO)
             if (startRect.y < 0) {
               // Reduce height to be the height of the positive-territory
               // region of original rect
-              startRect.height = NS_MAX(0, startRect.YMost());
+              startRect.height = std::max(0, startRect.YMost());
               startRect.y = 0;
             }
             if (endRect.y < 0) {
               // Reduce height to be the height of the positive-territory
               // region of original rect
-              endRect.height = NS_MAX(0, endRect.YMost());
+              endRect.height = std::max(0, endRect.YMost());
               endRect.y = 0;
             }
             NS_ASSERTION(endRect.y >= startRect.y,
@@ -3170,9 +3171,6 @@ nsPrintEngine::DonePrintingPages(nsPrintObject* aPO, nsresult aResult)
   }
 
   if (NS_SUCCEEDED(aResult)) {
-#ifdef MOZ_CRASHREPORTER
-    CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("Successful print.\n"));
-#endif
     FirePrintCompletionEvent();
   }
 

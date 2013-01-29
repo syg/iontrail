@@ -198,9 +198,13 @@ MBasicBlock::MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kin
 bool
 MBasicBlock::init()
 {
-    if (!slots_.init(info_.nslots()))
-        return false;
-    return true;
+    return slots_.init(info_.nslots());
+}
+
+bool
+MBasicBlock::increaseSlots(size_t num)
+{
+    return slots_.growBy(num);
 }
 
 void
@@ -389,7 +393,7 @@ MBasicBlock::rewriteAtDepth(int32_t depth, MDefinition *ins)
 void
 MBasicBlock::push(MDefinition *ins)
 {
-    JS_ASSERT(stackPosition_ < info_.nslots());
+    JS_ASSERT(stackPosition_ < nslots());
     slots_[stackPosition_++] = ins;
 }
 
@@ -422,6 +426,13 @@ MBasicBlock::pop()
 {
     JS_ASSERT(stackPosition_ > info_.firstStackSlot());
     return slots_[--stackPosition_];
+}
+
+void
+MBasicBlock::popn(uint32_t n)
+{
+    JS_ASSERT(stackPosition_ - n >= info_.firstStackSlot());
+    stackPosition_ -= n;
 }
 
 MDefinition *
@@ -700,9 +711,9 @@ MBasicBlock::setBackedge(MBasicBlock *pred)
     JS_ASSERT(kind_ == PENDING_LOOP_HEADER);
 
     // Add exit definitions to each corresponding phi at the entry.
-    for (uint32_t i = 0; i < pred->stackDepth(); i++) {
-        MPhi *entryDef = entryResumePoint()->getOperand(i)->toPhi();
-        MDefinition *exitDef = pred->slots_[i];
+    for (MPhiIterator phi = phisBegin(); phi != phisEnd(); phi++) {
+        MPhi *entryDef = *phi;
+        MDefinition *exitDef = pred->slots_[entryDef->slot()];
 
         // Assert that we already placed phis for each slot.
         JS_ASSERT(entryDef->block() == this);
@@ -721,7 +732,8 @@ MBasicBlock::setBackedge(MBasicBlock *pred)
         if (!entryDef->addInput(exitDef))
             return false;
 
-        setSlot(i, entryDef);
+        JS_ASSERT(entryDef->slot() < pred->stackDepth());
+        setSlot(entryDef->slot(), entryDef);
     }
 
     // We are now a loop header proper

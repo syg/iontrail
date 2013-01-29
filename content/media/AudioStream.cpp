@@ -12,6 +12,7 @@
 #include "VideoUtils.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/Mutex.h"
+#include <algorithm>
 extern "C" {
 #include "sydneyaudio/sydney_audio.h"
 }
@@ -58,6 +59,7 @@ class NativeAudioStream : public AudioStream
   uint32_t Available();
   void SetVolume(double aVolume);
   void Drain();
+  void Start();
   void Pause();
   void Resume();
   int64_t GetPosition();
@@ -99,7 +101,7 @@ static int PrefChanged(const char* aPref, void* aClosure)
       gVolumeScale = 1.0;
     } else {
       NS_ConvertUTF16toUTF8 utf8(value);
-      gVolumeScale = NS_MAX<double>(0, PR_strtod(utf8.get(), nullptr));
+      gVolumeScale = std::max<double>(0, PR_strtod(utf8.get(), nullptr));
     }
   } else if (strcmp(aPref, PREF_USE_CUBEB) == 0) {
 #ifdef MOZ_WIDGET_GONK
@@ -115,7 +117,7 @@ static int PrefChanged(const char* aPref, void* aClosure)
     // audible.
     uint32_t value = Preferences::GetUint(aPref, 100);
     MutexAutoLock lock(*gAudioPrefsLock);
-    gCubebLatency = NS_MIN<uint32_t>(NS_MAX<uint32_t>(value, 20), 1000);
+    gCubebLatency = std::min<uint32_t>(std::max<uint32_t>(value, 20), 1000);
   }
   return 0;
 }
@@ -180,6 +182,7 @@ AudioStream::AudioStream()
 : mInRate(0),
   mOutRate(0),
   mChannels(0),
+  mWritten(0),
   mAudioClock(this)
 {}
 
@@ -273,6 +276,11 @@ nsresult AudioStream::SetPreservesPitch(bool aPreservesPitch)
   mAudioClock.SetPreservesPitch(aPreservesPitch);
 
   return NS_OK;
+}
+
+int64_t AudioStream::GetWritten()
+{
+  return mWritten;
 }
 
 NativeAudioStream::NativeAudioStream() :
@@ -385,6 +393,8 @@ nsresult NativeAudioStream::Write(const AudioDataValue* aBuf, uint32_t aFrames)
     written = WriteToBackend(aBuf, samples);
   }
 
+  mWritten += aFrames;
+
   if (written == -1) {
     PR_LOG(gAudioStreamLog, PR_LOG_ERROR, ("NativeAudioStream: sa_stream_write error"));
     mInError = true;
@@ -452,6 +462,12 @@ void NativeAudioStream::Drain()
     PR_LOG(gAudioStreamLog, PR_LOG_ERROR, ("NativeAudioStream: sa_stream_drain error"));
     mInError = true;
   }
+}
+
+void NativeAudioStream::Start()
+{
+  // Since sydneyaudio is a push API, the playback is started when enough frames
+  // have been written. Hence, Start() is a noop.
 }
 
 void NativeAudioStream::Pause()
@@ -553,7 +569,7 @@ public:
 
     uint32_t end = (mStart + mCount) % mCapacity;
 
-    uint32_t toCopy = NS_MIN(mCapacity - end, aLength);
+    uint32_t toCopy = std::min(mCapacity - end, aLength);
     memcpy(&mBuffer[end], aSrc, toCopy);
     memcpy(&mBuffer[0], aSrc + toCopy, aLength - toCopy);
     mCount += aLength;
@@ -568,7 +584,7 @@ public:
     NS_ABORT_IF_FALSE(aSize <= Length(), "Request too large.");
 
     *aData1 = &mBuffer[mStart];
-    *aSize1 = NS_MIN(mCapacity - mStart, aSize);
+    *aSize1 = std::min(mCapacity - mStart, aSize);
     *aData2 = &mBuffer[0];
     *aSize2 = aSize - *aSize1;
     mCount -= *aSize1 + *aSize2;
@@ -596,6 +612,7 @@ class BufferedAudioStream : public AudioStream
   uint32_t Available();
   void SetVolume(double aVolume);
   void Drain();
+  void Start();
   void Pause();
   void Resume();
   int64_t GetPosition();
@@ -603,6 +620,10 @@ class BufferedAudioStream : public AudioStream
   int64_t GetPositionInFramesInternal();
   bool IsPaused();
   int32_t GetMinWriteSize();
+  // This method acquires the monitor and forward the call to the base
+  // class, to prevent a race on |mTimeStretcher|, in
+  // |AudioStream::EnsureTimeStretcherInitialized|.
+  void EnsureTimeStretcherInitialized();
 
 private:
   static long DataCallback_S(cubeb_stream*, void* aThis, void* aBuffer, long aFrames)
@@ -626,6 +647,8 @@ private:
   // Shared implementation of underflow adjusted position calculation.
   // Caller must own the monitor.
   int64_t GetPositionInFramesUnlocked();
+
+  void StartUnlocked();
 
   // The monitor is held to protect all access to member variables.  Write()
   // waits while mBuffer is full; DataCallback() notifies as it consumes
@@ -701,6 +724,13 @@ BufferedAudioStream::~BufferedAudioStream()
   Shutdown();
 }
 
+void
+BufferedAudioStream::EnsureTimeStretcherInitialized()
+{
+  MonitorAutoLock mon(mMonitor);
+  AudioStream::EnsureTimeStretcherInitialized();
+}
+
 nsresult
 BufferedAudioStream::Init(int32_t aNumChannels, int32_t aRate,
                             const dom::AudioChannelType aAudioChannelType)
@@ -773,7 +803,7 @@ BufferedAudioStream::Write(const AudioDataValue* aBuf, uint32_t aFrames)
   uint32_t bytesToCopy = FramesToBytes(aFrames);
 
   while (bytesToCopy > 0) {
-    uint32_t available = NS_MIN(bytesToCopy, mBuffer.Available());
+    uint32_t available = std::min(bytesToCopy, mBuffer.Available());
     NS_ABORT_IF_FALSE(available % mBytesPerFrame == 0,
         "Must copy complete frames.");
 
@@ -781,23 +811,20 @@ BufferedAudioStream::Write(const AudioDataValue* aBuf, uint32_t aFrames)
     src += available;
     bytesToCopy -= available;
 
-    if (mState != STARTED) {
-      int r;
-      {
-        MonitorAutoUnlock mon(mMonitor);
-        r = cubeb_stream_start(mCubebStream);
-      }
-      mState = r == CUBEB_OK ? STARTED : ERRORED;
-    }
-
-    if (mState != STARTED) {
-      return NS_ERROR_FAILURE;
-    }
-
     if (bytesToCopy > 0) {
+      // If we are not playing, but our buffer is full, start playing to make
+      // room for soon-to-be-decoded data.
+      if (mState != STARTED) {
+        StartUnlocked();
+        if (mState != STARTED) {
+          return NS_ERROR_FAILURE;
+        }
+      }
       mon.Wait();
     }
   }
+
+  mWritten += aFrames;
 
   return NS_OK;
 }
@@ -829,11 +856,38 @@ BufferedAudioStream::Drain()
 {
   MonitorAutoLock mon(mMonitor);
   if (mState != STARTED) {
+    NS_ASSERTION(mBuffer.Available() == 0, "Draining with unplayed audio");
     return;
   }
   mState = DRAINING;
   while (mState == DRAINING) {
     mon.Wait();
+  }
+}
+
+void
+BufferedAudioStream::Start()
+{
+  MonitorAutoLock mon(mMonitor);
+  StartUnlocked();
+}
+
+void
+BufferedAudioStream::StartUnlocked()
+{
+  mMonitor.AssertCurrentThreadOwns();
+  if (!mCubebStream || mState != INITIALIZED) {
+    return;
+  }
+  if (mState != STARTED) {
+    int r;
+    {
+      MonitorAutoUnlock mon(mMonitor);
+      r = cubeb_stream_start(mCubebStream);
+    }
+    if (mState != ERRORED) {
+      mState = r == CUBEB_OK ? STARTED : ERRORED;
+    }
   }
 }
 
@@ -922,7 +976,7 @@ BufferedAudioStream::GetPositionInFramesUnlocked()
   if (position >= mLostFrames) {
     adjustedPosition = position - mLostFrames;
   }
-  return NS_MIN<uint64_t>(adjustedPosition, INT64_MAX);
+  return std::min<uint64_t>(adjustedPosition, INT64_MAX);
 }
 
 bool
@@ -945,7 +999,7 @@ BufferedAudioStream::GetUnprocessed(void* aBuffer, long aFrames)
     wpos += FramesToBytes(flushedFrames);
   }
   uint32_t toPopBytes = FramesToBytes(aFrames - flushedFrames);
-  uint32_t available = NS_MIN(toPopBytes, mBuffer.Length());
+  uint32_t available = std::min(toPopBytes, mBuffer.Length());
 
   void* input[2];
   uint32_t input_size[2];
@@ -961,7 +1015,8 @@ BufferedAudioStream::GetTimeStretched(void* aBuffer, long aFrames)
 {
   long processedFrames = 0;
 
-  EnsureTimeStretcherInitialized();
+  // We need to call the non-locking version, because we already have the lock.
+  AudioStream::EnsureTimeStretcherInitialized();
 
   uint8_t* wpos = reinterpret_cast<uint8_t*>(aBuffer);
   double playbackRate = static_cast<double>(mInRate) / mOutRate;
@@ -973,7 +1028,7 @@ BufferedAudioStream::GetTimeStretched(void* aBuffer, long aFrames)
     if (mTimeStretcher->numSamples() <= static_cast<uint32_t>(aFrames)) {
       void* input[2];
       uint32_t input_size[2];
-      available = NS_MIN(mBuffer.Length(), toPopBytes);
+      available = std::min(mBuffer.Length(), toPopBytes);
       if (available != toPopBytes) {
         lowOnBufferedData = true;
       }
@@ -995,7 +1050,7 @@ long
 BufferedAudioStream::DataCallback(void* aBuffer, long aFrames)
 {
   MonitorAutoLock mon(mMonitor);
-  uint32_t available = NS_MIN(static_cast<uint32_t>(FramesToBytes(aFrames)), mBuffer.Length());
+  uint32_t available = std::min(static_cast<uint32_t>(FramesToBytes(aFrames)), mBuffer.Length());
   NS_ABORT_IF_FALSE(available % mBytesPerFrame == 0, "Must copy complete frames");
   uint32_t underrunFrames = 0;
   uint32_t servicedFrames = 0;

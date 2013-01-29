@@ -35,6 +35,7 @@ using PrefTuple;
 using ChromePackage;
 using ResourceMapping;
 using OverrideMapping;
+using base::ChildPrivileges;
 using IPC::Permission;
 using IPC::Principal;
 using mozilla::null_t;
@@ -74,10 +75,21 @@ struct FontListEntry {
     uint8_t   index;
 };
 
-struct DeviceStorageStatParams
+struct DeviceStorageFreeSpaceParams
 {
   nsString type;
   nsString fullpath;
+};
+
+struct DeviceStorageUsedSpaceParams
+{
+  nsString type;
+  nsString fullpath;
+};
+
+struct DeviceStorageAvailableParams
+{
+  nsString type;
 };
 
 struct DeviceStorageAddParams
@@ -114,7 +126,9 @@ union DeviceStorageParams
   DeviceStorageGetParams;
   DeviceStorageDeleteParams;
   DeviceStorageEnumerationParams;
-  DeviceStorageStatParams;
+  DeviceStorageFreeSpaceParams;
+  DeviceStorageUsedSpaceParams;
+  DeviceStorageAvailableParams;
 };
 
 // An IPCTabContext which corresponds to a PBrowser opened by a child when it
@@ -243,6 +257,13 @@ both:
     async PBlob(BlobConstructorParams params);
 
 child:
+    /**
+     * Update OS process privileges to |privs|.  Can usually only be
+     * performed zero or one times.  The child will abnormally exit if
+     * the privilege update fails.
+     */
+    async SetProcessPrivileges(ChildPrivileges privs);
+
     PMemoryReportRequest();
 
     /**
@@ -322,8 +343,7 @@ parent:
      * !isForBrowser|, we're probably loading <xul:browser remote>.
      */
     sync GetProcessAttributes()
-        returns (uint64_t id, bool startBackground,
-                 bool isForApp, bool isForBrowser);
+        returns (uint64_t id, bool isForApp, bool isForBrowser);
     sync GetXPCOMProcessAttributes()
         returns (bool isOffline);
 
@@ -428,6 +448,8 @@ parent:
                                nsCString aReason);
     // get nsIVolumeService to broadcast volume information
     async BroadcastVolume(nsString volumeName);
+
+    async RecordingDeviceEvents(nsString recordingStatus);
 
 both:
      AsyncMessage(nsString aMessage, ClonedMessageData aData);

@@ -18,6 +18,7 @@
 #include "nsThreadUtils.h"
 #include "Layers.h"
 #include "AnimationCommon.h"
+#include <algorithm>
 
 using namespace mozilla::css;
 
@@ -189,6 +190,14 @@ AsyncPanZoomController::AsyncPanZoomController(GeckoContentController* aGeckoCon
 
 AsyncPanZoomController::~AsyncPanZoomController() {
 
+}
+
+void
+AsyncPanZoomController::Destroy()
+{
+  // These memebrs can only be used on the controller/UI thread.
+  mGeckoContentController = nullptr;
+  mGestureEventListener = nullptr;
 }
 
 /* static */float
@@ -755,11 +764,11 @@ void AsyncPanZoomController::TrackTouch(const MultiTouchInput& aEvent) {
     // larger swipe should move you a shorter distance.
     gfxFloat inverseResolution = 1 / CalculateResolution(mFrameMetrics).width;
 
-    int32_t xDisplacement = mX.GetDisplacementForDuration(inverseResolution,
-                                                          timeDelta);
-    int32_t yDisplacement = mY.GetDisplacementForDuration(inverseResolution,
-                                                          timeDelta);
-    if (!xDisplacement && !yDisplacement) {
+    float xDisplacement = mX.GetDisplacementForDuration(inverseResolution,
+                                                        timeDelta);
+    float yDisplacement = mY.GetDisplacementForDuration(inverseResolution,
+                                                        timeDelta);
+    if (fabs(xDisplacement) <= EPSILON && fabs(yDisplacement) <= EPSILON) {
       return;
     }
 
@@ -916,7 +925,24 @@ const gfx::Rect AsyncPanZoomController::CalculatePendingDisplayPort(
   gfxFloat resolution = CalculateResolution(aFrameMetrics).width;
   nsIntRect compositionBounds = aFrameMetrics.mCompositionBounds;
   compositionBounds.ScaleInverseRoundIn(resolution);
-  const gfx::Rect& scrollableRect = aFrameMetrics.mScrollableRect;
+  gfx::Rect scrollableRect = aFrameMetrics.mScrollableRect;
+
+  // Ensure the scrollableRect is at least as big as the compositionBounds
+  // because the scrollableRect can be smaller if the content is not large
+  // and the scrollableRect hasn't been updated yet.
+  // We move the scrollableRect up because we don't know if we can move it
+  // down. i.e. we know that scrollableRect can go back as far as zero.
+  // but we don't know how much further ahead it can go.
+  if (scrollableRect.width < compositionBounds.width) {
+      scrollableRect.x = std::max(0.f,
+                                  scrollableRect.x - (compositionBounds.width - scrollableRect.width));
+      scrollableRect.width = compositionBounds.width;
+  }
+  if (scrollableRect.height < compositionBounds.height) {
+      scrollableRect.y = std::max(0.f,
+                                  scrollableRect.y - (compositionBounds.height - scrollableRect.height));
+      scrollableRect.height = compositionBounds.height;
+  }
 
   gfx::Point scrollOffset = aFrameMetrics.mScrollOffset;
 
@@ -965,7 +991,7 @@ const gfx::Rect AsyncPanZoomController::CalculatePendingDisplayPort(
 
   gfx::Rect shiftedDisplayPort = displayPort;
   shiftedDisplayPort.MoveBy(scrollOffset.x, scrollOffset.y);
-  displayPort = shiftedDisplayPort.Intersect(aFrameMetrics.mScrollableRect);
+  displayPort = shiftedDisplayPort.Intersect(scrollableRect);
   displayPort.MoveBy(-scrollOffset.x, -scrollOffset.y);
 
   return displayPort;
@@ -1059,7 +1085,7 @@ void AsyncPanZoomController::RequestContentRepaint() {
   gfxFloat actualZoom = mFrameMetrics.mZoom.width;
   // Calculate the factor of acceleration based on the faster of the two axes.
   float accelerationFactor =
-    clamped(NS_MAX(mX.GetAccelerationFactor(), mY.GetAccelerationFactor()),
+    clamped(std::max(mX.GetAccelerationFactor(), mY.GetAccelerationFactor()),
             float(MIN_ZOOM) / 2.0f, float(MAX_ZOOM));
   // Scale down the resolution a bit based on acceleration.
   mFrameMetrics.mZoom.width = mFrameMetrics.mZoom.height =
@@ -1344,7 +1370,7 @@ void AsyncPanZoomController::ZoomToRect(const gfxRect& aRect) {
     }
 
     gfxFloat targetResolution =
-      NS_MIN(compositionBounds.width / zoomToRect.width,
+      std::min(compositionBounds.width / zoomToRect.width,
              compositionBounds.height / zoomToRect.height);
 
     // Recalculate the zoom to rect using the new dimensions.
@@ -1355,7 +1381,7 @@ void AsyncPanZoomController::ZoomToRect(const gfxRect& aRect) {
     zoomToRect = zoomToRect.Intersect(cssPageRect);
 
     // Do one final recalculation to get the resolution.
-    targetResolution = NS_MAX(compositionBounds.width / zoomToRect.width,
+    targetResolution = std::max(compositionBounds.width / zoomToRect.width,
                               compositionBounds.height / zoomToRect.height);
     float targetZoom = float(targetResolution / resolution.width) * mFrameMetrics.mZoom.width;
 

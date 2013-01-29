@@ -110,6 +110,10 @@ function debug(aMsg) {
 }
 
 this.SessionStore = {
+  get promiseInitialized() {
+    return SessionStoreInternal.promiseInitialized.promise;
+  },
+
   get canRestoreLastSession() {
     return SessionStoreInternal.canRestoreLastSession;
   },
@@ -311,6 +315,13 @@ let SessionStoreInternal = {
   // previous session is not always restored when
   // "sessionstore.resume_from_crash" is true.
   _resume_session_once_on_shutdown: null,
+
+  /**
+   * A promise fulfilled once initialization is complete.
+   */
+  get promiseInitialized() {
+    return this._promiseInitialization;
+  },
 
   /* ........ Public Getters .............. */
   get canRestoreLastSession() {
@@ -3056,9 +3067,7 @@ let SessionStoreInternal = {
       if (!tabData.entries || tabData.entries.length == 0) {
         // make sure to blank out this tab's content
         // (just purging the tab's history won't be enough)
-        browser.loadURIWithFlags("about:blank",
-                                 Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_HISTORY,
-                                 null, null, null);
+        browser.contentDocument.location = "about:blank";
         continue;
       }
 

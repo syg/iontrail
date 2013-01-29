@@ -22,9 +22,10 @@
 
 #include "vm/ForkJoin.h"
 
-#include "jsscope.h"
 #include "jstypedarray.h"
 #include "jscompartment.h"
+
+#include "vm/Shape.h"
 
 namespace js {
 namespace ion {
@@ -133,17 +134,14 @@ class MacroAssembler : public MacroAssemblerSpecific
 
         loadPtr(Address(dest, Shape::offsetOfBase()), dest);
     }
-    void loadBaseShapeClass(Register baseShapeReg, Register dest) {
-        loadPtr(Address(baseShapeReg, BaseShape::offsetOfClass()), dest);
-    }
     void loadObjClass(Register objReg, Register dest) {
-        loadBaseShape(objReg, dest);
-        loadBaseShapeClass(dest, dest);
+        loadPtr(Address(objReg, JSObject::offsetOfType()), dest);
+        loadPtr(Address(dest, offsetof(types::TypeObject, clasp)), dest);
     }
     void branchTestObjClass(Condition cond, Register obj, Register scratch, js::Class *clasp,
                             Label *label) {
-        loadBaseShape(obj, scratch);
-        branchPtr(cond, Address(scratch, BaseShape::offsetOfClass()), ImmWord(clasp), label);
+        loadPtr(Address(obj, JSObject::offsetOfType()), scratch);
+        branchPtr(cond, Address(scratch, offsetof(types::TypeObject, clasp)), ImmWord(clasp), label);
     }
     void branchTestObjShape(Condition cond, Register obj, const Shape *shape, Label *label) {
         branchPtr(cond, Address(obj, JSObject::offsetOfShape()), ImmGCPtr(shape), label);
@@ -387,9 +385,9 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void branchTestNeedsBarrier(Condition cond, const Register &scratch, Label *label) {
         JS_ASSERT(cond == Zero || cond == NonZero);
-        JSCompartment *comp = GetIonContext()->compartment;
-        movePtr(ImmWord(comp), scratch);
-        Address needsBarrierAddr(scratch, JSCompartment::OffsetOfNeedsBarrier());
+        JS::Zone *zone = GetIonContext()->compartment->zone();
+        movePtr(ImmWord(zone), scratch);
+        Address needsBarrierAddr(scratch, JS::Zone::OffsetOfNeedsBarrier());
         branchTest32(cond, needsBarrierAddr, Imm32(0x1), label);
     }
 

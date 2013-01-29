@@ -249,7 +249,7 @@ RegExpObject *
 RegExpObject::createNoStatics(JSContext *cx, StableCharPtr chars, size_t length, RegExpFlag flags,
                               TokenStream *tokenStream)
 {
-    RootedAtom source(cx, AtomizeChars(cx, chars.get(), length));
+    RootedAtom source(cx, AtomizeChars<CanGC>(cx, chars.get(), length));
     if (!source)
         return NULL;
 
@@ -296,20 +296,20 @@ RegExpObject::assignInitialShape(JSContext *cx)
     RootedObject self(cx, this);
 
     /* The lastIndex property alone is writable but non-configurable. */
-    if (!addDataProperty(cx, NameToId(cx->names().lastIndex), LAST_INDEX_SLOT, JSPROP_PERMANENT))
+    if (!addDataProperty(cx, cx->names().lastIndex, LAST_INDEX_SLOT, JSPROP_PERMANENT))
         return UnrootedShape(NULL);
 
     /* Remaining instance properties are non-writable and non-configurable. */
     unsigned attrs = JSPROP_PERMANENT | JSPROP_READONLY;
-    if (!self->addDataProperty(cx, NameToId(cx->names().source), SOURCE_SLOT, attrs))
+    if (!self->addDataProperty(cx, cx->names().source, SOURCE_SLOT, attrs))
         return UnrootedShape(NULL);
-    if (!self->addDataProperty(cx, NameToId(cx->names().global), GLOBAL_FLAG_SLOT, attrs))
+    if (!self->addDataProperty(cx, cx->names().global, GLOBAL_FLAG_SLOT, attrs))
         return UnrootedShape(NULL);
-    if (!self->addDataProperty(cx, NameToId(cx->names().ignoreCase), IGNORE_CASE_FLAG_SLOT, attrs))
+    if (!self->addDataProperty(cx, cx->names().ignoreCase, IGNORE_CASE_FLAG_SLOT, attrs))
         return UnrootedShape(NULL);
-    if (!self->addDataProperty(cx, NameToId(cx->names().multiline), MULTILINE_FLAG_SLOT, attrs))
+    if (!self->addDataProperty(cx, cx->names().multiline, MULTILINE_FLAG_SLOT, attrs))
         return UnrootedShape(NULL);
-    return self->addDataProperty(cx, NameToId(cx->names().sticky), STICKY_FLAG_SLOT, attrs);
+    return self->addDataProperty(cx, cx->names().sticky, STICKY_FLAG_SLOT, attrs);
 }
 
 inline bool
@@ -331,17 +331,17 @@ RegExpObject::init(JSContext *cx, HandleAtom source, RegExpFlag flags)
         JS_ASSERT(!self->nativeEmpty());
     }
 
-    JS_ASSERT(self->nativeLookupNoAllocation(NameToId(cx->names().lastIndex))->slot() ==
+    JS_ASSERT(self->nativeLookup(cx, NameToId(cx->names().lastIndex))->slot() ==
               LAST_INDEX_SLOT);
-    JS_ASSERT(self->nativeLookupNoAllocation(NameToId(cx->names().source))->slot() ==
+    JS_ASSERT(self->nativeLookup(cx, NameToId(cx->names().source))->slot() ==
               SOURCE_SLOT);
-    JS_ASSERT(self->nativeLookupNoAllocation(NameToId(cx->names().global))->slot() ==
+    JS_ASSERT(self->nativeLookup(cx, NameToId(cx->names().global))->slot() ==
               GLOBAL_FLAG_SLOT);
-    JS_ASSERT(self->nativeLookupNoAllocation(NameToId(cx->names().ignoreCase))->slot() ==
+    JS_ASSERT(self->nativeLookup(cx, NameToId(cx->names().ignoreCase))->slot() ==
               IGNORE_CASE_FLAG_SLOT);
-    JS_ASSERT(self->nativeLookupNoAllocation(NameToId(cx->names().multiline))->slot() ==
+    JS_ASSERT(self->nativeLookup(cx, NameToId(cx->names().multiline))->slot() ==
               MULTILINE_FLAG_SLOT);
-    JS_ASSERT(self->nativeLookupNoAllocation(NameToId(cx->names().sticky))->slot() ==
+    JS_ASSERT(self->nativeLookup(cx, NameToId(cx->names().sticky))->slot() ==
               STICKY_FLAG_SLOT);
 
     /*
@@ -403,12 +403,6 @@ RegExpShared::~RegExpShared()
 #endif
     if (bytecode)
         js_delete<BytecodePattern>(bytecode);
-}
-
-void
-RegExpShared::trace(JSTracer *trc)
-{
-    MarkString(trc, &source, "regexpshared source");
 }
 
 void
@@ -651,6 +645,17 @@ RegExpCompartment::RegExpCompartment(JSRuntime *rt)
 RegExpCompartment::~RegExpCompartment()
 {
     JS_ASSERT(map_.empty());
+
+    /*
+     * RegExpStatics may have prevented a single RegExpShared from
+     * being collected during RegExpCompartment::sweep().
+     */
+    for (PendingSet::Enum e(inUse_); !e.empty(); e.popFront()) {
+        RegExpShared *shared = e.front();
+        JS_ASSERT(shared->activeUseCount == 0);
+        js_delete(shared);
+        e.removeFront();
+    }
     JS_ASSERT(inUse_.empty());
 }
 
@@ -696,7 +701,7 @@ RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGu
         return true;
     }
 
-    ScopedDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime, source, flags));
+    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime, source, flags));
     if (!shared)
         return false;
 

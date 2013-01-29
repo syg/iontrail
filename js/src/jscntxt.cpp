@@ -23,6 +23,8 @@
 # include <string>
 #endif  // ANDROID
 
+#include "mozilla/Util.h"
+
 #include "jstypes.h"
 #include "jsutil.h"
 #include "jsclist.h"
@@ -41,7 +43,6 @@
 #include "jsobj.h"
 #include "jsopcode.h"
 #include "jspubtd.h"
-#include "jsscope.h"
 #include "jsscript.h"
 #include "jsstr.h"
 #include "jsworkers.h"
@@ -55,9 +56,11 @@
 # include "methodjit/MethodJIT.h"
 #endif
 #include "gc/Marking.h"
+#include "js/CharacterEncoding.h"
 #include "js/MemoryMetrics.h"
 #include "frontend/TokenStream.h"
 #include "frontend/ParseMaps.h"
+#include "vm/Shape.h"
 #include "yarr/BumpPointerAllocator.h"
 
 #include "jsatominlines.h"
@@ -71,6 +74,7 @@ using namespace js;
 using namespace js::gc;
 
 using mozilla::DebugOnly;
+using mozilla::PointerRangeSize;
 
 bool
 js::AutoCycleDetector::init()
@@ -132,6 +136,8 @@ JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtS
         rtSizes->unusedCode = 0;
     }
 
+    rtSizes->regexpData = bumpAlloc_ ? bumpAlloc_->sizeOfNonHeapData() : 0;
+
     rtSizes->stack = stackSpace.sizeOf();
 
     rtSizes->gcMarker = gcMarker.sizeOfExcludingThis(mallocSizeOf);
@@ -146,15 +152,18 @@ JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtS
 size_t
 JSRuntime::sizeOfExplicitNonHeap()
 {
-    size_t size = stackSpace.sizeOf();
+    size_t n = stackSpace.sizeOf();
 
     if (execAlloc_) {
         size_t jaegerCode, ionCode, regexpCode, unusedCode;
         execAlloc_->sizeOfCode(&jaegerCode, &ionCode, &regexpCode, &unusedCode);
-        size += jaegerCode + ionCode + regexpCode + unusedCode;
+        n += jaegerCode + ionCode + regexpCode + unusedCode;
     }
 
-    return size;
+    if (bumpAlloc_)
+        n += bumpAlloc_->sizeOfNonHeapData();
+
+    return n;
 }
 
 void
@@ -411,8 +420,6 @@ js::DestroyContext(JSContext *cx, DestroyContextMode mode)
     JSRuntime *rt = cx->runtime;
     JS_AbortIfWrongThread(rt);
 
-    JS_ASSERT(!cx->enumerators);
-
 #ifdef JS_THREADSAFE
     JS_ASSERT(cx->outstandingRequests == 0);
 #endif
@@ -512,7 +519,7 @@ ReportError(JSContext *cx, const char *message, JSErrorReport *reportp,
          * the reporter triggers an over-recursion.
          */
         int stackDummy;
-        if (!JS_CHECK_STACK_SIZE(cx->runtime->mainThread.nativeStackLimit, &stackDummy))
+        if (!JS_CHECK_STACK_SIZE(cx->mainThread().nativeStackLimit, &stackDummy))
             return;
 
         if (cx->errorReporter)
@@ -602,8 +609,10 @@ js_ReportOverRecursed(JSContext *maybecx)
 void
 js_ReportAllocationOverflow(JSContext *maybecx)
 {
-    if (maybecx)
+    if (maybecx) {
+        AutoSuppressGC suppressGC(maybecx);
         JS_ReportErrorNumber(maybecx, js_GetErrorMessage, NULL, JSMSG_ALLOC_OVERFLOW);
+    }
 }
 
 /*
@@ -678,13 +687,14 @@ js::ReportUsageError(JSContext *cx, HandleObject callee, const char *msg)
 {
     const char *usageStr = "usage";
     PropertyName *usageAtom = Atomize(cx, usageStr, strlen(usageStr))->asPropertyName();
-    DebugOnly<RawShape> shape = static_cast<RawShape>(callee->nativeLookup(cx, NameToId(usageAtom)));
+    RootedId id(cx, NameToId(usageAtom));
+    DebugOnly<RawShape> shape = static_cast<RawShape>(callee->nativeLookup(cx, id));
     JS_ASSERT(!shape->configurable());
     JS_ASSERT(!shape->writable());
     JS_ASSERT(shape->hasDefaultGetter());
 
-    jsval usage;
-    if (!JS_LookupProperty(cx, callee, "usage", &usage))
+    RootedValue usage(cx);
+    if (!JS_LookupProperty(cx, callee, "usage", usage.address()))
         return;
 
     if (JSVAL_IS_VOID(usage)) {
@@ -884,8 +894,10 @@ js_ExpandErrorArguments(JSContext *cx, JSErrorCallback callback,
                 JS_ASSERT(expandedArgs == argCount);
                 *out = 0;
                 js_free(buffer);
-                *messagep = DeflateString(cx, reportp->ucmessage,
-                                          size_t(out - reportp->ucmessage));
+                TwoByteChars ucmsg(reportp->ucmessage,
+                                   PointerRangeSize(static_cast<const jschar *>(reportp->ucmessage),
+                                                    static_cast<const jschar *>(out)));
+                *messagep = LossyTwoByteCharsToNewLatin1CharsZ(cx, ucmsg).c_str();
                 if (!*messagep)
                     goto error;
             }
@@ -1125,7 +1137,7 @@ js_ReportValueErrorFlags(JSContext *cx, unsigned flags, const unsigned errorNumb
     return ok;
 }
 
-JSErrorFormatString js_ErrorFormatString[JSErr_Limit] = {
+const JSErrorFormatString js_ErrorFormatString[JSErr_Limit] = {
 #define MSG_DEF(name, number, count, exception, format) \
     { format, count, exception } ,
 #include "js.msg"
@@ -1226,7 +1238,6 @@ JSContext::JSContext(JSRuntime *rt)
 #ifdef MOZ_TRACE_JSCALLS
     functionCallback(NULL),
 #endif
-    enumerators(NULL),
     innermostGenerator_(NULL),
 #ifdef DEBUG
     stackIterAssertionEnabled(true),

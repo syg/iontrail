@@ -4,7 +4,7 @@
 
 "use strict";
 
-const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
+const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -47,7 +47,7 @@ GlobalPCList.prototype = {
   _xpcom_factory: {
     createInstance: function(outer, iid) {
       if (outer) {
-        throw Components.results.NS_ERROR_NO_AGGREGATION;
+        throw Cr.NS_ERROR_NO_AGGREGATION;
       }
       return _globalPCList.QueryInterface(iid);
     }
@@ -56,13 +56,23 @@ GlobalPCList.prototype = {
   addPC: function(pc) {
     let winID = pc._winID;
     if (this._list[winID]) {
-      this._list[winID].push(pc);
+      this._list[winID].push(Components.utils.getWeakReference(pc));
     } else {
-      this._list[winID] = [pc];
+      this._list[winID] = [Components.utils.getWeakReference(pc)];
     }
+    this.removeNullRefs(winID);
+  },
+
+  removeNullRefs: function(winID) {
+    if (this._list === undefined || this._list[winID] === undefined) {
+      return;
+    }
+    this._list[winID] = this._list[winID].filter(
+      function (e,i,a) { return e.get() !== null; });
   },
 
   hasActivePeerConnection: function(winID) {
+    this.removeNullRefs(winID);
     return this._list[winID] ? true : false;
   },
 
@@ -70,10 +80,13 @@ GlobalPCList.prototype = {
     if (topic == "inner-window-destroyed") {
       let winID = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
       if (this._list[winID]) {
-        this._list[winID].forEach(function(pc) {
-          pc._pc.close(false);
-          delete pc._observer;
-          pc._pc = null;
+        this._list[winID].forEach(function(pcref) {
+          let pc = pcref.get();
+          if (pc !== null) {
+            pc._pc.close(false);
+            delete pc._observer;
+            pc._pc = null;
+          }
         });
         delete this._list[winID];
       }
@@ -85,10 +98,13 @@ GlobalPCList.prototype = {
       // while offline, but attempts to connect them should fail.
       let array;
       while ((array = this._list.pop()) != undefined) {
-        array.forEach(function(pc) {
-          pc._pc.close(true);
-          delete pc._observer;
-          pc._pc = null;
+        array.forEach(function(pcref) {
+          let pc = pcref.get();
+          if (pc !== null) {
+            pc._pc.close(true);
+            delete pc._observer;
+            pc._pc = null;
+          }
         });
       };
       this._networkdown = true;
@@ -132,7 +148,7 @@ IceCandidate.prototype = {
     this._win = win;
     if (candidateInitDict !== undefined) {
       this.candidate = candidateInitDict.candidate || null;
-      this.sdpMid = candidateInitDict.sdbMid || null;
+      this.sdpMid = candidateInitDict.sdpMid || null;
       this.sdpMLineIndex = candidateInitDict.sdpMLineIndex === null ?
             null : candidateInitDict.sdpMLineIndex + 1;
     } else {
@@ -192,6 +208,10 @@ function PeerConnection() {
   this._onCreateAnswerSuccess = null;
   this._onCreateAnswerFailure = null;
 
+  this._pendingType = null;
+  this._localType = null;
+  this._remoteType = null;
+
   /**
    * Everytime we get a request from content, we put it in the queue. If
    * there are no pending operations though, we will execute it immediately.
@@ -210,8 +230,6 @@ function PeerConnection() {
   this.onstatechange = null;
   this.ongatheringchange = null;
   this.onicechange = null;
-  this.localDescription = null;
-  this.remoteDescription = null;
 
   // Data channel.
   this.ondatachannel = null;
@@ -230,19 +248,27 @@ PeerConnection.prototype = {
                                     flags: Ci.nsIClassInfo.DOM_OBJECT}),
 
   QueryInterface: XPCOMUtils.generateQI([
-    Ci.nsIDOMRTCPeerConnection, Ci.nsIDOMGlobalObjectConstructor
+    Ci.nsIDOMRTCPeerConnection,
+    Ci.nsIDOMGlobalObjectConstructor,
+    Ci.nsISupportsWeakReference
   ]),
 
   // Constructor is an explicit function, because of nsIDOMGlobalObjectConstructor.
-  constructor: function(win) {
+  constructor: function(win, rtcConfig) {
     if (!Services.prefs.getBoolPref("media.peerconnection.enabled")) {
       throw new Error("PeerConnection not enabled (did you set the pref?)");
     }
     if (this._win) {
-      throw new Error("Constructor already called");
+      throw new Error("RTCPeerConnection constructor already called");
     }
+    if (!rtcConfig) {
+      // TODO(jib@mozilla.com): Hardcoded Mozilla server. Final? Bug 807494
+      rtcConfig = { "iceServers": [{ url: "stun:23.21.150.121" }] };
+    }
+    this._mustValidateRTCConfiguration(rtcConfig,
+        "RTCPeerConnection constructor passed invalid RTCConfiguration");
     if (_globalPCList._networkdown) {
-      throw new Error("Can't create RTPPeerConnections when the network is down");
+      throw new Error("Can't create RTCPeerConnections when the network is down");
     }
 
     this._pc = Cc["@mozilla.org/peerconnection;1"].
@@ -252,7 +278,7 @@ PeerConnection.prototype = {
     // Nothing starts until ICE gathering completes.
     this._queueOrRun({
       func: this._pc.initialize,
-      args: [this._observer, win, Services.tm.currentThread],
+      args: [this._observer, win, rtcConfig, Services.tm.currentThread],
       wait: true
     });
 
@@ -271,10 +297,11 @@ PeerConnection.prototype = {
    * call _executeNext, false if it doesn't have a callback.
    */
   _queueOrRun: function(obj) {
-    if (this._closed) {
-	return;
-    }
+    this._checkClosed();
     if (!this._pending) {
+      if (obj.type !== undefined) {
+        this._pendingType = obj.type;
+      }
       obj.func.apply(this, obj.args);
       if (obj.wait) {
         this._pending = true;
@@ -288,12 +315,61 @@ PeerConnection.prototype = {
   _executeNext: function() {
     if (this._queue.length) {
       let obj = this._queue.shift();
+      if (obj.type !== undefined) {
+        this._pendingType = obj.type;
+      }
       obj.func.apply(this, obj.args);
       if (!obj.wait) {
         this._executeNext();
       }
     } else {
       this._pending = false;
+    }
+  },
+
+  /**
+   * An RTCConfiguration looks like this:
+   *
+   * { "iceServers": [ { url:"stun:23.21.150.121" },
+   *                   { url:"turn:user@turn.example.org", credential:"mypass"} ] }
+   *
+   * We check for basic structure and well-formed stun/turn urls, but not
+   * validity of servers themselves, before passing along to C++.
+   * ErrorMsg is passed in to detail which array-entry failed, if any.
+   */
+  _mustValidateRTCConfiguration: function(rtcConfig, errorMsg) {
+    function isObject(obj) {
+      return obj && (typeof obj === "object");
+    }
+    function isArray(obj) {
+      return isObject(obj) &&
+        (Object.prototype.toString.call(obj) === "[object Array]");
+    }
+    function nicerNewURI(uriStr, errorMsg) {
+      let ios = Cc['@mozilla.org/network/io-service;1'].getService(Ci.nsIIOService);
+      try {
+        return ios.newURI(uriStr, null, null);
+      } catch (e if (e.result == Cr.NS_ERROR_MALFORMED_URI)) {
+        throw new Error(errorMsg + " - malformed URI: " + uriStr);
+      }
+    }
+    function mustValidateServer(server) {
+      let url = nicerNewURI(server.url, errorMsg);
+      if (!(url.scheme in { stun:1, stuns:1, turn:1, turns:1 })) {
+        throw new Error (errorMsg + " - improper scheme: " + url.scheme);
+      }
+      if (server.credential && isObject(server.credential)) {
+        throw new Error (errorMsg + " - invalid credential");
+      }
+    }
+    if (!isObject(rtcConfig)) {
+      throw new Error (errorMsg);
+    }
+    if (!isArray(rtcConfig.iceServers)) {
+      throw new Error (errorMsg + " - iceServers [] property not present");
+    }
+    for (let i=0; i < rtcConfig.iceServers.length; i++) {
+      mustValidateServer (rtcConfig.iceServers[i], errorMsg);
     }
   },
 
@@ -330,11 +406,17 @@ PeerConnection.prototype = {
     return true;
   },
 
-  createOffer: function(onSuccess, onError, constraints) {
-    if (this._onCreateOfferSuccess) {
-      throw new Error("createOffer already called");
+  // Ideally, this should be of the form _checkState(state),
+  // where the state is taken from an enumeration containing
+  // the valid peer connection states defined in the WebRTC
+  // spec. See Bug 831756.
+  _checkClosed: function() {
+    if (this._closed) {
+      throw new Error ("Peer connection is closed");
     }
+  },
 
+  createOffer: function(onSuccess, onError, constraints) {
     if (!constraints) {
       constraints = {};
     }
@@ -353,19 +435,40 @@ PeerConnection.prototype = {
     });
   },
 
-  createAnswer: function(onSuccess, onError, constraints, provisional) {
-    if (this._onCreateAnswerSuccess) {
-      throw new Error("createAnswer already called");
-    }
+  _createAnswer: function(onSuccess, onError, constraints, provisional) {
+    this._onCreateAnswerSuccess = onSuccess;
+    this._onCreateAnswerFailure = onError;
 
     if (!this.remoteDescription) {
-      throw new Error("setRemoteDescription not called");
+      this._observer.onCreateAnswerError(3); // PC_INVALID_REMOTE_SDP
+      /*
+        This needs to be matched to spec -- see bug 834270. The final
+        code will be of the form:
+
+      this._observer.onCreateAnswerError(ci.IPeerConnection.kInvalidState,
+                                         "setRemoteDescription not called");
+      */
+      return;
     }
 
     if (this.remoteDescription.type != "offer") {
-      throw new Error("No outstanding offer");
+      this._observer.onCreateAnswerError(3); // PC_INVALID_REMOTE_SDP
+      /*
+        This needs to be matched to spec -- see bug 834270. The final
+        code will be of the form:
+
+      this._observer.onCreateAnswerError(ci.IPeerConnection.kInvalidState,
+                                         "No outstanding offer");
+      */
+      return;
     }
 
+    // TODO: Implement provisional answer.
+
+    this._pc.createAnswer(constraints);
+  },
+
+  createAnswer: function(onSuccess, onError, constraints, provisional) {
     if (!constraints) {
       constraints = {};
     }
@@ -374,22 +477,21 @@ PeerConnection.prototype = {
       throw new Error("createAnswer passed invalid constraints");
     }
 
-    this._onCreateAnswerSuccess = onSuccess;
-    this._onCreateAnswerFailure = onError;
-
     if (!provisional) {
       provisional = false;
     }
 
-    // TODO: Implement provisional answer.
     this._queueOrRun({
-      func: this._pc.createAnswer,
-      args: [constraints],
+      func: this._createAnswer,
+      args: [onSuccess, onError, constraints, provisional],
       wait: true
     });
   },
 
   setLocalDescription: function(desc, onSuccess, onError) {
+    // TODO -- if we have two setLocalDescriptions in the
+    // queue,this code overwrites the callbacks for the first
+    // one with the callbacks for the second one. See Bug 831759.
     this._onSetLocalDescriptionSuccess = onSuccess;
     this._onSetLocalDescriptionFailure = onError;
 
@@ -411,11 +513,15 @@ PeerConnection.prototype = {
     this._queueOrRun({
       func: this._pc.setLocalDescription,
       args: [type, desc.sdp],
-      wait: true
+      wait: true,
+      type: desc.type
     });
   },
 
   setRemoteDescription: function(desc, onSuccess, onError) {
+    // TODO -- if we have two setRemoteDescriptions in the
+    // queue, this code overwrites the callbacks for the first
+    // one with the callbacks for the second one. See Bug 831759.
     this._onSetRemoteDescriptionSuccess = onSuccess;
     this._onSetRemoteDescriptionFailure = onError;
 
@@ -434,20 +540,11 @@ PeerConnection.prototype = {
         break;
     }
 
-    this.localDescription = {
-      type: desc.type, sdp: desc.sdp,
-      __exposedProps__: { type: "rw", sdp: "rw"}
-    };
-
-    this.remoteDescription = {
-      type: desc.type, sdp: desc.sdp,
-      __exposedProps__: { type: "rw", sdp: "rw" }
-    };
-
     this._queueOrRun({
       func: this._pc.setRemoteDescription,
       args: [type, desc.sdp],
-      wait: true
+      wait: true,
+      type: desc.type
     });
   },
 
@@ -457,11 +554,11 @@ PeerConnection.prototype = {
 
   addIceCandidate: function(cand) {
     if (!cand) {
-      throw "NULL candidate passed to addIceCandidate!";
+      throw new Error ("NULL candidate passed to addIceCandidate!");
     }
 
     if (!cand.candidate || !cand.sdpMLineIndex) {
-      throw "Invalid candidate passed to addIceCandidate!";
+      throw new Error ("Invalid candidate passed to addIceCandidate!");
     }
 
     this._queueOrRun({
@@ -498,13 +595,41 @@ PeerConnection.prototype = {
   },
 
   get localStreams() {
+    this._checkClosed();
     return this._pc.localStreams;
   },
+
   get remoteStreams() {
+    this._checkClosed();
     return this._pc.remoteStreams;
   },
 
+  get localDescription() {
+    this._checkClosed();
+    let sdp = this._pc.localDescription;
+    if (sdp.length == 0) {
+      return null;
+    }
+    return {
+      type: this._localType, sdp: sdp,
+      __exposedProps__: { type: "rw", sdp: "rw" }
+    };
+  },
+
+  get remoteDescription() {
+    this._checkClosed();
+    let sdp = this._pc.remoteDescription;
+    if (sdp.length == 0) {
+      return null;
+    }
+    return {
+      type: this._remoteType, sdp: sdp,
+      __exposedProps__: { type: "rw", sdp: "rw" }
+    };
+  },
+
   createDataChannel: function(label, dict) {
+    this._checkClosed();
     if (dict &&
         dict.maxRetransmitTime != undefined &&
         dict.maxRetransmitNum != undefined) {
@@ -522,6 +647,8 @@ PeerConnection.prototype = {
     }
 
     // Synchronous since it doesn't block.
+    // TODO -- this may need to be revisited, based on how the
+    // spec ends up defining data channel handling
     let channel = this._pc.createDataChannel(
       label, type, dict.outOfOrderAllowed, dict.maxRetransmitTime,
       dict.maxRetransmitNum
@@ -541,12 +668,13 @@ PeerConnection.prototype = {
   }
 };
 
-// This is a seperate object because we don't want to expose it to DOM.
+// This is a separate object because we don't want to expose it to DOM.
 function PeerConnectionObserver(dompc) {
   this._dompc = dompc;
 }
 PeerConnectionObserver.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.IPeerConnectionObserver]),
+  QueryInterface: XPCOMUtils.generateQI([Ci.IPeerConnectionObserver,
+                                         Ci.nsISupportsWeakReference]),
 
   onCreateOfferSuccess: function(offer) {
     if (this._dompc._onCreateOfferSuccess) {
@@ -591,6 +719,8 @@ PeerConnectionObserver.prototype = {
   },
 
   onSetLocalDescriptionSuccess: function(code) {
+    this._dompc._localType = this._dompc._pendingType;
+    this._dompc._pendingType = null;
     if (this._dompc._onSetLocalDescriptionSuccess) {
       try {
         this._dompc._onSetLocalDescriptionSuccess.onCallback(code);
@@ -600,6 +730,8 @@ PeerConnectionObserver.prototype = {
   },
 
   onSetRemoteDescriptionSuccess: function(code) {
+    this._dompc._remoteType = this._dompc._pendingType;
+    this._dompc._pendingType = null;
     if (this._dompc._onSetRemoteDescriptionSuccess) {
       try {
         this._dompc._onSetRemoteDescriptionSuccess.onCallback(code);
@@ -609,6 +741,7 @@ PeerConnectionObserver.prototype = {
   },
 
   onSetLocalDescriptionError: function(code) {
+    this._dompc._pendingType = null;
     if (this._dompc._onSetLocalDescriptionFailure) {
       try {
         this._dompc._onSetLocalDescriptionFailure.onCallback(code);
@@ -618,6 +751,7 @@ PeerConnectionObserver.prototype = {
   },
 
   onSetRemoteDescriptionError: function(code) {
+    this._dompc._pendingType = null;
     if (this._dompc._onSetRemoteDescriptionFailure) {
       this._dompc._onSetRemoteDescriptionFailure.onCallback(code);
     }
@@ -657,13 +791,11 @@ PeerConnectionObserver.prototype = {
         break;
       case Ci.IPeerConnection.kIceChecking:
         iceCb("checking");
-        this._dompc._executeNext();
         break;
       case Ci.IPeerConnection.kIceConnected:
         // ICE gathering complete.
         iceCb("connected");
         iceGatherCb("complete");
-        this._dompc._executeNext();
         break;
       case Ci.IPeerConnection.kIceFailed:
         iceCb("failed");
@@ -683,7 +815,6 @@ PeerConnectionObserver.prototype = {
         });
       } catch(e) {}
     }
-    this._dompc._executeNext();
   },
 
   onRemoveStream: function(stream, type) {
@@ -695,7 +826,6 @@ PeerConnectionObserver.prototype = {
         });
       } catch(e) {}
     }
-    this._dompc._executeNext();
   },
 
   foundIceCandidate: function(cand) {
@@ -707,7 +837,6 @@ PeerConnectionObserver.prototype = {
         });
       } catch(e) {}
     }
-    this._dompc._executeNext();
   },
 
   notifyDataChannel: function(channel) {
@@ -716,7 +845,6 @@ PeerConnectionObserver.prototype = {
         this._dompc.ondatachannel.onCallback(channel);
       } catch(e) {}
     }
-    this._dompc._executeNext();
   },
 
   notifyConnection: function() {
@@ -725,7 +853,6 @@ PeerConnectionObserver.prototype = {
         this._dompc.onconnection.onCallback();
       } catch(e) {}
     }
-    this._dompc._executeNext();
   },
 
   notifyClosedConnection: function() {
@@ -734,7 +861,6 @@ PeerConnectionObserver.prototype = {
         this._dompc.onclosedconnection.onCallback();
       } catch(e) {}
     }
-    this._dompc._executeNext();
   }
 };
 

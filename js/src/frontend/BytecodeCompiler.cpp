@@ -47,7 +47,7 @@ SetSourceMap(JSContext *cx, TokenStream &tokenStream, ScriptSource *ss, Unrooted
 }
 
 UnrootedScript
-frontend::CompileScript(JSContext *cx, HandleObject scopeChain, StackFrame *callerFrame,
+frontend::CompileScript(JSContext *cx, HandleObject scopeChain, AbstractFramePtr callerFrame,
                         const CompileOptions &options,
                         StableCharPtr chars, size_t length,
                         JSString *source_ /* = NULL */,
@@ -106,7 +106,7 @@ frontend::CompileScript(JSContext *cx, HandleObject scopeChain, StackFrame *call
     if (!pc.init())
         return UnrootedScript(NULL);
 
-    bool savedCallerFun = options.compileAndGo && callerFrame && callerFrame->isFunctionFrame();
+    bool savedCallerFun = options.compileAndGo && callerFrame && callerFrame.isFunctionFrame();
     Rooted<JSScript*> script(cx, JSScript::Create(cx, NullPtr(), savedCallerFun,
                                                   options, staticLevel, ss, 0, length));
     if (!script)
@@ -129,7 +129,7 @@ frontend::CompileScript(JSContext *cx, HandleObject scopeChain, StackFrame *call
         return UnrootedScript(NULL);
 
     /* If this is a direct call to eval, inherit the caller's strictness.  */
-    if (callerFrame && callerFrame->script()->strict)
+    if (callerFrame && callerFrame.script()->strict)
         globalsc.strict = true;
 
     if (options.compileAndGo) {
@@ -138,19 +138,19 @@ frontend::CompileScript(JSContext *cx, HandleObject scopeChain, StackFrame *call
              * Save eval program source in script->atoms[0] for the
              * eval cache (see EvalCacheLookup in jsobj.cpp).
              */
-            JSAtom *atom = AtomizeString(cx, source);
+            JSAtom *atom = AtomizeString<CanGC>(cx, source);
             jsatomid _;
             if (!atom || !bce.makeAtomIndex(atom, &_))
                 return UnrootedScript(NULL);
         }
 
-        if (callerFrame && callerFrame->isFunctionFrame()) {
+        if (callerFrame && callerFrame.isFunctionFrame()) {
             /*
              * An eval script in a caller frame needs to have its enclosing
              * function captured in case it refers to an upvar, and someone
              * wishes to decompile it while it's running.
              */
-            JSFunction *fun = callerFrame->fun();
+            JSFunction *fun = callerFrame.fun();
             ObjectBox *funbox = parser.newFunctionBox(fun, &pc, fun->strict());
             if (!funbox)
                 return UnrootedScript(NULL);
@@ -185,7 +185,7 @@ frontend::CompileScript(JSContext *cx, HandleObject scopeChain, StackFrame *call
                 return UnrootedScript(NULL);
         }
 
-        if (!FoldConstants(cx, pn, &parser))
+        if (!FoldConstants(cx, &pn, &parser))
             return UnrootedScript(NULL);
         if (!NameFunctions(cx, pn))
             return UnrootedScript(NULL);
@@ -217,7 +217,7 @@ frontend::CompileScript(JSContext *cx, HandleObject scopeChain, StackFrame *call
 #endif
 
     // It's an error to use |arguments| in a function that has a rest parameter.
-    if (callerFrame && callerFrame->isFunctionFrame() && callerFrame->fun()->hasRest()) {
+    if (callerFrame && callerFrame.isFunctionFrame() && callerFrame.fun()->hasRest()) {
         HandlePropertyName arguments = cx->names().arguments;
         for (AtomDefnRange r = pc.lexdeps->all(); !r.empty(); r.popFront()) {
             if (r.front().key() == arguments) {
@@ -275,11 +275,12 @@ frontend::CompileFunctionBody(JSContext *cx, HandleFunction fun, CompileOptions 
     fun->setArgCount(formals.length());
 
     /* FIXME: make Function format the source for a function definition. */
-    ParseNode *fn = FunctionNode::create(PNK_NAME, &parser);
+    ParseNode *fn = FunctionNode::create(PNK_FUNCTION, &parser);
     if (!fn)
         return false;
 
     fn->pn_body = NULL;
+    fn->pn_funbox = NULL;
     fn->pn_cookie.makeFree();
 
     ParseNode *argsbody = ListNode::create(PNK_ARGSBODY, &parser);
@@ -317,7 +318,8 @@ frontend::CompileFunctionBody(JSContext *cx, HandleFunction fun, CompileOptions 
             return false;
     }
 
-    BytecodeEmitter funbce(/* parent = */ NULL, &parser, funbox, script, /* callerFrame = */ NULL,
+    BytecodeEmitter funbce(/* parent = */ NULL, &parser, funbox, script,
+                           /* callerFrame = */ NullFramePtr(),
                            /* hasGlobalScope = */ false, options.lineno);
     if (!funbce.init())
         return false;

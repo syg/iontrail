@@ -70,7 +70,7 @@ js::CreateRegExpMatchResult(JSContext *cx, JSString *input_, StableCharPtr chars
         return false;
 
     if (!input) {
-        input = js_NewStringCopyN(cx, chars.get(), length);
+        input = js_NewStringCopyN<CanGC>(cx, chars.get(), length);
         if (!input)
             return false;
     }
@@ -114,7 +114,7 @@ js::CreateRegExpMatchResult(JSContext *cx, HandleString string, MatchPairs &matc
 }
 
 RegExpRunStatus
-ExecuteRegExpImpl(JSContext *cx, RegExpStatics *res, RegExpShared &re, RegExpObject &regexp,
+ExecuteRegExpImpl(JSContext *cx, RegExpStatics *res, RegExpShared &re,
                   JSLinearString *input, StableCharPtr chars, size_t length,
                   size_t *lastIndex, MatchConduit &matches)
 {
@@ -126,7 +126,7 @@ ExecuteRegExpImpl(JSContext *cx, RegExpStatics *res, RegExpShared &re, RegExpObj
         /* Only one MatchPair slot provided: execute short-circuiting regexp. */
         status = re.executeMatchOnly(cx, chars, length, lastIndex, *matches.u.pair);
         if (status == RegExpRunStatus_Success && res)
-            res->updateLazily(cx, input, &regexp, lastIndex_orig);
+            res->updateLazily(cx, input, &re, lastIndex_orig);
     } else {
         /* Vector of MatchPairs provided: execute full regexp. */
         status = re.execute(cx, chars, length, lastIndex, *matches.u.pairs);
@@ -151,7 +151,7 @@ js::ExecuteRegExpLegacy(JSContext *cx, RegExpStatics *res, RegExpObject &reobj,
     MatchConduit conduit(&matches);
 
     RegExpRunStatus status =
-        ExecuteRegExpImpl(cx, res, *shared, reobj, input, chars, length, lastIndex, conduit);
+        ExecuteRegExpImpl(cx, res, *shared, input, chars, length, lastIndex, conduit);
 
     if (status == RegExpRunStatus_Error)
         return false;
@@ -281,18 +281,18 @@ CompileRegExpObject(JSContext *cx, RegExpObjectBuilder &builder, CallArgs args)
         source = cx->runtime->emptyString;
     } else {
         /* Coerce to string and compile. */
-        JSString *str = ToString(cx, sourceValue);
+        JSString *str = ToString<CanGC>(cx, sourceValue);
         if (!str)
             return false;
 
-        source = AtomizeString(cx, str);
+        source = AtomizeString<CanGC>(cx, str);
         if (!source)
             return false;
     }
 
     RegExpFlag flags = RegExpFlag(0);
     if (args.hasDefined(1)) {
-        JSString *flagStr = ToString(cx, args[1]);
+        JSString *flagStr = ToString<CanGC>(cx, args[1]);
         if (!flagStr)
             return false;
         args[1].setString(flagStr);
@@ -580,7 +580,7 @@ js::ExecuteRegExp(JSContext *cx, HandleObject regexp, HandleString string, Match
     /* Steps 8-21. */
     size_t lastIndexInt(i);
     RegExpRunStatus status =
-        ExecuteRegExpImpl(cx, res, *re, *reobj, stableInput, chars, length, &lastIndexInt, matches);
+        ExecuteRegExpImpl(cx, res, *re, stableInput, chars, length, &lastIndexInt, matches);
 
     if (status == RegExpRunStatus_Error)
         return RegExpRunStatus_Error;
@@ -604,7 +604,7 @@ ExecuteRegExp(JSContext *cx, CallArgs args, MatchConduit &matches)
     RootedObject regexp(cx, &args.thisv().toObject());
 
     /* Step 2. */
-    RootedString string(cx, ToString(cx, (args.length() > 0) ? args[0] : UndefinedValue()));
+    RootedString string(cx, ToString<CanGC>(cx, (args.length() > 0) ? args[0] : UndefinedValue()));
     if (!string)
         return RegExpRunStatus_Error;
 
@@ -624,7 +624,7 @@ regexp_exec_impl(JSContext *cx, CallArgs args)
      * and CreateRegExpMatchResult().
      */
     RootedObject regexp(cx, &args.thisv().toObject());
-    RootedString string(cx, ToString(cx, (args.length() > 0) ? args[0] : UndefinedValue()));
+    RootedString string(cx, ToString<CanGC>(cx, (args.length() > 0) ? args[0] : UndefinedValue()));
     if (!string)
         return false;
 

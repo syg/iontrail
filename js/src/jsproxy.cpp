@@ -13,9 +13,9 @@
 #include "jsprvtd.h"
 #include "jsnum.h"
 #include "jsproxy.h"
-#include "jsscope.h"
 
 #include "gc/Marking.h"
+#include "vm/Shape.h"
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
@@ -635,7 +635,7 @@ Trap(JSContext *cx, HandleObject handler, HandleValue fval, unsigned argc, Value
 static bool
 Trap1(JSContext *cx, HandleObject handler, HandleValue fval, HandleId id, Value *rval)
 {
-    JSString *str = ToString(cx, IdToValue(id));
+    JSString *str = ToString<CanGC>(cx, IdToValue(id));
     if (!str)
         return false;
     rval->setString(str);
@@ -646,7 +646,7 @@ static bool
 Trap2(JSContext *cx, HandleObject handler, HandleValue fval, HandleId id, Value v_, Value *rval)
 {
     RootedValue v(cx, v_);
-    JSString *str = ToString(cx, IdToValue(id));
+    JSString *str = ToString<CanGC>(cx, IdToValue(id));
     if (!str)
         return false;
     rval->setString(str);
@@ -709,7 +709,7 @@ ArrayToIdVector(JSContext *cx, const Value &array, AutoIdVector &props)
         if (!JSObject::getElement(cx, obj, obj, n, &v))
             return false;
         RootedId id(cx);
-        if (!ValueToId(cx, v, &id))
+        if (!ValueToId<CanGC>(cx, v, &id))
             return false;
         if (!props.append(id))
             return false;
@@ -897,7 +897,7 @@ ScriptedIndirectProxyHandler::get(JSContext *cx, JSObject *proxy_, JSObject *rec
     RootedId id(cx, id_);
     RootedObject proxy(cx, proxy_), receiver(cx, receiver_);
     RootedObject handler(cx, GetIndirectProxyHandlerObject(proxy));
-    JSString *str = ToString(cx, IdToValue(id));
+    JSString *str = ToString<CanGC>(cx, IdToValue(id));
     if (!str)
         return false;
     RootedValue value(cx, StringValue(str));
@@ -918,7 +918,7 @@ ScriptedIndirectProxyHandler::set(JSContext *cx, JSObject *proxy_, JSObject *rec
     RootedId id(cx, id_);
     RootedObject proxy(cx, proxy_), receiver(cx, receiver_);
     RootedObject handler(cx, GetIndirectProxyHandlerObject(proxy));
-    JSString *str = ToString(cx, IdToValue(id));
+    JSString *str = ToString<CanGC>(cx, IdToValue(id));
     if (!str)
         return false;
     RootedValue value(cx, StringValue(str));
@@ -1265,7 +1265,7 @@ HasOwn(JSContext *cx, HandleObject obj, HandleId id, bool *bp)
 static bool
 IdToValue(JSContext *cx, HandleId id, MutableHandleValue value)
 {
-    JSString *name = ToString(cx, IdToValue(id));
+    JSString *name = ToString<CanGC>(cx, IdToValue(id));
     if (!name)
         return false;
     value.set(StringValue(name));
@@ -1471,10 +1471,11 @@ ReportInvalidTrapResult(JSContext *cx, JSObject *proxy, JSAtom *atom)
 // This function is shared between getOwnPropertyNames, enumerate, and keys
 static bool
 ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleValue v,
-                AutoIdVector &props, unsigned flags, JSAtom *trapName)
+                AutoIdVector &props, unsigned flags, JSAtom *trapName_)
 {
     JS_ASSERT(v.isObject());
     RootedObject array(cx, &v.toObject());
+    RootedAtom trapName(cx, trapName_);
 
     // steps g-h
     uint32_t n;
@@ -1490,7 +1491,7 @@ ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleVa
 
         // step ii
         RootedId id(cx);
-        if (!ValueToId(cx, v, &id))
+        if (!ValueToId<CanGC>(cx, v, &id))
             return false;
 
         // step iii
@@ -2293,8 +2294,8 @@ Proxy::delete_(JSContext *cx, JSObject *proxy_, jsid id, bool *bp)
     return GetProxyHandler(proxy)->delete_(cx, proxy, id, bp);
 }
 
-static bool
-AppendUnique(JSContext *cx, AutoIdVector &base, AutoIdVector &others)
+JS_FRIEND_API(bool)
+js::AppendUnique(JSContext *cx, AutoIdVector &base, AutoIdVector &others)
 {
     AutoIdVector uniqueOthers(cx);
     if (!uniqueOthers.reserve(others.length()))
@@ -2551,7 +2552,7 @@ proxy_LookupGeneric(JSContext *cx, HandleObject obj, HandleId id,
         return false;
 
     if (found) {
-        MarkImplicitPropertyFound(propp);
+        MarkNonNativePropertyFound(propp);
         objp.set(obj);
     } else {
         objp.set(NULL);
@@ -3100,7 +3101,7 @@ NewProxyObject(JSContext *cx, BaseProxyHandler *handler, const Value &priv_, Tag
      */
     if (proto.isObject()) {
         RootedObject protoObj(cx, proto.toObject());
-        if (!JSObject::setNewTypeUnknown(cx, protoObj))
+        if (!JSObject::setNewTypeUnknown(cx, clasp, protoObj))
             return NULL;
     }
 
@@ -3235,17 +3236,17 @@ proxy_createFunction(JSContext *cx, unsigned argc, Value *vp)
                              "createFunction", "1", "");
         return false;
     }
-    JSObject *handler = NonNullObject(cx, vp[2]);
+    RootedObject handler(cx, NonNullObject(cx, vp[2]));
     if (!handler)
         return false;
-    JSObject *proto, *parent;
+    RootedObject proto(cx), parent(cx);
     parent = vp[0].toObject().getParent();
     proto = parent->global().getOrCreateFunctionPrototype(cx);
     if (!proto)
         return false;
     parent = proto->getParent();
 
-    JSObject *call = ValueToCallable(cx, &vp[3]);
+    RootedObject call(cx, ValueToCallable(cx, &vp[3]));
     if (!call)
         return false;
     JSObject *construct = NULL;

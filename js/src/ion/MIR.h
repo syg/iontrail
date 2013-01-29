@@ -2840,7 +2840,6 @@ class MDiv : public MBinaryArithInstruction
         setResultType(type);
     }
 
-
   public:
     INSTRUCTION_HEADER(Div)
     static MDiv *New(MDefinition *left, MDefinition *right) {
@@ -2881,14 +2880,18 @@ class MDiv : public MBinaryArithInstruction
     bool canBeDivideByZero() {
         return canBeDivideByZero_;
     }
-    bool updateForReplacement(MDefinition *ins);
 
+    bool updateForReplacement(MDefinition *ins);
+    bool fallible();
 };
 
 class MMod : public MBinaryArithInstruction
 {
+    int implicitTruncate_;
+
     MMod(MDefinition *left, MDefinition *right)
-      : MBinaryArithInstruction(left, right)
+      : MBinaryArithInstruction(left, right),
+        implicitTruncate_(0)
     {
         setResultType(MIRType_Value);
     }
@@ -2900,12 +2903,23 @@ class MMod : public MBinaryArithInstruction
     }
 
     MDefinition *foldsTo(bool useValueNumbers);
+    void analyzeTruncateBackward();
+
     double getIdentity() {
         JS_NOT_REACHED("not used");
         return 1;
     }
 
+    int isTruncated() const {
+        return implicitTruncate_;
+    }
+    void setTruncated(int truncate) {
+        implicitTruncate_ = truncate;
+    }
+
+    bool updateForReplacement(MDefinition *ins);
     void computeRange();
+    bool fallible();
 };
 
 class MConcat
@@ -3999,10 +4013,13 @@ class MStoreElement
     public MStoreElementCommon,
     public SingleObjectPolicy
 {
-    MStoreElement(MDefinition *elements, MDefinition *index, MDefinition *value) {
+    bool needsHoleCheck_;
+
+    MStoreElement(MDefinition *elements, MDefinition *index, MDefinition *value, bool needsHoleCheck) {
         initOperand(0, elements);
         initOperand(1, index);
         initOperand(2, value);
+        needsHoleCheck_ = needsHoleCheck;
         JS_ASSERT(elements->type() == MIRType_Elements);
         JS_ASSERT(index->type() == MIRType_Int32);
     }
@@ -4010,8 +4027,9 @@ class MStoreElement
   public:
     INSTRUCTION_HEADER(StoreElement)
 
-    static MStoreElement *New(MDefinition *elements, MDefinition *index, MDefinition *value) {
-        return new MStoreElement(elements, index, value);
+    static MStoreElement *New(MDefinition *elements, MDefinition *index, MDefinition *value,
+                              bool needsHoleCheck) {
+        return new MStoreElement(elements, index, value, needsHoleCheck);
     }
     MDefinition *elements() const {
         return getOperand(0);
@@ -4027,6 +4045,12 @@ class MStoreElement
     }
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::Element);
+    }
+    bool needsHoleCheck() const {
+        return needsHoleCheck_;
+    }
+    bool fallible() const {
+        return needsHoleCheck();
     }
 };
 

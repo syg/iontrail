@@ -19,7 +19,7 @@
 extern "C" {
 struct JSContext;
 class JSFunction;
-struct JSObject;
+class JSObject;
 class JSScript;
 }
 
@@ -97,7 +97,6 @@ DeclMarker(Object, DebugScopeObject)
 DeclMarker(Object, GlobalObject)
 DeclMarker(Object, JSObject)
 DeclMarker(Object, JSFunction)
-DeclMarker(Object, RegExpObject)
 DeclMarker(Object, ScopeObject)
 DeclMarker(Script, JSScript)
 DeclMarker(Shape, Shape)
@@ -174,6 +173,9 @@ MarkValueRootRange(JSTracer *trc, Value *begin, Value *end, const char *name)
 {
     MarkValueRootRange(trc, end - begin, begin, name);
 }
+
+void
+MarkValueRootRangeMaybeNullPayload(JSTracer *trc, size_t len, Value *vec, const char *name);
 
 void
 MarkTypeRoot(JSTracer *trc, types::Type *v, const char *name);

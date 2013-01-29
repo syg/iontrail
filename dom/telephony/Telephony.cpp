@@ -15,10 +15,8 @@
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentUtils.h"
 #include "nsDOMClassInfo.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "nsNetUtil.h"
 #include "nsServiceManagerUtils.h"
-#include "SystemWorkerManager.h"
 #include "nsRadioInterfaceLayer.h"
 #include "nsTArrayHelpers.h"
 
@@ -26,7 +24,6 @@
 #include "TelephonyCall.h"
 
 USING_TELEPHONY_NAMESPACE
-using namespace mozilla::dom::gonk;
 
 namespace {
 
@@ -183,8 +180,6 @@ Telephony::DialInternal(bool isEmergency,
   call.forget(aResult);
   return NS_OK;
 }
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(Telephony)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(Telephony,
                                                   nsDOMEventTargetHelper)

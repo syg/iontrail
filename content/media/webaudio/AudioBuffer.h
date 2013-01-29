@@ -16,7 +16,7 @@
 #include "AudioContext.h"
 
 struct JSContext;
-struct JSObject;
+class JSObject;
 
 namespace mozilla {
 
@@ -73,6 +73,8 @@ public:
                            ErrorResult& aRv) const;
 
 private:
+  void ClearJSChannels();
+
   nsRefPtr<AudioContext> mContext;
   FallibleTArray<JSObject*> mChannels;
   uint32_t mLength;

@@ -5,6 +5,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.LayerView;
+import org.mozilla.gecko.widget.ThumbnailView;
 
 import android.content.Context;
 import android.text.TextUtils;
@@ -66,6 +67,8 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
                 return new BrowserToolbarBackground(context, attrs);
             else if (TextUtils.equals(viewName, "BrowserToolbar$RightEdge"))
                 return new BrowserToolbar.RightEdge(context, attrs);
+            else if (TextUtils.equals(viewName, "CheckableLinearLayout"))
+                return new CheckableLinearLayout(context, attrs);
             else if (TextUtils.equals(viewName, "FormAssistPopup"))
                 return new FormAssistPopup(context, attrs);
             else if (TextUtils.equals(viewName, "ForwardButton"))
@@ -110,6 +113,8 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
                 return new GeckoTextSwitcher(context, attrs);
             else if (TextUtils.equals(viewName, "TextView"))
                 return new GeckoTextView(context, attrs);
+            else if (TextUtils.equals(viewName, "widget.ThumbnailView"))
+                return new ThumbnailView(context, attrs);
             else
                 Log.d(LOGTAG, "Warning: unknown custom view: " + viewName);
         }

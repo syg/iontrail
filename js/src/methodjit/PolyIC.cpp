@@ -11,17 +11,21 @@
 #include "BaseCompiler.h"
 #include "assembler/assembler/LinkBuffer.h"
 #include "TypedArrayIC.h"
-#include "jsscope.h"
 #include "jsnum.h"
 #include "jstypedarray.h"
-#include "jsatominlines.h"
-#include "jsobjinlines.h"
-#include "jsscopeinlines.h"
-#include "jsinterpinlines.h"
 #include "jsautooplen.h"
+
+#include "js/CharacterEncoding.h"
+#include "vm/Shape.h"
 
 #include "vm/ScopeObject-inl.h"
 #include "vm/StringObject-inl.h"
+
+#include "jsatominlines.h"
+#include "jsobjinlines.h"
+#include "jsinterpinlines.h"
+
+#include "vm/Shape-inl.h"
 
 #if defined JS_POLYIC
 
@@ -406,22 +410,22 @@ class SetPropCompiler : public PICStubCompiler
         JS_ASSERT(pic.typeMonitored);
 
         RecompilationMonitor monitor(cx);
-        jsid id = NameToId(name);
 
         types::TypeObject *type = obj->getType(cx);
         if (monitor.recompiled())
             return false;
 
         if (!type->unknownProperties()) {
-            types::AutoEnterTypeInference enter(cx);
-            types::TypeSet *types = type->getProperty(cx, types::MakeTypeId(cx, id), true);
+            types::AutoEnterAnalysis enter(cx);
+            RootedId id(cx, NameToId(name));
+            types::TypeSet *types = type->getProperty(cx, types::IdToTypeId(id), true);
             if (!types)
                 return false;
 
             jsbytecode *pc;
             RootedScript script(cx, cx->stack.currentScript(&pc));
 
-            if (!JSScript::ensureRanInference(cx, script) || monitor.recompiled())
+            if (!script->ensureRanInference(cx) || monitor.recompiled())
                 return false;
 
             JS_ASSERT(*pc == JSOP_SETPROP || *pc == JSOP_SETNAME);
@@ -560,7 +564,7 @@ class SetPropCompiler : public PICStubCompiler
              * Since we're changing the object's shape, we need a write
              * barrier. Taking the slow path is the easiest way to get one.
              */
-            if (cx->compartment->compileBarriers())
+            if (cx->zone()->compileBarriers())
                 return disable("ADDPROP write barrier required");
 #endif
 
@@ -1303,7 +1307,7 @@ class GetPropCompiler : public PICStubCompiler
             // that will complicate property lookups on them.
             JS_ASSERT_IF(expando, expando->isNative() && expando->getProto() == NULL);
 
-            if (expando && expando->nativeLookupNoAllocation(name) == NULL) {
+            if (expando && expando->nativeLookup(cx, name) == NULL) {
                 Jump expandoGuard = masm.testObject(Assembler::NotEqual, expandoAddress);
                 if (!shapeMismatches.append(expandoGuard))
                     return error();
@@ -2409,12 +2413,12 @@ GetElementIC::attachGetProp(VMFrame &f, HandleObject obj, HandleValue v, HandleP
 
     CodeLocationLabel cs = buffer.finalize(f);
 #if DEBUG
-    char *chars = DeflateString(cx, v.toString()->getChars(cx), v.toString()->length());
+    Latin1CharsZ latin1 = LossyTwoByteCharsToNewLatin1CharsZ(cx, v.toString()->ensureLinear(cx)->range());
     JaegerSpew(JSpew_PICs, "generated %s stub at %p for atom %p (\"%s\") shape %p (%s: %d)\n",
-               js_CodeName[JSOp(*f.pc())], cs.executableAddress(), (void*)name, chars,
+               js_CodeName[JSOp(*f.pc())], cs.executableAddress(), (void*)name, latin1.get(),
                (void*)holder->lastProperty(), cx->fp()->script()->filename,
                CurrentLine(cx));
-    js_free(chars);
+    JS_free(latin1);
 #endif
 
     // Update the inline guards, if needed.
@@ -2648,7 +2652,7 @@ ic::GetElement(VMFrame &f, ic::GetElementIC *ic)
     if (idval.isInt32() && INT_FITS_IN_JSID(idval.toInt32())) {
         id = INT_TO_JSID(idval.toInt32());
     } else {
-        if (!InternNonIntElementId(cx, obj, idval, &id))
+        if (!InternNonIntElementId<CanGC>(cx, obj, idval, &id))
             THROW();
     }
 
@@ -2842,7 +2846,7 @@ SetElementIC::shouldUpdate(VMFrame &f)
         return false;
     }
 #ifdef JSGC_INCREMENTAL_MJ
-    JS_ASSERT(!f.cx->compartment->compileBarriers());
+    JS_ASSERT(!f.cx->zone()->compileBarriers());
 #endif
     JS_ASSERT(stubsGenerated < MAX_PIC_STUBS);
     return true;

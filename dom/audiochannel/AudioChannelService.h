@@ -84,16 +84,19 @@ protected:
     AUDIO_CHANNEL_INT_CONTENT,
     AUDIO_CHANNEL_INT_CONTENT_HIDDEN,
     AUDIO_CHANNEL_INT_NOTIFICATION,
+    AUDIO_CHANNEL_INT_NOTIFICATION_HIDDEN,
     AUDIO_CHANNEL_INT_ALARM,
+    AUDIO_CHANNEL_INT_ALARM_HIDDEN,
     AUDIO_CHANNEL_INT_TELEPHONY,
+    AUDIO_CHANNEL_INT_TELEPHONY_HIDDEN,
     AUDIO_CHANNEL_INT_RINGER,
+    AUDIO_CHANNEL_INT_RINGER_HIDDEN,
     AUDIO_CHANNEL_INT_PUBLICNOTIFICATION,
+    AUDIO_CHANNEL_INT_PUBLICNOTIFICATION_HIDDEN,
     AUDIO_CHANNEL_INT_LAST
   };
 
   bool ChannelsActiveWithHigherPriorityThan(AudioChannelInternalType aType);
-
-  bool HasMoreThanOneContentChannelHidden();
 
   const char* ChannelName(AudioChannelType aType);
 
@@ -124,6 +127,9 @@ protected:
   nsTArray<uint64_t> mChannelCounters[AUDIO_CHANNEL_INT_LAST];
 
   AudioChannelType mCurrentHigherChannel;
+
+  nsTArray<uint64_t> mActiveContentChildIDs;
+  bool mActiveContentChildIDsFrozen;
 
   // This is needed for IPC comunication between
   // AudioChannelServiceChild and this class.

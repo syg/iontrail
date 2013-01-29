@@ -854,7 +854,6 @@ const int32_t nsCSSProps::kColorKTable[] = {
   eCSSKeyword__moz_mac_secondaryhighlight, LookAndFeel::eColorID__moz_mac_secondaryhighlight,
   eCSSKeyword__moz_menuhover, LookAndFeel::eColorID__moz_menuhover,
   eCSSKeyword__moz_menuhovertext, LookAndFeel::eColorID__moz_menuhovertext,
-  eCSSKeyword__moz_menubar, LookAndFeel::eColorID__moz_menubar,
   eCSSKeyword__moz_menubartext, LookAndFeel::eColorID__moz_menubartext,
   eCSSKeyword__moz_menubarhovertext, LookAndFeel::eColorID__moz_menubarhovertext,
   eCSSKeyword__moz_oddtreerow, LookAndFeel::eColorID__moz_oddtreerow,
@@ -1452,7 +1451,7 @@ const int32_t nsCSSProps::kUserSelectKTable[] = {
   eCSSKeyword_toggle,     NS_STYLE_USER_SELECT_TOGGLE,
   eCSSKeyword_tri_state,  NS_STYLE_USER_SELECT_TRI_STATE,
   eCSSKeyword__moz_all,   NS_STYLE_USER_SELECT_MOZ_ALL,
-  eCSSKeyword__moz_none,  NS_STYLE_USER_SELECT_MOZ_NONE,
+  eCSSKeyword__moz_none,  NS_STYLE_USER_SELECT_NONE,
   eCSSKeyword_UNKNOWN,-1
 };
 

@@ -71,15 +71,7 @@ inline int32_t CompareIntegers(uint32_t a, uint32_t b)
 
 using namespace mozilla::places;
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsNavHistoryResultNode)
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsNavHistoryResultNode)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END 
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsNavHistoryResultNode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParent);
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+NS_IMPL_CYCLE_COLLECTION_1(nsNavHistoryResultNode, mParent)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsNavHistoryResultNode)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsINavHistoryResultNode)
@@ -327,8 +319,6 @@ nsNavHistoryFullVisitResultNode::nsNavHistoryFullVisitResultNode(
 {
 }
 
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsNavHistoryContainerResultNode)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsNavHistoryContainerResultNode, nsNavHistoryResultNode)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mResult)
@@ -4012,6 +4002,18 @@ nsNavHistoryFolderResultNode::OnItemVisited(int64_t aItemId,
   nsresult rv = ReverseUpdateStats(mAccessCount - oldAccessCount);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // Update frecency for proper frecency ordering.
+  // TODO (bug 832617): we may avoid one query here, by providing the new
+  // frecency value in the notification.
+  nsNavHistory* history = nsNavHistory::GetHistoryService();
+  NS_ENSURE_TRUE(history, NS_OK);
+  nsRefPtr<nsNavHistoryResultNode> visitNode;
+  rv = history->VisitIdToResultNode(aVisitId, mOptions,
+                                    getter_AddRefs(visitNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_STATE(visitNode);
+  node->mFrecency = visitNode->mFrecency;
+
   if (AreChildrenVisible()) {
     // Sorting has not changed, just redraw the row if it's visible.
     nsNavHistoryResult* result = GetResult();
@@ -4024,7 +4026,9 @@ nsNavHistoryFolderResultNode::OnItemVisited(int64_t aItemId,
   if (sortType == nsINavHistoryQueryOptions::SORT_BY_VISITCOUNT_ASCENDING ||
       sortType == nsINavHistoryQueryOptions::SORT_BY_VISITCOUNT_DESCENDING ||
       sortType == nsINavHistoryQueryOptions::SORT_BY_DATE_ASCENDING ||
-      sortType == nsINavHistoryQueryOptions::SORT_BY_DATE_DESCENDING) {
+      sortType == nsINavHistoryQueryOptions::SORT_BY_DATE_DESCENDING ||
+      sortType == nsINavHistoryQueryOptions::SORT_BY_FRECENCY_ASCENDING ||
+      sortType == nsINavHistoryQueryOptions::SORT_BY_FRECENCY_DESCENDING) {
     int32_t childIndex = FindChild(node);
     NS_ASSERTION(childIndex >= 0, "Could not find child we just got a reference to");
     if (childIndex >= 0) {
@@ -4110,8 +4114,6 @@ nsNavHistorySeparatorResultNode::nsNavHistorySeparatorResultNode()
 {
 }
 
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsNavHistoryResult)
 
 static PLDHashOperator
 RemoveBookmarkFolderObserversCallback(nsTrimInt64HashKey::KeyType aKey,

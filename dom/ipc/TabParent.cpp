@@ -52,6 +52,7 @@
 #include "nsThreadUtils.h"
 #include "StructuredCloneUtils.h"
 #include "TabChild.h"
+#include <algorithm>
 
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
@@ -508,22 +509,7 @@ TabParent::RecvSyncMessage(const nsString& aMessage,
                            const ClonedMessageData& aData,
                            InfallibleTArray<nsString>* aJSONRetVal)
 {
-  const SerializedStructuredCloneBuffer& buffer = aData.data();
-  const InfallibleTArray<PBlobParent*>& blobParents = aData.blobsParent();
-  StructuredCloneData cloneData;
-  cloneData.mData = buffer.data;
-  cloneData.mDataLength = buffer.dataLength;
-  if (!blobParents.IsEmpty()) {
-    uint32_t length = blobParents.Length();
-    cloneData.mClosure.mBlobs.SetCapacity(length);
-    for (uint32_t i = 0; i < length; ++i) {
-      BlobParent* blobParent = static_cast<BlobParent*>(blobParents[i]);
-      MOZ_ASSERT(blobParent);
-      nsCOMPtr<nsIDOMBlob> blob = blobParent->GetBlob();
-      MOZ_ASSERT(blob);
-      cloneData.mClosure.mBlobs.AppendElement(blob);
-    }
-  }
+  StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
   return ReceiveMessage(aMessage, true, &cloneData, aJSONRetVal);
 }
 
@@ -531,24 +517,7 @@ bool
 TabParent::RecvAsyncMessage(const nsString& aMessage,
                                   const ClonedMessageData& aData)
 {
-    const SerializedStructuredCloneBuffer& buffer = aData.data();
-  const InfallibleTArray<PBlobParent*>& blobParents = aData.blobsParent();
-
-    StructuredCloneData cloneData;
-    cloneData.mData = buffer.data;
-    cloneData.mDataLength = buffer.dataLength;
-
-  if (!blobParents.IsEmpty()) {
-    uint32_t length = blobParents.Length();
-      cloneData.mClosure.mBlobs.SetCapacity(length);
-    for (uint32_t i = 0; i < length; ++i) {
-      BlobParent* blobParent = static_cast<BlobParent*>(blobParents[i]);
-      MOZ_ASSERT(blobParent);
-      nsCOMPtr<nsIDOMBlob> blob = blobParent->GetBlob();
-        MOZ_ASSERT(blob);
-        cloneData.mClosure.mBlobs.AppendElement(blob);
-      }
-    }
+  StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
   return ReceiveMessage(aMessage, false, &cloneData, nullptr);
 }
 
@@ -660,7 +629,7 @@ TabParent::HandleQueryContentEvent(nsQueryContentEvent& aEvent)
   {
   case NS_QUERY_SELECTED_TEXT:
     {
-      aEvent.mReply.mOffset = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
+      aEvent.mReply.mOffset = std::min(mIMESelectionAnchor, mIMESelectionFocus);
       if (mIMESelectionAnchor == mIMESelectionFocus) {
         aEvent.mReply.mString.Truncate(0);
       } else {
@@ -709,7 +678,7 @@ TabParent::SendCompositionEvent(nsCompositionEvent& event)
     return false;
   }
   mIMEComposing = event.message != NS_COMPOSITION_END;
-  mIMECompositionStart = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
+  mIMECompositionStart = std::min(mIMESelectionAnchor, mIMESelectionFocus);
   if (mIMECompositionEnding)
     return true;
   event.seqno = ++mIMESeqno;
@@ -737,7 +706,7 @@ TabParent::SendTextEvent(nsTextEvent& event)
   // We must be able to simulate the selection because
   // we might not receive selection updates in time
   if (!mIMEComposing) {
-    mIMECompositionStart = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
+    mIMECompositionStart = std::min(mIMESelectionAnchor, mIMESelectionFocus);
   }
   mIMESelectionAnchor = mIMESelectionFocus =
       mIMECompositionStart + event.theText.Length();

@@ -34,6 +34,7 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_propertyview-10.js \
 	browser_dbg_propertyview-edit.js \
 	browser_dbg_propertyview-edit-watch.js \
+	browser_dbg_propertyview-big-data.js \
 	browser_dbg_propertyview-data.js \
 	browser_dbg_propertyview-filter-01.js \
 	browser_dbg_propertyview-filter-02.js \
@@ -85,6 +86,7 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_iframes.js \
 	browser_dbg_pause-exceptions.js \
 	browser_dbg_multiple-windows.js \
+	browser_dbg_bfcache.js \
 	browser_dbg_breakpoint-new-script.js \
 	browser_dbg_bug737803_editor_actual_location.js \
 	browser_dbg_progress-listener-bug.js \
@@ -92,14 +94,6 @@ MOCHITEST_BROWSER_TESTS = \
 	$(filter disabled-for-intermittent-failures--bug-753225, browser_dbg_createRemote.js) \
 	head.js \
 	$(NULL)
-
-ifneq ($(OS_ARCH),WINNT)
-MOCHITEST_BROWSER_TESTS += \
-	browser_dbg_bfcache.js \
-	$(NULL)
-else
-$(filter disabled-temporarily--bug-774619, browser_dbg_bfcache.js)
-endif
 
 MOCHITEST_BROWSER_PAGES = \
 	browser_dbg_tab1.html \
@@ -109,6 +103,7 @@ MOCHITEST_BROWSER_PAGES = \
 	browser_dbg_script-switching.html \
 	test-script-switching-01.js \
 	test-script-switching-02.js \
+	browser_dbg_big-data.html \
 	browser_dbg_frame-parameters.html \
 	browser_dbg_update-editor-mode.html \
 	test-editor-mode \

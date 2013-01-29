@@ -274,6 +274,8 @@
            side="right"
            type="arrow"
            hidden="true"
+           rolluponmousewheel="true"
+           consumeoutsideclicks="false"
            noautofocus="true"
            position="topcenter topright"/>
 
@@ -312,7 +314,7 @@
     <menupopup id="contentAreaContextMenu" pagemenu="start"
                onpopupshowing="if (event.target != this)
                                  return true;
-                               gContextMenu = new nsContextMenu(this, gBrowser, event.shiftKey);
+                               gContextMenu = new nsContextMenu(this, event.shiftKey);
                                if (gContextMenu.shouldDisplay)
                                  updateEditUIVisibility();
                                return gContextMenu.shouldDisplay;"
@@ -1105,6 +1107,7 @@
           persist="width">
       <browser id="social-sidebar-browser"
                type="content"
+               context="contentAreaContextMenu"
                disableglobalhistory="true"
                flex="1"
                style="min-width: 14em; width: 18em; max-width: 36em;"/>

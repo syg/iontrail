@@ -44,8 +44,6 @@ CellBroadcastCallback::CellBroadcastCallback(CellBroadcast* aCellBroadcast)
  * CellBroadcast Implementation.
  */
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(CellBroadcast)
-
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(CellBroadcast,
                                                   nsDOMEventTargetHelper)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -56,7 +54,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(CellBroadcast)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozCellBroadcast)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMMozCellBroadcast)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(MozCellBroadcast)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 

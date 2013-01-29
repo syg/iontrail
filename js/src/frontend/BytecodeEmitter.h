@@ -83,7 +83,7 @@ struct BytecodeEmitter
 
     Parser          *const parser;  /* the parser */
 
-    StackFrame      *const callerFrame; /* scripted caller frame for eval and dbgapi */
+    AbstractFramePtr callerFrame;   /* scripted caller frame for eval and dbgapi */
 
     StmtInfoBCE     *topStmt;       /* top of statement info stack */
     StmtInfoBCE     *topScopeStmt;  /* top lexical scope statement */
@@ -114,6 +114,9 @@ struct BytecodeEmitter
 
     bool            emittingForInit:1;  /* true while emitting init expr of for; exclude 'in' */
 
+    bool            emittingRunOnceLambda:1; /* true while emitting a lambda which is only
+                                                expected to run once. */
+
     const bool      hasGlobalScope:1;   /* frontend::CompileScript's scope chain is the
                                            global object */
 
@@ -123,7 +126,7 @@ struct BytecodeEmitter
                                            the field |selfHostingMode| in Parser.h for details. */
 
     BytecodeEmitter(BytecodeEmitter *parent, Parser *parser, SharedContext *sc,
-                    HandleScript script, StackFrame *callerFrame, bool hasGlobalScope,
+                    HandleScript script, AbstractFramePtr callerFrame, bool hasGlobalScope,
                     unsigned lineno, bool selfHostingMode = false);
     bool init();
 
@@ -153,6 +156,7 @@ struct BytecodeEmitter
         return true;
     }
 
+    bool isInLoop();
     bool checkSingletonContext();
 
     bool needsImplicitThis();

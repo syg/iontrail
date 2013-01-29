@@ -165,6 +165,7 @@ _BROWSER_FILES = \
                  browser_bug749738.js \
                  browser_bug783614.js \
                  browser_bug797677.js \
+                 browser_bug832435.js \
                  browser_canonizeURL.js \
                  browser_customize.js \
                  browser_findbarClose.js \
@@ -187,7 +188,7 @@ _BROWSER_FILES = \
                  browser_plainTextLinks.js \
                  browser_pluginnotification.js \
                  browser_plugins_added_dynamically.js \
-                 browser_clickToPlayPluginScriptAccessPopup.js \
+                 browser_CTPScriptPlugin.js \
                  browser_pluginplaypreview.js \
                  browser_relatedTabs.js \
                  browser_sanitize-passwordDisabledHosts.js \
@@ -253,6 +254,7 @@ _BROWSER_FILES = \
                  plugin_add_dynamically.html \
                  plugin_clickToPlayAllow.html \
                  plugin_clickToPlayDeny.html \
+                 plugin_bug744745.html \
                  plugin_bug749455.html \
                  plugin_bug797677.html \
                  plugin_bug818009.html \
@@ -282,6 +284,7 @@ _BROWSER_FILES = \
                  browser_tabDrop.js \
                  browser_lastAccessedTab.js \
                  browser_bug734076.js \
+                 browser_bug744745.js \
                  browser_bug812562.js \
                  browser_bug818009.js \
                  browser_bug818118.js \

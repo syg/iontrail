@@ -47,7 +47,7 @@ var gContainingWindow = null;
 var gFilter = null;
 
 // "<!--CLEAR-->"
-const BLANK_URL_FOR_CLEARING = "data:text/html,%3C%21%2D%2DCLEAR%2D%2D%3E";
+const BLANK_URL_FOR_CLEARING = "data:text/html;charset=UTF-8,%3C%21%2D%2DCLEAR%2D%2D%3E";
 
 var gBrowser;
 // Are we testing web content loaded in a separate process?
@@ -574,6 +574,12 @@ function BuildConditionSandbox(aURL) {
     sandbox.gtk2Widget = xr.widgetToolkit == "gtk2";
     sandbox.qtWidget = xr.widgetToolkit == "qt";
     sandbox.winWidget = xr.widgetToolkit == "windows";
+
+#if MOZ_ASAN
+    sandbox.AddressSanitizer = true;
+#else
+    sandbox.AddressSanitizer = false;
+#endif
 
     var hh = CC[NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX + "http"].
                  getService(CI.nsIHttpProtocolHandler);

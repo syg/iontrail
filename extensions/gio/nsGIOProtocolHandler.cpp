@@ -19,6 +19,7 @@
 #include "nsNetUtil.h"
 #include "mozilla/Monitor.h"
 #include <gio/gio.h>
+#include <algorithm>
 
 #define MOZ_GIO_SCHEME              "moz-gio"
 #define MOZ_GIO_SUPPORTED_PROTOCOLS "network.gio.supported-protocols"
@@ -134,7 +135,7 @@ static void mount_operation_ask_password (GMountOperation   *mount_op,
                                           gpointer          user_data);
 //-----------------------------------------------------------------------------
 
-class nsGIOInputStream : public nsIInputStream
+class nsGIOInputStream MOZ_FINAL : public nsIInputStream
 {
   public:
     NS_DECL_ISUPPORTS
@@ -447,7 +448,7 @@ nsGIOInputStream::DoRead(char *aBuf, uint32_t aCount, uint32_t *aCountRead)
       uint32_t bufLen = mDirBuf.Length() - mDirBufCursor;
       if (bufLen)
       {
-        uint32_t n = NS_MIN(bufLen, aCount);
+        uint32_t n = std::min(bufLen, aCount);
         memcpy(aBuf, mDirBuf.get() + mDirBufCursor, n);
         *aCountRead += n;
         aBuf += n;
@@ -618,6 +619,7 @@ nsGIOInputStream::Close()
 
     NS_ASSERTION(thread && NS_SUCCEEDED(rv), "leaking channel reference");
     mChannel = nullptr;
+    (void) rv;
   }
 
   mSpec.Truncate(); // free memory
@@ -879,8 +881,8 @@ mount_operation_ask_password (GMountOperation   *mount_op,
 
 //-----------------------------------------------------------------------------
 
-class nsGIOProtocolHandler : public nsIProtocolHandler
-                           , public nsIObserver
+class nsGIOProtocolHandler MOZ_FINAL : public nsIProtocolHandler
+                                     , public nsIObserver
 {
   public:
     NS_DECL_ISUPPORTS
@@ -890,7 +892,7 @@ class nsGIOProtocolHandler : public nsIProtocolHandler
     nsresult Init();
 
   private:
-    void   InitSupportedProtocolsPref(nsIPrefBranch *prefs);
+    void InitSupportedProtocolsPref(nsIPrefBranch *prefs);
     bool IsSupportedProtocol(const nsCString &spec);
 
     nsCString mSupportedProtocols;

@@ -3,7 +3,9 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "MediaEngine.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/Services.h"
+#include "mozilla/unused.h"
 #include "nsIMediaManager.h"
 
 #include "nsHashKeys.h"
@@ -14,6 +16,7 @@
 
 #include "nsPIDOMWindow.h"
 #include "nsIDOMNavigatorUserMedia.h"
+#include "nsXULAppAPI.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/StaticPtr.h"
 #include "prlog.h"
@@ -49,10 +52,20 @@ class GetUserMediaNotificationEvent: public nsRunnable
         obs->NotifyObservers(nullptr,
             "recording-device-events",
             NS_LITERAL_STRING("starting").get());
+        // Forward recording events to parent process.
+        // The events are gathered in chrome process and used for recording indicator
+        if (XRE_GetProcessType() != GeckoProcessType_Default) {
+          unused << mozilla::dom::ContentChild::GetSingleton()->SendRecordingDeviceEvents(NS_LITERAL_STRING("starting"));
+        }
       } else {
         obs->NotifyObservers(nullptr,
             "recording-device-events",
             NS_LITERAL_STRING("shutdown").get());
+        // Forward recording events to parent process.
+        // The events are gathered in chrome process and used for recording indicator
+        if (XRE_GetProcessType() != GeckoProcessType_Default) {
+          unused << mozilla::dom::ContentChild::GetSingleton()->SendRecordingDeviceEvents(NS_LITERAL_STRING("shutdown"));
+        }
       }
       return NS_OK;
     }
@@ -125,7 +138,10 @@ public:
     if (mStream && !mRemoved) {
       MM_LOG(("Listener removed on purpose, mFinished = %d", (int) mFinished));
       mRemoved = true; // RemoveListener is async, avoid races
-      mStream->RemoveListener(this);
+      // If it's destroyed, don't call - listener will be removed and we'll be notified!
+      if (!mStream->IsDestroyed()) {
+        mStream->RemoveListener(this);
+      }
     }
   }
 

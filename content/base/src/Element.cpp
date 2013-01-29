@@ -404,8 +404,7 @@ Element::WrapObject(JSContext *aCx, JSObject *aScope,
   }
 
   nsRefPtr<nsXBLBinding> binding;
-  xblService->LoadBindings(this, uri, principal, false, getter_AddRefs(binding),
-                           &dummy);
+  xblService->LoadBindings(this, uri, principal, getter_AddRefs(binding), &dummy);
   
   if (binding) {
     if (nsContentUtils::IsSafeToRunScript()) {
@@ -464,7 +463,7 @@ Element::GetClassList()
 }
 
 void
-Element::GetClassList(nsIDOMDOMTokenList** aClassList)
+Element::GetClassList(nsISupports** aClassList)
 {
   NS_IF_ADDREF(*aClassList = GetClassList());
 }

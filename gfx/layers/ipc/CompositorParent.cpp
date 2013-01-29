@@ -9,6 +9,7 @@
 #include "mozilla/DebugOnly.h"
 
 #include "base/basictypes.h"
+#include <algorithm>
 
 #if defined(MOZ_WIDGET_ANDROID)
 # include <android/log.h>
@@ -510,28 +511,26 @@ private:
   {
     if (RefLayer* ref = aLayer->AsRefLayer()) {
       if (const LayerTreeState* state = GetIndirectShadowTree(ref->GetReferentId())) {
-        Layer* referent = state->mRoot;
-
-        if (!ref->GetVisibleRegion().IsEmpty()) {
-          ScreenOrientation chromeOrientation = mTargetConfig.orientation();
-          ScreenOrientation contentOrientation = state->mTargetConfig.orientation();
-          if (!IsSameDimension(chromeOrientation, contentOrientation) &&
-              ContentMightReflowOnOrientationChange(mTargetConfig.clientBounds())) {
-            mReadyForCompose = false;
+        if (Layer* referent = state->mRoot) {
+          if (!ref->GetVisibleRegion().IsEmpty()) {
+            ScreenOrientation chromeOrientation = mTargetConfig.orientation();
+            ScreenOrientation contentOrientation = state->mTargetConfig.orientation();
+            if (!IsSameDimension(chromeOrientation, contentOrientation) &&
+                ContentMightReflowOnOrientationChange(mTargetConfig.clientBounds())) {
+              mReadyForCompose = false;
+            }
           }
-        }
 
-        if (OP == Resolve) {
-          ref->ConnectReferentLayer(referent);
-          if (AsyncPanZoomController* apzc = state->mController) {
-            referent->SetUserData(&sPanZoomUserDataKey,
-                                  new PanZoomUserData(apzc));
+          if (OP == Resolve) {
+            ref->ConnectReferentLayer(referent);
+            if (AsyncPanZoomController* apzc = state->mController) {
+              referent->SetUserData(&sPanZoomUserDataKey,
+                                    new PanZoomUserData(apzc));
+            }
           } else {
-            CompensateForContentScrollOffset(ref, referent);
+            ref->DetachReferentLayer(referent);
+            referent->RemoveUserData(&sPanZoomUserDataKey);
           }
-        } else {
-          ref->DetachReferentLayer(referent);
-          referent->RemoveUserData(&sPanZoomUserDataKey);
         }
       }
     }
@@ -539,31 +538,6 @@ private:
          child; child = child->GetNextSibling()) {
       WalkTheTree<OP>(child, aLayer);
     }
-  }
-
-  // XXX the fact that we have to do this evidence of bad API design.
-  void CompensateForContentScrollOffset(Layer* aContainer,
-                                        Layer* aShadowContent)
-  {
-    ContainerLayer* c = aShadowContent->AsContainerLayer();
-    if (!c) {
-      return;
-    }
-    const FrameMetrics& fm = c->GetFrameMetrics();
-    gfx3DMatrix m(aContainer->GetTransform());
-    m.Translate(gfxPoint3D(-fm.GetScrollOffsetInLayerPixels().x,
-                           -fm.GetScrollOffsetInLayerPixels().y, 0));
-
-    // The transform already takes the resolution scale into account.  Since we
-    // will apply the resolution scale again when computing the effective
-    // transform, we must apply the inverse resolution scale here.
-    m.Scale(1.0f/c->GetPreXScale(),
-            1.0f/c->GetPreYScale(),
-            1);
-    m.ScalePost(1.0f/c->GetPostXScale(),
-                1.0f/c->GetPostYScale(),
-                1);
-    aContainer->AsShadowLayer()->SetShadowTransform(m);
   }
 
   bool IsSameDimension(ScreenOrientation o1, ScreenOrientation o2) {
@@ -760,9 +734,9 @@ SampleValue(float aPortion, Animation& aAnimation, nsStyleAnimation::Value& aSta
                0.0f);
   transform.Translate(newOrigin);
 
-  InfallibleTArray<TransformFunction>* functions = new InfallibleTArray<TransformFunction>();
-  functions->AppendElement(TransformMatrix(transform));
-  *aValue = *functions;
+  InfallibleTArray<TransformFunction> functions;
+  functions.AppendElement(TransformMatrix(transform));
+  *aValue = functions;
 }
 
 static bool
@@ -983,7 +957,7 @@ CompositorParent::TransformScrollableLayer(Layer* aLayer, const gfx3DMatrix& aRo
   // within the page boundaries.
   if (mContentRect.width * tempScaleDiffX < metrics.mCompositionBounds.width) {
     offset.x = -metricsScrollOffset.x;
-    scaleDiff.width = NS_MIN(1.0f, metrics.mCompositionBounds.width / (float)mContentRect.width);
+    scaleDiff.width = std::min(1.0f, metrics.mCompositionBounds.width / (float)mContentRect.width);
   } else {
     offset.x = clamped(mScrollOffset.x / tempScaleDiffX, (float)mContentRect.x,
                        mContentRect.XMost() - metrics.mCompositionBounds.width / tempScaleDiffX) -
@@ -993,7 +967,7 @@ CompositorParent::TransformScrollableLayer(Layer* aLayer, const gfx3DMatrix& aRo
 
   if (mContentRect.height * tempScaleDiffY < metrics.mCompositionBounds.height) {
     offset.y = -metricsScrollOffset.y;
-    scaleDiff.height = NS_MIN(1.0f, metrics.mCompositionBounds.height / (float)mContentRect.height);
+    scaleDiff.height = std::min(1.0f, metrics.mCompositionBounds.height / (float)mContentRect.height);
   } else {
     offset.y = clamped(mScrollOffset.y / tempScaleDiffY, (float)mContentRect.y,
                        mContentRect.YMost() - metrics.mCompositionBounds.height / tempScaleDiffY) -

@@ -57,6 +57,7 @@
 #include "nsWSRunObject.h"
 #include <cstdlib> // for std::abs(int/long)
 #include <cmath> // for std::abs(float/double)
+#include <algorithm>
 
 class nsISupports;
 class nsRulesInfo;
@@ -1931,7 +1932,7 @@ nsHTMLEditRules::WillDeleteSelection(Selection* aSelection,
       res = nsWSRunObject::PrepareToDeleteRange(mHTMLEditor, address_of(visNode), &so, address_of(visNode), &eo);
       NS_ENSURE_SUCCESS(res, res);
       nsCOMPtr<nsIDOMCharacterData> nodeAsText(do_QueryInterface(visNode));
-      res = mHTMLEditor->DeleteText(nodeAsText, NS_MIN(so, eo), std::abs(eo - so));
+      res = mHTMLEditor->DeleteText(nodeAsText, std::min(so, eo), std::abs(eo - so));
       *aHandled = true;
       NS_ENSURE_SUCCESS(res, res);    
       res = InsertBRIfNeeded(aSelection);
@@ -6315,6 +6316,10 @@ nsHTMLEditRules::ReturnInHeader(nsISelection *aSelection,
     NS_ENSURE_SUCCESS(res, res);
     if (!sibling || !nsTextEditUtils::IsBreak(sibling))
     {
+      res = ClearCachedStyles();
+      NS_ENSURE_SUCCESS(res, res);
+      mHTMLEditor->mTypeInState->ClearAllProps();
+
       // create a paragraph
       NS_NAMED_LITERAL_STRING(pType, "p");
       nsCOMPtr<nsIDOMNode> pNode;
@@ -6560,7 +6565,7 @@ nsHTMLEditRules::ReturnInListItem(nsISelection *aSelection,
       // otherwise kill this listitem
       res = mHTMLEditor->DeleteNode(aListItem);
       NS_ENSURE_SUCCESS(res, res);
-      
+
       // time to insert a paragraph
       NS_NAMED_LITERAL_STRING(pType, "p");
       nsCOMPtr<nsIDOMNode> pNode;

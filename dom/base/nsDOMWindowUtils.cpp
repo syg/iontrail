@@ -50,6 +50,7 @@
 #include "nsIContentViewer.h"
 #include "nsIMarkupDocumentViewer.h"
 #include "nsClientRect.h"
+#include <algorithm>
 
 #if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
 #include <gdk/gdk.h>
@@ -1311,10 +1312,10 @@ nsDOMWindowUtils::CompareCanvases(nsIDOMHTMLCanvasElement *aCanvas1,
 
           different++;
 
-          dc = NS_MAX((uint32_t)abs(p1[0] - p2[0]), dc);
-          dc = NS_MAX((uint32_t)abs(p1[1] - p2[1]), dc);
-          dc = NS_MAX((uint32_t)abs(p1[2] - p2[2]), dc);
-          dc = NS_MAX((uint32_t)abs(p1[3] - p2[3]), dc);
+          dc = std::max((uint32_t)abs(p1[0] - p2[0]), dc);
+          dc = std::max((uint32_t)abs(p1[1] - p2[1]), dc);
+          dc = std::max((uint32_t)abs(p1[2] - p2[2]), dc);
+          dc = std::max((uint32_t)abs(p1[3] - p2[3]), dc);
         }
 
         p1 += 4;
@@ -2136,11 +2137,13 @@ nsDOMWindowUtils::GetLayerManagerType(nsAString& aType)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::StartFrameTimeRecording()
+nsDOMWindowUtils::StartFrameTimeRecording(uint32_t *startIndex)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
+
+  NS_ENSURE_ARG_POINTER(startIndex);
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget)
@@ -2150,13 +2153,16 @@ nsDOMWindowUtils::StartFrameTimeRecording()
   if (!mgr)
     return NS_ERROR_FAILURE;
 
-  mgr->StartFrameTimeRecording();
+  *startIndex = mgr->StartFrameTimeRecording();
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::StopFrameTimeRecording(float** paintTimes, uint32_t *frameCount, float **frameIntervals)
+nsDOMWindowUtils::StopFrameTimeRecording(uint32_t   startIndex,
+                                         float    **paintTimes,
+                                         uint32_t  *frameCount,
+                                         float    **frameIntervals)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
@@ -2176,31 +2182,21 @@ nsDOMWindowUtils::StopFrameTimeRecording(float** paintTimes, uint32_t *frameCoun
 
   nsTArray<float> tmpFrameIntervals;
   nsTArray<float> tmpPaintTimes;
-  mgr->StopFrameTimeRecording(tmpFrameIntervals, tmpPaintTimes);
-
-  *frameIntervals = nullptr;
-  *paintTimes = nullptr;
+  mgr->StopFrameTimeRecording(startIndex, tmpFrameIntervals, tmpPaintTimes);
   *frameCount = tmpFrameIntervals.Length();
 
-  if (*frameCount != 0) {
-    *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
-    if (!*frameIntervals)
-      return NS_ERROR_OUT_OF_MEMORY;
+  *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
+  *paintTimes =     (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
 
-    *paintTimes = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
-    if (!*paintTimes)
-      return NS_ERROR_OUT_OF_MEMORY;
-
-    /* copy over the frame intervals and paint times into the arrays we just allocated */
-    for (uint32_t i = 0; i < *frameCount; i++) {
-      (*frameIntervals)[i] = tmpFrameIntervals[i];
-#ifndef ANDROID
-      (*paintTimes)[i] = tmpPaintTimes[i];
+  /* copy over the frame intervals and paint times into the arrays we just allocated */
+  for (uint32_t i = 0; i < *frameCount; i++) {
+    (*frameIntervals)[i] = tmpFrameIntervals[i];
+#ifndef MOZ_WIDGET_GONK
+    (*paintTimes)[i] = tmpPaintTimes[i];
 #else
-      // Waiting for bug 785597 to work on android.
-      (*paintTimes)[i] = 0;
+    // Waiting for bug 830475 to work on B2G.
+    (*paintTimes)[i] = 0;
 #endif
-    }
   }
 
   return NS_OK;
@@ -3119,5 +3115,20 @@ nsDOMWindowUtils::IsNodeDisabledForEvents(nsIDOMNode* aNode, bool* aRetVal)
     node = node->GetParentNode();
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::DispatchEventToChromeOnly(nsIDOMEventTarget* aTarget,
+                                            nsIDOMEvent* aEvent,
+                                            bool* aRetVal)
+{
+  *aRetVal = false;
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+  NS_ENSURE_STATE(aTarget && aEvent);
+  aEvent->GetInternalNSEvent()->mFlags.mOnlyChromeDispatch = true;
+  aTarget->DispatchEvent(aEvent, aRetVal);
   return NS_OK;
 }

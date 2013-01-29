@@ -181,7 +181,7 @@ GC(JSContext *cx, unsigned argc, jsval *vp)
             if (!JS_StringEqualsAscii(cx, arg.toString(), "compartment", &compartment))
                 return false;
         } else if (arg.isObject()) {
-            PrepareCompartmentForGC(UnwrapObject(&arg.toObject())->compartment());
+            PrepareZoneForGC(UnwrapObject(&arg.toObject())->zone());
             compartment = true;
         }
     }
@@ -328,6 +328,23 @@ InternalConst(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
+static JSBool
+GCPreserveCode(JSContext *cx, unsigned argc, jsval *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    if (argc != 0) {
+        RootedObject callee(cx, &args.callee());
+        ReportUsageError(cx, callee, "Wrong number of arguments");
+        return JS_FALSE;
+    }
+
+    cx->runtime->alwaysPreserveCode = true;
+
+    *vp = JSVAL_VOID;
+    return JS_TRUE;
+}
+
 #ifdef JS_GC_ZEAL
 static JSBool
 GCZeal(JSContext *cx, unsigned argc, jsval *vp)
@@ -366,12 +383,12 @@ ScheduleGC(JSContext *cx, unsigned argc, jsval *vp)
         /* Schedule a GC to happen after |arg| allocations. */
         JS_ScheduleGC(cx, args[0].toInt32());
     } else if (args[0].isObject()) {
-        /* Ensure that |comp| is collected during the next GC. */
-        JSCompartment *comp = UnwrapObject(&args[0].toObject())->compartment();
-        PrepareCompartmentForGC(comp);
+        /* Ensure that |zone| is collected during the next GC. */
+        Zone *zone = UnwrapObject(&args[0].toObject())->zone();
+        PrepareZoneForGC(zone);
     } else if (args[0].isString()) {
         /* This allows us to schedule atomsCompartment for GC. */
-        PrepareCompartmentForGC(args[0].toString()->compartment());
+        PrepareZoneForGC(args[0].toString()->zone());
     }
 
     *vp = JSVAL_VOID;
@@ -470,25 +487,11 @@ GCState(JSContext *cx, unsigned argc, jsval *vp)
     else
         JS_NOT_REACHED("Unobserveable global GC state");
 
-    *vp = StringValue(js_NewStringCopyZ(cx, state));
+    JSString *str = JS_NewStringCopyZ(cx, state);
+    if (!str)
+        return false;
+    *vp = StringValue(str);
     return true;
-}
-
-static JSBool
-GCPreserveCode(JSContext *cx, unsigned argc, jsval *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    if (argc != 0) {
-        RootedObject callee(cx, &args.callee());
-        ReportUsageError(cx, callee, "Wrong number of arguments");
-        return JS_FALSE;
-    }
-
-    cx->runtime->alwaysPreserveCode = true;
-
-    *vp = JSVAL_VOID;
-    return JS_TRUE;
 }
 
 static JSBool
@@ -905,6 +908,10 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "  Return the current value of the finalization counter that is incremented\n"
 "  each time an object returned by the makeFinalizeObserver is finalized."),
 
+    JS_FN_HELP("gcPreserveCode", GCPreserveCode, 0, 0,
+"gcPreserveCode()",
+"  Preserve JIT code during garbage collections."),
+
 #ifdef JS_GC_ZEAL
     JS_FN_HELP("gczeal", GCZeal, 2, 0,
 "gczeal(level, [period])",
@@ -949,10 +956,6 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("gcstate", GCState, 0, 0,
 "gcstate()",
 "  Report the global GC state."),
-
-    JS_FN_HELP("gcPreserveCode", GCPreserveCode, 0, 0,
-"gcPreserveCode()",
-"  Preserve JIT code during garbage collections."),
 
     JS_FN_HELP("deterministicgc", DeterministicGC, 1, 0,
 "deterministicgc(true|false)",

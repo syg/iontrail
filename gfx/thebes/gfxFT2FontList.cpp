@@ -128,7 +128,7 @@ FT2FontEntry::CreateScaledFont(const gfxFontStyle *aStyle)
 
     cairo_font_options_t *fontOptions = cairo_font_options_create();
 
-    if (!gfxPlatform::GetPlatform()->FontHintingEnabled()) {
+    if (gfxPlatform::GetPlatform()->RequiresLinearZoom()) {
         cairo_font_options_set_hint_metrics(fontOptions, CAIRO_HINT_METRICS_OFF);
     }
 
@@ -935,7 +935,7 @@ void ExtractFontsFromJar(nsIFile* aLocalDir)
         "res/fonts/*.ttf$",
     };
 
-    for (int i = 0; i < ArrayLength(sJarSearchPaths); i++) {
+    for (size_t i = 0; i < ArrayLength(sJarSearchPaths); i++) {
         reader->FindInit(sJarSearchPaths[i], &find);
         while (true) {
             const char* tmpPath;

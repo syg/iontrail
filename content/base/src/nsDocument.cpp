@@ -11,6 +11,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Util.h"
 #include "mozilla/Likely.h"
+#include <algorithm>
 
 #ifdef MOZ_LOGGING
 // so we can get logging even in release builds
@@ -41,7 +42,6 @@
 #include "nsIDOMStyleSheet.h"
 #include "nsDOMAttribute.h"
 #include "nsIDOMDOMStringList.h"
-#include "nsIDOMDOMImplementation.h"
 #include "nsIDOMDocumentXBL.h"
 #include "mozilla/dom/Element.h"
 #include "nsGenericHTMLElement.h"
@@ -1281,7 +1281,6 @@ nsDOMStyleSheetSetList::GetSets(nsTArray<nsString>& aStyleSets)
 
   int32_t count = mDocument->GetNumberOfStyleSheets();
   nsAutoString title;
-  nsAutoString temp;
   for (int32_t index = 0; index < count; index++) {
     nsIStyleSheet* sheet = mDocument->GetStyleSheetAt(index);
     NS_ASSERTION(sheet, "Null sheet in sheet list!");
@@ -1474,8 +1473,6 @@ nsDocument::~nsDocument()
   mPlugins.Clear();
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsDocument)
-
 NS_INTERFACE_TABLE_HEAD(nsDocument)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
   NS_DOCUMENT_INTERFACE_TABLE_BEGIN(nsDocument)
@@ -1515,8 +1512,27 @@ NS_INTERFACE_MAP_END
 
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDocument)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(nsDocument,
-                                              nsNodeUtils::LastRelease(this))
+NS_IMETHODIMP_(nsrefcnt)
+nsDocument::Release()
+{
+  NS_PRECONDITION(0 != mRefCnt, "dup release");
+  NS_ASSERT_OWNINGTHREAD_AND_NOT_CCTHREAD(nsDocument);
+  nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(nsDocument)::Upcast(this);
+  nsrefcnt count = mRefCnt.decr(base);
+  NS_LOG_RELEASE(this, count, "nsDocument");
+  if (count == 0) {
+    if (mStackRefCnt && !mNeedsReleaseAfterStackRefCntRelease) {
+      mNeedsReleaseAfterStackRefCntRelease = true;
+      NS_ADDREF_THIS();
+      return mRefCnt.get();
+    }
+    NS_ASSERT_OWNINGTHREAD(nsDocument);
+    mRefCnt.stabilizeForDeletion();
+    nsNodeUtils::LastRelease(this);
+    return 0;
+  }
+  return count;
+}
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsDocument)
   if (Element::CanSkip(tmp, aRemovingAllowed)) {
@@ -3189,16 +3205,12 @@ nsDocument::SetHeaderData(nsIAtom* aHeaderField, const nsAString& aData)
   }
 }
 
-bool
+void
 nsDocument::TryChannelCharset(nsIChannel *aChannel,
                               int32_t& aCharsetSource,
                               nsACString& aCharset,
                               nsHtml5TreeOpExecutor* aExecutor)
 {
-  if(kCharsetFromChannel <= aCharsetSource) {
-    return true;
-  }
-
   if (aChannel) {
     nsAutoCString charsetVal;
     nsresult rv = aChannel->GetContentCharset(charsetVal);
@@ -3207,13 +3219,12 @@ nsDocument::TryChannelCharset(nsIChannel *aChannel,
       if(EncodingUtils::FindEncodingForLabel(charsetVal, preferred)) {
         aCharset = preferred;
         aCharsetSource = kCharsetFromChannel;
-        return true;
+        return;
       } else if (aExecutor && !charsetVal.IsEmpty()) {
         aExecutor->ComplainAboutBogusProtocolCharset(this);
       }
     }
   }
-  return false;
 }
 
 nsresult
@@ -4491,7 +4502,7 @@ nsDocument::GetDoctype(nsIDOMDocumentType** aDoctype)
 }
 
 NS_IMETHODIMP
-nsDocument::GetImplementation(nsIDOMDOMImplementation** aImplementation)
+nsDocument::GetImplementation(nsISupports** aImplementation)
 {
   ErrorResult rv;
   *aImplementation = GetImplementation(rv);
@@ -5161,77 +5172,6 @@ nsIDocument::ImportNode(nsINode& aNode, bool aDeep, ErrorResult& rv) const
   }
 
   return nullptr;
-}
-
-NS_IMETHODIMP
-nsDocument::AddBinding(nsIDOMElement* aContent, const nsAString& aURI)
-{
-  nsCOMPtr<Element> element = do_QueryInterface(aContent);
-  NS_ENSURE_ARG_POINTER(element);
-  ErrorResult rv;
-  nsIDocument::AddBinding(*element, aURI, rv);
-  return rv.ErrorCode();
-}
-
-void
-nsIDocument::AddBinding(Element& aContent, const nsAString& aURI, ErrorResult& rv)
-{
-  rv = nsContentUtils::CheckSameOrigin(this, &aContent);
-  if (rv.Failed()) {
-    return;
-  }
-
-  nsCOMPtr<nsIURI> uri;
-  rv = NS_NewURI(getter_AddRefs(uri), aURI);
-  if (rv.Failed()) {
-    return;
-  }
-
-  // Figure out the right principal to use
-  nsCOMPtr<nsIPrincipal> subject;
-  nsIScriptSecurityManager* secMan = nsContentUtils::GetSecurityManager();
-  if (secMan) {
-    rv = secMan->GetSubjectPrincipal(getter_AddRefs(subject));
-    if (rv.Failed()) {
-      return;
-    }
-  }
-
-  if (!subject) {
-    // Fall back to our principal.  Or should we fall back to the null
-    // principal?  The latter would just mean no binding loads....
-    subject = NodePrincipal();
-  }
-
-  rv = BindingManager()->AddLayeredBinding(&aContent, uri, subject);
-}
-
-NS_IMETHODIMP
-nsDocument::RemoveBinding(nsIDOMElement* aContent, const nsAString& aURI)
-{
-  nsCOMPtr<Element> element = do_QueryInterface(aContent);
-  NS_ENSURE_ARG_POINTER(element);
-  ErrorResult rv;
-  nsIDocument::RemoveBinding(*element, aURI, rv);
-  return rv.ErrorCode();
-}
-
-void
-nsIDocument::RemoveBinding(Element& aContent, const nsAString& aURI,
-                           ErrorResult& rv)
-{
-  rv = nsContentUtils::CheckSameOrigin(this, &aContent);
-  if (rv.Failed()) {
-    return;
-  }
-
-  nsCOMPtr<nsIURI> uri;
-  rv = NS_NewURI(getter_AddRefs(uri), aURI);
-  if (rv.Failed()) {
-    return;
-  }
-
-  rv = BindingManager()->RemoveLayeredBinding(&aContent, uri);
 }
 
 NS_IMETHODIMP
@@ -5955,9 +5895,8 @@ nsDocument::GetAnimationController()
   // one and only SVG documents and the like will call this
   if (mAnimationController)
     return mAnimationController;
-  // Refuse to create an Animation Controller if SMIL is disabled, and also
-  // for data documents.
-  if (!NS_SMILEnabled() || mLoadedAsData || mLoadedAsInteractiveData)
+  // Refuse to create an Animation Controller for data documents.
+  if (mLoadedAsData || mLoadedAsInteractiveData)
     return nullptr;
 
   mAnimationController = new nsSMILAnimationController(this);
@@ -6524,8 +6463,8 @@ nsDocument::GetViewportInfo(uint32_t aDisplayWidth,
       mScaleMinFloat = kViewportMinScale;
     }
 
-    mScaleMinFloat = NS_MIN((double)mScaleMinFloat, kViewportMaxScale);
-    mScaleMinFloat = NS_MAX((double)mScaleMinFloat, kViewportMinScale);
+    mScaleMinFloat = std::min((double)mScaleMinFloat, kViewportMaxScale);
+    mScaleMinFloat = std::max((double)mScaleMinFloat, kViewportMinScale);
 
     nsAutoString maxScaleStr;
     GetHeaderData(nsGkAtoms::viewport_maximum_scale, maxScaleStr);
@@ -6539,8 +6478,8 @@ nsDocument::GetViewportInfo(uint32_t aDisplayWidth,
       mScaleMaxFloat = kViewportMaxScale;
     }
 
-    mScaleMaxFloat = NS_MIN((double)mScaleMaxFloat, kViewportMaxScale);
-    mScaleMaxFloat = NS_MAX((double)mScaleMaxFloat, kViewportMinScale);
+    mScaleMaxFloat = std::min((double)mScaleMaxFloat, kViewportMaxScale);
+    mScaleMaxFloat = std::max((double)mScaleMaxFloat, kViewportMinScale);
 
     nsAutoString scaleStr;
     GetHeaderData(nsGkAtoms::viewport_initial_scale, scaleStr);
@@ -6627,26 +6566,26 @@ nsDocument::GetViewportInfo(uint32_t aDisplayWidth,
       height = aDisplayHeight / pixelRatio;
     }
 
-    width = NS_MIN(width, kViewportMaxWidth);
-    width = NS_MAX(width, kViewportMinWidth);
+    width = std::min(width, kViewportMaxWidth);
+    width = std::max(width, kViewportMinWidth);
 
     // Also recalculate the default zoom, if it wasn't specified in the metadata,
     // and the width is specified.
     if (mScaleStrEmpty && !mWidthStrEmpty) {
-      scaleFloat = NS_MAX(scaleFloat, float(aDisplayWidth) / float(width));
+      scaleFloat = std::max(scaleFloat, float(aDisplayWidth) / float(width));
     }
 
-    height = NS_MIN(height, kViewportMaxHeight);
-    height = NS_MAX(height, kViewportMinHeight);
+    height = std::min(height, kViewportMaxHeight);
+    height = std::max(height, kViewportMinHeight);
 
     // We need to perform a conversion, but only if the initial or maximum
     // scale were set explicitly by the user.
     if (mValidScaleFloat) {
-      width = NS_MAX(width, (uint32_t)(aDisplayWidth / scaleFloat));
-      height = NS_MAX(height, (uint32_t)(aDisplayHeight / scaleFloat));
+      width = std::max(width, (uint32_t)(aDisplayWidth / scaleFloat));
+      height = std::max(height, (uint32_t)(aDisplayHeight / scaleFloat));
     } else if (mValidMaxScale) {
-      width = NS_MAX(width, (uint32_t)(aDisplayWidth / scaleMaxFloat));
-      height = NS_MAX(height, (uint32_t)(aDisplayHeight / scaleMaxFloat));
+      width = std::max(width, (uint32_t)(aDisplayWidth / scaleMaxFloat));
+      height = std::max(height, (uint32_t)(aDisplayHeight / scaleMaxFloat));
     }
 
     nsViewportInfo ret(scaleFloat, scaleMinFloat, scaleMaxFloat, width, height,
@@ -6715,6 +6654,8 @@ nsIDocument::CreateEvent(const nsAString& aEventType, ErrorResult& rv) const
 void
 nsDocument::FlushPendingNotifications(mozFlushType aType)
 {
+  nsDocumentOnStack dos(this);
+
   // We need to flush the sink for non-HTML documents (because the XML
   // parser still does insertion with deferred notifications).  We
   // also need to flush the sink if this is a layout-related flush, to
@@ -6760,7 +6701,7 @@ nsDocument::FlushPendingNotifications(mozFlushType aType)
   if (mParentDocument && IsSafeToFlush()) {
     mozFlushType parentType = aType;
     if (aType >= Flush_Style)
-      parentType = NS_MAX(Flush_Layout, aType);
+      parentType = std::max(Flush_Layout, aType);
     mParentDocument->FlushPendingNotifications(parentType);
   }
 

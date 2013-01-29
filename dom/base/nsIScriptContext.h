@@ -13,6 +13,7 @@
 #include "nsIProgrammingLanguage.h"
 #include "jsfriendapi.h"
 #include "jspubtd.h"
+#include "js/GCAPI.h"
 
 class nsIScriptGlobalObject;
 class nsIScriptSecurityManager;
@@ -45,8 +46,8 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIScriptContextPrincipal,
                               NS_ISCRIPTCONTEXTPRINCIPAL_IID)
 
 #define NS_ISCRIPTCONTEXT_IID \
-{ 0x95870c91, 0xe21d, 0x4499, \
-  { 0x9b, 0x61, 0x45, 0x79, 0x5f, 0x12, 0x0c, 0x98 } }
+{ 0xa2210341, 0x3123, 0x4477, \
+    { 0xb5, 0xa9, 0x91, 0x95, 0xbd, 0x77, 0xb1, 0xe6 } }
 
 /* This MUST match JSVERSION_DEFAULT.  This version stuff if we don't
    know what language we have is a little silly... */
@@ -65,42 +66,19 @@ public:
    * Compile and execute a script.
    *
    * @param aScript a string representing the script to be executed
-   * @param aScopeObject a script object for the scope to execute in, or
-   *                     nullptr to use a default scope
-   * @param aPrincipal the principal the script should be evaluated with
-   * @param aOriginPrincipal the principal the script originates from.  If null,
-   *                         aPrincipal is used.
-   * @param aURL the URL or filename for error messages
-   * @param aLineNo the starting line number of the script for error messages
-   * @param aVersion the script language version to use when executing
-   * @param aRetValue the result of executing the script, or null for no result.
-   *        If this is a JS context, it's the caller's responsibility to
-   *        preserve aRetValue from GC across this call
-   * @param aIsUndefined true if the result of executing the script is the
-   *                     undefined value
-   *
-   * @return NS_OK if the script was valid and got executed
-   *
+   * @param aScopeObject a script object for the scope to execute in.
+   * @param aOptions an options object. You probably want to at least set
+   *                 filename and line number. The principal is computed
+   *                 internally, though 'originPrincipals' may be passed.
+   * @param aCoerceToString if the return value is not JSVAL_VOID, convert it
+   *                        to a string before returning.
+   * @param aRetValue the result of executing the script.
    **/
   virtual nsresult EvaluateString(const nsAString& aScript,
-                                  JSObject* aScopeObject,
-                                  nsIPrincipal *aPrincipal,
-                                  nsIPrincipal *aOriginPrincipal,
-                                  const char *aURL,
-                                  uint32_t aLineNo,
-                                  JSVersion aVersion,
-                                  nsAString *aRetValue,
-                                  bool* aIsUndefined) = 0;
-
-  virtual nsresult EvaluateStringWithValue(const nsAString& aScript,
-                                           JSObject* aScopeObject,
-                                           nsIPrincipal *aPrincipal,
-                                           const char *aURL,
-                                           uint32_t aLineNo,
-                                           uint32_t aVersion,
-                                           bool aIsXBL,
-                                           JS::Value* aRetValue,
-                                           bool* aIsUndefined) = 0;
+                                  JSObject& aScopeObject,
+                                  JS::CompileOptions& aOptions,
+                                  bool aCoerceToString,
+                                  JS::Value* aRetValue) = 0;
 
   /**
    * Compile a script.
@@ -142,46 +120,7 @@ public:
    *
    */
   virtual nsresult ExecuteScript(JSScript* aScriptObject,
-                                 JSObject* aScopeObject,
-                                 nsAString* aRetValue,
-                                 bool* aIsUndefined) = 0;
-
-  /**
-   * Compile the event handler named by atom aName, with function body aBody
-   * into a function object returned if ok via aHandler.  Does NOT bind the
-   * function to anything - BindCompiledEventHandler() should be used for that
-   * purpose.  Note that this event handler is always considered 'shared' and
-   * hence is compiled without principals.  Never call the returned object
-   * directly - it must be bound (and thereby cloned, and therefore have the 
-   * correct principals) before use!
-   *
-   * If the compilation sets a pending exception on the native context, it is
-   * this method's responsibility to report said exception immediately, without
-   * relying on callers to do so.
-   *
-   *
-   * @param aName an nsIAtom pointer naming the function; it must be lowercase
-   *        and ASCII, and should not be longer than 63 chars.  This bound on
-   *        length is enforced only by assertions, so caveat caller!
-   * @param aEventName the name that the event object should be bound to
-   * @param aBody the event handler function's body
-   * @param aURL the URL or filename for error messages
-   * @param aLineNo the starting line number of the script for error messages
-   * @param aVersion the script language version to use when executing
-   * @param aHandler the out parameter in which a void pointer to the compiled
-   *        function object is stored on success
-   *
-   * @return NS_OK if the function body was valid and got compiled
-   */
-  virtual nsresult CompileEventHandler(nsIAtom* aName,
-                                       uint32_t aArgCount,
-                                       const char** aArgNames,
-                                       const nsAString& aBody,
-                                       const char* aURL,
-                                       uint32_t aLineNo,
-                                       uint32_t aVersion,
-                                       bool aIsXBL,
-                                       nsScriptObjectHolder<JSObject>& aHandler) = 0;
+                                 JSObject* aScopeObject) = 0;
 
   /**
    * Call the function object with given args and return its boolean result,
@@ -226,25 +165,6 @@ public:
                                             nsScriptObjectHolder<JSObject>& aBoundHandler) = 0;
 
   /**
-   * Compile a function that isn't used as an event handler.
-   *
-   * NOTE: Not yet language agnostic (main problem is XBL - not yet agnostic)
-   * Caller must make sure aFunctionObject is a JS GC root.
-   *
-   **/
-  virtual nsresult CompileFunction(JSObject* aTarget,
-                                   const nsACString& aName,
-                                   uint32_t aArgCount,
-                                   const char** aArgArray,
-                                   const nsAString& aBody,
-                                   const char* aURL,
-                                   uint32_t aLineNo,
-                                   uint32_t aVersion,
-                                   bool aShared,
-                                   bool aIsXBL,
-                                   JSObject** aFunctionObject) = 0;
-
-  /**
    * Return the global object.
    *
    **/
@@ -282,7 +202,7 @@ public:
    *
    * @return NS_OK if the method is successful
    */
-  virtual void GC(js::gcreason::Reason aReason) = 0;
+  virtual void GC(JS::gcreason::Reason aReason) = 0;
 
   /**
    * Inform the context that a script was evaluated.
@@ -328,6 +248,12 @@ public:
   // SetProperty is suspect and jst believes should not be needed.  Currenly
   // used only for "arguments".
   virtual nsresult SetProperty(JSObject* aTarget, const char* aPropName, nsISupports* aVal) = 0;
+  /** 
+   * Called to set/get information if the script context is
+   * currently processing a script tag
+   */
+  virtual bool GetProcessingScriptTag() = 0;
+  virtual void SetProcessingScriptTag(bool aResult) = 0;
 
   /**
    * Called to find out if this script context might be executing script.

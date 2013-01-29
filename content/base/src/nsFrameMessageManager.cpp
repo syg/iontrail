@@ -31,6 +31,7 @@
 #include "xpcpublic.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/StructuredCloneUtils.h"
+#include <algorithm>
 
 #ifdef ANDROID
 #include <android/log.h>
@@ -55,8 +56,6 @@ IsChromeProcess()
   rt->GetProcessType(&type);
   return type == nsIXULRuntime::PROCESS_TYPE_DEFAULT;
 }
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsFrameMessageManager)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFrameMessageManager)
   uint32_t count = tmp->mListeners.Length();
@@ -119,6 +118,120 @@ NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameMessageManager)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsFrameMessageManager)
+
+template<ActorFlavorEnum>
+struct DataBlobs
+{ };
+
+template<>
+struct DataBlobs<Parent>
+{
+  typedef BlobTraits<Parent>::ProtocolType ProtocolType;
+
+  static InfallibleTArray<ProtocolType*>& Blobs(ClonedMessageData& aData)
+  {
+    return aData.blobsParent();
+  }
+
+  static const InfallibleTArray<ProtocolType*>& Blobs(const ClonedMessageData& aData)
+  {
+    return aData.blobsParent();
+  }
+};
+
+template<>
+struct DataBlobs<Child>
+{
+  typedef BlobTraits<Child>::ProtocolType ProtocolType;
+
+  static InfallibleTArray<ProtocolType*>& Blobs(ClonedMessageData& aData)
+  {
+    return aData.blobsChild();
+  }
+
+  static const InfallibleTArray<ProtocolType*>& Blobs(const ClonedMessageData& aData)
+  {
+    return aData.blobsChild();
+  }
+};
+
+template<ActorFlavorEnum Flavor>
+static bool
+BuildClonedMessageData(typename BlobTraits<Flavor>::ConcreteContentManagerType* aManager,
+                       const StructuredCloneData& aData,
+                       ClonedMessageData& aClonedData)
+{
+  SerializedStructuredCloneBuffer& buffer = aClonedData.data();
+  buffer.data = aData.mData;
+  buffer.dataLength = aData.mDataLength;
+  const nsTArray<nsCOMPtr<nsIDOMBlob> >& blobs = aData.mClosure.mBlobs;
+  if (!blobs.IsEmpty()) {
+    typedef typename BlobTraits<Flavor>::ProtocolType ProtocolType;
+    InfallibleTArray<ProtocolType*>& blobList = DataBlobs<Flavor>::Blobs(aClonedData);
+    uint32_t length = blobs.Length();
+    blobList.SetCapacity(length);
+    for (uint32_t i = 0; i < length; ++i) {
+      Blob<Flavor>* protocolActor = aManager->GetOrCreateActorForBlob(blobs[i]);
+      if (!protocolActor) {
+        return false;
+      }
+      blobList.AppendElement(protocolActor);
+    }
+  }
+  return true;
+}
+
+bool
+MessageManagerCallback::BuildClonedMessageDataForParent(ContentParent* aParent,
+                                                        const StructuredCloneData& aData,
+                                                        ClonedMessageData& aClonedData)
+{
+  return BuildClonedMessageData<Parent>(aParent, aData, aClonedData);
+}
+
+bool
+MessageManagerCallback::BuildClonedMessageDataForChild(ContentChild* aChild,
+                                                       const StructuredCloneData& aData,
+                                                       ClonedMessageData& aClonedData)
+{
+  return BuildClonedMessageData<Child>(aChild, aData, aClonedData);
+}
+
+template<ActorFlavorEnum Flavor>
+static StructuredCloneData
+UnpackClonedMessageData(const ClonedMessageData& aData)
+{
+  const SerializedStructuredCloneBuffer& buffer = aData.data();
+  typedef typename BlobTraits<Flavor>::ProtocolType ProtocolType;
+  const InfallibleTArray<ProtocolType*>& blobs = DataBlobs<Flavor>::Blobs(aData);
+  StructuredCloneData cloneData;
+  cloneData.mData = buffer.data;
+  cloneData.mDataLength = buffer.dataLength;
+  if (!blobs.IsEmpty()) {
+    uint32_t length = blobs.Length();
+    cloneData.mClosure.mBlobs.SetCapacity(length);
+    for (uint32_t i = 0; i < length; ++i) {
+      Blob<Flavor>* blob = static_cast<Blob<Flavor>*>(blobs[i]);
+      MOZ_ASSERT(blob);
+      nsCOMPtr<nsIDOMBlob> domBlob = blob->GetBlob();
+      MOZ_ASSERT(domBlob);
+      cloneData.mClosure.mBlobs.AppendElement(domBlob);
+    }
+  }
+  return cloneData;
+}
+
+StructuredCloneData
+mozilla::dom::ipc::UnpackClonedMessageDataForParent(const ClonedMessageData& aData)
+{
+  return UnpackClonedMessageData<Parent>(aData);
+}
+
+StructuredCloneData
+mozilla::dom::ipc::UnpackClonedMessageDataForChild(const ClonedMessageData& aData)
+{
+  return UnpackClonedMessageData<Child>(aData);
+}
 
 // nsIMessageListenerManager
 
@@ -949,7 +1062,7 @@ nsFrameScriptExecutor::TryCacheLoadAndCompileScript(const nsAString& aURL,
       return;
     }
     nsCString buffer;
-    uint32_t avail = (uint32_t)NS_MIN(avail64, (uint64_t)UINT32_MAX);
+    uint32_t avail = (uint32_t)std::min(avail64, (uint64_t)UINT32_MAX);
     if (NS_FAILED(NS_ReadInputStreamToString(input, buffer, avail))) {
       return;
     }
@@ -1180,21 +1293,8 @@ public:
       return true;
     }
     ClonedMessageData data;
-    SerializedStructuredCloneBuffer& buffer = data.data();
-    buffer.data = aData.mData;
-    buffer.dataLength = aData.mDataLength;
-    const nsTArray<nsCOMPtr<nsIDOMBlob> >& blobs = aData.mClosure.mBlobs;
-    if (!blobs.IsEmpty()) {
-      InfallibleTArray<PBlobChild*>& blobChildList = data.blobsChild();
-      uint32_t length = blobs.Length();
-      blobChildList.SetCapacity(length);
-      for (uint32_t i = 0; i < length; ++i) {
-        BlobChild* blobChild = cc->GetOrCreateActorForBlob(blobs[i]);
-        if (!blobChild) {
-          return false;
-        }
-        blobChildList.AppendElement(blobChild);
-      }
+    if (!BuildClonedMessageDataForChild(cc, aData, data)) {
+      return false;
     }
     return cc->SendSyncMessage(nsString(aMessage), data, aJSONRetVal);
   }
@@ -1208,21 +1308,8 @@ public:
       return true;
     }
     ClonedMessageData data;
-    SerializedStructuredCloneBuffer& buffer = data.data();
-    buffer.data = aData.mData;
-    buffer.dataLength = aData.mDataLength;
-    const nsTArray<nsCOMPtr<nsIDOMBlob> >& blobs = aData.mClosure.mBlobs;
-    if (!blobs.IsEmpty()) {
-      InfallibleTArray<PBlobChild*>& blobChildList = data.blobsChild();
-      uint32_t length = blobs.Length();
-      blobChildList.SetCapacity(length);
-      for (uint32_t i = 0; i < length; ++i) {
-        BlobChild* blobChild = cc->GetOrCreateActorForBlob(blobs[i]);
-        if (!blobChild) {
-          return false;
-        }
-        blobChildList.AppendElement(blobChild);
-      }
+    if (!BuildClonedMessageDataForChild(cc, aData, data)) {
+      return false;
     }
     return cc->SendAsyncMessage(nsString(aMessage), data);
   }

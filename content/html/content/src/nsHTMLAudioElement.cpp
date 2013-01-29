@@ -14,6 +14,7 @@
 #include "nsJSUtils.h"
 #include "AudioSampleFormat.h"
 #include "AudioChannelCommon.h"
+#include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -122,7 +123,7 @@ nsHTMLAudioElement::MozSetup(uint32_t aChannels, uint32_t aRate)
     return rv;
   }
 
-  MetadataLoaded(aChannels, aRate, true, nullptr);
+  MetadataLoaded(aChannels, aRate, true, false, nullptr);
   mAudioStream->SetVolume(mVolume);
 
   return NS_OK;
@@ -166,7 +167,7 @@ nsHTMLAudioElement::MozWriteAudio(const JS::Value& aData, JSContext* aCx, uint32
   }
 
   // Don't write more than can be written without blocking.
-  uint32_t writeLen = NS_MIN(mAudioStream->Available(), dataLength / mChannels);
+  uint32_t writeLen = std::min(mAudioStream->Available(), dataLength / mChannels);
 
   float* frames = JS_GetFloat32ArrayData(tsrc);
   // Convert the samples back to integers as we are using fixed point audio in
@@ -176,10 +177,10 @@ nsHTMLAudioElement::MozWriteAudio(const JS::Value& aData, JSContext* aCx, uint32
   nsAutoArrayPtr<AudioDataValue> audioData(new AudioDataValue[writeLen * mChannels]);
   ConvertAudioSamples(frames, audioData.get(), writeLen * mChannels);
   nsresult rv = mAudioStream->Write(audioData.get(), writeLen);
-
   if (NS_FAILED(rv)) {
     return rv;
   }
+  mAudioStream->Start();
 
   // Return the actual amount written.
   *aRetVal = writeLen * mChannels;

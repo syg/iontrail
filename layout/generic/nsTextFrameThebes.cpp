@@ -63,6 +63,7 @@
 #include "nsILineIterator.h"
 
 #include "nsIServiceManager.h"
+#include <algorithm>
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
 #endif
@@ -98,14 +99,14 @@ struct TabWidth {
     : mOffset(aOffset), mWidth(float(aWidth))
   { }
 
-  uint32_t mOffset; // character offset within the text covered by the
-                    // PropertyProvider
+  uint32_t mOffset; // DOM offset relative to the current frame's offset.
   float    mWidth;  // extra space to be added at this position (in app units)
 };
 
 struct TabWidthStore {
-  TabWidthStore()
+  TabWidthStore(int32_t aValidForContentOffset)
     : mLimit(0)
+    , mValidForContentOffset(aValidForContentOffset)
   { }
 
   // Apply tab widths to the aSpacing array, which corresponds to characters
@@ -114,10 +115,16 @@ struct TabWidthStore {
   void ApplySpacing(gfxTextRun::PropertyProvider::Spacing *aSpacing,
                     uint32_t aOffset, uint32_t aLength);
 
-  uint32_t           mLimit;  // offset up to which tabs have been measured;
-                              // positions beyond this have not been calculated
-                              // yet but may be appended if needed later
-  nsTArray<TabWidth> mWidths; // (offset,width) records for each tab character
+  // Offset up to which tabs have been measured; positions beyond this have not
+  // been calculated yet but may be appended if needed later.  It's a DOM
+  // offset relative to the current frame's offset.
+  uint32_t mLimit;
+ 
+  // Need to recalc tab offsets if frame content offset differs from this.
+  int32_t mValidForContentOffset;
+
+  // A TabWidth record for each tab character measured so far.
+  nsTArray<TabWidth> mWidths;
 };
 
 void
@@ -2474,6 +2481,11 @@ nsTextFrame::EnsureTextRun(TextRunType aWhichTextRun,
       static const gfxSkipChars emptySkipChars;
       return gfxSkipCharsIterator(emptySkipChars, 0);
     }
+    TabWidthStore* tabWidths =
+      static_cast<TabWidthStore*>(Properties().Get(TabWidthProperty()));
+    if (tabWidths && tabWidths->mValidForContentOffset != GetContentOffset()) {
+      Properties().Delete(TabWidthProperty());
+    }
   }
 
   if (textRun->GetFlags() & nsTextFrameUtils::TEXT_IS_SIMPLE_FLOW) {
@@ -2797,10 +2809,11 @@ protected:
   gfxSkipCharsIterator  mStart;  // Offset in original and transformed string
   gfxSkipCharsIterator  mTempIterator;
   
-  // Either null, or pointing to the frame's tabWidthProperty.
+  // Either null, or pointing to the frame's TabWidthProperty.
   TabWidthStore*        mTabWidths;
-  // how far we've done tab-width calculation; this is ONLY valid
-  // when mTabWidths is NULL (otherwise rely on mTabWidths->mLimit instead)
+  // How far we've done tab-width calculation; this is ONLY valid
+  // when mTabWidths is NULL (otherwise rely on mTabWidths->mLimit instead).
+  // It's a DOM offset relative to the current frame's offset.
   uint32_t              mTabWidthsAnalyzedLimit;
 
   int32_t               mLength; // DOM string length, may be INT32_MAX
@@ -3022,7 +3035,8 @@ PropertyProvider::CalcTabWidths(uint32_t aStart, uint32_t aLength)
       // tab character present (if any)
       for (uint32_t i = aStart + aLength; i > aStart; --i) {
         if (mTextRun->CharIsTab(i - 1)) {
-          NS_ASSERTION(mTabWidths && mTabWidths->mLimit >= i,
+          uint32_t startOffset = mStart.GetSkippedOffset();
+          NS_ASSERTION(mTabWidths && mTabWidths->mLimit + startOffset >= i,
                        "Precomputed tab widths are missing!");
           break;
         }
@@ -3033,9 +3047,10 @@ PropertyProvider::CalcTabWidths(uint32_t aStart, uint32_t aLength)
   }
 
   uint32_t startOffset = mStart.GetSkippedOffset();
-  uint32_t tabsEnd = mTabWidths ?
-    mTabWidths->mLimit : NS_MAX(mTabWidthsAnalyzedLimit, startOffset);
-
+  MOZ_ASSERT(aStart >= startOffset, "wrong start offset");
+  MOZ_ASSERT(aStart + aLength <= startOffset + mLength, "beyond the end");
+  uint32_t tabsEnd =
+    (mTabWidths ? mTabWidths->mLimit : mTabWidthsAnalyzedLimit) + startOffset;
   if (tabsEnd < aStart + aLength) {
     NS_ASSERTION(mReflowing,
                  "We need precomputed tab widths, but don't have enough.");
@@ -3058,7 +3073,7 @@ PropertyProvider::CalcTabWidths(uint32_t aStart, uint32_t aLength)
         }
       } else {
         if (!mTabWidths) {
-          mTabWidths = new TabWidthStore();
+          mTabWidths = new TabWidthStore(mFrame->GetContentOffset());
           mFrame->Properties().Set(TabWidthProperty(), mTabWidths);
         }
         double nextTab = AdvanceToNextTab(mOffsetFromBlockOriginForTabs,
@@ -3072,15 +3087,15 @@ PropertyProvider::CalcTabWidths(uint32_t aStart, uint32_t aLength)
     }
 
     if (mTabWidths) {
-      mTabWidths->mLimit = aStart + aLength;
+      mTabWidths->mLimit = aStart + aLength - startOffset;
     }
   }
 
   if (!mTabWidths) {
     // Delete any stale property that may be left on the frame
     mFrame->Properties().Delete(TabWidthProperty());
-    mTabWidthsAnalyzedLimit = NS_MAX(mTabWidthsAnalyzedLimit,
-                                     aStart + aLength);
+    mTabWidthsAnalyzedLimit = std::max(mTabWidthsAnalyzedLimit,
+                                       aStart + aLength - startOffset);
   }
 }
 
@@ -3607,7 +3622,7 @@ nsTextPaintStyle::InitCommonColors()
     LookAndFeel::GetColor(LookAndFeel::eColorID_TextSelectBackground);
 
   mSufficientContrast =
-    NS_MIN(NS_MIN(NS_SUFFICIENT_LUMINOSITY_DIFFERENCE,
+    std::min(std::min(NS_SUFFICIENT_LUMINOSITY_DIFFERENCE,
                   NS_LUMINOSITY_DIFFERENCE(selectionTextColor,
                                            selectionBGColor)),
                   NS_LUMINOSITY_DIFFERENCE(defaultWindowBackgroundColor,
@@ -4255,6 +4270,10 @@ nsTextFrame::GetCursor(const nsPoint& aPoint,
   FillCursorInformationFromStyle(GetStyleUserInterface(), aCursor);  
   if (NS_STYLE_CURSOR_AUTO == aCursor.mCursor) {
     aCursor.mCursor = NS_STYLE_CURSOR_TEXT;
+    // If this is editable, we should ignore tabindex value.
+    if (mContent->IsEditable()) {
+      return NS_OK;
+    }
 
     // If tabindex >= 0, use default cursor to indicate it's not selectable
     nsIFrame *ancestorFrame = this;
@@ -4887,8 +4906,8 @@ nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
             NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE, decorationStyle) +
           nsPoint(0, -dec.mBaselineOffset);
 
-        top = NS_MIN(decorationRect.y, top);
-        bottom = NS_MAX(decorationRect.YMost(), bottom);
+        top = std::min(decorationRect.y, top);
+        bottom = std::max(decorationRect.YMost(), bottom);
       }
       for (uint32_t i = 0; i < textDecs.mOverlines.Length(); ++i) {
         const LineDecoration& dec = textDecs.mOverlines[i];
@@ -4912,8 +4931,8 @@ nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
             NS_STYLE_TEXT_DECORATION_LINE_OVERLINE, decorationStyle) +
           nsPoint(0, -dec.mBaselineOffset);
 
-        top = NS_MIN(decorationRect.y, top);
-        bottom = NS_MAX(decorationRect.YMost(), bottom);
+        top = std::min(decorationRect.y, top);
+        bottom = std::max(decorationRect.YMost(), bottom);
       }
       for (uint32_t i = 0; i < textDecs.mStrikes.Length(); ++i) {
         const LineDecoration& dec = textDecs.mStrikes[i];
@@ -4936,8 +4955,8 @@ nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
             ascent, metrics.strikeoutOffset,
             NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH, decorationStyle) +
           nsPoint(0, -dec.mBaselineOffset);
-        top = NS_MIN(decorationRect.y, top);
-        bottom = NS_MAX(decorationRect.YMost(), bottom);
+        top = std::min(decorationRect.y, top);
+        bottom = std::max(decorationRect.YMost(), bottom);
       }
 
       aVisualOverflowRect->UnionRect(*aVisualOverflowRect,
@@ -4997,9 +5016,9 @@ ComputeSelectionUnderlineHeight(nsPresContext* aPresContext,
       // current font size.
       int32_t defaultFontSize =
         aPresContext->AppUnitsToDevPixels(nsStyleFont(aPresContext).mFont.size);
-      gfxFloat fontSize = NS_MIN(gfxFloat(defaultFontSize),
+      gfxFloat fontSize = std::min(gfxFloat(defaultFontSize),
                                  aFontMetrics.emHeight);
-      fontSize = NS_MAX(fontSize, 1.0);
+      fontSize = std::max(fontSize, 1.0);
       return ceil(fontSize / 20);
     }
     default:
@@ -5357,7 +5376,7 @@ nsTextFrame::PaintOneShadow(uint32_t aOffset, uint32_t aLength,
 {
   SAMPLE_LABEL("nsTextFrame", "PaintOneShadow");
   gfxPoint shadowOffset(aShadowDetails->mXOffset, aShadowDetails->mYOffset);
-  nscoord blurRadius = NS_MAX(aShadowDetails->mRadius, 0);
+  nscoord blurRadius = std::max(aShadowDetails->mRadius, 0);
 
   // This rect is the box which is equivalent to where the shadow will be painted.
   // The origin of aBoundingBox is the text baseline left, so we must translate it by
@@ -5436,8 +5455,8 @@ nsTextFrame::PaintTextWithSelectionColors(gfxContext* aCtx,
   SelectionDetails *sdptr = aDetails;
   bool anyBackgrounds = false;
   while (sdptr) {
-    int32_t start = NS_MAX(0, sdptr->mStart - int32_t(aContentOffset));
-    int32_t end = NS_MIN(int32_t(aContentLength),
+    int32_t start = std::max(0, sdptr->mStart - int32_t(aContentOffset));
+    int32_t end = std::min(int32_t(aContentLength),
                          sdptr->mEnd - int32_t(aContentOffset));
     SelectionType type = sdptr->mType;
     if (start < end) {
@@ -5575,8 +5594,8 @@ nsTextFrame::PaintTextSelectionDecorations(gfxContext* aCtx,
   SelectionDetails *sdptr = aDetails;
   while (sdptr) {
     if (sdptr->mType == aSelectionType) {
-      int32_t start = NS_MAX(0, sdptr->mStart - int32_t(aContentOffset));
-      int32_t end = NS_MIN(int32_t(aContentLength),
+      int32_t start = std::max(0, sdptr->mStart - int32_t(aContentOffset));
+      int32_t end = std::min(int32_t(aContentLength),
                            sdptr->mEnd - int32_t(aContentOffset));
       for (int32_t i = start; i < end; ++i) {
         selectedChars[i] = sdptr;
@@ -5703,8 +5722,8 @@ nsTextFrame::GetCaretColorAt(int32_t aOffset)
   SelectionDetails* sdptr = details;
   SelectionType type = 0;
   while (sdptr) {
-    int32_t start = NS_MAX(0, sdptr->mStart - contentOffset);
-    int32_t end = NS_MIN(contentLength, sdptr->mEnd - contentOffset);
+    int32_t start = std::max(0, sdptr->mStart - contentOffset);
+    int32_t end = std::min(contentLength, sdptr->mEnd - contentOffset);
     if (start <= offsetInFrame && offsetInFrame < end &&
         (type == 0 || sdptr->mType < type)) {
       nscolor foreground, background;
@@ -6303,7 +6322,7 @@ nsTextFrame::CombineSelectionUnderlineRect(nsPresContext* aPresContext,
     gfxSize size(aPresContext->AppUnitsToGfxUnits(aRect.width),
                  ComputeSelectionUnderlineHeight(aPresContext,
                                                  metrics, sd->mType));
-    relativeSize = NS_MAX(relativeSize, 1.0f);
+    relativeSize = std::max(relativeSize, 1.0f);
     size.height *= relativeSize;
     decorationArea =
       nsCSSRendering::GetTextDecorationRect(aPresContext, size,
@@ -6401,8 +6420,8 @@ nsTextFrame::GetPointFromOffset(int32_t inOffset,
   }
   int32_t trimmedOffset = properties.GetStart().GetOriginalOffset();
   int32_t trimmedEnd = trimmedOffset + properties.GetOriginalLength();
-  inOffset = NS_MAX(inOffset, trimmedOffset);
-  inOffset = NS_MIN(inOffset, trimmedEnd);
+  inOffset = std::max(inOffset, trimmedOffset);
+  inOffset = std::min(inOffset, trimmedEnd);
 
   iter.SetOriginalOffset(inOffset);
 
@@ -6597,7 +6616,7 @@ nsTextFrame::PeekOffsetCharacter(bool aForward, int32_t* aOffset,
 
   if (!aForward) {
     // If at the beginning of the line, look at the previous continuation
-    for (int32_t i = NS_MIN(trimmed.GetEnd(), startOffset) - 1;
+    for (int32_t i = std::min(trimmed.GetEnd(), startOffset) - 1;
          i >= trimmed.mStart; --i) {
       iter.SetOriginalOffset(i);
       if (IsAcceptableCaretPosition(iter, aRespectClusters, mTextRun, this)) {
@@ -6997,7 +7016,7 @@ nsTextFrame::AddInlineMinWidthForFlow(nsRenderingContext *aRenderingContext,
       (textRun->GetFlags() & gfxTextRunFactory::TEXT_ENABLE_HYPHEN_BREAKS) != 0));
   if (hyphenating) {
     gfxSkipCharsIterator tmp(iter);
-    len = NS_MIN<int32_t>(GetContentOffset() + GetInFlowContentLength(),
+    len = std::min<int32_t>(GetContentOffset() + GetInFlowContentLength(),
                  tmp.ConvertSkippedToOriginal(flowEndInTextRun)) - iter.GetOriginalOffset();
   }
   PropertyProvider provider(textRun, textStyle, frag, this,
@@ -7759,7 +7778,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
             FindFirstLetterRange(frag, mTextRun, offset, iter, &firstLetterLength);
           if (newLineOffset >= 0) {
             // Don't allow a preformatted newline to be part of a first-letter.
-            firstLetterLength = NS_MIN(firstLetterLength, length - 1);
+            firstLetterLength = std::min(firstLetterLength, length - 1);
             if (length == 1) {
               // There is no text to be consumed by the first-letter before the
               // preformatted newline. Note that the first letter is therefore
@@ -7988,13 +8007,13 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   // first-letter frames should use the tight bounding box metrics for ascent/descent
   // for good drop-cap effects
   if (GetStateBits() & TEXT_FIRST_LETTER) {
-    textMetrics.mAscent = NS_MAX(gfxFloat(0.0), -textMetrics.mBoundingBox.Y());
-    textMetrics.mDescent = NS_MAX(gfxFloat(0.0), textMetrics.mBoundingBox.YMost());
+    textMetrics.mAscent = std::max(gfxFloat(0.0), -textMetrics.mBoundingBox.Y());
+    textMetrics.mDescent = std::max(gfxFloat(0.0), textMetrics.mBoundingBox.YMost());
   }
 
   // Setup metrics for caller
   // Disallow negative widths
-  aMetrics.width = NSToCoordCeil(NS_MAX(gfxFloat(0.0), textMetrics.mAdvanceWidth));
+  aMetrics.width = NSToCoordCeil(std::max(gfxFloat(0.0), textMetrics.mAdvanceWidth));
 
   if (transformedCharsFit == 0 && !usedHyphenation) {
     aMetrics.ascent = 0;
@@ -8010,8 +8029,8 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
     nsFontMetrics* fm = provider.GetFontMetrics();
     nscoord fontAscent = fm->MaxAscent();
     nscoord fontDescent = fm->MaxDescent();
-    aMetrics.ascent = NS_MAX(NSToCoordCeil(textMetrics.mAscent), fontAscent);
-    nscoord descent = NS_MAX(NSToCoordCeil(textMetrics.mDescent), fontDescent);
+    aMetrics.ascent = std::max(NSToCoordCeil(textMetrics.mAscent), fontAscent);
+    nscoord descent = std::max(NSToCoordCeil(textMetrics.mDescent), fontDescent);
     aMetrics.height = aMetrics.ascent + descent;
   }
 
@@ -8457,7 +8476,7 @@ nsTextFrame::GetFrameName(nsAString& aResult) const
   int32_t totalContentLength;
   nsAutoCString tmp;
   ToCString(tmp, &totalContentLength);
-  tmp.SetLength(NS_MIN(tmp.Length(), 50u));
+  tmp.SetLength(std::min(tmp.Length(), 50u));
   aResult += NS_LITERAL_STRING("\"") + NS_ConvertASCIItoUTF16(tmp) + NS_LITERAL_STRING("\"");
   return NS_OK;
 }
@@ -8546,8 +8565,8 @@ nsTextFrame::AdjustOffsetsForBidi(int32_t aStart, int32_t aEnd)
     // the bidi resolver can be very evil when columns/pages are involved. Don't
     // let it violate our invariants.
     int32_t prevOffset = prev->GetContentOffset();
-    aStart = NS_MAX(aStart, prevOffset);
-    aEnd = NS_MAX(aEnd, prevOffset);
+    aStart = std::max(aStart, prevOffset);
+    aEnd = std::max(aEnd, prevOffset);
     prev->ClearTextRuns();
   }
 

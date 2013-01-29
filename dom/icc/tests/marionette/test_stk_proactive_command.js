@@ -130,6 +130,27 @@ function testTimerManagementGetCurrentValue(cmd) {
   runNextTest();
 }
 
+function testGetInKeyVariableTimeout(cmd) {
+  log("STK CMD " + JSON.stringify(cmd));
+  is(cmd.typeOfCommand, icc.STK_CMD_GET_INKEY);
+  is(cmd.options.duration.timeUnit, 0x01);
+  is(cmd.options.duration.timeInterval, 0x0A);
+
+  runNextTest();
+}
+
+function testSetupCall(cmd) {
+  log("STK CMD " + JSON.stringify(cmd));
+  is(cmd.typeOfCommand, icc.STK_CMD_SET_UP_CALL);
+  is(cmd.commandNumber, 0x01);
+  is(cmd.commandQualifier, 0x04);
+  is(cmd.options.address, "012340123456,1,2");
+  is(cmd.options.confirmMessage, "Disconnect");
+  is(cmd.options.callMessage, "Message");
+
+  runNextTest();
+}
+
 let tests = [
   {command: "d0288103012180820281020d1d00d3309bfc06c95c301aa8e80259c3ec34b9ac07c9602f58ed159bb940",
    func: testDisplayTextGsm7BitEncoding},
@@ -155,6 +176,10 @@ let tests = [
    func: testTimerManagementDeactivate},
   {command: "d00c810301270282028182a40108",
    func: testTimerManagementGetCurrentValue},
+  {command: "d029810301100482028182050a446973636f6e6e6563748609811032042143651c2c05074d657373616765",
+   func: testSetupCall},
+  {command: "D0198103012200820281828D0A04456E74657220222B228402010A",
+   func: testGetInKeyVariableTimeout},
 ];
 
 let pendingEmulatorCmdCount = 0;

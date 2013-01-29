@@ -114,8 +114,6 @@ public:
     eColorID__moz_menuhover,
     // used to menu item text, when mouse is over
     eColorID__moz_menuhovertext,
-    // used to menu bar background
-    eColorID__moz_menubar,
     // used to menu bar item text
     eColorID__moz_menubartext,
     // used to menu bar item text, when mouse is over
@@ -251,6 +249,15 @@ public:
      * (will return the default of NS_ERROR_FAILURE).
      */
     eIntID_WindowsClassic,
+
+    /*
+     * A Boolean value to determine whether the current Windows desktop theme
+     * supports Aero Glass.
+     *
+     * This is Windows-specific and is not implemented on other platforms
+     * (will return the default of NS_ERROR_FAILURE).
+     */
+    eIntID_WindowsGlass,
 
     /*
      * A Boolean value to determine whether the device is a touch enabled

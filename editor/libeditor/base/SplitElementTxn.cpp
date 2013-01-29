@@ -29,8 +29,6 @@ SplitElementTxn::SplitElementTxn()
 {
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(SplitElementTxn)
-
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(SplitElementTxn, EditTxn)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mNewLeftNode)
@@ -201,7 +199,7 @@ NS_IMETHODIMP SplitElementTxn::RedoTransaction(void)
   }
   else
   {
-    nsINode* child = mExistingRightNode->GetFirstChild();
+    nsCOMPtr<nsINode> child = mExistingRightNode->GetFirstChild();
     for (int32_t i=0; i<mOffset; i++)
     {
       if (!child) {return NS_ERROR_NULL_POINTER;}

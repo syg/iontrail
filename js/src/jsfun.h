@@ -18,7 +18,6 @@
 #include "gc/Barrier.h"
 
 ForwardDeclareJS(Atom);
-ForwardDeclareJS(Script);
 
 namespace js { class FunctionExtended; }
 
@@ -201,15 +200,17 @@ class JSFunction : public JSObject
 
     bool initializeLazyScript(JSContext *cx);
 
-    static js::UnrootedScript getOrCreateScript(JSContext *cx, JS::HandleFunction fun) {
-        JS_ASSERT(fun->isInterpreted());
-        if (fun->isInterpretedLazy()) {
+    js::UnrootedScript getOrCreateScript(JSContext *cx) {
+        JS_ASSERT(isInterpreted());
+        if (isInterpretedLazy()) {
             js::MaybeCheckStackRoots(cx);
-            if (!fun->initializeLazyScript(cx))
+            js::RootedFunction self(cx, this);
+            if (!initializeLazyScript(cx))
                 return js::UnrootedScript(NULL);
+            return self->u.i.script_;
         }
-        JS_ASSERT(fun->hasScript());
-        return fun->u.i.script_;
+        JS_ASSERT(hasScript());
+        return u.i.script_;
     }
 
     static bool maybeGetOrCreateScript(JSContext *cx, js::HandleFunction fun,
@@ -219,7 +220,7 @@ class JSFunction : public JSObject
             script.set(NULL);
             return true;
         }
-        script.set(getOrCreateScript(cx, fun));
+        script.set(fun->getOrCreateScript(cx));
         return fun->hasScript();
     }
 
@@ -338,11 +339,6 @@ js_NewFunction(JSContext *cx, js::HandleObject funobj, JSNative native, unsigned
                JSFunction::Flags flags, js::HandleObject parent, js::HandleAtom atom,
                js::gc::AllocKind kind = JSFunction::FinalizeKind);
 
-extern JSFunction * JS_FASTCALL
-js_CloneFunctionObject(JSContext *cx, js::HandleFunction fun,
-                       js::HandleObject parent, js::HandleObject proto,
-                       js::gc::AllocKind kind = JSFunction::FinalizeKind);
-
 extern JSFunction *
 js_DefineFunction(JSContext *cx, js::HandleObject obj, js::HandleId id, JSNative native,
                   unsigned nargs, unsigned flags,
@@ -362,6 +358,10 @@ class FunctionExtended : public JSFunction
     /* Reserved slots available for storage by particular native functions. */
     HeapValue extendedSlots[2];
 };
+
+extern JSFunction *
+CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
+                    gc::AllocKind kind = JSFunction::FinalizeKind);
 
 } // namespace js
 

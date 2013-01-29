@@ -30,6 +30,7 @@
 
 #define CHILD_PROCESS_SHUTDOWN_MESSAGE NS_LITERAL_STRING("child-process-shutdown")
 
+#define CONTENT_PARENT_NO_CHILD_ID 0
 #define CONTENT_PARENT_UNKNOWN_CHILD_ID -1
 
 class mozIApplication;
@@ -177,7 +178,8 @@ private:
 
     // Transform a pre-allocated app process into a "real" app
     // process, for the specified manifest URL.
-    void SetManifestFromPreallocated(const nsAString& aAppManifestURL);
+    void TransformPreallocatedIntoApp(const nsAString& aAppManifestURL,
+                                      ChildPrivileges aPrivs);
 
     /**
      * Mark this ContentParent as dead for the purposes of Get*().
@@ -201,7 +203,6 @@ private:
                       base::ProcessId aOtherProcess) MOZ_OVERRIDE;
 
     virtual bool RecvGetProcessAttributes(uint64_t* aId,
-                                          bool* aStartBackground,
                                           bool* aIsForApp,
                                           bool* aIsForBrowser) MOZ_OVERRIDE;
     virtual bool RecvGetXPCOMProcessAttributes(bool* aIsOffline) MOZ_OVERRIDE;
@@ -341,6 +342,8 @@ private:
     virtual bool RecvAudioChannelChangedNotification();
 
     virtual bool RecvBroadcastVolume(const nsString& aVolumeName);
+
+    virtual bool RecvRecordingDeviceEvents(const nsString& aRecordingStatus);
 
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 

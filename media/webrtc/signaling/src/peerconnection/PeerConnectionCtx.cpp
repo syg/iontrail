@@ -41,10 +41,14 @@ public:
       if (!observerService)
         return;
 
-      nsresult rv = observerService->AddObserver(this,
-                                                 NS_XPCOM_SHUTDOWN_OBSERVER_ID,
-                                                 false);
-      MOZ_ASSERT(rv == NS_OK);
+      nsresult rv = NS_OK;
+
+#ifdef MOZILLA_INTERNAL_API
+      rv = observerService->AddObserver(this,
+                                        NS_XPCOM_SHUTDOWN_OBSERVER_ID,
+                                        false);
+      MOZ_ALWAYS_TRUE(NS_SUCCEEDED(rv));
+#endif
       (void) rv;
     }
 
@@ -198,13 +202,16 @@ void PeerConnectionCtx::onDeviceEvent(ccapi_device_event_e aDeviceEvent,
                                       CSF::CC_DevicePtr aDevice,
                                       CSF::CC_DeviceInfoPtr aInfo ) {
   cc_service_state_t state = aInfo->getServiceState();
+  // We are keeping this in a local var to avoid a data race
+  // with ChangeSipccState in the debug message and compound if below
+  PeerConnectionImpl::SipccState currentSipccState = mSipccState;
 
-  CSFLogDebug(logTag, "%s - %d : %d", __FUNCTION__, state, mSipccState);
+  CSFLogDebug(logTag, "%s - %d : %d", __FUNCTION__, state, currentSipccState);
 
   if (CC_STATE_INS == state) {
     // SIPCC is up
-    if (PeerConnectionImpl::kStarting == mSipccState ||
-        PeerConnectionImpl::kIdle == mSipccState) {
+    if (PeerConnectionImpl::kStarting == currentSipccState ||
+        PeerConnectionImpl::kIdle == currentSipccState) {
       ChangeSipccState(PeerConnectionImpl::kStarted);
     } else {
       CSFLogError(logTag, "%s PeerConnection already started", __FUNCTION__);

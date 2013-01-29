@@ -156,7 +156,6 @@ nsNodeIterator::~nsNodeIterator()
  * nsISupports and cycle collection stuff
  */
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsNodeIterator)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsNodeIterator)
     if (!tmp->mDetached && tmp->mRoot)
         tmp->mRoot->RemoveMutationObserver(tmp);
@@ -206,13 +205,6 @@ NS_IMETHODIMP nsNodeIterator::GetFilter(nsIDOMNodeFilter **aFilter)
 
     NS_IF_ADDREF(*aFilter = mFilter);
 
-    return NS_OK;
-}
-
-/* readonly attribute boolean expandEntityReferences; */
-NS_IMETHODIMP nsNodeIterator::GetExpandEntityReferences(bool *aExpandEntityReferences)
-{
-    *aExpandEntityReferences = false;
     return NS_OK;
 }
 

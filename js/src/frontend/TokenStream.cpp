@@ -32,6 +32,7 @@
 
 #include "frontend/Parser.h"
 #include "frontend/TokenStream.h"
+#include "js/CharacterEncoding.h"
 #include "vm/Keywords.h"
 #include "vm/RegExpObject.h"
 #include "vm/StringBuffer.h"
@@ -564,7 +565,8 @@ TokenStream::reportCompileErrorNumberVA(ParseNode *pn, unsigned flags, unsigned 
         err.report.uclinebuf = windowBuf.extractWellSized();
         if (!err.report.uclinebuf)
             return false;
-        err.report.linebuf = DeflateString(cx, err.report.uclinebuf, windowLength);
+        TwoByteChars tbchars(err.report.uclinebuf, windowLength);
+        err.report.linebuf = LossyTwoByteCharsToNewLatin1CharsZ(cx, tbchars).c_str();
         if (!err.report.linebuf)
             return false;
 
@@ -728,7 +730,8 @@ TokenStream::getXMLEntity()
   bad:
     /* No match: throw a TypeError per ECMA-357 10.3.2.1 step 8(a). */
     JS_ASSERT((tb.end() - bp) >= 1);
-    bytes = DeflateString(cx, bp + 1, (tb.end() - bp) - 1);
+    TwoByteChars tbchars(bp + 1, (tb.end() - bp) - 1);
+    bytes = LossyTwoByteCharsToNewLatin1CharsZ(cx, tbchars).c_str();
     if (bytes) {
         reportError(msg, bytes);
         js_free(bytes);
@@ -1053,8 +1056,8 @@ TokenStream::getXMLMarkup(TokenKind *ttp, Token **tpp)
         if (contentIndex < 0) {
             data = cx->names().empty;
         } else {
-            data = AtomizeChars(cx, tokenbuf.begin() + contentIndex,
-                                tokenbuf.length() - contentIndex);
+            data = AtomizeChars<CanGC>(cx, tokenbuf.begin() + contentIndex,
+                                       tokenbuf.length() - contentIndex);
             if (!data)
                 goto error;
         }
@@ -1281,7 +1284,7 @@ TokenStream::newToken(ptrdiff_t adjust)
 JS_ALWAYS_INLINE JSAtom *
 TokenStream::atomize(JSContext *cx, CharBuffer &cb)
 {
-    return AtomizeChars(cx, cb.begin(), cb.length());
+    return AtomizeChars<CanGC>(cx, cb.begin(), cb.length());
 }
 
 #ifdef DEBUG
@@ -1577,7 +1580,7 @@ TokenStream::getTokenInternal()
          */
         JSAtom *atom;
         if (!hadUnicodeEscape)
-            atom = AtomizeChars(cx, identStart, userbuf.addressOfNextRawChar() - identStart);
+            atom = AtomizeChars<CanGC>(cx, identStart, userbuf.addressOfNextRawChar() - identStart);
         else
             atom = atomize(cx, tokenbuf);
         if (!atom)

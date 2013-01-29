@@ -74,6 +74,14 @@ struct RunnableMethodTraits<GeckoChildProcessHost>
     static void ReleaseCallee(GeckoChildProcessHost* obj) { }
 };
 
+/*static*/
+base::ChildPrivileges
+GeckoChildProcessHost::DefaultChildPrivileges()
+{
+  return (kLowRightsSubprocesses ?
+          base::PRIVILEGES_UNPRIVILEGED : base::PRIVILEGES_INHERIT);
+}
+
 GeckoChildProcessHost::GeckoChildProcessHost(GeckoProcessType aProcessType,
                                              ChildPrivileges aPrivileges)
   : ChildProcessHost(RENDER_PROCESS), // FIXME/cjones: we should own this enum
@@ -490,8 +498,7 @@ GeckoChildProcessHost::PerformAsyncLaunchInternal(std::vector<std::string>& aExt
   base::environment_map newEnvVars;
   ChildPrivileges privs = mPrivileges;
   if (privs == base::PRIVILEGES_DEFAULT) {
-    privs = kLowRightsSubprocesses ?
-            base::PRIVILEGES_UNPRIVILEGED : base::PRIVILEGES_INHERIT;
+    privs = DefaultChildPrivileges();
   }
   // XPCOM may not be initialized in some subprocesses.  We don't want
   // to initialize XPCOM just for the directory service, especially
@@ -507,7 +514,7 @@ GeckoChildProcessHost::PerformAsyncLaunchInternal(std::vector<std::string>& aExt
         nsCString path;
         greDir->GetNativePath(path);
 # if defined(OS_LINUX) || defined(OS_BSD)
-#  if defined(MOZ_WIDGET_ANDROID) || defined(OS_BSD)
+#  if defined(MOZ_WIDGET_ANDROID)
         path += "/lib";
 #  endif  // MOZ_WIDGET_ANDROID
         const char *ld_library_path = PR_GetEnv("LD_LIBRARY_PATH");

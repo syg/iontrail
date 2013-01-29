@@ -59,6 +59,7 @@
 #include "nsINameSpaceManager.h"
 #include "nsIPercentHeightObserver.h"
 #include "nsStyleStructInlines.h"
+#include <algorithm>
 
 #ifdef IBMBIDI
 #include "nsBidiPresUtils.h"
@@ -1153,7 +1154,7 @@ nsIFrame::ComputeBorderRadii(const nsStyleCorners& aBorderRadius,
 
     // avoid floating point division in the normal case
     if (length < sum)
-      ratio = NS_MIN(ratio, double(length)/sum);
+      ratio = std::min(ratio, double(length)/sum);
   }
   if (ratio < 1.0) {
     NS_FOR_CSS_HALF_CORNERS(corner) {
@@ -1171,8 +1172,8 @@ nsIFrame::InsetBorderRadii(nscoord aRadii[8], const nsMargin &aOffsets)
     nscoord offset = aOffsets.Side(side);
     uint32_t hc1 = NS_SIDE_TO_HALF_CORNER(side, false, false);
     uint32_t hc2 = NS_SIDE_TO_HALF_CORNER(side, true, false);
-    aRadii[hc1] = NS_MAX(0, aRadii[hc1] - offset);
-    aRadii[hc2] = NS_MAX(0, aRadii[hc2] - offset);
+    aRadii[hc1] = std::max(0, aRadii[hc1] - offset);
+    aRadii[hc2] = std::max(0, aRadii[hc2] - offset);
   }
 }
 
@@ -2570,7 +2571,7 @@ nsFrame::IsSelectable(bool* aSelectable, uint8_t* aSelectStyle) const
   //
   // For instance, if the frame hierarchy is:
   //    AUTO     -> _MOZ_ALL -> NONE -> TEXT,     the returned value is _MOZ_ALL
-  //    TEXT     -> NONE     -> AUTO -> _MOZ_ALL, the returned value is NONE
+  //    TEXT     -> NONE     -> AUTO -> _MOZ_ALL, the returned value is TEXT
   //    _MOZ_ALL -> TEXT     -> AUTO -> AUTO,     the returned value is _MOZ_ALL
   //    AUTO     -> CELL     -> TEXT -> AUTO,     the returned value is TEXT
   //
@@ -2581,7 +2582,6 @@ nsFrame::IsSelectable(bool* aSelectable, uint8_t* aSelectStyle) const
     const nsStyleUIReset* userinterface = frame->GetStyleUIReset();
     switch (userinterface->mUserSelect) {
       case NS_STYLE_USER_SELECT_ALL:
-      case NS_STYLE_USER_SELECT_NONE:
       case NS_STYLE_USER_SELECT_MOZ_ALL:
         // override the previous values
         selectStyle = userinterface->mUserSelect;
@@ -2602,9 +2602,6 @@ nsFrame::IsSelectable(bool* aSelectable, uint8_t* aSelectStyle) const
   else
   if (selectStyle == NS_STYLE_USER_SELECT_MOZ_ALL)
     selectStyle = NS_STYLE_USER_SELECT_ALL;
-  else
-  if (selectStyle == NS_STYLE_USER_SELECT_MOZ_NONE)
-    selectStyle = NS_STYLE_USER_SELECT_NONE;
 
   // return stuff
   if (aSelectStyle)
@@ -3014,9 +3011,9 @@ NS_IMETHODIMP nsFrame::HandleDrag(nsPresContext* aPresContext,
 {
   MOZ_ASSERT(aEvent->eventStructType == NS_MOUSE_EVENT, "HandleDrag can only handle mouse event");
 
-  bool    selectable;
-  uint8_t selectStyle;
-  IsSelectable(&selectable, &selectStyle);
+  bool selectable;
+  IsSelectable(&selectable, nullptr);
+
   // XXX Do we really need to exclude non-selectable content here?
   // GetContentOffsetsFromPoint can handle it just fine, although some
   // other stuff might not like it.
@@ -3591,15 +3588,13 @@ static nsIFrame* AdjustFrameForSelectionStyles(nsIFrame* aFrame) {
   {
     // These are the conditions that make all children not able to handle
     // a cursor.
-    if (frame->GetStyleUIReset()->mUserSelect == NS_STYLE_USER_SELECT_NONE || 
-        frame->GetStyleUIReset()->mUserSelect == NS_STYLE_USER_SELECT_ALL || 
+    if (frame->GetStyleUIReset()->mUserSelect == NS_STYLE_USER_SELECT_ALL ||
         frame->IsGeneratedContentFrame()) {
       adjustedFrame = frame;
     }
   }
   return adjustedFrame;
 }
-  
 
 nsIFrame::ContentOffsets nsIFrame::GetContentOffsetsFromPoint(nsPoint aPoint,
                                                               uint32_t aFlags)
@@ -3610,8 +3605,8 @@ nsIFrame::ContentOffsets nsIFrame::GetContentOffsetsFromPoint(nsPoint aPoint,
   }
   else {
     // This section of code deals with special selection styles.  Note that
-    // -moz-none and -moz-all exist, even though they don't need to be explicitly
-    // handled.
+    // -moz-all exists, even though it doesn't need to be explicitly handled.
+    //
     // The offset is forced not to end up in generated content; content offsets
     // cannot represent content outside of the document's content tree.
 
@@ -3681,7 +3676,10 @@ nsFrame::GetCursor(const nsPoint& aPoint,
 {
   FillCursorInformationFromStyle(GetStyleUserInterface(), aCursor);
   if (NS_STYLE_CURSOR_AUTO == aCursor.mCursor) {
-    aCursor.mCursor = NS_STYLE_CURSOR_DEFAULT;
+    // If this is editable, I-beam cursor is better for most elements.
+    aCursor.mCursor =
+      (mContent && mContent->IsEditable()) ? NS_STYLE_CURSOR_TEXT :
+                                             NS_STYLE_CURSOR_DEFAULT;
   }
 
 
@@ -3763,7 +3761,7 @@ void
 nsIFrame::InlineMinWidthData::ForceBreak(nsRenderingContext *aRenderingContext)
 {
   currentLine -= trailingWhitespace;
-  prevLines = NS_MAX(prevLines, currentLine);
+  prevLines = std::max(prevLines, currentLine);
   currentLine = trailingWhitespace = 0;
 
   for (uint32_t i = 0, i_end = floats.Length(); i != i_end; ++i) {
@@ -3827,7 +3825,7 @@ nsIFrame::InlinePrefWidthData::ForceBreak(nsRenderingContext *aRenderingContext)
       // Negative-width floats don't change the available space so they
       // shouldn't change our intrinsic line width either.
       floats_cur =
-        NSCoordSaturatingAdd(floats_cur, NS_MAX(0, floatWidth));
+        NSCoordSaturatingAdd(floats_cur, std::max(0, floatWidth));
     }
 
     nscoord floats_cur =
@@ -3842,7 +3840,7 @@ nsIFrame::InlinePrefWidthData::ForceBreak(nsRenderingContext *aRenderingContext)
 
   currentLine =
     NSCoordSaturatingSubtract(currentLine, trailingWhitespace, nscoord_MAX);
-  prevLines = NS_MAX(prevLines, currentLine);
+  prevLines = std::max(prevLines, currentLine);
   currentLine = trailingWhitespace = 0;
   skipWhitespace = true;
 }
@@ -3871,8 +3869,8 @@ AddCoord(const nsStyleCoord& aStyle,
       const nsStyleCoord::Calc *calc = aStyle.GetCalcValue();
       if (aClampNegativeToZero) {
         // This is far from ideal when one is negative and one is positive.
-        *aCoord += NS_MAX(calc->mLength, 0);
-        *aPercent += NS_MAX(calc->mPercent, 0.0f);
+        *aCoord += std::max(calc->mLength, 0);
+        *aPercent += std::max(calc->mPercent, 0.0f);
       } else {
         *aCoord += calc->mLength;
         *aPercent += calc->mPercent;
@@ -4019,7 +4017,7 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
       nsLayoutUtils::ComputeWidthValue(aRenderingContext, this,
         aCBSize.width, boxSizingAdjust.width, boxSizingToMarginEdgeWidth,
         stylePos->mMaxWidth);
-    result.width = NS_MIN(maxWidth, result.width);
+    result.width = std::min(maxWidth, result.width);
   }
 
   nscoord minWidth;
@@ -4037,7 +4035,7 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
     // container explicitly considers them during space distribution.
     minWidth = 0;
   }
-  result.width = NS_MAX(minWidth, result.width);
+  result.width = std::max(minWidth, result.width);
 
   // Compute height
   // (but not if we're auto-height or if we recieved the "eUseAutoHeight"
@@ -4058,7 +4056,7 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
         nsLayoutUtils::ComputeHeightValue(aCBSize.height, 
                                           boxSizingAdjust.height,
                                           stylePos->mMaxHeight);
-      result.height = NS_MIN(maxHeight, result.height);
+      result.height = std::min(maxHeight, result.height);
     }
 
     if (!nsLayoutUtils::IsAutoHeight(stylePos->mMinHeight, aCBSize.height) &&
@@ -4067,7 +4065,7 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
         nsLayoutUtils::ComputeHeightValue(aCBSize.height, 
                                           boxSizingAdjust.height, 
                                           stylePos->mMinHeight);
-      result.height = NS_MAX(minHeight, result.height);
+      result.height = std::max(minHeight, result.height);
     }
   }
 
@@ -4094,8 +4092,8 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
       result.width = size.width;
   }
 
-  result.width = NS_MAX(0, result.width);
-  result.height = NS_MAX(0, result.height);
+  result.width = std::max(0, result.width);
+  result.height = std::max(0, result.height);
 
   return result;
 }
@@ -5137,7 +5135,7 @@ ComputeOutlineAndEffectsRect(nsIFrame* aFrame,
       }
 
       nscoord offset = outline->mOutlineOffset;
-      nscoord inflateBy = NS_MAX(width + offset, 0);
+      nscoord inflateBy = std::max(width + offset, 0);
       // FIXME (bug 599652): We probably want outline to be drawn around
       // something smaller than the visual overflow rect (perhaps the
       // scrollable overflow rect is correct).  When we change that, we
@@ -7929,9 +7927,9 @@ nsFrame::BoxReflow(nsBoxLayoutState&        aState,
 
     // This may not do very much useful, but it's probably worth trying.
     if (parentSize.width != NS_INTRINSICSIZE)
-      parentReflowState.SetComputedWidth(NS_MAX(parentSize.width, 0));
+      parentReflowState.SetComputedWidth(std::max(parentSize.width, 0));
     if (parentSize.height != NS_INTRINSICSIZE)
-      parentReflowState.SetComputedHeight(NS_MAX(parentSize.height, 0));
+      parentReflowState.SetComputedHeight(std::max(parentSize.height, 0));
     parentReflowState.mComputedMargin.SizeTo(0, 0, 0, 0);
     // XXX use box methods
     parentFrame->GetPadding(parentReflowState.mComputedPadding);
@@ -7970,7 +7968,7 @@ nsFrame::BoxReflow(nsBoxLayoutState&        aState,
     if (aWidth != NS_INTRINSICSIZE) {
       nscoord computedWidth =
         aWidth - reflowState.mComputedBorderPadding.LeftRight();
-      computedWidth = NS_MAX(computedWidth, 0);
+      computedWidth = std::max(computedWidth, 0);
       reflowState.SetComputedWidth(computedWidth);
     }
 
@@ -7983,7 +7981,7 @@ nsFrame::BoxReflow(nsBoxLayoutState&        aState,
       if (aHeight != NS_INTRINSICSIZE) {
         nscoord computedHeight =
           aHeight - reflowState.mComputedBorderPadding.TopBottom();
-        computedHeight = NS_MAX(computedHeight, 0);
+        computedHeight = std::max(computedHeight, 0);
         reflowState.SetComputedHeight(computedHeight);
       } else {
         reflowState.SetComputedHeight(

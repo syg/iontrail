@@ -12,6 +12,8 @@ include $(DEPTH)/config/autoconf.mk
 test_dirs := \
   mozbuild/mozbuild/test \
   mozbuild/mozbuild/test/compilation \
+  mozbuild/mozbuild/test/frontend \
+  mozbuild/mozpack/test \
   $(NULL)
 
 PYTHON_UNIT_TESTS := $(foreach dir,$(test_dirs),$(wildcard $(srcdir)/$(dir)/*.py))

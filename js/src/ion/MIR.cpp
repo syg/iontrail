@@ -344,6 +344,22 @@ MConstant::printOpcode(FILE *fp)
         fprintf(fp, "%f", value().toDouble());
         break;
       case MIRType_Object:
+        if (value().toObject().isFunction()) {
+            JSFunction *fun = value().toObject().toFunction();
+            if (fun->displayAtom()) {
+                fputs("function ", fp);
+                FileEscapedString(fp, fun->displayAtom(), 0);
+            } else {
+                fputs("unnamed function", fp);
+            }
+            if (fun->hasScript()) {
+                UnrootedScript script = fun->nonLazyScript();
+                fprintf(fp, " (%s:%u)",
+                        script->filename ? script->filename : "", script->lineno);
+            }
+            fprintf(fp, " at %p", (void *) fun);
+            break;
+        }
         fprintf(fp, "object %p (%s)", (void *)&value().toObject(),
                 value().toObject().getClass()->name);
         break;
@@ -786,16 +802,16 @@ MDiv::analyzeEdgeCasesForward()
 
     // Try removing divide by zero check
     if (rhs()->isConstant() && !rhs()->toConstant()->value().isInt32(0))
-        canBeDivideByZero_ =  false;
+        canBeDivideByZero_ = false;
 
     // If lhs is a constant int != INT32_MIN, then
     // negative overflow check can be skipped.
     if (lhs()->isConstant() && !lhs()->toConstant()->value().isInt32(INT32_MIN))
-        setCanBeNegativeZero(false);
+        canBeNegativeOverflow_ = false;
 
     // If rhs is a constant int != -1, likewise.
     if (rhs()->isConstant() && !rhs()->toConstant()->value().isInt32(-1))
-        setCanBeNegativeZero(false);
+        canBeNegativeOverflow_ = false;
 
     // If lhs is != 0, then negative zero check can be skipped.
     if (lhs()->isConstant() && !lhs()->toConstant()->value().isInt32(0))
@@ -837,6 +853,12 @@ MDiv::updateForReplacement(MDefinition *ins_)
     return true;
 }
 
+bool
+MDiv::fallible()
+{
+    return !isTruncated();
+}
+
 static inline MDefinition *
 TryFold(MDefinition *original, MDefinition *replacement)
 {
@@ -855,6 +877,31 @@ MMod::foldsTo(bool useValueNumbers)
         return folded;
 
     return this;
+}
+
+void
+MMod::analyzeTruncateBackward()
+{
+    if (!isTruncated())
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
+}
+
+bool
+MMod::updateForReplacement(MDefinition *ins_)
+{
+    JS_ASSERT(ins_->isMod());
+    MMod *ins = ins_->toMod();
+    if (isTruncated() && ins->isTruncated())
+        setTruncated(Max(isTruncated(), ins->isTruncated()));
+    else
+        setTruncated(0);
+    return true;
+}
+
+bool
+MMod::fallible()
+{
+    return !isTruncated();
 }
 
 void

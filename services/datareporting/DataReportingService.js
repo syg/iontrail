@@ -7,13 +7,16 @@
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/services/datareporting/policy.jsm");
+Cu.import("resource://gre/modules/services/datareporting/sessions.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://services-common/observers.js");
 Cu.import("resource://services-common/preferences.js");
+Cu.import("resource://services-common/utils.js");
 
 
 const ROOT_BRANCH = "datareporting.";
 const POLICY_BRANCH = ROOT_BRANCH + "policy.";
+const SESSIONS_BRANCH = ROOT_BRANCH + "sessions.";
 const HEALTHREPORT_BRANCH = ROOT_BRANCH + "healthreport.";
 const HEALTHREPORT_LOGGING_BRANCH = HEALTHREPORT_BRANCH + "logging.";
 const DEFAULT_LOAD_DELAY_MSEC = 10 * 1000;
@@ -29,7 +32,7 @@ const DEFAULT_LOAD_DELAY_MSEC = 10 * 1000;
  * EXAMPLE USAGE
  * =============
  *
- * let reporter = Cc["@mozilla.org/healthreport/service;1"]
+ * let reporter = Cc["@mozilla.org/datareporting/service;1"]
  *                  .getService(Ci.nsISupports)
  *                  .wrappedJSObject
  *                  .healthReporter;
@@ -52,6 +55,8 @@ const DEFAULT_LOAD_DELAY_MSEC = 10 * 1000;
  */
 this.DataReportingService = function () {
   this.wrappedJSObject = this;
+
+  this._quitting = false;
 
   this._os = Cc["@mozilla.org/observer-service;1"]
                .getService(Ci.nsIObserverService);
@@ -104,15 +109,37 @@ DataReportingService.prototype = Object.freeze({
         this._os.removeObserver(this, "profile-after-change");
         this._os.addObserver(this, "sessionstore-windows-restored", true);
 
+        this._prefs = new Preferences(HEALTHREPORT_BRANCH);
+
+        // We don't initialize the sessions recorder unless Health Report is
+        // around to provide pruning of data.
+        //
+        // FUTURE consider having the SessionsRecorder always enabled and/or
+        // living in its own XPCOM service.
+        if (this._prefs.get("service.enabled", true)) {
+          this.sessionRecorder = new SessionRecorder(SESSIONS_BRANCH);
+          this.sessionRecorder.onStartup();
+        }
+
         // We can't interact with prefs until after the profile is present.
         let policyPrefs = new Preferences(POLICY_BRANCH);
-        this._prefs = new Preferences(HEALTHREPORT_BRANCH);
         this.policy = new DataReportingPolicy(policyPrefs, this._prefs, this);
+
         break;
 
       case "sessionstore-windows-restored":
         this._os.removeObserver(this, "sessionstore-windows-restored");
         this._os.addObserver(this, "quit-application", false);
+
+        // When the session recorder starts up above, first paint and session
+        // restore times likely aren't available. So, we wait until they are (here)
+        // and record them. In the case of session restore time, that appears
+        // to be set by an observer of this notification. So, we delay
+        // recording until the next tick of the event loop.
+        if (this.sessionRecorder) {
+          CommonUtils.nextTick(this.sessionRecorder.recordStartupFields,
+                               this.sessionRecorder);
+        }
 
         this.policy.startPolling();
 
@@ -130,10 +157,20 @@ DataReportingService.prototype = Object.freeze({
         this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
         this.timer.initWithCallback({
           notify: function notify() {
+            delete this.timer;
+
+            // There could be a race between "quit-application" firing and
+            // this callback being invoked. We close that door.
+            if (this._quitting) {
+              return;
+            }
+
             // Side effect: instantiates the reporter instance if not already
             // accessed.
+            //
+            // The instance installs its own shutdown observers. So, we just
+            // fire and forget: it will clean itself up.
             let reporter = this.healthReporter;
-            delete this.timer;
           }.bind(this),
         }, delayInterval, this.timer.TYPE_ONE_SHOT);
 
@@ -141,6 +178,16 @@ DataReportingService.prototype = Object.freeze({
 
       case "quit-application":
         this._os.removeObserver(this, "quit-application");
+        this._quitting = true;
+
+        // Shutdown doesn't clear pending timers. So, we need to explicitly
+        // cancel our health reporter initialization timer or else it will
+        // attempt initialization after shutdown has commenced. This would
+        // likely lead to stalls or crashes.
+        if (this.timer) {
+          this.timer.cancel();
+        }
+
         this.policy.stopPolling();
         break;
     }
@@ -203,7 +250,8 @@ DataReportingService.prototype = Object.freeze({
 
     // The reporter initializes in the background.
     this._healthReporter = new ns.HealthReporter(HEALTHREPORT_BRANCH,
-                                                 this.policy);
+                                                 this.policy,
+                                                 this.sessionRecorder);
   },
 });
 

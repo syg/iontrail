@@ -62,8 +62,8 @@ RefPtr<SrtpFlow> SrtpFlow::Create(int cipher_suite,
     case SRTP_AES128_CM_HMAC_SHA1_32:
       MOZ_MTLOG(PR_LOG_DEBUG, "Setting SRTP cipher suite SRTP_AES128_CM_HMAC_SHA1_32");
       crypto_policy_set_aes_cm_128_hmac_sha1_32(&policy.rtp);
-      crypto_policy_set_aes_cm_128_hmac_sha1_32(&policy.rtcp);
-      break;
+      crypto_policy_set_aes_cm_128_hmac_sha1_80(&policy.rtcp); // 80-bit per RFC 5764
+      break;                                                   // S 4.1.2.
     default:
       MOZ_MTLOG(PR_LOG_ERROR, "Request to set unknown SRTP cipher suite");
       return NULL;
@@ -75,8 +75,8 @@ RefPtr<SrtpFlow> SrtpFlow::Create(int cipher_suite,
   policy.ssrc.type = inbound ? ssrc_any_inbound : ssrc_any_outbound;
   policy.ssrc.value = 0;
   policy.ekt = NULL;
-  policy.window_size = 0;      // Use the default value.
-  policy.allow_repeat_tx = 0;  // TODO(ekr@rtfm.com): revisit?
+  policy.window_size = 1024;   // Use the Chrome value.  Needs to be revisited.  Default is 128
+  policy.allow_repeat_tx = 1;  // Use Chrome value; needed for NACK mode to work
   policy.next = NULL;
 
   // Now make the session

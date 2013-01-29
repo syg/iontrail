@@ -25,6 +25,7 @@
 #include "nsRect.h"
 #include "nsStyleStruct.h"
 #include "mozilla/Constants.h"
+#include <algorithm>
 
 class gfxASurface;
 class gfxContext;
@@ -93,10 +94,6 @@ class Element;
 #define SVG_HIT_TEST_STROKE      0x02
 #define SVG_HIT_TEST_CHECK_MRECT 0x04
 
-/*
- * Checks the smil enabled preference.
- */
-bool NS_SMILEnabled();
 
 bool NS_SVGDisplayListHitTestingEnabled();
 bool NS_SVGDisplayListPaintingEnabled();
@@ -557,8 +554,8 @@ public:
    */
   static int32_t ClampToInt(double aVal)
   {
-    return NS_lround(NS_MAX(double(INT32_MIN),
-                            NS_MIN(double(INT32_MAX), aVal)));
+    return NS_lround(std::max(double(INT32_MIN),
+                            std::min(double(INT32_MAX), aVal)));
   }
 
   static nscolor GetFallbackOrPaintColor(gfxContext *aContext,

@@ -2193,8 +2193,6 @@ IDBObjectStore::IndexInternal(const nsAString& aName,
   return NS_OK;
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(IDBObjectStore)
-
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(IDBObjectStore)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mCachedKeyPath)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
@@ -3007,8 +3005,9 @@ AddHelper::PackArgumentsForParentProcess(ObjectStoreRequestParams& aParams)
 
       BlobChild* actor =
         contentChild->GetOrCreateActorForBlob(file.mFile);
-      NS_ASSERTION(actor, "This should never fail without aborting!");
-
+      if (!actor) {
+        return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
+      }
       blobsChild.AppendElement(actor);
     }
   }

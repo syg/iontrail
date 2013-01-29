@@ -52,7 +52,7 @@ public:
   nsresult StartPreview(DOMCameraPreview* aDOMPreview);
   void StopPreview();
   nsresult AutoFocus(nsICameraAutoFocusCallback* onSuccess, nsICameraErrorCallback* onError);
-  nsresult TakePicture(dom::CameraSize aSize, int32_t aRotation, const nsAString& aFileFormat, dom::CameraPosition aPosition, nsICameraTakePictureCallback* onSuccess, nsICameraErrorCallback* onError);
+  nsresult TakePicture(dom::CameraSize aSize, int32_t aRotation, const nsAString& aFileFormat, dom::CameraPosition aPosition, uint64_t aDateTime, nsICameraTakePictureCallback* onSuccess, nsICameraErrorCallback* onError);
   nsresult StartRecording(dom::CameraStartRecordingOptions* aOptions, nsIFile* aFolder, const nsAString& aFilename, nsICameraStartRecordingCallback* onSuccess, nsICameraErrorCallback* onError);
   nsresult StopRecording();
   nsresult GetPreviewStreamVideoMode(dom::CameraRecorderOptions* aOptions, nsICameraPreviewStreamCallback* onSuccess, nsICameraErrorCallback* onError);
@@ -235,8 +235,9 @@ public:
   {
     nsresult rv = mCameraControl->GetPreviewStreamImpl(this);
 
-    if (NS_FAILED(rv) && mOnErrorCb.get()) {
-      rv = NS_DispatchToMainThread(new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId()));
+    if (NS_FAILED(rv)) {
+      nsCOMPtr<nsIRunnable> cameraErrorResult = new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId());
+      rv = NS_DispatchToMainThread(cameraErrorResult);
       NS_ENSURE_SUCCESS(rv, rv);
     }
     return rv;
@@ -300,8 +301,9 @@ public:
     nsresult rv = mCameraControl->AutoFocusImpl(this);
     DOM_CAMERA_LOGT("%s:%d\n", __func__, __LINE__);
 
-    if (NS_FAILED(rv) && mOnErrorCb.get()) {
-      rv = NS_DispatchToMainThread(new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId()));
+    if (NS_FAILED(rv)) {
+      nsCOMPtr<nsIRunnable> cameraErrorResult = new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId());
+      rv = NS_DispatchToMainThread(cameraErrorResult);
       NS_ENSURE_SUCCESS(rv, rv);
     }
     return rv;
@@ -359,13 +361,14 @@ protected:
 class TakePictureTask : public nsRunnable
 {
 public:
-  TakePictureTask(CameraControlImpl* aCameraControl, bool aCancel, dom::CameraSize aSize, int32_t aRotation, const nsAString& aFileFormat, dom::CameraPosition aPosition, nsICameraTakePictureCallback* onSuccess, nsICameraErrorCallback* onError)
+  TakePictureTask(CameraControlImpl* aCameraControl, bool aCancel, dom::CameraSize aSize, int32_t aRotation, const nsAString& aFileFormat, dom::CameraPosition aPosition, uint64_t aDateTime, nsICameraTakePictureCallback* onSuccess, nsICameraErrorCallback* onError)
     : mCameraControl(aCameraControl)
     , mCancel(aCancel)
     , mSize(aSize)
     , mRotation(aRotation)
     , mFileFormat(aFileFormat)
     , mPosition(aPosition)
+    , mDateTime(aDateTime)
     , mOnSuccessCb(new nsMainThreadPtrHolder<nsICameraTakePictureCallback>(onSuccess))
     , mOnErrorCb(new nsMainThreadPtrHolder<nsICameraErrorCallback>(onError))
   {
@@ -383,8 +386,9 @@ public:
     nsresult rv = mCameraControl->TakePictureImpl(this);
     DOM_CAMERA_LOGT("%s:%d\n", __func__, __LINE__);
 
-    if (NS_FAILED(rv) && mOnErrorCb.get()) {
-      rv = NS_DispatchToMainThread(new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId()));
+    if (NS_FAILED(rv)) {
+      nsCOMPtr<nsIRunnable> cameraErrorResult = new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId());
+      rv = NS_DispatchToMainThread(cameraErrorResult);
       NS_ENSURE_SUCCESS(rv, rv);
     }
     return rv;
@@ -396,6 +400,7 @@ public:
   int32_t mRotation;
   nsString mFileFormat;
   dom::CameraPosition mPosition;
+  uint64_t mDateTime;
   nsMainThreadPtrHandle<nsICameraTakePictureCallback> mOnSuccessCb;
   nsMainThreadPtrHandle<nsICameraErrorCallback> mOnErrorCb;
 };
@@ -578,8 +583,9 @@ public:
     nsresult rv = mCameraControl->GetPreviewStreamVideoModeImpl(this);
     DOM_CAMERA_LOGI("%s:%d -- AFTER IMPL : rv = %d\n", __func__, __LINE__, rv);
 
-    if (NS_FAILED(rv) && mOnErrorCb.get()) {
-      rv = NS_DispatchToMainThread(new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId()));
+    if (NS_FAILED(rv)) {
+      nsCOMPtr<nsIRunnable> cameraErrorResult = new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId());
+      rv = NS_DispatchToMainThread(cameraErrorResult);
       NS_ENSURE_SUCCESS(rv, rv);
     }
     return NS_OK;
@@ -645,8 +651,9 @@ public:
     nsresult rv = mCameraControl->ReleaseHardwareImpl(this);
     DOM_CAMERA_LOGT("%s:%d\n", __func__, __LINE__);
 
-    if (NS_FAILED(rv) && mOnErrorCb.get()) {
-      rv = NS_DispatchToMainThread(new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId()));
+    if (NS_FAILED(rv)) {
+      nsCOMPtr<nsIRunnable> cameraErrorResult = new CameraErrorResult(mOnErrorCb, NS_LITERAL_STRING("FAILURE"), mCameraControl->GetWindowId());
+      rv = NS_DispatchToMainThread(cameraErrorResult);
       NS_ENSURE_SUCCESS(rv, rv);
     }
     return rv;

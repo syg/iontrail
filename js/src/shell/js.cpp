@@ -37,7 +37,6 @@
 #include "jsobj.h"
 #include "json.h"
 #include "jsreflect.h"
-#include "jsscope.h"
 #include "jsscript.h"
 #include "jstypedarray.h"
 #include "jstypedarrayinlines.h"
@@ -49,6 +48,7 @@
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/Parser.h"
 #include "methodjit/MethodJIT.h"
+#include "vm/Shape.h"
 
 #include "prmjtime.h"
 
@@ -94,17 +94,15 @@ typedef enum JSShellExitCode {
 
 size_t gStackChunkSize = 8192;
 
-/* Assume that we can not use more than 5e5 bytes of C stack by default. */
-#if (defined(DEBUG) && defined(__SUNPRO_CC))  || defined(JS_CPU_SPARC)
-/* Sun compiler uses larger stack space for js_Interpret() with debug
-   Use a bigger gMaxStackSize to make "make check" happy. */
-#define DEFAULT_MAX_STACK_SIZE 5000000
+/*
+ * Note: This limit should match the stack limit set by the browser in
+ *       js/xpconnect/src/XPCJSRuntime.cpp
+ */
+#if defined(MOZ_ASAN) || (defined(DEBUG) && !defined(XP_WIN))
+size_t gMaxStackSize = 2 * 128 * sizeof(size_t) * 1024;
 #else
-#define DEFAULT_MAX_STACK_SIZE 500000
+size_t gMaxStackSize = 128 * sizeof(size_t) * 1024;
 #endif
-
-size_t gMaxStackSize = DEFAULT_MAX_STACK_SIZE;
-
 
 #ifdef JS_THREADSAFE
 static unsigned gStackBaseThreadIndex;
@@ -1559,7 +1557,7 @@ TrapHandler(JSContext *cx, RawScript, jsbytecode *pc, jsval *rval,
     JS_ASSERT(!iter.done());
 
     /* Debug-mode currently disables Ion compilation. */
-    JSStackFrame *caller = Jsvalify(iter.interpFrame());
+    JSAbstractFramePtr frame(Jsvalify(iter.abstractFramePtr()));
     RootedScript script(cx, iter.script());
 
     size_t length;
@@ -1567,10 +1565,11 @@ TrapHandler(JSContext *cx, RawScript, jsbytecode *pc, jsval *rval,
     if (!chars)
         return JSTRAP_ERROR;
 
-    if (!JS_EvaluateUCInStackFrame(cx, caller, chars, length,
-                                   script->filename,
-                                   script->lineno,
-                                   rval)) {
+    if (!frame.evaluateUCInStackFrame(cx, chars, length,
+                                      script->filename,
+                                      script->lineno,
+                                      rval))
+    {
         return JSTRAP_ERROR;
     }
     if (!JSVAL_IS_VOID(*rval))
@@ -2458,47 +2457,6 @@ ToInt32(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-static const char* badUTF8 = "...\xC0...";
-static const char* bigUTF8 = "...\xFB\xBF\xBF\xBF\xBF...";
-static const jschar badSurrogate[] = { 'A', 'B', 'C', 0xDEEE, 'D', 'E', 0 };
-
-static JSBool
-TestUTF8(JSContext *cx, unsigned argc, jsval *vp)
-{
-    int32_t mode = 1;
-    jschar chars[20];
-    size_t charsLength = 5;
-    char bytes[20];
-    size_t bytesLength = 20;
-    if (argc && !JS_ValueToInt32(cx, *JS_ARGV(cx, vp), &mode))
-        return false;
-
-    /* The following throw errors if compiled with UTF-8. */
-    switch (mode) {
-      /* mode 1: malformed UTF-8 string. */
-      case 1:
-        JS_NewStringCopyZ(cx, badUTF8);
-        break;
-      /* mode 2: big UTF-8 character. */
-      case 2:
-        JS_NewStringCopyZ(cx, bigUTF8);
-        break;
-      /* mode 3: bad surrogate character. */
-      case 3:
-        DeflateStringToBuffer(cx, badSurrogate, 6, bytes, &bytesLength);
-        break;
-      /* mode 4: use a too small buffer. */
-      case 4:
-        JS_DecodeBytes(cx, "1234567890", 10, chars, &charsLength);
-        break;
-      default:
-        JS_ReportError(cx, "invalid mode parameter");
-        return false;
-    }
-    JS_SET_RVAL(cx, vp, JSVAL_VOID);
-    return !JS_IsExceptionPending (cx);
-}
-
 static JSBool
 ThrowError(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -2696,13 +2654,13 @@ EvalInFrame(JSContext *cx, unsigned argc, jsval *vp)
     if (!chars)
         return false;
 
-    StackFrame *fp = fi.interpFrame();
-    RootedScript fpscript(cx, fp->script());
-    bool ok = !!JS_EvaluateUCInStackFrame(cx, Jsvalify(fp), chars, length,
-                                          fpscript->filename,
-                                          JS_PCToLineNumber(cx, fpscript,
-                                                            fi.pc()),
-                                          vp);
+    JSAbstractFramePtr frame(Jsvalify(fi.abstractFramePtr()));
+    RootedScript fpscript(cx, frame.script());
+    bool ok = !!frame.evaluateUCInStackFrame(cx, chars, length,
+                                             fpscript->filename,
+                                             JS_PCToLineNumber(cx, fpscript,
+                                                               fi.pc()),
+                                             vp);
 
     if (saved)
         JS_RestoreFrameChain(cx);
@@ -3614,7 +3572,7 @@ RelaxRootChecks(JSContext *cx, unsigned argc, jsval *vp)
     }
 
 #ifdef DEBUG
-    cx->runtime->mainThread.gcRelaxRootChecks = true;
+    cx->mainThread().gcRelaxRootChecks = true;
 #endif
 
     return true;
@@ -3659,7 +3617,7 @@ GetSelfHostedValue(JSContext *cx, unsigned argc, jsval *vp)
                              "getSelfHostedValue");
         return false;
     }
-    RootedAtom srcAtom(cx, ToAtom(cx, args[0]));
+    RootedAtom srcAtom(cx, ToAtom<CanGC>(cx, args[0]));
     if (!srcAtom)
         return false;
     RootedPropertyName srcName(cx, srcAtom->asPropertyName());
@@ -3766,10 +3724,6 @@ static JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("pc2line", PCToLine, 0, 0,
 "pc2line(fun[, pc])",
 "  Map PC to line number."),
-
-    JS_FN_HELP("testUTF8", TestUTF8, 1, 0,
-"testUTF8(mode)",
-"  Perform UTF-8 tests (modes are 1 to 4)."),
 
     JS_FN_HELP("throwError", ThrowError, 0, 0,
 "throwError()",
@@ -5292,6 +5246,13 @@ JSSecurityCallbacks securityCallbacks = {
     NULL
 };
 
+/* Pretend we can always preserve wrappers for dummy DOM objects. */
+static bool
+DummyPreserveWrapperCallback(JSContext *cx, JSObject *obj)
+{
+    return true;
+}
+
 int
 main(int argc, char **argv, char **envp)
 {
@@ -5400,6 +5361,9 @@ main(int argc, char **argv, char **envp)
         || !op.addStringOption('\0', "ion-parallel-compile", "on/off",
                                "Compile scripts off thread (default: off)")
 #endif
+#ifdef JSGC_GENERATIONAL
+        || !op.addBoolOption('\0', "ggc", "Enable Generational GC")
+#endif
     )
     {
         return EXIT_FAILURE;
@@ -5442,6 +5406,9 @@ main(int argc, char **argv, char **envp)
         return 1;
 
     JS_SetGCParameter(rt, JSGC_MAX_BYTES, 0xffffffff);
+#ifdef JSGC_GENERATIONAL
+    JS_SetGCParameter(rt, JSGC_ENABLE_GENERATIONAL, op.getBoolOption("ggc"));
+#endif
 
     JS_SetTrustedPrincipals(rt, &shellTrustedPrincipals);
     JS_SetSecurityCallbacks(rt, &securityCallbacks);
@@ -5457,9 +5424,8 @@ main(int argc, char **argv, char **envp)
 
     JS_SetGCParameter(rt, JSGC_MODE, JSGC_MODE_INCREMENTAL);
     JS_SetGCParameterForThread(cx, JSGC_MAX_CODE_CACHE_BYTES, 16 * 1024 * 1024);
-#ifdef JS_GC_ZEAL
-    JS_SetGCZeal(cx, 0, 0);
-#endif
+
+    js::SetPreserveWrapperCallback(rt, DummyPreserveWrapperCallback);
 
     /* Must be done before creating the global object */
     if (op.getBoolOption('D'))

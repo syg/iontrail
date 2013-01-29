@@ -89,12 +89,12 @@ js::intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
     for (unsigned i = 1; i < 4 && i < args.length(); i++) {
         RootedValue val(cx, args[i]);
         if (val.isInt32()) {
-            JSString *str = ToString(cx, val);
+            JSString *str = ToString<CanGC>(cx, val);
             if (!str)
                 return false;
             errorArgs[i - 1] = JS_EncodeString(cx, str);
         } else if (val.isString()) {
-            errorArgs[i - 1] = JS_EncodeString(cx, ToString(cx, val));
+            errorArgs[i - 1] = JS_EncodeString(cx, ToString<CanGC>(cx, val));
         } else {
             errorArgs[i - 1] = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, val, NullPtr());
         }
@@ -120,7 +120,7 @@ intrinsic_AssertionFailed(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     if (args.length() > 0) {
         // try to dump the informative string
-        JSString *str = ToString(cx, args[0]);
+        JSString *str = ToString<CanGC>(cx, args[0]);
         if (str) {
             const jschar *chars = str->getChars(cx);
             if (chars) {
@@ -150,7 +150,7 @@ intrinsic_DecompileArg(JSContext *cx, unsigned argc, Value *vp)
     JS_ASSERT(args.length() == 2);
 
     RootedValue value(cx, args[1]);
-    ScopedFreePtr<char> str(DecompileArgument(cx, args[0].toInt32(), value));
+    ScopedJSFreePtr<char> str(DecompileArgument(cx, args[0].toInt32(), value));
     if (!str)
         return false;
     RootedAtom atom(cx, Atomize(cx, str, strlen(str)));
@@ -560,7 +560,7 @@ CloneObject(JSContext *cx, HandleObject srcObj, CloneMemory &clonedObjects)
         Rooted<JSStableString*> str(cx, srcObj->asString().unbox()->ensureStable(cx));
         if (!str)
             return NULL;
-        str = js_NewStringCopyN(cx, str->chars().get(), str->length())->ensureStable(cx);
+        str = js_NewStringCopyN<CanGC>(cx, str->chars().get(), str->length())->ensureStable(cx);
         if (!str)
             return NULL;
         clone = StringObject::create(cx, str);
@@ -594,7 +594,7 @@ CloneValue(JSContext *cx, MutableHandleValue vp, CloneMemory &clonedObjects)
         Rooted<JSStableString*> str(cx, vp.toString()->ensureStable(cx));
         if (!str)
             return false;
-        RootedString clone(cx, js_NewStringCopyN(cx, str->chars().get(), str->length()));
+        RootedString clone(cx, js_NewStringCopyN<CanGC>(cx, str->chars().get(), str->length()));
         if (!clone)
             return false;
         vp.setString(clone);

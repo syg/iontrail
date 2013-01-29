@@ -496,7 +496,7 @@ private:
                            void *k, JSGCTraceKind kkind,
                            void *v, JSGCTraceKind vkind)
     {
-        MOZ_ASSERT(!js::IsIncrementalBarrierNeeded(trc->runtime),
+        MOZ_ASSERT(!js::IsIncrementalGCInProgress(trc->runtime),
                    "Don't call FixWeakMappingGrayBits during a GC.");
 
         FixWeakMappingGrayBitsTracer *tracer = static_cast<FixWeakMappingGrayBitsTracer*>(trc);
@@ -513,7 +513,7 @@ private:
         if (delegateMightNeedMarking && kkind == JSTRACE_OBJECT) {
             JSObject *kdelegate = js::GetWeakmapKeyDelegate((JSObject *)k);
             if (kdelegate && !xpc_IsGrayGCThing(kdelegate)) {
-                js::UnmarkGrayGCThingRecursively(k, JSTRACE_OBJECT);
+                JS::UnmarkGrayGCThingRecursively(k, JSTRACE_OBJECT);
                 tracer->mAnyMarked = true;
             }
         }
@@ -523,7 +523,7 @@ private:
             (!m || !xpc_IsGrayGCThing(m)) &&
             vkind != JSTRACE_SHAPE)
         {
-            js::UnmarkGrayGCThingRecursively(v, vkind);
+            JS::UnmarkGrayGCThingRecursively(v, vkind);
             tracer->mAnyMarked = true;
         }
 
@@ -1061,6 +1061,7 @@ CreateGlobalObject(JSContext *cx, JSClass *clasp, nsIPrincipal *principal)
     CheckTypeInference(cx, clasp, principal);
 
     NS_ABORT_IF_FALSE(NS_IsMainThread(), "using a principal off the main thread?");
+    MOZ_ASSERT(principal);
 
     JSObject *global = JS_NewGlobalObject(cx, clasp, nsJSPrincipals::get(principal));
     if (!global)

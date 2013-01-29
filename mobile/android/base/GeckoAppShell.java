@@ -533,8 +533,6 @@ public class GeckoAppShell
     }
 
     public static void runGecko(String apkPath, String args, String url, String type) {
-        WebAppAllocator.getInstance();
-
         Looper.prepare();
         sGeckoHandler = new Handler();
 
@@ -584,7 +582,7 @@ public class GeckoAppShell
 
     /* This method is referenced by Robocop via reflection. */
     public static void sendEventToGecko(GeckoEvent e) {
-        if (GeckoApp.checkLaunchState(GeckoApp.LaunchState.GeckoRunning)) {
+        if (GeckoThread.checkLaunchState(GeckoThread.LaunchState.GeckoRunning)) {
             notifyGeckoOfEvent(e);
         } else {
             gPendingEvents.addLast(e);
@@ -792,8 +790,8 @@ public class GeckoAppShell
     }
 
     static void onXreExit() {
-        // mLaunchState can only be Launched or GeckoRunning at this point
-        GeckoApp.setLaunchState(GeckoApp.LaunchState.GeckoExiting);
+        // The launch state can only be Launched or GeckoRunning at this point
+        GeckoThread.setLaunchState(GeckoThread.LaunchState.GeckoExiting);
         if (gRestartScheduled) {
             GeckoApp.mAppContext.doRestart();
         } else {
