@@ -27,7 +27,6 @@ namespace ion {
     _(OsrScopeChain)                                                        \
     _(ReturnFromCtor)                                                       \
     _(CheckOverRecursed)                                                    \
-    _(ParCheckOverRecursed)                                                 \
     _(RecompileCheck)                                                       \
     _(DefVar)                                                               \
     _(DefFun)                                                               \
@@ -78,11 +77,7 @@ namespace ion {
     _(NewObject)                                                            \
     _(NewDeclEnvObject)                                                     \
     _(NewCallObject)                                                        \
-    _(ParNewCallObject)                                                     \
     _(NewStringObject)                                                      \
-    _(ParNew)                                                               \
-    _(ParNewDenseArray)                                                     \
-    _(ParBailout)                                                           \
     _(InitProp)                                                             \
     _(Start)                                                                \
     _(OsrEntry)                                                             \
@@ -90,7 +85,6 @@ namespace ion {
     _(RegExp)                                                               \
     _(RegExpTest)                                                           \
     _(Lambda)                                                               \
-    _(ParLambda)                                                            \
     _(ImplicitThis)                                                         \
     _(Slots)                                                                \
     _(Elements)                                                             \
@@ -98,9 +92,6 @@ namespace ion {
     _(LoadSlot)                                                             \
     _(StoreSlot)                                                            \
     _(FunctionEnvironment)                                                  \
-    _(ParSlice)                                                             \
-    _(ParWriteGuard)                                                        \
-    _(ParDump)                                                              \
     _(TypeBarrier)                                                          \
     _(MonitorTypes)                                                         \
     _(GetPropertyCache)                                                     \
@@ -152,10 +143,19 @@ namespace ion {
     _(InstanceOf)                                                           \
     _(CallInstanceOf)                                                       \
     _(InterruptCheck)                                                       \
-    _(ParCheckInterrupt)                                                    \
     _(FunctionBoundary)                                                     \
     _(GetDOMProperty)                                                       \
-    _(SetDOMProperty)
+    _(SetDOMProperty)                                                       \
+    _(ParCheckOverRecursed)                                                 \
+    _(ParNewCallObject)                                                     \
+    _(ParNew)                                                               \
+    _(ParNewDenseArray)                                                     \
+    _(ParBailout)                                                           \
+    _(ParLambda)                                                            \
+    _(ParSlice)                                                             \
+    _(ParWriteGuard)                                                        \
+    _(ParDump)                                                              \
+    _(ParCheckInterrupt)
 
 // Forward declarations of MIR types.
 #define FORWARD_DECLARE(op) class M##op;

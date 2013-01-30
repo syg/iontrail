@@ -316,7 +316,7 @@ CPPSRCS +=	MIR.cpp \
 		ValueNumbering.cpp \
 		RangeAnalysis.cpp \
 		VMFunctions.cpp \
-		ParFunctions.cpp \
+		ParallelFunctions.cpp \
 		AliasAnalysis.cpp \
 		ParallelArrayAnalysis.cpp \
 		UnreachableCodeElimination.cpp \

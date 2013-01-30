@@ -130,7 +130,7 @@ class AutoSetForkJoinSlice;
 class AutoMarkWorldStoppedForGC;
 
 #ifdef DEBUG
-struct IonTraceData {
+struct IonLIRTraceData {
     uint32_t bblock;
     uint32_t lir;
     uint32_t execModeInt;
@@ -161,9 +161,9 @@ struct ForkJoinSlice
     // If we took a parallel bailout, the script that bailed out is stored here.
     JSScript *abortedScript;
 
-    // Records the last instr. to execute on this thread.
 #ifdef DEBUG
-    IonTraceData traceData;
+    // Records the last instr. to execute on this thread.
+    IonLIRTraceData traceData;
 #endif
 
     ForkJoinSlice(PerThreadData *perThreadData, uint32_t sliceId, uint32_t numSlices,

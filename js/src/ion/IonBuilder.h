@@ -429,9 +429,9 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineParallelArrayTail(uint32_t argc, bool constructing,
                                            HandleFunction target, MDefinition *ctor,
                                            types::StackTypeSet *ctorTypes, int32_t discards);
-    InliningStatus inlineDenseArray(uint32_t argc, bool constructing);
-    InliningStatus inlineDenseArrayForSequentialExecution(uint32_t argc);
-    InliningStatus inlineDenseArrayForParallelExecution(uint32_t argc);
+    InliningStatus inlineNewDenseArray(uint32_t argc, bool constructing);
+    InliningStatus inlineNewDenseArrayForSequentialExecution(uint32_t argc);
+    InliningStatus inlineNewDenseArrayForParallelExecution(uint32_t argc);
 
     InliningStatus inlineThrowError(uint32_t argc, bool constructing);
     InliningStatus inlineDump(uint32_t argc, bool constructing);

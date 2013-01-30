@@ -258,7 +258,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCache(LInstruction *load);
     bool visitCallSetProperty(LInstruction *ins);
 
-    bool maybePropagateParallelBailout();
+    bool checkForParallelBailout();
 
     ConstantOrRegister getSetPropertyValue(LInstruction *ins);
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);

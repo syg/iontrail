@@ -89,8 +89,8 @@ IonBuilder::inlineNativeCall(JSNative native, uint32_t argc, bool constructing)
         return inlineNewParallelArray(argc, constructing);
     if (native == ParallelArrayObject::construct)
         return inlineParallelArray(argc, constructing);
-    if (native == intrinsic_DenseArray)
-        return inlineDenseArray(argc, constructing);
+    if (native == intrinsic_NewDenseArray)
+        return inlineNewDenseArray(argc, constructing);
 
     // Self-hosting
     if (native == intrinsic_ThrowError)
@@ -925,7 +925,9 @@ IonBuilder::inlineUnsafeSetElement(uint32_t argc, bool constructing)
         int arrayType;
         if (!oracle->elementAccessIsDenseNative(obj, id) &&
             !oracle->elementAccessIsTypedArray(obj, id, &arrayType))
+        {
             return InliningStatus_NotInlined;
+        }
     }
 
     MDefinitionVector argv;
@@ -1201,7 +1203,7 @@ IonBuilder::inlineParallelArrayTail(uint32_t argc, bool constructing,
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineDenseArray(uint32_t argc, bool constructing)
+IonBuilder::inlineNewDenseArray(uint32_t argc, bool constructing)
 {
     if (constructing || argc != 1)
         return InliningStatus_NotInlined;
@@ -1210,22 +1212,24 @@ IonBuilder::inlineDenseArray(uint32_t argc, bool constructing)
     // par. mode we use inlined MIR.
     ExecutionMode executionMode = info().executionMode();
     switch (executionMode) {
-      case SequentialExecution: return inlineDenseArrayForSequentialExecution(argc);
-      case ParallelExecution: return inlineDenseArrayForParallelExecution(argc);
+      case SequentialExecution:
+        return inlineNewDenseArrayForSequentialExecution(argc);
+      case ParallelExecution:
+        return inlineNewDenseArrayForParallelExecution(argc);
     }
 
     JS_NOT_REACHED("unknown ExecutionMode");
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineDenseArrayForSequentialExecution(uint32_t argc)
+IonBuilder::inlineNewDenseArrayForSequentialExecution(uint32_t argc)
 {
     // not yet implemented; in seq. mode the C function is not so bad
     return InliningStatus_NotInlined;
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineDenseArrayForParallelExecution(uint32_t argc)
+IonBuilder::inlineNewDenseArrayForParallelExecution(uint32_t argc)
 {
     MDefinitionVector argv;
     if (!discardCall(argc, argv, current))

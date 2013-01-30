@@ -14,7 +14,7 @@
 #include "CodeGenerator-shared-inl.h"
 #include "ion/IonSpewer.h"
 #include "ion/IonMacroAssembler.h"
-#include "ion/ParFunctions.h"
+#include "ion/ParallelFunctions.h"
 #include "builtin/ParallelArray.h"
 
 using namespace js;
@@ -525,12 +525,12 @@ CodeGeneratorShared::ensureOutOfLineParallelAbort(Label **result)
 bool
 OutOfLineParallelAbort::generate(CodeGeneratorShared *codegen)
 {
-    codegen->maybeCallTrace(0xDEADBEEF, NULL, "ParallelBailout");
+    codegen->callTraceLIR(0xDEADBEEF, NULL, "ParallelBailout");
     return codegen->visitOutOfLineParallelAbort(this);
 }
 
 bool
-CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, LInstruction *lir,
+CodeGeneratorShared::callTraceLIR(uint32_t blockIndex, LInstruction *lir,
                                     const char *bailoutName)
 {
     JS_ASSERT_IF(!lir, bailoutName);
@@ -588,7 +588,7 @@ CodeGeneratorShared::maybeCallTrace(uint32_t blockIndex, LInstruction *lir,
     masm.passABIArg(mirOpNameReg);
     masm.passABIArg(scriptReg);
     masm.passABIArg(pcReg);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, Trace));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, TraceLIR));
     masm.PopRegsInMask(RegisterSet::All());
     return true;
 }

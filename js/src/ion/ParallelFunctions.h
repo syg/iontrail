@@ -40,9 +40,9 @@ ParCompareResult ParCompareStrings(JSString *str1, JSString *str2);
 
 void ParallelAbort(JSScript *script);
 
-void Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
-           const char *lirOpName, const char *mirOpName,
-           JSScript *script, jsbytecode *pc);
+void TraceLIR(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
+              const char *lirOpName, const char *mirOpName,
+              JSScript *script, jsbytecode *pc);
 
 void ParCallToUncompiledScript(JSFunction *func);
 

@@ -286,7 +286,8 @@ class LParNew : public LInstructionHelper<1, 1, 2>
 
     LParNew(const LAllocation &parSlice,
             const LDefinition &temp1,
-            const LDefinition &temp2) {
+            const LDefinition &temp2)
+    {
         setOperand(0, parSlice);
         setTemp(0, temp1);
         setTemp(1, temp2);
@@ -2279,7 +2280,6 @@ class LLambda : public LInstructionHelper<1, 1, 0>
     }
 };
 
-// TODO: this class should not require so many temporaries.
 class LParLambda : public LInstructionHelper<1, 2, 2>
 {
   public:

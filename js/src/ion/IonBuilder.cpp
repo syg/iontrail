@@ -4475,8 +4475,11 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
     // In parallel execution, we never require write barriers.  See
     // forkjoin.cpp for more information.
     switch (info().executionMode()) {
-      case SequentialExecution: break;
-      case ParallelExecution: needsBarrier = false; break;
+      case SequentialExecution:
+        break;
+      case ParallelExecution:
+        needsBarrier = false;
+        break;
     }
 
     if (templateObject->isFixedSlot(shape->slot())) {

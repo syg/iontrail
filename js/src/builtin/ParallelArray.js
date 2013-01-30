@@ -233,7 +233,7 @@ function ParallelArrayBuild(self, shape, f, m) {
     break;
   }
 
-  var buffer = self.buffer = DenseArray(length);
+  var buffer = self.buffer = NewDenseArray(length);
 
   parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
     if (ForceSequential())
@@ -316,7 +316,7 @@ function ParallelArrayBuild(self, shape, f, m) {
 function ParallelArrayMap(f, m) {
   var self = this;
   var length = self.shape[0];
-  var buffer = DenseArray(length);
+  var buffer = NewDenseArray(length);
 
   parallel: for (;;) {
 
@@ -383,7 +383,7 @@ function ParallelArrayReduce(f, m) {
       break parallel;
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
-    var subreductions = DenseArray(numSlices);
+    var subreductions = NewDenseArray(numSlices);
     ParallelDo(reduceSlice, CheckParallel(m));
     var acc = subreductions[0];
     for (var i = 1; i < numSlices; i++)
@@ -447,7 +447,7 @@ function ParallelArrayScan(f, m) {
   if (length === 0)
     ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  var buffer = DenseArray(length);
+  var buffer = NewDenseArray(length);
 
   parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
     if (ForceSequential())
@@ -700,12 +700,12 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
   function parDivideOutputRange() {
     var chunks = ComputeNumChunks(targetsLength);
     var numSlices = ParallelSlices();
-    var checkpoints = DenseArray(numSlices);
+    var checkpoints = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
       checkpoints[i] = 0;
 
-    var buffer = DenseArray(length);
-    var conflicts = DenseArray(length);
+    var buffer = NewDenseArray(length);
+    var conflicts = NewDenseArray(length);
 
     for (var i = 0; i < length; i++)
       buffer[i] = zero;
@@ -746,12 +746,12 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
     var numSlices = ParallelSlices();
     var info = ComputeAllSliceBounds(targetsLength, numSlices);
 
-    var localbuffers = DenseArray(numSlices);
+    var localbuffers = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-        localbuffers[i] = DenseArray(length);
-    var localconflicts = DenseArray(numSlices);
+        localbuffers[i] = NewDenseArray(length);
+    var localconflicts = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-        localconflicts[i] = DenseArray(length);
+        localconflicts[i] = NewDenseArray(length);
 
     // Initialize the 0th buffer, which will become the output.  For
     // the other buffers, we track which parts have been written to
@@ -809,8 +809,8 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
   }
 
   function seq() {
-    var buffer = DenseArray(length);
-    var conflicts = DenseArray(length);
+    var buffer = NewDenseArray(length);
+    var conflicts = NewDenseArray(length);
 
     for (var i = 0; i < length; i++)
       buffer[i] = zero;
@@ -861,17 +861,17 @@ function ParallelArrayFilter(func, m) {
     // which members of the chunk survived.  We also keep an array
     // |counts| containing the total number of items that are being
     // preserved from within one slice.
-    var counts = DenseArray(numSlices);
+    var counts = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
       counts[i] = 0;
-    var survivors = DenseArray(chunks);
+    var survivors = NewDenseArray(chunks);
     ParallelDo(findSurvivorsInSlice, CheckParallel(m));
 
     // Step 2. Compress the slices into one contiguous set.
     var count = 0;
     for (var i = 0; i < numSlices; i++)
       count += counts[i];
-    var buffer = DenseArray(count);
+    var buffer = NewDenseArray(count);
     if (count > 0)
       ParallelDo(copySurvivorsInSlice, CheckParallel(m));
 

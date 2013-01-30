@@ -6,7 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jsinterp.h"
-#include "ParFunctions.h"
+#include "ParallelFunctions.h"
 #include "IonSpewer.h"
 
 #include "jsinterpinlines.h"
@@ -52,20 +52,20 @@ ion::ParWriteGuard(ForkJoinSlice *slice, JSObject *object)
 
 #ifdef DEBUG
 static void
-printTrace(const char *prefix, struct IonTraceData *cached)
+printTrace(const char *prefix, struct IonLIRTraceData *cached)
 {
     fprintf(stderr, "%s / Block %3u / LIR %3u / Mode %u / LIR %s\n",
             prefix,
             cached->bblock, cached->lir, cached->execModeInt, cached->lirOpName);
 }
 
-struct IonTraceData seqTraceData;
+struct IonLIRTraceData seqTraceData;
 #endif
 
 void
-ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
-           const char *lirOpName, const char *mirOpName,
-           JSScript *script, jsbytecode *pc)
+ion::TraceLIR(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
+              const char *lirOpName, const char *mirOpName,
+              JSScript *script, jsbytecode *pc)
 {
 #ifdef DEBUG
     static enum { NotSet, All, Bailouts } traceMode;
@@ -89,7 +89,7 @@ ion::Trace(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
             traceMode = Bailouts;
     }
 
-    IonTraceData *cached;
+    IonLIRTraceData *cached;
     if (execModeInt == 0)
         cached = &seqTraceData;
     else

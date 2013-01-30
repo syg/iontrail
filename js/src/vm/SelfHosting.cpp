@@ -269,9 +269,9 @@ js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 }
 
 JSBool
-js::intrinsic_DenseArray(JSContext *cx, unsigned argc, Value *vp)
+js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %DenseArray(length)
+    // Usage: %NewDenseArray(length)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Check that index is an int32
@@ -437,7 +437,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ParallelDo",           intrinsic_ParallelDo,           2,0),
     JS_FN("ParallelSlices",       intrinsic_ParallelSlices,       0,0),
     JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
-    JS_FN("DenseArray",           intrinsic_DenseArray,           1,0),
+    JS_FN("NewDenseArray",        intrinsic_NewDenseArray,           1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
     JS_FN("ForceSequential",      intrinsic_ForceSequential,      0,0),
     JS_FN("ParallelTestsShouldPass", intrinsic_ParallelTestsShouldPass, 0,0),

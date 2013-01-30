@@ -300,7 +300,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     // When compiling parallel code, all bailouts just abort funnel to
     // this same point and hence abort execution altogether:
     virtual bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool) = 0;
-    bool maybeCallTrace(uint32_t blockIndex, LInstruction *lir, const char *bailoutName = NULL);
+    bool callTraceLIR(uint32_t blockIndex, LInstruction *lir, const char *bailoutName = NULL);
 
   protected:
     bool ensureOutOfLineParallelAbort(Label **result);

@@ -1767,16 +1767,14 @@ MBeta::computeRange()
 bool
 MNewObject::shouldUseVM() const
 {
-    JSObject *o = templateObject();
-    return o->hasSingletonType() || o->hasDynamicSlots();
+    return templateObject()->hasSingletonType() ||
+           templateObject()->hasDynamicSlots();
 }
 
 bool
 MNewArray::shouldUseVM() const
 {
-    uint32_t cnt = count();
-
-    JS_ASSERT(cnt < JSObject::NELEMENTS_LIMIT);
+    JS_ASSERT(count() < JSObject::NELEMENTS_LIMIT);
 
     size_t maxArraySlots =
         gc::GetGCKindSlots(gc::FINALIZE_OBJECT_LAST) - ObjectElements::VALUES_PER_HEADER;
@@ -1784,7 +1782,7 @@ MNewArray::shouldUseVM() const
     // Allocate space using the VMCall
     // when mir hints it needs to get allocated immediatly,
     // but only when data doesn't fit the available array slots.
-    bool allocating = isAllocating() && cnt > maxArraySlots;
+    bool allocating = isAllocating() && count() > maxArraySlots;
 
     return templateObject()->hasSingletonType() || allocating;
 }

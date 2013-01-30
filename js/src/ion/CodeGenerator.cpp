@@ -18,7 +18,7 @@
 #include "jsnum.h"
 #include "jsmath.h"
 #include "jsinterpinlines.h"
-#include "ParFunctions.h"
+#include "ParallelFunctions.h"
 #include "ExecutionModeInlines.h"
 #include "vm/ForkJoin.h"
 
@@ -1199,7 +1199,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         masm.bind(&notPrimitive);
     }
 
-    if (!maybePropagateParallelBailout())
+    if (!checkForParallelBailout())
         return false;
 
     dropArguments(call->numStackArgs() + 1);
@@ -1314,7 +1314,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
 
     masm.bind(&end);
 
-    if (!maybePropagateParallelBailout())
+    if (!checkForParallelBailout())
         return false;
 
     // If the return value of the constructing function is Primitive,
@@ -1331,7 +1331,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
 }
 
 bool
-CodeGenerator::maybePropagateParallelBailout()
+CodeGenerator::checkForParallelBailout()
 {
     // In parallel mode, if we call another ion-compiled function and
     // it returns JS_ION_ERROR, that indicates a bailout that we have
@@ -2049,7 +2049,7 @@ CodeGenerator::generateBody()
                     return false;
             }
 
-            if (!maybeCallTrace(i, *iter))
+            if (!callTraceLIR(i, *iter))
                 return false;
 
             if (!iter->accept(this))
@@ -2386,11 +2386,11 @@ CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
 
     emitParAllocateGCThing(resultReg, parSliceReg, tempReg1, tempReg2, templateObj);
 
-    // TO INVESTIGATE: does ! lir->slots()->isRegister() imply that
-    // there is no slots array at all?  And also, do we need to
-    // store a NULL explicitly, or is this memory already zeroed?
+    // NB: !lir->slots()->isRegister() implies that there is no slots
+    // array at all, and the memory is already zeroed when copying
+    // from the template object
 
-    if (lir->slots() && lir->slots()->isRegister()) {
+    if (lir->slots()->isRegister()) {
         Register slotsReg = ToRegister(lir->slots());
         JS_ASSERT(slotsReg != resultReg);
         masm.storePtr(slotsReg, Address(resultReg, JSObject::offsetOfSlots()));
@@ -2536,10 +2536,8 @@ CodeGenerator::visitOutOfLineParNewGCThing(OutOfLineParNewGCThing *ool)
 
     // Also preserve the temps we're about to overwrite,
     // but don't bother to save the objReg.
-    if (!saveSet.has(CallTempReg0))
-        saveSet.add(CallTempReg0);
-    if (!saveSet.has(CallTempReg1))
-        saveSet.add(CallTempReg1);
+    saveSet.addUnchecked(CallTempReg0);
+    saveSet.addUnchecked(CallTempReg1);
     if (saveSet.has(ool->objReg))
         saveSet.take(AnyRegister(ool->objReg));
 
@@ -5704,7 +5702,6 @@ CodeGenerator::visitFunctionBoundary(LFunctionBoundary *lir)
 bool
 CodeGenerator::visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool)
 {
-    JS_ASSERT(current);
     masm.movePtr(ImmWord((void *) current->mir()->info().script()), CallTempReg0);
     masm.setupUnalignedABICall(1, CallTempReg1);
     masm.passABIArg(CallTempReg0);
