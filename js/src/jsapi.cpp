@@ -736,6 +736,7 @@ js::PerThreadData::PerThreadData(JSRuntime *runtime)
 
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
   : mainThread(this),
+    extraExtents(NULL),
     atomsCompartment(NULL),
 #ifdef JS_THREADSAFE
     ownerThread_(NULL),
