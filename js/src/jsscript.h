@@ -572,7 +572,7 @@ class JSScript : public js::gc::Cell
     js::ion::IonScript *ion;
 
     bool hasIonScript() const {
-        return ion && ion != ION_DISABLED_SCRIPT;
+        return ion && ion != ION_DISABLED_SCRIPT && ion != ION_COMPILING_SCRIPT;
     }
 
     bool canIonCompile() const {
