@@ -159,7 +159,7 @@ ion::ParDumpValue(Value *v)
 #endif
 }
 
-bool
+JSObject*
 ion::ParPush(ParPushArgs *args)
 {
     // It is awkward to have the MIR pass the current slice in, so
@@ -169,7 +169,9 @@ ion::ParPush(ParPushArgs *args)
     JSObject::EnsureDenseResult res =
         args->object->parExtendDenseElements(slice->allocator,
                                              &args->value, 1);
-    return res == JSObject::ED_OK;
+    if (res != JSObject::ED_OK)
+        return NULL;
+    return args->object;
 }
 
 JSObject *

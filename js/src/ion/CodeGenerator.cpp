@@ -2538,8 +2538,7 @@ CodeGenerator::visitOutOfLineParNewGCThing(OutOfLineParNewGCThing *ool)
     // but don't bother to save the objReg.
     saveSet.addUnchecked(CallTempReg0);
     saveSet.addUnchecked(CallTempReg1);
-    if (saveSet.has(ool->objReg))
-        saveSet.take(AnyRegister(ool->objReg));
+    saveSet.maybeTake(AnyRegister(ool->objReg));
 
     masm.PushRegsInMask(saveSet);
     masm.move32(Imm32(ool->allocKind), CallTempReg0);
@@ -3736,19 +3735,31 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         if (!ensureOutOfLineParallelAbort(&bail))
             return false;
 
+        //////////////////////////////////////////////////////////////
         // If the problem is that we do not have sufficient capacity,
         // try to reallocate the elements array and then branch back
         // to perform the actual write.  Note that we do not want to
         // force the reg alloc to assign any particular register, so
         // we make space on the stack and pass the arguments that way.
         // (Also, outside of the VM call mechanism, it's very hard to
-        // pass in a Value to a C function!)
+        // pass in a Value to a C function!).
         masm.bind(&indexWouldExceedCapacity);
 
-        SaveLiveRegs regs(*this, ins);
-        Label abort;
+        // The use of registers here is somewhat subtle.  We need to
+        // save and restore the volatile registers but we also need to
+        // preserve the ReturnReg. Normally we'd just add a constraint
+        // to the regalloc, but since this is the slow path of a hot
+        // instruction we don't want to do that.  So instead we push
+        // the volatile registers but we don't save the register
+        // `object`.  We will copy the ReturnReg into `object`.  The
+        // function we are calling (`ParPush`) agrees to either return
+        // `object` unchanged or NULL.  This way after we restore the
+        // registers, we can examine `object` to know whether an error
+        // occurred.
+        RegisterSet saveSet(ins->safepoint()->liveRegs());
+        saveSet.maybeTake(object);
 
-        regs.save();
+        masm.PushRegsInMask(saveSet);
         masm.reserveStack(sizeof(ParPushArgs));
         masm.storePtr(object, Address(StackPointer, offsetof(ParPushArgs, object)));
         masm.storeConstantOrRegister(value, Address(StackPointer,
@@ -3758,14 +3769,12 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool)
         masm.passABIArg(CallTempReg0);
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParPush));
         masm.freeStack(sizeof(ParPushArgs));
-        masm.branchTestBool(Assembler::Zero, ReturnReg, ReturnReg, &abort);
-        regs.restore();
+        masm.movePtr(ReturnReg, object);
+        masm.PopRegsInMask(saveSet);
+        masm.branchTestPtr(Assembler::Zero, object, object, bail);
         masm.jump(ool->rejoin());
 
-        masm.bind(&abort);
-        regs.fixStack();
-        masm.jump(bail);
-
+        //////////////////////////////////////////////////////////////
         // If the problem is that we are trying to write an index that
         // is not the initialized length, that would result in a
         // sparse array, and since we don't want to think about that

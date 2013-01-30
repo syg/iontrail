@@ -24,15 +24,22 @@ bool ParCheckInterrupt(ForkJoinSlice *context);
 
 void ParDumpValue(Value *v);
 
-// We pass the arguments in a structure because, in code gen, it is
-// convenient to store them on the stack to avoid constraining the reg
-// alloc for the slow path.
+// We pass the arguments to ParPush in a structure because, in code
+// gen, it is convenient to store them on the stack to avoid
+// constraining the reg alloc for the slow path.
 struct ParPushArgs {
     JSObject *object;
     Value value;
 };
-bool ParPush(ParPushArgs *args);
 
+// Extends the given object with the given value (like `Array.push`).
+// Returns NULL on failure or else `args->object`, which is convenient
+// during code generation.
+JSObject* ParPush(ParPushArgs *args);
+
+// Extends the given array with `length` new holes.  Returns NULL on
+// failure or else `array`, which is convenient during code
+// generation.
 JSObject *ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length);
 
 enum ParCompareResult { ParCompareNe = false, ParCompareEq = true, ParCompareUnknown = 2 };
