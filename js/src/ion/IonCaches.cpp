@@ -667,7 +667,7 @@ IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *o
 
     // Need to set correct framePushed on the masm so that exit frame descriptors are
     // properly constructed.
-    masm.setFramePushed(script->ionScript()->frameSize());
+    masm.setFramePushed(ion->frameSize());
 
     GetNativePropertyStub getprop;
     if (!getprop.generateCallGetter(cx, masm, obj, name(), holder, shape, liveRegs,
