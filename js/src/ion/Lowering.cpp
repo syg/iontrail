@@ -1504,7 +1504,7 @@ LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
 bool
 LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 {
-    LParCheckOverRecursed *lir = new LParCheckOverRecursed(
+    LParCheckInterrupt *lir = new LParCheckInterrupt(
         useRegister(ins->parSlice()),
         temp());
     if (!add(lir))
