@@ -124,6 +124,56 @@ var gPrivacyPane = {
   },
 
   /**
+   * Open up the DNT "learn more" link.
+   */
+  openTrackingInfoSite: function PPP_openTrackingInfoSite()
+  {
+    let thisDocEl = document.documentElement,
+        openerDocEl = window.opener && window.opener.document.documentElement,
+        url = "https://www.mozilla.org/dnt";
+    if (thisDocEl.id == "BrowserPreferences" && !thisDocEl.instantApply)
+      openUILinkIn(url, "window");
+    else
+      openUILinkIn(url, "tab");
+  },
+
+  /**
+   * Update the Tracking preferences based on controls.
+   */
+  setTrackingPrefs: function PPP_setTrackingPrefs()
+  {
+    let dntRadioGroup = document.getElementById("doNotTrackSelection"),
+        dntValuePref = document.getElementById("privacy.donottrackheader.value"),
+        dntEnabledPref = document.getElementById("privacy.donottrackheader.enabled");
+
+    // if the selected radio button says "no preference", set on/off pref to
+    // false and don't change the value pref.
+    if (dntRadioGroup.selectedItem.value == -1) {
+      dntEnabledPref.value = false;
+      return dntValuePref.value;
+    }
+
+    dntEnabledPref.value = true;
+    return dntRadioGroup.selectedItem.value;
+  },
+
+  /**
+   * Obtain the tracking preference value and reflect it in the UI.
+   */
+  getTrackingPrefs: function PPP_getTrackingPrefs()
+  {
+    let dntValuePref = document.getElementById("privacy.donottrackheader.value"),
+        dntEnabledPref = document.getElementById("privacy.donottrackheader.enabled");
+
+    // if DNT is enbaled, select the value from the selected radio
+    // button, otherwise choose the "no preference" radio button
+    if (dntEnabledPref.value)
+      return dntValuePref.value;
+
+    return document.getElementById("dntnopref").value;
+  },
+
+  /**
    * Update the private browsing auto-start pref and the history mode
    * micro-management prefs based on the history mode menulist
    */
@@ -226,7 +276,6 @@ var gPrivacyPane = {
 
     observe: function PPP_observe(aSubject, aTopic, aData)
     {
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
       if (!gPrivacyPane._shouldPromptForRestart) {
         // We're performing a revert. Just let it happen.
         gPrivacyPane._shouldPromptForRestart = true;
@@ -268,23 +317,6 @@ var gPrivacyPane = {
         let rememberHistoryCheckbox = document.getElementById("rememberHistory");
         rememberHistory.checked = pref.value;
       }
-#else
-      // Toggle the private browsing mode without switching the session
-      let prefValue = document.getElementById("browser.privatebrowsing.autostart").value;
-      let keepCurrentSession = document.getElementById("browser.privatebrowsing.keep_current_session");
-      keepCurrentSession.value = true;
-
-      let privateBrowsingService = Components.classes["@mozilla.org/privatebrowsing;1"].
-        getService(Components.interfaces.nsIPrivateBrowsingService);
-
-      // If activating from within the private browsing mode, reset the
-      // private session
-      if (prefValue && privateBrowsingService.privateBrowsingEnabled)
-        privateBrowsingService.privateBrowsingEnabled = false;
-      privateBrowsingService.privateBrowsingEnabled = prefValue;
-
-      keepCurrentSession.reset();
-#endif
     }
   },
 

@@ -347,6 +347,14 @@ TypeInferenceOracle::elementReadIsString(UnrootedScript script, jsbytecode *pc)
 }
 
 bool
+TypeInferenceOracle::elementReadShouldAlwaysLoadDoubles(UnrootedScript script, jsbytecode *pc)
+{
+    StackTypeSet *types = script->analysis()->poppedTypes(pc, 1);
+    types::StackTypeSet::DoubleConversion conversion = types->convertDoubleElements(cx);
+    return conversion == StackTypeSet::AlwaysConvertToDoubles;
+}
+
+bool
 TypeInferenceOracle::elementReadHasExtraIndexedProperty(UnrootedScript script, jsbytecode *pc)
 {
     StackTypeSet *obj = script->analysis()->poppedTypes(pc, 1);
@@ -395,7 +403,10 @@ TypeInferenceOracle::elementAccessIsDenseNative(StackTypeSet *obj, StackTypeSet 
         return false;
 
     Class *clasp = obj->getKnownClass();
-    return clasp && clasp->isNative();
+    if (!clasp || !clasp->isNative())
+        return false;
+
+    return obj->convertDoubleElements(cx) != StackTypeSet::AmbiguousDoubleConversion;
 }
 
 bool
@@ -420,6 +431,15 @@ TypeInferenceOracle::elementAccessIsTypedArray(StackTypeSet *obj, StackTypeSet *
         return false;
 
     return true;
+}
+
+bool
+TypeInferenceOracle::elementWriteNeedsDoubleConversion(UnrootedScript script, jsbytecode *pc)
+{
+    StackTypeSet *types = script->analysis()->poppedTypes(pc, 2);
+    types::StackTypeSet::DoubleConversion conversion = types->convertDoubleElements(cx);
+    return conversion == StackTypeSet::AlwaysConvertToDoubles ||
+           conversion == StackTypeSet::MaybeConvertToDoubles;
 }
 
 bool
@@ -477,6 +497,14 @@ TypeInferenceOracle::elementWrite(UnrootedScript script, jsbytecode *pc)
     }
 
     return elementType;
+}
+
+bool
+TypeInferenceOracle::arrayResultShouldHaveDoubleConversion(UnrootedScript script, jsbytecode *pc)
+{
+    types::StackTypeSet::DoubleConversion conversion =
+        script->analysis()->pushedTypes(pc, 0)->convertDoubleElements(cx);
+    return conversion == types::StackTypeSet::AlwaysConvertToDoubles;
 }
 
 bool

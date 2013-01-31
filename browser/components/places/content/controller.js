@@ -139,13 +139,8 @@ PlacesController.prototype = {
       // Otherwise fallback to cmd_delete check.
     case "cmd_delete":
     case "placesCmd_delete":
-      return this._hasRemovableSelection(false);
     case "placesCmd_deleteDataHost":
-      return this._hasRemovableSelection(false)
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-        && !PlacesUIUtils.privateBrowsing.privateBrowsingEnabled
-#endif
-        ;
+      return this._hasRemovableSelection(false);
     case "placesCmd_moveBookmarks":
       return this._hasRemovableSelection(true);
     case "cmd_copy":
@@ -465,7 +460,6 @@ PlacesController.prototype = {
           break;
         case Ci.nsINavHistoryResultNode.RESULT_TYPE_URI:
         case Ci.nsINavHistoryResultNode.RESULT_TYPE_VISIT:
-        case Ci.nsINavHistoryResultNode.RESULT_TYPE_FULL_VISIT:
           nodeData["link"] = true;
           uri = NetUtil.newURI(node.uri);
           if (PlacesUtils.nodeIsBookmark(node)) {
@@ -604,14 +598,7 @@ PlacesController.prototype = {
         // We allow pasting into tag containers, so special case that.
         var hideIfNoIP = item.getAttribute("hideifnoinsertionpoint") == "true" &&
                          noIp && !(ip && ip.isTag && item.id == "placesContext_paste");
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-        var hideIfPB = false;
-#else
-        var hideIfPB = item.getAttribute("hideifprivatebrowsing") == "true" &&
-                       PlacesUIUtils.privateBrowsing.privateBrowsingEnabled;
-#endif
-        item.hidden = hideIfNoIP || hideIfPB ||
-                      !this._shouldShowMenuItem(item, metadata);
+        item.hidden = hideIfNoIP || !this._shouldShowMenuItem(item, metadata);
 
         if (!item.hidden) {
           visibleItemsBeforeSep = true;

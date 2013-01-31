@@ -5402,7 +5402,7 @@ main(int argc, char **argv, char **envp)
     if (!rt)
         return 1;
     gTimeoutFunc = JSVAL_NULL;
-    if (!js_AddRootRT(rt, &gTimeoutFunc, "gTimeoutFunc"))
+    if (!JS_AddNamedValueRootRT(rt, &gTimeoutFunc, "gTimeoutFunc"))
         return 1;
 
     JS_SetGCParameter(rt, JSGC_MAX_BYTES, 0xffffffff);

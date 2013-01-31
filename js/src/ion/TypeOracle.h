@@ -91,6 +91,9 @@ class TypeOracle
     virtual bool elementReadIsString(UnrootedScript script, jsbytecode *pc) {
         return false;
     }
+    virtual bool elementReadShouldAlwaysLoadDoubles(UnrootedScript script, jsbytecode *pc) {
+        return false;
+    }
     virtual bool elementReadHasExtraIndexedProperty(UnrootedScript, jsbytecode *pc) {
         return false;
     }
@@ -110,6 +113,9 @@ class TypeOracle
     virtual bool elementWriteIsTypedArray(RawScript script, jsbytecode *pc, int *arrayType) {
         return false;
     }
+    virtual bool elementWriteNeedsDoubleConversion(UnrootedScript script, jsbytecode *pc) {
+        return false;
+    }
     virtual bool elementWriteHasExtraIndexedProperty(UnrootedScript script, jsbytecode *pc) {
         return false;
     }
@@ -120,6 +126,9 @@ class TypeOracle
         return false;
     }
     virtual bool elementAccessIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType) {
+        return false;
+    }
+    virtual bool arrayResultShouldHaveDoubleConversion(UnrootedScript script, jsbytecode *pc) {
         return false;
     }
     virtual bool propertyWriteCanSpecialize(UnrootedScript script, jsbytecode *pc) {
@@ -244,6 +253,7 @@ class TypeInferenceOracle : public TypeOracle
     bool elementReadIsDenseNative(RawScript script, jsbytecode *pc);
     bool elementReadIsTypedArray(HandleScript script, jsbytecode *pc, int *atype);
     bool elementReadIsString(UnrootedScript script, jsbytecode *pc);
+    bool elementReadShouldAlwaysLoadDoubles(UnrootedScript script, jsbytecode *pc);
     bool elementReadHasExtraIndexedProperty(UnrootedScript, jsbytecode *pc);
     bool elementReadIsPacked(UnrootedScript script, jsbytecode *pc);
     void elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult);
@@ -251,8 +261,10 @@ class TypeInferenceOracle : public TypeOracle
     bool elementAccessIsDenseNative(types::StackTypeSet *obj, types::StackTypeSet *id);
     bool elementWriteIsTypedArray(RawScript script, jsbytecode *pc, int *arrayType);
     bool elementAccessIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType);
+    bool elementWriteNeedsDoubleConversion(UnrootedScript script, jsbytecode *pc);
     bool elementWriteHasExtraIndexedProperty(UnrootedScript script, jsbytecode *pc);
     bool elementWriteIsPacked(UnrootedScript script, jsbytecode *pc);
+    bool arrayResultShouldHaveDoubleConversion(UnrootedScript script, jsbytecode *pc);
     bool setElementHasWrittenHoles(UnrootedScript script, jsbytecode *pc);
     bool propertyWriteCanSpecialize(UnrootedScript script, jsbytecode *pc);
     bool propertyWriteNeedsBarrier(UnrootedScript script, jsbytecode *pc, RawId id);

@@ -11,6 +11,8 @@
 
 "use strict";
 
+#ifndef MERGED_COMPARTMENT
+
 this.EXPORTED_SYMBOLS = [
   "BagheeraClient",
   "BagheeraClientRequestResult",
@@ -18,9 +20,11 @@ this.EXPORTED_SYMBOLS = [
 
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
+Cu.import("resource://services-common/rest.js");
+#endif
+
 Cu.import("resource://gre/modules/commonjs/promise/core.js");
 Cu.import("resource://services-common/log4moz.js");
-Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-common/utils.js");
 
 

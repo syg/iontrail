@@ -431,7 +431,6 @@ DOMCI_CLASS(MediaQueryList)
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(Telephony)
 DOMCI_CLASS(TelephonyCall)
-DOMCI_CLASS(CallEvent)
 DOMCI_CLASS(MozVoicemail)
 DOMCI_CLASS(MozVoicemailEvent)
 DOMCI_CLASS(MozIccManager)
@@ -446,7 +445,6 @@ DOMCI_CLASS(FMRadio)
 DOMCI_CLASS(BluetoothManager)
 DOMCI_CLASS(BluetoothAdapter)
 DOMCI_CLASS(BluetoothDevice)
-DOMCI_CLASS(BluetoothPropertyEvent)
 #endif
 
 DOMCI_CLASS(CameraManager)

@@ -12,6 +12,7 @@ LIBRARY_NAME     = dombindings_s
 LIBXUL_LIBRARY   = 1
 FORCE_STATIC_LIB = 1
 EXPORT_LIBRARY   = 1
+FAIL_ON_WARNINGS := 1
 
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
@@ -46,7 +47,8 @@ CPPSRCS = \
   $(linked_binding_cpp_files) \
   $(filter %.cpp, $(globalgen_targets)) \
   BindingUtils.cpp \
-  CallbackFunction.cpp \
+  CallbackInterface.cpp \
+  CallbackObject.cpp \
   DOMJSProxyHandler.cpp \
   $(NULL)
 
@@ -60,6 +62,8 @@ EXPORTS_$(binding_include_path) = \
   BindingDeclarations.h \
   BindingUtils.h \
   CallbackFunction.h \
+  CallbackInterface.h \
+  CallbackObject.h \
   DOMJSClass.h \
   DOMJSProxyHandler.h \
   Errors.msg \

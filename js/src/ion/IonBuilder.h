@@ -189,8 +189,8 @@ class IonBuilder : public MIRGenerator
     }
 
     JSFunction *getSingleCallTarget(types::StackTypeSet *calleeTypes);
-    unsigned getPolyCallTargets(types::StackTypeSet *calleeTypes,
-                                AutoObjectVector &targets, uint32_t maxTargets);
+    bool getPolyCallTargets(types::StackTypeSet *calleeTypes,
+                            AutoObjectVector &targets, uint32_t maxTargets);
     bool canInlineTarget(JSFunction *target);
 
     void popCfgStack();
@@ -284,6 +284,7 @@ class IonBuilder : public MIRGenerator
 
     MDefinition *walkScopeChain(unsigned hops);
 
+    MInstruction *addConvertElementsToDoubles(MDefinition *elements);
     MInstruction *addBoundsCheck(MDefinition *index, MDefinition *length);
     MInstruction *addShapeGuard(MDefinition *obj, const UnrootedShape shape, BailoutKind bailoutKind);
 

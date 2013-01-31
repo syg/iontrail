@@ -34,6 +34,7 @@ class nsDOMNavigationTiming;
 class nsEventStates;
 class nsFrameLoader;
 class nsHTMLCSSStyleSheet;
+class nsHTMLDocument;
 class nsHTMLStyleSheet;
 class nsIAtom;
 class nsIBFCacheEntry;
@@ -91,6 +92,7 @@ class DocumentFragment;
 class DocumentType;
 class DOMImplementation;
 class Element;
+class GlobalObject;
 class HTMLBodyElement;
 class Link;
 class ProcessingInstruction;
@@ -100,8 +102,8 @@ template<typename> class Sequence;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x2df7f766, 0xf70b, 0x4de4, \
- { 0xb0, 0xba, 0x78, 0x25, 0x07, 0x41, 0xd6, 0xce } }
+{ 0x4e6f7d97, 0x091e, 0x4eda, \
+  { 0xb7, 0xd6, 0xfe, 0xb0, 0xb8, 0x01, 0x2a, 0x93 } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -444,6 +446,53 @@ public:
     mHasMixedActiveContentLoaded = aHasMixedActiveContentLoaded;
   }
 
+  /**
+   * Get mixed active content blocked flag for this document.
+   */
+  bool GetHasMixedActiveContentBlocked()
+  {
+    return mHasMixedActiveContentBlocked;
+  }
+
+  /**
+   * Set the mixed active content blocked flag for this document.
+   */
+  void SetHasMixedActiveContentBlocked(bool aHasMixedActiveContentBlocked)
+  {
+    mHasMixedActiveContentBlocked = aHasMixedActiveContentBlocked;
+  }
+
+  /**
+   * Get the has mixed display content loaded flag for this document.
+   */
+  bool GetHasMixedDisplayContentLoaded()
+  {
+    return mHasMixedDisplayContentLoaded;
+  }
+
+  /**
+   * Set the has mixed display content loaded flag for this document.
+   */
+  void SetHasMixedDisplayContentLoaded(bool aHasMixedDisplayContentLoaded)
+  {
+    mHasMixedDisplayContentLoaded = aHasMixedDisplayContentLoaded;
+  }
+
+  /**
+   * Get mixed display content blocked flag for this document.
+   */
+  bool GetHasMixedDisplayContentBlocked()
+  {
+    return mHasMixedDisplayContentBlocked;
+  }
+
+  /**
+   * Set the mixed display content blocked flag for this document.
+   */
+  void SetHasMixedDisplayContentBlocked(bool aHasMixedDisplayContentBlocked)
+  {
+    mHasMixedDisplayContentBlocked = aHasMixedDisplayContentBlocked;
+  }
 
   /**
    * Get the sandbox flags for this document.
@@ -1801,8 +1850,9 @@ public:
   {
     return GetScopeObject();
   }
-  static already_AddRefed<nsIDocument> Constructor(nsISupports* aGlobal,
-                                                   mozilla::ErrorResult& rv);
+  static already_AddRefed<nsIDocument>
+    Constructor(const mozilla::dom::GlobalObject& aGlobal,
+                mozilla::ErrorResult& rv);
   virtual mozilla::dom::DOMImplementation*
     GetImplementation(mozilla::ErrorResult& rv) = 0;
   void GetURL(nsString& retval) const;
@@ -1971,6 +2021,8 @@ public:
                     const mozilla::dom::Sequence<nsRefPtr<nsIDOMTouch> >& aTouches);
   already_AddRefed<nsIDOMTouchList>
     CreateTouchList(const mozilla::dom::Sequence<nsRefPtr<nsIDOMTouch> >& aTouches);
+
+  nsHTMLDocument* AsHTMLDocument();
 
 private:
   uint64_t mWarnedAbout;
@@ -2160,6 +2212,15 @@ protected:
 
   // True if a document has loaded Mixed Active Script (see nsMixedContentBlocker.cpp)
   bool mHasMixedActiveContentLoaded;
+
+  // True if a document has blocked Mixed Active Script (see nsMixedContentBlocker.cpp)
+  bool mHasMixedActiveContentBlocked;
+
+  // True if a document has loaded Mixed Display/Passive Content (see nsMixedContentBlocker.cpp)
+  bool mHasMixedDisplayContentLoaded;
+
+  // True if a document has blocked Mixed Display/Passive Content (see nsMixedContentBlocker.cpp)
+  bool mHasMixedDisplayContentBlocked;
 
   // True if DisallowBFCaching has been called on this document.
   bool mBFCacheDisallowed;

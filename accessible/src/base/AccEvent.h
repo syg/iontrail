@@ -58,6 +58,9 @@ public:
     // eCoalesceSelectionChange: coalescence of selection change events.
     eCoalesceSelectionChange,
 
+    // eCoalesceStateChange: coalesce state change events.
+    eCoalesceStateChange,
+
      // eRemoveDupes : For repeat events, only the newest event in queue
      //    will be emitted.
     eRemoveDupes,
@@ -120,7 +123,7 @@ protected:
   EEventRule mEventRule;
   nsRefPtr<Accessible> mAccessible;
 
-  friend class NotificationController;
+  friend class EventQueue;
   friend class AccReorderEvent;
 };
 
@@ -135,12 +138,12 @@ public:
                       bool aIsEnabled,
                       EIsFromUserInput aIsFromUserInput = eAutoDetect) :
     AccEvent(nsIAccessibleEvent::EVENT_STATE_CHANGE, aAccessible,
-             aIsFromUserInput, eAllowDupes),
+             aIsFromUserInput, eCoalesceStateChange),
              mState(aState), mIsEnabled(aIsEnabled) { }
 
   AccStateChangeEvent(Accessible* aAccessible, uint64_t aState) :
     AccEvent(::nsIAccessibleEvent::EVENT_STATE_CHANGE, aAccessible,
-             eAutoDetect, eAllowDupes), mState(aState)
+             eAutoDetect, eCoalesceStateChange), mState(aState)
     { mIsEnabled = (mAccessible->State() & mState) != 0; }
 
   // AccEvent
@@ -159,6 +162,8 @@ public:
 private:
   uint64_t mState;
   bool mIsEnabled;
+
+  friend class EventQueue;
 };
 
 
@@ -193,7 +198,7 @@ private:
   bool mIsInserted;
   nsString mModifiedText;
 
-  friend class NotificationController;
+  friend class EventQueue;
   friend class AccReorderEvent;
 };
 
@@ -230,7 +235,7 @@ protected:
   nsRefPtr<Accessible> mParent;
   nsRefPtr<AccTextChangeEvent> mTextChangeEvent;
 
-  friend class NotificationController;
+  friend class EventQueue;
 };
 
 
@@ -260,7 +265,7 @@ protected:
   nsRefPtr<Accessible> mNextSibling;
   nsRefPtr<Accessible> mPrevSibling;
 
-  friend class NotificationController;
+  friend class EventQueue;
 };
 
 
@@ -328,7 +333,7 @@ protected:
    */
   nsTArray<AccMutationEvent*> mDependentEvents;
 
-  friend class NotificationController;
+  friend class EventQueue;
 };
 
 
@@ -358,7 +363,7 @@ public:
 private:
   int32_t mCaretOffset;
 
-  friend class NotificationController;
+  friend class EventQueue;
 };
 
 
@@ -395,7 +400,7 @@ private:
   uint32_t mPreceedingCount;
   AccSelChangeEvent* mPackedEvent;
 
-  friend class NotificationController;
+  friend class EventQueue;
 };
 
 

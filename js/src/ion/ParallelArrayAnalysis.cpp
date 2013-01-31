@@ -263,6 +263,9 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParCheckInterrupt)
     SAFE_OP(ParCheckOverRecursed)
     SAFE_OP(PolyInlineDispatch)
+
+    // It looks like this could easily be made safe:
+    UNSAFE_OP(ConvertElementsToDoubles)
 };
 
 bool
@@ -614,8 +617,8 @@ ParallelArrayVisitor::replace(MInstruction *oldInstruction,
 {
     MBasicBlock *block = oldInstruction->block();
     block->insertBefore(oldInstruction, replacementInstruction);
-    block->discard(oldInstruction);
     oldInstruction->replaceAllUsesWith(replacementInstruction);
+    block->discard(oldInstruction);
     return true;
 }
 
