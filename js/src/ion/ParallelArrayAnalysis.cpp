@@ -1,3 +1,10 @@
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=4 sw=4 et tw=99:
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include <stdio.h>
 
 #include "Ion.h"
@@ -18,20 +25,6 @@ namespace ion {
 using parallel::Spew;
 using parallel::SpewMIR;
 using parallel::SpewCompile;
-
-typedef uint32_t typeset_t;
-
-static inline typeset_t typeset(MIRType type) {
-    return 1 << (uint32_t) type;
-}
-
-static inline bool isSubset(typeset_t small, typeset_t big) {
-    return ((big & small) == small);
-}
-
-static inline typeset_t containsType(typeset_t set, MIRType type) {
-    return (set & typeset(type)) != 0;
-}
 
 #define SAFE_OP(op)                             \
     virtual bool visit##op(M##op *prop) { return true; }
@@ -313,7 +306,6 @@ ParallelCompileContext::appendToWorklist(HandleFunction fun)
         return true;
     }
 
-    // TODO: Have worklist use an auto hash set or something.
     for (uint32_t i = 0; i < worklist_.length(); i++) {
         if (worklist_[i]->toFunction() == fun)
             return true;
@@ -498,7 +490,7 @@ ParallelArrayVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
     block->unmark();
 
     // Determine the best PC to use for the bailouts we'll be creating.
-    jsbytecode *pc = ins->trackedPc();
+    jsbytecode *pc = block->pc();
     if (!pc)
         pc = block->pc();
 
@@ -550,14 +542,16 @@ ParallelArrayVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
 // These allocations will take place using per-helper-thread arenas.
 
 bool
-ParallelArrayVisitor::visitNewParallelArray(MNewParallelArray *ins) {
+ParallelArrayVisitor::visitNewParallelArray(MNewParallelArray *ins)
+{
     MParNew *parNew = new MParNew(parSlice(), ins->templateObject());
     replace(ins, parNew);
     return true;
 }
 
 bool
-ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins) {
+ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins)
+{
     // fast path: replace with ParNewCallObject op
     MParNewCallObject *parNewCallObjectInstruction =
         MParNewCallObject::New(parSlice(), ins);
@@ -566,9 +560,11 @@ ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins) {
 }
 
 bool
-ParallelArrayVisitor::visitLambda(MLambda *ins) {
+ParallelArrayVisitor::visitLambda(MLambda *ins)
+{
     if (ins->fun()->hasSingletonType() ||
-        types::UseNewTypeForClone(ins->fun())) {
+        types::UseNewTypeForClone(ins->fun()))
+    {
         // slow path: bail on parallel execution.
         return markUnsafe();
     }
@@ -580,7 +576,8 @@ ParallelArrayVisitor::visitLambda(MLambda *ins) {
 }
 
 bool
-ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
+ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction)
+{
     if (newInstruction->shouldUseVM()) {
         SpewMIR(newInstruction, "should use VM");
         return markUnsafe();
@@ -591,7 +588,8 @@ ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction) {
 }
 
 bool
-ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction) {
+ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction)
+{
     if (newInstruction->shouldUseVM()) {
         SpewMIR(newInstruction, "should use VM");
         return markUnsafe();
@@ -603,7 +601,8 @@ ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction) {
 
 bool
 ParallelArrayVisitor::replaceWithParNew(MInstruction *newInstruction,
-                                        JSObject *templateObject) {
+                                        JSObject *templateObject)
+{
     MParNew *parNewInstruction = new MParNew(parSlice(), templateObject);
     replace(newInstruction, parNewInstruction);
     return true;

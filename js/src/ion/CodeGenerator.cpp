@@ -2886,9 +2886,8 @@ CodeGenerator::visitParCompareS(LParCompareS *lir)
         return false;
     masm.branch32(Assembler::Equal, ReturnReg, Imm32(ParCompareUnknown), bail);
 
-    if (op == JSOP_NE || op == JSOP_STRICTNE) {
+    if (op == JSOP_NE || op == JSOP_STRICTNE)
         masm.xor32(Imm32(1), ReturnReg);
-    }
 
     return true;
 }

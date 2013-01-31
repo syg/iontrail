@@ -163,13 +163,14 @@ MBasicBlock::NewParBailout(MIRGraph &graph, CompileInfo &info,
                            MBasicBlock *pred, jsbytecode *entryPc)
 {
     MBasicBlock *block = MBasicBlock::New(graph, info, pred, entryPc, NORMAL);
-    if (block) {
-        MParBailout *bailout = new MParBailout();
-        if (!bailout)
-            return NULL;
+    if (!block)
+        return NULL;
 
-        block->end(bailout);
-    }
+    MParBailout *bailout = new MParBailout();
+    if (!bailout)
+        return NULL;
+
+    block->end(bailout);
     return block;
 }
 
@@ -767,9 +768,10 @@ size_t
 MBasicBlock::getSuccessorIndex(MBasicBlock *block) const
 {
     JS_ASSERT(lastIns());
-    for (size_t i = 0; i < numSuccessors(); i++)
+    for (size_t i = 0; i < numSuccessors(); i++) {
         if (getSuccessor(i) == block)
             return i;
+    }
     JS_NOT_REACHED("Invalid successor");
 }
 

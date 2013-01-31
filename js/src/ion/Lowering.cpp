@@ -1517,7 +1517,9 @@ LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 bool
 LIRGenerator::visitParDump(MParDump *ins)
 {
-    return add(new LParDump(useFixed(ins->value(), CallTempReg0)));
+    LParDump *lir = new LParDump();
+    useBoxFixed(lir, LParDump::Value, ins->value(), CallTempReg0, CallTempReg1);
+    return add(lir);
 }
 
 bool

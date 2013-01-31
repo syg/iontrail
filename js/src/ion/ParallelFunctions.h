@@ -42,7 +42,11 @@ JSObject* ParPush(ParPushArgs *args);
 // generation.
 JSObject *ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length);
 
-enum ParCompareResult { ParCompareNe = false, ParCompareEq = true, ParCompareUnknown = 2 };
+enum ParCompareResult {
+    ParCompareNe = false,
+    ParCompareEq = true,
+    ParCompareUnknown = 2
+};
 ParCompareResult ParCompareStrings(JSString *str1, JSString *str2);
 
 void ParallelAbort(JSScript *script);

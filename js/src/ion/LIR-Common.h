@@ -3572,9 +3572,7 @@ class LParDump : public LCallInstructionHelper<0, BOX_PIECES, 0>
   public:
     LIR_HEADER(ParDump);
 
-    LParDump(const LAllocation &value) {
-        setOperand(0, value);
-    }
+    static const size_t Value = 0;
 
     const LAllocation *value() {
         return getOperand(0);

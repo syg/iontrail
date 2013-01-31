@@ -1637,7 +1637,7 @@ ParallelCompileContext::compile(IonBuilder *builder,
         return builder->abortReason();
     builder->clearForBackEnd();
 
-    // XXX: no idea if bhackett's parallel compilation thing is safe here
+    // For the time being, we do not enable parallel compilation.
 
     if (!OptimizeMIR(builder)) {
         IonSpew(IonSpew_Abort, "Failed during back-end compilation.");
@@ -2175,13 +2175,11 @@ FinishInvalidationOf(FreeOp *fop, UnrootedScript script, IonScript **ionField)
 void
 ion::FinishInvalidation(FreeOp *fop, UnrootedScript script)
 {
-    if (script->hasIonScript()) {
+    if (script->hasIonScript())
         FinishInvalidationOf(fop, script, &script->ion);
-    }
 
-    if (script->hasParallelIonScript()) {
+    if (script->hasParallelIonScript())
         FinishInvalidationOf(fop, script, &script->parallelIon);
-    }
 }
 
 void
@@ -2200,15 +2198,6 @@ void
 ion::ForbidCompilation(JSContext *cx, UnrootedScript script)
 {
     ForbidCompilation(cx, script, SequentialExecution);
-
-    CancelOffThreadIonCompile(cx->compartment, script);
-
-    if (script->hasIonScript()) {
-        if (!Invalidate(cx, script, false))
-            return;
-    }
-
-    script->ion = ION_DISABLED_SCRIPT;
 }
 
 void
