@@ -22,7 +22,7 @@
 #include "jsnativestack.h"
 
 // For representing stack event for each thread.
-#include "StacKExtents.h"
+#include "StackExtents.h"
 
 using namespace js;
 
