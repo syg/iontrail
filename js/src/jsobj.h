@@ -1362,6 +1362,15 @@ GetPropertyHelper(JSContext *cx, HandleObject obj, PropertyName *name, uint32_t 
 }
 
 bool
+GetPropertyPure(RawObject obj, jsid id, Value *vp);
+
+inline bool
+GetPropertyPure(RawObject obj, PropertyName *name, Value *vp)
+{
+    return GetPropertyPure(obj, NameToId(name), vp);
+}
+
+bool
 GetOwnPropertyDescriptor(JSContext *cx, HandleObject obj, HandleId id, PropertyDescriptor *desc);
 
 bool

@@ -292,6 +292,14 @@ js::ObjectImpl::nativeLookup(JSContext *cx, jsid id)
     return Shape::search(cx, lastProperty(), id, &spp);
 }
 
+bool
+js::ObjectImpl::nativeLookupPure(jsid id, Shape **shapep)
+{
+    AutoAssertNoGC nogc;
+    MOZ_ASSERT(isNative());
+    return Shape::searchNoHashify(lastProperty(), id, shapep);
+}
+
 void
 js::ObjectImpl::markChildren(JSTracer *trc)
 {

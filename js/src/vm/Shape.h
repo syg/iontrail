@@ -498,6 +498,7 @@ class Shape : public js::gc::Cell
 
     static inline UnrootedShape search(JSContext *cx, Shape *start, jsid id,
                                        Shape ***pspp, bool adding = false);
+    static inline bool searchNoHashify(Shape *start, jsid id, Shape **shapep);
 
     inline void removeFromDictionary(JSObject *obj);
     inline void insertIntoDictionary(HeapPtrShape *dictp);
@@ -1089,6 +1090,50 @@ Shape::search(JSContext *cx, Shape *start, jsid id, Shape ***pspp, bool adding)
     }
 
     return UnrootedShape(NULL);
+}
+
+/*
+ * Keep this function in sync with search. It should return false whenever
+ * search would transition to a ShapeTable.
+ */
+inline bool
+Shape::searchNoHashify(Shape *start, jsid id, Shape **shapep)
+{
+    AutoAssertNoGC nogc;
+    Shape **spp;
+
+    *shapep = NULL;
+
+    if (start->inDictionary()) {
+        spp = start->table().search(id, false);
+        *shapep = SHAPE_FETCH(spp);
+        return true;
+    }
+
+    if (start->hasTable()) {
+        spp = start->table().search(id, false);
+        *shapep = SHAPE_FETCH(spp);
+        return true;
+    }
+
+    /* We bail instead of hashifying, as that would be effectful on the shape. */
+    if (start->numLinearSearches() == LINEAR_SEARCHES_MAX)
+        return false;
+
+    /*
+     * Note that we let the linear searches be bumped racily. This is not
+     * incorrect, as the number of linear searches is a heuristic anyways.
+     */
+    start->incrementNumLinearSearches();
+
+    for (UnrootedShape shape = start; shape; shape = shape->parent) {
+        if (shape->propidRef() == id) {
+            *shapep = shape;
+            return true;
+        }
+    }
+
+    return true;
 }
 
 template<> struct RootKind<Shape *> : SpecificRootKind<Shape *, THING_ROOT_SHAPE> {};

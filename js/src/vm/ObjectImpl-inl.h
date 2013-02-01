@@ -71,6 +71,44 @@ js::ObjectImpl::nativeContains(JSContext *cx, Shape *shape)
 }
 
 inline bool
+js::ObjectImpl::nativeLookupPure(PropertyId pid, Shape **shapep)
+{
+    return nativeLookupPure(pid.asId(), shapep);
+}
+
+inline bool
+js::ObjectImpl::nativeLookupPure(PropertyName *name, Shape **shapep)
+{
+    return nativeLookupPure(NameToId(name), shapep);
+}
+
+inline bool
+js::ObjectImpl::nativeContainsPure(jsid id, bool *contains)
+{
+    Shape *shape;
+    if (!nativeLookupPure(id, &shape))
+        return false;
+    *contains = !!shape;
+    return true;
+}
+
+inline bool
+js::ObjectImpl::nativeContainsPure(PropertyName *name, bool *contains)
+{
+    return nativeContainsPure(NameToId(name), contains);
+}
+
+inline bool
+js::ObjectImpl::nativeContainsPure(Shape *shape, bool *contains)
+{
+    Shape *shape2;
+    if (!nativeLookupPure(shape->propid(), &shape2))
+        return false;
+    *contains = shape == shape2;
+    return true;
+}
+
+inline bool
 js::ObjectImpl::isExtensible() const
 {
     return !lastProperty()->hasObjectFlag(BaseShape::NOT_EXTENSIBLE);

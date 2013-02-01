@@ -1222,6 +1222,18 @@ class ObjectImpl : public gc::Cell
     inline bool nativeContains(JSContext *cx, PropertyName* name);
     inline bool nativeContains(JSContext *cx, Shape* shape);
 
+    /*
+     * Contextless; can be called from parallel code. Returns false if the
+     * operation would have been effectful.
+     */
+    bool nativeLookupPure(jsid id, Shape **shapep);
+    inline bool nativeLookupPure(PropertyId pid, Shape **shapep);
+    inline bool nativeLookupPure(PropertyName *name, Shape **shapep);
+
+    inline bool nativeContainsPure(jsid id, bool *contains);
+    inline bool nativeContainsPure(PropertyName* name, bool *contains);
+    inline bool nativeContainsPure(Shape* shape, bool *contains);
+
     inline JSClass *getJSClass() const;
     inline bool hasClass(const Class *c) const;
     inline const ObjectOps *getOps() const;

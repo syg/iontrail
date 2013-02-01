@@ -3876,6 +3876,132 @@ baseops::GetPropertyNoGC(JSContext *cx, JSObject *obj, JSObject *receiver, jsid 
     return GetPropertyHelperInline<NoGC>(cx, obj, receiver, id, 0, vp);
 }
 
+static JS_ALWAYS_INLINE bool
+LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *propp)
+{
+    AutoAssertNoGC nogc;
+
+    RawObject current = obj;
+    while (true) {
+        /* Search for a native dense element or property. */
+        {
+            if (JSID_IS_INT(id) && current->containsDenseElement(JSID_TO_INT(id))) {
+                *objp = current;
+                MarkDenseElementFound<NoGC>(propp);
+                return true;
+            }
+
+            RawShape shape;
+            if (!current->nativeLookupPure(id, &shape))
+                return false;
+
+            if (shape) {
+                *objp = current;
+                *propp = shape;
+                return true;
+            }
+        }
+
+        /* Fail if there's a resolve hook. */
+        if (current->getClass()->resolve != JS_ResolveStub)
+            return false;
+
+        RawObject proto = current->getProto();
+
+        if (!proto)
+            break;
+        if (!proto->isNative())
+            return false;
+
+        current = proto;
+    }
+
+    *objp = NULL;
+    *propp = NULL;
+    return true;
+}
+
+static JS_ALWAYS_INLINE bool
+NativeGetPureInline(RawObject pobj, RawShape shape, Value *vp)
+{
+    JS_ASSERT(pobj->isNative());
+    AutoAssertNoGC nogc;
+
+    if (shape->hasSlot()) {
+        *vp = pobj->nativeGetSlot(shape->slot());
+        JS_ASSERT(!vp->isMagic());
+        /*
+         * XXX: Unfortunately the below assert can't be checked since we have
+         * no cx and it'd probably be unsafe.
+         *
+         * JS_ASSERT_IF(!pobj->hasSingletonType() && shape->hasDefaultGetter(),
+         *              js::types::TypeHasProperty(cx, pobj->type(), shape->propid(), vp));
+         */
+    } else {
+        vp->setUndefined();
+    }
+
+    /* Fail if we have a custom getter. */
+    return !shape->hasDefaultGetter();
+}
+
+/*
+ * A pure version of GetPropertyHelper that can be called from parallel code
+ * without locking. This variant returns false whenever a side-effect might
+ * have occured in the effectful version. This includes, but is not limited
+ * to:
+ *
+ *  - Any object in the lookup chain has a non-stub resolve hook.
+ *  - Any object in the lookup chain is non-native.
+ *  - Hashification of a shape tree into a shape table.
+ *  - The property has a getter.
+ */
+bool
+js::GetPropertyPure(RawObject obj, jsid id, Value *vp)
+{
+    AutoAssertNoGC nogc;
+
+    RawObject obj2;
+    RawShape shape;
+    if (!LookupPropertyPureInline(obj, id, &obj2, &shape))
+        return false;
+
+    /*
+     * If we couldn't find the property, fail if any of the following edge
+     * cases appear.
+     */
+    if (!shape) {
+        /* Do we have a non-stub class op hook? */
+        if (obj->getClass()->getProperty && obj->getClass()->getProperty != JS_PropertyStub)
+            return false;
+
+        /* Did we skip a non-native object? */
+        RawObject current = obj;
+        while (current) {
+            if (!current->isNative())
+                return false;
+            current = obj2->getProto();
+        }
+
+        vp->setUndefined();
+        return true;
+    }
+
+    /* Fail if the object isn't native. */
+    if (!obj2->isNative())
+        return false;
+
+    if (IsImplicitDenseElement(shape)) {
+        *vp = obj2->getDenseElement(JSID_TO_INT(id));
+        return true;
+    }
+
+    if (!NativeGetPureInline(obj2, shape, vp))
+        return false;
+
+    return true;
+}
+
 JSBool
 baseops::GetElement(JSContext *cx, HandleObject obj, HandleObject receiver, uint32_t index,
                     MutableHandleValue vp)
