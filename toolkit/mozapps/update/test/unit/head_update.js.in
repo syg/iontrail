@@ -471,6 +471,83 @@ if (IS_WIN) {
 }
 
 /**
+ * Copies a directory and its children. First it tries nsIFile::CopyTo on the
+ * source directory and if that fails it will fall back to recursing.
+ *
+ * @param  aSrcDir
+ *         nsIFile for the source directory to be copied from.
+ * @param  aDestDir
+ *         nsIFile for the destination directory parent.
+ * @param  aDestLeafName
+ *         the destination directory name.
+ */
+function copyDirRecursive(aSrcDir, aDestDir, aDestLeafName) {
+  try {
+    aSrcDir.copyTo(aDestDir, aDestLeafName);
+    return;
+  }
+  catch (e) {
+    logTestInfo("copyTo error - src path: " + aSrcDir.path + ", dest path: " +
+                aDestDir.path + ", dir name: " + aDestLeafName +
+                ", exception: " + e);
+  }
+
+  let destDir = aDestDir.clone();
+  destDir.append(aDestLeafName);
+  if (!destDir.exists()) {
+    try {
+      destDir.create(AUS_Ci.nsIFile.DIRECTORY_TYPE, PERMS_DIRECTORY);
+    }
+    catch (e) {
+      logTestInfo("unable to create directory, path: " + destDir.path +
+                  ", exception: " + e);
+      do_throw(e);
+    }
+  }
+  var dirEntries = aSrcDir.directoryEntries;
+  while (dirEntries.hasMoreElements()) {
+    let entry = dirEntries.getNext().QueryInterface(AUS_Ci.nsIFile);
+
+    if (entry.isDirectory()) {
+      copyDirRecursive(entry, destDir, entry.leafName);
+    }
+    else {
+      let destFile = destDir.clone();
+      destFile.append(entry.leafName);
+      if (destFile.exists()) {
+        try {
+          destFile.remove(false);
+        }
+        catch (e) {
+          logTestInfo("unable to remove file, path: " + destFile.path +
+                      ", exception: " + e);
+          let bakFile = destDir.clone();
+          bakFile.append(entry.leafName + ".bak");
+          logTestInfo("attempting moveTo of file, src path: " + destFile.path +
+                      ", dest path: " + bakFile.path + ", exception: " + e);
+          try {
+            destFile.moveTo(destDir, bakFile.leafName);
+          }
+          catch (e) {
+            logTestInfo("unable to move file, src path: " + destFile.path +
+                        ", dest path: " + bakFile.path + ", exception: " + e);
+            do_throw(e);
+          }
+        }
+      }
+      try {
+        entry.copyTo(destDir, entry.leafName);
+      }
+      catch (e) {
+        logTestInfo("unable to copy file, src path: " + entry.path +
+                    ", dest path: " + destFile.path + ", exception: " + e);
+        do_throw(e);
+      }
+    }
+  }
+}
+
+/**
  * Helper function for updater tests for launching the updater binary to apply
  * a mar file.
  *
@@ -1411,8 +1488,7 @@ function checkCallbackAppLog() {
               "and the expected command line arguments passed to it");
   do_check_eq(logContents, expectedLogContents);
 
-  // Use a timeout to give any files that were in use additional time to close.
-  do_timeout(TEST_HELPER_TIMEOUT, do_test_finished);
+  removeCallbackCopy();
 }
 
 /**
@@ -1442,7 +1518,7 @@ function checkCallbackServiceLog() {
               "and the expected command line arguments passed to it");
   do_check_eq(logContents, expectedLogContents);
 
-  do_timeout(TEST_HELPER_TIMEOUT, do_test_finished);
+  removeCallbackCopy();
 }
 
 function removeCallbackCopy() {
@@ -1465,6 +1541,52 @@ function removeCallbackCopy() {
   // Use a timeout to give any files that were in use additional 
   // time to close.  Same as updater.exe without service tests.
   do_timeout(TEST_HELPER_TIMEOUT, do_test_finished);
+}
+
+// Waits until files that are in use that break tests are no longer in use and
+// then calls removeCallbackCopy.
+function waitForFilesInUse() {
+  let maintSvcInstaller = getAppDir();
+  maintSvcInstaller.append("MAINTENANCE_SERVICE_INSTALLER_BIN_FILE");
+
+  let helper = getAppDir();
+  helper.append("uninstall");
+  helper.append("helper.exe");
+
+  let files = [maintSvcInstaller, helper];
+  for (let i = 0; i < files.length; ++i) {
+    let file = files[i];
+    let fileBak = file.parent.clone();
+    if (file.exists()) {
+      fileBak.append(file.leafName + ".bak");
+      try {
+        if (fileBak.exists()) {
+          fileBak.remove(false);
+        }
+        file.copyTo(fileBak.parent, fileBak.leafName);
+        file.remove(false);
+        fileBak.moveTo(file.parent, file.leafName);
+        logTestInfo("file is not in use. path: " + file.path);
+      }
+      catch (e) {
+        logTestInfo("file in use, will try again after " + CHECK_TIMEOUT_MILLI +
+                    " ms, path: " + file.path + ", exception: " + e);
+        try {
+          if (fileBak.exists()) {
+            fileBak.remove(false);
+          }
+        }
+        catch (e) {
+          logTestInfo("unable to remove file, this should never happen! " +
+                      "path: " + fileBak.path + ", exception: " + e);
+        }
+        do_timeout(CHECK_TIMEOUT_MILLI, waitForFilesInUse);
+        return;
+      }
+    }
+  }
+
+  removeCallbackCopy();
 }
 
 /**

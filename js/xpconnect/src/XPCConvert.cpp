@@ -980,10 +980,6 @@ XPCConvert::NativeInterface2JSObject(XPCLazyCallContext& lccx,
     if (!JS_WrapObject(ccx, &flat))
         return false;
 
-    // Outerize if necessary.
-    flat = JS_ObjectToOuterObject(cx, flat);
-    MOZ_ASSERT(flat, "bad outer object hook!");
-
     *d = OBJECT_TO_JSVAL(flat);
 
     if (dest) {
@@ -1058,12 +1054,6 @@ XPCConvert::JSObject2NativeInterface(JSContext* cx,
             return NS_SUCCEEDED(iface->QueryInterface(*iid, dest));
         }
         // else...
-
-        // XXX E4X breaks the world. Don't try wrapping E4X objects!
-        // This hack can be removed (or changed accordingly) when the
-        // DOM <-> E4X bindings are complete, see bug 270553
-        if (JS_TypeOfValue(cx, OBJECT_TO_JSVAL(src)) == JSTYPE_XML)
-            return false;
 
         // Deal with slim wrappers here.
         if (GetISupportsFromJSObject(inner ? inner : src, &iface)) {

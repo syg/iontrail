@@ -51,9 +51,6 @@ extern JS_FRIEND_API(uint32_t)
 JS_ObjectCountDynamicSlots(JSHandleObject obj);
 
 extern JS_FRIEND_API(size_t)
-JS_GetE4XObjectsCreated(JSContext *cx);
-
-extern JS_FRIEND_API(size_t)
 JS_SetProtoCalled(JSContext *cx);
 
 extern JS_FRIEND_API(size_t)
@@ -355,17 +352,12 @@ struct Atom {
 
 } /* namespace shadow */
 
-extern JS_FRIEND_DATA(js::Class) AnyNameClass;
-extern JS_FRIEND_DATA(js::Class) AttributeNameClass;
 extern JS_FRIEND_DATA(js::Class) CallClass;
 extern JS_FRIEND_DATA(js::Class) DeclEnvClass;
 extern JS_FRIEND_DATA(js::Class) FunctionClass;
 extern JS_FRIEND_DATA(js::Class) FunctionProxyClass;
-extern JS_FRIEND_DATA(js::Class) NamespaceClass;
 extern JS_FRIEND_DATA(js::Class) OuterWindowProxyClass;
 extern JS_FRIEND_DATA(js::Class) ObjectProxyClass;
-extern JS_FRIEND_DATA(js::Class) QNameClass;
-extern JS_FRIEND_DATA(js::Class) XMLClass;
 extern JS_FRIEND_DATA(js::Class) ObjectClass;
 
 inline js::Class *
@@ -378,6 +370,16 @@ inline JSClass *
 GetObjectJSClass(RawObject obj)
 {
     return js::Jsvalify(GetObjectClass(obj));
+}
+
+inline bool
+IsInnerObject(JSObject *obj) {
+    return !!GetObjectClass(obj)->ext.outerObject;
+}
+
+inline bool
+IsOuterObject(JSObject *obj) {
+    return !!GetObjectClass(obj)->ext.innerObject;
 }
 
 JS_FRIEND_API(bool)
@@ -711,9 +713,6 @@ SetActivityCallback(JSRuntime *rt, ActivityCallback cb, void *arg);
 
 extern JS_FRIEND_API(const JSStructuredCloneCallbacks *)
 GetContextStructuredCloneCallbacks(JSContext *cx);
-
-extern JS_FRIEND_API(JSVersion)
-VersionSetMoarXML(JSVersion version, bool enable);
 
 extern JS_FRIEND_API(bool)
 CanCallContextDebugHandler(JSContext *cx);
@@ -1362,7 +1361,7 @@ IdToValue(jsid id)
         return Int32Value(JSID_TO_INT(id));
     if (JS_LIKELY(JSID_IS_OBJECT(id)))
         return ObjectValue(*JSID_TO_OBJECT(id));
-    JS_ASSERT(JSID_IS_DEFAULT_XML_NAMESPACE(id) || JSID_IS_VOID(id));
+    JS_ASSERT(JSID_IS_VOID(id));
     return UndefinedValue();
 }
 
@@ -1399,7 +1398,6 @@ class JS_FRIEND_API(AutoCTypesActivityCallback) {
   private:
     JSContext *cx;
     CTypesActivityCallback callback;
-    CTypesActivityType beginType;
     CTypesActivityType endType;
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 

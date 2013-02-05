@@ -102,6 +102,9 @@ abstract public class BrowserApp extends GeckoApp
                     else
                         hideAboutHome();
 
+                    // Dismiss any SiteIdentity Popup
+                    SiteIdentityPopup.getInstance().dismiss();
+
                     final TabsPanel.Panel panel = tab.isPrivate()
                                                 ? TabsPanel.Panel.PRIVATE_TABS
                                                 : TabsPanel.Panel.NORMAL_TABS;
@@ -236,6 +239,8 @@ abstract public class BrowserApp extends GeckoApp
         registerEventListener("Feedback:MaybeLater");
         registerEventListener("Dex:Load");
         registerEventListener("Telemetry:Gather");
+
+        Distribution.init(this);
     }
 
     @Override
@@ -1050,12 +1055,17 @@ abstract public class BrowserApp extends GeckoApp
                 return true;
 
             case R.id.abouthome_topsites_unpin:
-                mAboutHomeContent.unpinSite();
+                mAboutHomeContent.unpinSite(AboutHomeContent.UnpinFlags.REMOVE_PIN);
                 return true;
 
             case R.id.abouthome_topsites_pin:
                 mAboutHomeContent.pinSite();
                 return true;
+
+            case R.id.abouthome_topsites_remove:
+                mAboutHomeContent.unpinSite(AboutHomeContent.UnpinFlags.REMOVE_HISTORY);
+                return true;
+
         }
         return super.onContextItemSelected(item);
     }

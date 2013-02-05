@@ -93,7 +93,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.StringTokenizer;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.SynchronousQueue;
 import java.net.ProxySelector;
 import java.net.Proxy;
@@ -133,9 +132,14 @@ public class GeckoAppShell
     static private int sFreeSpace = -1;
     static File sHomeDir = null;
     static private int sDensityDpi = 0;
-    private static Boolean sSQLiteLibsLoaded = false;
-    private static Boolean sNSSLibsLoaded = false;
-    private static Boolean sLibsSetup = false;
+
+    private static final Object sLibLoadingLock = new Object();
+    // Must hold sLibLoadingLock while accessing the following boolean variables.
+    private static boolean sSQLiteLibsLoaded;
+    private static boolean sNSSLibsLoaded;
+    private static boolean sMozGlueLoaded;
+    private static boolean sLibsSetup;
+
     private static File sGREDir = null;
     private static final EventDispatcher sEventDispatcher = new EventDispatcher();
 
@@ -334,8 +338,12 @@ public class GeckoAppShell
 
     // java-side stuff
     public static void loadLibsSetup(Context context) {
-        if (sLibsSetup)
-            return;
+        synchronized (sLibLoadingLock) {
+            if (sLibsSetup) {
+                return;
+            }
+            sLibsSetup = true;
+        }
 
         // The package data lib directory isn't placed in ld.so's
         // search path, so we have to manually load libraries that
@@ -362,8 +370,6 @@ public class GeckoAppShell
                 cacheDir.setReadable(true, false);
             }
         }
-
-        sLibsSetup = true;
     }
 
     private static void setupPluginEnvironment(GeckoApp context) {
@@ -469,33 +475,40 @@ public class GeckoAppShell
 
     /* This method is referenced by Robocop via reflection. */
     public static void loadSQLiteLibs(Context context, String apkName) {
-        if (sSQLiteLibsLoaded)
-            return;
-        synchronized(sSQLiteLibsLoaded) {
-            if (sSQLiteLibsLoaded)
+        synchronized (sLibLoadingLock) {
+            if (sSQLiteLibsLoaded) {
                 return;
-            loadMozGlue(context);
-            // the extract libs parameter is being removed in bug 732069
-            loadLibsSetup(context);
-            loadSQLiteLibsNative(apkName, false);
+            }
             sSQLiteLibsLoaded = true;
         }
+
+        loadMozGlue(context);
+        // the extract libs parameter is being removed in bug 732069
+        loadLibsSetup(context);
+        loadSQLiteLibsNative(apkName, false);
     }
 
     public static void loadNSSLibs(Context context, String apkName) {
-        if (sNSSLibsLoaded)
-            return;
-        synchronized(sNSSLibsLoaded) {
-            if (sNSSLibsLoaded)
+        synchronized (sLibLoadingLock) {
+            if (sNSSLibsLoaded) {
                 return;
-            loadMozGlue(context);
-            loadLibsSetup(context);
-            loadNSSLibsNative(apkName, false);
+            }
             sNSSLibsLoaded = true;
         }
+
+        loadMozGlue(context);
+        loadLibsSetup(context);
+        loadNSSLibsNative(apkName, false);
     }
 
     public static void loadMozGlue(Context context) {
+        synchronized (sLibLoadingLock) {
+            if (sMozGlueLoaded) {
+                return;
+            }
+            sMozGlueLoaded = true;
+        }
+
         System.loadLibrary("mozglue");
 
         // When running TestPasswordProvider, we're being called with
@@ -630,34 +643,49 @@ public class GeckoAppShell
         }
     }
 
-    private static CountDownLatch sGeckoPendingAcks = null;
+    private static final GeckoEvent sSyncEvent = GeckoEvent.createSyncEvent();
+    private static boolean sWaitingForSyncAck;
 
     // Block the current thread until the Gecko event loop is caught up
-    synchronized public static void geckoEventSync() {
+    public static void geckoEventSync() {
         long time = SystemClock.uptimeMillis();
+        boolean isMainThread = (GeckoApp.mAppContext.getMainLooper().getThread() == Thread.currentThread());
 
-        sGeckoPendingAcks = new CountDownLatch(1);
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createSyncEvent());
-        while (sGeckoPendingAcks.getCount() != 0) {
-            try {
-                sGeckoPendingAcks.await();
-            } catch(InterruptedException e) {}
-        }
-        sGeckoPendingAcks = null;
+        synchronized (sSyncEvent) {
+            if (sWaitingForSyncAck) {
+                // should never happen since we always leave it as false when we exit this function.
+                Log.e(LOGTAG, "geckoEventSync() may have been called twice concurrently!", new Exception());
+                // fall through for graceful handling
+            }
 
-        time = SystemClock.uptimeMillis() - time;
-        if (time > 500) {
-            Log.w(LOGTAG, "Gecko event sync took too long! (" + time + " ms)", new Exception());
-        } else {
-            Log.d(LOGTAG, "Gecko event sync took " + time + " ms");
+            GeckoAppShell.sendEventToGecko(sSyncEvent);
+            sWaitingForSyncAck = true;
+            while (true) {
+                try {
+                    sSyncEvent.wait(100);
+                } catch (InterruptedException ie) {
+                }
+                if (!sWaitingForSyncAck) {
+                    // response received
+                    break;
+                }
+                long waited = SystemClock.uptimeMillis() - time;
+                Log.d(LOGTAG, "Gecko event sync taking too long: " + waited + "ms");
+                if (isMainThread && waited >= 4000) {
+                    Log.w(LOGTAG, "Gecko event sync took too long, aborting!", new Exception());
+                    sWaitingForSyncAck = false;
+                    break;
+                }
+            }
         }
     }
 
     // Signal the Java thread that it's time to wake up
     public static void acknowledgeEventSync() {
-        CountDownLatch tmp = sGeckoPendingAcks;
-        if (tmp != null)
-            tmp.countDown();
+        synchronized (sSyncEvent) {
+            sWaitingForSyncAck = false;
+            sSyncEvent.notifyAll();
+        }
     }
 
     public static void enableLocation(final boolean enable) {

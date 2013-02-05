@@ -1,7 +1,7 @@
 "use strict";
 
 Components.utils.import("resource://gre/modules/osfile.jsm");
-Components.utils.import("resource://gre/modules/commonjs/promise/core.js");
+Components.utils.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Components.utils.import("resource://gre/modules/Task.jsm");
 
 // The following are used to compare against a well-tested reference
@@ -131,7 +131,6 @@ let test = maketest("Main", function main(test) {
     yield test_path();
     yield test_open();
     yield test_stat();
-    yield test_debug();
     yield test_info_features_detect();
     yield test_read_write();
     yield test_read_write_all();
@@ -559,6 +558,12 @@ let test_iter = maketest("iter", function iter(test) {
     yield iterator.close();
     test.info("Closed iterator");
 
+    test.info("Double closing DirectoryIterator");
+    iterator = new OS.File.DirectoryIterator(currentDir);
+    yield iterator.close();
+    yield iterator.close(); //double closing |DirectoryIterator|
+    test.ok(true, "|DirectoryIterator| was closed twice successfully");
+
     let allFiles2 = [];
     let i = 0;
     iterator = new OS.File.DirectoryIterator(currentDir);
@@ -622,29 +627,5 @@ let test_exists = maketest("exists", function exists(test) {
     test.ok(fileExists, "file exists");
     fileExists = yield OS.File.exists(EXISTING_FILE + ".tmp");
     test.ok(!fileExists, "file does not exists");
-  });
-});
-
-/**
- * Test changes to OS.Shared.DEBUG flag.
- */
-let test_debug = maketest("debug", function debug(test) {
-  return Task.spawn(function() {
-    function testSetDebugPref (pref) {
-      try {
-        Services.prefs.setBoolPref("toolkit.osfile.log", pref);
-      } catch (x) {
-        test.fail("Setting OS.Shared.DEBUG to " + pref +
-          " should not cause error.");
-      } finally {
-        test.is(OS.Shared.DEBUG, pref, "OS.Shared.DEBUG is set correctly.");
-      }
-    }
-    testSetDebugPref(true);
-    let workerDEBUG = yield OS.File.GET_DEBUG();
-    test.is(workerDEBUG, true, "Worker's DEBUG is set.");
-    testSetDebugPref(false);
-    workerDEBUG = yield OS.File.GET_DEBUG();
-    test.is(workerDEBUG, false, "Worker's DEBUG is unset.");
   });
 });

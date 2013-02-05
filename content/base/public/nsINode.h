@@ -388,6 +388,7 @@ protected:
   virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope,
                              bool *aTriedToWrap)
   {
+    MOZ_ASSERT(!IsDOMBinding(), "Someone forgot to override WrapNode");
     *aTriedToWrap = false;
     return nullptr;
   }
@@ -1492,7 +1493,10 @@ protected:
 
 public:
   // Optimized way to get classinfo.
-  virtual nsXPCClassInfo* GetClassInfo() = 0;
+  virtual nsXPCClassInfo* GetClassInfo()
+  {
+    return nullptr;
+  }
 
   // Makes nsINode object to keep aObject alive.
   void BindObject(nsISupports* aObject);

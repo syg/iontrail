@@ -1307,6 +1307,34 @@ class LCompareS : public LInstructionHelper<1, 2, 1>
     }
 };
 
+// strict-equality between value and string.
+class LCompareStrictS : public LInstructionHelper<1, BOX_PIECES + 1, 2>
+{
+  public:
+    LIR_HEADER(CompareStrictS)
+    LCompareStrictS(const LAllocation &rhs, const LDefinition &temp0,
+                    const LDefinition &temp1) {
+        setOperand(BOX_PIECES, rhs);
+        setTemp(0, temp0);
+        setTemp(1, temp1);
+    }
+
+    static const size_t Lhs = 0;
+
+    const LAllocation *right() {
+        return getOperand(BOX_PIECES);
+    }
+    const LDefinition *temp0() {
+        return getTemp(0);
+    }
+    const LDefinition *temp1() {
+        return getTemp(1);
+    }
+    MCompare *mir() {
+        return mir_->toCompare();
+    }
+};
+
 class LParCompareS : public LCallInstructionHelper<1, 2, 0>
 {
   public:

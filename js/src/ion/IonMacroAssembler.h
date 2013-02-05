@@ -439,7 +439,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     template<typename T>
     void loadFromTypedArray(int arrayType, const T &src, const ValueOperand &dest, bool allowDouble,
-                            Label *fail);
+                            Register temp, Label *fail);
 
     template<typename S, typename T>
     void storeToTypedIntArray(int arrayType, const S &value, const T &dest) {
@@ -477,6 +477,13 @@ class MacroAssembler : public MacroAssemblerSpecific
             JS_NOT_REACHED("Invalid typed array type");
             break;
         }
+    }
+
+    Register extractString(const Address &address, Register scratch) {
+        return extractObject(address, scratch);
+    }
+    Register extractString(const ValueOperand &value, Register scratch) {
+        return extractObject(value, scratch);
     }
 
     // Inline version of js_TypedArray_uint8_clamp_double.

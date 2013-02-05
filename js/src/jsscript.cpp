@@ -551,7 +551,7 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             JS_ASSERT(enclosingScript);
             ss = enclosingScript->scriptSource();
         }
-        ScriptSourceHolder ssh(cx->runtime, ss);
+        ScriptSourceHolder ssh(ss);
         script = JSScript::Create(cx, enclosingScope, !!(scriptBits & (1 << SavedCallerFun)),
                                   options, /* staticLevel = */ 0, ss, 0, 0);
         if (!script)
@@ -1292,7 +1292,7 @@ SourceCompressionToken::abort()
 }
 
 void
-ScriptSource::destroy(JSRuntime *rt)
+ScriptSource::destroy()
 {
     JS_ASSERT(ready());
     adjustDataSize(0);
@@ -1597,10 +1597,9 @@ JSScript::Create(JSContext *cx, HandleObject enclosingScope, bool savedCallerFun
 
     /* Establish invariant: principals implies originPrincipals. */
     if (options.principals) {
-        script->principals = options.principals;
+        JS_ASSERT(options.principals == cx->compartment->principals);
         script->originPrincipals
             = options.originPrincipals ? options.originPrincipals : options.principals;
-        JS_HoldPrincipals(script->principals);
         JS_HoldPrincipals(script->originPrincipals);
     } else if (options.originPrincipals) {
         script->originPrincipals = options.originPrincipals;
@@ -1926,9 +1925,6 @@ JSScript::finalize(FreeOp *fop)
     CallDestroyScriptHook(fop, this);
     fop->runtime()->spsProfiler.onScriptFinalized(this);
 
-    JS_ASSERT_IF(principals, originPrincipals);
-    if (principals)
-        JS_DropPrincipals(fop->runtime(), principals);
     if (originPrincipals)
         JS_DropPrincipals(fop->runtime(), originPrincipals);
 
@@ -1944,7 +1940,7 @@ JSScript::finalize(FreeOp *fop)
 
     destroyScriptCounts(fop);
     destroyDebugScript(fop);
-    scriptSource_->decref(fop->runtime());
+    scriptSource_->decref();
 
     if (data) {
         JS_POISON(data, 0xdb, computedSizeOfData());
@@ -2577,6 +2573,16 @@ JSScript::clearBreakpointsIn(FreeOp *fop, js::Debugger *dbg, RawObject handler)
             }
         }
     }
+}
+
+bool
+JSScript::hasBreakpointsAt(jsbytecode *pc)
+{
+    BreakpointSite *site = getBreakpointSite(pc);
+    if (!site)
+        return false;
+
+    return site->enabledCount > 0 || site->trapHandler;
 }
 
 void

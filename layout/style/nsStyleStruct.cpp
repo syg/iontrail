@@ -1643,10 +1643,8 @@ nsStyleImage::IsOpaque() const
   mImage->GetImage(getter_AddRefs(imageContainer));
   NS_ABORT_IF_FALSE(imageContainer, "IsComplete() said image container is ready");
 
-  // Check if the crop region of the current image frame is opaque
-  bool isOpaque;
-  if (NS_SUCCEEDED(imageContainer->GetCurrentFrameIsOpaque(&isOpaque)) &&
-      isOpaque) {
+  // Check if the crop region of the current image frame is opaque.
+  if (imageContainer->FrameIsOpaque(imgIContainer::FRAME_CURRENT)) {
     if (!mCropRect)
       return true;
 
@@ -2114,7 +2112,7 @@ nsStyleDisplay::nsStyleDisplay()
   mChildPerspective.SetCoordValue(0);
   mBackfaceVisibility = NS_STYLE_BACKFACE_VISIBILITY_VISIBLE;
   mTransformStyle = NS_STYLE_TRANSFORM_STYLE_FLAT;
-  mOrient = NS_STYLE_ORIENT_HORIZONTAL;
+  mOrient = NS_STYLE_ORIENT_AUTO;
 
   mTransitions.AppendElement();
   NS_ABORT_IF_FALSE(mTransitions.Length() == 1,

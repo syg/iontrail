@@ -12,12 +12,15 @@ if (this.Components) {
 (function(exports) {
   "use strict";
 
+  // A simple flag used to control debugging messages.
+  // FIXME: Once this library has been battle-tested, this flag will
+  // either be removed or replaced with a pref.
+  const DEBUG = false;
+
    try {
      importScripts("resource://gre/modules/osfile.jsm");
 
      let LOG = exports.OS.Shared.LOG.bind(exports.OS.Shared.LOG, "Agent");
-     // A simple flag used to control debugging messages.
-     let DEBUG = exports.OS.Shared.DEBUG;
 
      /**
       * Communications with the controller.
@@ -145,6 +148,7 @@ if (this.Components) {
       *
       * @param {*} id A unique identifier, as used by |OpenFiles|.
       * @param {Function} f A function to call.
+      * @param {boolean} ignoreAbsent If |true|, the error is ignored. Otherwise, the error causes an exception.
       * @return The return value of |f()|
       *
       * This function attempts to get the file matching |id|. If
@@ -160,10 +164,13 @@ if (this.Components) {
      };
 
      let OpenedDirectoryIterators = new ResourceTracker();
-     let withDir = function withDir(fd, f) {
+     let withDir = function withDir(fd, f, ignoreAbsent) {
        let file = OpenedDirectoryIterators.get(fd);
        if (file == null) {
-         throw new Error("Could not find Directory");
+         if (!ignoreAbsent) {
+           throw new Error("Could not find Directory");
+         }
+         return;
        }
        if (!(file instanceof File.DirectoryIterator)) {
          throw new Error("file is not a directory iterator " + file.__proto__.toSource());
@@ -198,15 +205,6 @@ if (this.Components) {
       * back the results.
       */
      let Agent = {
-       // Update DEBUG flag message from controller.
-       SET_DEBUG: function SET_DEBUG (aDEBUG) {
-         DEBUG = aDEBUG;
-       },
-       // Return current DEBUG value to controller.
-       // Note: This is used for testing purposes.
-       GET_DEBUG: function GET_DEBUG () {
-         return DEBUG;
-       },
        // Functions of OS.File
        stat: function stat(path) {
          return exports.OS.File.Info.toMsg(
@@ -322,7 +320,7 @@ if (this.Components) {
                }
                throw x;
              }
-           });
+           }, false);
        },
        DirectoryIterator_prototype_nextBatch: function nextBatch(dir, size) {
          return withDir(dir,
@@ -335,14 +333,14 @@ if (this.Components) {
                throw x;
              }
              return result.map(File.DirectoryIterator.Entry.toMsg);
-           });
+           }, false);
        },
        DirectoryIterator_prototype_close: function close(dir) {
          return withDir(dir,
            function do_close() {
              this.close();
              OpenedDirectoryIterators.remove(dir);
-           });
+           }, true);// ignore error to support double-closing |DirectoryIterator|
        }
      };
   } catch(ex) {

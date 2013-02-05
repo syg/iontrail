@@ -92,6 +92,7 @@ INCLUDES	+= \
 		-I$(srcdir)/../../html/content/src \
 		-I$(srcdir)/../../../js/xpconnect/src \
 		-I$(srcdir)/../../../dom/base \
+		-I$(topsrcdir)/content/xul/content/src \
 		$(NULL)
 
 DEFINES += -D_IMPL_NS_LAYOUT

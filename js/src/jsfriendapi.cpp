@@ -501,15 +501,6 @@ js::SetPreserveWrapperCallback(JSRuntime *rt, PreserveWrapperCallback callback)
  * sufficient data has been harvested.
  */
 
-// Defined in jsxml.cpp.
-extern size_t sE4XObjectsCreated;
-
-JS_FRIEND_API(size_t)
-JS_GetE4XObjectsCreated(JSContext *)
-{
-    return sE4XObjectsCreated;
-}
-
 namespace js {
 // Defined in vm/GlobalObject.cpp.
 extern size_t sSetProtoCalled;
@@ -716,13 +707,6 @@ JS_FRIEND_API(const JSStructuredCloneCallbacks *)
 js::GetContextStructuredCloneCallbacks(JSContext *cx)
 {
     return cx->runtime->structuredCloneCallbacks;
-}
-
-JS_FRIEND_API(JSVersion)
-js::VersionSetMoarXML(JSVersion version, bool enable)
-{
-    return enable ? JSVersion(uint32_t(version) | VersionFlags::MOAR_XML)
-                  : JSVersion(uint32_t(version) & ~VersionFlags::MOAR_XML);
 }
 
 JS_FRIEND_API(bool)
@@ -1008,7 +992,7 @@ js::AutoCTypesActivityCallback::AutoCTypesActivityCallback(JSContext *cx,
                                                            js::CTypesActivityType beginType,
                                                            js::CTypesActivityType endType
                                                            MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : cx(cx), callback(cx->runtime->ctypesActivityCallback), beginType(beginType), endType(endType)
+  : cx(cx), callback(cx->runtime->ctypesActivityCallback), endType(endType)
 {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 
