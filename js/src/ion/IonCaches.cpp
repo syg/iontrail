@@ -1062,6 +1062,11 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
 
     // In parallel execution we can't cache getters due to possible
     // side-effects, so only check if we can cache slot reads.
+    //
+    // XXX: Currently we don't stub Array or TypedArray length getters in
+    // parallel execution, as it would require special casing both here and in
+    // {Lookup,Get}PropertyPure. If it turns out we have a workload that
+    // requires them, we should add them.
     if (IsCacheableGetPropReadSlot(obj, holder, shape) ||
         IsCacheableNoProperty(obj, holder, shape, pc, cache.output())) {
         // With Proxies, we cannot garantee any property access as the proxy can
@@ -1094,7 +1099,7 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
 bool
 js::ion::ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj, MutableHandleValue vp)
 {
-    AutoFlushCache afc ("GetPropertyCache");
+    AutoFlushCache afc("ParGetPropertyCache");
     PerThreadData *pt = slice->perThreadData;
 
     const SafepointIndex *safepointIndex;
@@ -1130,9 +1135,7 @@ js::ion::ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObje
         if (!cache.stubbedObjects()->add(p, obj))
             return false;
 
-        // For now, just stop generating new stubs once we hit the stub count
-        // limit. Once we can make calls from within generated stubs, a new call
-        // stub will be generated instead and the previous stubs unlinked.
+        // See note about the stub limit in GetPropertyCache.
         if (!ParTryAttachNativeGetPropStub(cx, ion, cache, obj, name,
                                            safepointIndex, returnAddr))
         {

@@ -709,8 +709,8 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
 // Calls
 //
 // We only support calls to interpreted functions that that have already been
-// Ion compiled. If a function has no IonScript, we bail out. The compilation
-// is done during warmup of the parallel kernel, see js::RunScript.
+// Ion compiled. If a function has no IonScript, we bail out. The transitive
+// compilation is done by asking TI for all possible callees at callsites.
 
 static bool
 GetPossibleCallees(JSContext *cx, HandleScript script, jsbytecode *pc,
