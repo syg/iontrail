@@ -1117,14 +1117,16 @@ Shape::searchNoHashify(Shape *start, jsid id, Shape **shapep)
     }
 
     /* We bail instead of hashifying, as that would be effectful on the shape. */
-    if (start->numLinearSearches() == LINEAR_SEARCHES_MAX)
-        return false;
-
-    /*
-     * Note that we let the linear searches be bumped racily. This is not
-     * incorrect, as the number of linear searches is a heuristic anyways.
-     */
-    start->incrementNumLinearSearches();
+    if (start->numLinearSearches() == LINEAR_SEARCHES_MAX) {
+        if (start->isBigEnoughForAShapeTable())
+            return false;
+    } else {
+        /*
+         * Note that we let the linear searches be bumped racily. This is not
+         * incorrect, as the number of linear searches is a heuristic anyways.
+         */
+        start->incrementNumLinearSearches();
+    }
 
     for (UnrootedShape shape = start; shape; shape = shape->parent) {
         if (shape->propidRef() == id) {

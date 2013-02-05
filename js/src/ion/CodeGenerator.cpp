@@ -4642,8 +4642,7 @@ static const VMFunction GetPropertyCacheInfo =
 
 typedef bool (*ParGetPropertyCacheFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
 static const VMFunction ParGetPropertyCacheInfo =
-    FunctionInfo<ParGetPropertyCacheFn>(
-        LockedVMFunction<GetPropertyCacheFn>::Wrap<GetPropertyCache>);
+    FunctionInfo<ParGetPropertyCacheFn>(ParGetPropertyCache);
 
 bool
 CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
@@ -4707,6 +4706,8 @@ CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
         if (!callVM(ParGetPropertyCacheInfo, ins))
             return false;
         break;
+      default:
+        JS_NOT_REACHED("Bad execution mode");
     }
 
     masm.storeCallResultValue(output);

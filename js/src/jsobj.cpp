@@ -3942,14 +3942,20 @@ NativeGetPureInline(RawObject pobj, RawShape shape, Value *vp)
     }
 
     /* Fail if we have a custom getter. */
-    return !shape->hasDefaultGetter();
+    return shape->hasDefaultGetter();
+}
+
+bool
+js::LookupPropertyPure(RawObject obj, jsid id, RawObject *objp, RawShape *propp)
+{
+    return LookupPropertyPureInline(obj, id, objp, propp);
 }
 
 /*
  * A pure version of GetPropertyHelper that can be called from parallel code
- * without locking. This variant returns false whenever a side-effect might
- * have occured in the effectful version. This includes, but is not limited
- * to:
+ * without locking. This code path cannot GC. This variant returns false
+ * whenever a side-effect might have occured in the effectful version. This
+ * includes, but is not limited to:
  *
  *  - Any object in the lookup chain has a non-stub resolve hook.
  *  - Any object in the lookup chain is non-native.
@@ -3980,7 +3986,7 @@ js::GetPropertyPure(RawObject obj, jsid id, Value *vp)
         while (current) {
             if (!current->isNative())
                 return false;
-            current = obj2->getProto();
+            current = current->getProto();
         }
 
         vp->setUndefined();

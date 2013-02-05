@@ -57,76 +57,9 @@ void TraceLIR(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 
 void ParCallToUncompiledScript(JSFunction *func);
 
-//
-// A helper struct to automatically lock the JSContext before calling a
-// VMFunction. Use it when defining the parallel version of VMFunctions:
-//
-//   typedef bool (*FooFn)(JSContext *);
-//   static const VMFunction FooInfo =
-//       FunctionInfo<FooFn>(Foo);
-//
-//   typedef bool (*ParFooFn)(ForkJoinSlice *);
-//   static const VMFunction ParFooInfo = 
-//       FunctionInfo<ParFooFn>(LockedVMFunction<FooFn>::Wrap<Foo>);
-//
-
-template <typename T>
-struct LockedVMFunction {
-};
-
-template <class R>
-struct LockedVMFunction<R (*)(JSContext *)> {
-    template <R (*pf)(JSContext *)>
-    static R Wrap(ForkJoinSlice *slice) {
-        LockedJSContext cx(slice);
-        return pf(cx);
-    }
-};
-
-template <class R, class A1>
-struct LockedVMFunction<R (*)(JSContext *, A1)> {
-    template <R (*pf)(JSContext *, A1)>
-    static R Wrap(ForkJoinSlice *slice, A1 a1) {
-        LockedJSContext cx(slice);
-        return pf(cx, a1);
-    }
-};
-
-template <class R, class A1, class A2>
-struct LockedVMFunction<R (*)(JSContext *, A1, A2)> {
-    template <R (*pf)(JSContext *, A1, A2)>
-    static R Wrap(ForkJoinSlice *slice, A1 a1, A2 a2) {
-        LockedJSContext cx(slice);
-        return pf(cx, a1, a2);
-    }
-};
-
-template <class R, class A1, class A2, class A3>
-struct LockedVMFunction<R (*)(JSContext *, A1, A2, A3)> {
-    template <R (*pf)(JSContext *, A1, A2, A3)>
-    static R Wrap(ForkJoinSlice *slice, A1 a1, A2 a2, A3 a3) {
-        LockedJSContext cx(slice);
-        return pf(cx, a1, a2, a3);
-    }
-};
-
-template <class R, class A1, class A2, class A3, class A4>
-struct LockedVMFunction<R (*)(JSContext *, A1, A2, A3, A4)> {
-    template <R (*pf)(JSContext *, A1, A2, A3, A4)>
-    static R Wrap(ForkJoinSlice *slice, A1 a1, A2 a2, A3 a3, A4 a4) {
-        LockedJSContext cx(slice);
-        return pf(cx, a1, a2, a3, a4);
-    }
-};
-
-template <class R, class A1, class A2, class A3, class A4, class A5>
-struct LockedVMFunction<R (*)(JSContext *, A1, A2, A3, A4, A5)> {
-    template <R (*pf)(JSContext *, A1, A2, A3, A4, A5)>
-    static R Wrap(ForkJoinSlice *slice, A1 a1, A2 a2, A3 a3, A4 a4, A5 a5) {
-        LockedJSContext cx(slice);
-        return pf(cx, a1, a2, a3, a4, a5);
-    }
-};
+// Defined in IonCaches.cpp to use the statics there.
+bool ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
+                         MutableHandleValue vp);
 
 }
 }

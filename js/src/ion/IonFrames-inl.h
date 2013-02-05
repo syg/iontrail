@@ -98,9 +98,7 @@ GetTopIonJSScript(PerThreadData *pt, const SafepointIndex **safepointIndexOut, v
         *returnAddrOut = (void *) iter.returnAddressToFp();
 
     JS_ASSERT(iter.isScripted());
-    IonJSFrameLayout *frame = static_cast<IonJSFrameLayout*>(iter.current());
-    UnrootedScript script = ScriptFromCalleeToken(frame->calleeToken());
-    return script;
+    return iter.script();
 }
 
 inline UnrootedScript

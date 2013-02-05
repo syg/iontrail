@@ -15,6 +15,7 @@
 #include "VMFunctions.h"
 
 #include "vm/Shape.h"
+#include "vm/ParallelDo.h"
 
 #include "jsinterpinlines.h"
 
@@ -932,35 +933,14 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
     return true;
 }
 
-static bool
-GetProperty(JSContext *cx, jsbytecode *pc, HandleObject obj, HandleId id, MutableHandleValue vp)
-{
-    if (obj->getOps()->getProperty) {
-        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), obj, id, vp))
-            return false;
-    } else {
-        if (!GetPropertyHelper(cx, obj, id, 0, vp))
-            return false;
-    }
-    return true;
-}
-
 bool
 js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp)
 {
     AutoFlushCache afc ("GetPropertyCache");
     const SafepointIndex *safepointIndex;
     void *returnAddr;
-    IonScript *ion;
-    RootedScript topScript(cx);
-    ForkJoinSlice *slice = ForkJoinSlice::Current();
-    if (slice) {
-        topScript = GetTopIonJSScript(slice->perThreadData, &safepointIndex, &returnAddr);
-        ion = topScript->parallelIonScript();
-    } else {
-        topScript = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
-        ion = topScript->ionScript();
-    }
+    RootedScript topScript(cx, GetTopIonJSScript(cx, &safepointIndex, &returnAddr));
+    IonScript *ion = topScript->ionScript();
 
     IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
     RootedPropertyName name(cx, cache.name());
@@ -968,25 +948,6 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     RootedScript script(cx);
     jsbytecode *pc;
     cache.getScriptedLocation(&script, &pc);
-
-    // If we're inside parallel code, check if the last object we locked on is
-    // the current one, and if so, just get the property and return without
-    // attaching a duplicate stub.
-    if (slice) {
-        if (!cache.initStubbedObjects(cx))
-            return false;
-        ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
-        if (p) {
-            printf("old %p\n", obj.get());
-            RootedId id(cx, NameToId(name));
-            if (!GetProperty(cx, pc, obj, id, vp))
-                return false;
-            return true;
-        }
-        printf("new %p\n", obj.get());
-        if (!cache.stubbedObjects()->add(p, obj))
-            return false;
-    }
 
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, vp.address(), ion);
@@ -1038,8 +999,13 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     }
 
     RootedId id(cx, NameToId(name));
-    if (!GetProperty(cx, pc, obj, id, vp))
-        return false;
+    if (obj->getOps()->getProperty) {
+        if (!JSObject::getGeneric(cx, obj, obj, id, vp))
+            return false;
+    } else {
+        if (!GetPropertyHelper(cx, obj, id, 0, vp))
+            return false;
+    }
 
     if (!cache.idempotent()) {
         // If the cache is idempotent, the property exists so we don't have to
@@ -1055,6 +1021,143 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
 
         // Monitor changes to cache entry.
         types::TypeScript::Monitor(cx, script, pc, vp);
+    }
+
+    return true;
+}
+
+static bool
+ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
+                              IonCacheGetProperty &cache, HandleObject obj,
+                              HandlePropertyName name,
+                              const SafepointIndex *safepointIndex,
+                              void *returnAddr)
+{
+    RootedObject checkObj(cx, obj);
+    bool isListBase = IsCacheableListBase(obj);
+    if (isListBase)
+        checkObj = obj->getTaggedProto().toObjectOrNull();
+
+    if (!checkObj || !checkObj->isNative())
+        return false;
+
+    // If the cache is idempotent, watch out for resolve hooks or non-native
+    // objects on the proto chain. We check this before calling lookupProperty,
+    // to make sure no effectful lookup hooks or resolve hooks are called.
+    if (cache.idempotent() && !checkObj->hasIdempotentProtoChain())
+        return false;
+
+    // Bail if we have hooks.
+    if (obj->getOps()->lookupProperty || obj->getOps()->lookupGeneric)
+        return false;
+
+    RootedShape shape(cx);
+    RootedObject holder(cx);
+    if (!js::LookupPropertyPure(checkObj, NameToId(name), holder.address(), shape.address()))
+        return false;
+
+    RootedScript script(cx);
+    jsbytecode *pc;
+    cache.getScriptedLocation(&script, &pc);
+
+    // In parallel execution we can't cache getters due to possible
+    // side-effects, so only check if we can cache slot reads.
+    if (IsCacheableGetPropReadSlot(obj, holder, shape) ||
+        IsCacheableNoProperty(obj, holder, shape, pc, cache.output())) {
+        // With Proxies, we cannot garantee any property access as the proxy can
+        // mask any property from the prototype chain.
+        if (obj->isProxy())
+            return false;
+    }
+
+    // TI infers the possible types of native object properties. There's one
+    // edge case though: for singleton objects it does not add the initial
+    // "undefined" type, see the propertySet comment in jsinfer.h. We can't
+    // monitor the return type inside an idempotent cache though, so we don't
+    // handle this case.
+    if (cache.idempotent() &&
+        holder &&
+        holder->hasSingletonType() &&
+        holder->getSlot(shape->slot()).isUndefined())
+    {
+        return false;
+    }
+
+    if (cache.stubCount() < MAX_STUBS) {
+        cache.incrementStubCount();
+        return cache.attachReadSlot(cx, ion, obj, holder, shape);
+    }
+
+    return true;
+}
+
+bool
+js::ion::ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj, MutableHandleValue vp)
+{
+    AutoFlushCache afc ("GetPropertyCache");
+    PerThreadData *pt = slice->perThreadData;
+
+    const SafepointIndex *safepointIndex;
+    void *returnAddr;
+    RootedScript topScript(pt, GetTopIonJSScript(pt, &safepointIndex, &returnAddr));
+    IonScript *ion = topScript->parallelIonScript();
+
+    IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
+    RootedPropertyName name(pt, cache.name());
+
+    RootedScript script(pt);
+    jsbytecode *pc;
+    cache.getScriptedLocation(&script, &pc);
+
+    // Grab the property early, as the pure path is fast anyways and doesn't
+    // need a lock.
+    if (!GetPropertyPure(obj, NameToId(name), vp.address()))
+        return false;
+
+    {
+        // Lock the context before mutating the cache. Ideally we'd like to do
+        // finer-grained locking, with one lock per cache. However, generating
+        // new jitcode uses a global ExecutableAllocator tied to the runtime.
+        LockedJSContext cx(slice);
+
+        // Check if we have already stubbed the current object to avoid attaching
+        // a duplicate stub.
+        if (!cache.initStubbedObjects(cx))
+            return false;
+        ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
+        if (p)
+            return true;
+        if (!cache.stubbedObjects()->add(p, obj))
+            return false;
+
+        // For now, just stop generating new stubs once we hit the stub count
+        // limit. Once we can make calls from within generated stubs, a new call
+        // stub will be generated instead and the previous stubs unlinked.
+        if (!ParTryAttachNativeGetPropStub(cx, ion, cache, obj, name,
+                                           safepointIndex, returnAddr))
+        {
+            // Bail out if we can't find the property.
+            parallel::Spew(parallel::SpewBailouts,
+                           "Marking idempotent cache as invalidated in parallel %s:%d",
+                           topScript->filename, topScript->lineno);
+
+            topScript->invalidatedIdempotentCache = true;
+
+            // ParallelDo will take care of invalidating all bailed out scripts,
+            // so just bail out now.
+            return false;
+        }
+
+        if (!cache.idempotent()) {
+#if JS_HAS_NO_SUCH_METHOD
+            // Straight up bail if there's this __noSuchMethod__ hook.
+            if (JSOp(*pc) == JSOP_CALLPROP && JS_UNLIKELY(vp.isPrimitive()))
+                return false;
+#endif
+
+            // Monitor changes to cache entry.
+            types::TypeScript::Monitor(cx, script, pc, vp);
+        }
     }
 
     return true;

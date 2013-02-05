@@ -180,7 +180,7 @@ MacroAssemblerX64::callWithABI(Address fun, Result result)
 }
 
 void
-MacroAssemblerX64::handleException()
+MacroAssemblerX64::handleExceptionWithHandler(void *handler)
 {
     // Reserve space for exception information.
     subq(Imm32(sizeof(ResumeFromException)), rsp);
@@ -189,7 +189,7 @@ MacroAssemblerX64::handleException()
     // Ask for an exception handler.
     setupUnalignedABICall(1, rcx);
     passABIArg(rax);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, ion::HandleException));
+    callWithABI(handler);
 
     // Load the error value, load the new stack pointer, and return.
     moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
@@ -198,12 +198,15 @@ MacroAssemblerX64::handleException()
 }
 
 void
+MacroAssemblerX64::handleException()
+{
+    handleExceptionWithHandler(JS_FUNC_TO_DATA_PTR(void *, ion::HandleException));
+}
+
+void
 MacroAssemblerX64::handleParException()
 {
-    // In parallel execution we don't need to call the exception handler, so
-    // just return error.
-    moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
-    ret();
+    handleExceptionWithHandler(JS_FUNC_TO_DATA_PTR(void *, ion::HandleParException));
 }
 
 Assembler::Condition

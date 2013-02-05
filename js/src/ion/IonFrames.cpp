@@ -23,6 +23,8 @@
 #include "Safepoints.h"
 #include "VMFunctions.h"
 
+#include "vm/ParallelDo.h"
+
 using namespace js;
 using namespace js::ion;
 
@@ -363,6 +365,22 @@ ion::HandleException(ResumeFromException *rfe)
     // otherwise clear the return override.
     if (cx->runtime->hasIonReturnOverride())
         cx->runtime->takeIonReturnOverride();
+
+    rfe->stackPointer = iter.fp();
+}
+
+void
+ion::HandleParException(ResumeFromException *rfe)
+{
+    ForkJoinSlice *slice = ForkJoinSlice::Current();
+    IonFrameIterator iter(slice->perThreadData->ionTop);
+    
+    while (!iter.isEntry()) {
+        parallel::Spew(parallel::SpewBailouts, "Bailing from VM reentry");
+        if (!slice->abortedScript && iter.isScripted())
+            slice->abortedScript = iter.script();
+        ++iter;
+    }
 
     rfe->stackPointer = iter.fp();
 }

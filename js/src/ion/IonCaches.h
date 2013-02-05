@@ -272,6 +272,8 @@ class IonCache
     }
 
     bool initStubbedObjects(JSContext *cx) {
+        // Note: to avoid double freeing, only initialize stubbedObjects after
+        // the cache has been allocated (copied) into the cacheList.
         if (!stubbedObjects_) {
             stubbedObjects_ = cx->new_<ObjectSet>(cx);
             return stubbedObjects_ && stubbedObjects_->init();
@@ -280,8 +282,7 @@ class IonCache
     }
 
     ObjectSet *stubbedObjects() const {
-        JS_ASSERT(stubbedObjects_);
-        JS_ASSERT(stubbedObjects_->initialized());
+        JS_ASSERT_IF(stubbedObjects_, stubbedObjects_->initialized());
         return stubbedObjects_;
     }
 };
