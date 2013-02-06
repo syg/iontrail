@@ -2841,6 +2841,8 @@ TypeCompartment::addPendingRecompile(JSContext *cx, const RecompileInfo &info)
         return;
     }
 
+    InferSpew(ISpewOps, "addPendingRecompile:%p:%s:%d", co->script, co->script->filename, co->script->lineno);
+
     co->setPendingRecompilation();
 }
 
