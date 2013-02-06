@@ -1564,11 +1564,13 @@ class AutoEnterTransitiveCompilation
     AutoEnterTransitiveCompilation(JSContext *cx, AutoObjectVector &worklist)
       : cx_(cx)
     {
+        JS_ASSERT(!cx->compartment->types.transitiveCompilationWorklist);
         cx->compartment->types.transitiveCompilationWorklist = &worklist;
     }
 
     ~AutoEnterTransitiveCompilation()
     {
+        JS_ASSERT(cx_->compartment->types.transitiveCompilationWorklist);
         cx_->compartment->types.transitiveCompilationWorklist = NULL;
     }
 };
