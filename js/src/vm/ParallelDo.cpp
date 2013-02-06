@@ -560,6 +560,8 @@ class ParallelDo : public ForkJoinOp
     }
 
     virtual bool parallel(ForkJoinSlice &slice) {
+        Spew(SpewOps, "Up");
+
         // Make a new IonContext for the slice, which is needed if we need to
         // re-enter the VM.
         IonContext icx(cx_, cx_->compartment, NULL);
@@ -586,6 +588,9 @@ class ParallelDo : public ForkJoinOp
             JSScript *script = slice.abortedScript;
             pendingInvalidations[slice.sliceId] = script;
         }
+
+        Spew(SpewOps, "Down");
+
         return ok;
     }
 
