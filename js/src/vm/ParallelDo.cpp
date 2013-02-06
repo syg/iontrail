@@ -530,6 +530,7 @@ class ParallelDo : public ForkJoinOp
                     return false;
                 ion->parallelInvalidatedScriptList()[i] = script;
             }
+            pendingInvalidations[i] = NULL;
         }
         Invalidate(cx_, invalid);
         return true;
@@ -584,6 +585,7 @@ class ParallelDo : public ForkJoinOp
         } else {
             JS_ASSERT(slice.abortedScript);
             JSScript *script = slice.abortedScript;
+            JS_ASSERT(script->hasParallelIonScript());
             pendingInvalidations[slice.sliceId] = script;
         }
         return ok;
