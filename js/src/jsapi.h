@@ -1280,6 +1280,10 @@ class AutoVectorRooter : protected AutoGCRooter
         return vector.append(other.vector);
     }
 
+    bool insert(T *p, const T &val) { return vector.insert(p, val); }
+
+    void erase(T *t) { return vector.erase(t); }
+
     /* For use when space has already been reserved. */
     void infallibleAppend(const T &v) { vector.infallibleAppend(v); }
 

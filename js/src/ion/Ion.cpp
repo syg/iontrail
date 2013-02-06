@@ -1556,6 +1556,23 @@ ParallelCompileContext::checkScriptSize(JSContext *cx, UnrootedScript script)
     return Method_Compiled;
 }
 
+class AutoEnterTransitiveCompilation
+{
+    JSContext *cx_;
+
+  public:
+    AutoEnterTransitiveCompilation(JSContext *cx, AutoObjectVector &worklist)
+      : cx_(cx)
+    {
+        cx->compartment->types.transitiveCompilationWorklist = &worklist;
+    }
+
+    ~AutoEnterTransitiveCompilation()
+    {
+        cx_->compartment->types.transitiveCompilationWorklist = NULL;
+    }
+};
+
 MethodStatus
 ParallelCompileContext::compileTransitively()
 {
@@ -1564,6 +1581,8 @@ ParallelCompileContext::compileTransitively()
 
     if (worklist_.empty())
         return Method_Skipped;
+
+    AutoEnterTransitiveCompilation transCompile(cx_, worklist_);
 
     RootedFunction fun(cx_);
     RootedScript script(cx_);
@@ -1587,7 +1606,8 @@ ParallelCompileContext::compileTransitively()
                     parallel::Spew(parallel::SpewCompile,
                                    "Adding previously invalidated function %p:%s:%u",
                                    fun.get(), invalid->filename, invalid->lineno);
-                    appendToWorklist(invalidFun);
+                    if (!appendToWorklist(invalidFun))
+                        return SpewEndCompile(Method_Error);
                 }
             }
         }

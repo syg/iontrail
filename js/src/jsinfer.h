@@ -109,6 +109,8 @@ namespace ion {
     struct IonScript;
 }
 
+class AutoObjectVector;
+
 namespace types {
 
 /* Type set entry for either a JSObject with singleton type or a non-singleton TypeObject. */
@@ -1365,6 +1367,12 @@ struct TypeCompartment
 
     /* Pending recompilations to perform before execution of JIT code can resume. */
     Vector<RecompileInfo> *pendingRecompiles;
+
+    /*
+     * Worklist of the current transitive compilation for parallel
+     * execution. Otherwise NULL.
+     */
+    AutoObjectVector *transitiveCompilationWorklist;
 
     /*
      * Number of recompilation events and inline frame expansions that have
