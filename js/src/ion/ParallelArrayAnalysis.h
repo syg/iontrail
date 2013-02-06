@@ -30,6 +30,7 @@ class ParallelCompileContext
 
     // Is a function compilable for parallel execution?
     bool analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &graph);
+    MethodStatus compileSingleScript(HandleScript script, HandleFunction fun);
 
     bool removeResumePointOperands(MIRGenerator *mir, MIRGraph &graph);
     void replaceOperandsOnResumePoint(MResumePoint *resumePoint, MDefinition *withDef);

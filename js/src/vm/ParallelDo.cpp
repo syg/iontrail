@@ -222,11 +222,11 @@ class ParallelSpewer
         spew(SpewOps, "%s%sBAILOUT %d%s", bold(), yellow(), count, reset());
     }
 
-    void beginCompile(HandleFunction fun) {
+    void beginCompile(HandleFunction fun, bool isRecompile) {
         if (!active[SpewCompile])
             return;
 
-        spew(SpewCompile, "COMPILE %p:%s:%u",
+        spew(SpewCompile, "%sCOMPILE %p:%s:%u", isRecompile ? "RE" : "",
              fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
         depth++;
     }
@@ -325,9 +325,9 @@ parallel::SpewBailout(uint32_t count)
 }
 
 void
-parallel::SpewBeginCompile(HandleFunction fun)
+parallel::SpewBeginCompile(HandleFunction fun, bool isRecompile)
 {
-    spewer.beginCompile(fun);
+    spewer.beginCompile(fun, isRecompile);
 }
 
 MethodStatus
