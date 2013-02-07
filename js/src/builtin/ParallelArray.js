@@ -361,18 +361,18 @@ function ParallelArrayReduce(func, m) {
     var info = ComputeAllSliceBounds(chunks, numSlices);
     var subreductions = NewDenseArray(numSlices);
     ParallelDo(reduceSlice, CheckParallel(m));
-    var acc = subreductions[0];
+    var accumulator = subreductions[0];
     for (var i = 1; i < numSlices; i++)
-      acc = func(acc, subreductions[i]);
-    return acc;
+      accumulator = func(accumulator, subreductions[i]);
+    return accumulator;
   }
 
   // Sequential fallback:
   CHECK_SEQUENTIAL(m);
-  var acc = self.get(0);
+  var accumulator = self.get(0);
   for (var i = 1; i < length; i++)
-    acc = func(acc, self.get(i));
-  return acc;
+    accumulator = func(accumulator, self.get(i));
+  return accumulator;
 
   function reduceSlice(id, n, warmup) {
     var chunkStart = info[SLICE_START(id)];
@@ -382,7 +382,7 @@ function ParallelArrayReduce(func, m) {
     // (*) This function is carefully designed so that the warmup
     // (which executes with chunkStart === chunkPos) will execute
     // all potential loads and stores. In particular, the warmup run
-    // processes two chunks rather than one.  Moreover, it stores acc
+    // processes two chunks rather than one.  Moreover, it stores accumulator
     // into subreductions and then loads it again ensure that the load
     // is executed during the warmup, as it will certainly be run
     // during subsequent runs.
@@ -392,27 +392,27 @@ function ParallelArrayReduce(func, m) {
 
     if (chunkStart === chunkPos) {
       var indexPos = chunkStart << CHUNK_SHIFT;
-      var acc = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
+      var accumulator = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
 
-      UnsafeSetElement(subreductions, id, acc, // see (*) above
+      UnsafeSetElement(subreductions, id, accumulator, // see (*) above
                        info, SLICE_POS(id), ++chunkPos);
     }
 
-    var acc = subreductions[id]; // see (*) above
+    var accumulator = subreductions[id]; // see (*) above
 
     while (chunkPos < chunkEnd) {
       var indexPos = chunkPos << CHUNK_SHIFT;
-      acc = reduceChunk(acc, indexPos, indexPos + CHUNK_SIZE);
-      UnsafeSetElement(subreductions, id, acc,
+      accumulator = reduceChunk(accumulator, indexPos, indexPos + CHUNK_SIZE);
+      UnsafeSetElement(subreductions, id, accumulator,
                        info, SLICE_POS(id), ++chunkPos);
     }
   }
 
-  function reduceChunk(acc, from, to) {
+  function reduceChunk(accumulator, from, to) {
     to = std_Math_min(to, length);
     for (var i = from; i < to; i++)
-      acc = func(acc, self.get(i));
-    return acc;
+      accumulator = func(accumulator, self.get(i));
+    return accumulator;
   }
 }
 
@@ -442,9 +442,9 @@ function ParallelArrayScan(func, m) {
 
     // Compute intermediates array (see comment on phase2()).
     var intermediates = [];
-    var acc = intermediates[0] = buffer[finalElement(0)];
+    var accumulator = intermediates[0] = buffer[finalElement(0)];
     for (var i = 1; i < numSlices - 1; i++)
-      acc = intermediates[i] = func(acc, buffer[finalElement(i)]);
+      accumulator = intermediates[i] = func(accumulator, buffer[finalElement(i)]);
 
     // Reset the current position information for each slice, but
     // convert from chunks to indicies (see comment on phase2()).
@@ -464,13 +464,13 @@ function ParallelArrayScan(func, m) {
   scan(self.get(0), 0, length);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
-  function scan(acc, start, end) {
-    UnsafeSetElement(buffer, start, acc);
+  function scan(accumulator, start, end) {
+    UnsafeSetElement(buffer, start, accumulator);
     for (var i = start + 1; i < end; i++) {
-      acc = func(acc, self.get(i));
-      UnsafeSetElement(buffer, i, acc);
+      accumulator = func(accumulator, self.get(i));
+      UnsafeSetElement(buffer, i, accumulator);
     }
-    return acc;
+    return accumulator;
   }
 
   function phase1(id, n, warmup) {
@@ -511,8 +511,8 @@ function ParallelArrayScan(func, m) {
       // from the buffer per iteration.
       var indexStart = chunkPos << CHUNK_SHIFT;
       var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
-      var acc = func(buffer[indexStart - 1], self.get(indexStart));
-      scan(acc, indexStart, indexEnd);
+      var accumulator = func(buffer[indexStart - 1], self.get(indexStart));
+      scan(accumulator, indexStart, indexEnd);
       UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
   }
