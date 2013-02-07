@@ -214,8 +214,8 @@ function ParallelArrayBuild(self, shape, func, mode) {
 
   parallel: for (;;) {
     // Avoid parallel compilation if we are already nested in another
-    // parallel section or the user told us not to.  The use of a for
-    // (;;) loop is working around some ion limitations:
+    // parallel section or the user told us not to parallelize.  The
+    // use of a for (;;) loop is working around some ion limitations:
     //
     // - Breaking out of named blocks does not currently work (bug 684384);
     // - Unreachable Code Elim. can't properly handle if (a && b) (bug 669796)
