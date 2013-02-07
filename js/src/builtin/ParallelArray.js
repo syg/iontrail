@@ -177,7 +177,7 @@ function ParallelArrayBuild(self, shape, func, m) {
   self.shape = shape;
 
   var length;
-  var xw, yw, zw;
+  var xDimension, yDimension, zDimension;
   var computefunc;
 
   switch (shape.length) {
@@ -187,17 +187,17 @@ function ParallelArrayBuild(self, shape, func, m) {
     computefunc = fill1;
     break;
   case 2:
-    xw = shape[0];
-    yw = shape[1];
-    length = xw * yw;
+    xDimension = shape[0];
+    yDimension = shape[1];
+    length = xDimension * yDimension;
     self.get = ParallelArrayGet2;
     computefunc = fill2;
     break;
   case 3:
-    xw = shape[0];
-    yw = shape[1];
-    zw = shape[2];
-    length = xw * yw * zw;
+    xDimension = shape[0];
+    yDimension = shape[1];
+    zDimension = shape[2];
+    length = xDimension * yDimension * zDimension;
     self.get = ParallelArrayGet3;
     computefunc = fill3;
     break;
@@ -259,11 +259,11 @@ function ParallelArrayBuild(self, shape, func, m) {
   }
 
   function fill2(indexStart, indexEnd) {
-    var x = (indexStart / yw) | 0;
-    var y = indexStart - x*yw;
+    var x = (indexStart / yDimension) | 0;
+    var y = indexStart - x*yDimension;
     for (var i = indexStart; i < indexEnd; i++) {
       UnsafeSetElement(buffer, i, func(x, y));
-      if (++y == yw) {
+      if (++y == yDimension) {
         y = 0;
         ++x;
       }
@@ -271,15 +271,15 @@ function ParallelArrayBuild(self, shape, func, m) {
   }
 
   function fill3(indexStart, indexEnd) {
-    var x = (indexStart / (yw*zw)) | 0;
-    var r = indexStart - x*yw*zw;
-    var y = (r / zw) | 0;
-    var z = r - y*zw;
+    var x = (indexStart / (yDimension*zDimension)) | 0;
+    var r = indexStart - x*yDimension*zDimension;
+    var y = (r / zDimension) | 0;
+    var z = r - y*zDimension;
     for (var i = indexStart; i < indexEnd; i++) {
       UnsafeSetElement(buffer, i, func(x, y, z));
-      if (++z == zw) {
+      if (++z == zDimension) {
         z = 0;
-        if (++y == yw) {
+        if (++y == yDimension) {
           y = 0;
           ++x;
         }
@@ -976,37 +976,39 @@ function ParallelArrayGet1(i) {
 }
 
 function ParallelArrayGet2(x, y) {
-  var xw = this.shape[0];
-  var yw = this.shape[1];
+  var xDimension = this.shape[0];
+  var yDimension = this.shape[1];
   if (x === undefined)
     return undefined;
-  if (x >= xw)
+  if (x >= xDimension)
     return undefined;
   if (y === undefined)
-    return NewParallelArray(ParallelArrayView, [yw], this.buffer, this.offset + x*yw);
-  if (y >= yw)
+    return NewParallelArray(ParallelArrayView, [yDimension], this.buffer, this.offset + x*yDimension);
+  if (y >= yDimension)
     return undefined;
-  var offset = y + x*yw;
+  var offset = y + x*yDimension;
   return this.buffer[this.offset + offset];
 }
 
 function ParallelArrayGet3(x, y, z) {
-  var xw = this.shape[0];
-  var yw = this.shape[1];
-  var zw = this.shape[2];
+  var xDimension = this.shape[0];
+  var yDimension = this.shape[1];
+  var zDimension = this.shape[2];
   if (x === undefined)
     return undefined;
-  if (x >= xw)
+  if (x >= xDimension)
     return undefined;
   if (y === undefined)
-    return NewParallelArray(ParallelArrayView, [yw, zw], this.buffer, this.offset + x*yw*zw);
-  if (y >= yw)
+    return NewParallelArray(ParallelArrayView, [yDimension, zDimension],
+                            this.buffer, this.offset + x*yDimension*zDimension);
+  if (y >= yDimension)
     return undefined;
   if (z === undefined)
-    return NewParallelArray(ParallelArrayView, [zw], this.buffer, this.offset + y*zw + x*yw*zw);
-  if (z >= zw)
+    return NewParallelArray(ParallelArrayView, [zDimension],
+                            this.buffer, this.offset + y*zDimension + x*yDimension*zDimension);
+  if (z >= zDimension)
     return undefined;
-  var offset = z + y*zw + x*yw*zw;
+  var offset = z + y*zDimension + x*yDimension*zDimension;
   return this.buffer[this.offset + offset];
 }
 
