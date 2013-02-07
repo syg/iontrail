@@ -46,11 +46,11 @@ function ComputeProducts(shape) {
   // e.g., if the shape is [A,B,C,D], then the
   // array |products| will be [1,D,CD,BCD].
   var product = 1;
-  var products = [];
+  var products = [1];
   var sdimensionality = shape.length;
-  for (var i = sdimensionality - 1; i >= 0; i--) {
-    products.push(product);
+  for (var i = sdimensionality - 1; i > 0; i--) {
     product *= shape[i];
+    products.push(product);
   }
   return products;
 }
