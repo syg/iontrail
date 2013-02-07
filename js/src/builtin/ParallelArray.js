@@ -306,7 +306,7 @@ function ParallelArrayBuild(self, shape, func, m) {
   }
 }
 
-function ParallelArrayMap(f, m) {
+function ParallelArrayMap(func, m) {
   var self = this;
   var length = self.shape[0];
   var buffer = NewDenseArray(length);
@@ -335,7 +335,7 @@ function ParallelArrayMap(f, m) {
   // Sequential fallback:
   CHECK_SEQUENTIAL(m);
   for (var i = 0; i < length; i++)
-    buffer[i] = f(self.get(i), i, self);
+    buffer[i] = func(self.get(i), i, self);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
   function mapSlice(id, n, warmup) {
@@ -350,14 +350,14 @@ function ParallelArrayMap(f, m) {
       var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
 
       for (var i = indexStart; i < indexEnd; i++)
-        UnsafeSetElement(buffer, i, f(self.get(i), i, self));
+        UnsafeSetElement(buffer, i, func(self.get(i), i, self));
 
       UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
   }
 }
 
-function ParallelArrayReduce(f, m) {
+function ParallelArrayReduce(func, m) {
   var self = this;
   var length = self.shape[0];
 
@@ -380,7 +380,7 @@ function ParallelArrayReduce(f, m) {
     ParallelDo(reduceSlice, CheckParallel(m));
     var acc = subreductions[0];
     for (var i = 1; i < numSlices; i++)
-      acc = f(acc, subreductions[i]);
+      acc = func(acc, subreductions[i]);
     return acc;
   }
 
@@ -388,7 +388,7 @@ function ParallelArrayReduce(f, m) {
   CHECK_SEQUENTIAL(m);
   var acc = self.get(0);
   for (var i = 1; i < length; i++)
-    acc = f(acc, self.get(i));
+    acc = func(acc, self.get(i));
   return acc;
 
   function reduceSlice(id, n, warmup) {
@@ -428,12 +428,12 @@ function ParallelArrayReduce(f, m) {
   function reduceChunk(acc, from, to) {
     to = IntMin(to, length);
     for (var i = from; i < to; i++)
-      acc = f(acc, self.get(i));
+      acc = func(acc, self.get(i));
     return acc;
   }
 }
 
-function ParallelArrayScan(f, m) {
+function ParallelArrayScan(func, m) {
   var self = this;
   var length = self.shape[0];
 
@@ -461,7 +461,7 @@ function ParallelArrayScan(f, m) {
     var intermediates = [];
     var acc = intermediates[0] = buffer[finalElement(0)];
     for (var i = 1; i < numSlices - 1; i++)
-      acc = intermediates[i] = f(acc, buffer[finalElement(i)]);
+      acc = intermediates[i] = func(acc, buffer[finalElement(i)]);
 
     // Reset the current position information for each slice, but
     // convert from chunks to indicies (see comment on phase2()).
@@ -484,7 +484,7 @@ function ParallelArrayScan(f, m) {
   function scan(acc, start, end) {
     UnsafeSetElement(buffer, start, acc);
     for (var i = start + 1; i < end; i++) {
-      acc = f(acc, self.get(i));
+      acc = func(acc, self.get(i));
       UnsafeSetElement(buffer, i, acc);
     }
     return acc;
@@ -528,7 +528,7 @@ function ParallelArrayScan(f, m) {
       // from the buffer per iteration.
       var indexStart = chunkPos << CHUNK_SHIFT;
       var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
-      var acc = f(buffer[indexStart - 1], self.get(indexStart));
+      var acc = func(buffer[indexStart - 1], self.get(indexStart));
       scan(acc, indexStart, indexEnd);
       UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
@@ -593,12 +593,12 @@ function ParallelArrayScan(f, m) {
 
     var intermediate = intermediates[id - 1];
     for (; indexPos < indexEnd; indexPos++)
-      UnsafeSetElement(buffer, indexPos, f(intermediate, buffer[indexPos]),
+      UnsafeSetElement(buffer, indexPos, func(intermediate, buffer[indexPos]),
                        info, SLICE_POS(id), indexPos + 1);
   }
 }
 
-function ParallelArrayScatter(targets, zero, f, length, m) {
+function ParallelArrayScatter(targets, zero, func, length, m) {
 
   var self = this;
 
@@ -664,7 +664,7 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
       return parDivideScatterVector();
     else if (forceDivideOutputRange())
       return parDivideOutputRange();
-    else if (f === undefined && targetsLength < length)
+    else if (func === undefined && targetsLength < length)
       return parDivideOutputRange();
     return parDivideScatterVector();
   }
@@ -679,14 +679,14 @@ function ParallelArrayScatter(targets, zero, f, length, m) {
 
   function forceDivideOutputRange() {
     return m && m.strategy && m.strategy == "divide-output-range";
-    return f(elem1, elem2);
+    return func(elem1, elem2);
   }
 
   function collide(elem1, elem2) {
-    if (f === undefined)
+    if (func === undefined)
       ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
 
-    return f(elem1, elem2);
+    return func(elem1, elem2);
   }
 
 
