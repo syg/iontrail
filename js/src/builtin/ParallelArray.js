@@ -19,17 +19,17 @@ function ComputeSliceBounds(numItems, sliceIndex, numSlices) {
   return [startIndex, endIndex];
 }
 
-function ComputeAllSliceBounds(length, numSlices) {
-  // Computes the bounds for all slices of |length| items, assuming
-  // that there are |slices| items.  The result is an array containing
-  // multiple values per slice: the start index, end index, current
-  // position, and some padding.  The current position is initally the
-  // same as the start index.  To access the values for a particular
-  // slice, use the macros SLICE_START() and so forth.
+function ComputeAllSliceBounds(numItems, numSlices) {
+  // Divides |numItems| items amongst |numSlices| slices.  The result
+  // is an array containing multiple values per slice: the start
+  // index, end index, current position, and some padding.  The
+  // current position is initally the same as the start index.  To
+  // access the values for a particular slice, use the macros
+  // SLICE_START() and so forth.
 
   var info = [];
   for (var i = 0; i < numSlices; i++) {
-    var [start, end] = ComputeSliceBounds(length, i, numSlices);
+    var [start, end] = ComputeSliceBounds(numItems, i, numSlices);
     info.push(SLICE_INFO(start, end));
   }
   return info;
