@@ -566,6 +566,8 @@ class ParallelDo : public ForkJoinOp
         IonContext icx(cx_, cx_->compartment, NULL);
         uintptr_t *myStackTop = (uintptr_t*)&icx;
 
+        JS_ASSERT(pendingInvalidations[slice.sliceId] == NULL);
+
         // This works in concert with ForkJoinSlice::recordStackExtent
         // to establish the stack extent for this slice.
         slice.recordStackBase(myStackTop);
@@ -579,11 +581,8 @@ class ParallelDo : public ForkJoinOp
         fii.args[2] = BooleanValue(false);
 
         bool ok = fii.invoke();
-        if (ok) {
-            JS_ASSERT(!slice.abortedScript);
-            pendingInvalidations[slice.sliceId] = NULL;
-        } else {
-            JS_ASSERT(slice.abortedScript);
+        JS_ASSERT(ok == !slice.abortedScript);
+        if (!ok) {
             JSScript *script = slice.abortedScript;
             JS_ASSERT(script->hasParallelIonScript());
             pendingInvalidations[slice.sliceId] = script;
