@@ -2037,15 +2037,8 @@ StackTypeSet::convertDoubleElements(JSContext *cx)
         // double in their element types (as the conversion may render the type
         // information incorrect), nor for non-array objects (as their elements
         // may point to emptyObjectElements, which cannot be converted).
-        if (type->clasp != &ArrayClass) {
+        if (!types->hasType(Type::DoubleType()) || type->clasp != &ArrayClass) {
             dontConvert = true;
-            alwaysConvert = false;
-            continue;
-        }
-
-        if (!types->hasType(Type::DoubleType())) {
-            if (!types->hasType(Type::Int32Type()))
-                dontConvert = true;
             alwaysConvert = false;
             continue;
         }
