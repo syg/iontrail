@@ -80,15 +80,13 @@ function ComputeIndices(shape, index1d) {
 }
 
 function StepIndices(shape, indices) {
-  var i = shape.length - 1;
-  while (i >= 0) {
+  for (var i = shape.length - 1; i >= 0; i--) {
     var indexi = indices[i] + 1;
     if (indexi < shape[i]) {
       indices[i] = indexi;
       return;
     }
     indices[i] = 0;
-    i--;
   }
 }
 
