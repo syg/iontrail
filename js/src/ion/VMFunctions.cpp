@@ -9,14 +9,14 @@
 #include "IonCompartment.h"
 #include "jsinterp.h"
 #include "ion/IonFrames.h"
-#include "ion/IonFrames-inl.h" // for GetTopIonJSScript
-
-#include "vm/StringObject-inl.h"
 
 #include "builtin/ParallelArray.h"
 
 #include "jsboolinlines.h"
 #include "jsinterpinlines.h"
+
+#include "ion/IonFrames-inl.h" // for GetTopIonJSScript
+#include "vm/StringObject-inl.h"
 
 using namespace js;
 using namespace js::ion;

@@ -412,7 +412,7 @@ class ParallelDo : public ForkJoinOp
 
   public:
     // For tests, make sure to keep this in sync with minItemsTestingThreshold.
-    const static uint32_t max_bailouts = 3;
+    const static uint32_t MAX_BAILOUTS = 3;
     uint32_t bailouts;
     Vector<JSScript *> pendingInvalidations;
 
@@ -434,7 +434,7 @@ class ParallelDo : public ForkJoinOp
 
         // Try to execute in parallel.  If a bailout occurs, re-warmup
         // and then try again.  Repeat this a few times.
-        while (bailouts < max_bailouts) {
+        while (bailouts < MAX_BAILOUTS) {
             MethodStatus status = compileForParallelExecution();
             if (status == Method_Error)
                 return SpewEndOp(ExecutionFatal);
@@ -594,8 +594,7 @@ class ParallelDo : public ForkJoinOp
         return ok;
     }
 
-    inline bool
-    hasScript(Vector<types::RecompileInfo> &scripts, JSScript *script) {
+    inline bool hasScript(Vector<types::RecompileInfo> &scripts, JSScript *script) {
         for (uint32_t i = 0; i < scripts.length(); i++) {
             if (scripts[i] == script->parallelIonScript()->recompileInfo())
                 return true;

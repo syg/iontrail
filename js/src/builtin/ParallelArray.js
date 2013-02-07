@@ -1,11 +1,3 @@
-// FIXME: ICs must work in parallel.
-// FIXME: Must be able to call native intrinsics in parallel with a JSContext,
-//        or have native intrinsics provide both a sequential and a parallel
-//        version.
-// TODO: Use let over var when Ion compiles let.
-// TODO: Private names.
-// XXX: Hide buffer and other fields?
-
 function ComputeNumChunks(length) {
   // Determine the number of chunks of size CHUNK_SIZE;
   // note that the final chunk may be smaller than CHUNK_SIZE.
@@ -15,15 +7,16 @@ function ComputeNumChunks(length) {
   return chunks + 1;
 }
 
-function ComputeSliceBounds(len, id, n) {
-  // Computes the bounds for slice |id| of |len| items, assuming |n|
-  // total slices.  If len is not evenly divisible by n, then the
-  // final thread may have a bit of extra work.  It might be better to
-  // do the division more equitably.
-  var slice = (len / n) | 0;
-  var start = slice * id;
-  var end = id === n - 1 ? len : slice * (id + 1);
-  return [start, end];
+function ComputeSliceBounds(numItems, sliceIndex, numSlices) {
+  // Computes the bounds for slice |sliceIndex| of |numItems| items,
+  // assuming |numSlices| total slices.  If numItems is not evenly
+  // divisible by numSlices, then the final thread may have a bit of
+  // extra work.  It might be better to do the division more
+  // equitably.
+  var sliceWidth = (numItems / numSlices) | 0;
+  var startIndex = sliceWidth * sliceIndex;
+  var endIndex = sliceIndex === numSlices - 1 ? numItems : sliceWidth * (sliceIndex + 1);
+  return [startIndex, endIndex];
 }
 
 function ComputeAllSliceBounds(length, numSlices) {
@@ -1089,7 +1082,7 @@ function CheckSequential(m) {
   if (!m || m.mode === "seq")
     return;
 
-  ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, "par", "seq");
+  ThrowError(JSMSG_WRONG_VALUE, "par", "seq");
 }
 
 function CheckParallel(m) {
@@ -1111,9 +1104,9 @@ function CheckParallel(m) {
 
     if (m.expect === "mixed") {
       if (result !== "success" && result !== "bailout")
-        ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, m.expect, result);
+        ThrowError(JSMSG_WRONG_VALUE, m.expect, result);
     } else if (result !== m.expect) {
-      ThrowError(JSMSG_PAR_ARRAY_MODE_FAILURE, m.expect, result);
+      ThrowError(JSMSG_WRONG_VALUE, m.expect, result);
     }
   };
 }

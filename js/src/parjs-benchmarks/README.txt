@@ -15,4 +15,4 @@ Where `build-opt/js` is the path to your shell.
 
 - Mandelbrot: A test of embarassingly parallel arithmetic.  Exercises
   the comprehension form of 2D parallel arrays.
-- Allocator: A test of parallel allocation.  Ensures that 
+- Allocator: A test of parallel allocation.

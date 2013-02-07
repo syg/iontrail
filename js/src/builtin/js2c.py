@@ -278,6 +278,7 @@ def JS2C(source, target, env):
     lines = ExpandConstants(lines, consts)
     lines = ExpandMacros(lines, macros)
     Validate(lines, filename)
+    # FIXME #824112
     #if not env['DEBUG']:
     #  lines = minifier.JSMinify(lines)
     id = (os.path.split(filename)[1])[:-3]

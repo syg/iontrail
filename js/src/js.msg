@@ -388,4 +388,4 @@ MSG_DEF(JSMSG_INVALID_CURRENCY_CODE,  334, 1, JSEXN_RANGEERR, "invalid currency 
 MSG_DEF(JSMSG_UNDEFINED_CURRENCY,     335, 0, JSEXN_TYPEERR, "undefined currency in NumberFormat() with currency style")
 MSG_DEF(JSMSG_INVALID_TIME_ZONE,      336, 1, JSEXN_RANGEERR, "invalid time zone in DateTimeFormat(): {0}")
 MSG_DEF(JSMSG_DATE_NOT_FINITE,        337, 0, JSEXN_RANGEERR, "date value is not finite in DateTimeFormat.format()")
-MSG_DEF(JSMSG_PAR_ARRAY_MODE_FAILURE, 338, 2, JSEXN_ERR, "expected {0} but found {1}")
+MSG_DEF(JSMSG_WRONG_VALUE,            338, 2, JSEXN_ERR, "expected {0} but found {1}")

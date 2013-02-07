@@ -11,9 +11,10 @@
 #include "jsapi.h"
 #include "jscntxt.h"
 #include "jsobj.h"
+
+#include "ion/Ion.h"
 #include "vm/ThreadPool.h"
 #include "vm/ForkJoin.h"
-#include "ion/Ion.h"
 
 namespace js {
 
@@ -36,9 +37,13 @@ class ParallelArrayObject : public JSObject
     // Creates a new ParallelArray instance with the correct number of slots
     // and so forth.
     //
-    // NOTE: This object will NOT have the correct type object!  It is
+    // NOTE: This object will NOT have the correct type object! It is
     // up to you the caller to adjust the type object appropriately
-    // before releasing the object into the wild.
+    // before releasing the object into the wild.  You probably want
+    // to be calling construct() above, which will adjust the type
+    // object for you, since ParallelArray type objects must be setup
+    // in a rather particular way to interact well with the
+    // self-hosted code.  See constructHelper() for details.
     static JSObject *newInstance(JSContext *cx);
 
     // Get the constructor function for argc number of arguments.

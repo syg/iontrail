@@ -33,7 +33,6 @@ using namespace js;
 
 FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[NumCtors];
 
-// TODO: non-generic self hosted
 JSFunctionSpec ParallelArrayObject::methods[] = {
     { "map",       JSOP_NULLWRAPPER, 2, 0, "ParallelArrayMap"       },
     { "reduce",    JSOP_NULLWRAPPER, 2, 0, "ParallelArrayReduce"    },
@@ -42,7 +41,16 @@ JSFunctionSpec ParallelArrayObject::methods[] = {
     { "filter",    JSOP_NULLWRAPPER, 2, 0, "ParallelArrayFilter"    },
     { "partition", JSOP_NULLWRAPPER, 1, 0, "ParallelArrayPartition" },
     { "flatten",   JSOP_NULLWRAPPER, 0, 0, "ParallelArrayFlatten" },
-    /*{ "get",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayGet" },*/
+
+    // FIXME #838906. Note that `get()` is not currently defined on this table but
+    // rather is assigned to each instance of ParallelArray as an own
+    // property.  This is a bit of a hack designed to supply a
+    // specialized version of get() based on the dimensionality of the
+    // receiver.  In the future we can improve this by (1) extending
+    // TI to track the dimensionality of the receiver and (2) using a
+    // hint to aggressively inline calls to get().
+    // { "get",      JSOP_NULLWRAPPER, 1, 0, "ParallelArrayGet" },
+
     { "toString", JSOP_NULLWRAPPER, 0, 0, "ParallelArrayToString" },
     JS_FS_END
 };
@@ -107,6 +115,7 @@ ParallelArrayObject::getConstructor(JSContext *cx, unsigned argc)
     RootedValue ctorValue(cx);
     if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
         return NULL;
+    JS_ASSERT(ctorValue.toObject().isFunction());
     return ctorValue.toObject().toFunction();
 }
 
@@ -155,6 +164,9 @@ ParallelArrayObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, 
             if (paTypeObject->getPropertyCount() == 0) {
                 if (!paTypeObject->addDefiniteProperties(cx, result))
                     return false;
+
+                // addDefiniteProperties() above should have added one
+                // property for of the fixed slots:
                 JS_ASSERT(paTypeObject->getPropertyCount() == NumFixedSlots);
             }
             result->setType(paTypeObject);

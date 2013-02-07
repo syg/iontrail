@@ -251,7 +251,7 @@ intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %NewParallelArray(init, ...args)
+    // Usage: NewParallelArray(init, ...args)
     //
     // Creates a new parallel array using an initialization function init. All
     // subsequent arguments are passed to init. The new instance will be
@@ -271,7 +271,7 @@ js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %NewDenseArray(length)
+    // Usage: NewDenseArray(length)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Check that index is an int32
@@ -311,9 +311,9 @@ js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %UnsafeSetElement(arr0, idx0, elem0,
-    //                          ...,
-    //                          arrN, idxN, elemN)
+    // Usage: UnsafeSetElement(arr0, idx0, elem0,
+    //                         ...,
+    //                         arrN, idxN, elemN)
     //
     // For each set of |(arr, idx, elem)| arguments that are passed,
     // performs the assignment |arr[idx] = elem|. |arr| must be either
