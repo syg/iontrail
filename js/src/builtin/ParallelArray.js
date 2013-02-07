@@ -96,14 +96,6 @@ function IsInteger(v) {
   return (v | 0) === v;
 }
 
-// I'd prefer to use Math.min, but we have no way to access a pristine
-// copy.  global.Math.min might be modified by the user.
-function IntMin(a, b) {
-  var a1 = a | 0;
-  var b1 = b | 0;
-  return (a1 < b1 ? a1 : b1);
-}
-
 // Constructor
 //
 // We split the 3 construction cases so that we don't case on arguments.
@@ -257,7 +249,7 @@ function ParallelArrayBuild(self, shape, func, m) {
 
     while (chunkPos < chunkEnd) {
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       computefunc(indexStart, indexEnd);
       UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
@@ -347,7 +339,7 @@ function ParallelArrayMap(func, m) {
 
     while (chunkPos < chunkEnd) {
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
 
       for (var i = indexStart; i < indexEnd; i++)
         UnsafeSetElement(buffer, i, func(self.get(i), i, self));
@@ -426,7 +418,7 @@ function ParallelArrayReduce(func, m) {
   }
 
   function reduceChunk(acc, from, to) {
-    to = IntMin(to, length);
+    to = std_Math_min(to, length);
     for (var i = from; i < to; i++)
       acc = func(acc, self.get(i));
     return acc;
@@ -469,7 +461,7 @@ function ParallelArrayScan(func, m) {
       info[SLICE_POS(i)] = info[SLICE_START(i)] << CHUNK_SHIFT;
       info[SLICE_END(i)] = info[SLICE_END(i)] << CHUNK_SHIFT;
     }
-    info[SLICE_END(numSlices - 1)] = IntMin(info[SLICE_END(numSlices - 1)], length);
+    info[SLICE_END(numSlices - 1)] = std_Math_min(info[SLICE_END(numSlices - 1)], length);
 
     // Complete each slice using intermediates array (see comment on phase2()).
     ParallelDo(phase2, CheckParallel(m));
@@ -515,7 +507,7 @@ function ParallelArrayScan(func, m) {
       // For the first chunk, the accumulator begins as the value in
       // the input at the start of the chunk.
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       scan(self.get(indexStart), indexStart, indexEnd);
       UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
     }
@@ -527,7 +519,7 @@ function ParallelArrayScan(func, m) {
       // written as simple as possible, at the cost of an extra read
       // from the buffer per iteration.
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       var acc = func(buffer[indexStart - 1], self.get(indexStart));
       scan(acc, indexStart, indexEnd);
       UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
@@ -537,7 +529,7 @@ function ParallelArrayScan(func, m) {
   function finalElement(id) {
     // Computes the index of the final element computed by the slice |id|.
     var chunkEnd = info[SLICE_END(id)]; // last chunk written by |id| is endChunk - 1
-    var indexStart = IntMin(chunkEnd << CHUNK_SHIFT, length);
+    var indexStart = std_Math_min(chunkEnd << CHUNK_SHIFT, length);
     return indexStart - 1;
   }
 
@@ -589,7 +581,7 @@ function ParallelArrayScan(func, m) {
     var indexEnd = info[SLICE_END(id)];
 
     if (warmup)
-      indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
+      indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
     var intermediate = intermediates[id - 1];
     for (; indexPos < indexEnd; indexPos++)
@@ -649,7 +641,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
   if (targets.length >>> 0 !== targets.length)
     ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  var targetsLength = IntMin(targets.length, self.length);
+  var targetsLength = std_Math_min(targets.length, self.length);
 
   if (length && length >>> 0 !== length)
     ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
@@ -710,7 +702,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
       var indexPos = checkpoints[id];
       var indexEnd = targetsLength;
       if (warmup)
-        indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
+        indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
       // Range in the output for which we are responsible:
       var [outputStart, outputEnd] = ComputeSliceBounds(length, id, numSlices);
@@ -762,7 +754,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
       var indexPos = info[SLICE_POS(id)];
       var indexEnd = info[SLICE_END(id)];
       if (warmup)
-        indexEnd = IntMin(indexEnd, indexPos + CHUNK_SIZE);
+        indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
       var localbuffer = localbuffers[id];
       var conflicts = localconflicts[id];
@@ -896,7 +888,7 @@ function ParallelArrayFilter(func, m) {
     var count = counts[id];
     while (chunkPos < chunkEnd) {
       var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = IntMin(indexStart + CHUNK_SIZE, length);
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       var chunkBits = 0;
 
       for (var bit = 0; indexStart + bit < indexEnd; bit++) {
