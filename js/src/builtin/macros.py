@@ -225,10 +225,10 @@ const CHUNK_SHIFT = 5;
 const CHUNK_SIZE = 32;
 
 # Slice array: see ComputeAllSliceBounds() in ParallelArray.js
-macro SLICE_INFO(start, end) = start, end, start, 0;
-macro SLICE_START(id) = ((id << 2) + 0);
-macro SLICE_END(id) =   ((id << 2) + 1);
-macro SLICE_POS(id) =   ((id << 2) + 2);
+macro SLICE_INFO(START, END) = START, END, START, 0;
+macro SLICE_START(ID) = ((ID << 2) + 0);
+macro SLICE_END(ID) =   ((ID << 2) + 1);
+macro SLICE_POS(ID) =   ((ID << 2) + 2);
 
 # PropertyDescriptor return value indices - must match
 # PropertyDescriptorIndices in runtime.cc.
