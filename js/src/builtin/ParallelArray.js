@@ -1078,10 +1078,10 @@ function ParallelArrayToString() {
 
   var result = "";
   for (var i = 0; i < l - 1; i++) {
-    result += open + this.get(i).toString() + close;
+    result += open + String(this.get(i)) + close;
     result += ",";
   }
-  result += open + this.get(l-1).toString() + close;
+  result += open + String(this.get(l-1)) + close;
   return result;
 }
 
