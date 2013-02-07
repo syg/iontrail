@@ -238,9 +238,9 @@ function ParallelArrayBuild(self, shape, func, mode) {
   computefunc(0, length);
   return;
 
-  function constructSlice(id, n, warmup) {
-    var chunkPos = info[SLICE_POS(id)];
-    var chunkEnd = info[SLICE_END(id)];
+  function constructSlice(sliceId, numSlices, warmup) {
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
 
     if (warmup && chunkEnd > chunkPos)
       chunkEnd = chunkPos + 1;
@@ -249,7 +249,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
       var indexStart = chunkPos << CHUNK_SHIFT;
       var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       computefunc(indexStart, indexEnd);
-      UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      UnsafeSetElement(info, SLICE_POS(sliceId), ++chunkPos);
     }
   }
 
@@ -321,9 +321,9 @@ function ParallelArrayMap(func, mode) {
     buffer[i] = func(self.get(i), i, self);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
-  function mapSlice(id, n, warmup) {
-    var chunkPos = info[SLICE_POS(id)];
-    var chunkEnd = info[SLICE_END(id)];
+  function mapSlice(sliceId, numSlices, warmup) {
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
 
     if (warmup && chunkEnd > chunkPos)
       chunkEnd = chunkPos + 1;
@@ -335,7 +335,7 @@ function ParallelArrayMap(func, mode) {
       for (var i = indexStart; i < indexEnd; i++)
         UnsafeSetElement(buffer, i, func(self.get(i), i, self));
 
-      UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      UnsafeSetElement(info, SLICE_POS(sliceId), ++chunkPos);
     }
   }
 }
@@ -374,10 +374,10 @@ function ParallelArrayReduce(func, mode) {
     accumulator = func(accumulator, self.get(i));
   return accumulator;
 
-  function reduceSlice(id, n, warmup) {
-    var chunkStart = info[SLICE_START(id)];
-    var chunkPos = info[SLICE_POS(id)];
-    var chunkEnd = info[SLICE_END(id)];
+  function reduceSlice(sliceId, numSlices, warmup) {
+    var chunkStart = info[SLICE_START(sliceId)];
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
 
     // (*) This function is carefully designed so that the warmup
     // (which executes with chunkStart === chunkPos) will execute
@@ -394,17 +394,17 @@ function ParallelArrayReduce(func, mode) {
       var indexPos = chunkStart << CHUNK_SHIFT;
       var accumulator = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
 
-      UnsafeSetElement(subreductions, id, accumulator, // see (*) above
-                       info, SLICE_POS(id), ++chunkPos);
+      UnsafeSetElement(subreductions, sliceId, accumulator, // see (*) above
+                       info, SLICE_POS(sliceId), ++chunkPos);
     }
 
-    var accumulator = subreductions[id]; // see (*) above
+    var accumulator = subreductions[sliceId]; // see (*) above
 
     while (chunkPos < chunkEnd) {
       var indexPos = chunkPos << CHUNK_SHIFT;
       accumulator = reduceChunk(accumulator, indexPos, indexPos + CHUNK_SIZE);
-      UnsafeSetElement(subreductions, id, accumulator,
-                       info, SLICE_POS(id), ++chunkPos);
+      UnsafeSetElement(subreductions, sliceId, accumulator,
+                       info, SLICE_POS(sliceId), ++chunkPos);
     }
   }
 
@@ -473,13 +473,13 @@ function ParallelArrayScan(func, mode) {
     return accumulator;
   }
 
-  function phase1(id, n, warmup) {
-    // In phase 1, we divide the source array into n slices and
+  function phase1(sliceId, numSlices, warmup) {
+    // In phase 1, we divide the source array into numSlices slices and
     // compute scan on each slice sequentially as it were the entire
     // array.  This function is responsible for computing one of those
     // slices.
     //
-    // So, if we have an array [A,B,C,D,E,F,G,H,I], n == 3, and our function
+    // So, if we have an array [A,B,C,D,E,F,G,H,I], numSlices == 3, and our function
     // |f| is sum, then would wind up computing a result array like:
     //
     //     [A, A+B, A+B+C, D, D+E, D+E+F, G, G+H, G+H+I]
@@ -487,9 +487,9 @@ function ParallelArrayScan(func, mode) {
     //      Slice 0        Slice 1        Slice 2
     //
     // Read on in phase2 to see what we do next!
-    var chunkStart = info[SLICE_START(id)];
-    var chunkPos = info[SLICE_POS(id)];
-    var chunkEnd = info[SLICE_END(id)];
+    var chunkStart = info[SLICE_START(sliceId)];
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
 
     if (warmup && chunkEnd > chunkPos + 2)
       chunkEnd = chunkPos + 2;
@@ -500,7 +500,7 @@ function ParallelArrayScan(func, mode) {
       var indexStart = chunkPos << CHUNK_SHIFT;
       var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       scan(self.get(indexStart), indexStart, indexEnd);
-      UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      UnsafeSetElement(info, SLICE_POS(sliceId), ++chunkPos);
     }
 
     while (chunkPos < chunkEnd) {
@@ -513,18 +513,18 @@ function ParallelArrayScan(func, mode) {
       var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
       var accumulator = func(buffer[indexStart - 1], self.get(indexStart));
       scan(accumulator, indexStart, indexEnd);
-      UnsafeSetElement(info, SLICE_POS(id), ++chunkPos);
+      UnsafeSetElement(info, SLICE_POS(sliceId), ++chunkPos);
     }
   }
 
-  function finalElement(id) {
-    // Computes the index of the final element computed by the slice |id|.
-    var chunkEnd = info[SLICE_END(id)]; // last chunk written by |id| is endChunk - 1
+  function finalElement(sliceId) {
+    // Computes the index of the final element computed by the slice |sliceId|.
+    var chunkEnd = info[SLICE_END(sliceId)]; // last chunk written by |sliceId| is endChunk - 1
     var indexStart = std_Math_min(chunkEnd << CHUNK_SHIFT, length);
     return indexStart - 1;
   }
 
-  function phase2(id, n, warmup) {
+  function phase2(sliceId, numSlices, warmup) {
     // After computing the phase1 results, we compute an
     // |intermediates| array.  |intermediates[i]| contains the result
     // of reducing the final value from each preceding slice j<i with
@@ -545,10 +545,10 @@ function ParallelArrayScan(func, mode) {
     //
     // Phase 2 combines the results of phase1 with the intermediates
     // array to produce the final scan results.  The idea is to
-    // reiterate over each element S[i] in the slice |id|, which
+    // reiterate over each element S[i] in the slice |sliceId|, which
     // currently contains the result of reducing with S[0]...S[i]
     // (where S0 is the first thing in the slice), and combine that
-    // with |intermediate[id-1]|, which represents the result of
+    // with |intermediate[sliceId-1]|, which represents the result of
     // reducing everything in the input array prior to the slice.
     //
     // To continue with our example, in phase 1 we computed slice 1 to
@@ -565,19 +565,19 @@ function ParallelArrayScan(func, mode) {
     // index granularity, although this requires two memory writes per
     // index.
 
-    if (id == 0)
+    if (sliceId == 0)
       return; // No work to do for the 0th slice.
 
-    var indexPos = info[SLICE_POS(id)];
-    var indexEnd = info[SLICE_END(id)];
+    var indexPos = info[SLICE_POS(sliceId)];
+    var indexEnd = info[SLICE_END(sliceId)];
 
     if (warmup)
       indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
-    var intermediate = intermediates[id - 1];
+    var intermediate = intermediates[sliceId - 1];
     for (; indexPos < indexEnd; indexPos++)
       UnsafeSetElement(buffer, indexPos, func(intermediate, buffer[indexPos]),
-                       info, SLICE_POS(id), indexPos + 1);
+                       info, SLICE_POS(sliceId), indexPos + 1);
   }
 }
 
@@ -689,14 +689,14 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     ParallelDo(fill, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
-    function fill(id, n, warmup) {
-      var indexPos = checkpoints[id];
+    function fill(sliceId, numSlices, warmup) {
+      var indexPos = checkpoints[sliceId];
       var indexEnd = targetsLength;
       if (warmup)
         indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
       // Range in the output for which we are responsible:
-      var [outputStart, outputEnd] = ComputeSliceBounds(length, id, numSlices);
+      var [outputStart, outputEnd] = ComputeSliceBounds(length, sliceId, numSlices);
 
       for (; indexPos < indexEnd; indexPos++) {
         var x = self.get(indexPos);
@@ -708,7 +708,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
           x = collide(x, buffer[t]);
         UnsafeSetElement(buffer, t, x,
                          conflicts, t, true,
-                         checkpoints, id, indexPos + 1);
+                         checkpoints, sliceId, indexPos + 1);
       }
     }
   }
@@ -741,14 +741,14 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     mergeBuffers();
     return NewParallelArray(ParallelArrayView, [length], outputbuffer, 0);
 
-    function fill(id, n, warmup) {
-      var indexPos = info[SLICE_POS(id)];
-      var indexEnd = info[SLICE_END(id)];
+    function fill(sliceId, numSlices, warmup) {
+      var indexPos = info[SLICE_POS(sliceId)];
+      var indexEnd = info[SLICE_END(sliceId)];
       if (warmup)
         indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
-      var localbuffer = localbuffers[id];
-      var conflicts = localconflicts[id];
+      var localbuffer = localbuffers[sliceId];
+      var conflicts = localconflicts[sliceId];
       while (indexPos < indexEnd) {
         var x = self.get(indexPos);
         var t = targets[indexPos];
@@ -757,12 +757,12 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
           x = collide(x, localbuffer[t]);
         UnsafeSetElement(localbuffer, t, x,
                          conflicts, t, true,
-                         info, SLICE_POS(id), ++indexPos);
+                         info, SLICE_POS(sliceId), ++indexPos);
       }
     }
 
     function mergeBuffers() {
-      // Merge buffers 1..N into buffer 0.  In principle, we could
+      // Merge buffers 1..NUMSLICES into buffer 0.  In principle, we could
       // parallelize the merge work as well.  But for this first cut,
       // just do the merge sequentially.
       var buffer = localbuffers[0];
@@ -864,19 +864,19 @@ function ParallelArrayFilter(func, mode) {
   }
   return NewParallelArray(ParallelArrayView, [count], buffer, 0);
 
-  function findSurvivorsInSlice(id, n, warmup) {
+  function findSurvivorsInSlice(sliceId, numSlices, warmup) {
     // As described above, our goal is to determine which items we
     // will preserve from a given slice.  We do this one chunk at a
     // time. When we finish a chunk, we record our current count and
-    // the next chunk id, lest we should bail.
+    // the next chunk sliceId, lest we should bail.
 
-    var chunkPos = info[SLICE_POS(id)];
-    var chunkEnd = info[SLICE_END(id)];
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
 
     if (warmup && chunkEnd > chunkPos)
       chunkEnd = chunkPos + 1;
 
-    var count = counts[id];
+    var count = counts[sliceId];
     while (chunkPos < chunkEnd) {
       var indexStart = chunkPos << CHUNK_SHIFT;
       var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
@@ -889,32 +889,32 @@ function ParallelArrayFilter(func, mode) {
       }
 
       UnsafeSetElement(survivors, chunkPos, chunkBits,
-                       counts, id, count,
-                       info, SLICE_POS(id), ++chunkPos);
+                       counts, sliceId, count,
+                       info, SLICE_POS(sliceId), ++chunkPos);
     }
   }
 
-  function copySurvivorsInSlice(id, n, warmup) {
+  function copySurvivorsInSlice(sliceId, numSlices, warmup) {
     // Copies the survivors from this slice into the correct position.
     // Note that this is an idempotent operation that does not invoke
     // user code.  Therefore, we don't expect bailouts and make an
     // effort to proceed chunk by chunk or avoid duplicating work.
 
-    // During warmup, we only execute with id 0.  This would fail to
+    // During warmup, we only execute with sliceId 0.  This would fail to
     // execute the loop below.  Therefore, during warmup, we
-    // substitute 1 for the id.
-    if (warmup && id == 0 && n != 1)
-      id = 1;
+    // substitute 1 for the sliceId.
+    if (warmup && sliceId == 0 && numSlices != 1)
+      sliceId = 1;
 
     // Total up the items preserved by previous slices.
     var count = 0;
-    if (id > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
-      for (var i = 0; i < id; i++)
+    if (sliceId > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
+      for (var i = 0; i < sliceId; i++)
         count += counts[i];
     }
 
     // Compute the final index we expect to write.
-    var total = count + counts[id];
+    var total = count + counts[sliceId];
     if (count == total)
       return;
 
@@ -923,8 +923,8 @@ function ParallelArrayFilter(func, mode) {
     // written all the values that we expect to.  We can just iterate
     // from 0...CHUNK_SIZE without fear of a truncated final chunk
     // because we are already checking for when count==total.
-    var chunkStart = info[SLICE_START(id)];
-    var chunkEnd = info[SLICE_END(id)];
+    var chunkStart = info[SLICE_START(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
     for (var chunk = chunkStart; chunk < chunkEnd; chunk++) {
       var chunkBits = survivors[chunk];
       var indexStart = chunk << CHUNK_SHIFT;
@@ -1127,10 +1127,10 @@ SetFunctionFlags(ParallelArrayGet3,       { cloneAtCallsite: true });
 //     }
 //     c += idx[i] * stride;
 //   }
-//   
+//
 //   assertEq(index1d, c);
 // }
-// 
+//
 // for (var q = 0; q < 2*4*6*8; q++) {
 //   CheckIndices([2,4,6,8], q);
 // }
