@@ -35,12 +35,6 @@ function ComputeAllSliceBounds(numItems, numSlices) {
   return info;
 }
 
-function TruncateEnd(start, end) {
-  var end1 = start + 3;
-  if (end1 < end) return end1;
-  return end;
-}
-
 function ComputeProducts(shape) {
   // Compute the partial products in reverse order.
   // e.g., if the shape is [A,B,C,D], then the
@@ -218,7 +212,13 @@ function ParallelArrayBuild(self, shape, func, m) {
 
   var buffer = self.buffer = NewDenseArray(length);
 
-  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+  parallel: for (;;) {
+    // Avoid parallel compilation if we are already nested in another
+    // parallel section or the user told us not to.  The use of a for
+    // (;;) loop is working around some ion limitations:
+    //
+    // - Breaking out of named blocks does not currently work (bug 684384);
+    // - Unreachable Code Elim. can't properly handle if (a && b) (bug 669796)
     if (ForceSequential())
       break parallel;
     if (!TRY_PARALLEL(m))
@@ -301,15 +301,8 @@ function ParallelArrayMap(func, m) {
   var length = self.shape[0];
   var buffer = NewDenseArray(length);
 
-  parallel: for (;;) {
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
 
-    // Avoid parallel compilation if we are already nested in another
-    // parallel section or the user told us not to.  The somewhat
-    // artificial style of this code is working around some ion
-    // limitations:
-    //
-    // - Breaking out of named blocks does not currently work;
-    // - Unreachable Code Elim. can't properly handle if (a && b)
     if (ForceSequential())
       break parallel;
     if (!TRY_PARALLEL(m))
@@ -354,7 +347,7 @@ function ParallelArrayReduce(func, m) {
   if (length === 0)
     ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
-  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
     if (!TRY_PARALLEL(m))
@@ -432,7 +425,7 @@ function ParallelArrayScan(func, m) {
 
   var buffer = NewDenseArray(length);
 
-  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
     if (!TRY_PARALLEL(m))
@@ -644,7 +637,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
   if (length && length >>> 0 !== length)
     ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
-  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
     if (!TRY_PARALLEL(m))
@@ -825,7 +818,7 @@ function ParallelArrayFilter(func, m) {
   var self = this;
   var length = self.shape[0];
 
-  parallel: for (;;) { // see ParallelArrayMap() to explain why for(;;) etc
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
     if (!TRY_PARALLEL(m))
