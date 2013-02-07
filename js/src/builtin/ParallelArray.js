@@ -131,12 +131,12 @@ function ParallelArrayConstruct1(buffer) {
   this.get = ParallelArrayGet1;
 }
 
-function ParallelArrayConstruct2(shape, f) {
+function ParallelArrayConstruct2(shape, func) {
   if (typeof shape === "number") {
     var length = shape >>> 0;
     if (length !== shape)
       ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-    ParallelArrayBuild(this, [length], f);
+    ParallelArrayBuild(this, [length], func);
   } else {
     var shape1 = [];
     for (var i = 0, l = shape.length; i < l; i++) {
@@ -146,17 +146,17 @@ function ParallelArrayConstruct2(shape, f) {
         ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
       shape1[i] = s1;
     }
-    ParallelArrayBuild(this, shape1, f);
+    ParallelArrayBuild(this, shape1, func);
   }
 }
 
 // We duplicate code here to avoid extra cloning.
-function ParallelArrayConstruct3(shape, f, m) {
+function ParallelArrayConstruct3(shape, func, m) {
   if (typeof shape === "number") {
     var length = shape >>> 0;
     if (length !== shape)
       ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-    ParallelArrayBuild(this, [length], f, m);
+    ParallelArrayBuild(this, [length], func, m);
   } else {
     var shape1 = [];
     for (var i = 0, l = shape.length; i < l; i++) {
@@ -166,7 +166,7 @@ function ParallelArrayConstruct3(shape, f, m) {
         ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
       shape1[i] = s1;
     }
-    ParallelArrayBuild(this, shape1, f, m);
+    ParallelArrayBuild(this, shape1, func, m);
   }
 }
 
@@ -188,7 +188,7 @@ function ParallelArrayView(shape, buffer, offset) {
   return this;
 }
 
-function ParallelArrayBuild(self, shape, f, m) {
+function ParallelArrayBuild(self, shape, func, m) {
   self.offset = 0;
   self.shape = shape;
 
@@ -265,14 +265,14 @@ function ParallelArrayBuild(self, shape, f, m) {
 
   function fill1(indexStart, indexEnd) {
     for (var i = indexStart; i < indexEnd; i++)
-      UnsafeSetElement(buffer, i, f(i));
+      UnsafeSetElement(buffer, i, func(i));
   }
 
   function fill2(indexStart, indexEnd) {
     var x = (indexStart / yw) | 0;
     var y = indexStart - x*yw;
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, f(x, y));
+      UnsafeSetElement(buffer, i, func(x, y));
       if (++y == yw) {
         y = 0;
         ++x;
@@ -286,7 +286,7 @@ function ParallelArrayBuild(self, shape, f, m) {
     var y = (r / zw) | 0;
     var z = r - y*zw;
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, f(x, y, z));
+      UnsafeSetElement(buffer, i, func(x, y, z));
       if (++z == zw) {
         z = 0;
         if (++y == yw) {
@@ -300,7 +300,7 @@ function ParallelArrayBuild(self, shape, f, m) {
   function fillN(indexStart, indexEnd) {
     var indices = ComputeIndices(shape, indexStart);
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, f.apply(null, indices));
+      UnsafeSetElement(buffer, i, func.apply(null, indices));
       StepIndices(shape, indices);
     }
   }
