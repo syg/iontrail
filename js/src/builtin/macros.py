@@ -215,8 +215,8 @@ macro OVERRIDE_SUBJECT(override) = ((override)[(override).length - 1]);
 macro OVERRIDE_CAPTURE(override, index) = ((override)[(index)]);
 
 # The mode asserts options object for ParallelArray
-macro TRY_PARALLEL(m) = ((!m || m.mode === "par"));
-macro CHECK_SEQUENTIAL(m) = do { if (m) CheckSequential(m) } while(false);
+macro TRY_PARALLEL(MODE) = ((!MODE || MODE.mode === "par"));
+macro CHECK_SEQUENTIAL(MODE) = do { if (MODE) CheckSequential(MODE) } while(false);
 
 # How many items at a time do we do recomp. for parallel execution.
 # Note that filter currently assumes that this is no greater than 32

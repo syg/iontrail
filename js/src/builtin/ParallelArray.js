@@ -135,12 +135,12 @@ function ParallelArrayConstruct2(shape, func) {
 }
 
 // We duplicate code here to avoid extra cloning.
-function ParallelArrayConstruct3(shape, func, m) {
+function ParallelArrayConstruct3(shape, func, mode) {
   if (typeof shape === "number") {
     var length = shape >>> 0;
     if (length !== shape)
       ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-    ParallelArrayBuild(this, [length], func, m);
+    ParallelArrayBuild(this, [length], func, mode);
   } else {
     var shape1 = [];
     for (var i = 0, l = shape.length; i < l; i++) {
@@ -150,7 +150,7 @@ function ParallelArrayConstruct3(shape, func, m) {
         ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
       shape1[i] = s1;
     }
-    ParallelArrayBuild(this, shape1, func, m);
+    ParallelArrayBuild(this, shape1, func, mode);
   }
 }
 
@@ -172,7 +172,7 @@ function ParallelArrayView(shape, buffer, offset) {
   return this;
 }
 
-function ParallelArrayBuild(self, shape, func, m) {
+function ParallelArrayBuild(self, shape, func, mode) {
   self.offset = 0;
   self.shape = shape;
 
@@ -221,7 +221,7 @@ function ParallelArrayBuild(self, shape, func, m) {
     // - Unreachable Code Elim. can't properly handle if (a && b) (bug 669796)
     if (ForceSequential())
       break parallel;
-    if (!TRY_PARALLEL(m))
+    if (!TRY_PARALLEL(mode))
       break parallel;
     if (computefunc === fillN)
       break parallel;
@@ -229,12 +229,12 @@ function ParallelArrayBuild(self, shape, func, m) {
     var chunks = ComputeNumChunks(length);
     var numSlices = ParallelSlices();
     var info = ComputeAllSliceBounds(chunks, numSlices);
-    ParallelDo(constructSlice, CheckParallel(m));
+    ParallelDo(constructSlice, CheckParallel(mode));
     return;
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(m);
+  CHECK_SEQUENTIAL(mode);
   computefunc(0, length);
   return;
 
@@ -296,7 +296,7 @@ function ParallelArrayBuild(self, shape, func, m) {
   }
 }
 
-function ParallelArrayMap(func, m) {
+function ParallelArrayMap(func, mode) {
   var self = this;
   var length = self.shape[0];
   var buffer = NewDenseArray(length);
@@ -305,18 +305,18 @@ function ParallelArrayMap(func, m) {
 
     if (ForceSequential())
       break parallel;
-    if (!TRY_PARALLEL(m))
+    if (!TRY_PARALLEL(mode))
       break parallel;
 
     var chunks = ComputeNumChunks(length);
     var numSlices = ParallelSlices();
     var info = ComputeAllSliceBounds(chunks, numSlices);
-    ParallelDo(mapSlice, CheckParallel(m));
+    ParallelDo(mapSlice, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(m);
+  CHECK_SEQUENTIAL(mode);
   for (var i = 0; i < length; i++)
     buffer[i] = func(self.get(i), i, self);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
@@ -340,7 +340,7 @@ function ParallelArrayMap(func, m) {
   }
 }
 
-function ParallelArrayReduce(func, m) {
+function ParallelArrayReduce(func, mode) {
   var self = this;
   var length = self.shape[0];
 
@@ -350,7 +350,7 @@ function ParallelArrayReduce(func, m) {
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
-    if (!TRY_PARALLEL(m))
+    if (!TRY_PARALLEL(mode))
       break parallel;
 
     var chunks = ComputeNumChunks(length);
@@ -360,7 +360,7 @@ function ParallelArrayReduce(func, m) {
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
     var subreductions = NewDenseArray(numSlices);
-    ParallelDo(reduceSlice, CheckParallel(m));
+    ParallelDo(reduceSlice, CheckParallel(mode));
     var accumulator = subreductions[0];
     for (var i = 1; i < numSlices; i++)
       accumulator = func(accumulator, subreductions[i]);
@@ -368,7 +368,7 @@ function ParallelArrayReduce(func, m) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(m);
+  CHECK_SEQUENTIAL(mode);
   var accumulator = self.get(0);
   for (var i = 1; i < length; i++)
     accumulator = func(accumulator, self.get(i));
@@ -416,7 +416,7 @@ function ParallelArrayReduce(func, m) {
   }
 }
 
-function ParallelArrayScan(func, m) {
+function ParallelArrayScan(func, mode) {
   var self = this;
   var length = self.shape[0];
 
@@ -428,7 +428,7 @@ function ParallelArrayScan(func, m) {
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
-    if (!TRY_PARALLEL(m))
+    if (!TRY_PARALLEL(mode))
       break parallel;
 
     var chunks = ComputeNumChunks(length);
@@ -438,7 +438,7 @@ function ParallelArrayScan(func, m) {
     var info = ComputeAllSliceBounds(chunks, numSlices);
 
     // Scan slices individually (see comment on phase1()).
-    ParallelDo(phase1, CheckParallel(m));
+    ParallelDo(phase1, CheckParallel(mode));
 
     // Compute intermediates array (see comment on phase2()).
     var intermediates = [];
@@ -455,12 +455,12 @@ function ParallelArrayScan(func, m) {
     info[SLICE_END(numSlices - 1)] = std_Math_min(info[SLICE_END(numSlices - 1)], length);
 
     // Complete each slice using intermediates array (see comment on phase2()).
-    ParallelDo(phase2, CheckParallel(m));
+    ParallelDo(phase2, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(m);
+  CHECK_SEQUENTIAL(mode);
   scan(self.get(0), 0, length);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
@@ -581,7 +581,7 @@ function ParallelArrayScan(func, m) {
   }
 }
 
-function ParallelArrayScatter(targets, zero, func, length, m) {
+function ParallelArrayScatter(targets, zero, func, length, mode) {
 
   var self = this;
 
@@ -640,7 +640,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
-    if (!TRY_PARALLEL(m))
+    if (!TRY_PARALLEL(mode))
       break parallel;
 
     if (forceDivideScatterVector())
@@ -653,15 +653,15 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(m);
+  CHECK_SEQUENTIAL(mode);
   return seq();
 
   function forceDivideScatterVector() {
-    return m && m.strategy && m.strategy == "divide-scatter-vector";
+    return mode && mode.strategy && mode.strategy == "divide-scatter-vector";
   }
 
   function forceDivideOutputRange() {
-    return m && m.strategy && m.strategy == "divide-output-range";
+    return mode && mode.strategy && mode.strategy == "divide-output-range";
     return func(elem1, elem2);
   }
 
@@ -686,7 +686,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
     for (var i = 0; i < length; i++)
       buffer[i] = zero;
 
-    ParallelDo(fill, CheckParallel(m));
+    ParallelDo(fill, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
     function fill(id, n, warmup) {
@@ -737,7 +737,7 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
     for (var i = 0; i < length; i++)
       outputbuffer[i] = zero;
 
-    ParallelDo(fill, CheckParallel(m));
+    ParallelDo(fill, CheckParallel(mode));
     mergeBuffers();
     return NewParallelArray(ParallelArrayView, [length], outputbuffer, 0);
 
@@ -814,14 +814,14 @@ function ParallelArrayScatter(targets, zero, func, length, m) {
   }
 }
 
-function ParallelArrayFilter(func, m) {
+function ParallelArrayFilter(func, mode) {
   var self = this;
   var length = self.shape[0];
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ForceSequential())
       break parallel;
-    if (!TRY_PARALLEL(m))
+    if (!TRY_PARALLEL(mode))
       break parallel;
 
     var chunks = ComputeNumChunks(length);
@@ -841,7 +841,7 @@ function ParallelArrayFilter(func, m) {
     for (var i = 0; i < numSlices; i++)
       counts[i] = 0;
     var survivors = NewDenseArray(chunks);
-    ParallelDo(findSurvivorsInSlice, CheckParallel(m));
+    ParallelDo(findSurvivorsInSlice, CheckParallel(mode));
 
     // Step 2. Compress the slices into one contiguous set.
     var count = 0;
@@ -849,13 +849,13 @@ function ParallelArrayFilter(func, m) {
       count += counts[i];
     var buffer = NewDenseArray(count);
     if (count > 0)
-      ParallelDo(copySurvivorsInSlice, CheckParallel(m));
+      ParallelDo(copySurvivorsInSlice, CheckParallel(mode));
 
     return NewParallelArray(ParallelArrayView, [count], buffer, 0);
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(m);
+  CHECK_SEQUENTIAL(mode);
   var buffer = [], count = 0;
   for (var i = 0; i < length; i++) {
     var elem = self.get(i);
@@ -1063,19 +1063,19 @@ function ParallelArrayToString() {
   return result;
 }
 
-function CheckSequential(m) {
-  if (!m || m.mode === "seq")
+function CheckSequential(mode) {
+  if (!mode || mode.mode === "seq")
     return;
 
   ThrowError(JSMSG_WRONG_VALUE, "par", "seq");
 }
 
-function CheckParallel(m) {
-  if (!m || !ParallelTestsShouldPass())
+function CheckParallel(mode) {
+  if (!mode || !ParallelTestsShouldPass())
     return null;
 
   return function(bailouts) {
-    if (!("expect" in m) || m.expect === "any") {
+    if (!("expect" in mode) || mode.expect === "any") {
       return; // Ignore result when unspecified or unimportant.
     }
 
@@ -1087,11 +1087,11 @@ function CheckParallel(m) {
     else
       result = "bailout";
 
-    if (m.expect === "mixed") {
+    if (mode.expect === "mixed") {
       if (result !== "success" && result !== "bailout")
-        ThrowError(JSMSG_WRONG_VALUE, m.expect, result);
-    } else if (result !== m.expect) {
-      ThrowError(JSMSG_WRONG_VALUE, m.expect, result);
+        ThrowError(JSMSG_WRONG_VALUE, mode.expect, result);
+    } else if (result !== mode.expect) {
+      ThrowError(JSMSG_WRONG_VALUE, mode.expect, result);
     }
   };
 }
