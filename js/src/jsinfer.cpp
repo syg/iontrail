@@ -1427,6 +1427,17 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             return;
         if (!newCallee(cx, clone, script))
             return;
+
+        /*
+         * When cloning a callee, we must flow the more specific argument
+         * types of the clone to that of the original, lest we install type
+         * barriers when propagating the original where none is required.
+         */
+        for (unsigned i = 0; i < callsite->argumentCount && i < callee->nargs; i++) {
+            StackTypeSet *cloneTypes = TypeScript::ArgTypes(clone->nonLazyScript(), i);
+            StackTypeSet *originalTypes = TypeScript::ArgTypes(callee->nonLazyScript(), i);
+            cloneTypes->addSubset(cx, originalTypes);
+        }
     }
 
     newCallee(cx, callee, script);
