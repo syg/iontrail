@@ -1427,6 +1427,11 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             return;
         if (!newCallee(cx, clone, script))
             return;
+        for (unsigned i = 0; i < callsite->argumentCount && i < callee->nargs; i++) {
+            StackTypeSet *cloneTypes = TypeScript::ArgTypes(clone->nonLazyScript(), i);
+            StackTypeSet *originalTypes = TypeScript::ArgTypes(callee->nonLazyScript(), i);
+            cloneTypes->addSubset(cx, originalTypes);
+        }
     }
 
     newCallee(cx, callee, script);
@@ -3049,6 +3054,10 @@ ScriptAnalysis::addTypeBarrier(JSContext *cx, const jsbytecode *pc, TypeSet *tar
         !type.isUnknown() && !type.isAnyObject() && type.isObject())
     {
         type = Type::AnyObjectType();
+    }
+
+    if (script_->id() == 19 && (pc - script_->code) == 420) {
+        printf("here\n");
     }
 
     InferSpew(ISpewOps, "typeBarrier: #%u:%05u: %sT%p%s %s",

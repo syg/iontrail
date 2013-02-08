@@ -970,8 +970,6 @@ function ParallelArrayFlatten() {
 //
 
 function ParallelArrayGet1(i) {
-  if (i === undefined)
-    return undefined;
   return this.buffer[this.offset + i];
 }
 

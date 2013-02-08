@@ -2883,7 +2883,7 @@ IonBuilder::inlineScriptedCall(HandleFunction target, CallInfo &callInfo)
     RootedScript calleeScript(cx, target->nonLazyScript());
     CompileInfo *info = alloc->new_<CompileInfo>(calleeScript.get(), target,
                                                  (jsbytecode *)NULL, callInfo.constructing(),
-                                                 SequentialExecution);
+                                                 this->info().executionMode());
     if (!info)
         return false;
 
@@ -3134,7 +3134,8 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
         if (targetScript->length > 1 && // Always inline the empty script.
             calleeUses * js_IonOptions.inlineUseCountRatio < callerUses)
         {
-            IonSpew(IonSpew_Inlining, "Not inlining, callee is not hot");
+            IonSpew(IonSpew_Inlining, "Not inlining %s:%u, callee is not hot",
+                    targetScript->filename, targetScript->lineno);
             return false;
         }
     }
@@ -3146,14 +3147,16 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
     if (inliningDepth >= maxInlineDepth)
         return false;
 
-    if (script()->getUseCount() < checkUses) {
-        IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
+    if (info().executionMode() == SequentialExecution && script()->getUseCount() < checkUses) {
+        IonSpew(IonSpew_Inlining, "Not inlining %s:%u, caller %s:%u is not hot %d",
+                targetScript->filename, targetScript->lineno, script()->filename, script()->lineno, info().executionMode());
         return false;
     }
 
     RootedScript scriptRoot(cx, script());
     if (!oracle->canInlineCall(scriptRoot, pc)) {
-        IonSpew(IonSpew_Inlining, "Cannot inline due to uninlineable call site");
+        IonSpew(IonSpew_Inlining, "Cannot inline %s:%u due to uninlineable call site",
+                targetScript->filename, targetScript->lineno);
         return false;
     }
 
@@ -3389,6 +3392,8 @@ IonBuilder::inlineScriptedCalls(AutoObjectVector &targets, AutoObjectVector &ori
     IonSpew(IonSpew_Inlining, "Inlining %d targets", (int) targets.length());
     JS_ASSERT(targets.length() > 0);
 
+    IonSpew(IonSpew_Inlining, "Inlining %s:%d", targets[0]->toFunction()->nonLazyScript()->filename,
+            targets[0]->toFunction()->nonLazyScript()->lineno);
     // |top| jumps into the callee subgraph -- save it for later use.
     MBasicBlock *top = current;
 
