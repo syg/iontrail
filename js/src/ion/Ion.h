@@ -324,11 +324,10 @@ class CodeGenerator;
 CodeGenerator *CompileBackEnd(MIRGenerator *mir);
 void AttachFinishedCompilations(JSContext *cx);
 void FinishOffThreadBuilder(IonBuilder *builder);
-MethodStatus TestIonCompile(JSContext *cx, HandleScript script, HandleFunction fun, jsbytecode *osrPc, bool constructing);
 
 static inline bool IsEnabled(JSContext *cx)
 {
-    return cx->hasRunOption(JSOPTION_ION) && cx->typeInferenceEnabled();
+    return cx->hasOption(JSOPTION_ION) && cx->typeInferenceEnabled();
 }
 
 void ForbidCompilation(JSContext *cx, UnrootedScript script);

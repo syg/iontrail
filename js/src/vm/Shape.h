@@ -821,6 +821,7 @@ class Shape : public js::gc::Cell
     void dumpSubtree(JSContext *cx, int level, FILE *fp) const;
 #endif
 
+    void sweep();
     void finalize(FreeOp *fop);
     void removeChild(UnrootedShape child);
 

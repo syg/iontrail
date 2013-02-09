@@ -212,10 +212,12 @@ class CGPrototypeJSClass(CGThing):
     JSCLASS_NO_INTERNAL_MEMBERS
   },
   eInterfacePrototype,
-  %s
+  %s,
+  "[object %sPrototype]"
 };
 """ % (self.descriptor.interface.identifier.name,
-       NativePropertyHooks(self.descriptor))
+       NativePropertyHooks(self.descriptor),
+       self.descriptor.interface.identifier.name)
 
 class CGInterfaceObjectJSClass(CGThing):
     def __init__(self, descriptor, properties):
@@ -254,9 +256,11 @@ static DOMIfaceAndProtoJSClass InterfaceObjectClass = {
     JSCLASS_NO_INTERNAL_MEMBERS
   },
   eInterface,
-  %s
+  %s,
+  "function %s() {\\n    [native code]\\n}"
 };
-""" % (ctorname, hasinstance, ctorname, NativePropertyHooks(self.descriptor))
+""" % (ctorname, hasinstance, ctorname, NativePropertyHooks(self.descriptor),
+       self.descriptor.interface.identifier.name)
 
 class CGList(CGThing):
     """
@@ -2479,8 +2483,7 @@ for (uint32_t i = 0; i < length; ++i) {
 
         if (descriptor.interface.isCallback() and
             descriptor.interface.identifier.name != "NodeFilter" and
-            descriptor.interface.identifier.name != "EventListener" and
-            descriptor.interface.identifier.name != "DOMTransaction"):
+            descriptor.interface.identifier.name != "EventListener"):
             if descriptor.workers:
                 if type.nullable():
                     declType = CGGeneric("JSObject*")
@@ -2831,13 +2834,21 @@ for (uint32_t i = 0; i < length; ++i) {
     if type.isAny():
         assert not isEnforceRange and not isClamp
 
-        if isMember:
-            raise TypeError("Can't handle member 'any'; need to sort out "
-                            "rooting issues")
-        templateBody = "${declName} = ${val};"
-        templateBody = handleDefaultNull(templateBody,
-                                         "${declName} = JS::NullValue()")
-        return (templateBody, CGGeneric("JS::Value"), None, isOptional)
+        if isMember == "Dictionary":
+            declType = "RootedJSValue"
+            templateBody = ("if (!${declName}.SetValue(cx, ${val})) {\n"
+                            "  return false;\n"
+                            "}")
+            nullHandling = "${declName}.SetValue(nullptr, JS::NullValue())"
+        elif isMember:
+            raise TypeError("Can't handle sequence member 'any'; need to sort "
+                            "out rooting issues")
+        else:
+            declType = "JS::Value"
+            templateBody = "${declName} = ${val};"
+            nullHandling = "${declName} = JS::NullValue()"
+        templateBody = handleDefaultNull(templateBody, nullHandling)
+        return (templateBody, CGGeneric(declType), None, isOptional)
 
     if type.isObject():
         assert not isEnforceRange and not isClamp
@@ -3322,8 +3333,7 @@ if (!returnArray) {
     if (type.isGeckoInterface() and
         (not type.isCallbackInterface() or
          type.unroll().inner.identifier.name == "EventListener" or
-         type.unroll().inner.identifier.name == "NodeFilter" or
-         type.unroll().inner.identifier.name == "DOMTransaction")):
+         type.unroll().inner.identifier.name == "NodeFilter")):
         descriptor = descriptorProvider.getDescriptor(type.unroll().inner.identifier.name)
         if type.nullable():
             wrappingCode = ("if (!%s) {\n" % (result) +
@@ -7283,8 +7293,7 @@ class CGNativeMember(ClassMethod):
         if (type.isGeckoInterface() and
             (not type.isCallbackInterface() or
              type.unroll().inner.identifier.name == "NodeFilter" or
-             type.unroll().inner.identifier.name == "EventListener" or
-             type.unroll().inner.identifier.name == "DOMTransaction")):
+             type.unroll().inner.identifier.name == "EventListener")):
             iface = type.unroll().inner
             argIsPointer = type.nullable() or iface.isExternal()
             forceOwningType = iface.isCallback() or isMember

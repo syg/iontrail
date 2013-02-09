@@ -271,7 +271,7 @@ js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: NewDenseArray(length)
+    // Usage: %NewDenseArray(length)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Check that index is an int32
@@ -311,9 +311,9 @@ js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: UnsafeSetElement(arr0, idx0, elem0,
-    //                         ...,
-    //                         arrN, idxN, elemN)
+    // Usage: %UnsafeSetElement(arr0, idx0, elem0,
+    //                          ...,
+    //                          arrN, idxN, elemN)
     //
     // For each set of |(arr, idx, elem)| arguments that are passed,
     // performs the assignment |arr[idx] = elem|. |arr| must be either
@@ -396,7 +396,7 @@ js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_THREADSAFE
     args.rval().setBoolean(cx->runtime->parallelWarmup ||
-                           ForkJoinSlice::InParallelSection());
+                           InParallelSection());
 #else
     args.rval().setBoolean(true);
 #endif
@@ -430,14 +430,14 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IsCallable",           intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",           intrinsic_ThrowError,           4,0),
     JS_FN("AssertionFailed",      intrinsic_AssertionFailed,      1,0),
-    JS_FN("SetFunctionFlags",     intrinsic_SetFunctionFlags,     2,0),
     JS_FN("DecompileArg",         intrinsic_DecompileArg,         2,0),
+    JS_FN("SetFunctionFlags",     intrinsic_SetFunctionFlags,     2,0),
     JS_FN("RuntimeDefaultLocale", intrinsic_RuntimeDefaultLocale, 0,0),
 
     JS_FN("ParallelDo",           intrinsic_ParallelDo,           2,0),
     JS_FN("ParallelSlices",       intrinsic_ParallelSlices,       0,0),
     JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
-    JS_FN("NewDenseArray",        intrinsic_NewDenseArray,           1,0),
+    JS_FN("NewDenseArray",        intrinsic_NewDenseArray,        1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
     JS_FN("ForceSequential",      intrinsic_ForceSequential,      0,0),
     JS_FN("ParallelTestsShouldPass", intrinsic_ParallelTestsShouldPass, 0,0),

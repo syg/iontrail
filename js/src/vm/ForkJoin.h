@@ -10,6 +10,7 @@
 
 #include "jscntxt.h"
 #include "vm/ThreadPool.h"
+#include "jsgc.h"
 
 // ForkJoin
 //
@@ -206,11 +207,11 @@ struct ForkJoinSlice
 
     // Check the current state of parallel execution.
     static inline ForkJoinSlice *Current();
-    static inline bool InParallelSection();
     static inline bool InGarbageCollectionDisallowedSection();
     bool InWorldStoppedForGCSection();
 
-    static bool Initialize();
+    // Initializes the thread-local state.
+    static bool InitializeTLS();
 
   private:
     friend class AutoRendezvous;
@@ -220,8 +221,9 @@ struct ForkJoinSlice
     bool checkOutOfLine();
 
 #ifdef JS_THREADSAFE
-    // Initialized by Initialize()
+    // Initialized by InitializeTLS()
     static unsigned ThreadPrivateIndex;
+    static bool TLSInitialized;
 #endif
 
 #ifdef JS_THREADSAFE
@@ -277,6 +279,13 @@ class LockedJSContext
     JSContext *operator->() { return cx_; }
 };
 
+
+static inline bool
+InParallelSection()
+{
+    return ForkJoinSlice::Current() != NULL;
+}
+
 } // namespace js
 
 /* static */ inline js::ForkJoinSlice *
@@ -287,12 +296,6 @@ js::ForkJoinSlice::Current()
 #else
     return NULL;
 #endif
-}
-
-/* static */ inline bool
-js::ForkJoinSlice::InParallelSection()
-{
-    return Current() != NULL;
 }
 
 /* static */ inline bool

@@ -407,9 +407,9 @@ template void JS_FASTCALL stubs::DefFun<false>(VMFrame &f, JSFunction *fun);
         Value &rval = regs.sp[-1];                                            \
         Value &lval = regs.sp[-2];                                            \
         bool cond;                                                            \
-        if (!ToPrimitive(cx, JSTYPE_NUMBER, &lval))                           \
+        if (!ToPrimitive(cx, JSTYPE_NUMBER, MutableHandleValue::fromMarkedLocation(&lval))) \
             THROWV(JS_FALSE);                                                 \
-        if (!ToPrimitive(cx, JSTYPE_NUMBER, &rval))                           \
+        if (!ToPrimitive(cx, JSTYPE_NUMBER, MutableHandleValue::fromMarkedLocation(&rval))) \
             THROWV(JS_FALSE);                                                 \
         if (lval.isString() && rval.isString()) {                             \
             JSString *l = lval.toString(), *r = rval.toString();              \
@@ -518,9 +518,9 @@ StubEqualityOp(VMFrame &f)
         } else if (rval.isNullOrUndefined()) {
             cond = (lval.isObject() && EmulatesUndefined(&lval.toObject())) == EQ;
         } else {
-            if (!ToPrimitive(cx, &lval))
+            if (!ToPrimitive(cx, MutableHandleValue::fromMarkedLocation(&lval)))
                 return false;
-            if (!ToPrimitive(cx, &rval))
+            if (!ToPrimitive(cx, MutableHandleValue::fromMarkedLocation(&rval)))
                 return false;
 
             /*
@@ -586,9 +586,9 @@ stubs::Add(VMFrame &f)
 
     } else {
         bool lIsObject = lval.isObject(), rIsObject = rval.isObject();
-        if (!ToPrimitive(f.cx, &lval))
+        if (!ToPrimitive(f.cx, MutableHandleValue::fromMarkedLocation(&lval)))
             THROW();
-        if (!ToPrimitive(f.cx, &rval))
+        if (!ToPrimitive(f.cx, MutableHandleValue::fromMarkedLocation(&rval)))
             THROW();
         if ((lIsString = lval.isString()) || (rIsString = rval.isString())) {
             if (lIsString) {
@@ -812,9 +812,14 @@ stubs::TriggerIonCompile(VMFrame &f)
         if (*osrPC != JSOP_LOOPENTRY)
             osrPC = NULL;
 
-        RootedFunction scriptFunction(f.cx, script->function());
-        ion::MethodStatus compileStatus =
-            ion::TestIonCompile(f.cx, script, scriptFunction, osrPC, f.fp()->isConstructing());
+        ion::MethodStatus compileStatus;
+        if (osrPC) {
+            compileStatus = ion::CanEnterAtBranch(f.cx, script, f.cx->fp(), osrPC,
+                                                  f.fp()->isConstructing());
+        } else {
+            compileStatus = ion::CanEnter(f.cx, script, f.cx->fp(), f.fp()->isConstructing(),
+                                          /* newType = */ false);
+        }
 
         if (compileStatus != ion::Method_Compiled) {
             if (f.cx->isExceptionPending())
@@ -937,15 +942,17 @@ void JS_FASTCALL
 stubs::NewInitArray(VMFrame &f, uint32_t count)
 {
     Rooted<TypeObject*> type(f.cx, (TypeObject *) f.scratch);
-    RootedObject obj(f.cx, NewDenseAllocatedArray(f.cx, count));
+    RootedScript fscript(f.cx, f.script());
+
+    NewObjectKind newKind = UseNewTypeForInitializer(f.cx, fscript, f.pc(), &ArrayClass);
+    RootedObject obj(f.cx, NewDenseAllocatedArray(f.cx, count, NULL, newKind));
     if (!obj)
         THROW();
 
     if (type) {
         obj->setType(type);
     } else {
-        RootedScript fscript(f.cx, f.script());
-        if (!SetInitializerObjectType(f.cx, fscript, f.pc(), obj))
+        if (!SetInitializerObjectType(f.cx, fscript, f.pc(), obj, newKind))
             THROW();
     }
 
@@ -957,14 +964,16 @@ stubs::NewInitObject(VMFrame &f, JSObject *baseobj)
 {
     JSContext *cx = f.cx;
     Rooted<TypeObject*> type(f.cx, (TypeObject *) f.scratch);
+    RootedScript fscript(f.cx, f.script());
 
+    NewObjectKind newKind = UseNewTypeForInitializer(f.cx, fscript, f.pc(), &ObjectClass);
     RootedObject obj(cx);
     if (baseobj) {
         Rooted<JSObject*> base(cx, baseobj);
-        obj = CopyInitializerObject(cx, base);
+        obj = CopyInitializerObject(cx, base, newKind);
     } else {
-        gc::AllocKind kind = GuessObjectGCKind(0);
-        obj = NewBuiltinClassInstance(cx, &ObjectClass, kind);
+        gc::AllocKind allocKind = GuessObjectGCKind(0);
+        obj = NewBuiltinClassInstance(cx, &ObjectClass, allocKind, newKind);
     }
 
     if (!obj)
@@ -973,8 +982,7 @@ stubs::NewInitObject(VMFrame &f, JSObject *baseobj)
     if (type) {
         obj->setType(type);
     } else {
-        RootedScript fscript(f.cx, f.script());
-        if (!SetInitializerObjectType(cx, fscript, f.pc(), obj))
+        if (!SetInitializerObjectType(cx, fscript, f.pc(), obj, newKind))
             THROW();
     }
 

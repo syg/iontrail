@@ -30,6 +30,7 @@
 
 #include "ds/LifoAlloc.h"
 #include "gc/Statistics.h"
+#include "gc/StoreBuffer.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
 #include "vm/DateTime.h"
@@ -341,7 +342,7 @@ class NewObjectCache
      * NULL if returning the object could possibly trigger GC (does not
      * indicate failure).
      */
-    inline JSObject *newObjectFromHit(JSContext *cx, EntryIndex entry);
+    inline JSObject *newObjectFromHit(JSContext *cx, EntryIndex entry, js::gc::InitialHeap heap);
 
     /* Fill an entry after a cache miss. */
     inline void fillProto(EntryIndex entry, Class *clasp, js::TaggedProto proto, gc::AllocKind kind, JSObject *obj);
@@ -889,19 +890,19 @@ struct JSRuntime : js::RuntimeFriendFields,
     /*
      * This is true if we are in the middle of a brain transplant (e.g.,
      * JS_TransplantObject) or some other operation that can manipulate
-     * dead compartments.
+     * dead zones.
      */
-    bool                gcManipulatingDeadCompartments;
+    bool                gcManipulatingDeadZones;
 
     /*
      * This field is incremented each time we mark an object inside a
-     * compartment with no incoming cross-compartment pointers. Typically if
+     * zone with no incoming cross-compartment pointers. Typically if
      * this happens it signals that an incremental GC is marking too much
      * stuff. At various times we check this counter and, if it has changed, we
      * run an immediate, non-incremental GC to clean up the dead
-     * compartments. This should happen very rarely.
+     * zones. This should happen very rarely.
      */
-    unsigned            gcObjectsMarkedInDeadCompartments;
+    unsigned            gcObjectsMarkedInDeadZones;
 
     bool                gcPoke;
 
@@ -910,6 +911,11 @@ struct JSRuntime : js::RuntimeFriendFields,
     bool isHeapBusy() { return heapState != js::Idle; }
 
     bool isHeapCollecting() { return heapState == js::Collecting; }
+
+#ifdef JSGC_GENERATIONAL
+    js::gc::Nursery              gcNursery;
+    js::gc::StoreBuffer          gcStoreBuffer;
+#endif
 
     /*
      * These options control the zealousness of the GC. The fundamental values
@@ -1306,7 +1312,6 @@ struct AutoResolving;
  */
 namespace VersionFlags {
 static const unsigned MASK      = 0x0FFF; /* see JSVersion in jspubtd.h */
-static const unsigned FULL_MASK = 0x0FFF;
 } /* namespace VersionFlags */
 
 static inline JSVersion
@@ -1331,20 +1336,6 @@ static inline bool
 VersionHasFlags(JSVersion version)
 {
     return !!VersionExtractFlags(version);
-}
-
-static inline unsigned
-VersionFlagsToOptions(JSVersion version)
-{
-    unsigned copts = 0;
-    JS_ASSERT((copts & JSCOMPILEOPTION_MASK) == copts);
-    return copts;
-}
-
-static inline JSVersion
-OptionFlagsToVersion(unsigned options, JSVersion version)
-{
-    return version;
 }
 
 static inline bool
@@ -1386,8 +1377,8 @@ struct JSContext : js::ContextFriendFields,
     bool                throwing;            /* is there a pending exception? */
     js::Value           exception;           /* most-recently-thrown exception */
 
-    /* Per-context run options. */
-    unsigned            runOptions;          /* see jsapi.h for JSOPTION_* */
+    /* Per-context options. */
+    unsigned            options_;            /* see jsapi.h for JSOPTION_* */
 
     /* Default locale for Internationalization API */
     char                *defaultLocale;
@@ -1574,26 +1565,21 @@ struct JSContext : js::ContextFriendFields,
      */
     inline JSVersion findVersion() const;
 
-    void setRunOptions(unsigned ropts) {
-        JS_ASSERT((ropts & JSRUNOPTION_MASK) == ropts);
-        runOptions = ropts;
+    void setOptions(unsigned opts) {
+        JS_ASSERT((opts & JSOPTION_MASK) == opts);
+        options_ = opts;
     }
 
-    /* Note: may override the version. */
-    inline void setCompileOptions(unsigned newcopts);
+    unsigned options() const { return options_; }
 
-    unsigned getRunOptions() const { return runOptions; }
-    inline unsigned getCompileOptions() const;
-    inline unsigned allOptions() const;
-
-    bool hasRunOption(unsigned ropt) const {
-        JS_ASSERT((ropt & JSRUNOPTION_MASK) == ropt);
-        return !!(runOptions & ropt);
+    bool hasOption(unsigned opt) const {
+        JS_ASSERT((opt & JSOPTION_MASK) == opt);
+        return !!(options_ & opt);
     }
 
-    bool hasStrictOption() const { return hasRunOption(JSOPTION_STRICT); }
-    bool hasWErrorOption() const { return hasRunOption(JSOPTION_WERROR); }
-    bool hasAtLineOption() const { return hasRunOption(JSOPTION_ATLINE); }
+    bool hasStrictOption() const { return hasOption(JSOPTION_STRICT); }
+    bool hasWErrorOption() const { return hasOption(JSOPTION_WERROR); }
+    bool hasAtLineOption() const { return hasOption(JSOPTION_ATLINE); }
 
     js::LifoAlloc &tempLifoAlloc() { return runtime->tempLifoAlloc; }
     inline js::LifoAlloc &analysisLifoAlloc();
@@ -1649,9 +1635,7 @@ struct JSContext : js::ContextFriendFields,
     void *onOutOfMemory(void *p, size_t nbytes) {
         return runtime->onOutOfMemory(p, nbytes, this);
     }
-    void updateMallocCounter(size_t nbytes) {
-        runtime->updateMallocCounter(compartment, nbytes);
-    }
+    void updateMallocCounter(size_t nbytes);
     void reportAllocationOverflow() {
         js_ReportAllocationOverflow(this);
     }
@@ -2175,6 +2159,32 @@ class AutoObjectObjectHashMap : public AutoHashMapRooter<RawObject, RawObject>
     explicit AutoObjectObjectHashMap(JSContext *cx
                                      MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : AutoHashMapRooter<RawObject, RawObject>(cx, OBJOBJHASHMAP)
+    {
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+    }
+
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+};
+
+class AutoObjectUnsigned32HashMap : public AutoHashMapRooter<RawObject, uint32_t>
+{
+  public:
+    explicit AutoObjectUnsigned32HashMap(JSContext *cx
+                                         MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : AutoHashMapRooter<RawObject, uint32_t>(cx, OBJU32HASHMAP)
+    {
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+    }
+
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+};
+
+class AutoObjectHashSet : public AutoHashSetRooter<RawObject>
+{
+  public:
+    explicit AutoObjectHashSet(JSContext *cx
+                               MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : AutoHashSetRooter<RawObject>(cx, OBJHASHSET)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }

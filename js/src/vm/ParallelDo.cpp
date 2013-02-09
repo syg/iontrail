@@ -11,20 +11,23 @@
 #include "jsobj.h"
 #include "jsarray.h"
 
+#include "ion/ParallelArrayAnalysis.h"
 #include "vm/String.h"
 #include "vm/GlobalObject.h"
 #include "vm/ThreadPool.h"
 #include "vm/ForkJoin.h"
-#include "vm/StackExtents.h"
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 
+#if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
 #include "ion/Ion.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
 #include "ion/IonCompartment.h"
-#include "ion/ParallelArrayAnalysis.h"
+
+#include "prprf.h"
+#endif
 
 using namespace js;
 using namespace js::parallel;
@@ -34,7 +37,7 @@ using namespace js::ion;
 // Debug spew
 //
 
-#ifdef DEBUG
+#if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
 
 static const char *
 ExecutionStatusToString(ExecutionStatus status)
@@ -139,17 +142,17 @@ class ParallelSpewer
         char buf[BufferSize];
 
         if (ForkJoinSlice *slice = ForkJoinSlice::Current()) {
-            snprintf(buf, BufferSize, "[%sParallel:%u%s] ",
-                     sliceColor(slice->sliceId), slice->sliceId, reset());
+            PR_snprintf(buf, BufferSize, "[%sParallel:%u%s] ",
+                        sliceColor(slice->sliceId), slice->sliceId, reset());
         } else {
-            snprintf(buf, BufferSize, "[Parallel:M] ");
+            PR_snprintf(buf, BufferSize, "[Parallel:M] ");
         }
 
         for (uint32_t i = 0; i < depth; i++)
-            snprintf(buf + strlen(buf), BufferSize, "  ");
+            PR_snprintf(buf + strlen(buf), BufferSize, "  ");
 
-        vsnprintf(buf + strlen(buf), BufferSize, fmt, ap);
-        snprintf(buf + strlen(buf), BufferSize, "\n");
+        PR_vsnprintf(buf + strlen(buf), BufferSize, fmt, ap);
+        PR_snprintf(buf + strlen(buf), BufferSize, "\n");
 
         fprintf(stderr, "%s", buf);
     }
@@ -263,7 +266,7 @@ class ParallelSpewer
             return;
 
         char buf[BufferSize];
-        vsnprintf(buf, BufferSize, fmt, ap);
+        PR_vsnprintf(buf, BufferSize, fmt, ap);
 
         JSScript *script = mir->block()->info().script();
         spew(SpewCompile, "%s%s%s: %s (%s:%u)", cyan(), mir->opName(), reset(), buf,
@@ -354,7 +357,7 @@ parallel::SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
     spewer.spewBailoutIR(bblockId, lirId, lir, mir, script, pc);
 }
 
-#endif // DEBUG
+#endif // DEBUG && JS_THREADSAFE && JS_ION
 
 class AutoEnterWarmup
 {

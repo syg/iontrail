@@ -43,7 +43,7 @@ enum SpewChannel {
     NumSpewChannels
 };
 
-#ifdef DEBUG
+#if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
 
 bool SpewEnabled(SpewChannel channel);
 void Spew(SpewChannel channel, const char *fmt, ...);
@@ -64,13 +64,15 @@ static inline void SpewBeginOp(JSContext *cx, const char *name) { }
 static inline void SpewBailout(uint32_t count) {}
 static inline ExecutionStatus SpewEndOp(ExecutionStatus status) { return status; }
 static inline void SpewBeginCompile(HandleFunction fun) { }
+#ifdef JS_ION
 static inline ion::MethodStatus SpewEndCompile(ion::MethodStatus status) { return status; }
 static inline void SpewMIR(ion::MDefinition *mir, const char *fmt, ...) { }
+#endif
 static inline void SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
                                  const char *lir, const char *mir,
                                  JSScript *script, jsbytecode *pc) { }
 
-#endif // DEBUG
+#endif // DEBUG && JS_THREADSAFE && JS_ION
 
 } // namespace parallel
 } // namespace js

@@ -292,6 +292,42 @@ class MacroAssemblerX86Shared : public Assembler
         movss(src, Operand(dest));
     }
 
+    // Checks whether a double is representable as a 32-bit integer. If so, the
+    // integer is written to the output register. Otherwise, a bailout is taken to
+    // the given snapshot. This function overwrites the scratch float register.
+    void convertDoubleToInt32(FloatRegister src, Register dest, Label *fail,
+                              bool negativeZeroCheck = true)
+    {
+        // Note that we don't specify the destination width for the truncated
+        // conversion to integer. x64 will use the native width (quadword) which
+        // sign-extends the top bits, preserving a little sanity.
+        cvttsd2s(src, dest);
+        cvtsi2sd(dest, ScratchFloatReg);
+        ucomisd(src, ScratchFloatReg);
+        j(Assembler::Parity, fail);
+        j(Assembler::NotEqual, fail);
+
+        // Check for -0
+        if (negativeZeroCheck) {
+            Label notZero;
+            testl(dest, dest);
+            j(Assembler::NonZero, &notZero);
+
+            if (Assembler::HasSSE41()) {
+                ptest(src, src);
+                j(Assembler::NonZero, fail);
+            } else {
+                // bit 0 = sign of low double
+                // bit 1 = sign of high double
+                movmskpd(src, dest);
+                andl(Imm32(1), dest);
+                j(Assembler::NonZero, fail);
+            }
+
+            bind(&notZero);
+        }
+    }
+
     void clampIntToUint8(Register src, Register dest) {
         Label inRange, done;
         branchTest32(Assembler::Zero, src, Imm32(0xffffff00), &inRange);
@@ -315,7 +351,7 @@ class MacroAssemblerX86Shared : public Assembler
     }
 
     bool maybeInlineDouble(uint64_t u, const FloatRegister &dest) {
-        // This implements parts of "13.4 Generating constants" of 
+        // This implements parts of "13.4 Generating constants" of
         // "2. Optimizing subroutines in assembly language" by Agner Fog.
         switch (u) {
           case 0x0000000000000000ULL: // 0.0
@@ -353,6 +389,40 @@ class MacroAssemblerX86Shared : public Assembler
             return false;
         }
         return true;
+    }
+
+    void emitSet(Assembler::Condition cond, const Register &dest,
+                 Assembler::NaNCond ifNaN = Assembler::NaN_Unexpected) {
+        if (GeneralRegisterSet(Registers::SingleByteRegs).has(dest)) {
+            // If the register we're defining is a single byte register,
+            // take advantage of the setCC instruction
+            setCC(cond, dest);
+            movzxbl(dest, dest);
+
+            if (ifNaN != Assembler::NaN_Unexpected) {
+                Label noNaN;
+                j(Assembler::NoParity, &noNaN);
+                if (ifNaN == Assembler::NaN_IsTrue)
+                    movl(Imm32(1), dest);
+                else
+                    xorl(dest, dest);
+                bind(&noNaN);
+            }
+        } else {
+            Label end;
+            Label ifFalse;
+
+            if (ifNaN == Assembler::NaN_IsFalse)
+                j(Assembler::Parity, &ifFalse);
+            movl(Imm32(1), dest);
+            j(cond, &end);
+            if (ifNaN == Assembler::NaN_IsTrue)
+                j(Assembler::Parity, &end);
+            bind(&ifFalse);
+            xorl(dest, dest);
+
+            bind(&end);
+        }
     }
 
     // Emit a JMP that can be toggled to a CMP. See ToggleToJmp(), ToggleToCmp().

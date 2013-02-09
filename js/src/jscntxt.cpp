@@ -318,6 +318,7 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     key.original = fun;
 
     Table::AddPtr p = table.lookupForAdd(key);
+    SkipRoot skipHash(cx, &p); /* Prevent the hash from being poisoned. */
     if (p) {
 #ifdef DEBUG
         if (IsCloneSpewActive(CloneSpewOld)) {
@@ -340,6 +341,14 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 
     // Store a link back to the original for function.caller.
     clone->setExtendedSlot(0, ObjectValue(*fun));
+
+    // Recalculate the hash if script or fun have been moved.
+    if (key.script != script && key.original != fun) {
+        key.script = script;
+        key.original = fun;
+        Table::AddPtr p = table.lookupForAdd(key);
+        JS_ASSERT(!p);
+    }
 
     if (!table.relookupOrAdd(p, key, clone.get()))
         return NULL;
@@ -1211,7 +1220,7 @@ JSContext::JSContext(JSRuntime *rt)
     hasVersionOverride(false),
     throwing(false),
     exception(UndefinedValue()),
-    runOptions(0),
+    options_(0),
     defaultLocale(NULL),
     reportGranularity(JS_DEFAULT_JITREPORT_GRANULARITY),
     localeCallbacks(NULL),
@@ -1390,8 +1399,8 @@ JSRuntime::setGCMaxMallocBytes(size_t value)
      * mean that value.
      */
     gcMaxMallocBytes = (ptrdiff_t(value) >= 0) ? value : size_t(-1) >> 1;
-    for (CompartmentsIter c(this); !c.done(); c.next())
-        c->setGCMaxMallocBytes(value);
+    for (ZonesIter zone(this); !zone.done(); zone.next())
+        zone->setGCMaxMallocBytes(value);
 }
 
 void
@@ -1536,7 +1545,7 @@ void
 JSContext::updateJITEnabled()
 {
 #ifdef JS_METHODJIT
-    methodJitEnabled = (runOptions & JSOPTION_METHODJIT) && !IsJITBrokenHere();
+    methodJitEnabled = (options_ & JSOPTION_METHODJIT) && !IsJITBrokenHere();
 #endif
 }
 
@@ -1557,7 +1566,7 @@ JSContext::mark(JSTracer *trc)
     /* Stack frames and slots are traced by StackSpace::mark. */
 
     /* Mark other roots-by-definition in the JSContext. */
-    if (defaultCompartmentObject_ && !hasRunOption(JSOPTION_UNROOTED_GLOBAL))
+    if (defaultCompartmentObject_ && !hasOption(JSOPTION_UNROOTED_GLOBAL))
         MarkObjectRoot(trc, &defaultCompartmentObject_, "default compartment object");
     if (isExceptionPending())
         MarkValueRoot(trc, &exception, "exception");

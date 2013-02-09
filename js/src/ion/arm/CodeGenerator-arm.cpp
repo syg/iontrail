@@ -103,13 +103,6 @@ CodeGeneratorARM::visitTestIAndBranch(LTestIAndBranch *test)
     return true;
 }
 
-void
-CodeGeneratorARM::emitSet(Assembler::Condition cond, const Register &dest)
-{
-    masm.ma_mov(Imm32(0), dest);
-    masm.ma_mov(Imm32(1), dest, NoSetCond, cond);
-}
-
 bool
 CodeGeneratorARM::visitCompare(LCompare *comp)
 {
@@ -1030,30 +1023,6 @@ CodeGeneratorARM::visitRound(LRound *lir)
     return true;
 }
 
-// Checks whether a double is representable as a 32-bit integer. If so, the
-// integer is written to the output register. Otherwise, a bailout is taken to
-// the given snapshot. This function overwrites the scratch float register.
-void
-CodeGeneratorARM::emitDoubleToInt32(const FloatRegister &src, const Register &dest, Label *fail, bool negativeZeroCheck)
-{
-    // convert the floating point value to an integer, if it did not fit,
-    //     then when we convert it *back* to  a float, it will have a
-    //     different value, which we can test.
-    masm.ma_vcvt_F64_I32(src, ScratchFloatReg);
-    // move the value into the dest register.
-    masm.ma_vxfer(ScratchFloatReg, dest);
-    masm.ma_vcvt_I32_F64(ScratchFloatReg, ScratchFloatReg);
-    masm.ma_vcmp(src, ScratchFloatReg);
-    masm.as_vmrs(pc);
-    masm.ma_b(fail, Assembler::VFP_NotEqualOrUnordered);
-    // If they're equal, test for 0.  It would be nicer to test for -0.0 explicitly, but that seems hard.
-    if (negativeZeroCheck) {
-        masm.ma_cmp(dest, Imm32(0));
-        masm.ma_b(fail, Assembler::Equal);
-        // guard for != 0.
-    }
-}
-
 void
 CodeGeneratorARM::emitRoundDouble(const FloatRegister &src, const Register &dest, Label *fail)
 {
@@ -1260,7 +1229,7 @@ CodeGeneratorARM::visitCompareD(LCompareD *comp)
 
     Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->mir()->jsop());
     masm.compareDouble(lhs, rhs);
-    emitSet(Assembler::ConditionFromDoubleCondition(cond), ToRegister(comp->output()));
+    masm.emitSet(Assembler::ConditionFromDoubleCondition(cond), ToRegister(comp->output()));
     return true;
 }
 
@@ -1294,7 +1263,7 @@ CodeGeneratorARM::visitCompareB(LCompareB *lir)
             masm.cmp32(lhs.payloadReg(), Imm32(rhs->toConstant()->toBoolean()));
         else
             masm.cmp32(lhs.payloadReg(), ToRegister(rhs));
-        emitSet(JSOpToCondition(mir->jsop()), output);
+        masm.emitSet(JSOpToCondition(mir->jsop()), output);
         masm.jump(&done);
     }
 
@@ -1346,7 +1315,7 @@ CodeGeneratorARM::visitCompareV(LCompareV *lir)
     masm.j(Assembler::NotEqual, &notEqual);
     {
         masm.cmp32(lhs.payloadReg(), rhs.payloadReg());
-        emitSet(cond, output);
+        masm.emitSet(cond, output);
         masm.jump(&done);
     }
     masm.bind(&notEqual);
@@ -1387,7 +1356,7 @@ CodeGeneratorARM::visitNotI(LNotI *ins)
 {
     // It is hard to optimize !x, so just do it the basic way for now.
     masm.ma_cmp(ToRegister(ins->input()), Imm32(0));
-    emitSet(Assembler::Equal, ToRegister(ins->output()));
+    masm.emitSet(Assembler::Equal, ToRegister(ins->output()));
     return true;
 }
 

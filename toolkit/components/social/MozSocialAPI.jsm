@@ -8,6 +8,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "SocialService", "resource://gre/modules/SocialService.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils", "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 this.EXPORTED_SYMBOLS = ["MozSocialAPI", "openChatWindow"];
 
@@ -40,7 +41,7 @@ this.MozSocialAPI = {
 function injectController(doc, topic, data) {
   try {
     let window = doc.defaultView;
-    if (!window)
+    if (!window || PrivateBrowsingUtils.isWindowPrivate(window))
       return;
 
     // Do not attempt to load the API into about: error pages
@@ -229,16 +230,17 @@ function getChromeWindow(contentWin) {
 
 function isWindowGoodForChats(win) {
   return win.SocialChatBar
-         && win.SocialChatBar.isAvailable;
+         && win.SocialChatBar.isAvailable
+         && !PrivateBrowsingUtils.isWindowPrivate(win);
 }
 
 function findChromeWindowForChats(preferredWindow) {
   if (preferredWindow && isWindowGoodForChats(preferredWindow))
     return preferredWindow;
-  // no good - so let's go hunting.  We are now looking for a navigator:browser
-  // window that is suitable and already has chats open, or failing that,
-  // any suitable navigator:browser window.
-  let first, best, enumerator;
+  // no good - we just use the "most recent" browser window which can host
+  // chats (we used to try and "group" all chats in the same browser window,
+  // but that didn't work out so well - see bug 835111
+  let topMost, enumerator;
   // *sigh* - getZOrderDOMWindowEnumerator is broken everywhere other than
   // Windows.  We use BROKEN_WM_Z_ORDER as that is what the c++ code uses
   // and a few bugs recommend searching mxr for this symbol to identify the
@@ -254,13 +256,10 @@ function findChromeWindowForChats(preferredWindow) {
   }
   while (enumerator.hasMoreElements()) {
     let win = enumerator.getNext();
-    if (win && isWindowGoodForChats(win)) {
-      first = win;
-      if (win.SocialChatBar.hasChats)
-        best = win;
-    }
+    if (win && isWindowGoodForChats(win))
+      topMost = win;
   }
-  return best || first;
+  return topMost;
 }
 
 this.openChatWindow =

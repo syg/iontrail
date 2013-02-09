@@ -70,7 +70,7 @@ CodeGenerator::visitValueToInt32(LValueToInt32 *lir)
         break;
       default:
         JS_ASSERT(lir->mode() == LValueToInt32::NORMAL);
-        emitDoubleToInt32(temp, output, &fails, lir->mir()->canBeNegativeZero());
+        masm.convertDoubleToInt32(temp, output, &fails, lir->mir()->canBeNegativeZero());
         break;
     }
     masm.jump(&done);
@@ -164,7 +164,7 @@ CodeGenerator::visitDoubleToInt32(LDoubleToInt32 *lir)
     Label fail;
     FloatRegister input = ToFloatRegister(lir->input());
     Register output = ToRegister(lir->output());
-    emitDoubleToInt32(input, output, &fail, lir->mir()->canBeNegativeZero());
+    masm.convertDoubleToInt32(input, output, &fail, lir->mir()->canBeNegativeZero());
     if (!bailoutFrom(&fail, lir->snapshot()))
         return false;
     return true;
@@ -582,7 +582,7 @@ CodeGenerator::visitTableSwitch(LTableSwitch *ins)
 
         // The input is a double, so try and convert it to an integer.
         // If it does not fit in an integer, take the default case.
-        emitDoubleToInt32(ToFloatRegister(ins->index()), ToRegister(temp), defaultcase, false);
+        masm.convertDoubleToInt32(ToFloatRegister(ins->index()), ToRegister(temp), defaultcase, false);
     } else {
         temp = ins->index();
     }
@@ -606,7 +606,7 @@ CodeGenerator::visitTableSwitchV(LTableSwitchV *ins)
     {
         FloatRegister floatIndex = ToFloatRegister(ins->tempFloat());
         masm.unboxDouble(value, floatIndex);
-        emitDoubleToInt32(floatIndex, index, defaultcase, false);
+        masm.convertDoubleToInt32(floatIndex, index, defaultcase, false);
         masm.jump(&isInt);
     }
 
@@ -2566,9 +2566,15 @@ CodeGenerator::visitCreateThis(LCreateThis *lir)
     return callVM(CreateThisInfo, lir);
 }
 
+static JSObject *
+CreateThisForFunctionWithProtoWrapper(JSContext *cx, js::HandleObject callee, JSObject *proto)
+{
+    return CreateThisForFunctionWithProto(cx, callee, proto);
+}
+
 typedef JSObject *(*CreateThisWithProtoFn)(JSContext *cx, HandleObject callee, JSObject *proto);
 static const VMFunction CreateThisWithProtoInfo =
-FunctionInfo<CreateThisWithProtoFn>(js_CreateThisForFunctionWithProto);
+FunctionInfo<CreateThisWithProtoFn>(CreateThisForFunctionWithProtoWrapper);
 
 bool
 CodeGenerator::visitCreateThisWithProto(LCreateThisWithProto *lir)
@@ -2935,33 +2941,7 @@ CodeGenerator::emitCompareS(LInstruction *lir, JSOp op, Register left, Register 
     if (!ool)
         return false;
 
-    Label notPointerEqual;
-    // Fast path for identical strings
-    masm.branchPtr(Assembler::NotEqual, left, right, &notPointerEqual);
-    masm.move32(Imm32(op == JSOP_EQ || op == JSOP_STRICTEQ), output);
-    masm.jump(ool->rejoin());
-
-    masm.bind(&notPointerEqual);
-    masm.loadPtr(Address(left, JSString::offsetOfLengthAndFlags()), output);
-    masm.loadPtr(Address(right, JSString::offsetOfLengthAndFlags()), temp);
-
-    Label notAtom;
-    // We can optimize the equality operation to a pointer compare for
-    // two atoms.
-    Imm32 atomBit(JSString::ATOM_BIT);
-    masm.branchTest32(Assembler::Zero, output, atomBit, &notAtom);
-    masm.branchTest32(Assembler::Zero, temp, atomBit, &notAtom);
-
-    masm.cmpPtr(left, right);
-    emitSet(JSOpToCondition(op), output);
-    masm.jump(ool->rejoin());
-
-    masm.bind(&notAtom);
-    // Strings of different length can never be equal.
-    masm.rshiftPtr(Imm32(JSString::LENGTH_SHIFT), output);
-    masm.rshiftPtr(Imm32(JSString::LENGTH_SHIFT), temp);
-    masm.branchPtr(Assembler::Equal, output, temp, ool->entry());
-    masm.move32(Imm32(op == JSOP_NE || op == JSOP_STRICTNE), output);
+    masm.compareStrings(op, left, right, output, temp, ool->entry());
 
     masm.bind(ool->rejoin());
     return true;
@@ -3125,7 +3105,7 @@ CodeGenerator::visitIsNullOrLikeUndefined(LIsNullOrLikeUndefined *lir)
     else
         cond = masm.testUndefined(cond, value);
 
-    emitSet(cond, output);
+    masm.emitSet(cond, output);
     return true;
 }
 
@@ -4165,7 +4145,7 @@ CodeGenerator::visitIteratorMore(LIteratorMore *lir)
     // Set output to true if props_cursor < props_end.
     masm.loadPtr(Address(output, offsetof(NativeIterator, props_end)), temp);
     masm.cmpPtr(Address(output, offsetof(NativeIterator, props_cursor)), temp);
-    emitSet(Assembler::LessThan, output);
+    masm.emitSet(Assembler::LessThan, output);
 
     masm.bind(ool->rejoin());
     return true;

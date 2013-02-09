@@ -5,8 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_par_functions_h__
-#define jsion_par_functions_h__
+#ifndef jsion_parallel_functions_h__
+#define jsion_parallel_functions_h__
 
 #include "vm/ThreadPool.h"
 #include "vm/ForkJoin.h"
@@ -61,7 +61,7 @@ void ParCallToUncompiledScript(JSFunction *func);
 bool ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
                          MutableHandleValue vp);
 
-}
-}
+} // namespace ion
+} // namespace js
 
-#endif
+#endif // jsion_parallel_functions_h__

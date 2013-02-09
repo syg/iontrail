@@ -124,9 +124,6 @@ ion::InitializeIon()
         if (status != PR_SUCCESS)
             return false;
 
-        if (!ForkJoinSlice::Initialize())
-            return false;
-
         IonTLSInitialized = true;
     }
 #endif
@@ -333,7 +330,7 @@ IonCode::New(JSContext *cx, uint8_t *code, uint32_t bufferSize, JSC::ExecutableP
 {
     AssertCanGC();
 
-    IonCode *codeObj = gc::NewGCThing<IonCode, CanGC>(cx, gc::FINALIZE_IONCODE, sizeof(IonCode));
+    IonCode *codeObj = gc::NewGCThing<IonCode, CanGC>(cx, gc::FINALIZE_IONCODE, sizeof(IonCode), gc::DefaultHeap);
     if (!codeObj) {
         pool->release();
         return NULL;
@@ -1258,29 +1255,6 @@ SequentialCompileContext::compile(IonBuilder *builder, MIRGraph *graph,
     return success ? AbortReason_NoAbort : AbortReason_Disable;
 }
 
-MethodStatus
-TestIonCompile(JSContext *cx, HandleScript script, HandleFunction fun, jsbytecode *osrPc, bool constructing)
-{
-    SequentialCompileContext compileContext;
-
-    AbortReason reason = IonCompile(cx, script, fun, osrPc, constructing, compileContext);
-
-    if (reason == AbortReason_Alloc)
-        return Method_Skipped;
-
-    if (reason == AbortReason_Inlining)
-        return Method_Skipped;
-
-    if (reason == AbortReason_Disable) {
-        if (!cx->isExceptionPending())
-            ForbidCompilation(cx, script);
-        return Method_CantCompile;
-    }
-
-    JS_ASSERT(reason == AbortReason_NoAbort);
-    return Method_Compiled;
-}
-
 static bool
 CheckFrame(AbstractFramePtr fp)
 {
@@ -1504,7 +1478,7 @@ ion::CanEnter(JSContext *cx, JSScript *script, AbstractFramePtr fp,
     if (isConstructing && fp.thisValue().isPrimitive()) {
         RootedScript scriptRoot(cx, script);
         RootedObject callee(cx, &fp.callee());
-        RootedObject obj(cx, js_CreateThisForFunction(cx, callee, newType));
+        RootedObject obj(cx, CreateThisForFunction(cx, callee, newType));
         if (!obj)
             return Method_Skipped;
         fp.thisValue().setObject(*obj);

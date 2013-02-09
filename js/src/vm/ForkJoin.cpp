@@ -180,6 +180,7 @@ class js::AutoRendezvous
 };
 
 unsigned ForkJoinSlice::ThreadPrivateIndex;
+bool ForkJoinSlice::TLSInitialized;
 
 class js::AutoSetForkJoinSlice
 {
@@ -708,11 +709,15 @@ ForkJoinSlice::check()
 }
 
 bool
-ForkJoinSlice::Initialize()
+ForkJoinSlice::InitializeTLS()
 {
 #ifdef JS_THREADSAFE
-    PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
-    return status == PR_SUCCESS;
+    if (!TLSInitialized) {
+        TLSInitialized = true;
+        PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
+        return status == PR_SUCCESS;
+    }
+    return true;
 #else
     return true;
 #endif
@@ -850,7 +855,7 @@ js::ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
 {
 #ifdef JS_THREADSAFE
     // Recursive use of the ThreadPool is not supported.
-    JS_ASSERT(!ForkJoinSlice::InParallelSection());
+    JS_ASSERT(!InParallelSection());
 
     AutoEnterParallelSection enter(cx);
 

@@ -49,6 +49,8 @@ class MacroAssemblerARM : public Assembler
     void convertUInt32ToDouble(const Register &src, const FloatRegister &dest);
     void convertDoubleToFloat(const FloatRegister &src, const FloatRegister &dest);
     void branchTruncateDouble(const FloatRegister &src, const Register &dest, Label *fail);
+    void convertDoubleToInt32(const FloatRegister &src, const Register &dest, Label *fail,
+                              bool negativeZeroCheck = true);
 
     void negateDouble(FloatRegister reg);
 
@@ -1061,6 +1063,13 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     }
     void lshiftPtr(Imm32 imm, Register dest) {
         ma_lsl(imm, dest, dest);
+    }
+
+    void
+    emitSet(Assembler::Condition cond, const Register &dest)
+    {
+        ma_mov(Imm32(0), dest);
+        ma_mov(Imm32(1), dest, NoSetCond, cond);
     }
 
     // Setup a call to C/C++ code, given the number of general arguments it
