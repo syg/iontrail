@@ -909,8 +909,8 @@ IonBuilder::inlineUnsafeSetElement(CallInfo &callInfo)
         types::StackTypeSet *id = getInlineArgTypeSet(callInfo, idxi);
 
         int arrayType;
-        if (!oracle->elementAccessIsDenseNative(obj, id) &&
-            !oracle->elementAccessIsTypedArray(obj, id, &arrayType))
+        if (!oracle->elementWriteIsDenseNative(obj, id) &&
+            !oracle->elementWriteIsTypedArray(obj, id, &arrayType))
         {
             return InliningStatus_NotInlined;
         }
@@ -931,14 +931,14 @@ IonBuilder::inlineUnsafeSetElement(CallInfo &callInfo)
         types::StackTypeSet *obj = getInlineArgTypeSet(callInfo, arri);
         types::StackTypeSet *id = getInlineArgTypeSet(callInfo, idxi);
 
-        if (oracle->elementAccessIsDenseNative(obj, id)) {
+        if (oracle->elementWriteIsDenseNative(obj, id)) {
             if (!inlineUnsafeSetDenseArrayElement(callInfo, base))
                 return InliningStatus_Error;
             continue;
         }
 
         int arrayType;
-        if (oracle->elementAccessIsTypedArray(obj, id, &arrayType)) {
+        if (oracle->elementWriteIsTypedArray(obj, id, &arrayType)) {
             if (!inlineUnsafeSetTypedArrayElement(callInfo, base, arrayType))
                 return InliningStatus_Error;
             continue;

@@ -128,12 +128,6 @@ class TypeOracle
     virtual bool elementWriteIsPacked(UnrootedScript script, jsbytecode *pc) {
         return false;
     }
-    virtual bool elementAccessIsDenseNative(types::StackTypeSet *obj, types::StackTypeSet *id) {
-        return false;
-    }
-    virtual bool elementAccessIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType) {
-        return false;
-    }
     virtual bool arrayResultShouldHaveDoubleConversion(UnrootedScript script, jsbytecode *pc) {
         return false;
     }
@@ -264,9 +258,9 @@ class TypeInferenceOracle : public TypeOracle
     bool elementReadIsPacked(UnrootedScript script, jsbytecode *pc);
     void elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult);
     bool elementWriteIsDenseNative(HandleScript script, jsbytecode *pc);
-    bool elementAccessIsDenseNative(types::StackTypeSet *obj, types::StackTypeSet *id);
+    bool elementWriteIsDenseNative(types::StackTypeSet *obj, types::StackTypeSet *id);
     bool elementWriteIsTypedArray(RawScript script, jsbytecode *pc, int *arrayType);
-    bool elementAccessIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType);
+    bool elementWriteIsTypedArray(types::StackTypeSet *obj, types::StackTypeSet *id, int *arrayType);
     bool elementWriteNeedsDoubleConversion(UnrootedScript script, jsbytecode *pc);
     bool elementWriteHasExtraIndexedProperty(UnrootedScript script, jsbytecode *pc);
     bool elementWriteIsPacked(UnrootedScript script, jsbytecode *pc);
