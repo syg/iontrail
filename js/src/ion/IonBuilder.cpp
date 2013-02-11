@@ -3114,6 +3114,7 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
     uint32_t checkUses = js_IonOptions.usesBeforeInlining;
     uint32_t maxInlineDepth = js_IonOptions.maxInlineDepth;
     bool allFunctionsAreSmall = true;
+    bool allFunctionsAreHinted = true;
     RootedFunction target(cx);
     RootedScript targetScript(cx);
     for (size_t i = 0; i < targets.length(); i++) {
@@ -3131,6 +3132,12 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
         if (targetScript->length > js_IonOptions.smallFunctionMaxBytecodeLength)
             allFunctionsAreSmall = false;
 
+        // Skip heuristics if we have an explicit hint to inline.
+        if (targetScript->shouldInline)
+            continue;
+
+        allFunctionsAreHinted = false;
+
         if (targetScript->length > 1 && // Always inline the empty script.
             calleeUses * js_IonOptions.inlineUseCountRatio < callerUses)
         {
@@ -3138,17 +3145,21 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
             return false;
         }
     }
-    if (allFunctionsAreSmall) {
-        checkUses = js_IonOptions.smallFunctionUsesBeforeInlining;
-        maxInlineDepth = js_IonOptions.smallFunctionMaxInlineDepth;
-    }
 
-    if (inliningDepth >= maxInlineDepth)
-        return false;
+    // Don't check heruistics if explicitly hinted.
+    if (!allFunctionsAreHinted) {
+        if (allFunctionsAreSmall) {
+            checkUses = js_IonOptions.smallFunctionUsesBeforeInlining;
+            maxInlineDepth = js_IonOptions.smallFunctionMaxInlineDepth;
+        }
 
-    if (script()->getUseCount() < checkUses) {
-        IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
-        return false;
+        if (inliningDepth >= maxInlineDepth)
+            return false;
+
+        if (script()->getUseCount() < checkUses) {
+            IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
+            return false;
+        }
     }
 
     RootedScript scriptRoot(cx, script());

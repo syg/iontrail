@@ -1109,10 +1109,10 @@ SetScriptHints(ParallelArrayScan,       { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayScatter,    { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
 
-// Mark the common getters as clone-at-callsite.
-SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true });
-SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true });
-SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true });
+// Mark the common getters as clone-at-callsite and inline.
+SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true, inline: true });
+SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true, inline: true });
+SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true, inline: true });
 
 // Unit Test Functions
 //
