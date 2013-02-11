@@ -9,7 +9,7 @@
 */
 
 /*global ToObject: false, ToInteger: false, IsCallable: false, ThrowError: false,
-         AssertionFailed: false, SetFunctionFlags: false, DecompileArg: false,
+         AssertionFailed: false, MakeConstructible: false, DecompileArg: false,
          RuntimeDefaultLocale: false,
          callFunction: false,
          IS_UNDEFINED: false, TO_UINT32: false,
@@ -66,7 +66,7 @@ function List() {
         List.prototype = proto;
     }
 }
-SetFunctionFlags(List, { constructible: true });
+MakeConstructible(List);
 
 
 /********** Record specification type **********/
@@ -76,7 +76,7 @@ SetFunctionFlags(List, { constructible: true });
 function Record() {
     return std_Object_create(null);
 }
-SetFunctionFlags(Record, { constructible: true });
+MakeConstructible(Record);
 
 
 /********** Abstract operations defined in ECMAScript Language Specification **********/

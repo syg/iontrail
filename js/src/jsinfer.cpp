@@ -1421,7 +1421,7 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
      * As callsite cloning is a hint, we must propagate to both the original
      * and the clone.
      */
-    if (callee->isCloneAtCallsite()) {
+    if (callee->nonLazyScript()->shouldCloneAtCallsite) {
         RootedFunction clone(cx, CloneCallee(cx, callee, script, pc));
         if (!clone)
             return;
@@ -1532,7 +1532,7 @@ TypeConstraintPropagateThis::newType(JSContext *cx, TypeSet *source, Type type)
      * As callsite cloning is a hint, we must propagate to both the original
      * and the clone.
      */
-    if (callee->isCloneAtCallsite()) {
+    if (callee->nonLazyScript()->shouldCloneAtCallsite) {
         RootedFunction clone(cx, CloneCallee(cx, callee, script, callpc));
         if (!clone)
             return;

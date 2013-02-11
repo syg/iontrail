@@ -1072,7 +1072,7 @@ IonBuilder::inlineNewParallelArray(CallInfo &callInfo)
     RootedFunction target(cx);
     if (targetObj && targetObj->isFunction())
         target = targetObj->toFunction();
-    if (target && target->isCloneAtCallsite()) {
+    if (target && target->isInterpreted() && target->nonLazyScript()->shouldCloneAtCallsite) {
         RootedScript scriptRoot(cx, script());
         target = CloneFunctionAtCallsite(cx, target, scriptRoot, pc);
         if (!target)
@@ -1098,7 +1098,7 @@ IonBuilder::inlineParallelArray(CallInfo &callInfo)
     if (!target)
         return InliningStatus_Error;
 
-    JS_ASSERT(target->isCloneAtCallsite());
+    JS_ASSERT(target->nonLazyScript()->shouldCloneAtCallsite);
     RootedScript script(cx, script_);
     target = CloneFunctionAtCallsite(cx, target, script, pc);
     if (!target)

@@ -1097,22 +1097,22 @@ function CheckParallel(mode) {
 }
 
 // Mark the main operations as clone-at-callsite for better precision.
-SetFunctionFlags(ParallelArrayConstruct0, { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayConstruct1, { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayConstruct2, { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayConstruct3, { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayView,       { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayBuild,      { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayMap,        { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayReduce,     { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayScan,       { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayScatter,    { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayFilter,     { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayConstruct0, { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayConstruct1, { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayConstruct2, { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayConstruct3, { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayView,       { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayBuild,      { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayMap,        { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayReduce,     { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayScan,       { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayScatter,    { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
 
 // Mark the common getters as clone-at-callsite.
-SetFunctionFlags(ParallelArrayGet1,       { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayGet2,       { cloneAtCallsite: true });
-SetFunctionFlags(ParallelArrayGet3,       { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true });
 
 // Unit Test Functions
 //

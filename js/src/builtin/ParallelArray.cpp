@@ -145,7 +145,7 @@ ParallelArrayObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, 
         jsbytecode *pc;
         RootedScript script(cx, cx->stack.currentScript(&pc));
         if (script) {
-            if (ctor->isCloneAtCallsite()) {
+            if (ctor->nonLazyScript()->shouldCloneAtCallsite) {
                 ctor.set(CloneFunctionAtCallsite(cx, ctor, script, pc));
                 if (!ctor)
                     return false;

@@ -161,7 +161,18 @@ intrinsic_DecompileArg(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static JSBool
-intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() >= 1);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().isFunction());
+    args[0].toObject().toFunction()->setIsSelfHostedConstructor();
+    return true;
+}
+
+static JSBool
+intrinsic_SetScriptHints(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args.length() >= 2);
@@ -169,6 +180,7 @@ intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
     JS_ASSERT(args[1].isObject());
 
     RootedFunction fun(cx, args[0].toObject().toFunction());
+    RootedScript funScript(cx, fun->nonLazyScript());
     RootedObject flags(cx, &args[1].toObject());
 
     RootedId id(cx);
@@ -178,13 +190,7 @@ intrinsic_SetFunctionFlags(JSContext *cx, unsigned argc, Value *vp)
     if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
         return false;
     if (ToBoolean(propv))
-        fun->setIsCloneAtCallsite();
-
-    id = AtomToId(Atomize(cx, "constructible", strlen("constructible")));
-    if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
-        return false;
-    if (ToBoolean(propv))
-        fun->setIsSelfHostedConstructor();
+        funScript->shouldCloneAtCallsite = true;
 
     return true;
 }
@@ -430,8 +436,9 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IsCallable",           intrinsic_IsCallable,           1,0),
     JS_FN("ThrowError",           intrinsic_ThrowError,           4,0),
     JS_FN("AssertionFailed",      intrinsic_AssertionFailed,      1,0),
+    JS_FN("SetScriptHints",       intrinsic_SetScriptHints,       2,0),
+    JS_FN("MakeConstructible",    intrinsic_MakeConstructible,    1,0),
     JS_FN("DecompileArg",         intrinsic_DecompileArg,         2,0),
-    JS_FN("SetFunctionFlags",     intrinsic_SetFunctionFlags,     2,0),
     JS_FN("RuntimeDefaultLocale", intrinsic_RuntimeDefaultLocale, 0,0),
 
     JS_FN("ParallelDo",           intrinsic_ParallelDo,           2,0),
