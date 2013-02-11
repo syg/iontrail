@@ -381,15 +381,13 @@ class ParallelIonInvoke
   public:
     Value *args;
 
-    ParallelIonInvoke(JSContext *cx, HandleObject fun, uint32_t argc)
+    ParallelIonInvoke(JSContext *cx, HandleFunction callee, uint32_t argc)
       : argc_(argc),
         args(argv_ + 2)
     {
         JS_ASSERT(argc <= maxArgc + 2);
-        JS_ASSERT(fun->isFunction());
 
         // Set 'callee' and 'this'.
-        RootedFunction callee(cx, fun->toFunction());
         argv_[0] = ObjectValue(*callee);
         argv_[1] = UndefinedValue();
 
@@ -522,7 +520,15 @@ class ParallelDo : public ForkJoinOp
     }
 
     bool invalidateBailedOutScripts() {
-        IonScript *ion = fun_->toFunction()->nonLazyScript()->parallelIonScript();
+        RootedScript script(cx_, fun_->toFunction()->nonLazyScript());
+
+        // Sometimes the script is collected or invalidated before we
+        // get here, for example when a full GC runs at an
+        // inconvenient time.
+        if (!script->hasParallelIonScript())
+            return true;
+
+        IonScript *ion = script->parallelIonScript();
         JS_ASSERT(pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
         Vector<types::RecompileInfo> invalid(cx_);
         for (uint32_t i = 0; i < pendingInvalidations.length(); i++) {
@@ -579,7 +585,18 @@ class ParallelDo : public ForkJoinOp
 
         js::PerThreadData *pt = slice.perThreadData;
         RootedObject fun(pt, fun_);
-        ParallelIonInvoke<3> fii(cx_, fun, 3);
+        JS_ASSERT(fun->isFunction());
+        RootedFunction callee(cx_, fun->toFunction());
+        if (!callee->nonLazyScript()->hasParallelIonScript()) {
+            // Sometimes, particularly with GCZeal, the parallel ion
+            // script can be compiled between starting the parallel op
+            // and reaching this point.  In that case, we just fail
+            // and fallback.
+            Spew(SpewOps, "Down (Script no longer present)");
+            return false;
+        }
+
+        ParallelIonInvoke<3> fii(cx_, callee, 3);
 
         fii.args[0] = Int32Value(slice.sliceId);
         fii.args[1] = Int32Value(slice.numSlices);
