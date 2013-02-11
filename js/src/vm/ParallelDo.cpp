@@ -522,11 +522,12 @@ class ParallelDo : public ForkJoinOp
     bool invalidateBailedOutScripts() {
         RootedScript script(cx_, fun_->toFunction()->nonLazyScript());
 
-        // Sometimes the script is collected or invalidated before we
-        // get here, for example when a full GC runs at an
-        // inconvenient time.
-        if (!script->hasParallelIonScript())
+        // Sometimes the script is collected or invalidated already,
+        // for example when a full GC runs at an inconvenient time.
+        if (!script->hasParallelIonScript()) {
+            JS_ASSERT(hasNoPendingInvalidations());
             return true;
+        }
 
         IonScript *ion = script->parallelIonScript();
         JS_ASSERT(pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
@@ -589,8 +590,8 @@ class ParallelDo : public ForkJoinOp
         RootedFunction callee(cx_, fun->toFunction());
         if (!callee->nonLazyScript()->hasParallelIonScript()) {
             // Sometimes, particularly with GCZeal, the parallel ion
-            // script can be compiled between starting the parallel op
-            // and reaching this point.  In that case, we just fail
+            // script can be collected between starting the parallel
+            // op and reaching this point.  In that case, we just fail
             // and fallback.
             Spew(SpewOps, "Down (Script no longer present)");
             return false;
@@ -621,6 +622,14 @@ class ParallelDo : public ForkJoinOp
                 return true;
         }
         return false;
+    }
+
+    inline bool hasNoPendingInvalidations() {
+        for (uint32_t i = 0; i < pendingInvalidations.length(); i++) {
+            if (pendingInvalidations[i] != NULL)
+                return false;
+        }
+        return true;
     }
 };
 
