@@ -1246,7 +1246,7 @@ CodeGenerator::emitParCallToUncompiledScript(Register calleeReg)
 bool
 CodeGenerator::visitCallKnown(LCallKnown *call)
 {
-    JSContext *cx      = GetIonContext()->cx;
+    JSContext *cx = GetIonContext()->cx;
     Register calleereg = ToRegister(call->getFunction());
     Register objreg    = ToRegister(call->getTempObject());
     uint32_t unusedStack = StackOffsetOfPassedArg(call->argslot());
@@ -1254,7 +1254,7 @@ CodeGenerator::visitCallKnown(LCallKnown *call)
     ExecutionMode executionMode = gen->info().executionMode();
     Label end, uncompiled;
 
-     // Native single targets are handled by LCallNative.
+    // Native single targets are handled by LCallNative.
     JS_ASSERT(!target->isNative());
     // Missing arguments must have been explicitly appended by the IonBuilder.
     JS_ASSERT(target->nargs <= call->numStackArgs());

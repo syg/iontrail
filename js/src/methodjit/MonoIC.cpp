@@ -599,7 +599,7 @@ class CallCompiler : public BaseCompiler
 
         size_t argc = ic.frameSize.staticArgc();
 
-        /* Load fun->u.i.script->ions[js::ion::COMPILE_MODE_SEQ] */
+        /* Load fun->u.i.script->ion */
         RegisterID ionScript = regs.takeAnyReg().reg();
         Address scriptAddr(funObjReg, JSFunction::offsetOfNativeOrScript());
         masm.loadPtr(scriptAddr, ionScript);

@@ -832,10 +832,8 @@ stubs::TriggerIonCompile(VMFrame &f)
     ExpandInlineFrames(f.cx->compartment);
     Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), script);
 
-    if (ion::IsEnabled(f.cx) &&
-        f.jit()->nchunks == 1 &&
-        script->canIonCompile() &&
-        !script->hasIonScript())
+    if (ion::IsEnabled(f.cx) && f.jit()->nchunks == 1 &&
+        script->canIonCompile() && !script->hasIonScript())
     {
         // After returning to the interpreter, IonMonkey will try to compile
         // this script. Don't destroy the JITChunk immediately so that Ion

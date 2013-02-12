@@ -1662,10 +1662,7 @@ ion::CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, uint32_t numAct
     JS_ASSERT(ion::IsEnabled(cx));
 
     // Skip if the code is expected to result in a bailout.
-    if (!script->hasIonScript())
-        return Method_Skipped;
-
-    if (script->ion->bailoutExpected())
+    if (!script->hasIonScript() || script->ion->bailoutExpected())
         return Method_Skipped;
 
     // Don't handle arguments underflow, to make this work we would have to pad
@@ -1948,9 +1945,10 @@ InvalidateActivation(FreeOp *fop, uint8_t *ionTop, bool invalidateAll)
         if (!script->hasIonScript())
             continue;
 
-        IonScript *ionScript = script->ion;
-        if (!invalidateAll && !ionScript->invalidated())
+        if (!invalidateAll && !script->ion->invalidated())
             continue;
+
+        IonScript *ionScript = script->ion;
 
         // Purge ICs before we mark this script as invalidated. This will
         // prevent lastJump_ from appearing to be a bogus pointer, just

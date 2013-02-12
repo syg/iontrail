@@ -407,7 +407,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     if (f.explicitArgs) {
         argsBase = r10;
         regs.take(argsBase);
-        masm.lea(Operand(rsp, IonExitFrameLayout::SizeWithFooter()), argsBase);
+        masm.lea(Operand(rsp,IonExitFrameLayout::SizeWithFooter()), argsBase);
     }
 
     // Reserve space for the outparameter.

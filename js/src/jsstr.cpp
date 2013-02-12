@@ -39,8 +39,6 @@
 #include "jsprobes.h"
 #include "jsstr.h"
 #include "jsversion.h"
-#include "vm/ThreadPool.h"
-#include "vm/ForkJoin.h"
 
 #include "builtin/RegExp.h"
 #include "js/HashTable.h"
@@ -1919,8 +1917,7 @@ struct ReplaceData
       : str(cx), g(cx), lambda(cx), elembase(cx), repstr(cx),
         dollarRoot(cx, &dollar), dollarEndRoot(cx, &dollarEnd),
         fig(cx, NullValue()), sb(cx)
-    {
-    }
+    {}
 
     RootedString       str;            /* 'this' parameter object as a string */
     StringRegExpGuard  g;              /* regexp parameter object and private data */
