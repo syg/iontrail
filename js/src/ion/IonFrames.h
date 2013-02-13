@@ -263,6 +263,8 @@ struct ResumeFromException
 void HandleException(ResumeFromException *rfe);
 void HandleParException(ResumeFromException *rfe);
 
+void EnsureExitFrame(IonCommonFrameLayout *frame);
+
 void MarkIonActivations(JSRuntime *rt, JSTracer *trc);
 void MarkIonCompilerRoots(JSTracer *trc);
 
