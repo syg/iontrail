@@ -12,6 +12,13 @@ using namespace js;
 using namespace ion;
 
 bool
+UnreachableCodeElimination::everythingWasReachable()
+{
+    JS_ASSERT(marked_ > 0 && marked_ <= initialNumBlocks_);
+    return marked_ == initialNumBlocks_;
+}
+
+bool
 UnreachableCodeElimination::analyze()
 {
     // The goal of this routine is to eliminate code that is

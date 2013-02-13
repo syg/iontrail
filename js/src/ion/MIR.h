@@ -363,6 +363,9 @@ class MDefinition : public MNode
     ValueNumberData *valueNumberData() {
         return valueNumber_;
     }
+    void clearValueNumberData() {
+        valueNumber_ = NULL;
+    }
     void setValueNumberData(ValueNumberData *vn) {
         JS_ASSERT(valueNumber_ == NULL);
         valueNumber_ = vn;

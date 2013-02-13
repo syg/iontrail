@@ -886,10 +886,34 @@ OptimizeMIR(MIRGenerator *mir)
             return false;
         IonSpewPass("UCE");
         AssertExtendedGraphCoherency(graph);
-    }
 
-    if (mir->shouldCancel("UCE"))
-        return false;
+        if (mir->shouldCancel("UCE"))
+            return false;
+
+        // It's important for optimizations to re-run GVN (and in turn alias
+        // analysis) after UCE if we eliminated branches.
+        if (!uce.everythingWasReachable() && (js_IonOptions.licm || js_IonOptions.gvn)) {
+            AliasAnalysis alias(mir, graph);
+            if (!alias.analyze())
+                return false;
+            IonSpewPass("Alias analysis (after UCE)");
+            AssertExtendedGraphCoherency(graph);
+
+            if (mir->shouldCancel("Alias analysis (after UCE)"))
+                return false;
+
+            if (js_IonOptions.gvn) {
+                ValueNumberer gvn(mir, graph, js_IonOptions.gvnIsOptimistic);
+                if (!gvn.clear() || !gvn.analyze())
+                    return false;
+                IonSpewPass("GVN (after UCE)");
+                AssertExtendedGraphCoherency(graph);
+
+                if (mir->shouldCancel("GVN (after UCE)"))
+                    return false;
+            }
+        }
+    }
 
     if (js_IonOptions.licm) {
         LICM licm(mir, graph);

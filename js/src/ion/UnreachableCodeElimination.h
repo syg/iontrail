@@ -21,6 +21,7 @@ class UnreachableCodeElimination
     MIRGenerator *mir_;
     MIRGraph &graph_;
     uint32_t marked_;
+    uint32_t initialNumBlocks_;
     bool redundantPhis_;
 
     bool prunePointlessBranchesAndMarkReachableBlocks();
@@ -33,6 +34,7 @@ class UnreachableCodeElimination
       : mir_(mir),
         graph_(graph),
         marked_(0),
+        initialNumBlocks_(graph.numBlocks()),
         redundantPhis_(false)
     {}
 
@@ -43,6 +45,9 @@ class UnreachableCodeElimination
     // reachable.  The parameter |marked| should be the number of blocks that
     // are marked.
     bool removeUnmarkedBlocks(size_t marked);
+
+    // Was everything reachable? Only valid to call after analyze() has been called.
+    bool everythingWasReachable();
 };
 
 } /* namespace ion */
