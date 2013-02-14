@@ -225,12 +225,11 @@ class ParallelSpewer
         spew(SpewOps, "%s%sBAILOUT %d%s", bold(), yellow(), count, reset());
     }
 
-    void beginCompile(HandleFunction fun) {
+    void beginCompile(HandleScript script) {
         if (!active[SpewCompile])
             return;
 
-        spew(SpewCompile, "COMPILE %p:%s:%u",
-             fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno);
+        spew(SpewCompile, "COMPILE %p:%s:%u", script.get(), script->filename, script->lineno);
         depth++;
     }
 
@@ -328,9 +327,9 @@ parallel::SpewBailout(uint32_t count)
 }
 
 void
-parallel::SpewBeginCompile(HandleFunction fun)
+parallel::SpewBeginCompile(HandleScript script)
 {
-    spewer.beginCompile(fun);
+    spewer.beginCompile(script);
 }
 
 MethodStatus
@@ -415,7 +414,7 @@ class ParallelDo : public ForkJoinOp
     // For tests, make sure to keep this in sync with minItemsTestingThreshold.
     const static uint32_t MAX_BAILOUTS = 3;
     uint32_t bailouts;
-    Vector<JSScript *> pendingInvalidations;
+    Vector<RawScript, 4> pendingInvalidations;
 
     ParallelDo(JSContext *cx, HandleObject fun)
       : cx_(cx),
@@ -493,10 +492,17 @@ class ParallelDo : public ForkJoinOp
                 return Method_Error;
         }
 
+        if (script->hasParallelIonScript() &&
+            !script->parallelIonScript()->hasInvalidatedCallTarget())
+        {
+            Spew(SpewOps, "Already compiled");
+            return Method_Compiled;
+        }
+
         Spew(SpewOps, "Compiling all reachable functions");
 
         ParallelCompileContext compileContext(cx_);
-        if (!compileContext.appendToWorklist(callee))
+        if (!compileContext.appendToWorklist(script))
             return Method_Error;
 
         MethodStatus status = compileContext.compileTransitively();
@@ -507,7 +513,7 @@ class ParallelDo : public ForkJoinOp
         // callee's parallel ion script is invalidated or GC'd. So
         // before we declare success, double check that it's still
         // compiled!
-        if (!callee->nonLazyScript()->hasParallelIonScript())
+        if (!script->hasParallelIonScript())
             return Method_Skipped;
 
         return Method_Compiled;
@@ -529,8 +535,6 @@ class ParallelDo : public ForkJoinOp
             return true;
         }
 
-        IonScript *ion = script->parallelIonScript();
-        JS_ASSERT(pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
         Vector<types::RecompileInfo> invalid(cx_);
         for (uint32_t i = 0; i < pendingInvalidations.length(); i++) {
             JSScript *script = pendingInvalidations[i];
@@ -538,7 +542,6 @@ class ParallelDo : public ForkJoinOp
                 JS_ASSERT(script->hasParallelIonScript());
                 if (!invalid.append(script->parallelIonScript()->recompileInfo()))
                     return false;
-                ion->parallelInvalidatedScriptList()[i] = script;
             }
             pendingInvalidations[i] = NULL;
         }

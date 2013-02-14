@@ -209,8 +209,14 @@ ion::ParallelAbort(JSScript *script)
 
     Spew(SpewBailouts, "Parallel abort in %p:%s:%d", script, script->filename, script->lineno);
 
+    // If slice->abortedScript isn't set yet, we have just aborted the
+    // innermost script, so set it. If it is set, then we have already aborted
+    // an inner script and are unwinding the stack, so mark the caller as
+    // needing to check its call targets for recompiles.
     if (!slice->abortedScript)
         slice->abortedScript = script;
+    else
+        script->parallelIonScript()->setHasInvalidatedCallTarget();
 }
 
 void

@@ -451,6 +451,7 @@ IonScript::IonScript()
     invalidateEpilogueOffset_(0),
     invalidateEpilogueDataOffset_(0),
     bailoutExpected_(false),
+    hasInvalidatedCallTarget_(false),
     snapshots_(0),
     snapshotsSize_(0),
     bailoutTable_(0),
@@ -469,7 +470,8 @@ IonScript::IonScript()
     safepointsSize_(0),
     scriptList_(0),
     scriptEntries_(0),
-    parallelInvalidatedScriptList_(0),
+    callTargetList_(0),
+    callTargetEntries_(0),
     refcount_(0),
     recompileInfo_(),
     slowCallCount(0)
@@ -482,7 +484,7 @@ IonScript *
 IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t snapshotsSize,
                size_t bailoutEntries, size_t constants, size_t safepointIndices,
                size_t osiIndices, size_t cacheEntries, size_t safepointsSize,
-               size_t scriptEntries, size_t parallelInvalidatedScriptEntries)
+               size_t scriptEntries, size_t callTargetEntries)
 {
     if (snapshotsSize >= MAX_BUFFER_SIZE ||
         (bailoutEntries >= MAX_BUFFER_SIZE / sizeof(uint32_t)))
@@ -502,8 +504,7 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(IonCache), DataAlignment);
     size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
     size_t paddedScriptSize = AlignBytes(scriptEntries * sizeof(RawScript), DataAlignment);
-    size_t paddedParallelInvalidatedScriptSize =
-        AlignBytes(parallelInvalidatedScriptEntries * sizeof(RawScript), DataAlignment);
+    size_t paddedCallTargetSize = AlignBytes(callTargetEntries * sizeof(RawScript), DataAlignment);
     size_t bytes = paddedSnapshotsSize +
                    paddedBailoutSize +
                    paddedConstantsSize +
@@ -512,7 +513,7 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
                    paddedCacheEntriesSize +
                    paddedSafepointSize +
                    paddedScriptSize +
-                   paddedParallelInvalidatedScriptSize;
+                   paddedCallTargetSize;
     uint8_t *buffer = (uint8_t *)cx->malloc_(sizeof(IonScript) + bytes);
     if (!buffer)
         return NULL;
@@ -554,9 +555,9 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     script->scriptEntries_ = scriptEntries;
     offsetCursor += paddedScriptSize;
 
-    script->parallelInvalidatedScriptList_ = offsetCursor;
-    script->parallelInvalidatedScriptEntries_ = parallelInvalidatedScriptEntries;
-    offsetCursor += parallelInvalidatedScriptEntries;
+    script->callTargetList_ = offsetCursor;
+    script->callTargetEntries_ = callTargetEntries;
+    offsetCursor += callTargetEntries;
 
     script->frameSlots_ = frameSlots;
     script->frameSize_ = frameSize;
@@ -614,10 +615,10 @@ IonScript::copyScriptEntries(JSScript **scripts)
 }
 
 void
-IonScript::zeroParallelInvalidatedScripts()
+IonScript::copyCallTargetEntries(JSScript **callTargets)
 {
-    memset(parallelInvalidatedScriptList(), 0,
-           parallelInvalidatedScriptEntries_ * sizeof(JSScript *));
+    for (size_t i = 0; i < callTargetEntries_; i++)
+        callTargetList()[i] = callTargets[i];
 }
 
 void
@@ -1559,7 +1560,7 @@ class AutoEnterTransitiveCompilation
     JSContext *cx_;
 
   public:
-    AutoEnterTransitiveCompilation(JSContext *cx, AutoObjectVector &worklist)
+    AutoEnterTransitiveCompilation(JSContext *cx, AutoScriptVector &worklist)
       : cx_(cx)
     {
         JS_ASSERT(!cx->compartment->types.transitiveCompilationWorklist);
@@ -1587,26 +1588,24 @@ ParallelCompileContext::compileTransitively()
     RootedFunction fun(cx_);
     RootedScript script(cx_);
     while (!worklist_.empty()) {
-        fun = worklist_.back()->toFunction();
-        script = fun->nonLazyScript();
-        worklist_.popBack();
+        script = worklist_.popCopy();
+        fun = script->function();
 
-        SpewBeginCompile(fun);
+        SpewBeginCompile(script);
 
-        // If we had invalidations last time the parallel script run, add the
-        // invalidated scripts to the worklist.
+        // If we had invalidations last time the parallel script ran, the bit
+        // to check its call targets will be set.
         if (script->hasParallelIonScript()) {
             IonScript *ion = script->parallelIonScript();
-            JS_ASSERT(ion->parallelInvalidatedScriptEntries() > 0);
-
-            RootedFunction invalidFun(cx_);
-            for (uint32_t i = 0; i < ion->parallelInvalidatedScriptEntries(); i++) {
-                if (JSScript *invalid = ion->getAndZeroParallelInvalidatedScript(i)) {
-                    invalidFun = invalid->function();
+            if (ion->hasInvalidatedCallTarget()) {
+                ion->clearHasInvalidatedCallTarget();
+                RootedScript target(cx_);
+                for (uint32_t i = 0; i < ion->callTargetEntries(); i++) {
+                    target = ion->callTargetList()[i];
                     parallel::Spew(parallel::SpewCompile,
-                                   "Adding previously invalidated function %p:%s:%u",
-                                   fun.get(), invalid->filename, invalid->lineno);
-                    if (!appendToWorklist(invalidFun))
+                                   "Adding uncompiled %p:%s:%u",
+                                   target.get(), target->filename, target->lineno);
+                    if (!appendToWorklist(target))
                         return SpewEndCompile(Method_Error);
                 }
             }

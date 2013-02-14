@@ -1365,7 +1365,7 @@ struct TypeCompartment
      * Worklist of the current transitive compilation for parallel
      * execution. Otherwise NULL.
      */
-    AutoObjectVector *transitiveCompilationWorklist;
+    AutoScriptVector *transitiveCompilationWorklist;
 
     /*
      * Number of recompilation events and inline frame expansions that have

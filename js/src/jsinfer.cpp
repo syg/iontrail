@@ -2743,7 +2743,7 @@ TypeCompartment::processPendingRecompiles(FreeOp *fop)
              */
             if (transitiveCompilationWorklist) {
                 transitiveCompilationWorklist->insert(transitiveCompilationWorklist->begin(),
-                                                      co.script->function());
+                                                      co.script);
             }
 # endif
             break;

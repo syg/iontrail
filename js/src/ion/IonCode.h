@@ -171,6 +171,10 @@ struct IonScript
     // Flag set when we bailout, to avoid frequent bailouts.
     bool bailoutExpected_;
 
+    // Flag set when we bailed out in parallel execution and should ensure its
+    // call targets are compiled.
+    bool hasInvalidatedCallTarget_;
+
     // Offset from the start of the code buffer to its snapshot buffer.
     uint32_t snapshots_;
     uint32_t snapshotsSize_;
@@ -211,17 +215,11 @@ struct IonScript
     uint32_t scriptList_;
     uint32_t scriptEntries_;
 
-    // In parallel mode, list of scripts that we call that were invalidated
-    // last time this script bailed out. These will be recompiled (or tried to
-    // be) upon next parallel entry of this script.
+    // List of scripts that we call.
     //
-    // For non-parallel IonScripts, this is NULL.
-    //
-    // For parallel IonScripts, there are as many entries as there are slices,
-    // since for any single parallel execution, we can only get a single
-    // invalidation per slice.
-    uint32_t parallelInvalidatedScriptList_;
-    uint32_t parallelInvalidatedScriptEntries_;
+    // Currently this is only non-NULL for parallel IonScripts.
+    uint32_t callTargetList_;
+    uint32_t callTargetEntries_;
 
     // Number of references from invalidation records.
     size_t refcount_;
@@ -256,9 +254,8 @@ struct IonScript
     JSScript **scriptList() const {
         return (JSScript **)(reinterpret_cast<const uint8_t *>(this) + scriptList_);
     }
-    JSScript **parallelInvalidatedScriptList() {
-        return (JSScript **)(reinterpret_cast<const uint8_t *>(this) +
-                             parallelInvalidatedScriptList_);
+    JSScript **callTargetList() {
+        return (JSScript **)(reinterpret_cast<const uint8_t *>(this) + callTargetList_);
     }
 
   private:
@@ -272,7 +269,7 @@ struct IonScript
                           size_t snapshotsSize, size_t snapshotEntries,
                           size_t constants, size_t safepointIndexEntries, size_t osiIndexEntries,
                           size_t cacheEntries, size_t safepointsSize, size_t scriptEntries,
-                          size_t parallelInvalidatedScriptEntries);
+                          size_t callTargetEntries);
     static void Trace(JSTracer *trc, IonScript *script);
     static void Destroy(FreeOp *fop, IonScript *script);
 
@@ -337,6 +334,15 @@ struct IonScript
     bool bailoutExpected() const {
         return bailoutExpected_;
     }
+    void setHasInvalidatedCallTarget() {
+        hasInvalidatedCallTarget_ = true;
+    }
+    void clearHasInvalidatedCallTarget() {
+        hasInvalidatedCallTarget_ = false;
+    }
+    bool hasInvalidatedCallTarget() const {
+        return hasInvalidatedCallTarget_;
+    }
     const uint8_t *snapshots() const {
         return reinterpret_cast<const uint8_t *>(this) + snapshots_;
     }
@@ -356,14 +362,8 @@ struct IonScript
     size_t scriptEntries() const {
         return scriptEntries_;
     }
-    size_t parallelInvalidatedScriptEntries() const {
-        return parallelInvalidatedScriptEntries_;
-    }
-    RawScript getAndZeroParallelInvalidatedScript(uint32_t i) {
-        JS_ASSERT(i < parallelInvalidatedScriptEntries_);
-        RawScript script = parallelInvalidatedScriptList()[i];
-        parallelInvalidatedScriptList()[i] = NULL;
-        return script;
+    size_t callTargetEntries() const {
+        return callTargetEntries_;
     }
     size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf) const {
         return mallocSizeOf(this);
@@ -406,7 +406,7 @@ struct IonScript
     void copyCacheEntries(const IonCache *caches, MacroAssembler &masm);
     void copySafepoints(const SafepointWriter *writer);
     void copyScriptEntries(JSScript **scripts);
-    void zeroParallelInvalidatedScripts();
+    void copyCallTargetEntries(JSScript **callTargets);
 
     bool invalidated() const {
         return refcount_ != 0;

@@ -4292,8 +4292,7 @@ CodeGenerator::link()
                      bailouts_.length(), graph.numConstants(),
                      safepointIndices_.length(), osiIndices_.length(),
                      cacheList_.length(), safepoints_.size(),
-                     graph.mir().numScripts(),
-                     executionMode == ParallelExecution ? ForkJoinSlices(cx) : 0);
+                     graph.mir().numScripts(), graph.mir().numCallTargets());
     SetIonScript(script, executionMode, ionScript);
 
     if (!ionScript)
@@ -4331,9 +4330,8 @@ CodeGenerator::link()
 
     JS_ASSERT(graph.mir().numScripts() > 0);
     ionScript->copyScriptEntries(graph.mir().scripts());
-
-    if (executionMode == ParallelExecution)
-        ionScript->zeroParallelInvalidatedScripts();
+    if (graph.mir().numCallTargets() > 0)
+        ionScript->copyCallTargetEntries(graph.mir().callTargets());
 
     linkAbsoluteLabels();
 
