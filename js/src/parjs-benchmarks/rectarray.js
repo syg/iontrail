@@ -131,6 +131,15 @@ var RectArray, RectByteTypedArray;
                          this.width, this.height, this.payload);
    };
 
+   RectArray.prototype.map = function map(f) {
+     var ret = Array.map(this, f);
+     ret.__proto__ = RectArray.prototype;
+     defineReadOnly(ret, "width", this.width);
+     defineReadOnly(ret, "height", this.height);
+     defineReadOnly(ret, "payload", this.payload);
+     return ret;
+   };
+
    // (Array<X>|ArrayView<X>) Nat Nat Nat (Nat Nat Nat -> X) -> void
    function fillArrayView(view, width, height, k, fill) {
      var i = 0;
