@@ -167,11 +167,11 @@ class RegExpShared
     inline void prepareForUse(JSContext *cx);
 
     /* Primary interface: run this regular expression on the given string. */
-    RegExpRunStatus execute(JSContext *cx, StableCharPtr chars, size_t length,
+    RegExpRunStatus execute(JSContext *cx, const jschar *chars, size_t length,
                             size_t *lastIndex, MatchPairs &matches);
 
     /* Run the regular expression without collecting matches, for test(). */
-    RegExpRunStatus executeMatchOnly(JSContext *cx, StableCharPtr chars, size_t length,
+    RegExpRunStatus executeMatchOnly(JSContext *cx, const jschar *chars, size_t length,
                                      size_t *lastIndex, MatchPair &match);
 
     /* Accessors */
@@ -278,7 +278,7 @@ class RegExpCompartment
     bool get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGuard *g);
 
     /* Like 'get', but compile 'maybeOpt' (if non-null). */
-    bool get(JSContext *cx, JSAtom *source, JSString *maybeOpt, RegExpGuard *g);
+    bool get(JSContext *cx, HandleAtom source, JSString *maybeOpt, RegExpGuard *g);
 
     size_t sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf);
 };
@@ -301,11 +301,11 @@ class RegExpObject : public JSObject
      * execution, as opposed to during something like XDR.
      */
     static RegExpObject *
-    create(JSContext *cx, RegExpStatics *res, StableCharPtr chars, size_t length,
+    create(JSContext *cx, RegExpStatics *res, const jschar *chars, size_t length,
            RegExpFlag flags, frontend::TokenStream *ts);
 
     static RegExpObject *
-    createNoStatics(JSContext *cx, StableCharPtr chars, size_t length, RegExpFlag flags,
+    createNoStatics(JSContext *cx, const jschar *chars, size_t length, RegExpFlag flags,
                     frontend::TokenStream *ts);
 
     static RegExpObject *

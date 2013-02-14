@@ -91,6 +91,7 @@ webidl_files = \
   HTMLParagraphElement.webidl \
   HTMLParamElement.webidl \
   HTMLPreElement.webidl \
+  HTMLProgressElement.webidl \
   HTMLPropertiesCollection.webidl \
   HTMLQuoteElement.webidl \
   HTMLScriptElement.webidl \

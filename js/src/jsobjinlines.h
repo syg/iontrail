@@ -73,13 +73,6 @@ JSObject::defaultValue(JSContext *cx, js::HandleObject obj, JSType hint, js::Mut
     return ok;
 }
 
-/* static */ inline JSType
-JSObject::typeOf(JSContext *cx, js::HandleObject obj)
-{
-    js::TypeOfOp op = obj->getOps()->typeOf;
-    return (op ? op : js::baseops::TypeOf)(cx, obj);
-}
-
 /* static */ inline JSObject *
 JSObject::thisObject(JSContext *cx, js::HandleObject obj)
 {
@@ -796,8 +789,6 @@ inline void
 JSObject::setType(js::types::TypeObject *newType)
 {
     JS_ASSERT(newType);
-    JS_ASSERT_IF(hasSpecialEquality(),
-                 newType->hasAnyFlags(js::types::OBJECT_FLAG_SPECIAL_EQUALITY));
     JS_ASSERT_IF(getClass()->emulatesUndefined(),
                  newType->hasAnyFlags(js::types::OBJECT_FLAG_EMULATES_UNDEFINED));
     JS_ASSERT(!hasSingletonType());
@@ -880,11 +871,6 @@ inline bool JSObject::isIndexed() const
 inline bool JSObject::watched() const
 {
     return lastProperty()->hasObjectFlag(js::BaseShape::WATCHED);
-}
-
-inline bool JSObject::hasSpecialEquality() const
-{
-    return !!getClass()->ext.equality;
 }
 
 inline bool JSObject::isArray() const { return hasClass(&js::ArrayClass); }
@@ -1783,18 +1769,18 @@ DefineConstructorAndPrototype(JSContext *cx, Handle<GlobalObject*> global,
 }
 
 inline bool
-ObjectClassIs(JSObject &obj, ESClassValue classValue, JSContext *cx)
+ObjectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx)
 {
-    if (JS_UNLIKELY(obj.isProxy()))
-        return Proxy::objectClassIs(&obj, classValue, cx);
+    if (JS_UNLIKELY(obj->isProxy()))
+        return Proxy::objectClassIs(obj, classValue, cx);
 
     switch (classValue) {
-      case ESClass_Array: return obj.isArray();
-      case ESClass_Number: return obj.isNumber();
-      case ESClass_String: return obj.isString();
-      case ESClass_Boolean: return obj.isBoolean();
-      case ESClass_RegExp: return obj.isRegExp();
-      case ESClass_ArrayBuffer: return obj.isArrayBuffer();
+      case ESClass_Array: return obj->isArray();
+      case ESClass_Number: return obj->isNumber();
+      case ESClass_String: return obj->isString();
+      case ESClass_Boolean: return obj->isBoolean();
+      case ESClass_RegExp: return obj->isRegExp();
+      case ESClass_ArrayBuffer: return obj->isArrayBuffer();
     }
     JS_NOT_REACHED("bad classValue");
     return false;
@@ -1805,7 +1791,8 @@ IsObjectWithClass(const Value &v, ESClassValue classValue, JSContext *cx)
 {
     if (!v.isObject())
         return false;
-    return ObjectClassIs(v.toObject(), classValue, cx);
+    js::RootedObject obj(cx, &v.toObject());
+    return ObjectClassIs(obj, classValue, cx);
 }
 
 static JS_ALWAYS_INLINE bool

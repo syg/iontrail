@@ -533,7 +533,8 @@ PluginModuleParent::EvaluateHangUIState(const bool aReset)
 bool
 PluginModuleParent::GetPluginName(nsAString& aPluginName)
 {
-    nsPluginHost* host = nsPluginHost::GetInst();
+    nsRefPtr<nsPluginHost> host = 
+        dont_AddRef<nsPluginHost>(nsPluginHost::GetInst());
     if (!host) {
         return false;
     }
@@ -562,7 +563,8 @@ PluginModuleParent::LaunchHangUI()
         delete mHangUIParent;
         mHangUIParent = nullptr;
     }
-    mHangUIParent = new PluginHangUIParent(this);
+    mHangUIParent = new PluginHangUIParent(this, 
+            Preferences::GetInt(kHangUITimeoutPref, 0));
     nsAutoString pluginName;
     if (!GetPluginName(pluginName)) {
         return false;

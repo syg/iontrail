@@ -1542,7 +1542,7 @@ class TypedArrayTemplate
     {
         JS_ASSERT(proto);
 
-        JSObject *obj = NewBuiltinClassInstance(cx, fastClass());
+        RootedObject obj(cx, NewBuiltinClassInstance(cx, fastClass()));
         if (!obj)
             return NULL;
 
@@ -1949,7 +1949,7 @@ class TypedArrayTemplate
     fromBuffer(JSContext *cx, HandleObject bufobj, int32_t byteOffsetInt, int32_t lengthInt,
                HandleObject proto)
     {
-        if (!ObjectClassIs(*bufobj, ESClass_ArrayBuffer, cx)) {
+        if (!ObjectClassIs(bufobj, ESClass_ArrayBuffer, cx)) {
             JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_TYPED_ARRAY_BAD_ARGS);
             return NULL; // must be arrayBuffer
         }
@@ -3184,7 +3184,6 @@ Class js::ArrayBufferClass = {
         ArrayBufferObject::obj_deleteElement,
         ArrayBufferObject::obj_deleteSpecial,
         ArrayBufferObject::obj_enumerate,
-        NULL,       /* typeOf          */
         NULL,       /* thisObject      */
     }
 };
@@ -3319,11 +3318,9 @@ IMPL_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
     NULL,                    /* hasInstance */                                 \
     _typedArray::obj_trace,  /* trace       */                                 \
     {                                                                          \
-        NULL,       /* equality    */                                          \
         NULL,       /* outerObject */                                          \
         NULL,       /* innerObject */                                          \
         NULL,       /* iteratorObject  */                                      \
-        NULL,       /* unused      */                                          \
         false,      /* isWrappedNative */                                      \
     },                                                                         \
     {                                                                          \
@@ -3356,7 +3353,6 @@ IMPL_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
         _typedArray::obj_deleteElement,                                        \
         _typedArray::obj_deleteSpecial,                                        \
         _typedArray::obj_enumerate,                                            \
-        NULL,                /* typeOf      */                                 \
         NULL,                /* thisObject  */                                 \
     }                                                                          \
 }

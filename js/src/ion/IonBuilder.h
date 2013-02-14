@@ -446,7 +446,7 @@ class IonBuilder : public MIRGenerator
     bool inlineScriptedCalls(AutoObjectVector &targets, AutoObjectVector &originals,
                              CallInfo &callInfo);
     bool inlineScriptedCall(HandleFunction target, CallInfo &callInfo);
-    bool makeInliningDecision(AutoObjectVector &targets, uint32_t argc);
+    bool makeInliningDecision(AutoObjectVector &targets);
 
     bool anyFunctionIsCloneAtCallsite(types::StackTypeSet *funTypes);
     MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);
@@ -457,6 +457,7 @@ class IonBuilder : public MIRGenerator
     bool makeCall(HandleFunction target, CallInfo &callInfo, 
                   types::StackTypeSet *calleeTypes, bool cloneAtCallsite);
 
+    MDefinition *patchInlinedReturn(CallInfo &callInfo, MBasicBlock *exit, MBasicBlock *bottom);
     MDefinition *patchInlinedReturns(CallInfo &callInfo, MIRGraphExits &exits, MBasicBlock *bottom);
 
     inline bool TestCommonPropFunc(JSContext *cx, types::StackTypeSet *types,
@@ -467,7 +468,7 @@ class IonBuilder : public MIRGenerator
     bool annotateGetPropertyCache(JSContext *cx, MDefinition *obj, MGetPropertyCache *getPropCache,
                                   types::StackTypeSet *objTypes, types::StackTypeSet *pushedTypes);
 
-    MGetPropertyCache *checkInlineableGetPropertyCache(uint32_t argc);
+    MGetPropertyCache *getInlineableGetPropertyCache(CallInfo &callInfo);
 
     MPolyInlineDispatch *
     makePolyInlineDispatch(JSContext *cx, CallInfo &callInfo,
