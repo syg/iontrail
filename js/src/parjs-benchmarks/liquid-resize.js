@@ -79,7 +79,7 @@ var smallImage =
     });
 
 var bigImage =
-  RectArray.build(200, 50,
+  RectArray.build(200, 70,
     function(x, y, k) {
       var ret;
       if (4 <= x && x < 7 && 10 <= y && y < 40)
@@ -104,6 +104,15 @@ function randomImage(w, h, sparsity, variety) {
       return 1+Math.random()*variety|0;
   });
 }
+
+// stripedImage: Nat Nat -> RectArray
+function stripedImage(w, h) {
+  return RectArray.build(w, h,
+                         function (x, y) (Math.abs(x%100-y%100) < 10) ? 32 : 0);
+}
+
+var massiveImage =
+  RectArray.build(70, 10000, function(x,y) (Math.abs(x%100-y%100) < 10) ? 32 : 0);
 
 // asciiart: Self -> RectArray
 RectArray.prototype.asciiart = function asciiart() {
@@ -447,29 +456,38 @@ RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   return times;
 };
 
-// Below functions are to interface with run.sh
-
-function buildSequentially() {
-  return bigImage.toParallelArray({mode:"seq"});
-}
-function buildParallel() {
-  return bigImage.toParallelArray({mode:"par"});
-}
-
-var seqInput = tinyImage;
-var parInput = seqInput.toParallelArray();
-
-function edgesSequentially() {
-  return detectEdgesSeq(seqInput);
-}
-function edgesParallel() {
-  return detectEdgesPar(parInput);
-}
-
 if (benchmarking) {
-  benchmark("BUILD", 1, DEFAULT_MEASURE,
-            buildSequentially, buildParallel);
+  // Below functions are to interface with run.sh
 
-  benchmark("EDGES", 1, DEFAULT_MEASURE,
-            edgesSequentially, edgesParallel);
+  // For simple, repeatable investigation, use: tinyImage, smallImage,
+  // bigImage, or massiveImage for expression establishing seqInput
+  // below.  stripedImage() is also useful for repeatable inputs.
+  //
+  // For play, use: randomImage(width, height, sparsity, variety)
+  // or stripedImage(width, height).
+  //
+  var seqInput = stripedImage(60, 1000, 10, 10);
+  var parInput = seqInput.toParallelArray();
+
+  function buildSequentially() {
+    return seqInput.toParallelArray({mode:"seq"});
+  }
+  function buildParallel() {
+    return seqInput.toParallelArray({mode:"par"});
+  }
+
+  function edgesSequentially() {
+    return detectEdgesSeq(seqInput);
+  }
+  function edgesParallel() {
+    return detectEdgesPar(parInput);
+  }
+
+  if (benchmarking) {
+    benchmark("BUILD", 1, DEFAULT_MEASURE,
+              buildSequentially, buildParallel);
+
+    benchmark("EDGES", 1, DEFAULT_MEASURE,
+              edgesSequentially, edgesParallel);
+    }
 }
