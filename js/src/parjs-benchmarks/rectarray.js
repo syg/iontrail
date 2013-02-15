@@ -146,7 +146,7 @@ var RectArray, RectByteTypedArray;
      for (var y=0; y < height; y++) {
        for (var x=0; x < width; x++) {
          for (var j=0; j < k; j++) {
-           view[i++] = fill(x, y, k);
+           view[i++] = fill(x, y, j);
          }
        }
      }
@@ -171,7 +171,7 @@ var RectArray, RectByteTypedArray;
 
    // Nat Nat (Nat Nat Nat -> X) -> RectArray<X,1>
    RectArray.buildN =
-     function buildRectArray4(width, height, n, fill) {
+     function buildRectArrayN(width, height, n, fill) {
        var a = new RectArray(width, height, n);
        fillArrayView(a, width, height, n, fill);
        return a;
