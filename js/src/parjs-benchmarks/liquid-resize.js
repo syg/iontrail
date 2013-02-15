@@ -10,11 +10,39 @@
 // ACM Trans. Graph. 26, 3, Article 10 (July 2007).
 // DOI=10.1145/1276377.1276390 http://doi.acm.org/10.1145/1276377.1276390
 
+  // Assumption: if MODE defined then running under benchmark script
+var benchmarking = (typeof(MODE) != "undefined");
+
+if (benchmarking) {
+  // util.js provides interface for benchmark infrastructure.
+  load(libdir + "util.js");
+}
+
+// rectarray.js provides 2D array abstraction for interactive development in REPL.
 load(libdir + "rectarray.js");
+
+// A RectArray is a 2D array class exported by rectarray.js.
+// It has width and height properties, and a get(i,j) method.
+//
+// An RectArray of Nat is thought of as an image, where the natural
+// number contents are the "colors" at that point in the image.
+
+// A ParallelArray is assumed to be 2D throughout this code.
+
+// A ParMode is an object with properties mode [, expect]; see ParallelArray.js
+
+// A Path is an Array of indices, related to an origin RectArray R.
+// Horizontal paths are of length R.width and have elements in [0,R.height-1];
+// vertical paths are of length R.height and have elements in [0,R.width-1].
+
+// A PhaseTimes is an object with various properties naming phases of a
+// computation; each property maps to a number.
 
 // Ideally, one needs only change the below constructions
 // to build4 to approximate "real image" input.
 // (However, this is untested.)
+
+// To see the images, try e.g. smallImage.print()
 
 var tinyImage =
   RectArray.build(20, 5,
@@ -67,6 +95,7 @@ var bigImage =
       return ret.charCodeAt(0) - 32;
     });
 
+// randomImage: Nat Nat Nat Nat -> RectArray
 function randomImage(w, h, sparsity, variety) {
   return RectArray.build(w, h, function (x,y) {
       if (Math.random() > 1/sparsity)
@@ -76,14 +105,17 @@ function randomImage(w, h, sparsity, variety) {
   });
 }
 
+// asciiart: Self -> RectArray
 RectArray.prototype.asciiart = function asciiart() {
   return this.map(function (x) String.fromCharCode(x+32));
-}
+};
 
+// row: Self Nat -> Array
 RectArray.prototype.row = function row(i) {
   return this.slice(i*this.width*this.payload, (i+1)*this.width*this.payload);
 };
 
+// render: Self -> String
 RectArray.prototype.render = function render() {
   var art = this.asciiart();
   var a = new Array(art.height);
@@ -93,10 +125,12 @@ RectArray.prototype.render = function render() {
   return a.map(function(r) r.join("")).join("\n");
 };
 
+// print: Self -> void; effect: prints rendered self.
 RectArray.prototype.print =
   (function locals() { var pr = print;
       return function print() pr(this.render()); })();
 
+// toRectArray: Self -> RectArray
 ParallelArray.prototype.toRectArray = function toRectArray() {
   var p = this;
   var w = p.shape[0];
@@ -104,6 +138,7 @@ ParallelArray.prototype.toRectArray = function toRectArray() {
   return RectArray.build(w, h, function (i,j) p.get(i,j));
 };
 
+// toParallelArray: Self -> ParallelArray
 RectArray.prototype.toParallelArray = function toParallelArray(mode) {
   var r = this;
   var w = this.width;
@@ -111,6 +146,7 @@ RectArray.prototype.toParallelArray = function toParallelArray(mode) {
   return new ParallelArray([w,h], function (i,j) r.get(i,j), mode);
 };
 
+// transpose: Self -> RectArray
 RectArray.prototype.transpose =
   function transpose() {
     var r = this;
@@ -118,7 +154,7 @@ RectArray.prototype.transpose =
                             function(x, y, k) r.get(y,x,k));
   };
 
-
+// grayScale: RectArray [ParMode] -> ParallelArray
 function grayScale(ra, mode)
 {
   return new ParallelArray([ra.width, ra.height],
@@ -131,7 +167,53 @@ function grayScale(ra, mode)
                            }, mode);
 }
 
-function detectEdges(pa, mode)
+// The detectEdgesSeq function allows edgesSequentially to be
+// implemented w/ sequential code directly rather than using a
+// ParMode to enforce sequential execution a la buildSequentially.)
+
+// detectEdgesSeq: RectArray -> RectArray
+function detectEdgesSeq(ra) {
+  var sobelX = [[-1.0,  0.0, 1.0],
+                [-2.0, 0.0, 2.0],
+                [-1.0, 0.0, 1.0]];
+  var sobelY = [[1.0,  2.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [-1.0, -2.0, -1.0]];
+
+  var width = ra.width;
+  var height = ra.height;
+
+  return RectArray.build(width, height,
+    // The fill functions here and below are begging for refactoring, but leaving as manual clones until performance issues are resolved.
+    function (x,y)
+    {
+      // process pixel
+      var totalX = 0;
+      var totalY = 0;
+      for (var offY = -1; offY <= 1; offY++) {
+        var newY = y + offY;
+        for (var offX = -1; offX <= 1; offX++) {
+          var newX = x + offX;
+          if ((newX >= 0) && (newX < width) && (newY >= 0) && (newY < height)) {
+            var pointIndex = (x + offX + (y + offY) * width);
+            var e = ra.get(x + offX, y + offY);
+            totalX += e * sobelX[offY + 1][offX + 1];
+            totalY += e * sobelY[offY + 1][offX + 1];
+          }
+        }
+      }
+      var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
+      return total;
+    });
+}
+
+// detectEdges: Self -> RectArray
+RectArray.prototype.detectEdges =
+  (function locals () { var detect = detectEdgesSeq;
+      return function detectEdges() detect(this); })();
+
+// detectEdgesPar: ParallelArray [ParMode] -> ParallelArray
+function detectEdgesPar(pa, mode)
 {
   var sobelX = [[-1.0,  0.0, 1.0],
                 [-2.0, 0.0, 2.0],
@@ -144,6 +226,7 @@ function detectEdges(pa, mode)
   var height = pa.shape[1];
 
   return new ParallelArray([width, height],
+    // The fill functions here and above are begging for refactoring, but leaving as manual clones until performance issues are resolved.
     function (x,y)
     {
       // process pixel
@@ -166,14 +249,17 @@ function detectEdges(pa, mode)
     }, mode);
 }
 
+// detectEdges: Self [ParMode] -> ParallelArray
 ParallelArray.prototype.detectEdges =
-  (function locals () { var detect = detectEdges;
+  (function locals () { var detect = detectEdgesPar;
       return function detectEdges(mode) detect(this, mode); })();
 
-// computeEnergy : ParallelArray -> RectArray
-// (for now at least, until we add appropriate API to ParallelArray;
-//  there's a dependency from each row upon its predecessor, but
-//  the contents of each row could be computed in parallel.)
+// computeEnergy: ParallelArray -> RectArray
+//
+// (The return type is forced upon us, for now at least, until we add
+// appropriate API to ParallelArray; there's a dependency from each
+// row upon its predecessor, but the contents of each row could be
+// computed in parallel.)
 function computeEnergy(pa) {
   var width = pa.shape[0];
   var height = pa.shape[1];
@@ -199,11 +285,12 @@ function computeEnergy(pa) {
   return energy;
 }
 
+// computeEnergy: Self -> RectArray
 ParallelArray.prototype.computeEnergy =
   (function locals () { var energy = computeEnergy;
       return function computeEnergy() energy(this); })();
 
-// findPath : RectArray -> Array
+// findPath: RectArray -> Array
 // (This is inherently sequential.)
 function findPath(energy)
 {
@@ -237,12 +324,12 @@ function findPath(energy)
   return path;
 }
 
+// findPath: Self -> Path
 RectArray.prototype.findPath =
   (function locals() { var path = findPath;
       return function findPath() path(this); })();
 
-// cutPathHorizontally : RectArray Array -> RectArray
-
+// cutPathHorizontallyBW : RectArray Array -> RectArray
 function cutPathHorizontallyBW(ra, path) {
   return RectArray.build(ra.width-1, ra.height,
                          function (x, y) {
@@ -255,10 +342,12 @@ function cutPathHorizontallyBW(ra, path) {
                          });
 }
 
+// cutPathHorizontallyBW: Self -> RectArray
 RectArray.prototype.cutPathHorizontallyBW =
   (function locals() { var cut = cutPathHorizontallyBW;
       return function cutPathHorizontallyBW(path) cut(this, path);  })();
 
+// cutPathVerticallyBW: RectArray Path -> RectArray
 function cutPathVerticallyBW(ra, path) {
   return RectArray.build(ra.width, ra.height-1,
                          function (x, y) {
@@ -271,10 +360,12 @@ function cutPathVerticallyBW(ra, path) {
                          });
 }
 
+// cutPathVerticallyBW: Self Path -> RectArray
 RectArray.prototype.cutPathVerticallyBW =
   (function locals() { var cut = cutPathVerticallyBW;
       return function cutPathVerticallyBW(path) cut(this, path); })();
 
+// cutHorizontalSeamBW: RectArray ParMode -> RectArray
 function cutHorizontalSeamBW(r, mode)
 {
   var e = r.toParallelArray(mode).detectEdges(mode).computeEnergy(mode);
@@ -282,20 +373,24 @@ function cutHorizontalSeamBW(r, mode)
   return r.cutPathHorizontallyBW(p, mode);
 }
 
+// cutHorizontalSeamBW: Self ParMode -> RectArray
 RectArray.prototype.cutHorizontalSeamBW =
   (function locals() { var cut = cutHorizontalSeamBW;
       return function cutHorizontalSeamBW(mode) cut(this, mode); })();
 
+// cutVerticalSeamBW: RectArray ParMode -> RectArray
 function cutVerticalSeamBW(r, mode)
 {
   var e = r.transpose(mode).toParallelArray(mode).detectEdges(mode).computeEnergy(mode);
   return r.cutPathVerticallyBW(e.findPath());
 }
 
+// cutVerticalSeamBW: Self ParMode -> RectArray
 RectArray.prototype.cutVerticalSeamBW =
   (function locals() { var cut = cutVerticalSeamBW;
       return function cutVerticalSeamBW(mode) cut(this, mode); })();
 
+// cutVerticalSeamBW: Self Nat Nat ParMode -> Self
 RectArray.prototype.shrinkBW = function shrinkBW(w, h, mode) {
   var r = this;
   while (r.height > h || r.width > w) {
@@ -307,6 +402,7 @@ RectArray.prototype.shrinkBW = function shrinkBW(w, h, mode) {
   return r;
 };
 
+// timedShrinkBW: Self Nat Nat ParMode -> PhaseTimes
 RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   var times = {
     "topar": 0, "trans": 0, "edges": 0, "energ": 0, "fpath": 0, "cpath": 0
@@ -350,3 +446,30 @@ RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   }
   return times;
 };
+
+// Below functions are to interface with run.sh
+
+function buildSequentially() {
+  return bigImage.toParallelArray({mode:"seq"});
+}
+function buildParallel() {
+  return bigImage.toParallelArray({mode:"par"});
+}
+
+var seqInput = tinyImage;
+var parInput = seqInput.toParallelArray();
+
+function edgesSequentially() {
+  return detectEdgesSeq(seqInput);
+}
+function edgesParallel() {
+  return detectEdgesPar(parInput);
+}
+
+if (benchmarking) {
+  benchmark("BUILD", 1, DEFAULT_MEASURE,
+            buildSequentially, buildParallel);
+
+  benchmark("EDGES", 1, DEFAULT_MEASURE,
+            edgesSequentially, edgesParallel);
+}
