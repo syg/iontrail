@@ -104,11 +104,11 @@ ParallelArray.prototype.toRectArray = function toRectArray() {
   return RectArray.build(w, h, function (i,j) p.get(i,j));
 };
 
-RectArray.prototype.toParallelArray = function toParallelArray() {
+RectArray.prototype.toParallelArray = function toParallelArray(mode) {
   var r = this;
   var w = this.width;
   var h = this.height;
-  return new ParallelArray([w,h], function (i,j) r.get(i,j));
+  return new ParallelArray([w,h], function (i,j) r.get(i,j), mode);
 };
 
 RectArray.prototype.transpose =
@@ -119,7 +119,7 @@ RectArray.prototype.transpose =
   };
 
 
-function grayScale(ra)
+function grayScale(ra, mode)
 {
   return new ParallelArray([ra.width, ra.height],
                            function (x,y) {
@@ -128,10 +128,10 @@ function grayScale(ra)
                              var b = ra.get(x,y,2);
                              var lum = (0.299*r + 0.587*g + 0.114*b);
                              return lum;
-                           });
+                           }, mode);
 }
 
-function detectEdges(pa)
+function detectEdges(pa, mode)
 {
   var sobelX = [[-1.0,  0.0, 1.0],
                 [-2.0, 0.0, 2.0],
@@ -163,12 +163,12 @@ function detectEdges(pa)
       }
       var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
       return total;
-    });
+    }, mode);
 }
 
 ParallelArray.prototype.detectEdges =
   (function locals () { var detect = detectEdges;
-      return function detectEdges() detect(this); })();
+      return function detectEdges(mode) detect(this, mode); })();
 
 // computeEnergy : ParallelArray -> RectArray
 // (for now at least, until we add appropriate API to ParallelArray;
@@ -275,38 +275,39 @@ RectArray.prototype.cutPathVerticallyBW =
   (function locals() { var cut = cutPathVerticallyBW;
       return function cutPathVerticallyBW(path) cut(this, path); })();
 
-function cutHorizontalSeamBW(r)
+function cutHorizontalSeamBW(r, mode)
 {
-  var e = r.toParallelArray().detectEdges().computeEnergy();
-  return r.cutPathHorizontallyBW(e.findPath());
+  var e = r.toParallelArray(mode).detectEdges(mode).computeEnergy(mode);
+  var p = e.findPath(mode); e = null;
+  return r.cutPathHorizontallyBW(p, mode);
 }
 
 RectArray.prototype.cutHorizontalSeamBW =
   (function locals() { var cut = cutHorizontalSeamBW;
-      return function cutHorizontalSeamBW() cut(this); })();
+      return function cutHorizontalSeamBW(mode) cut(this, mode); })();
 
-function cutVerticalSeamBW(r)
+function cutVerticalSeamBW(r, mode)
 {
-  var e = r.transpose().toParallelArray().detectEdges().computeEnergy();
+  var e = r.transpose(mode).toParallelArray(mode).detectEdges(mode).computeEnergy(mode);
   return r.cutPathVerticallyBW(e.findPath());
 }
 
 RectArray.prototype.cutVerticalSeamBW =
   (function locals() { var cut = cutVerticalSeamBW;
-      return function cutVerticalSeamBW() cut(this); })();
+      return function cutVerticalSeamBW(mode) cut(this, mode); })();
 
-RectArray.prototype.shrinkBW = function shrinkBW(w, h) {
+RectArray.prototype.shrinkBW = function shrinkBW(w, h, mode) {
   var r = this;
   while (r.height > h || r.width > w) {
     if (r.width > w) 
-      r = r.cutHorizontalSeamBW();
+      r = r.cutHorizontalSeamBW(mode);
     if (r.height > h)
-      r = r.cutVerticalSeamBW();
+      r = r.cutVerticalSeamBW(mode);
   }
   return r;
 };
 
-RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h) {
+RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   var times = {
     "topar": 0, "trans": 0, "edges": 0, "energ": 0, "fpath": 0, "cpath": 0
   };
@@ -318,31 +319,31 @@ RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h) {
   while (r.height > h || r.width > w) {
     if (r.width > w) {
       elapsed();
-      var e = r.toParallelArray();
+      var e = r.toParallelArray(mode);
       times.topar += elapsed();
-      e = e.detectEdges();
+      e = e.detectEdges(mode);
       times.edges += elapsed();
-      e = e.computeEnergy();
+      e = e.computeEnergy(mode);
       times.energ += elapsed();
-      e = e.findPath();
+      e = e.findPath(mode);
       times.fpath += elapsed();
-      r = r.cutPathHorizontallyBW(e);
+      r = r.cutPathHorizontallyBW(e, mode);
       times.cpath += elapsed();
       e = null;
     }
     if (r.height > h) {
       elapsed();
-      var e = r.transpose();
+      var e = r.transpose(mode);
       times.trans += elapsed();
-      e = e.toParallelArray();
+      e = e.toParallelArray(mode);
       times.topar += elapsed();
-      e = e.detectEdges();
+      e = e.detectEdges(mode);
       times.edges += elapsed();
-      e = e.computeEnergy();
+      e = e.computeEnergy(mode);
       times.energ += elapsed();
-      e = e.findPath();
+      e = e.findPath(mode);
       times.fpath += elapsed();
-      r = r.cutPathVerticallyBW(e);
+      r = r.cutPathVerticallyBW(e, mode);
       times.cpath += elapsed();
       e = null;
     }
