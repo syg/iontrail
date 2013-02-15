@@ -140,12 +140,6 @@ ParallelArray.prototype.detectEdges =
   (function locals () { var detect = detectEdges;
       return function detectEdges() detect(this); })();
 
-Array.build = function build(len, fill) {
-  var a = new Array(len);
-  for (var i=0; i < len; i++) { a[i] = fill(i); }
-  return a;
-};
-
 // computeEnergy : ParallelArray -> RectArray
 // (for now at least, until we add appropriate API to ParallelArray;
 //  there's a dependency from each row upon its predecessor, but
@@ -153,9 +147,9 @@ Array.build = function build(len, fill) {
 function computeEnergy(pa) {
   var width = pa.shape[0];
   var height = pa.shape[1];
-  // Array.build(height, function (x) Array.build(width));
+
   var energy = new RectArray(width, height);
-  energy.set(0, 0, 0); // energy[0][0] = 0;
+  energy.set(0, 0, 0);
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
       var e = pa.get(x, y);
@@ -169,7 +163,7 @@ function computeEnergy(pa) {
         }
         e += p;
       }
-      energy.set(x, y, e); // energy[y][x] = e;
+      energy.set(x, y, e);
     }
   }
   return energy;
