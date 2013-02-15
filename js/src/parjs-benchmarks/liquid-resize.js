@@ -12,11 +12,15 @@
 
 load(libdir + "rectarray.js");
 
+// Ideally, one needs only change the below constructions
+// to build4 to approximate "real image" input.
+// (However, this is untested.)
+
 var tinyImage =
   RectArray.build(20, 5,
     function(x, y, k) {
       var ret;
-      if (6 <= x && x < 7 && 0 <= y && y < 4)
+      if (6 <= x && x < 8 && 0 <= y && y < 4)
         ret = ".";
       else if ((x-15)*(x-15)+(y-1)*(y-1) < 2)
         ret = "^";
@@ -29,8 +33,25 @@ var tinyImage =
       return ret.charCodeAt(0) - 32;
     });
 
+var smallImage =
+  RectArray.build(60, 15,
+    function(x, y, k) {
+      var ret;
+      if (6 <= x && x < 8 && 0 <= y && y < 7)
+        ret = ".";
+      else if ((x-15)*(x-15)+(y-1)*(y-1) < 2)
+        ret = "^";
+      else if ((x-40)*(x-40)+(y-6)*(y-6) < 6)
+        ret = "%";
+      else if ((x-1)*(x-1)+(y-12)*(y-12) < 2)
+        ret = "@";
+      else
+        ret = " ";
+      return ret.charCodeAt(0) - 32;
+    });
+
 var bigImage =
-  RectArray.build(200, 50, // change to build4 for a "real image"
+  RectArray.build(200, 50,
     function(x, y, k) {
       var ret;
       if (4 <= x && x < 7 && 10 <= y && y < 40)
@@ -45,6 +66,15 @@ var bigImage =
         ret = " ";
       return ret.charCodeAt(0) - 32;
     });
+
+function randomImage(w, h, sparsity, variety) {
+  return RectArray.build(w, h, function (x,y) {
+      if (Math.random() > 1/sparsity)
+        return 0;
+      else
+      return 1+Math.random()*variety|0;
+  });
+}
 
 RectArray.prototype.asciiart = function asciiart() {
   return this.map(function (x) String.fromCharCode(x+32));
@@ -274,4 +304,48 @@ RectArray.prototype.shrinkBW = function shrinkBW(w, h) {
       r = r.cutVerticalSeamBW();
   }
   return r;
+};
+
+RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h) {
+  var times = {
+    "topar": 0, "trans": 0, "edges": 0, "energ": 0, "fpath": 0, "cpath": 0
+  };
+  var r = this;
+  var lasttime = new Date();
+  function elapsed() {
+    var d = new Date(); var e = d - lasttime; lasttime = d; return e;
+  }
+  while (r.height > h || r.width > w) {
+    if (r.width > w) {
+      elapsed();
+      var e = r.toParallelArray();
+      times.topar += elapsed();
+      e = e.detectEdges();
+      times.edges += elapsed();
+      e = e.computeEnergy();
+      times.energ += elapsed();
+      e = e.findPath();
+      times.fpath += elapsed();
+      r = r.cutPathHorizontallyBW(e);
+      times.cpath += elapsed();
+      e = null;
+    }
+    if (r.height > h) {
+      elapsed();
+      var e = r.transpose();
+      times.trans += elapsed();
+      e = e.toParallelArray();
+      times.topar += elapsed();
+      e = e.detectEdges();
+      times.edges += elapsed();
+      e = e.computeEnergy();
+      times.energ += elapsed();
+      e = e.findPath();
+      times.fpath += elapsed();
+      r = r.cutPathVerticallyBW(e);
+      times.cpath += elapsed();
+      e = null;
+    }
+  }
+  return times;
 };
