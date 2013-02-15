@@ -238,9 +238,9 @@ RectArray.prototype.cutPathHorizontallyBW =
 function cutPathVerticallyBW(ra, path) {
   return RectArray.build(ra.width, ra.height-1,
                          function (x, y) {
-                             if (x < path[x]-1)
+                             if (y < path[x]-1)
                                return ra.get(x, y);
-                             if (x == path[x]-1)
+                             if (y == path[x]-1)
                                return (ra.get(x,y)+ra.get(x,y+1))/2|0;
                              else
                                return ra.get(x,y+1);
@@ -251,21 +251,33 @@ RectArray.prototype.cutPathVerticallyBW =
   (function locals() { var cut = cutPathVerticallyBW;
       return function cutPathVerticallyBW(path) cut(this, path); })();
 
-function cutHorizontalSeam(r)
+function cutHorizontalSeamBW(r)
 {
   var e = r.toParallelArray().detectEdges().computeEnergy();
   return r.cutPathHorizontallyBW(e.findPath());
 }
 
-function cutVerticalSeam(r)
+RectArray.prototype.cutHorizontalSeamBW =
+  (function locals() { var cut = cutHorizontalSeamBW;
+      return function cutHorizontalSeamBW() cut(this); })();
+
+function cutVerticalSeamBW(r)
 {
   var e = r.transpose().toParallelArray().detectEdges().computeEnergy();
   return r.cutPathVerticallyBW(e.findPath());
 }
 
-function iterated(count, transform) {
-  return function (x) {
-    for (var i = 0 ; i < count; i++) { x = transform(x); }
-    return x;
-  };
-}
+RectArray.prototype.cutVerticalSeamBW =
+  (function locals() { var cut = cutVerticalSeamBW;
+      return function cutVerticalSeamBW() cut(this); })();
+
+RectArray.prototype.shrinkBW = function shrinkBW(w, h) {
+  var r = this;
+  while (r.height > h || r.width > w) {
+    if (r.width > w) 
+      r = r.cutHorizontalSeamBW();
+    if (r.height > h)
+      r = r.cutVerticalSeamBW();
+  }
+  return r;
+};
