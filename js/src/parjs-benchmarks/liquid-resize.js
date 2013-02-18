@@ -139,6 +139,12 @@ RectArray.prototype.print =
   (function locals() { var pr = print;
       return function print() pr(this.render()); })();
 
+// toRectArray: Self Nat Nat -> RectArray
+Array.prototype.toRectArray = function toRectArray(w,h) {
+  var p = this;
+  return RectArray.build(w, h, function (i, j) p[i+j*w]);
+};
+
 // toRectArray: Self -> RectArray
 ParallelArray.prototype.toRectArray = function toRectArray() {
   var p = this;
@@ -180,8 +186,10 @@ function grayScale(ra, mode)
 // implemented w/ sequential code directly rather than using a
 // ParMode to enforce sequential execution a la buildSequentially.)
 
-// detectEdgesSeq: RectArray -> RectArray
-function detectEdgesSeq(ra) {
+// detectEdgesSeq_naive: RectArray -> RectArray
+// This version is naive because working directly on an array is
+// enormously faster.
+function detectEdgesSeq_naive(ra) {
   var sobelX = [[-1.0,  0.0, 1.0],
                 [-2.0, 0.0, 2.0],
                 [-1.0, 0.0, 1.0]];
@@ -216,13 +224,58 @@ function detectEdgesSeq(ra) {
     });
 }
 
+// detectEdgesSeq_array: Array -> Array
+// The input array needs to be carrying width and height properties, like RectArray
+function detectEdgesSeq_array(data) {
+    var data1 = new Array(data.width*data.height);
+    var sobelX =  [[-1.0,  0.0, 1.0],
+                    [-2.0, 0.0, 2.0],
+                    [-1.0, 0.0, 1.0]];
+    var sobelY = [[1.0,  2.0, 1.0],
+                    [0.0, 0.0, 0.0],
+                    [-1.0, -2.0, -1.0]];
+
+    var height = data.height;
+    var width = data.width;
+
+    for (var y = 0; y < height; y++) {
+        for (var x = 0; x < width; x++) {
+            // process pixel
+            var totalX = 0;
+            var totalY = 0;
+            for (var offY = -1; offY <= 1; offY++) {
+                var newY = y + offY;
+                for (var offX = -1; offX <= 1; offX++) {
+                    var newX = x + offX;
+                    if ((newX >= 0) && (newX < width) && (newY >= 0) && (newY < height)) {
+                        var pointIndex = x + offX + (y + offY) * data.width;
+                        var e = data[pointIndex];
+                        totalX += e * sobelX[offY + 1][offX + 1];
+                        totalY += e * sobelY[offY + 1][offX + 1];
+                    }
+                }
+            }
+            var total = Math.floor((Math.abs(totalX) + Math.abs(totalY))/8.0);
+            var index = y*width+x;
+            data1[index] = total | 0;
+        }
+    }
+    data1.width = width;
+    data1.height = height;
+    return data1;
+}
+
+
 // detectEdges: Self -> RectArray
-RectArray.prototype.detectEdges =
-  (function locals () { var detect = detectEdgesSeq;
-      return function detectEdges() detect(this); })();
+RectArray.prototype.detectEdges2D =
+  (function locals () { var detect = detectEdgesSeq_array;
+      return function detectEdges()
+                        detect(this).toRectArray(this.width, this.height);
+      })();
 
 // detectEdgesPar: ParallelArray [ParMode] -> ParallelArray
-function detectEdgesPar(pa, mode)
+
+function detectEdgesPar_2d(pa, mode)
 {
   var sobelX = [[-1.0,  0.0, 1.0],
                 [-2.0, 0.0, 2.0],
@@ -235,7 +288,6 @@ function detectEdgesPar(pa, mode)
   var height = pa.shape[1];
 
   return new ParallelArray([width, height],
-    // The fill functions here and above are begging for refactoring, but leaving as manual clones until performance issues are resolved.
     function (x,y)
     {
       // process pixel
@@ -258,9 +310,51 @@ function detectEdgesPar(pa, mode)
     }, mode);
 }
 
+function detectEdgesPar_1d(pa, mode)
+{
+  var sobelX = [[-1.0,  0.0, 1.0],
+                [-2.0, 0.0, 2.0],
+                [-1.0, 0.0, 1.0]];
+  var sobelY = [[1.0,  2.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [-1.0, -2.0, -1.0]];
+
+  var width = pa.shape[0];
+  var height = pa.shape[1];
+
+  return new ParallelArray(width*height,
+    function (index)
+    {
+      var j = index | 0;
+      var y = (j / width) | 0;
+      var x = (j % width);
+      // process pixel
+      var totalX = 0;
+      var totalY = 0;
+      for (var offY = -1; offY <= 1; offY++) {
+        var newY = y + offY;
+        for (var offX = -1; offX <= 1; offX++) {
+          var newX = x + offX;
+          if ((newX >= 0) && (newX < width) && (newY >= 0) && (newY < height)) {
+            var pointIndex = (x + offX + (y + offY) * width);
+            var e = pa.get(x + offX, y + offY);
+            totalX += e * sobelX[offY + 1][offX + 1];
+            totalY += e * sobelY[offY + 1][offX + 1];
+          }
+        }
+      }
+      var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
+      return total;
+    }, mode);
+}
+
 // detectEdges: Self [ParMode] -> ParallelArray
-ParallelArray.prototype.detectEdges =
-  (function locals () { var detect = detectEdgesPar;
+ParallelArray.prototype.detectEdges2D =
+  (function locals () { var detect = detectEdgesPar_2d;
+      return function detectEdges(mode) detect(this, mode); })();
+
+ParallelArray.prototype.detectEdges1D =
+  (function locals () { var detect = detectEdgesPar_1d;
       return function detectEdges(mode) detect(this, mode); })();
 
 // computeEnergy: ParallelArray -> RectArray
@@ -377,7 +471,7 @@ RectArray.prototype.cutPathVerticallyBW =
 // cutHorizontalSeamBW: RectArray ParMode -> RectArray
 function cutHorizontalSeamBW(r, mode)
 {
-  var e = r.toParallelArray(mode).detectEdges(mode).computeEnergy(mode);
+  var e = r.toParallelArray(mode).detectEdges2D(mode).computeEnergy(mode);
   var p = e.findPath(mode); e = null;
   return r.cutPathHorizontallyBW(p, mode);
 }
@@ -390,7 +484,7 @@ RectArray.prototype.cutHorizontalSeamBW =
 // cutVerticalSeamBW: RectArray ParMode -> RectArray
 function cutVerticalSeamBW(r, mode)
 {
-  var e = r.transpose(mode).toParallelArray(mode).detectEdges(mode).computeEnergy(mode);
+  var e = r.transpose(mode).toParallelArray(mode).detectEdges2D(mode).computeEnergy(mode);
   return r.cutPathVerticallyBW(e.findPath());
 }
 
@@ -426,7 +520,7 @@ RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
       elapsed();
       var e = r.toParallelArray(mode);
       times.topar += elapsed();
-      e = e.detectEdges(mode);
+      e = e.detectEdges1D(mode);
       times.edges += elapsed();
       e = e.computeEnergy(mode);
       times.energ += elapsed();
@@ -442,7 +536,7 @@ RectArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
       times.trans += elapsed();
       e = e.toParallelArray(mode);
       times.topar += elapsed();
-      e = e.detectEdges(mode);
+      e = e.detectEdges1D(mode);
       times.edges += elapsed();
       e = e.computeEnergy(mode);
       times.energ += elapsed();
@@ -466,7 +560,9 @@ if (benchmarking) {
   // For play, use: randomImage(width, height, sparsity, variety)
   // or stripedImage(width, height).
   //
-  var seqInput = stripedImage(60, 1000, 10, 10);
+  // The default tower image from the original benchmarks was 800x542.
+  // (Correspondingly, the shrunken versions were 400x271 and 80x54.)
+  var seqInput = stripedImage(800, 542, 10, 10);
   var parInput = seqInput.toParallelArray();
 
   function buildSequentially() {
@@ -477,10 +573,10 @@ if (benchmarking) {
   }
 
   function edgesSequentially() {
-    return detectEdgesSeq(seqInput);
+    return detectEdgesSeq_array(seqInput);
   }
   function edgesParallel() {
-    return detectEdgesPar(parInput);
+    return detectEdgesPar_1d(parInput);
   }
 
   if (benchmarking) {
