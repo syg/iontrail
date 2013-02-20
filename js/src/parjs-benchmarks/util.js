@@ -144,7 +144,7 @@ function assertEqRectArray(a, b) {
   assertEq(a.width, b.width);
   assertEq(a.height, b.height);
   for (var i = 0, w = a.width; i < w; i++) {
-    for (var j = 0, h = a.height; j < l; j++) {
+    for (var j = 0, h = a.height; j < h; j++) {
       assertStructuralEq(a.get(i,j), b.get(i,j));
     }
   }
