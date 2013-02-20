@@ -1427,6 +1427,8 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             return;
         if (!newCallee(cx, clone, script))
             return;
+        if (!newCallee(cx, callee, script))
+            return;
 
         /*
          * When cloning a callee, we must flow the more specific argument
@@ -1438,9 +1440,9 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
             StackTypeSet *originalTypes = TypeScript::ArgTypes(callee->nonLazyScript(), i);
             cloneTypes->addSubset(cx, originalTypes);
         }
+    } else {
+        newCallee(cx, callee, script);
     }
-
-    newCallee(cx, callee, script);
 }
 
 bool
