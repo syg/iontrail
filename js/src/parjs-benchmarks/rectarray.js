@@ -161,6 +161,19 @@ var RectArray, RectByteTypedArray;
        return a;
      };
 
+   RectArray.buildA =
+     function buildRectArrayA(width, height, fill) {
+       var a = new Array(width*height);
+       fillArrayView(a, width, height, 1, fill);
+       a.width = width;
+       a.height = height;
+       a.payload = 1;
+       function F() { }
+       F.prototype = RectArray.prototype;
+       a.__proto__ = new F();
+       return a;
+     };
+
    // Nat Nat (Nat Nat Nat -> X) -> RectArray<X,4>
    RectArray.build4 =
      function buildRectArray4(width, height, fill) {
