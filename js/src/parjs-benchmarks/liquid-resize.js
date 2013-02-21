@@ -176,7 +176,16 @@ WrapArray.prototype.toParallelArray = function toParallelArray(mode) {
   var r = this;
   var w = this.width;
   var h = this.height;
-  return new ParallelArray([w,h], function (i,j) r.get(i,j), mode);
+
+  if (false) {
+    // This path is too slow...
+    return new ParallelArray([w,h], function (i,j) r.get(i,j), mode);
+  } else {
+    // ...so resort to abstraction-breaking path here; yields >10x
+    // speedup on Felix's Intel Core i7; but can we make above fast?
+    var b = r.backingArray;
+    return new ParallelArray([w,h], function (i,j) b[i+w*j], mode);
+  }
 };
 
 // transpose: Self -> RectArray
