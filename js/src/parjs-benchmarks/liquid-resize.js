@@ -13,6 +13,13 @@
   // Assumption: if MODE defined then running under benchmark script
 var benchmarking = (typeof(MODE) != "undefined");
 
+// Assumption: if libdir undefined then it is current directory (but this one we warn about)
+if (typeof(libdir) == "undefined") {
+  print("Selecting default libdir of './';");
+  print("you should override if you are not running from current directory.");
+  var libdir = "./";
+}
+
 if (benchmarking) {
   // util.js provides interface for benchmark infrastructure.
   load(libdir + "util.js");
@@ -529,7 +536,13 @@ WrapArray.prototype.cutHorizontalSeamBW =
       };})();
 
 // cutVerticalSeamBW: RectArray ParMode -> RectArray
-function cutVerticalSeamBW(r, mode)
+function cutVerticalSeamBW_seq(r)
+{
+  var e = r.transpose().detectEdges2D().computeEnergy();
+  return r.cutPathVerticallyBW(e.findPath());
+}
+
+function cutVerticalSeamBW_par(r, mode)
 {
   var e = r.transpose(mode).toParallelArray(mode).detectEdges1D(mode).computeEnergy(mode);
   return r.cutPathVerticallyBW(e.findPath());
@@ -537,8 +550,12 @@ function cutVerticalSeamBW(r, mode)
 
 // cutVerticalSeamBW: Self ParMode -> RectArray
 WrapArray.prototype.cutVerticalSeamBW =
-  (function locals() { var cut = cutVerticalSeamBW;
-      return function cutVerticalSeamBW(mode) cut(this, mode); })();
+  (function locals() {
+      var cut_seq = cutVerticalSeamBW_seq;
+      var cut_par = cutVerticalSeamBW_par;
+      return function cutVerticalSeamBW(mode) {
+        return (mode ? cut_par(this, mode) : cut_seq(this));
+      };})();
 
 // cutVerticalSeamBW: Self Nat Nat ParMode -> Self
 WrapArray.prototype.shrinkBW = function shrinkBW(w, h, mode) {
