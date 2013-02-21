@@ -24,6 +24,12 @@
 
 var RectArray, RectByteTypedArray;
 
+// This is a variant of RectArray that supports the same interface,
+// but instead of attempting to extend Array (a practice fraught with
+// peril), it instead makes a wrapper around another array.
+
+var WrapArray, WrapByteTypedArray;
+
 (function (){
 
    function defineReadOnly(x, name, value) {
@@ -52,6 +58,27 @@ var RectArray, RectByteTypedArray;
      defineReadOnly(this, "payload", k);
    };
 
+   WrapArray = function WrapArray(w,h,k) {
+     if (k === undefined)
+       k = 1;
+     this.backingArray = new Array(w*h*k);
+     defineReadOnly(this, "width", w);
+     defineReadOnly(this, "height", h);
+     defineReadOnly(this, "payload", k);
+   };
+
+   WrapByteTypedArray = function WrapByteTypedArray(w,h,k) {
+     if (k === undefined)
+       k = 1;
+     this.backingArray = new Uint8Array(new ArrayBuffer(w*h*k));
+     defineReadOnly(this, "width", w);
+     defineReadOnly(this, "height", h);
+     defineReadOnly(this, "payload", k);
+   };
+
+   WrapArray.prototype.slice = function(a,b) this.backingArray.slice(a,b);
+   WrapArray.prototype.join  = function(a) this.backingArray.join(a);
+
    RectArray.prototype = new Array();
    RectByteTypedArray.prototype = new ArrayBuffer();
 
@@ -79,6 +106,32 @@ var RectArray, RectByteTypedArray;
        j = 0;
      }
      (new Uint8Array(this))[(y*this.width+x)*this.payload+j] = value;
+   };
+
+   WrapArray.prototype.get = function get(x,y,j) {
+     if (j === undefined) j = 0;
+     return this.backingArray[(y*this.width+x)*this.payload+j];
+   };
+
+   WrapArray.prototype.set = function set(x,y,j,value) {
+     if (value === undefined) {
+       value = j;
+       j = 0;
+     }
+     this.backingArray[(y*this.width+x)*this.payload+j] = value;
+   };
+
+   WrapByteTypedArray.prototype.get = function get(x,y,j) {
+     if (j === undefined) j = 0;
+     return this.backingArray[(y*this.width+x)*this.payload+j];
+   };
+
+   WrapByteTypedArray.prototype.set = function set(x,y,j,value) {
+     if (value === undefined) {
+       value = j;
+       j = 0;
+     }
+     this.backingArray[(y*this.width+x)*this.payload+j] = value;
    };
 
    function viewToSource(view, width, height, payload) {
@@ -131,12 +184,28 @@ var RectArray, RectByteTypedArray;
                          this.width, this.height, this.payload);
    };
 
+   WrapArray.prototype.toSource = function toSource() {
+     return viewToSource(this.backingArray,
+                         this.width, this.height, this.payload);
+   };
+
+   WrapByteTypedArray.prototype.toSource = function toSource() {
+     return viewToSource(this.backingArray,
+                         this.width, this.height, this.payload);
+   };
+
    RectArray.prototype.map = function map(f) {
      var ret = Array.map(this, f);
      ret.__proto__ = RectArray.prototype;
      defineReadOnly(ret, "width", this.width);
      defineReadOnly(ret, "height", this.height);
      defineReadOnly(ret, "payload", this.payload);
+     return ret;
+   };
+
+   WrapArray.prototype.map = function map(f) {
+     var ret = new WrapArray(this.width, this.height, this.payload);
+     ret.backingArray = this.backingArray.map(f);
      return ret;
    };
 
@@ -213,6 +282,34 @@ var RectArray, RectByteTypedArray;
        var buf = new RectByteTypedArray(width, height, n);
        fillArrayView(new Uint8Array(buf), width, height, n, fill);
        return buf;
+     };
+
+   WrapArray.build =
+     function buildWrapArray1(width, height, fill) {
+       var a = new WrapArray(width, height, 1);
+       fillArrayView(a, width, height, 1, fill);
+       return a;
+     };
+
+   WrapArray.build =
+     function buildWrapArray1(width, height, fill) {
+       var a = new WrapArray(width, height, 1);
+       fillArrayView(a.backingArray, width, height, 1, fill);
+       return a;
+     };
+
+   WrapArray.build4 =
+     function buildWrapArray1(width, height, fill) {
+       var a = new WrapArray(width, height, 4);
+       fillArrayView(a.backingArray, width, height, 4, fill);
+       return a;
+     };
+
+   WrapArray.buildN =
+     function buildWrapArray1(width, height, n, fill) {
+       var a = new WrapArray(width, height, n);
+       fillArrayView(a.backingArray, width, height, n, fill);
+       return a;
      };
 
  })();

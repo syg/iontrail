@@ -100,12 +100,20 @@ function assertStructuralEq(e1, e2) {
     } else if (typeof(RectArray) != "undefined" &&
                e1 instanceof RectArray && e2 instanceof ParallelArray) {
       assertEqParallelArrayRectArray(e2, e1);
+    } else if (typeof(WrapArray) != "undefined" &&
+               e1 instanceof ParallelArray && e2 instanceof WrapArray) {
+      assertEqParallelArrayWrapArray(e1, e2);
+    } else if (typeof(WrapArray) != "undefined" &&
+               e1 instanceof WrapArray && e2 instanceof ParallelArray) {
+      assertEqParallelArrayWrapArray(e2, e1);
     } else if (e1 instanceof Array && e2 instanceof ParallelArray) {
       assertEqParallelArrayArray(e2, e1);
     } else if (e1 instanceof ParallelArray && e2 instanceof Array) {
       assertEqParallelArrayArray(e1, e2);
     } else if (e1 instanceof RectArray && e2 instanceof RectArray) {
       assertEqRectArray(e1, e2);
+    } else if (e1 instanceof WrapArray && e2 instanceof WrapArray) {
+      assertEqWrapArray(e1, e2);
     } else if (e1 instanceof Array && e2 instanceof Array) {
       assertEqArray(e1, e2);
     } else if (e1 instanceof Object && e2 instanceof Object) {
@@ -132,6 +140,17 @@ function assertEqParallelArrayRectArray(a, b) {
   }
 }
 
+function assertEqParallelArrayWrapArray(a, b) {
+  assertEq(a.shape.length, 2);
+  assertEq(a.shape[0], b.width);
+  assertEq(a.shape[1], b.height);
+  for (var i = 0, w = a.shape[0]; i < w; i++) {
+    for (var j = 0, h = a.shape[1]; j < h; j++) {
+      assertStructuralEq(a.get(i,j), b.get(i,j));
+    }
+  }
+}
+
 function assertEqParallelArrayArray(a, b) {
   assertEq(a.shape.length, 1);
   assertEq(a.length, b.length);
@@ -141,6 +160,16 @@ function assertEqParallelArrayArray(a, b) {
 }
 
 function assertEqRectArray(a, b) {
+  assertEq(a.width, b.width);
+  assertEq(a.height, b.height);
+  for (var i = 0, w = a.width; i < w; i++) {
+    for (var j = 0, h = a.height; j < h; j++) {
+      assertStructuralEq(a.get(i,j), b.get(i,j));
+    }
+  }
+}
+
+function assertEqWrapArray(a, b) {
   assertEq(a.width, b.width);
   assertEq(a.height, b.height);
   for (var i = 0, w = a.width; i < w; i++) {
