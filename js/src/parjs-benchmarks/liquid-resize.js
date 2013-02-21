@@ -201,6 +201,23 @@ WrapArray.prototype.transpose =
                            );
   };
 
+// transpose: Self -> ParallelArray
+WrapArray.prototype.transposeParallelArray =
+  function transpose(mode) {
+    var r = this;
+    var b = r.backingArray;
+    var w = r.width;
+    return new ParallelArray([r.height, r.width], function(x, y) b[y+w*x], mode);
+  };
+
+ParallelArray.prototype.transpose =
+  function transpose(mode) {
+    var p = this;
+    var w = this.shape[0];
+    var h = this.shape[1];
+    return new ParallelArray([h,w], function (i,j) p.get(j,i), mode);
+  };
+
 // The detectEdgesSeq function allows edgesSequentially to be
 // implemented w/ sequential code directly rather than using a
 // ParMode to enforce sequential execution a la buildSequentially.)
@@ -558,7 +575,7 @@ function cutVerticalSeamBW_seq(r)
 
 function cutVerticalSeamBW_par(r, mode)
 {
-  var e = r.transpose(mode).toParallelArray(mode).detectEdges1D(mode).computeEnergy(mode);
+  var e = r.transposeParallelArray(mode).detectEdges1D(mode).computeEnergy(mode);
   return r.cutPathVerticallyBW(e.findPath());
 }
 
@@ -616,10 +633,8 @@ WrapArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
     }
     if (r.height > h) {
       elapsed();
-      var e = r.transpose(mode);
+      var e = r.transposeParallelArray(mode);
       times.trans += elapsed();
-      e = e.toParallelArray(mode);
-      times.topar += elapsed();
       e = e.detectEdges1D(mode);
       times.edges += elapsed();
       e = e.computeEnergy(mode);
@@ -646,7 +661,7 @@ if (benchmarking) {
   //
   // The default tower image from the original benchmarks was 800x542.
   // (Correspondingly, the shrunken versions were 400x271 and 80x54.)
-  var seqInput = stripedImage(800/2|0, 542/2|0, 10, 10);
+  var seqInput = stripedImage(800/20|0, 542/20|0, 10, 10);
   var parInput = seqInput.toParallelArray();
 
   function buildSequentially() {
