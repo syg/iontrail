@@ -615,8 +615,7 @@ if (benchmarking) {
   //
   // The default tower image from the original benchmarks was 800x542.
   // (Correspondingly, the shrunken versions were 400x271 and 80x54.)
-  var seqInput = // stripedImage(800/8|0, 542/8|0, 10, 10);
-                 tinyImage;
+  var seqInput = stripedImage(800/2|0, 542/2|0, 10, 10);
   var parInput = seqInput.toParallelArray();
 
   function buildSequentially() {
@@ -634,10 +633,16 @@ if (benchmarking) {
   }
 
   function resizSequentially() {
-    return seqInput.shrinkBW(seqInput.width/2|0, seqInput.height/2|0);
+    var input = seqInput;
+    return input.shrinkBW(input.width/2|0, input.height/2|0);
   }
   function resizParallel() {
-    return seqInput.shrinkBW(seqInput.width/2|0, seqInput.height/2|0, {mode:"par"});
+    var input = seqInput; // Use of "seqInput" here is deliberate, as
+                          // the above code does not add a shrinkBW
+                          // method to ParallelArray.prototype (we
+                          // are going to marshall repeatedly in the
+                          // loop within shrinkBW anyway).
+    return input.shrinkBW(input.width/2|0, input.height/2|0, {mode:"par"});
   }
 
   if (benchmarking) {
