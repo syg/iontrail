@@ -580,7 +580,7 @@ WrapArray.prototype.shrinkBW = function shrinkBW(w, h, mode) {
   var r = this;
   var i=0;
   while (r.height > h || r.width > w) {
-    if (i > 0 && i%10 == 0) { print(i); } i++;
+    if (i > 0 && i%50 == 0) { print("shrinkBW iteration "+i); } i++;
     if (r.width > w) 
       r = r.cutHorizontalSeamBW(mode);
     if (r.height > h)
