@@ -134,7 +134,7 @@ static inline bool
 MaybeCloneAndPatchCallee(JSContext *cx, CallArgs args, HandleScript script, jsbytecode *pc)
 {
     if (cx->typeInferenceEnabled() && !args.calleev().isPrimitive() &&
-        args.callee().isFunction() && args.callee().toFunction()->isInterpreted() &&
+        args.callee().isFunction() && args.callee().toFunction()->hasScript() &&
         args.callee().toFunction()->nonLazyScript()->shouldCloneAtCallsite)
     {
         RootedFunction fun(cx, args.callee().toFunction());
