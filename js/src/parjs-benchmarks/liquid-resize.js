@@ -172,19 +172,6 @@ RectArray.prototype.transpose =
                             function(x, y, k) r.get(y,x,k));
   };
 
-// grayScale: RectArray [ParMode] -> ParallelArray
-function grayScale(ra, mode)
-{
-  return new ParallelArray([ra.width, ra.height],
-                           function (x,y) {
-                             var r = ra.get(x,y,0);
-                             var g = ra.get(x,y,1);
-                             var b = ra.get(x,y,2);
-                             var lum = (0.299*r + 0.587*g + 0.114*b);
-                             return lum;
-                           }, mode);
-}
-
 // The detectEdgesSeq function allows edgesSequentially to be
 // implemented w/ sequential code directly rather than using a
 // ParMode to enforce sequential execution a la buildSequentially.)
