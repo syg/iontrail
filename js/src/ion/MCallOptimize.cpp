@@ -1142,6 +1142,8 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
     if (!call)
         return InliningStatus_Error;
 
+    callInfo.unwrapArgs();
+
     // Explicitly pad any missing arguments with |undefined|.
     // This permits skipping the argumentsRectifier.
     for (int32_t i = targetArgs; i > (int)argc; i--) {
@@ -1153,14 +1155,20 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
         call->addArg(i, pass);
     }
 
+    MPassArg *oldThis = MPassArg::New(callInfo.thisArg());
+    current->add(oldThis);
+
     // Add explicit arguments.
     // Skip addArg(0) because it is reserved for this
-    for (int32_t i = argc - 1; i >= 0; i--)
-        call->addArg(i + 1, callInfo.getArg(i + discards)->toPassArg());
+    for (int32_t i = 0; i < argc; i++) {
+        MDefinition *arg = callInfo.getArg(i + discards);
+        MPassArg *passArg = MPassArg::New(arg);
+        current->add(passArg);
+        call->addArg(i + 1, passArg);
+    }
 
     // Place an MPrepareCall before the first passed argument, before we
     // potentially perform rearrangement.
-    MPassArg *oldThis = callInfo.thisArg()->toPassArg();
     MPrepareCall *start = new MPrepareCall;
     oldThis->block()->insertBefore(oldThis, start);
     call->initPrepareCall(start);
