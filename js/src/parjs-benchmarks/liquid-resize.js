@@ -146,11 +146,14 @@ Array.prototype.toRectArray = function toRectArray(w,h) {
 };
 
 // toRectArray: Self -> RectArray
-ParallelArray.prototype.toRectArray = function toRectArray() {
+ParallelArray.prototype.toRectArray = function toRectArray(w, h) {
   var p = this;
-  var w = p.shape[0];
-  var h = p.shape[1];
-  return RectArray.buildA(w, h, function (i,j) p.get(i,j));
+  if (h == undefined) h = p.shape[1];
+  if (w == undefined) w = p.shape[0];
+  if (p.shape.length == 2)
+    return RectArray.buildA(w, h, function (i,j) p.get(i,j));
+  if (p.shape.length == 1)
+    return RectArray.buildA(w, h, function (i,j) p.get(i + j*w));
 };
 
 // toParallelArray: Self -> ParallelArray
@@ -287,7 +290,7 @@ function detectEdgesPar_2d(pa, mode)
   var width = pa.shape[0];
   var height = pa.shape[1];
 
-  return new ParallelArray([width, height],
+  var ret=new ParallelArray([width, height],
     function (x,y)
     {
       // process pixel
@@ -308,6 +311,9 @@ function detectEdgesPar_2d(pa, mode)
       var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
       return total;
     }, mode);
+  ret.width = width;
+  ret.height = height;
+  return ret;
 }
 
 function detectEdgesPar_1d(pa, mode)
@@ -322,7 +328,7 @@ function detectEdgesPar_1d(pa, mode)
   var width = pa.shape[0];
   var height = pa.shape[1];
 
-  return new ParallelArray(width*height,
+  var ret=new ParallelArray(width*height,
     function (index)
     {
       var j = index | 0;
@@ -346,6 +352,10 @@ function detectEdgesPar_1d(pa, mode)
       var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
       return total;
     }, mode);
+
+  ret.width = width;
+  ret.height = height;
+  return ret;
 }
 
 // detectEdges: Self [ParMode] -> ParallelArray
@@ -363,7 +373,7 @@ ParallelArray.prototype.detectEdges1D =
 // appropriate API to ParallelArray; there's a dependency from each
 // row upon its predecessor, but the contents of each row could be
 // computed in parallel.)
-function computeEnergy_core(source, width, height) {
+function computeEnergy_2d(source, width, height) {
   var energy = new RectArray(width, height);
   energy.set(0, 0, 0);
   for (var y = 0; y < height; y++) {
@@ -385,15 +395,42 @@ function computeEnergy_core(source, width, height) {
   return energy;
 }
 
+function computeEnergy_1d(source, width, height) {
+  var energy = new RectArray(width, height);
+  energy.set(0, 0, 0);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      var e = source.get(x + y*width);
+      if (y >= 1) {
+        var p = energy.get(x, (y-1));
+        if (x > 0) {
+          p = Math.min(p, energy.get(x-1, (y-1)));
+        }
+        if (x < (width - 1)) {
+          p = Math.min(p, energy.get(x+1, (y-1)));
+        }
+        e += p;
+      }
+      energy.set(x, y, e);
+    }
+  }
+  return energy;
+}
+
 // computeEnergy: Self -> RectArray
 RectArray.prototype.computeEnergy =
-  (function locals () { var energy = computeEnergy_core;
+  (function locals () { var energy = computeEnergy_2d;
       return function computeEnergy() energy(this, this.width, this.height); })();
 
 // computeEnergy: Self -> RectArray
 ParallelArray.prototype.computeEnergy =
-  (function locals () { var energy = computeEnergy_core;
-      return function computeEnergy() energy(this, this.shape[0], this.shape[1]); })();
+  (function locals () {
+     var energy1d = computeEnergy_1d;
+     var energy2d = computeEnergy_2d;
+     return function computeEnergy()
+         (this.shape.length == 2)
+          ? energy2d(this, this.width, this.height)
+          : energy1d(this, this.width, this.height); })();
 
 // findPath: RectArray -> Array
 // (This is inherently sequential.)
