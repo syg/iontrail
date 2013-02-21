@@ -192,8 +192,13 @@ WrapArray.prototype.toParallelArray = function toParallelArray(mode) {
 WrapArray.prototype.transpose =
   function transpose() {
     var r = this;
+    var b = r.backingArray;
+    var w = r.width;
     return WrapArray.buildN(r.height, r.width, r.payload,
-                            function(x, y, k) r.get(y,x,k));
+                            function(x, y, k)
+                              // r.get(y,x,k)
+                              b[x+w*y]
+                           );
   };
 
 // The detectEdgesSeq function allows edgesSequentially to be
