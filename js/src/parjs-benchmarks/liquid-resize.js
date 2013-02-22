@@ -236,6 +236,7 @@ function detectEdgesSeq_naive(ra) {
   var width = ra.width;
   var height = ra.height;
 
+  var abs = function(x) (x < 0) ? -x : x;
   return WrapArray.build(width, height,
     // The fill functions here and below are begging for refactoring, but leaving as manual clones until performance issues are resolved.
     function (x,y)
@@ -255,7 +256,7 @@ function detectEdgesSeq_naive(ra) {
           }
         }
       }
-      var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
+      var total = (abs(totalX) + abs(totalY))/8.0 | 0;
       return total;
     });
 }
@@ -271,6 +272,7 @@ function detectEdgesSeq_array_wh(data, width, height) {
                     [0.0, 0.0, 0.0],
                     [-1.0, -2.0, -1.0]];
 
+    var abs = function(x) (x < 0) ? -x : x;
     for (var y = 0; y < height; y++) {
         for (var x = 0; x < width; x++) {
             // process pixel
@@ -288,7 +290,7 @@ function detectEdgesSeq_array_wh(data, width, height) {
                     }
                 }
             }
-            var total = Math.floor((Math.abs(totalX) + Math.abs(totalY))/8.0);
+            var total = ((abs(totalX) + abs(totalY))/8.0)|0;
             var index = y*width+x;
             data1[index] = total | 0;
         }
@@ -324,6 +326,7 @@ function detectEdgesPar_2d(pa, mode)
   var width = pa.shape[0];
   var height = pa.shape[1];
 
+  var abs = function(x) (x < 0) ? -x : x;
   var ret=new ParallelArray([width, height],
     function (x,y)
     {
@@ -342,7 +345,7 @@ function detectEdgesPar_2d(pa, mode)
           }
         }
       }
-      var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
+      var total = (abs(totalX) + abs(totalY))/8.0 | 0;
       return total;
     }, mode);
   ret.width = width;
@@ -361,6 +364,8 @@ function detectEdgesPar_1d(pa, mode)
 
   var width = pa.shape[0];
   var height = pa.shape[1];
+
+  var abs = function(x) (x < 0) ? -x : x;
 
   var ret=new ParallelArray(width*height,
     function (index)
@@ -383,7 +388,7 @@ function detectEdgesPar_1d(pa, mode)
           }
         }
       }
-      var total = (Math.abs(totalX) + Math.abs(totalY))/8.0 | 0;
+      var total = (abs(totalX) + abs(totalY))/8.0 | 0;
       return total;
     }, mode);
 
@@ -616,38 +621,80 @@ WrapArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   function elapsed() {
     var d = new Date(); var e = d - lasttime; lasttime = d; return e;
   }
-  while (r.height > h || r.width > w) {
-    if (r.width > w) {
-      elapsed();
-      var e = r.toParallelArray(mode);
-      times.topar += elapsed();
-      e = e.detectEdges1D(mode);
-      times.edges += elapsed();
-      e = e.computeEnergy(mode);
-      times.energ += elapsed();
-      e = e.findPath(mode);
-      times.fpath += elapsed();
-      r = r.cutPathHorizontallyBW(e, mode);
-      times.cpath += elapsed();
-      e = null;
+  if (mode) {
+    while (r.height > h || r.width > w) {
+      if (r.width > w) {
+        elapsed();
+        var e = r.toParallelArray(mode);
+        times.topar += elapsed();
+        e = e.detectEdges1D(mode);
+        times.edges += elapsed();
+        e = e.computeEnergy(mode);
+        times.energ += elapsed();
+        e = e.findPath(mode);
+        times.fpath += elapsed();
+        r = r.cutPathHorizontallyBW(e, mode);
+        times.cpath += elapsed();
+        e = null;
+      }
+      if (r.height > h) {
+        elapsed();
+        var e = r.transposeParallelArray(mode);
+        times.trans += elapsed();
+        e = e.detectEdges1D(mode);
+        times.edges += elapsed();
+        e = e.computeEnergy(mode);
+        times.energ += elapsed();
+        e = e.findPath(mode);
+        times.fpath += elapsed();
+        r = r.cutPathVerticallyBW(e, mode);
+        times.cpath += elapsed();
+        e = null;
+      }
     }
-    if (r.height > h) {
-      elapsed();
-      var e = r.transposeParallelArray(mode);
-      times.trans += elapsed();
-      e = e.detectEdges1D(mode);
-      times.edges += elapsed();
-      e = e.computeEnergy(mode);
-      times.energ += elapsed();
-      e = e.findPath(mode);
-      times.fpath += elapsed();
-      r = r.cutPathVerticallyBW(e, mode);
-      times.cpath += elapsed();
-      e = null;
+  } else {
+    while (r.height > h || r.width > w) {
+      if (r.width > w) {
+        elapsed();
+        var e = r.detectEdges2D();
+        times.edges += elapsed();
+        e = e.computeEnergy();
+        times.energ += elapsed();
+        var p = e.findPath(); e = null;
+        times.fpath += elapsed();
+        r = r.cutPathHorizontallyBW(p);
+        times.cpath += elapsed();
+        e = null; p = null;
+      }
+      if (r.height > h) {
+        elapsed();
+        var e = r.transpose();
+        times.trans += elapsed();
+        e = e.detectEdges2D();
+        times.edges += elapsed();
+        e = e.computeEnergy();
+        times.energ += elapsed();
+        var p = e.findPath(); e = null;
+        times.fpath += elapsed();
+        r = r.cutPathVerticallyBW(p);
+        times.cpath += elapsed();
+      }
     }
   }
   return times;
 };
+
+function timedDetectEdges2D(mode) {
+    var d = new Date(); this.detectEdges2D(mode); var e = new Date(); return e - d;
+};
+
+function timedDetectEdges1D(mode) {
+    var d = new Date(); this.detectEdges1D(mode); var e = new Date(); return e - d;
+};
+
+WrapArray.prototype.timedDetectEdges2D = timedDetectEdges2D;
+ParallelArray.prototype.timedDetectEdges2D = timedDetectEdges2D;
+ParallelArray.prototype.timedDetectEdges1D = timedDetectEdges1D;
 
 if (benchmarking) {
   // Below functions are to interface with run.sh
