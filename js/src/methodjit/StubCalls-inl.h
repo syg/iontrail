@@ -39,7 +39,7 @@ stubs::UncachedCallResult::setFunction(JSContext *cx, CallArgs &args,
     if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
         return false;
 
-    if (cx->typeInferenceEnabled() && fun->isInterpreted() &&
+    if (cx->typeInferenceEnabled() && fun->hasScript() &&
         fun->nonLazyScript()->shouldCloneAtCallsite)
     {
         original = fun;

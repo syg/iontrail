@@ -1072,7 +1072,7 @@ IonBuilder::inlineNewParallelArray(CallInfo &callInfo)
     RootedFunction target(cx);
     if (targetObj && targetObj->isFunction())
         target = targetObj->toFunction();
-    if (target && target->isInterpreted() && target->nonLazyScript()->shouldCloneAtCallsite) {
+    if (target && target->hasScript() && target->nonLazyScript()->shouldCloneAtCallsite) {
         RootedScript scriptRoot(cx, script());
         target = CloneFunctionAtCallsite(cx, target, scriptRoot, pc);
         if (!target)
