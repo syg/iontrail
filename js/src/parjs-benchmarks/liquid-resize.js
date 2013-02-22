@@ -679,6 +679,18 @@ WrapArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   return times;
 };
 
+function timedDetectEdges2D(mode) {
+    var d = new Date(); this.detectEdges2D(mode); var e = new Date(); return e - d;
+};
+
+function timedDetectEdges1D(mode) {
+    var d = new Date(); this.detectEdges1D(mode); var e = new Date(); return e - d;
+};
+
+WrapArray.prototype.timedDetectEdges2D = timedDetectEdges2D;
+ParallelArray.prototype.timedDetectEdges2D = timedDetectEdges2D;
+ParallelArray.prototype.timedDetectEdges1D = timedDetectEdges1D;
+
 if (benchmarking) {
   // Below functions are to interface with run.sh
 
