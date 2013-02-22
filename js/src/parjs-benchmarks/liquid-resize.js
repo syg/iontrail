@@ -197,7 +197,7 @@ WrapArray.prototype.transpose =
     return WrapArray.buildN(r.height, r.width, r.payload,
                             function(x, y, k)
                               // r.get(y,x,k)
-                              b[x+w*y]
+                              b[y+w*x]
                            );
   };
 
