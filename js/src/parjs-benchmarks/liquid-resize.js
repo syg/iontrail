@@ -616,34 +616,64 @@ WrapArray.prototype.timedShrinkBW = function timedShrinkBW(w, h, mode) {
   function elapsed() {
     var d = new Date(); var e = d - lasttime; lasttime = d; return e;
   }
-  while (r.height > h || r.width > w) {
-    if (r.width > w) {
-      elapsed();
-      var e = r.toParallelArray(mode);
-      times.topar += elapsed();
-      e = e.detectEdges1D(mode);
-      times.edges += elapsed();
-      e = e.computeEnergy(mode);
-      times.energ += elapsed();
-      e = e.findPath(mode);
-      times.fpath += elapsed();
-      r = r.cutPathHorizontallyBW(e, mode);
-      times.cpath += elapsed();
-      e = null;
+  if (mode) {
+    while (r.height > h || r.width > w) {
+      if (r.width > w) {
+        elapsed();
+        var e = r.toParallelArray(mode);
+        times.topar += elapsed();
+        e = e.detectEdges1D(mode);
+        times.edges += elapsed();
+        e = e.computeEnergy(mode);
+        times.energ += elapsed();
+        e = e.findPath(mode);
+        times.fpath += elapsed();
+        r = r.cutPathHorizontallyBW(e, mode);
+        times.cpath += elapsed();
+        e = null;
+      }
+      if (r.height > h) {
+        elapsed();
+        var e = r.transposeParallelArray(mode);
+        times.trans += elapsed();
+        e = e.detectEdges1D(mode);
+        times.edges += elapsed();
+        e = e.computeEnergy(mode);
+        times.energ += elapsed();
+        e = e.findPath(mode);
+        times.fpath += elapsed();
+        r = r.cutPathVerticallyBW(e, mode);
+        times.cpath += elapsed();
+        e = null;
+      }
     }
-    if (r.height > h) {
-      elapsed();
-      var e = r.transposeParallelArray(mode);
-      times.trans += elapsed();
-      e = e.detectEdges1D(mode);
-      times.edges += elapsed();
-      e = e.computeEnergy(mode);
-      times.energ += elapsed();
-      e = e.findPath(mode);
-      times.fpath += elapsed();
-      r = r.cutPathVerticallyBW(e, mode);
-      times.cpath += elapsed();
-      e = null;
+  } else {
+    while (r.height > h || r.width > w) {
+      if (r.width > w) {
+        elapsed();
+        var e = r.detectEdges2D();
+        times.edges += elapsed();
+        e = e.computeEnergy();
+        times.energ += elapsed();
+        var p = e.findPath(); e = null;
+        times.fpath += elapsed();
+        r = r.cutPathHorizontallyBW(p);
+        times.cpath += elapsed();
+        e = null; p = null;
+      }
+      if (r.height > h) {
+        elapsed();
+        var e = r.transpose();
+        times.trans += elapsed();
+        e = e.detectEdges2D();
+        times.edges += elapsed();
+        e = e.computeEnergy();
+        times.energ += elapsed();
+        var p = e.findPath(); e = null;
+        times.fpath += elapsed();
+        r = r.cutPathVerticallyBW(p);
+        times.cpath += elapsed();
+      }
     }
   }
   return times;
