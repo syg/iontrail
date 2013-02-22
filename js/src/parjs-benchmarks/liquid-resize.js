@@ -661,7 +661,7 @@ if (benchmarking) {
   //
   // The default tower image from the original benchmarks was 800x542.
   // (Correspondingly, the shrunken versions were 400x271 and 80x54.)
-  var seqInput = stripedImage(800/20|0, 542/20|0, 10, 10);
+  var seqInput = stripedImage(800/4|0, 542/4|0, 10, 10);
   var parInput = seqInput.toParallelArray();
 
   function buildSequentially() {
