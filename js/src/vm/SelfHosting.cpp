@@ -391,8 +391,8 @@ intrinsic_ParallelTestsShouldPass(JSContext *cx, unsigned argc, Value *vp)
     // bailouts etc should occur.
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_THREADSAFE
-    args.rval().setBoolean(!ion::js_IonOptions.eagerCompilation &&
-                           cx->typeInferenceEnabled());
+    args.rval().setBoolean(ion::IsEnabled(cx) &&
+                           !ion::js_IonOptions.eagerCompilation);
 #else
     args.rval().setBoolean(false);
 #endif
