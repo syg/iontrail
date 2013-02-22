@@ -1190,9 +1190,8 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
 
     current->add(call);
     current->push(newObject);
+
     if (!resumeAfter(call))
-        return InliningStatus_Error;
-    if (!resumeAfter(newObject))
         return InliningStatus_Error;
 
     return InliningStatus_Inlined;
