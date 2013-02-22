@@ -2892,7 +2892,7 @@ IonBuilder::inlineScriptedCall(HandleFunction target, CallInfo &callInfo)
     RootedScript calleeScript(cx, target->nonLazyScript());
     CompileInfo *info = alloc->new_<CompileInfo>(calleeScript.get(), target,
                                                  (jsbytecode *)NULL, callInfo.constructing(),
-                                                 SequentialExecution);
+                                                 this->info().executionMode());
     if (!info)
         return false;
 
