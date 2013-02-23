@@ -441,12 +441,14 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineNativeCall(CallInfo &callInfo, JSNative native);
 
     // Call functions
+    RawFunction cloneAndRefineInlineFunction(JSContext *cx, HandleFunction fun,
+                                             CallInfo &callInfo);
     bool jsop_call_inline(HandleFunction callee, CallInfo &callInfo, MBasicBlock *bottom,
                           Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns);
     bool inlineScriptedCalls(AutoObjectVector &targets, AutoObjectVector &originals,
                              CallInfo &callInfo);
     bool inlineScriptedCall(HandleFunction target, CallInfo &callInfo);
-    bool makeInliningDecision(AutoObjectVector &targets);
+    bool makeInliningDecision(AutoObjectVector &targets, CallInfo &callInfo);
 
     bool anyFunctionIsCloneAtCallsite(types::StackTypeSet *funTypes);
     MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);

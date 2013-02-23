@@ -3033,7 +3033,7 @@ IonBuilder::jsop_call_inline(HandleFunction callee, CallInfo &callInfo, MBasicBl
     RootedScript calleeScript(cx, callee->nonLazyScript());
     CompileInfo *info = alloc->new_<CompileInfo>(calleeScript.get(), callee,
                                                  (jsbytecode *)NULL, callInfo.constructing(),
-                                                 SequentialExecution);
+                                                 this->info().executionMode());
     if (!info)
         return false;
 
@@ -3081,7 +3081,7 @@ IonBuilder::jsop_call_inline(HandleFunction callee, CallInfo &callInfo, MBasicBl
 }
 
 bool
-IonBuilder::makeInliningDecision(AutoObjectVector &targets)
+IonBuilder::makeInliningDecision(AutoObjectVector &targets, CallInfo &callInfo)
 {
     AssertCanGC();
 
@@ -3104,7 +3104,9 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets)
     bool allFunctionsAreSmall = true;
     bool allFunctionsAreHinted = true;
     RootedFunction target(cx);
+    RootedFunction clone(cx);
     RootedScript targetScript(cx);
+    RootedScript scriptRoot(cx, script());
     for (size_t i = 0; i < targets.length(); i++) {
         target = targets[i]->toFunction();
         if (!target->isInterpreted())
@@ -3120,9 +3122,21 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets)
         if (targetScript->length > js_IonOptions.smallFunctionMaxBytecodeLength)
             allFunctionsAreSmall = false;
 
-        // Skip heuristics if we have an explicit hint to inline.
-        if (targetScript->shouldInline)
+        // FIXME: Redo when we merge Bug 796114
+        if (!oracle->canInlineCall(scriptRoot, targetScript, pc)) {
+            IonSpew(IonSpew_Inlining, "Cannot inline due to uninlineable call site");
+            return false;
+        }
+
+        // Clone, refine, and skip heuristics if we have an explicit hint to
+        // inline.
+        if (targetScript->shouldInline) {
+            clone = cloneAndRefineInlineFunction(cx, target, callInfo);
+            if (!clone)
+                return false;
+            targets[i] = clone;
             continue;
+        }
 
         allFunctionsAreHinted = false;
 
@@ -3148,12 +3162,6 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets)
             IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
             return false;
         }
-    }
-
-    RootedScript scriptRoot(cx, script());
-    if (!oracle->canInlineCall(scriptRoot, pc)) {
-        IonSpew(IonSpew_Inlining, "Cannot inline due to uninlineable call site");
-        return false;
     }
 
     for (size_t i = 0; i < targets.length(); i++) {
@@ -3234,7 +3242,7 @@ IonBuilder::getInlineableGetPropertyCache(CallInfo &callInfo)
 }
 
 MPolyInlineDispatch *
-IonBuilder::makePolyInlineDispatch(JSContext *cx, CallInfo &callInfo, 
+IonBuilder::makePolyInlineDispatch(JSContext *cx, CallInfo &callInfo,
                                    MGetPropertyCache *getPropCache, MBasicBlock *bottom,
                                    Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns)
 {
@@ -3348,6 +3356,39 @@ IonBuilder::makePolyInlineDispatch(JSContext *cx, CallInfo &callInfo,
     return MPolyInlineDispatch::New(targetObject, inlinePropTable,
                                     fallbackPrepBlock, fallbackBlock,
                                     fallbackEndBlock);
+}
+
+RawFunction
+IonBuilder::cloneAndRefineInlineFunction(JSContext *cx, HandleFunction fun, CallInfo &callInfo)
+{
+    JS_ASSERT(fun->nonLazyScript()->shouldInline);
+
+    RootedObject parent(cx, fun->environment());
+    RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
+    if (!clone)
+        return NULL;
+
+    Vector<types::StackTypeSet *> argumentTypes(cx);
+    for (unsigned i = 1; i <= callInfo.argc(); i++) {
+        if (!argumentTypes.append(oracle->getCallArg(script(), callInfo.argc(), i, pc)))
+            return NULL;
+    }
+    types::StackTypeSet *thisTypes = oracle->getCallArg(script(), callInfo.argc(), 0, pc);
+
+    RootedScript cloneScript(cx, clone->nonLazyScript());
+    if (!cloneScript->ensureRanAnalysis(cx))
+        return NULL;
+
+    {
+        types::AutoEnterAnalysis enter(cx);
+        cloneScript->analysis()->refineTypes(cx, argumentTypes,
+                                             thisTypes, fun->nonLazyScript());
+    }
+
+    if (cloneScript->analysis()->OOM() || cx->compartment->types.pendingNukeTypes)
+        return NULL;
+
+    return clone;
 }
 
 bool
@@ -3844,7 +3885,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
         current->push(pass);
     } else {
         // |this| becomes implicit in the call.
-        argc -= 1; 
+        argc -= 1;
     }
 
     // Call without inlining.
@@ -3989,7 +4030,7 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
         AutoObjectVector targets(cx);
         targets.append(target);
 
-        if (makeInliningDecision(targets))
+        if (makeInliningDecision(targets, callInfo))
             return inlineScriptedCall(target, callInfo);
     }
 
@@ -4044,7 +4085,7 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     }
 
     // Inline scriped call(s).
-    if (inliningEnabled() && targets.length() > 0 && makeInliningDecision(targets))
+    if (inliningEnabled() && targets.length() > 0 && makeInliningDecision(targets, callInfo))
         return inlineScriptedCalls(targets, originals, callInfo);
 
     // No inline, just make the call.
@@ -4257,7 +4298,7 @@ AdjustTypeBarrierForDOMCall(const JSJitInfo* jitinfo, types::StackTypeSet *types
 
     if (jitinfo->returnType != types->getKnownTypeTag())
         return barrier;
-    
+
     // No need for a barrier if we're already expecting the type we'll produce.
     return NULL;
 }

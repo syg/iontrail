@@ -1241,9 +1241,9 @@ SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
  * mechanism for that right now.  Bug 804767 might permit another
  * alternative by specializing the inlined gets.
  */
-SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true, inline: true });
-SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true, inline: true });
-SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true, inline: true });
+SetScriptHints(ParallelArrayGet1,       { inline: true });
+SetScriptHints(ParallelArrayGet2,       { inline: true });
+SetScriptHints(ParallelArrayGet3,       { inline: true });
 
 // Unit Test Functions
 //

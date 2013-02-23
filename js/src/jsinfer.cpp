@@ -561,10 +561,33 @@ HeapTypeSet::addSubset(JSContext *cx, TypeSet *target)
     add(cx, cx->typeLifoAlloc().new_<TypeConstraintSubset>(target));
 }
 
+class TypeConstraintIntersect : public TypeConstraint
+{
+  public:
+    TypeSet *filter;
+    TypeSet *target;
+
+    TypeConstraintIntersect(TypeSet *filter, TypeSet *target)
+      : filter(filter), target(target)
+    {
+        JS_ASSERT(filter && target);
+    }
+
+    const char *kind() { return "intersect"; }
+
+    void newType(JSContext *cx, TypeSet *source, Type type)
+    {
+        /* Only move the type to target if filter has it. */
+        if (filter->hasType(type))
+            target->addType(cx, type);
+    }
+};
+
 enum PropertyAccessKind {
     PROPERTY_WRITE,
     PROPERTY_READ,
-    PROPERTY_READ_EXISTING
+    PROPERTY_READ_EXISTING,
+    PROPERTY_READ_NO_BARRIER
 };
 
 /* Constraints for reads/writes on object properties. */
@@ -599,6 +622,7 @@ class TypeConstraintProp : public TypeConstraint
 typedef TypeConstraintProp<PROPERTY_WRITE> TypeConstraintSetProperty;
 typedef TypeConstraintProp<PROPERTY_READ>  TypeConstraintGetProperty;
 typedef TypeConstraintProp<PROPERTY_READ_EXISTING> TypeConstraintGetPropertyExisting;
+typedef TypeConstraintProp<PROPERTY_READ_NO_BARRIER> TypeConstraintGetPropertyNoBarrier;
 
 void
 StackTypeSet::addGetProperty(JSContext *cx, JSScript *script, jsbytecode *pc,
@@ -1173,11 +1197,16 @@ PropertyAccess(JSContext *cx, JSScript *script, jsbytecode *pc, TypeObject *obje
     if (access == PROPERTY_WRITE) {
         target->addSubset(cx, types);
     } else {
+        /*
         JS_ASSERT_IF(script->hasAnalysis(),
                      target == script->analysis()->bytecodeTypes(pc));
+        */
         if (!types->hasPropagatedProperty())
             object->getFromPrototypes(cx, id, types);
-        if (UsePropertyTypeBarrier(pc)) {
+        if (access == PROPERTY_READ_NO_BARRIER) {
+            TypeConstraintSubset constraint(target);
+            types->addTypesToConstraint(cx, &constraint);
+        } else if (UsePropertyTypeBarrier(pc)) {
             if (access == PROPERTY_READ) {
                 types->addSubsetBarrier(cx, script, pc, target);
             } else {
@@ -1465,7 +1494,10 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
          * in the 'this' and 'callee' sets, which we want to maintain for
          * polymorphic JSOP_CALLPROP invocations.
          */
-        returnTypes->addSubset(cx, callsite->returnTypes);
+        if (calleeScript->shouldInline)
+            returnTypes->addSubsetBarrier(cx, script, callsite->pc, callsite->returnTypes);
+        else
+            returnTypes->addSubset(cx, callsite->returnTypes);
     }
 }
 
@@ -3913,6 +3945,17 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
     jsbytecode *pc = script->code + offset;
     JSOp op = (JSOp)*pc;
 
+    ScriptAnalysis *seenAnalysis;
+    jsbytecode *seenPc;
+    if (state.refineScript) {
+        seenAnalysis = state.refineScript->analysis();
+        seenPc = state.refineScript->code + offset;
+        JS_ASSERT(op == (JSOp)*seenPc);
+    } else {
+        seenAnalysis = this;
+        seenPc = pc;
+    }
+
     Bytecode &code = getCode(offset);
     JS_ASSERT(!code.pushedTypes);
 
@@ -4104,7 +4147,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_CALLGNAME: {
         RawId id = GetAtomId(cx, script, pc, 0);
 
-        StackTypeSet *seen = bytecodeTypes(pc);
+        StackTypeSet *seen = seenAnalysis->bytecodeTypes(seenPc);
         seen->addSubset(cx, &pushed[0]);
 
         /*
@@ -4134,7 +4177,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_GETINTRINSIC:
       case JSOP_CALLNAME:
       case JSOP_CALLINTRINSIC: {
-        StackTypeSet *seen = bytecodeTypes(pc);
+        StackTypeSet *seen = seenAnalysis->bytecodeTypes(seenPc);
         addTypeBarrier(cx, pc, seen, Type::UnknownType());
         seen->addSubset(cx, &pushed[0]);
         break;
@@ -4161,7 +4204,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
         break;
 
       case JSOP_GETXPROP: {
-        StackTypeSet *seen = bytecodeTypes(pc);
+        StackTypeSet *seen = seenAnalysis->bytecodeTypes(seenPc);
         addTypeBarrier(cx, pc, seen, Type::UnknownType());
         seen->addSubset(cx, &pushed[0]);
         break;
@@ -4265,7 +4308,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_GETPROP:
       case JSOP_CALLPROP: {
         jsid id = GetAtomId(cx, script, pc, 0);
-        StackTypeSet *seen = script->analysis()->bytecodeTypes(pc);
+        StackTypeSet *seen = seenAnalysis->bytecodeTypes(seenPc);
 
         HeapTypeSet *input = &script->types->propertyReadTypes[state.propertyReadIndex++];
         poppedTypes(pc, 0)->addSubset(cx, input);
@@ -4283,7 +4326,17 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
                 input->addCallProperty(cx, script, pc, id);
         }
 
-        seen->addSubset(cx, &pushed[0]);
+        if (state.refineScript) {
+            StackTypeSet *propTypes = StackTypeSet::make(cx, "intersect");
+            if (!propTypes)
+                break;
+            TypeConstraintGetPropertyNoBarrier getProp(script, pc, propTypes, id);
+            input->addTypesToConstraint(cx, &getProp);
+            TypeConstraintIntersect intersect(propTypes, &pushed[0]);
+            seen->addTypesToConstraint(cx, &intersect);
+        } else {
+            seen->addSubset(cx, &pushed[0]);
+        }
         break;
       }
 
@@ -4294,7 +4347,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
 
       case JSOP_GETELEM:
       case JSOP_CALLELEM: {
-        StackTypeSet *seen = script->analysis()->bytecodeTypes(pc);
+        StackTypeSet *seen = seenAnalysis->bytecodeTypes(seenPc);
 
         /* Don't try to compute a precise callee for CALLELEM. */
         if (op == JSOP_CALLELEM)
@@ -4310,7 +4363,17 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
             input->addGetProperty(cx, script, pc, seen, JSID_VOID);
         }
 
-        seen->addSubset(cx, &pushed[0]);
+        if (state.refineScript) {
+            StackTypeSet *propTypes = StackTypeSet::make(cx, "intersect");
+            if (!propTypes)
+                break;
+            TypeConstraintGetPropertyNoBarrier getProp(script, pc, propTypes, JSID_VOID);
+            input->addTypesToConstraint(cx, &getProp);
+            TypeConstraintIntersect intersect(propTypes, &pushed[0]);
+            seen->addTypesToConstraint(cx, &intersect);
+        } else {
+            seen->addSubset(cx, &pushed[0]);
+        }
         break;
       }
 
@@ -4382,7 +4445,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_FUNCALL:
       case JSOP_FUNAPPLY:
       case JSOP_NEW: {
-        StackTypeSet *seen = script->analysis()->bytecodeTypes(pc);
+        StackTypeSet *seen = seenAnalysis->bytecodeTypes(seenPc);
         seen->addSubset(cx, &pushed[0]);
 
         /* Construct the base call information about this site. */
@@ -4648,7 +4711,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
 }
 
 void
-ScriptAnalysis::analyzeTypes(JSContext *cx)
+ScriptAnalysis::analyzeTypesWithState(JSContext *cx, TypeInferenceState &state)
 {
     JS_ASSERT(!ranInference());
 
@@ -4672,8 +4735,6 @@ ScriptAnalysis::analyzeTypes(JSContext *cx)
     /* Make sure the initial type set of all local vars includes void. */
     for (unsigned i = 0; i < script_->nfixed; i++)
         TypeScript::LocalTypes(script_, i)->addType(cx, Type::UndefinedType());
-
-    TypeInferenceState state(cx);
 
     /*
      * Generate type sets for the inputs to property reads in the script,
@@ -4748,6 +4809,71 @@ ScriptAnalysis::analyzeTypes(JSContext *cx)
         TypeScript::AddFreezeConstraints(cx, script);
         script_->hasFreezeConstraints = true;
     }
+}
+
+void
+ScriptAnalysis::analyzeTypes(JSContext *cx)
+{
+    TypeInferenceState state(cx);
+    analyzeTypesWithState(cx, state);
+}
+
+void
+ScriptAnalysis::refineTypes(JSContext *cx, const Vector<StackTypeSet *> &argumentTypes,
+                            StackTypeSet *thisTypes, RawScript original)
+{
+    /*
+     * This is a special case of inference which runs for refining the types
+     * an freshly cloned script to a callsite. Running this is mutually
+     * exclusive with running analyzeTypes.
+     */
+    JS_ASSERT(original->function());
+
+    unsigned nargs = script_->function()->nargs;
+    JS_ASSERT(nargs = original->function()->nargs);
+
+#ifdef DEBUG
+    /* The argument types should be empty. */
+    for (unsigned i = 0; i < nargs; i++)
+        JS_ASSERT(TypeScript::ArgTypes(script_, i)->empty());
+    JS_ASSERT(TypeScript::ThisTypes(script_)->empty());
+#endif
+
+    /*
+     * Bind argument and this types from the callsite, adding undefined type
+     * for any missing formals.
+     */
+    for (unsigned i = 0; i < argumentTypes.length() && i < nargs; i++)
+        argumentTypes[i]->addSubset(cx, TypeScript::ArgTypes(script_, i));
+    for (unsigned i = argumentTypes.length(); i < nargs; i++)
+        TypeScript::ArgTypes(script_, i)->addType(cx, Type::UndefinedType());
+    thisTypes->addSubset(cx, TypeScript::ThisTypes(script_));
+
+    TypeInferenceState state(cx);
+    state.refineScript = original;
+    analyzeTypesWithState(cx, state);
+
+#ifdef DEBUG
+    if (original->analysis()->ranInference()) {
+        /* The refined types should be subsets of the original types. */
+        unsigned offset = 0;
+        while (offset < script_->length) {
+            Bytecode *code = maybeCode(offset);
+            jsbytecode *pc = script_->code + offset;
+
+            if (code) {
+                unsigned defCount = GetDefCount(script_, offset);
+                for (unsigned i = 0; i < defCount; i++) {
+                    TypeSet *originalTypes = original->analysis()->pushedTypes(offset, i);
+                    TypeSet *types = pushedTypes(offset, i);
+                    JS_ASSERT(types->isSubset(originalTypes));
+                }
+            }
+
+            offset += GetBytecodeLength(pc);
+        }
+    }
+#endif
 }
 
 bool

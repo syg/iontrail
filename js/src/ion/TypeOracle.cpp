@@ -574,7 +574,7 @@ TypeInferenceOracle::getCallReturn(UnrootedScript script, jsbytecode *pc)
 }
 
 bool
-TypeInferenceOracle::canInlineCall(HandleScript caller, jsbytecode *pc)
+TypeInferenceOracle::canInlineCall(HandleScript caller, HandleScript callee, jsbytecode *pc)
 {
     JS_ASSERT(types::IsInlinableCall(pc));
 
@@ -586,9 +586,18 @@ TypeInferenceOracle::canInlineCall(HandleScript caller, jsbytecode *pc)
     if (op != JSOP_FUNAPPLY && code->monitoredTypes)
         return false;
 
-    // Gets removed in Bug 796114
-    if (caller->analysis()->typeBarriers(cx, pc))
-        return false;
+    // Redo removed in Bug 796114 Returns false if any arguments are
+    // barriered. Inline hinted functions may be barriered on the return
+    // types, which is just an extra pushed barrier.
+    if (types::TypeBarrier *barrier = caller->analysis()->typeBarriers(cx, pc)) {
+        while (barrier) {
+            for (uint32_t i = 0; i < callee->function()->nargs; i++) {
+                if (barrier->target == TypeScript::ArgTypes(callee, i))
+                    return false;
+            }
+            barrier = barrier->next;
+        }
+    }
 
     return true;
 }
@@ -633,7 +642,7 @@ TypeInferenceOracle::canEnterInlinedFunction(RawScript caller, jsbytecode *pc, R
             return false;
     } else {
         if (!returnTypes->isSubset(callReturn))
-            return false;
+            return true;
     }
 
     // TI calls ObjectStateChange to trigger invalidation of the caller.
@@ -655,10 +664,23 @@ TypeInferenceOracle::globalPropertyWrite(UnrootedScript script, jsbytecode *pc, 
 StackTypeSet *
 TypeInferenceOracle::returnTypeSet(UnrootedScript script, jsbytecode *pc, types::StackTypeSet **barrier)
 {
-    if (script->analysis()->getCode(pc).monitoredTypesReturn)
+    if (script->analysis()->getCode(pc).monitoredTypesReturn) {
         *barrier = script->analysis()->bytecodeTypes(pc);
-    else
+    } else if (types::TypeBarrier *barrier_ = script->analysis()->typeBarriers(cx, pc)) {
+        // If any of the barriers lead back to bytecodeTypes, we have called a
+        // return type-barriered inline hinted function at this callsite. See
+        // bottom of TypeConstraintCall::newType.
+        types::StackTypeSet *types = script->analysis()->bytecodeTypes(pc);
+        while (barrier_) {
+            if (barrier_->target == types) {
+                *barrier = types;
+                break;
+            }
+            barrier_ = barrier_->next;
+        }
+    } else {
         *barrier = NULL;
+    }
     return script->analysis()->pushedTypes(pc, 0);
 }
 

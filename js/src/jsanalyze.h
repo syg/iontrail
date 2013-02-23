@@ -875,6 +875,8 @@ class ScriptAnalysis
     void analyzeSSA(JSContext *cx);
     void analyzeLifetimes(JSContext *cx);
     void analyzeTypes(JSContext *cx);
+    void refineTypes(JSContext *cx, const Vector<types::StackTypeSet *> &argumentTypes,
+                     types::StackTypeSet *thisTypes, RawScript original);
 
     /* Analyze the effect of invoking 'new' on script. */
     void analyzeTypesNew(JSContext *cx);
@@ -1182,13 +1184,15 @@ class ScriptAnalysis
         types::StackTypeSet *forTypes;
         bool hasPropertyReadTypes;
         uint32_t propertyReadIndex;
+        RawScript refineScript;
         TypeInferenceState(JSContext *cx)
             : phiNodes(cx), hasGetSet(false), hasHole(false), forTypes(NULL),
-              hasPropertyReadTypes(false), propertyReadIndex(0)
+              hasPropertyReadTypes(false), propertyReadIndex(0), refineScript(NULL)
         {}
     };
 
     /* Type inference helpers */
+    void analyzeTypesWithState(JSContext *cx, TypeInferenceState &state);
     bool analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferenceState &state);
 
     typedef Vector<SSAValue, 16> SeenVector;
