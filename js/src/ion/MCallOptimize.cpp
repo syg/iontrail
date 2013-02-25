@@ -473,7 +473,8 @@ IonBuilder::inlineMathAbs(CallInfo &callInfo)
 
     // It is impossible for Math.abs to promote to a double on an int input,
     // but possible to get an int output with a double input.
-    JS_ASSERT_IF(argType != returnType, returnType == MIRType_Int32);
+    if (argType != returnType && returnType != MIRType_Int32)
+        return InliningStatus_NotInlined;
 
     callInfo.unwrapArgs();
 
