@@ -1486,7 +1486,7 @@ RunLastDitchGC(JSContext *cx, JS::Zone *zone, AllocKind thingKind)
      * In parallel sections, we do not attempt to refill the free list
      * and hence do not encounter last ditch GC.
      */
-    JS_ASSERT(!InParallelSection());
+    JS_ASSERT(!ParallelJSActive());
 
     PrepareZoneForGC(zone);
 
@@ -1962,8 +1962,8 @@ void
 js::TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 {
     /* Wait till end of parallel section to trigger GC. */
-    if (ForkJoinSlice *slice = ForkJoinSlice::Current()) {
-        slice->requestGC(reason);
+    if (ParallelJSActive()) {
+        ForkJoinSlice::Current()->requestGC(reason);
         return;
     }
 
@@ -1979,9 +1979,10 @@ js::TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 void
 js::TriggerZoneGC(Zone *zone, gcreason::Reason reason)
 {
-    /* Wait till end of parallel section to trigger GC. */
-    if (ForkJoinSlice *slice = ForkJoinSlice::Current()) {
-        slice->requestZoneGC(zone, reason);
+    /* If parallel threads are running, wait till they
+       are stopped to trigger GC. */
+    if (ParallelJSActive()) {
+        ForkJoinSlice::Current()->requestZoneGC(zone, reason);
         return;
     }
 
@@ -4408,7 +4409,7 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
         JSGCInvocationKind gckind, gcreason::Reason reason)
 {
     /* GC shouldn't be running in parallel execution mode */
-    JS_ASSERT(!InParallelSection());
+    JS_ASSERT(!ParallelJSActive());
 
     JS_AbortIfWrongThread(rt);
 

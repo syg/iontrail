@@ -1414,7 +1414,7 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
             }
         } else {
             /* array.sort() cannot currently be used from parallel code */
-            JS_ASSERT(!InParallelSection());
+            JS_ASSERT(!ParallelJSActive());
             FastInvokeGuard fig(cx, fval);
             if (!MergeSort(vec.begin(), n, vec.begin() + n,
                            SortComparatorFunction(cx, fval, fig))) {
@@ -2203,7 +2203,7 @@ array_map(JSContext *cx, unsigned argc, Value *vp)
 
     /* Step 8. */
     RootedValue kValue(cx);
-    JS_ASSERT(!InParallelSection());
+    JS_ASSERT(!ParallelJSActive());
     FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     while (k < len) {
@@ -2284,7 +2284,7 @@ array_filter(JSContext *cx, unsigned argc, Value *vp)
     uint32_t to = 0;
 
     /* Step 9. */
-    JS_ASSERT(!InParallelSection());
+    JS_ASSERT(!ParallelJSActive());
     FastInvokeGuard fig(cx, ObjectValue(*callable));
     InvokeArgsGuard &ag = fig.args();
     RootedValue kValue(cx);

@@ -65,11 +65,10 @@
 // Garbage collection and allocation:
 //
 // Code which executes on these parallel threads must be very careful
-// with respect to garbage collection and allocation.  Currently, we
-// do not permit GC to occur when executing in parallel.  Furthermore,
-// the typical allocation paths are UNSAFE in parallel code because
-// they access shared state (the compartment's arena lists and so
-// forth) without any synchronization.
+// with respect to garbage collection and allocation.  The typical
+// allocation paths are UNSAFE in parallel code because they access
+// shared state (the compartment's arena lists and so forth) without
+// any synchronization.  They can also trigger GC in an ad-hoc way.
 //
 // To deal with this, the forkjoin code creates a distinct |Allocator|
 // object for each slice.  You can access the appropriate object via
@@ -87,9 +86,11 @@
 // upon entering a parallel section to ensure that any concurrent
 // marking or incremental GC has completed.
 //
-// In the future, it should be possible to lift the restriction that
-// we must block until inc. GC has completed and also to permit GC
-// during parallel exeution. But we're not there yet.
+// If the GC *is* triggered during parallel execution, it will
+// redirect to the current ForkJoinSlice() and invoke requestGC() (or
+// requestZoneGC).  This will cause an interrupt.  Once the interrupt
+// occurs, we will stop the world and then re-trigger the GC to run
+// it.
 //
 // Current Limitations:
 //
@@ -207,7 +208,6 @@ struct ForkJoinSlice
 
     // Check the current state of parallel execution.
     static inline ForkJoinSlice *Current();
-    static inline bool InGarbageCollectionDisallowedSection();
     bool InWorldStoppedForGCSection();
 
     // Initializes the thread-local state.
@@ -279,11 +279,16 @@ class LockedJSContext
     JSContext *operator->() { return cx_; }
 };
 
-
+// True if parallel threads are currently active.
 static inline bool
-InParallelSection()
+ParallelJSActive()
 {
-    return ForkJoinSlice::Current() != NULL;
+#ifdef JS_THREADSAFE
+    ForkJoinSlice *current = ForkJoinSlice::Current();
+    return current != NULL && !current->InWorldStoppedForGCSection();
+#else
+    return false;
+#endif
 }
 
 } // namespace js
@@ -296,12 +301,6 @@ js::ForkJoinSlice::Current()
 #else
     return NULL;
 #endif
-}
-
-/* static */ inline bool
-js::ForkJoinSlice::InGarbageCollectionDisallowedSection()
-{
-    return (Current() != NULL) && !Current()->InWorldStoppedForGCSection();
 }
 
 #endif // ForkJoin_h__
