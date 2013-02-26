@@ -471,8 +471,6 @@ IonBuilder::inlineMathAbs(CallInfo &callInfo)
     if (argType != MIRType_Int32 && argType != MIRType_Double)
         return InliningStatus_NotInlined;
 
-    // It is impossible for Math.abs to promote to a double on an int input,
-    // but possible to get an int output with a double input.
     if (argType != returnType && returnType != MIRType_Int32)
         return InliningStatus_NotInlined;
 
@@ -483,6 +481,7 @@ IonBuilder::inlineMathAbs(CallInfo &callInfo)
 
     if (argType != returnType) {
         MToInt32 *toInt = MToInt32::New(ins);
+        toInt->setCanBeNegativeZero(false);
         current->add(toInt);
         ins = toInt;
     }
