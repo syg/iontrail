@@ -408,7 +408,7 @@ js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_THREADSAFE
     args.rval().setBoolean(cx->runtime->parallelWarmup ||
-                           InParallelSection());
+                           ForkJoinSlice::Current() != NULL);
 #else
     args.rval().setBoolean(true);
 #endif

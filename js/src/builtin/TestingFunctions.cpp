@@ -880,11 +880,11 @@ DisplayName(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 JSBool
-js::testingFunc_inParallelSection(JSContext *cx, unsigned argc, jsval *vp)
+js::testingFunc_parallelJSActive(JSContext *cx, unsigned argc, jsval *vp)
 {
     // If we were actually *in* a parallel section, then this function
     // would be inlined to TRUE in ion-generated code.
-    JS_ASSERT(!InParallelSection());
+    JS_ASSERT(!ParallelJSActive());
     JS_SET_RVAL(cx, vp, JSVAL_FALSE);
     return true;
 }
@@ -1020,8 +1020,8 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "  inferred name based on where the function was defined. This can be\n"
 "  different from the 'name' property on the function."),
 
-    JS_FN_HELP("inParallelSection", testingFunc_inParallelSection, 0, 0,
-"inParallelSection()",
+    JS_FN_HELP("parallelJSActive", testingFunc_parallelJSActive, 0, 0,
+"parallelJSActive()",
 "  True if this code is executing within a parallel section."),
 
     JS_FS_HELP_END

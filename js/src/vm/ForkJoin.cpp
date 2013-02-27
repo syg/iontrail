@@ -87,9 +87,6 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     // True if all non-main threads have stopped for the main thread to GC
     volatile bool worldStoppedForGC_;
 
-    // True if running with stop-the-world (vs abort-the-world) GC enabled
-    bool useStopTheWorldGC_;
-
     // Invoked only from the main thread:
     void executeFromMainThread();
 
@@ -134,9 +131,10 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
 
     // Moves all the per-thread arenas into the main zone and
     // processes any pending requests for a GC.  This can only safely
-    // be invoked on the main thread, either during a rendezvous or
-    // after the workers have completed.
-    void transferArenasToZoneAndProcessGCRequests();
+    // be invoked on the main thread after the workers have completed.
+    void transferArenasToZone();
+
+    void triggerGCIfRequested();
 
     // Invoked during processing by worker threads to "check in".
     bool check(ForkJoinSlice &threadCx);
@@ -156,7 +154,6 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
     gc::StackExtent &stackExtent(uint32_t i) { return stackExtents_[i]; }
 
     bool isWorldStoppedForGC() { return worldStoppedForGC_; }
-    bool useStopTheWorldGC() { return useStopTheWorldGC_; }
 
     void addSlice(ForkJoinSlice *slice);
     void removeSlice(ForkJoinSlice *slice);
@@ -243,8 +240,7 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
     fatal_(false),
     rendezvous_(false),
     gcRequested_(false),
-    worldStoppedForGC_(false),
-    useStopTheWorldGC_(true)
+    worldStoppedForGC_(false)
 {
 }
 
@@ -335,7 +331,8 @@ ForkJoinShared::execute()
         lock.wait();
 
     bool gcWasRequested = gcRequested_; // transfer clears gcRequested_ flag.
-    transferArenasToZoneAndProcessGCRequests();
+    transferArenasToZone();
+    triggerGCIfRequested();
 
     // Check if any of the workers failed.
     if (abort_) {
@@ -352,8 +349,10 @@ ForkJoinShared::execute()
 }
 
 void
-ForkJoinShared::transferArenasToZoneAndProcessGCRequests()
+ForkJoinShared::transferArenasToZone()
 {
+    JS_ASSERT(ForkJoinSlice::Current() == NULL);
+
     // stop-the-world GC may still be sweeping; let that finish so
     // that we do not upset the state of compartments being swept.
     cx_->runtime->gcHelperThread.waitBackgroundSweepEnd();
@@ -362,11 +361,20 @@ ForkJoinShared::transferArenasToZoneAndProcessGCRequests()
     for (unsigned i = 0; i < numSlices_; i++)
         zone->adoptWorkerAllocator(allocators_[i]);
 
+    triggerGCIfRequested();
+}
+
+void
+ForkJoinShared::triggerGCIfRequested() {
+    // this function either executes after the fork-join section ends
+    // or when the world is stopped:
+    JS_ASSERT(!ParallelJSActive());
+
     if (gcRequested_) {
-        if (!gcZone_)
-            TriggerGC(cx_->runtime, gcReason_);
+        if (gcZone_ == NULL)
+            js::TriggerGC(cx_->runtime, gcReason_);
         else
-            TriggerZoneGC(gcZone_, gcReason_);
+            js::TriggerZoneGC(gcZone_, gcReason_);
         gcRequested_ = false;
         gcZone_ = NULL;
     }
@@ -445,22 +453,17 @@ ForkJoinShared::check(ForkJoinSlice &slice)
         return false;
 
     if (slice.isMainThread()) {
+        // We are the main thread: therefore we must
+        // (1) initiate the rendezvous;
+        // (2) if GC was requested, reinvoke trigger
+        //     which will do various non-thread-safe
+        //     preparatory steps;
+        // (3) run the operation callback, which
+        //     may also run the GC.
+
+        // Calls to js::TriggerGC() should have been redirected to
+        // requestGC(), and thus the gcIsNeeded flag is not set yet.
         JS_ASSERT(!cx_->runtime->gcIsNeeded);
-
-        if (cx_->runtime->interrupt) {
-            // The GC Needed flag should not be set during parallel
-            // execution.  Instead, one of the requestGC() or
-            // requestZoneGC() methods should be invoked.
-            JS_ASSERT(!cx_->runtime->gcIsNeeded);
-
-            // If interrupt is requested, bring worker threads to a halt,
-            // service the interrupt, then let them start back up again.
-            // AutoRendezvous autoRendezvous(slice);
-            // if (!js_HandleExecutionInterrupt(cx_))
-            //     return setAbortFlag(true);
-            setAbortFlag(false);
-            return false;
-        }
 
         if (gcRequested_ && cx_->runtime->isHeapBusy()) {
             // Cannot call GCSlice when heap busy, so abort.  Easier
@@ -470,24 +473,24 @@ ForkJoinShared::check(ForkJoinSlice &slice)
             return false;
         }
 
-        if (useStopTheWorldGC() && gcRequested_) {
-            {
-                AutoRendezvous autoRendezvous(slice);
-                AutoMarkWorldStoppedForGC autoMarkSTWFlag(slice);
+        // (1). Initiaize the rendezvous and record stack extents.
+        AutoRendezvous autoRendezvous(slice);
+        AutoMarkWorldStoppedForGC autoMarkSTWFlag(slice);
+        slice.recordStackExtent();
+        AutoInstallForkJoinStackExtents extents(cx_->runtime, &stackExtents_[0]);
 
-                slice.recordStackExtent();
-                AutoInstallForkJoinStackExtents extents(cx_->runtime, &stackExtents_[0]);
+        // (2).  Note that because we are in a STW section, calls to
+        // js::TriggerGC() etc will not re-invoke
+        // ForkJoinSlice::requestGC().
+        triggerGCIfRequested();
 
-                if (gcZone_ == NULL || gcZone_ == cx_->runtime->atomsCompartment->zone()) {
-                    PrepareForFullGC(cx_->runtime);
-                    GCSlice(cx_->runtime, GC_NORMAL, gcReason_);
-                } else {
-                    PrepareZoneForGC(gcZone_);
-                    GCSlice(cx_->runtime, GC_NORMAL, gcReason_);
-                }
-                gcRequested_ = false;
-            }
+        // (3). Invoke the callback and abort if it returns false.
+        if (!js_InvokeOperationCallback(cx_)) {
+            setAbortFlag(true);
+            return false;
         }
+
+        return true;
     } else if (rendezvous_) {
         slice.recordStackExtent();
         joinRendezvous(slice);
@@ -592,17 +595,26 @@ ForkJoinShared::setAbortFlag(bool fatal)
 void
 ForkJoinShared::requestGC(gcreason::Reason reason)
 {
+    // Remember the details of the GC that was required for later,
+    // then trigger an interrupt.
+
     AutoLockMonitor lock(*this);
 
     gcZone_ = NULL;
     gcReason_ = reason;
     gcRequested_ = true;
+
+    cx_->runtime->triggerOperationCallback();
 }
 
 void
 ForkJoinShared::requestZoneGC(Zone *zone,
-                                     gcreason::Reason reason)
+                              gcreason::Reason reason)
 {
+    // Remember the details of the GC that was required for later,
+    // then trigger an interrupt.  If more than one zone is requested,
+    // fallback to full GC.
+
     AutoLockMonitor lock(*this);
 
     if (gcRequested_ && gcZone_ != zone) {
@@ -617,6 +629,8 @@ ForkJoinShared::requestZoneGC(Zone *zone,
         gcReason_ = reason;
         gcRequested_ = true;
     }
+
+    cx_->runtime->triggerOperationCallback();
 }
 
 #endif // JS_THREADSAFE
@@ -768,11 +782,8 @@ void ForkJoinSlice::recordStackBase(uintptr_t *baseAddr)
 void
 ForkJoinSlice::requestGC(gcreason::Reason reason)
 {
-    recordStackExtent();
 #ifdef JS_THREADSAFE
     shared->requestGC(reason);
-    if (!shared->useStopTheWorldGC())
-        triggerAbort();
 #endif
 }
 
@@ -780,11 +791,8 @@ void
 ForkJoinSlice::requestZoneGC(Zone *zone,
                              gcreason::Reason reason)
 {
-    recordStackExtent();
 #ifdef JS_THREADSAFE
     shared->requestZoneGC(zone, reason);
-    if (!shared->useStopTheWorldGC())
-        triggerAbort();
 #endif
 }
 
@@ -855,7 +863,8 @@ js::ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op)
 {
 #ifdef JS_THREADSAFE
     // Recursive use of the ThreadPool is not supported.
-    JS_ASSERT(!InParallelSection());
+    if (ForkJoinSlice::Current() != NULL)
+        return TP_RETRY_SEQUENTIALLY;
 
     AutoEnterParallelSection enter(cx);
 
