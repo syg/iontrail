@@ -642,7 +642,7 @@ TypeInferenceOracle::canEnterInlinedFunction(RawScript caller, jsbytecode *pc, R
             return false;
     } else {
         if (!returnTypes->isSubset(callReturn))
-            return true;
+            return false;
     }
 
     // TI calls ObjectStateChange to trigger invalidation of the caller.
