@@ -457,15 +457,18 @@ ForkJoinShared::check(ForkJoinSlice &slice)
         // (1) initiate the rendezvous;
         // (2) if GC was requested, reinvoke trigger
         //     which will do various non-thread-safe
-        //     preparatory steps;
+        //     preparatory steps.  We then invoke
+        //     a non-incremental GC manually.
         // (3) run the operation callback, which
-        //     may also run the GC.
+        //     would normally run the GC but
+        //     incrementally, which we do not want.
+        JSRuntime *rt = cx_->runtime;
 
         // Calls to js::TriggerGC() should have been redirected to
         // requestGC(), and thus the gcIsNeeded flag is not set yet.
-        JS_ASSERT(!cx_->runtime->gcIsNeeded);
+        JS_ASSERT(!rt->gcIsNeeded);
 
-        if (gcRequested_ && cx_->runtime->isHeapBusy()) {
+        if (gcRequested_ && rt->isHeapBusy()) {
             // Cannot call GCSlice when heap busy, so abort.  Easier
             // right now to abort rather than prove it cannot arise,
             // and safer for short-term than asserting !isHeapBusy.
@@ -477,12 +480,19 @@ ForkJoinShared::check(ForkJoinSlice &slice)
         AutoRendezvous autoRendezvous(slice);
         AutoMarkWorldStoppedForGC autoMarkSTWFlag(slice);
         slice.recordStackExtent();
-        AutoInstallForkJoinStackExtents extents(cx_->runtime, &stackExtents_[0]);
+        AutoInstallForkJoinStackExtents extents(rt, &stackExtents_[0]);
 
         // (2).  Note that because we are in a STW section, calls to
         // js::TriggerGC() etc will not re-invoke
         // ForkJoinSlice::requestGC().
         triggerGCIfRequested();
+
+        // (2b) Run the GC if it is required.  This would occur as
+        // part of js_InvokeOperationCallback(), but we want to avoid
+        // an incremental GC.
+        if (rt->gcIsNeeded) {
+            GC(rt, GC_NORMAL, gcReason_);
+        }
 
         // (3). Invoke the callback and abort if it returns false.
         if (!js_InvokeOperationCallback(cx_)) {
