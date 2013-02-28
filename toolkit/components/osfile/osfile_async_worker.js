@@ -12,11 +12,6 @@ if (this.Components) {
 (function(exports) {
   "use strict";
 
-  // A simple flag used to control debugging messages.
-  // FIXME: Once this library has been battle-tested, this flag will
-  // either be removed or replaced with a pref.
-  const DEBUG = false;
-
    try {
      importScripts("resource://gre/modules/osfile.jsm");
 
@@ -33,35 +28,25 @@ if (this.Components) {
       */
      self.onmessage = function onmessage(msg) {
        let data = msg.data;
-       if (DEBUG) {
-         LOG("Received message", JSON.stringify(data));
-       }
+       LOG("Received message", data);
        let id = data.id;
        let result;
        let exn;
        try {
          let method = data.fun;
-         if (DEBUG) {
-           LOG("Calling method", method);
-         }
+         LOG("Calling method", method);
          result = Agent[method].apply(Agent, data.args);
-         if (DEBUG) {
-           LOG("Method", method, "succeeded");
-         }
+         LOG("Method", method, "succeeded");
        } catch (ex) {
          exn = ex;
-         if (DEBUG) {
-           LOG("Error while calling agent method", exn, exn.stack);
-         }
+         LOG("Error while calling agent method", exn, exn.stack);
        }
        // Now, post a reply, possibly as an uncaught error.
        // We post this message from outside the |try ... catch| block
        // to avoid capturing errors that take place during |postMessage| and
        // built-in serialization.
        if (!exn) {
-         if (DEBUG) {
-           LOG("Sending positive reply", JSON.stringify(result), "id is", id);
-         }
+         LOG("Sending positive reply", result, "id is", id);
          if (result instanceof Transfer) {
            // Take advantage of zero-copy transfers
            self.postMessage({ok: result.data, id: id}, result.transfers);
@@ -70,22 +55,16 @@ if (this.Components) {
          }
        } else if (exn == StopIteration) {
          // StopIteration cannot be serialized automatically
-         if (DEBUG) {
-           LOG("Sending back StopIteration");
-         }
+         LOG("Sending back StopIteration");
          self.postMessage({StopIteration: true, id: id});
        } else if (exn instanceof exports.OS.File.Error) {
-         if (DEBUG) {
-           LOG("Sending back OS.File error", exn, "id is", id);
-         }
+         LOG("Sending back OS.File error", exn, "id is", id);
          // Instances of OS.File.Error know how to serialize themselves
          // (deserialization ensures that we end up with OS-specific
          // instances of |OS.File.Error|)
          self.postMessage({fail: exports.OS.File.Error.toMsg(exn), id:id});
        } else {
-         if (DEBUG) {
-           LOG("Sending back regular error", exn, exn.stack, "id is", id);
-         }
+         LOG("Sending back regular error", exn, exn.stack, "id is", id);
          // Other exceptions do not, and should be propagated through DOM's
          // built-in mechanism for uncaught errors, although this mechanism
          // may lose interesting information.
@@ -135,6 +114,13 @@ if (this.Components) {
          let id = this._idgen++;
          this._map.set(id, {resource:resource, info:info});
          return id;
+       },
+       /**
+        * Return a list of all open resources i.e. the ones still present in
+        * ResourceTracker's _map.
+        */
+       listOpenedResources: function listOpenedResources() {
+         return [resource.info.path for ([id, resource] of this._map)];
        }
      };
 
@@ -205,6 +191,25 @@ if (this.Components) {
       * back the results.
       */
      let Agent = {
+       // Update worker's OS.Shared.DEBUG flag message from controller.
+       SET_DEBUG: function SET_DEBUG (aDEBUG) {
+         exports.OS.Shared.DEBUG = aDEBUG;
+       },
+       // Return worker's current OS.Shared.DEBUG value to controller.
+       // Note: This is used for testing purposes.
+       GET_DEBUG: function GET_DEBUG () {
+         return exports.OS.Shared.DEBUG;
+       },
+       // Report file descriptors leaks.
+       System_shutdown: function System_shutdown () {
+         // Return information about both opened files and opened
+         // directory iterators.
+         return {
+           openedFiles: OpenedFiles.listOpenedResources(),
+           openedDirectoryIterators:
+             OpenedDirectoryIterators.listOpenedResources()
+         };
+       },
        // Functions of OS.File
        stat: function stat(path) {
          return exports.OS.File.Info.toMsg(
@@ -234,8 +239,13 @@ if (this.Components) {
          return File.remove(Type.path.fromMsg(path));
        },
        open: function open(path, mode, options) {
-         let file = File.open(Type.path.fromMsg(path), mode, options);
-         return OpenedFiles.add(file);
+         let filePath = Type.path.fromMsg(path);
+         let file = File.open(filePath, mode, options);
+         return OpenedFiles.add(file, {
+           // Adding path information to keep track of opened files
+           // to report leaks when debugging.
+           path: filePath
+         });
        },
        read: function read(path, bytes) {
          let data = File.read(Type.path.fromMsg(path), bytes);
@@ -254,8 +264,13 @@ if (this.Components) {
                                 );
        },
        new_DirectoryIterator: function new_DirectoryIterator(path, options) {
-         let iterator = new File.DirectoryIterator(Type.path.fromMsg(path), options);
-         return OpenedDirectoryIterators.add(iterator);
+         let directoryPath = Type.path.fromMsg(path);
+         let iterator = new File.DirectoryIterator(directoryPath, options);
+         return OpenedDirectoryIterators.add(iterator, {
+           // Adding path information to keep track of opened directory
+           // iterators to report leaks when debugging.
+           path: directoryPath
+         });
        },
        // Methods of OS.File
        File_prototype_close: function close(fd) {
@@ -341,6 +356,12 @@ if (this.Components) {
              this.close();
              OpenedDirectoryIterators.remove(dir);
            }, true);// ignore error to support double-closing |DirectoryIterator|
+       },
+       DirectoryIterator_prototype_exists: function exists(dir) {
+         return withDir(dir,
+           function do_exists() {
+             return this.exists();
+           });
        }
      };
   } catch(ex) {

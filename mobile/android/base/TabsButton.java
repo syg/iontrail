@@ -35,9 +35,7 @@ public class TabsButton extends ShapedButton {
         mCropped = a.getBoolean(R.styleable.TabsButton_cropped, false);
         a.recycle();
 
-        a = context.obtainStyledAttributes(attrs, R.styleable.TabsPanel);
-        mSideBar = a.getBoolean(R.styleable.TabsPanel_sidebar, false);
-        a.recycle();
+        mSideBar = false;
 
         // Paint to draw the background.
         mPaint = new Paint();
@@ -160,8 +158,10 @@ public class TabsButton extends ShapedButton {
     // The drawable is constructed as per @drawable/tabs_button.
     @Override
     public void onLightweightThemeChanged() {
-        LightweightThemeDrawable lightWeight1 = mActivity.getLightweightTheme().getTextureDrawable(this, R.drawable.tabs_tray_bg_repeat);
-        LightweightThemeDrawable lightWeight2 = mActivity.getLightweightTheme().getTextureDrawable(this, R.drawable.tabs_tray_dark_bg_repeat);
+        int background1 = mActivity.getResources().getColor(R.color.background_tabs_light);
+        LightweightThemeDrawable lightWeight1 = mActivity.getLightweightTheme().getColorDrawable(this, background1);
+        int background2 = mActivity.getResources().getColor(R.color.background_tabs_dark);
+        LightweightThemeDrawable lightWeight2 = mActivity.getLightweightTheme().getColorDrawable(this, background2);
         if (lightWeight1 == null || lightWeight2 == null)
             return;
 
@@ -171,12 +171,12 @@ public class TabsButton extends ShapedButton {
         Resources resources = this.getContext().getResources();
         StateListDrawable stateList1 = new StateListDrawable();
         stateList1.addState(new int[] { android.R.attr.state_pressed }, resources.getDrawable(R.drawable.highlight));
-        stateList1.addState(new int[] { R.attr.state_private }, resources.getDrawable(R.drawable.tabs_tray_bg_repeat));
+        stateList1.addState(new int[] { R.attr.state_private }, new ColorDrawable(resources.getColor(R.color.background_tabs_light)));
         stateList1.addState(new int[] {}, lightWeight1);
 
         StateListDrawable stateList2 = new StateListDrawable();
         stateList2.addState(new int[] { android.R.attr.state_pressed }, resources.getDrawable(R.drawable.highlight));
-        stateList2.addState(new int[] { R.attr.state_private }, resources.getDrawable(R.drawable.tabs_tray_bg_repeat));
+        stateList2.addState(new int[] { R.attr.state_private }, new ColorDrawable(resources.getColor(R.color.background_tabs_dark)));
         stateList2.addState(new int[] {}, lightWeight2);
 
         LevelListDrawable levelList = new LevelListDrawable();
@@ -194,5 +194,13 @@ public class TabsButton extends ShapedButton {
     @Override
     public void onLightweightThemeReset() {
         setBackgroundResource(R.drawable.tabs_button);
+    }
+
+    public void setIsSideBar(boolean isSideBar) {
+        if (mSideBar == isSideBar)
+            return;
+
+        mSideBar = isSideBar;
+        requestLayout();
     }
 }

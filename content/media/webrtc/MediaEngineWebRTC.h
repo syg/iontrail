@@ -14,7 +14,7 @@
 #include "nsCOMPtr.h"
 #include "nsDOMFile.h"
 #include "nsThreadUtils.h"
-#include "nsDOMMediaStream.h"
+#include "DOMMediaStream.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsComponentManagerUtils.h"
 
@@ -57,22 +57,25 @@ class MediaEngineWebRTCVideoSource : public MediaEngineVideoSource,
 {
 public:
   static const int DEFAULT_VIDEO_FPS = 60;
-  static const int DEFAULT_MIN_VIDEO_FPS = 10;
+  static const int DEFAULT_VIDEO_MIN_FPS = 10;
+  static const int DEFAULT_VIDEO_WIDTH = 640;
+  static const int DEFAULT_VIDEO_HEIGHT = 480;
 
   // ViEExternalRenderer.
   virtual int FrameSizeChange(unsigned int, unsigned int, unsigned int);
   virtual int DeliverFrame(unsigned char*, int, uint32_t, int64_t);
 
   MediaEngineWebRTCVideoSource(webrtc::VideoEngine* aVideoEnginePtr,
-    int aIndex, int aMinFps = DEFAULT_MIN_VIDEO_FPS)
+    int aIndex,
+    int aWidth = DEFAULT_VIDEO_WIDTH, int aHeight = DEFAULT_VIDEO_HEIGHT,
+    int aFps = DEFAULT_VIDEO_FPS, int aMinFps = DEFAULT_VIDEO_MIN_FPS)
     : mVideoEngine(aVideoEnginePtr)
     , mCaptureIndex(aIndex)
     , mCapabilityChosen(false)
-    , mWidth(640)
-    , mHeight(480)
-    , mLastEndTime(0)
+    , mWidth(aWidth)
+    , mHeight(aHeight)
     , mMonitor("WebRTCCamera.Monitor")
-    , mFps(DEFAULT_VIDEO_FPS)
+    , mFps(aFps)
     , mMinFps(aMinFps)
     , mInitDone(false)
     , mInSnapshotMode(false)
@@ -140,8 +143,6 @@ private:
   int mCaptureIndex;
   bool mCapabilityChosen;
   int mWidth, mHeight;
-  TrackID mTrackID;
-  TrackTicks mLastEndTime;
 
   // mMonitor protects mImage access/changes, and transitions of mState
   // from kStarted to kStopped (which are combined with EndTrack() and
@@ -286,6 +287,9 @@ private:
   // Need this to avoid unneccesary WebRTC calls while enumerating.
   bool mVideoEngineInit;
   bool mAudioEngineInit;
+
+  // the last set of selection vars for video sources
+  int mHeight, mWidth, mFPS, mMinFPS;
 
   // Store devices we've already seen in a hashtable for quick return.
   // Maps UUID to MediaEngineSource (one set for audio, one for video).

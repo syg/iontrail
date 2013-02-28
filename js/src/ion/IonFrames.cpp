@@ -351,7 +351,7 @@ ion::HandleException(ResumeFromException *rfe)
                 ++frames;
             }
 
-            IonScript *ionScript;
+            IonScript *ionScript = NULL;
             if (iter.checkInvalidation(&ionScript))
                 ionScript->decref(cx->runtime->defaultFreeOp());
         }
@@ -499,7 +499,7 @@ MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 
     MarkCalleeToken(trc, layout->calleeToken());
 
-    IonScript *ionScript;
+    IonScript *ionScript = NULL;
     if (frame.checkInvalidation(&ionScript)) {
         // This frame has been invalidated, meaning that its IonScript is no
         // longer reachable through the callee token (JSFunction/JSScript->ion
@@ -613,7 +613,7 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
         gc::MarkValueRoot(trc, oolgetter->thisp(), "ion-ool-getter-this");
         return;
     }
- 
+
     if (frame.isOOLPropertyOp()) {
         IonOOLPropertyOpExitFrameLayout *oolgetter = frame.exitFrame()->oolPropertyOpExit();
         gc::MarkIonCodeRoot(trc, oolgetter->stubCode(), "ion-ool-property-op-code");
@@ -919,7 +919,7 @@ IonFrameIterator::ionScript() const
 {
     JS_ASSERT(type() == IonFrame_OptimizedJS);
 
-    IonScript *ionScript;
+    IonScript *ionScript = NULL;
     if (checkInvalidation(&ionScript))
         return ionScript;
     switch (GetCalleeTokenTag(calleeToken())) {
@@ -968,7 +968,7 @@ InlineFrameIterator::resetOn(const IonFrameIterator *iter)
 }
 
 InlineFrameIterator::InlineFrameIterator(JSContext *cx, const InlineFrameIterator *iter)
-  : frame_(iter->frame_),
+  : frame_(iter ? iter->frame_ : NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)

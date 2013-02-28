@@ -64,9 +64,9 @@ namespace js {
  * common and future-friendly cases.
  */
 inline bool
-ComputeImplicitThis(JSContext *cx, HandleObject obj, Value *vp)
+ComputeImplicitThis(JSContext *cx, HandleObject obj, MutableHandleValue vp)
 {
-    vp->setUndefined();
+    vp.setUndefined();
 
     if (obj->isGlobal())
         return true;
@@ -78,7 +78,7 @@ ComputeImplicitThis(JSContext *cx, HandleObject obj, Value *vp)
     if (!nobj)
         return false;
 
-    vp->setObject(*nobj);
+    vp.setObject(*nobj);
     return true;
 }
 
@@ -97,9 +97,11 @@ ComputeThis(JSContext *cx, AbstractFramePtr frame)
          * |this| slot. If we lazily wrap a primitive |this| in an eval function frame, the
          * eval's frame will get the wrapper, but the function's frame will not. To prevent
          * this, we always wrap a function's |this| before pushing an eval frame, and should
-         * thus never see an unwrapped primitive in a non-strict eval function frame.
+         * thus never see an unwrapped primitive in a non-strict eval function frame. Null
+         * and undefined |this| values will unwrap to the same object in the function and
+         * eval frames, so are not required to be wrapped.
          */
-        JS_ASSERT(!frame.isEvalFrame());
+        JS_ASSERT_IF(frame.isEvalFrame(), thisv.isUndefined() || thisv.isNull());
     }
     bool modified;
     if (!BoxNonStrictThis(cx, &thisv, &modified))
@@ -748,7 +750,7 @@ GetObjectElementOperation(JSContext *cx, JSOp op, JSObject *objArg, bool wasObje
 
         uint32_t index;
         if (IsDefinitelyIndex(rref, &index)) {
-            if (analyze && !objArg->isNative()) {
+            if (analyze && !objArg->isNative() && !objArg->isTypedArray()) {
                 JSScript *script = NULL;
                 jsbytecode *pc = NULL;
                 types::TypeScript::GetPcScript(cx, &script, &pc);
@@ -775,7 +777,7 @@ GetObjectElementOperation(JSContext *cx, JSOp op, JSObject *objArg, bool wasObje
             if (script->hasAnalysis()) {
                 script->analysis()->getCode(pc).getStringElement = true;
 
-                if (!objArg->isArray() && !objArg->isNative())
+                if (!objArg->isArray() && !objArg->isNative() && !objArg->isTypedArray())
                     script->analysis()->getCode(pc).nonNativeGetElement = true;
             }
         }
@@ -892,20 +894,28 @@ GetElementOperation(JSContext *cx, JSOp op, MutableHandleValue lref, HandleValue
 }
 
 static JS_ALWAYS_INLINE bool
-SetObjectElementOperation(JSContext *cx, Handle<JSObject*> obj, HandleId id, const Value &value, bool strict)
+SetObjectElementOperation(JSContext *cx, Handle<JSObject*> obj, HandleId id, const Value &value,
+                          bool strict, RawScript maybeScript = NULL, jsbytecode *pc = NULL)
 {
+    RootedScript script(cx, maybeScript);
     types::TypeScript::MonitorAssign(cx, obj, id);
 
     if (obj->isArray() && JSID_IS_INT(id)) {
         uint32_t length = obj->getDenseInitializedLength();
         int32_t i = JSID_TO_INT(id);
-        if ((uint32_t)i >= length && !cx->fp()->beginsIonActivation()) {
-            JSScript *script = NULL;
-            jsbytecode *pc;
-            types::TypeScript::GetPcScript(cx, &script, &pc);
+        if ((uint32_t)i >= length) {
+            // In an Ion activation, GetPcScript won't work.  For non-baseline activations,
+            // that's ok, because optimized ion doesn't generate analysis info.  However,
+            // baseline must generate this information, so it passes the script and pc in
+            // as arguments.
+            if (script || !cx->fp()->beginsIonActivation()) {
+                JS_ASSERT(!!script == !!pc);
+                if (!script)
+                    types::TypeScript::GetPcScript(cx, script.address(), &pc);
 
-            if (script->hasAnalysis())
-                script->analysis()->getCode(pc).arrayWriteHole = true;
+                if (script->hasAnalysis())
+                    script->analysis()->getCode(pc).arrayWriteHole = true;
+            }
         }
     }
 

@@ -23,6 +23,10 @@
         <attr name="android:showAsAction"/>
     </declare-styleable>
 
+    <declare-styleable name="MenuItemDefault">
+        <attr name="state_more" format="boolean"/>
+    </declare-styleable>
+
     <declare-styleable name="FlowLayout">
         <attr name="spacing" format="dimension"/>
     </declare-styleable>
@@ -43,10 +47,6 @@
 
     <declare-styleable name="TabsButton">
         <attr name="cropped" format="boolean"/>
-    </declare-styleable>
-
-    <declare-styleable name="TabsPanel">
-        <attr name="sidebar" format="boolean"/>
     </declare-styleable>
 
     <declare-styleable name="TabsTray">
@@ -71,6 +71,29 @@
     <declare-styleable name="LightweightTheme">
         <attr name="state_light" format="boolean"/>
         <attr name="state_dark" format="boolean"/>
+    </declare-styleable>
+
+    <declare-styleable name="TwoWayView">
+
+        <attr name="android:orientation"/>
+
+        <attr name="android:choiceMode"/>
+
+        <attr name="android:drawSelectorOnTop"/>
+        <attr name="android:listSelector"/>
+
+        <attr name="android:scrollbarAlwaysDrawHorizontalTrack"/>
+        <attr name="android:scrollbarAlwaysDrawVerticalTrack"/>
+        <attr name="android:scrollbarDefaultDelayBeforeFade"/>
+        <attr name="android:scrollbarFadeDuration"/>
+        <attr name="android:scrollbarSize"/>
+        <attr name="android:scrollbarStyle"/>
+        <attr name="android:scrollbarThumbHorizontal"/>
+        <attr name="android:scrollbarThumbVertical"/>
+        <attr name="android:scrollbarTrackHorizontal"/>
+        <attr name="android:scrollbarTrackVertical"/>
+        <attr name="android:scrollbars"/>
+
     </declare-styleable>
 
 </resources>

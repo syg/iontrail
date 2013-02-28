@@ -80,6 +80,7 @@ this.DOMApplicationRegistry = {
                      "Webapps:UnregisterForMessages",
                      "Webapps:CancelDownload", "Webapps:CheckForUpdate",
                      "Webapps:Download", "Webapps:ApplyDownload",
+                     "Webapps:Install:Return:Ack",
                      "child-process-shutdown"];
 
     this.frameMessages = ["Webapps:ClearBrowserData"];
@@ -853,6 +854,9 @@ this.DOMApplicationRegistry = {
       case "Activities:Register:OK":
         this.notifyAppsRegistryReady();
         break;
+      case "Webapps:Install:Return:Ack":
+        this.onInstallSuccessAck(msg.manifestURL);
+        break;
     }
   },
 
@@ -1178,29 +1182,29 @@ this.DOMApplicationRegistry = {
       aApp.installState = "updating";
     }
 
-    // We set the 'downloading' flag right before starting the app
-    // download/update.
+    // We set the 'downloading' flag and update the apps registry right before
+    // starting the app download/update.
     aApp.downloading = true;
-    let cacheUpdate = aProfileDir
-      ? updateSvc.scheduleCustomProfileUpdate(appcacheURI, docURI, aProfileDir)
-      : updateSvc.scheduleAppUpdate(appcacheURI, docURI, aApp.localId, false);
-
-    // initialize the progress to 0 right now
     aApp.progress = 0;
+    DOMApplicationRegistry._saveApps((function() {
+      let cacheUpdate = aProfileDir
+        ? updateSvc.scheduleCustomProfileUpdate(appcacheURI, docURI, aProfileDir)
+        : updateSvc.scheduleAppUpdate(appcacheURI, docURI, aApp.localId, false);
 
-    // We save the download details for potential further usage like cancelling
-    // it.
-    let download = {
-      cacheUpdate: cacheUpdate,
-      appId: this._appIdForManifestURL(aApp.manifestURL),
-      previousState: aIsUpdate ? "installed" : "pending"
-    };
-    AppDownloadManager.add(aApp.manifestURL, download);
+      // We save the download details for potential further usage like
+      // cancelling it.
+      let download = {
+        cacheUpdate: cacheUpdate,
+        appId: this._appIdForManifestURL(aApp.manifestURL),
+        previousState: aIsUpdate ? "installed" : "pending"
+      };
+      AppDownloadManager.add(aApp.manifestURL, download);
 
-    cacheUpdate.addObserver(new AppcacheObserver(aApp), false);
-    if (aOfflineCacheObserver) {
-      cacheUpdate.addObserver(aOfflineCacheObserver, false);
-    }
+      cacheUpdate.addObserver(new AppcacheObserver(aApp), false);
+      if (aOfflineCacheObserver) {
+        cacheUpdate.addObserver(aOfflineCacheObserver, false);
+      }
+    }).bind(this));
   },
 
   // Returns the MD5 hash of a file, doing async IO off the main thread.
@@ -1285,18 +1289,6 @@ this.DOMApplicationRegistry = {
     let id = this._appIdForManifestURL(aData.manifestURL);
     let app = this.webapps[id];
 
-    if (!app) {
-      sendError("NO_SUCH_APP");
-      return;
-    }
-
-    // we may be able to remove this when this bug is fixed:
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=839071
-    if (app.downloading) {
-      sendError("APP_IS_DOWNLOADING");
-      return;
-    }
-
     function updatePackagedApp(aManifest) {
       debug("updatePackagedApp");
 
@@ -1345,6 +1337,8 @@ this.DOMApplicationRegistry = {
         delete this._manifestCache[id];
       }
 
+      app.manifest = aNewManifest || aOldManifest;
+
       let manifest;
       if (aNewManifest) {
         // Update the web apps' registration.
@@ -1363,27 +1357,25 @@ this.DOMApplicationRegistry = {
         manFile.append("manifest.webapp");
         this._writeFile(manFile, JSON.stringify(aNewManifest), function() { });
         manifest = new ManifestHelper(aNewManifest, app.origin);
+
+        // Update the permissions for this app.
+        PermissionsInstaller.installPermissions({
+          manifest: app.manifest,
+          origin: app.origin,
+          manifestURL: aData.manifestURL
+        }, true);
+
+        app.name = manifest.name;
+        app.csp = manifest.csp || "";
       } else {
         manifest = new ManifestHelper(aOldManifest, app.origin);
       }
 
-      app.installState = "installed";
-      app.downloading = false;
-      app.downloadSize = 0;
-      app.readyToApplyDownload = false;
-      app.downloadAvailable = !!manifest.appcache_path;
-
-      app.name = manifest.name;
-      app.csp = manifest.csp || "";
-      app.updateTime = Date.now();
-
       // Update the registry.
       this.webapps[id] = app;
-
       this._saveApps(function() {
         let reg = DOMApplicationRegistry;
         aData.app = app;
-        app.manifest = aNewManifest || aOldManifest;
         if (!manifest.appcache_path) {
           aData.event = "downloadapplied";
           reg.broadcastMessage("Webapps:CheckForUpdate:Return:OK", aData);
@@ -1409,12 +1401,25 @@ this.DOMApplicationRegistry = {
         }
         delete app.manifest;
       });
+    }
 
-      // Update the permissions for this app.
-      PermissionsInstaller.installPermissions({ manifest: aNewManifest || aOldManifest,
-                                                origin: app.origin,
-                                                manifestURL: aData.manifestURL },
-                                              true);
+
+    // We cannot update an app that does not exists.
+    if (!app) {
+      sendError("NO_SUCH_APP");
+      return;
+    }
+
+    // We cannot update an app that is not fully installed.
+    if (app.installState !== "installed") {
+      sendError("PENDING_APP_NOT_UPDATABLE");
+      return;
+    }
+
+    // We may be able to remove this when Bug 839071 is fixed.
+    if (app.downloading) {
+      sendError("APP_IS_DOWNLOADING");
+      return;
     }
 
     // For non-removable hosted apps that lives in the core apps dir we
@@ -1444,12 +1449,6 @@ this.DOMApplicationRegistry = {
           return;
         }
 
-        app.installState = "installed";
-        app.downloading = false;
-        app.downloadSize = 0;
-        app.readyToApplyDownload = false;
-        app.updateTime = Date.now();
-
         debug("Checking only appcache for " + aData.manifestURL);
         // Check if the appcache is updatable, and send "downloadavailable" or
         // "downloadapplied".
@@ -1461,8 +1460,10 @@ this.DOMApplicationRegistry = {
               aData.event = "downloadavailable";
               app.downloadAvailable = true;
               aData.app = app;
-              DOMApplicationRegistry.broadcastMessage("Webapps:CheckForUpdate:Return:OK",
-                                                      aData);
+              this._saveApps(function() {
+                DOMApplicationRegistry.broadcastMessage(
+                  "Webapps:CheckForUpdate:Return:OK", aData);
+              });
             } else {
               aData.error = "NOT_UPDATABLE";
               aMm.sendAsyncMessage("Webapps:CheckForUpdate:Return:KO", aData);
@@ -1478,20 +1479,8 @@ this.DOMApplicationRegistry = {
       return;
     }
 
-    // Try to download a new manifest.
-    let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
-                .createInstance(Ci.nsIXMLHttpRequest);
-    xhr.open("GET", aData.manifestURL, true);
-    xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_CACHING;
-    xhr.responseType = "json";
-    if (app.etag) {
-      debug("adding manifest etag:" + app.etag);
-      xhr.setRequestHeader("If-None-Match", app.etag);
-    }
-    xhr.channel.notificationCallbacks =
-      this.createLoadContext(app.installerAppId, app.installerIsBrowser);
-
-    xhr.addEventListener("load", (function() {
+    // On xhr load request event
+    function onload(xhr, oldManifest) {
       debug("Got http status=" + xhr.status + " for " + aData.manifestURL);
       let oldHash = app.manifestHash;
       let isPackage = app.origin.startsWith("app://");
@@ -1510,6 +1499,8 @@ this.DOMApplicationRegistry = {
           sendError("INSTALL_FROM_DENIED");
           return;
         } else {
+          AppsUtils.ensureSameAppName(oldManifest, manifest, app);
+
           let hash = this.computeManifestHash(manifest);
           debug("Manifest hash = " + hash);
           if (isPackage) {
@@ -1539,12 +1530,10 @@ this.DOMApplicationRegistry = {
               this._saveApps();
             }
           } else {
-            this._readManifests([{ id: id }], (function(aResult) {
-              // Update only the appcache if the manifest has not changed
-              // based on the hash value.
-              updateHostedApp.call(this, aResult[0].manifest,
-                                   oldHash == hash ? null : manifest);
-            }).bind(this));
+            // Update only the appcache if the manifest has not changed
+            // based on the hash value.
+            updateHostedApp.call(this, oldManifest,
+                                 oldHash == hash ? null : manifest);
           }
         }
       } else if (xhr.status == 304) {
@@ -1563,21 +1552,40 @@ this.DOMApplicationRegistry = {
         } else {
           // For hosted apps, even if the manifest has not changed, we check
           // for offline cache updates.
-          this._readManifests([{ id: id }], (function(aResult) {
-            updateHostedApp.call(this, aResult[0].manifest, null);
-          }).bind(this));
+          updateHostedApp.call(this, oldManifest, null);
         }
       } else {
         sendError("MANIFEST_URL_ERROR");
       }
-    }).bind(this), false);
+    }
 
-    xhr.addEventListener("error", (function() {
-      sendError("NETWORK_ERROR");
-    }).bind(this), false);
+    // Try to download a new manifest.
+    function doRequest(oldManifest) {
+      let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
+                  .createInstance(Ci.nsIXMLHttpRequest);
+      xhr.open("GET", aData.manifestURL, true);
+      xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_CACHING;
+      xhr.responseType = "json";
+      if (app.etag) {
+        debug("adding manifest etag:" + app.etag);
+        xhr.setRequestHeader("If-None-Match", app.etag);
+      }
+      xhr.channel.notificationCallbacks =
+        this.createLoadContext(app.installerAppId, app.installerIsBrowser);
 
-    debug("Checking manifest at " + aData.manifestURL);
-    xhr.send(null);
+      xhr.addEventListener("load", onload.bind(this, xhr, oldManifest), false);
+      xhr.addEventListener("error", (function() {
+        sendError("NETWORK_ERROR");
+      }).bind(this), false);
+
+      debug("Checking manifest at " + aData.manifestURL);
+      xhr.send(null);
+    }
+
+    // Read the current app manifest file
+    this._readManifests([{ id: id }], (function(aResult) {
+      doRequest.call(this, aResult[0].manifest);
+    }).bind(this));
   },
 
   // Creates a nsILoadContext object with a given appId and isBrowser flag.
@@ -1619,7 +1627,7 @@ this.DOMApplicationRegistry = {
 
     // Disallow reinstalls from the same origin for now.
     // See https://bugzilla.mozilla.org/show_bug.cgi?id=821288
-    if (this._appId(app.origin) !== null) {
+    if (this._appId(app.origin) !== null && this._isLaunchable(app.origin)) {
       sendError("REINSTALL_FORBIDDEN");
       return;
     }
@@ -1764,6 +1772,23 @@ this.DOMApplicationRegistry = {
     aData.mm.sendAsyncMessage("Webapps:Install:Return:KO", aData);
   },
 
+  // This function is called after we called the onsuccess callback on the
+  // content side. This let the webpage the opportunity to set event handlers
+  // on the app before we start firing progress events.
+  queuedDownload: {},
+
+  onInstallSuccessAck: function onInstallSuccessAck(aManifestURL) {
+    let download = this.queuedDownload[aManifestURL];
+    if (!download) {
+      return;
+    }
+    this.startOfflineCacheDownload(download.manifest,
+                                   download.app,
+                                   download.profileDir,
+                                   download.offlineCacheObserver);
+    delete this.queuedDownload[aManifestURL];
+  },
+
   confirmInstall: function(aData, aFromSync, aProfileDir, aOfflineCacheObserver) {
     let isReinstall = false;
     let app = aData.app;
@@ -1866,6 +1891,13 @@ this.DOMApplicationRegistry = {
       aData.app[aProp] = appObject[aProp];
      });
 
+    this.queuedDownload[app.manifestURL] = {
+      manifest: manifest,
+      app: appObject,
+      profileDir: aProfileDir,
+      offlineCacheObserver: aOfflineCacheObserver
+    }
+
     if (!aFromSync)
       this._saveApps((function() {
         this.broadcastMessage("Webapps:Install:Return:OK", aData);
@@ -1884,7 +1916,6 @@ this.DOMApplicationRegistry = {
 #endif
     }
 
-    this.startOfflineCacheDownload(manifest, appObject, aProfileDir, aOfflineCacheObserver);
     if (manifest.package_path) {
       // origin for install apps is meaningless here, since it's app:// and this
       // can't be used to resolve package paths.
@@ -2221,6 +2252,8 @@ this.DOMApplicationRegistry = {
                 if (Components.isSuccessCode(aRv)) {
                   isSigned = true;
                   zipReader = aZipReader;
+                } else if (aRv == Cr.NS_ERROR_FILE_CORRUPTED) {
+                  throw "APP_PACKAGE_CORRUPTED";
                 } else if (aRv != Cr.NS_ERROR_SIGNED_JAR_NOT_SIGNED) {
                   throw "INVALID_SIGNATURE";
                 } else {
@@ -2257,7 +2290,7 @@ this.DOMApplicationRegistry = {
                   throw "INVALID_SIGNATURE";
                 } else if (isSigned && !isSignedAppOrigin) {
                   // Other origins are *prohibited* from installing signed apps.
-                  // One reason is that our app revociation mechanism requires
+                  // One reason is that our app revocation mechanism requires
                   // strong cooperation from the host of the mini-manifest, which
                   // we assume to be under the control of the install origin,
                   // even if it has a different origin.
@@ -2278,11 +2311,19 @@ this.DOMApplicationRegistry = {
                 let manifest = JSON.parse(converter.ConvertToUnicode(NetUtil.readInputStreamToString(istream,
                                                                      istream.available()) || ""));
 
-                // Call checkManifest before compareManifests, as checkManifest
-                // will normalize some attributes that has already been normalized
-                // for aManifest during checkForUpdate.
                 if (!AppsUtils.checkManifest(manifest, app)) {
                   throw "INVALID_MANIFEST";
+                }
+
+                // For app updates we don't forbid apps to rename themselves but
+                // we still retain the old name of the app. In the future we
+                // will use UI to allow updates to rename an app after we check
+                // with the user that the rename is ok.
+                if (aIsUpdate) {
+                  // Call ensureSameAppName before compareManifests as `manifest`
+                  // has been normalized to avoid app rename.
+                  AppsUtils.ensureSameAppName(aManifest._manifest, manifest,
+                                              app);
                 }
 
                 if (!AppsUtils.compareManifests(manifest,
@@ -2327,8 +2368,13 @@ this.DOMApplicationRegistry = {
                 }
               } catch (e) {
                 // Something bad happened when reading the package.
-                // unrecoverable error, don't bug the user
-                app.downloadAvailable = false;
+                // Unrecoverable error, don't bug the user.
+                // Apps with installState 'pending' does not produce any
+                // notification, so we are safe with its current
+                // downladAvailable state.
+                if (app.installState === "installed") {
+                  app.downloadAvailable = false;
+                }
                 if (typeof e == 'object') {
                   Cu.reportError("Error while reading package:" + e);
                   cleanup("INVALID_PACKAGE");
@@ -2860,6 +2906,7 @@ AppcacheObserver.prototype = {
       app.installState = aStatus;
       app.progress = aProgress;
       if (aStatus == "installed") {
+        app.updateTime = Date.now();
         app.downloading = false;
         app.downloadAvailable = false;
       }

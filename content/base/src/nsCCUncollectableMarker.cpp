@@ -6,7 +6,6 @@
 #include "nsCCUncollectableMarker.h"
 #include "nsIObserverService.h"
 #include "nsIDocShell.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIContentViewer.h"
 #include "nsIDocument.h"
@@ -329,7 +328,7 @@ nsCCUncollectableMarker::Observe(nsISupports* aSubject, const char* aTopic,
     Element::ClearContentUnbinder();
   }
 
-  // Increase generation to effectivly unmark all current objects
+  // Increase generation to effectively unmark all current objects
   if (!++sGeneration) {
     ++sGeneration;
   }

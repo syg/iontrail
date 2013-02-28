@@ -6,7 +6,63 @@
 ; to launch the Win8 metro browser or desktop browser.
 !define DELEGATE_EXECUTE_HANDLER_ID {5100FEC1-212B-4BF5-9BF8-3E650FD794A3}
 
+; Does metro registration for the command execute handler
+Function RegisterCEH
+!ifdef MOZ_METRO
+  ${If} ${AtLeastWin8}
+    ${CleanupMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID}
+    ${AddMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID} \
+                                    "$INSTDIR\CommandExecuteHandler.exe" \
+                                    $AppUserModelID \
+                                    "FirefoxURL" \
+                                    "FirefoxHTML"
+  ${EndIf}
+!endif
+FunctionEnd
+
+; If we're in Win8 make sure we have a start menu shortcut and that it has
+; the correct AppuserModelID so that the Metro browser has a Metro tile.
+Function RegisterStartMenuTile
+!ifdef MOZ_METRO
+  ${If} ${AtLeastWin8}
+    CreateShortCut "$SMPROGRAMS\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
+    ${If} ${FileExists} "$SMPROGRAMS\${BrandFullName}.lnk"
+      ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandFullName}.lnk" \
+                                             "$INSTDIR"
+      ${If} "$AppUserModelID" != ""
+        ApplicationID::Set "$SMPROGRAMS\${BrandFullName}.lnk" "$AppUserModelID" "true"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!endif
+FunctionEnd
+
 !macro PostUpdate
+
+  ; PostUpdate is called from both session 0 and from the user session
+  ; for service updates, make sure that we only register with the user session
+  ; Otherwise ApplicationID::Set can fail intermittently with a file in use error.
+  System::Call "kernel32::GetCurrentProcessId() i.r0"
+  System::Call "kernel32::ProcessIdToSessionId(i $0, *i ${NSIS_MAX_STRLEN} r9)"
+
+  ; Determine if we're the protected UserChoice default or not. If so fix the
+  ; start menu tile.  In case there are 2 Firefox installations, we only do
+  ; this if the application being updated is the default.
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" "ProgId"
+  ${If} $0 == "FirefoxURL"
+  ${AndIf} $9 != 0 ; We're not running in session 0
+    ReadRegStr $0 HKCU "Software\Classes\FirefoxURL\shell\open\command" ""
+    ${GetPathFromString} "$0" $0
+    ${GetParent} "$0" $0
+    ${If} ${FileExists} "$0"
+      ${GetLongPath} "$0" $0
+    ${EndIf}
+    ${If} "$0" == "$INSTDIR"
+      ; Win8 specific registration
+      Call RegisterStartMenuTile
+    ${EndIf}
+  ${EndIf}
+
   ${CreateShortcutsLog}
 
   ; Remove registry entries for non-existent apps and for apps that point to our
@@ -141,6 +197,21 @@
   ${EndIf}
 !endif
 
+; Register the DEH
+!ifdef MOZ_METRO
+  ${If} ${AtLeastWin8}
+  ${AndIf} $9 != 0 ; We're not running in session 0
+    ; If RegisterCEH is called too close to changing the shortcut AppUserModelID
+    ; and if the tile image is not already in cache.  Then Windows won't refresh
+    ; the tile image on the start screen.  So wait before calling RegisterCEH.
+    ; We only need to do this when the DEH doesn't already exist.
+    ReadRegStr $0 HKCU "Software\Classes\FirefoxURL\shell\open\command" "DelegateExecute"
+    ${If} $0 != ${DELEGATE_EXECUTE_HANDLER_ID}
+      Sleep 3000
+    ${EndIf}
+    Call RegisterCEH
+  ${EndIf}
+!endif
 !macroend
 !define PostUpdate "!insertmacro PostUpdate"
 
@@ -342,16 +413,7 @@
 
   ${AddDisabledDDEHandlerValues} "FirefoxURL" "$2" "$8,1" "${AppRegName} URL" \
                                  "true"
-!ifdef MOZ_METRO
-  ${If} ${AtLeastWin8}
-    ${CleanupMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID}
-    ${AddMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID} \
-                                    "$INSTDIR\CommandExecuteHandler.exe" \
-                                    $AppUserModelID \
-                                    "FirefoxURL" \
-                                    "FirefoxHTML"
-  ${EndIf}
-!endif
+  Call RegisterCEH
 
   ; An empty string is used for the 4th & 5th params because the following
   ; protocol handlers already have a display name and the additional keys
@@ -1149,20 +1211,7 @@ Function SetAsDefaultAppUserHKCU
     ${SetStartMenuInternet} "HKCU"
     ${FixShellIconHandler} "HKCU"
     ${FixClassKeys} ; Does not use SHCTX
-; If MOZ_METRO is defined and we're at least win8, then we should re-create
-; the start menu shortcut so that the Metro browser is accessible.
-; This is also for zip builds who won't have a start menu shortcut yet.
-!ifdef MOZ_METRO
-    Delete "$SMPROGRAMS\${BrandFullName}.lnk"
-    CreateShortCut "$SMPROGRAMS\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
-    ${If} ${FileExists} "$SMPROGRAMS\${BrandFullName}.lnk"
-      ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandFullName}.lnk" \
-                                             "$INSTDIR"
-      ${If} "$AppUserModelID" != ""
-        ApplicationID::Set "$SMPROGRAMS\${BrandFullName}.lnk" "$AppUserModelID" "true"
-      ${EndIf}
-    ${EndIf}
-!endif
+    Call RegisterStartMenuTile
   ${EndIf}
 
   ${SetHandlers}

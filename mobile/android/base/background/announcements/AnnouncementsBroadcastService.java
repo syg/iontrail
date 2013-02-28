@@ -8,10 +8,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 import org.mozilla.gecko.background.BackgroundConstants;
+import org.mozilla.gecko.background.BackgroundService;
+import org.mozilla.gecko.sync.GlobalConstants;
 import org.mozilla.gecko.sync.Logger;
 
 import android.app.AlarmManager;
-import android.app.IntentService;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
@@ -23,7 +24,7 @@ import android.content.SharedPreferences.Editor;
  * browser, registering or unregistering the main
  * {@link AnnouncementsStartReceiver} with the {@link AlarmManager}.
  */
-public class AnnouncementsBroadcastService extends IntentService {
+public class AnnouncementsBroadcastService extends BackgroundService {
   private static final String WORKER_THREAD_NAME = "AnnouncementsBroadcastServiceWorker";
   private static final String LOG_TAG = "AnnounceBrSvc";
 
@@ -33,24 +34,16 @@ public class AnnouncementsBroadcastService extends IntentService {
 
   private void toggleAlarm(final Context context, boolean enabled) {
     Logger.info(LOG_TAG, (enabled ? "R" : "Unr") + "egistering announcements broadcast receiver...");
-    final AlarmManager alarm = getAlarmManager(context);
 
-    final Intent service = new Intent(context, AnnouncementsStartReceiver.class);
-    final PendingIntent pending = PendingIntent.getBroadcast(context, 0, service, PendingIntent.FLAG_CANCEL_CURRENT);
+    final PendingIntent pending = createPendingIntent(context, AnnouncementsStartReceiver.class);
 
     if (!enabled) {
-      alarm.cancel(pending);
+      cancelAlarm(pending);
       return;
     }
 
-    final long firstEvent = System.currentTimeMillis();
     final long pollInterval = getPollInterval(context);
-    Logger.info(LOG_TAG, "Setting inexact repeating alarm for interval " + pollInterval);
-    alarm.setInexactRepeating(AlarmManager.RTC, firstEvent, pollInterval, pending);
-  }
-
-  private static AlarmManager getAlarmManager(Context context) {
-    return (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+    scheduleAlarm(pollInterval, pending);
   }
 
   /**
@@ -63,6 +56,43 @@ public class AnnouncementsBroadcastService extends IntentService {
   public static void recordLastLaunch(final Context context) {
     final long now = System.currentTimeMillis();
     final SharedPreferences preferences = context.getSharedPreferences(AnnouncementsConstants.PREFS_BRANCH, BackgroundConstants.SHARED_PREFERENCES_MODE);
+
+    // One of several things might be true, according to our logs:
+    //
+    // * The new current time is older than the last
+    // * … or way in the future
+    // * … or way in the distant past
+    // * … or it's reasonable.
+    //
+    // Furthermore, when we come to calculate idle we might find that the clock
+    // is dramatically different — that the current time is thirteen years older
+    // than our saved timestamp (system clock resets to 2000 on battery change),
+    // or it's thirty years in the future (previous timestamp was saved as 0).
+    //
+    // We should try to do something vaguely sane in these situations.
+    long previous = preferences.getLong(AnnouncementsConstants.PREF_LAST_LAUNCH, -1);
+    if (previous == -1) {
+      Logger.debug(LOG_TAG, "No previous launch recorded.");
+    }
+
+    if (now < GlobalConstants.BUILD_TIMESTAMP) {
+      Logger.warn(LOG_TAG, "Current time " + now + " is older than build date " +
+                           GlobalConstants.BUILD_TIMESTAMP + ". Ignoring until clock is corrected.");
+      return;
+    }
+
+    if (now > AnnouncementsConstants.LATEST_ACCEPTED_LAUNCH_TIMESTAMP) {
+      Logger.warn(LOG_TAG, "Launch time " + now + " is later than max sane launch timestamp " +
+                           AnnouncementsConstants.LATEST_ACCEPTED_LAUNCH_TIMESTAMP +
+                           ". Ignoring until clock is corrected.");
+      return;
+    }
+
+    if (previous > now) {
+      Logger.debug(LOG_TAG, "Previous launch " + previous + " later than current time " +
+                            now + ", but new time is sane. Accepting new time.");
+    }
+
     preferences.edit().putLong(AnnouncementsConstants.PREF_LAST_LAUNCH, now).commit();
   }
 

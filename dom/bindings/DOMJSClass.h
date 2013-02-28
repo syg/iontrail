@@ -41,6 +41,10 @@ class nsCycleCollectionParticipant;
 // changes.
 #define DOM_PROTO_INSTANCE_CLASS_SLOT 0
 
+// Interface objects store a number of reserved slots equal to
+// DOM_INTERFACE_BASE_SLOTS + number of named constructors.
+#define DOM_INTERFACE_SLOTS_BASE (DOM_XRAY_EXPANDO_SLOT + 1)
+
 MOZ_STATIC_ASSERT(DOM_PROTO_INSTANCE_CLASS_SLOT != DOM_XRAY_EXPANDO_SLOT,
                   "Interface prototype object use both of these, so they must "
                   "not be the same slot.");
@@ -62,10 +66,22 @@ struct ConstantSpec
   JS::Value value;
 };
 
+typedef bool (*PropertyEnabled)(JSContext* cx, JSObject* global);
+
 template<typename T>
 struct Prefable {
+  inline bool isEnabled(JSContext* cx, JSObject* obj) {
+    return enabled &&
+      (!enabledFunc ||
+       enabledFunc(cx, js::GetGlobalForObjectCrossCompartment(obj)));
+  }
+
   // A boolean indicating whether this set of specs is enabled
   bool enabled;
+  // A function pointer to a function that can say the property is disabled
+  // even if "enabled" is set to true.  If the pointer is null the value of
+  // "enabled" is used as-is.
+  PropertyEnabled enabledFunc;
   // Array of specs, terminated in whatever way is customary for T.
   // Null to indicate a end-of-array for Prefable, when such an
   // indicator is needed.
@@ -207,6 +223,9 @@ struct DOMIfaceAndProtoJSClass
   // The value to return for toString() on this interface or interface prototype
   // object.
   const char* mToString;
+
+  const prototypes::ID mPrototypeID;
+  const uint32_t mDepth;
 
   static const DOMIfaceAndProtoJSClass* FromJSClass(const JSClass* base) {
     MOZ_ASSERT(base->flags & JSCLASS_IS_DOMIFACEANDPROTOJSCLASS);

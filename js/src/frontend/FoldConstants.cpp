@@ -108,7 +108,7 @@ FoldType(JSContext *cx, ParseNode *pn, ParseNodeKind kind)
  */
 static bool
 FoldBinaryNumeric(JSContext *cx, JSOp op, ParseNode *pn1, ParseNode *pn2,
-                  ParseNode *pn, Parser *parser)
+                  ParseNode *pn, Parser<FullParseHandler> *parser)
 {
     double d, d2;
     int32_t i, j;
@@ -174,10 +174,6 @@ FoldBinaryNumeric(JSContext *cx, JSOp op, ParseNode *pn1, ParseNode *pn2,
     }
 
     /* Take care to allow pn1 or pn2 to alias pn. */
-    if (pn1 != pn)
-        parser->freeTree(pn1);
-    if (pn2 != pn)
-        parser->freeTree(pn2);
     pn->setKind(PNK_NUMBER);
     pn->setOp(JSOP_DOUBLE);
     pn->setArity(PN_NULLARY);
@@ -244,9 +240,14 @@ Boolish(ParseNode *pn)
     }
 }
 
+namespace js {
+namespace frontend {
+
+template <>
 bool
-frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inGenexpLambda,
-                        bool inCond)
+FoldConstants<FullParseHandler>(JSContext *cx, ParseNode **pnp,
+                                Parser<FullParseHandler> *parser,
+                                bool inGenexpLambda, bool inCond)
 {
     ParseNode *pn = *pnp;
     ParseNode *pn1 = NULL, *pn2 = NULL, *pn3 = NULL;
@@ -254,9 +255,15 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
     JS_CHECK_RECURSION(cx, return false);
 
     switch (pn->getArity()) {
-      case PN_FUNC:
-        if (!FoldConstants(cx, &pn->pn_body, parser, pn->pn_funbox->inGenexpLambda))
-            return false;
+      case PN_CODE:
+        if (pn->getKind() == PNK_MODULE) {
+            if (!FoldConstants(cx, &pn->pn_body, parser))
+                return false;
+        } else {
+            JS_ASSERT(pn->getKind() == PNK_FUNCTION);
+            if (!FoldConstants(cx, &pn->pn_body, parser, pn->pn_funbox->inGenexpLambda))
+                return false;
+        }
         break;
 
       case PN_LIST:
@@ -295,7 +302,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
             if (!FoldConstants(cx, &pn->pn_kid2, parser, inGenexpLambda, pn->isKind(PNK_FORHEAD)))
                 return false;
             if (pn->isKind(PNK_FORHEAD) && pn->pn_kid2->isOp(JSOP_TRUE)) {
-                parser->freeTree(pn->pn_kid2);
+                parser->handler.freeTree(pn->pn_kid2);
                 pn->pn_kid2 = NULL;
             }
         }
@@ -421,7 +428,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
             pn->makeEmpty();
         }
         if (pn3 && pn3 != pn2)
-            parser->freeTree(pn3);
+            parser->handler.freeTree(pn3);
         break;
 
       case PNK_OR:
@@ -440,7 +447,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
                     if ((t == Truthy) == pn->isKind(PNK_OR)) {
                         for (pn2 = pn1->pn_next; pn2; pn2 = pn3) {
                             pn3 = pn2->pn_next;
-                            parser->freeTree(pn2);
+                            parser->handler.freeTree(pn2);
                             --pn->pn_count;
                         }
                         pn1->pn_next = NULL;
@@ -450,7 +457,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
                     if (pn->pn_count == 1)
                         break;
                     *listp = pn1->pn_next;
-                    parser->freeTree(pn1);
+                    parser->handler.freeTree(pn1);
                     --pn->pn_count;
                 } while ((pn1 = *listp) != NULL);
 
@@ -477,12 +484,12 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
                 Truthiness t = Boolish(pn1);
                 if (t != Unknown) {
                     if ((t == Truthy) == pn->isKind(PNK_OR)) {
-                        parser->freeTree(pn2);
+                        parser->handler.freeTree(pn2);
                         ReplaceNode(pnp, pn1);
                         pn = pn1;
                     } else {
                         JS_ASSERT((t == Truthy) == pn->isKind(PNK_AND));
-                        parser->freeTree(pn1);
+                        parser->handler.freeTree(pn1);
                         ReplaceNode(pnp, pn2);
                         pn = pn2;
                     }
@@ -549,7 +556,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
             }
 
             /* Fill the buffer, advancing chars and recycling kids as we go. */
-            for (pn2 = pn1; pn2; pn2 = parser->freeTree(pn2)) {
+            for (pn2 = pn1; pn2; pn2 = parser->handler.freeTree(pn2)) {
                 JSAtom *atom = pn2->pn_atom;
                 size_t length2 = atom->length();
                 js_strncpy(chars, atom->chars(), length2);
@@ -585,8 +592,8 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
             pn->setKind(PNK_STRING);
             pn->setOp(JSOP_STRING);
             pn->setArity(PN_NULLARY);
-            parser->freeTree(pn1);
-            parser->freeTree(pn2);
+            parser->handler.freeTree(pn1);
+            parser->handler.freeTree(pn2);
             break;
         }
 
@@ -680,7 +687,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
             pn->setOp(JSOP_DOUBLE);
             pn->setArity(PN_NULLARY);
             pn->pn_dval = d;
-            parser->freeTree(pn1);
+            parser->handler.freeTree(pn1);
         } else if (pn1->isKind(PNK_TRUE) || pn1->isKind(PNK_FALSE)) {
             if (pn->isOp(JSOP_NOT)) {
                 ReplaceNode(pnp, pn1);
@@ -708,7 +715,7 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
              * a method list corrupts the method list. However, methods are M's in
              * statements of the form 'this.foo = M;', which we never fold, so we're okay.
              */
-            parser->allocator.prepareNodeForMutation(pn);
+            parser->handler.prepareNodeForMutation(pn);
             if (t == Truthy) {
                 pn->setKind(PNK_TRUE);
                 pn->setOp(JSOP_TRUE);
@@ -722,3 +729,15 @@ frontend::FoldConstants(JSContext *cx, ParseNode **pnp, Parser *parser, bool inG
 
     return true;
 }
+
+template <>
+bool
+FoldConstants<SyntaxParseHandler>(JSContext *cx, SyntaxParseHandler::Node *pnp,
+                                  Parser<SyntaxParseHandler> *parser,
+                                  bool inGenexpLambda, bool inCond)
+{
+    return true;
+}
+
+} /* namespace frontend */
+} /* namespace js */

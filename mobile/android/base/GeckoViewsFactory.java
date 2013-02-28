@@ -44,7 +44,7 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
             mFactoryMap.put("AboutHomeContent$TopSitesGridView", AboutHomeContent.TopSitesGridView.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("AboutHomeSection", AboutHomeSection.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("AwesomeBarTabs", AwesomeBarTabs.class.getConstructor(arg1Class, arg2Class));
-            mFactoryMap.put("AwesomeBarTabs.Background", AwesomeBarTabs.Background.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("AwesomeBarTabs$BackgroundLayout", AwesomeBarTabs.BackgroundLayout.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("BackButton", BackButton.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("BrowserToolbarBackground", BrowserToolbarBackground.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("BrowserToolbar$RightEdge", BrowserToolbar.RightEdge.class.getConstructor(arg1Class, arg2Class));
@@ -53,6 +53,7 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
             mFactoryMap.put("ForwardButton", ForwardButton.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("GeckoApp$MainLayout", GeckoApp.MainLayout.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("LinkTextView", LinkTextView.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("MenuItemDefault", MenuItemDefault.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("FindInPageBar", FindInPageBar.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("IconTabWidget", IconTabWidget.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("MenuButton", MenuButton.class.getConstructor(arg1Class, arg2Class));

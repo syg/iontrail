@@ -883,6 +883,9 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     useHelperThreads_(useHelperThreads),
     requestedHelperThreadCount(-1),
+#ifdef DEBUG
+    enteredPolicy(NULL),
+#endif
     rngNonce(0)
 {
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
@@ -948,6 +951,9 @@ JSRuntime::init(uint32_t maxbytes)
     if (!scriptFilenameTable.init())
         return false;
 
+    if (!scriptDataTable.init())
+        return false;
+
     if (!threadPool.init())
         return false;
 
@@ -974,6 +980,7 @@ JSRuntime::~JSRuntime()
      * some filenames around because of gcKeepAtoms.
      */
     FreeScriptFilenames(this);
+    FreeScriptData(this);
 
 #ifdef JS_THREADSAFE
 # ifdef JS_ION
@@ -1580,7 +1587,7 @@ JS_TransplantObject(JSContext *cx, JSObject *origobjArg, JSObject *targetArg)
         // destination, then we know that we won't find a wrapper in the
         // destination's cross compartment map and that the same
         // object will continue to work.
-        if (!origobj->swap(cx, target))
+        if (!JSObject::swap(cx, origobj, target))
             MOZ_CRASH();
         newIdentity = origobj;
     } else if (WrapperMap::Ptr p = destination->lookupWrapper(origv)) {
@@ -1594,7 +1601,7 @@ JS_TransplantObject(JSContext *cx, JSObject *origobjArg, JSObject *targetArg)
         destination->removeWrapper(p);
         NukeCrossCompartmentWrapper(cx, newIdentity);
 
-        if (!newIdentity->swap(cx, target))
+        if (!JSObject::swap(cx, newIdentity, target))
             MOZ_CRASH();
     } else {
         // Otherwise, we use |target| for the new identity object.
@@ -1613,7 +1620,7 @@ JS_TransplantObject(JSContext *cx, JSObject *origobjArg, JSObject *targetArg)
         if (!JS_WrapObject(cx, newIdentityWrapper.address()))
             MOZ_CRASH();
         JS_ASSERT(Wrapper::wrappedObject(newIdentityWrapper) == newIdentity);
-        if (!origobj->swap(cx, newIdentityWrapper))
+        if (!JSObject::swap(cx, origobj, newIdentityWrapper))
             MOZ_CRASH();
         origobj->compartment()->putWrapper(ObjectValue(*newIdentity), origv);
     }
@@ -1669,7 +1676,7 @@ js_TransplantObjectWithWrapper(JSContext *cx,
         destination->removeWrapper(p);
         NukeCrossCompartmentWrapper(cx, newWrapper);
 
-        if (!newWrapper->swap(cx, targetwrapper))
+        if (!JSObject::swap(cx, newWrapper, targetwrapper))
             MOZ_CRASH();
     } else {
         // Otherwise, use the passed-in wrapper as the same-compartment wrapper.
@@ -1696,7 +1703,7 @@ js_TransplantObjectWithWrapper(JSContext *cx,
         // After the swap we have a possibly-live object that isn't dangerous,
         // and a possibly-dangerous object that isn't live.
         RootedObject reflectorGuts(cx, NewDeadProxyObject(cx, JS_GetGlobalForObject(cx, origobj)));
-        if (!reflectorGuts || !origobj->swap(cx, reflectorGuts))
+        if (!reflectorGuts || !JSObject::swap(cx, origobj, reflectorGuts))
             MOZ_CRASH();
 
         // Turn origwrapper into a CCW to the new object.
@@ -1704,7 +1711,7 @@ js_TransplantObjectWithWrapper(JSContext *cx,
         if (!JS_WrapObject(cx, wrapperGuts.address()))
             MOZ_CRASH();
         JS_ASSERT(Wrapper::wrappedObject(wrapperGuts) == targetobj);
-        if (!origwrapper->swap(cx, wrapperGuts))
+        if (!JSObject::swap(cx, origwrapper, wrapperGuts))
             MOZ_CRASH();
         origwrapper->compartment()->putWrapper(ObjectValue(*targetobj),
                                                ObjectValue(*origwrapper));
@@ -5187,7 +5194,7 @@ JS::Compile(JSContext *cx, HandleObject obj, CompileOptions options,
     JS_ASSERT_IF(options.principals, cx->compartment->principals == options.principals);
     AutoLastFrameCheck lfc(cx);
 
-    return frontend::CompileScript(cx, obj, NullFramePtr(), options, chars, length);
+    return frontend::CompileScript(cx, obj, NullPtr(), options, chars, length);
 }
 
 JSScript *
@@ -5302,7 +5309,8 @@ JS_BufferIsCompilableUnit(JSContext *cx, JSObject *objArg, const char *utf8, siz
     {
         CompileOptions options(cx);
         options.setCompileAndGo(false);
-        Parser parser(cx, options, chars, length, /* foldConstants = */ true);
+        Parser<frontend::FullParseHandler> parser(cx, options, chars, length,
+                                                  /* foldConstants = */ true);
         if (parser.init()) {
             older = JS_SetErrorReporter(cx, NULL);
             if (!parser.parse(obj) &&
@@ -5541,7 +5549,7 @@ JS::Evaluate(JSContext *cx, HandleObject obj, CompileOptions options,
     options.setCompileAndGo(true);
     options.setNoScriptRval(!rval);
     SourceCompressionToken sct(cx);
-    RootedScript script(cx, frontend::CompileScript(cx, obj, NullFramePtr(), options,
+    RootedScript script(cx, frontend::CompileScript(cx, obj, NullPtr(), options,
                                                     chars, length, NULL, 0, &sct));
     if (!script)
         return false;
@@ -5970,13 +5978,8 @@ JS_GetStringLength(JSString *str)
 JS_PUBLIC_API(const jschar *)
 JS_GetStringCharsZ(JSContext *cx, JSString *str)
 {
-    AssertHeapIsIdleOrStringIsFlat(cx, str);
-    CHECK_REQUEST(cx);
-    assertSameCompartment(cx, str);
-    JSFlatString *flat = str->ensureFlat(cx);
-    if (!flat)
-        return NULL;
-    return flat->chars();
+    size_t dummy;
+    return JS_GetStringCharsZAndLength(cx, str, &dummy);
 }
 
 JS_PUBLIC_API(const jschar *)
@@ -6144,6 +6147,20 @@ JS_EncodeString(JSContext *cx, JSRawString str)
         return NULL;
 
     return LossyTwoByteCharsToNewLatin1CharsZ(cx, linear->range()).c_str();
+}
+
+JS_PUBLIC_API(char *)
+JS_EncodeStringToUTF8(JSContext *cx, JSRawString str)
+{
+    AutoAssertNoGC nogc;
+    AssertHeapIsIdle(cx);
+    CHECK_REQUEST(cx);
+
+    JSLinearString *linear = str->ensureLinear(cx);
+    if (!linear)
+        return NULL;
+
+    return TwoByteCharsToNewUTF8CharsZ(cx, linear->range()).c_str();
 }
 
 JS_PUBLIC_API(size_t)
@@ -7067,7 +7084,7 @@ JS_CallOnce(JSCallOnceType *once, JSInitCallback func)
 }
 
 AutoGCRooter::AutoGCRooter(JSContext *cx, ptrdiff_t tag)
-  : down(cx->runtime->autoGCRooters), tag(tag), stackTop(&cx->runtime->autoGCRooters)
+  : down(cx->runtime->autoGCRooters), tag_(tag), stackTop(&cx->runtime->autoGCRooters)
 {
     JS_ASSERT(this != *stackTop);
     *stackTop = this;

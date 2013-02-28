@@ -4,6 +4,10 @@
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 <resources>
+  <color name="background_normal">#FFCED7DE</color>
+  <color name="background_private">#FF292C29</color>
+  <color name="background_tabs_dark">#FF363B40</color>
+  <color name="background_tabs_light">#FF43484E</color>
   <color name="autocomplete_listitem_text">#000000</color>
   <color name="splash_background">#000000</color>
   <color name="splash_msgfont">#ffffff</color>
@@ -18,6 +22,7 @@
   <color name="url_bar_text_highlight_pb">#FFD06BFF</color>
   <color name="suggestion_primary">#dddddd</color>
   <color name="suggestion_pressed">#bbbbbb</color>
+  <color name="abouthome_thumbnail_bg">#5FFF</color>
   <color name="abouthome_topsite_shadow">#1000</color>
   <color name="tab_indicator_unselected">@android:color/transparent</color>
   <color name="tab_indicator_unselected_focused">#34FF9500</color>

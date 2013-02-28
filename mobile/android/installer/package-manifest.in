@@ -14,6 +14,8 @@
 
 #filter substitution
 
+@BINPATH@/chrome/chrome/content/branding/favicon64.png
+
 [@AB_CD@]
 @BINPATH@/chrome/@AB_CD@@JAREXT@
 @BINPATH@/chrome/@AB_CD@.manifest
@@ -210,6 +212,9 @@
 @BINPATH@/components/saxparser.xpt
 @BINPATH@/components/sessionstore.xpt
 @BINPATH@/components/services-crypto-component.xpt
+#ifdef MOZ_CAPTIVEDETECT
+@BINPATH@/components/captivedetect.xpt
+#endif
 @BINPATH@/components/shellservice.xpt
 @BINPATH@/components/shistory.xpt
 @BINPATH@/components/spellchecker.xpt
@@ -273,8 +278,6 @@
 @BINPATH@/components/nsBrowserGlue.js
 @BINPATH@/components/nsSetDefaultBrowser.manifest
 @BINPATH@/components/nsSetDefaultBrowser.js
-@BINPATH@/components/nsPrivateBrowsingService.manifest
-@BINPATH@/components/nsPrivateBrowsingService.js
 @BINPATH@/components/toolkitsearch.manifest
 @BINPATH@/components/nsSearchService.js
 @BINPATH@/components/nsSearchSuggestions.js
@@ -375,6 +378,11 @@
 #ifdef MOZ_SERVICES_HEALTHREPORT
 @BINPATH@/components/HealthReportComponents.manifest
 @BINPATH@/components/HealthReportService.js
+#endif
+
+#ifdef MOZ_CAPTIVEDETECT
+@BINPATH@/components/CaptivePortalDetectComponents.manifest
+@BINPATH@/components/captivedetect.js
 #endif
 
 ; Modules

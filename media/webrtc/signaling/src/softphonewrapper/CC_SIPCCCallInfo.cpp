@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "CSFLog.h"
+
 #include "CC_Common.h"
 
 #include "CC_SIPCCCallInfo.h"
@@ -13,11 +15,7 @@ extern "C"
 #include "ccapi_call_info.h"
 }
 
-#include "CSFLogStream.h"
-
-#ifdef DEBUG
 static const char* logTag = "CC_SIPCCCallInfo";
-#endif
 
 using namespace std;
 using namespace CSF;
@@ -368,7 +366,7 @@ bool CC_SIPCCCallInfo::getIsConference()
 
 set<cc_int32_t> CC_SIPCCCallInfo::getStreamStatistics()
 {
-    CSFLogErrorS(logTag, "CCAPI_CallInfo_getCapabilitySet() NOT IMPLEMENTED IN PSIPCC.");
+    CSFLogError(logTag, "CCAPI_CallInfo_getCapabilitySet() NOT IMPLEMENTED IN PSIPCC.");
     set<cc_int32_t> stats;
     return stats;
 }
@@ -553,7 +551,8 @@ void CC_SIPCCCallInfo::generateCapabilities()
 	case WHISPER:
 	case WAITINGFORDIGITS:
 	default:
-		CSFLogErrorS( logTag, "State " << getCallState() << " not handled in generateCapabilities()");
+		CSFLogError( logTag, "State %d not handled in generateCapabilities()",
+      getCallState());
 		break;
 	}
 }

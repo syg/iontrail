@@ -183,6 +183,7 @@ protected:
   void UnbindFromTree(bool aDeep, bool aNullParent);
 
   nsresult OnStopRequest(imgIRequest* aRequest, nsresult aStatus);
+  void OnUnlockedDraw();
   nsresult OnImageIsAnimated(imgIRequest *aRequest);
 
 private:
@@ -326,9 +327,21 @@ protected:
    * Adds/Removes a given imgIRequest from our document's tracker.
    *
    * No-op if aImage is null.
+   *
+   * SKIP_FRAME_CHECK passed to TrackImage means we skip the check if we have a
+   * frame, there is only one valid use of this: when calling from FrameCreated.
+   *
+   * REQUEST_DISCARD passed to UntrackImage means we request the discard of the
+   * decoded data of the image.
    */
-  nsresult TrackImage(imgIRequest* aImage);
-  nsresult UntrackImage(imgIRequest* aImage);
+  enum {
+    SKIP_FRAME_CHECK = 0x1
+  };
+  nsresult TrackImage(imgIRequest* aImage, uint32_t aFlags = 0);
+  enum {
+    REQUEST_DISCARD = 0x1
+  };
+  nsresult UntrackImage(imgIRequest* aImage, uint32_t aFlags = 0);
 
   /* MEMBERS */
   nsRefPtr<imgRequestProxy> mCurrentRequest;
@@ -337,13 +350,12 @@ protected:
   uint32_t mPendingRequestFlags;
 
   enum {
-    // Set if the request needs 
+    // Set if the request needs ResetAnimation called on it.
     REQUEST_NEEDS_ANIMATION_RESET = 0x00000001U,
-    // Set if the request should be tracked.  This is true if the request is
-    // not tracked iff this node is not in the document.
-    REQUEST_SHOULD_BE_TRACKED = 0x00000002U,
     // Set if the request is blocking onload.
-    REQUEST_BLOCKS_ONLOAD = 0x00000004U
+    REQUEST_BLOCKS_ONLOAD = 0x00000002U,
+    // Set if the request is currently tracked with the document.
+    REQUEST_IS_TRACKED = 0x00000004U
   };
 
   // If the image was blocked or if there was an error loading, it's nice to
@@ -405,6 +417,8 @@ private:
   // registered with the refresh driver.
   bool mCurrentRequestRegistered;
   bool mPendingRequestRegistered;
+
+  uint32_t mVisibleCount;
 };
 
 #endif // nsImageLoadingContent_h__

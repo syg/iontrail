@@ -70,13 +70,6 @@ Wrapper::wrappedObject(RawObject wrapper)
     return GetProxyTargetObject(wrapper);
 }
 
-bool
-Wrapper::enter(JSContext *cx, JSObject *wrapper, jsid id, Action act, bool *bp)
-{
-    *bp = true;
-    return true;
-}
-
 JS_FRIEND_API(JSObject *)
 js::UnwrapObject(JSObject *wrapped, bool stopAtOuter, unsigned *flagsp)
 {
@@ -92,22 +85,21 @@ js::UnwrapObject(JSObject *wrapped, bool stopAtOuter, unsigned *flagsp)
 }
 
 JS_FRIEND_API(JSObject *)
-js::UnwrapObjectChecked(RawObject obj)
+js::UnwrapObjectChecked(RawObject obj, bool stopAtOuter)
 {
     while (true) {
         JSObject *wrapper = obj;
-        obj = UnwrapOneChecked(obj);
+        obj = UnwrapOneChecked(obj, stopAtOuter);
         if (!obj || obj == wrapper)
             return obj;
     }
 }
 
 JS_FRIEND_API(JSObject *)
-js::UnwrapOneChecked(RawObject obj)
+js::UnwrapOneChecked(RawObject obj, bool stopAtOuter)
 {
-    // Checked unwraps should never unwrap outer windows.
     if (!obj->isWrapper() ||
-        JS_UNLIKELY(!!obj->getClass()->ext.innerObject))
+        JS_UNLIKELY(!!obj->getClass()->ext.innerObject && stopAtOuter))
     {
         return obj;
     }
@@ -123,17 +115,6 @@ js::IsCrossCompartmentWrapper(RawObject wrapper)
            !!(Wrapper::wrapperHandler(wrapper)->flags() & Wrapper::CROSS_COMPARTMENT);
 }
 
-#define CHECKED(op, act)                                                     \
-    JS_BEGIN_MACRO                                                           \
-        bool status;                                                         \
-        if (!enter(cx, wrapper, id, act, &status))                           \
-            return status;                                                   \
-        return (op);                                                         \
-    JS_END_MACRO
-
-#define SET(action) CHECKED(action, SET)
-#define GET(action) CHECKED(action, GET)
-
 Wrapper::Wrapper(unsigned flags, bool hasPrototype) : DirectProxyHandler(&sWrapperFamily)
                                                     , mFlags(flags)
                                                     , mSafeToUnwrap(true)
@@ -143,62 +124,6 @@ Wrapper::Wrapper(unsigned flags, bool hasPrototype) : DirectProxyHandler(&sWrapp
 
 Wrapper::~Wrapper()
 {
-}
-
-bool
-Wrapper::getPropertyDescriptor(JSContext *cx, JSObject *wrapperArg,
-                               jsid id, PropertyDescriptor *desc, unsigned flags)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    JS_ASSERT(!hasPrototype()); // Should never be called when there's a prototype.
-    desc->obj = NULL; // default result if we refuse to perform this action
-    CHECKED(DirectProxyHandler::getPropertyDescriptor(cx, wrapper, id, desc, flags),
-            (flags & JSRESOLVE_ASSIGNING) ? SET : GET);
-}
-
-bool
-Wrapper::getOwnPropertyDescriptor(JSContext *cx, JSObject *wrapperArg,
-                                  jsid id, PropertyDescriptor *desc, unsigned flags)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    desc->obj = NULL; // default result if we refuse to perform this action
-    CHECKED(DirectProxyHandler::getOwnPropertyDescriptor(cx, wrapper, id, desc, flags), GET);
-}
-
-bool
-Wrapper::defineProperty(JSContext *cx, JSObject *wrapperArg, jsid id,
-                        PropertyDescriptor *desc)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    SET(DirectProxyHandler::defineProperty(cx, wrapper, id, desc));
-}
-
-bool
-Wrapper::getOwnPropertyNames(JSContext *cx, JSObject *wrapperArg,
-                             AutoIdVector &props)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    // if we refuse to perform this action, props remains empty
-    jsid id = JSID_VOID;
-    GET(DirectProxyHandler::getOwnPropertyNames(cx, wrapper, props));
-}
-
-bool
-Wrapper::delete_(JSContext *cx, JSObject *wrapperArg, jsid id, bool *bp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    *bp = true; // default result if we refuse to perform this action
-    SET(DirectProxyHandler::delete_(cx, wrapper, id, bp));
-}
-
-bool
-Wrapper::enumerate(JSContext *cx, JSObject *wrapperArg, AutoIdVector &props)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    JS_ASSERT(!hasPrototype()); // Should never be called when there's a prototype.
-    // if we refuse to perform this action, props remains empty
-    static jsid id = JSID_VOID;
-    GET(DirectProxyHandler::enumerate(cx, wrapper, props));
 }
 
 /*
@@ -235,126 +160,6 @@ Wrapper::defaultValue(JSContext *cx, JSObject *wrapperArg, JSType hint, Value *v
     return DirectProxyHandler::defaultValue(cx, wrapper, hint, vp);
 }
 
-bool
-Wrapper::has(JSContext *cx, JSObject *wrapperArg, jsid id, bool *bp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    JS_ASSERT(!hasPrototype()); // Should never be called when there's a prototype.
-    *bp = false; // default result if we refuse to perform this action
-    GET(DirectProxyHandler::has(cx, wrapper, id, bp));
-}
-
-bool
-Wrapper::hasOwn(JSContext *cx, JSObject *wrapperArg, jsid id, bool *bp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    *bp = false; // default result if we refuse to perform this action
-    GET(DirectProxyHandler::hasOwn(cx, wrapper, id, bp));
-}
-
-bool
-Wrapper::get(JSContext *cx, JSObject *wrapperArg, JSObject *receiver, jsid id, Value *vp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    vp->setUndefined(); // default result if we refuse to perform this action
-    GET(DirectProxyHandler::get(cx, wrapper, receiver, id, vp));
-}
-
-bool
-Wrapper::set(JSContext *cx, JSObject *wrapperArg, JSObject *receiver, jsid id, bool strict,
-             Value *vp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    SET(DirectProxyHandler::set(cx, wrapper, receiver, id, strict, vp));
-}
-
-bool
-Wrapper::keys(JSContext *cx, JSObject *wrapperArg, AutoIdVector &props)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    // if we refuse to perform this action, props remains empty
-    const jsid id = JSID_VOID;
-    GET(DirectProxyHandler::keys(cx, wrapper, props));
-}
-
-bool
-Wrapper::iterate(JSContext *cx, JSObject *wrapperArg, unsigned flags, Value *vp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    JS_ASSERT(!hasPrototype()); // Should never be called when there's a prototype.
-    vp->setUndefined(); // default result if we refuse to perform this action
-    const jsid id = JSID_VOID;
-    GET(DirectProxyHandler::iterate(cx, wrapper, flags, vp));
-}
-
-bool
-Wrapper::call(JSContext *cx, JSObject *wrapperArg, unsigned argc, Value *vp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    vp->setUndefined(); // default result if we refuse to perform this action
-    const jsid id = JSID_VOID;
-    CHECKED(DirectProxyHandler::call(cx, wrapper, argc, vp), CALL);
-}
-
-bool
-Wrapper::construct(JSContext *cx, JSObject *wrapperArg, unsigned argc, Value *argv, Value *vp)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    vp->setUndefined(); // default result if we refuse to perform this action
-    const jsid id = JSID_VOID;
-    CHECKED(DirectProxyHandler::construct(cx, wrapper, argc, argv, vp), CALL);
-}
-
-bool
-Wrapper::nativeCall(JSContext *cx, IsAcceptableThis test, NativeImpl impl, CallArgs args)
-{
-    const jsid id = JSID_VOID;
-    RootedObject wrapper(cx, &args.thisv().toObject());
-    CHECKED(DirectProxyHandler::nativeCall(cx, test, impl, args), CALL);
-}
-
-bool
-Wrapper::hasInstance(JSContext *cx, HandleObject wrapper, MutableHandleValue v, bool *bp)
-{
-    *bp = false; // default result if we refuse to perform this action
-    const jsid id = JSID_VOID;
-    GET(DirectProxyHandler::hasInstance(cx, wrapper, v, bp));
-}
-
-JSString *
-Wrapper::obj_toString(JSContext *cx, JSObject *wrapperArg)
-{
-    RootedObject wrapper(cx, wrapperArg);
-    bool status;
-    if (!enter(cx, wrapper, JSID_VOID, GET, &status)) {
-        if (status) {
-            // Perform some default behavior that doesn't leak any information.
-            return JS_NewStringCopyZ(cx, "[object Object]");
-        }
-        return NULL;
-    }
-    JSString *str = DirectProxyHandler::obj_toString(cx, wrapper);
-    return str;
-}
-
-JSString *
-Wrapper::fun_toString(JSContext *cx, JSObject *wrapper, unsigned indent)
-{
-    bool status;
-    if (!enter(cx, wrapper, JSID_VOID, GET, &status)) {
-        if (status) {
-            // Perform some default behavior that doesn't leak any information.
-            if (wrapper->isCallable())
-                return JS_NewStringCopyZ(cx, "function () {\n    [native code]\n}");
-            ReportIsNotFunction(cx, ObjectValue(*wrapper));
-            return NULL;
-        }
-        return NULL;
-    }
-    JSString *str = DirectProxyHandler::fun_toString(cx, wrapper, indent);
-    return str;
-}
-
 Wrapper Wrapper::singleton((unsigned)0);
 Wrapper Wrapper::singletonWithPrototype((unsigned)0, true);
 
@@ -378,7 +183,7 @@ ErrorCopier::~ErrorCopier()
 {
     JSContext *cx = ac.ref().context();
     if (ac.ref().origin() != cx->compartment && cx->isExceptionPending()) {
-        Value exc = cx->getPendingException();
+        RootedValue exc(cx, cx->getPendingException());
         if (exc.isObject() && exc.toObject().isError() && exc.toObject().getPrivate()) {
             cx->clearPendingException();
             ac.destroy();
@@ -839,6 +644,7 @@ SecurityWrapper<Base>::SecurityWrapper(unsigned flags)
   : Base(flags)
 {
     Base::setSafeToUnwrap(false);
+    BaseProxyHandler::setHasPolicy(true);
 }
 
 template <class Base>
@@ -1155,7 +961,7 @@ js::RemapWrapper(JSContext *cx, JSObject *wobjArg, JSObject *newTargetArg)
         // Now, because we need to maintain object identity, we do a brain
         // transplant on the old object so that it contains the contents of the
         // new one.
-        if (!wobj->swap(cx, tobj))
+        if (!JSObject::swap(cx, wobj, tobj))
             MOZ_CRASH();
     }
 

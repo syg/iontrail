@@ -171,6 +171,21 @@ intrinsic_MakeConstructible(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+/*
+ * SetScriptHints(fun, flags): Sets various internal hints to the ion
+ * compiler for use when compiling |fun| or calls to |fun|.  Flags
+ * should be a dictionary object.
+ *
+ * The function |fun| should be a self-hosted function (in particular,
+ * it *must* be a JS function).
+ *
+ * Possible flags:
+ * - |cloneAtCallsite: true| will hint that |fun| should be cloned
+ *   each callsite to improve TI resolution.  This is important for
+ *   higher-order functions like |Array.map|.
+ * - |inline: true| will hint that |fun| be inlined regardless of
+ *   JIT heuristics.
+ */
 static JSBool
 intrinsic_SetScriptHints(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -202,6 +217,9 @@ intrinsic_SetScriptHints(JSContext *cx, unsigned argc, Value *vp)
 }
 
 #ifdef DEBUG
+/*
+ * Dump(val): Dumps a value for debugging, even in parallel mode.
+ */
 JSBool
 js::intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -214,60 +232,60 @@ js::intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
 }
 #endif
 
+/*
+ * ParallelDo(func, feedback): Invokes |func| many times in parallel.
+ *
+ * Executed based on the fork join pool described in vm/ForkJoin.h.
+ * If func() has not been compiled for parallel execution, it will
+ * first be invoked various times sequentially as a warmup phase,
+ * which is used to gather TI information and to determine which
+ * functions func() will invoke.
+ *
+ * func() should expect the following arguments:
+ *
+ *     func(id, n, warmup, args...)
+ *
+ * Here, |id| is the slice id. |n| is the total number of slices;
+ * |warmup| is true if this is a warmup or recovery phase.
+ * Typically, if |warmup| is true, you will want to do less work.
+ *
+ * The |feedback| argument is optional.  If provided, it should be a
+ * closure.  This closure will be invoked with a double argument
+ * representing the number of bailouts that occurred before a
+ * successful parallel execution.  If the number is infinity, then
+ * parallel execution was abandoned and |func| was simply invoked
+ * sequentially.
+ *
+ * See ParallelArray.js for examples.
+ */
 static JSBool
 intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: ParallelDo(func, feedback)
-    //
-    // Invokes |func| many times in parallel.  Executed based on the
-    // fork join pool described in vm/ForkJoin.h.  If func() has not
-    // been compiled for parallel execution, it will first be invoked
-    // various times sequentially as a warmup phase, which is used to
-    // gather TI information and to determine which functions func()
-    // will invoke.
-    //
-    // func() should expect the following arguments:
-    //
-    //     func(id, n, warmup, args...)
-    //
-    // Here, |id| is the slice id. |n| is the total number of slices;
-    // |warmup| is true if this is a warmup or recovery phase.
-    // Typically, if |warmup| is true, you will want to do less work.
-    //
-    // The |feedback| argument is optional.  If provided, it should be
-    // a closure.  This closure will either be invoked with a double
-    // argument representing the number of bailouts that occurred before
-    // a successful parallel execution.  If the number is infinity, then
-    // parallel execution was abandoned and |func| was simply invoked
-    // sequentially.
-    //
-    // See ParallelArray.js for examples.
-
     CallArgs args = CallArgsFromVp(argc, vp);
     return parallel::Do(cx, args);
 }
 
+/*
+ * ParallelSlices(): Returns the number of parallel slices that will
+ * be created by ParallelDo().
+ */
 static JSBool
 intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: ParallelSlices()
-    //
-    // Returns the number of parallel slices that will be created
-    // by |ParallelDo()|.
-
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setInt32(ForkJoinSlices(cx));
     return true;
 }
 
+/*
+ * NewParallelArray(init, ...args): Creates a new parallel array using an
+ * initialization function init. All subsequent arguments are passed to
+ * init. The new instance will be passed as the 'this' value.
+ */
 JSBool
 js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: NewParallelArray(init, ...args)
-    //
-    // Creates a new parallel array using an initialization function init. All
-    // subsequent arguments are passed to init. The new instance will be
-    // passed as the 'this' value.
+
     CallArgs args = CallArgsFromVp(argc, vp);
 
     JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());
@@ -280,10 +298,13 @@ js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+/*
+ * NewDenseArray(length): Allocates and returns a new dense array with
+ * the given length where all values are initialized to holes.
+ */
 JSBool
 js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %NewDenseArray(length)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Check that index is an int32
@@ -320,23 +341,22 @@ js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
     return false;
 }
 
+/*
+ * UnsafeSetElement(arr0, idx0, elem0, ..., arrN, idxN, elemN): For
+ * each set of (arr, idx, elem) arguments that are passed, performs
+ * the assignment |arr[idx] = elem|. |arr| must be either a dense array
+ * or a typed array.
+ *
+ * If |arr| is a dense array, the index must be an int32 less than the
+ * initialized length of |arr|. Use |%EnsureDenseResultArrayElements|
+ * to ensure that the initialized length is long enough.
+ *
+ * If |arr| is a typed array, the index must be an int32 less than the
+ * length of |arr|.
+ */
 JSBool
 js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: %UnsafeSetElement(arr0, idx0, elem0,
-    //                          ...,
-    //                          arrN, idxN, elemN)
-    //
-    // For each set of |(arr, idx, elem)| arguments that are passed,
-    // performs the assignment |arr[idx] = elem|. |arr| must be either
-    // a dense array or a typed array.
-    //
-    // If |arr| is a dense array, the index must be an int32 less than the
-    // initialized length of |arr|. Use |%EnsureDenseResultArrayElements| to
-    // ensure that the initialized length is long enough.
-    //
-    // If |arr| is a typed array, the index must be an int32 less than the
-    // length of |arr|.
     CallArgs args = CallArgsFromVp(argc, vp);
 
     if ((args.length() % 3) != 0) {
@@ -364,7 +384,8 @@ js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
             JS_ASSERT(idx < TypedArray::length(arrobj));
             RootedValue tmp(cx, args[elemi]);
             // XXX: Always non-strict.
-            JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false);
+            if (!JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false))
+                return false;
         }
     }
 
@@ -372,25 +393,24 @@ js::intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+/*
+ * ParallelTestsShouldPass(): Returns false if we are running in a
+ * mode (such as --ion-eager) that is known to cause additional
+ * bailouts or disqualifications for parallel array tests.
+ *
+ * This is needed because the parallel tests generally assert that,
+ * under normal conditions, they will run without bailouts or
+ * compilation failures, but this does not hold under "stress-testing"
+ * conditions like --ion-eager or --no-ti.  However, running the tests
+ * under those conditions HAS exposed bugs and thus we do not wish to
+ * disable them entirely.  Instead, we simply disable the assertions
+ * that state that no bailouts etc should occur.
+ */
 static JSBool
 intrinsic_ParallelTestsShouldPass(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: ParallelTestsShouldPass()
-    //
-    // Returns false if we are running in a mode (such as --ion-eager)
-    // that is known to cause additional bailouts or disqualifications
-    // for parallel array tests.
-    //
-    // This is needed because the parallel tests generally assert
-    // that, under normal conditions, they will run without bailouts
-    // or compilation failures, but this does not hold under
-    // "stress-testing" conditions like --ion-eager or --no-ti.
-    // However, running the tests under those conditions HAS exposed
-    // bugs and thus we do not wish to disable them entirely.
-    // Instead, we simply disable the assertions that state that no
-    // bailouts etc should occur.
     CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef JS_THREADSAFE
+#if defined(JS_THREADSAFE) && defined(JS_ION)
     args.rval().setBoolean(ion::IsEnabled(cx) &&
                            !ion::js_IonOptions.eagerCompilation);
 #else
@@ -399,16 +419,17 @@ intrinsic_ParallelTestsShouldPass(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+/*
+ * ShouldForceSequential(): Returns true if parallel ops should take
+ * the sequential fallback path.
+ */
 JSBool
-js::intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp)
+js::intrinsic_ShouldForceSequential(JSContext *cx, unsigned argc, Value *vp)
 {
-    // Usage: ForceSequential()
-    //
-    // Returns true if parallel ops should take the sequential fallback path.
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_THREADSAFE
     args.rval().setBoolean(cx->runtime->parallelWarmup ||
-                           ForkJoinSlice::Current() != NULL);
+                           ParallelJSActive());
 #else
     args.rval().setBoolean(true);
 #endif
@@ -454,7 +475,7 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
     JS_FN("NewDenseArray",        intrinsic_NewDenseArray,        1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
-    JS_FN("ForceSequential",      intrinsic_ForceSequential,      0,0),
+    JS_FN("ShouldForceSequential", intrinsic_ShouldForceSequential, 0,0),
     JS_FN("ParallelTestsShouldPass", intrinsic_ParallelTestsShouldPass, 0,0),
 
 #ifdef DEBUG
@@ -544,7 +565,7 @@ CloneProperties(JSContext *cx, HandleObject obj, HandleObject clone, CloneMemory
         id = ids[i];
         if (!GetUnclonedValue(cx, obj, id, &val) ||
             !CloneValue(cx, &val, clonedObjects) ||
-            !JSObject::setGeneric(cx, clone, clone, id, &val, false))
+            !JS_DefinePropertyById(cx, clone, id, val.get(), NULL, NULL, 0))
         {
             return false;
         }

@@ -22,11 +22,13 @@ this.webrtcUI = {
   init: function () {
     Services.obs.addObserver(handleRequest, "getUserMedia:request", false);
     Services.obs.addObserver(updateGlobalIndicator, "recording-device-events", false);
+    Services.obs.addObserver(removeBrowserSpecificIndicator, "recording-window-ended", false);
   },
 
   uninit: function () {
     Services.obs.removeObserver(handleRequest, "getUserMedia:request");
     Services.obs.removeObserver(updateGlobalIndicator, "recording-device-events");
+    Services.obs.removeObserver(removeBrowserSpecificIndicator, "recording-window-ended");
   },
 
   showGlobalIndicator: false,
@@ -54,18 +56,21 @@ this.webrtcUI = {
   }
 }
 
-function handleRequest(aSubject, aTopic, aData) {
-  let {windowID: windowID, callID: callID} = JSON.parse(aData);
-
+function getBrowserForWindowId(aWindowID) {
   let someWindow = Services.wm.getMostRecentWindow(null);
   let contentWindow = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                                 .getInterface(Ci.nsIDOMWindowUtils)
-                                .getOuterWindowWithId(windowID);
-  let browser = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                             .getInterface(Ci.nsIWebNavigation)
-                             .QueryInterface(Ci.nsIDocShell)
-                             .chromeEventHandler;
+                                .getOuterWindowWithId(aWindowID);
+  return contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                      .getInterface(Ci.nsIWebNavigation)
+                      .QueryInterface(Ci.nsIDocShell)
+                      .chromeEventHandler;
+}
 
+function handleRequest(aSubject, aTopic, aData) {
+  let {windowID: windowID, callID: callID} = JSON.parse(aData);
+
+  let browser = getBrowserForWindowId(windowID);
   let params = aSubject.QueryInterface(Ci.nsIMediaStreamOptions);
 
   browser.ownerDocument.defaultView.navigator.mozGetUserMediaDevices(
@@ -73,9 +78,20 @@ function handleRequest(aSubject, aTopic, aData) {
       prompt(browser, callID, params.audio, params.video, devices);
     },
     function (error) {
-      Cu.reportError(error);
+      // bug 827146 -- In the future, the UI should catch NO_DEVICES_FOUND
+      // and allow the user to plug in a device, instead of immediately failing.
+      denyRequest(callID, error);
     }
   );
+}
+
+function denyRequest(aCallID, aError) {
+  let msg = null;
+  if (aError) {
+    msg = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
+    msg.data = aError;
+  }
+  Services.obs.notifyObservers(msg, "getUserMedia:response:deny", aCallID);
 }
 
 function prompt(aBrowser, aCallID, aAudioRequested, aVideoRequested, aDevices) {
@@ -102,8 +118,10 @@ function prompt(aBrowser, aCallID, aAudioRequested, aVideoRequested, aDevices) {
     requestType = "Microphone";
   else if (videoDevices.length)
     requestType = "Camera";
-  else
+  else {
+    denyRequest(aCallID, "NO_DEVICES_FOUND");
     return;
+  }
 
   let host = aBrowser.contentDocument.documentURIObject.asciiHost;
   let chromeDoc = aBrowser.ownerDocument;
@@ -162,7 +180,7 @@ function prompt(aBrowser, aCallID, aAudioRequested, aVideoRequested, aDevices) {
       }
 
       if (allowedDevices.Count() == 0) {
-        Services.obs.notifyObservers(null, "getUserMedia:response:deny", aCallID);
+        denyRequest(aCallID);
         return;
       }
 
@@ -186,7 +204,7 @@ function prompt(aBrowser, aCallID, aAudioRequested, aVideoRequested, aDevices) {
     label: stringBundle.getString("getUserMedia.denyRequest.label"),
     accessKey: stringBundle.getString("getUserMedia.denyRequest.accesskey"),
     callback: function () {
-      Services.obs.notifyObservers(null, "getUserMedia:response:deny", aCallID);
+      denyRequest(aCallID);
     }
   }];
 
@@ -204,4 +222,14 @@ function updateGlobalIndicator() {
   let e = Services.wm.getEnumerator("navigator:browser");
   while (e.hasMoreElements())
     e.getNext().WebrtcIndicator.updateButton();
+}
+
+function removeBrowserSpecificIndicator(aSubject, aTopic, aData) {
+  let browser = getBrowserForWindowId(aData);
+  let PopupNotifications = browser.ownerDocument.defaultView.PopupNotifications;
+  let notification = PopupNotifications &&
+                     PopupNotifications.getNotification("webRTC-sharingDevices",
+                                                        browser);
+  if (notification)
+    PopupNotifications.remove(notification);
 }

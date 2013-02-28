@@ -61,6 +61,14 @@ ErrorResult::ThrowTypeError(const dom::ErrNum errorNumber, ...)
 {
   va_list ap;
   va_start(ap, errorNumber);
+  if (IsJSException()) {
+    // We have rooted our mJSException, and we don't have the info
+    // needed to unroot here, so just bail.
+    va_end(ap);
+    MOZ_ASSERT(false,
+               "Ignoring ThrowTypeError call because we have a JS exception");
+    return;
+  }
   if (IsTypeError()) {
     delete mMessage;
   }
@@ -95,8 +103,49 @@ ErrorResult::ReportTypeError(JSContext* aCx)
                               static_cast<const unsigned>(message->mErrorNumber),
                               argCount > 0 ? args : nullptr);
 
-  delete message;
-  mMessage = nullptr;
+  ClearMessage();
+}
+
+void
+ErrorResult::ClearMessage()
+{
+  if (IsTypeError()) {
+    delete mMessage;
+    mMessage = nullptr;
+  }
+}
+
+void
+ErrorResult::ThrowJSException(JSContext* cx, JS::Value exn)
+{
+  MOZ_ASSERT(mMightHaveUnreportedJSException,
+             "Why didn't you tell us you planned to throw a JS exception?");
+
+  if (IsTypeError()) {
+    delete mMessage;
+  }
+
+  if (!JS_AddNamedValueRoot(cx, &mJSException, "ErrorResult::mJSException")) {
+    // Don't use NS_ERROR_DOM_JS_EXCEPTION, because that indicates we have
+    // in fact rooted mJSException.
+    mResult = NS_ERROR_OUT_OF_MEMORY;
+  } else {
+    mJSException = exn;
+    mResult = NS_ERROR_DOM_JS_EXCEPTION;
+  }
+}
+
+void
+ErrorResult::ReportJSException(JSContext* cx)
+{
+  MOZ_ASSERT(!mMightHaveUnreportedJSException,
+             "Why didn't you tell us you planned to handle JS exceptions?");
+  if (JS_WrapValue(cx, &mJSException)) {
+    JS_SetPendingException(cx, mJSException);
+  }
+  // If JS_WrapValue failed, not much we can do about it...  No matter
+  // what, go ahead and unroot mJSException.
+  JS_RemoveValueRoot(cx, &mJSException);
 }
 
 namespace dom {
@@ -136,7 +185,7 @@ DefinePrefable(JSContext* cx, JSObject* obj, Prefable<T>* props)
   MOZ_ASSERT(props->specs);
   do {
     // Define if enabled
-    if (props->enabled) {
+    if (props->isEnabled(cx, obj)) {
       if (!Define(cx, obj, props->specs)) {
         return false;
       }
@@ -210,15 +259,49 @@ Constructor(JSContext* cx, unsigned argc, JS::Value* vp)
   const JS::Value& v =
     js::GetFunctionNativeReserved(callee,
                                   CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT);
-  JSNativeHolder* nativeHolder = static_cast<JSNativeHolder*>(v.toPrivate());
+  const JSNativeHolder* nativeHolder =
+    static_cast<const JSNativeHolder*>(v.toPrivate());
   return (nativeHolder->mNative)(cx, argc, vp);
+}
+
+static JSObject*
+CreateConstructor(JSContext* cx, JSObject* global, const char* name,
+                  const JSNativeHolder* nativeHolder, unsigned ctorNargs)
+{
+  JSFunction* fun = js::NewFunctionWithReserved(cx, Constructor, ctorNargs,
+                                                JSFUN_CONSTRUCTOR, global,
+                                                name);
+  if (!fun) {
+    return nullptr;
+  }
+
+  JSObject* constructor = JS_GetFunctionObject(fun);
+  js::SetFunctionNativeReserved(constructor,
+                                CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT,
+                                js::PrivateValue(const_cast<JSNativeHolder*>(nativeHolder)));
+  return constructor;
+}
+
+static bool
+DefineConstructor(JSContext* cx, JSObject* global, const char* name,
+                  JSObject* constructor)
+{
+  JSBool alreadyDefined;
+  if (!JS_AlreadyHasOwnProperty(cx, global, name, &alreadyDefined)) {
+    return false;
+  }
+
+  // This is Enumerable: False per spec.
+  return alreadyDefined ||
+         JS_DefineProperty(cx, global, name, OBJECT_TO_JSVAL(constructor),
+                           nullptr, nullptr, 0);
 }
 
 static JSObject*
 CreateInterfaceObject(JSContext* cx, JSObject* global,
                       JSClass* constructorClass,
-                      JSNativeHolder* constructorNative,
-                      unsigned ctorNargs,
+                      const JSNativeHolder* constructorNative,
+                      unsigned ctorNargs, const NamedConstructor* namedConstructors,
                       JSObject* proto,
                       const NativeProperties* properties,
                       const NativeProperties* chromeOnlyProperties,
@@ -239,16 +322,8 @@ CreateInterfaceObject(JSContext* cx, JSObject* global,
     constructor = JS_NewObject(cx, constructorClass, constructorProto, global);
   } else {
     MOZ_ASSERT(constructorNative);
-    JSFunction* fun = js::NewFunctionWithReserved(cx, Constructor, ctorNargs,
-                                                  JSFUN_CONSTRUCTOR, global,
-                                                  name);
-    if (!fun) {
-      return NULL;
-    }
-    constructor = JS_GetFunctionObject(fun);
-    js::SetFunctionNativeReserved(constructor,
-                                  CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT,
-                                  js::PrivateValue(constructorNative));
+    constructor = CreateConstructor(cx, global, name, constructorNative,
+                                    ctorNargs);
   }
   if (!constructor) {
     return NULL;
@@ -321,16 +396,30 @@ CreateInterfaceObject(JSContext* cx, JSObject* global,
     return NULL;
   }
 
-  JSBool alreadyDefined;
-  if (!JS_AlreadyHasOwnProperty(cx, global, name, &alreadyDefined)) {
-    return NULL;
+  if (!DefineConstructor(cx, global, name, constructor)) {
+    return nullptr;
   }
 
-  // This is Enumerable: False per spec.
-  if (!alreadyDefined &&
-      !JS_DefineProperty(cx, global, name, OBJECT_TO_JSVAL(constructor), NULL,
-                         NULL, 0)) {
-    return NULL;
+  if (namedConstructors) {
+    int namedConstructorSlot = DOM_INTERFACE_SLOTS_BASE;
+    while (namedConstructors->mName) {
+      JSObject* namedConstructor = CreateConstructor(cx, global,
+                                                     namedConstructors->mName,
+                                                     &namedConstructors->mHolder,
+                                                     namedConstructors->mNargs);
+      if (!namedConstructor ||
+          !JS_DefineProperty(cx, namedConstructor, "prototype",
+                             JS::ObjectValue(*proto), JS_PropertyStub,
+                             JS_StrictPropertyStub,
+                             JSPROP_PERMANENT | JSPROP_READONLY) ||
+          !DefineConstructor(cx, global, namedConstructors->mName,
+                             namedConstructor)) {
+        return nullptr;
+      }
+      js::SetReservedSlot(constructor, namedConstructorSlot++,
+                          JS::ObjectValue(*namedConstructor));
+      ++namedConstructors;
+    }
   }
 
   return constructor;
@@ -404,9 +493,9 @@ CreateInterfacePrototypeObject(JSContext* cx, JSObject* global,
 void
 CreateInterfaceObjects(JSContext* cx, JSObject* global, JSObject* protoProto,
                        JSClass* protoClass, JSObject** protoCache,
-                       JSClass* constructorClass, JSNativeHolder* constructor,
-                       unsigned ctorNargs, JSObject** constructorCache,
-                       const DOMClass* domClass,
+                       JSClass* constructorClass, const JSNativeHolder* constructor,
+                       unsigned ctorNargs, const NamedConstructor* namedConstructors,
+                       JSObject** constructorCache, const DOMClass* domClass,
                        const NativeProperties* properties,
                        const NativeProperties* chromeOnlyProperties,
                        const char* name)
@@ -456,8 +545,8 @@ CreateInterfaceObjects(JSContext* cx, JSObject* global, JSObject* protoProto,
   JSObject* interface;
   if (constructorClass || constructor) {
     interface = CreateInterfaceObject(cx, global, constructorClass, constructor,
-                                      ctorNargs, proto, properties,
-                                      chromeOnlyProperties, name);
+                                      ctorNargs, namedConstructors, proto,
+                                      properties, chromeOnlyProperties, name);
     if (!interface) {
       if (protoCache) {
         // If we fail we need to make sure to clear the value of protoCache we
@@ -624,7 +713,8 @@ GetNativePropertyHooks(JSContext *cx, JSObject *obj, DOMObjectType& type)
     const JS::Value& v =
       js::GetFunctionNativeReserved(obj,
                                     CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT);
-    JSNativeHolder* nativeHolder = static_cast<JSNativeHolder*>(v.toPrivate());
+    const JSNativeHolder* nativeHolder =
+      static_cast<const JSNativeHolder*>(v.toPrivate());
     return nativeHolder->mPropertyHooks;
   }
 
@@ -649,12 +739,12 @@ XrayResolveOwnProperty(JSContext* cx, JSObject* wrapper, JSObject* obj, jsid id,
 }
 
 static bool
-XrayResolveAttribute(JSContext* cx, JSObject* wrapper, jsid id,
+XrayResolveAttribute(JSContext* cx, JSObject* wrapper, JSObject* obj, jsid id,
                      Prefable<JSPropertySpec>* attributes, jsid* attributeIds,
                      JSPropertySpec* attributeSpecs, JSPropertyDescriptor* desc)
 {
   for (; attributes->specs; ++attributes) {
-    if (attributes->enabled) {
+    if (attributes->isEnabled(cx, obj)) {
       // Set i to be the index into our full list of ids/specs that we're
       // looking at now.
       size_t i = attributes->specs - attributeSpecs;
@@ -698,7 +788,7 @@ XrayResolveAttribute(JSContext* cx, JSObject* wrapper, jsid id,
 }
 
 static bool
-XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
+XrayResolveProperty(JSContext* cx, JSObject* wrapper, JSObject* obj, jsid id,
                     JSPropertyDescriptor* desc, DOMObjectType type,
                     const NativeProperties* nativeProperties)
 {
@@ -717,7 +807,7 @@ XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
   if (methods) {
     Prefable<JSFunctionSpec>* method;
     for (method = methods; method->specs; ++method) {
-      if (method->enabled) {
+      if (method->isEnabled(cx, obj)) {
         // Set i to be the index into our full list of ids/specs that we're
         // looking at now.
         size_t i = method->specs - methodsSpecs;
@@ -746,7 +836,7 @@ XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
 
   if (type == eInterface) {
     if (nativeProperties->staticAttributes) {
-      if (!XrayResolveAttribute(cx, wrapper, id,
+      if (!XrayResolveAttribute(cx, wrapper, obj, id,
                                 nativeProperties->staticAttributes,
                                 nativeProperties->staticAttributeIds,
                                 nativeProperties->staticAttributeSpecs, desc)) {
@@ -758,7 +848,7 @@ XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
     }
   } else {
     if (nativeProperties->attributes) {
-      if (!XrayResolveAttribute(cx, wrapper, id,
+      if (!XrayResolveAttribute(cx, wrapper, obj, id,
                                 nativeProperties->attributes,
                                 nativeProperties->attributeIds,
                                 nativeProperties->attributeSpecs, desc)) {
@@ -769,7 +859,7 @@ XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
       }
     }
     if (nativeProperties->unforgeableAttributes) {
-      if (!XrayResolveAttribute(cx, wrapper, id,
+      if (!XrayResolveAttribute(cx, wrapper, obj, id,
                                 nativeProperties->unforgeableAttributes,
                                 nativeProperties->unforgeableAttributeIds,
                                 nativeProperties->unforgeableAttributeSpecs,
@@ -785,7 +875,7 @@ XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
   if (nativeProperties->constants) {
     Prefable<ConstantSpec>* constant;
     for (constant = nativeProperties->constants; constant->specs; ++constant) {
-      if (constant->enabled) {
+      if (constant->isEnabled(cx, obj)) {
         // Set i to be the index into our full list of ids/specs that we're
         // looking at now.
         size_t i = constant->specs - nativeProperties->constantSpecs;
@@ -852,7 +942,7 @@ XrayResolveNativeProperty(JSContext* cx, JSObject* wrapper,
     nativePropertyHooks->mNativeProperties;
 
   if (nativeProperties.regular &&
-      !XrayResolveProperty(cx, wrapper, id, desc, type,
+      !XrayResolveProperty(cx, wrapper, obj, id, desc, type,
                            nativeProperties.regular)) {
     return false;
   }
@@ -860,7 +950,7 @@ XrayResolveNativeProperty(JSContext* cx, JSObject* wrapper,
   if (!desc->obj &&
       nativeProperties.chromeOnly &&
       xpc::AccessCheck::isChrome(js::GetObjectCompartment(wrapper)) &&
-      !XrayResolveProperty(cx, wrapper, id, desc, type,
+      !XrayResolveProperty(cx, wrapper, obj, id, desc, type,
                            nativeProperties.chromeOnly)) {
     return false;
   }
@@ -902,12 +992,13 @@ XrayResolveNativeProperty(JSContext* cx, JSObject* wrapper, JSObject* obj,
 }
 
 bool
-XrayEnumerateAttributes(Prefable<JSPropertySpec>* attributes,
+XrayEnumerateAttributes(JSContext* cx, JSObject* wrapper, JSObject* obj,
+                        Prefable<JSPropertySpec>* attributes,
                         jsid* attributeIds, JSPropertySpec* attributeSpecs,
                         unsigned flags, JS::AutoIdVector& props)
 {
   for (; attributes->specs; ++attributes) {
-    if (attributes->enabled) {
+    if (attributes->isEnabled(cx, obj)) {
       // Set i to be the index into our full list of ids/specs that we're
       // looking at now.
       size_t i = attributes->specs - attributeSpecs;
@@ -924,7 +1015,8 @@ XrayEnumerateAttributes(Prefable<JSPropertySpec>* attributes,
 }
 
 bool
-XrayEnumerateProperties(unsigned flags, JS::AutoIdVector& props,
+XrayEnumerateProperties(JSContext* cx, JSObject* wrapper, JSObject* obj,
+                        unsigned flags, JS::AutoIdVector& props,
                         DOMObjectType type,
                         const NativeProperties* nativeProperties)
 {
@@ -943,7 +1035,7 @@ XrayEnumerateProperties(unsigned flags, JS::AutoIdVector& props,
   if (methods) {
     Prefable<JSFunctionSpec>* method;
     for (method = methods; method->specs; ++method) {
-      if (method->enabled) {
+      if (method->isEnabled(cx, obj)) {
         // Set i to be the index into our full list of ids/specs that we're
         // looking at now.
         size_t i = method->specs - methodsSpecs;
@@ -960,7 +1052,8 @@ XrayEnumerateProperties(unsigned flags, JS::AutoIdVector& props,
 
   if (type == eInterface) {
     if (nativeProperties->staticAttributes &&
-        !XrayEnumerateAttributes(nativeProperties->staticAttributes,
+        !XrayEnumerateAttributes(cx, wrapper, obj,
+                                 nativeProperties->staticAttributes,
                                  nativeProperties->staticAttributeIds,
                                  nativeProperties->staticAttributeSpecs,
                                  flags, props)) {
@@ -968,14 +1061,16 @@ XrayEnumerateProperties(unsigned flags, JS::AutoIdVector& props,
     }
   } else {
     if (nativeProperties->attributes &&
-        !XrayEnumerateAttributes(nativeProperties->attributes,
+        !XrayEnumerateAttributes(cx, wrapper, obj,
+                                 nativeProperties->attributes,
                                  nativeProperties->attributeIds,
                                  nativeProperties->attributeSpecs,
                                  flags, props)) {
       return false;
     }
     if (nativeProperties->unforgeableAttributes &&
-        !XrayEnumerateAttributes(nativeProperties->unforgeableAttributes,
+        !XrayEnumerateAttributes(cx, wrapper, obj,
+                                 nativeProperties->unforgeableAttributes,
                                  nativeProperties->unforgeableAttributeIds,
                                  nativeProperties->unforgeableAttributeSpecs,
                                  flags, props)) {
@@ -986,7 +1081,7 @@ XrayEnumerateProperties(unsigned flags, JS::AutoIdVector& props,
   if (nativeProperties->constants) {
     Prefable<ConstantSpec>* constant;
     for (constant = nativeProperties->constants; constant->specs; ++constant) {
-      if (constant->enabled) {
+      if (constant->isEnabled(cx, obj)) {
         // Set i to be the index into our full list of ids/specs that we're
         // looking at now.
         size_t i = constant->specs - nativeProperties->constantSpecs;
@@ -1025,13 +1120,15 @@ XrayEnumerateNativeProperties(JSContext* cx, JSObject* wrapper,
     nativePropertyHooks->mNativeProperties;
 
   if (nativeProperties.regular &&
-      !XrayEnumerateProperties(flags, props, type, nativeProperties.regular)) {
+      !XrayEnumerateProperties(cx, wrapper, obj, flags, props, type,
+                               nativeProperties.regular)) {
     return false;
   }
 
   if (nativeProperties.chromeOnly &&
       xpc::AccessCheck::isChrome(js::GetObjectCompartment(wrapper)) &&
-      !XrayEnumerateProperties(flags, props, type, nativeProperties.chromeOnly)) {
+      !XrayEnumerateProperties(cx, wrapper, obj, flags, props, type,
+                               nativeProperties.chromeOnly)) {
     return false;
   }
 
@@ -1490,6 +1587,36 @@ WorkerGlobalObject::WorkerGlobalObject(JSContext* aCx, JSObject* aObject)
 {
   Maybe<JSAutoCompartment> ac;
   mGlobalJSObject = GetGlobalObject<false>(aCx, aObject, ac);
+}
+
+JSBool
+InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSObject* instance,
+                     JSBool* bp)
+{
+  const DOMIfaceAndProtoJSClass* clasp =
+    DOMIfaceAndProtoJSClass::FromJSClass(js::GetObjectClass(obj));
+
+  const DOMClass* domClass = GetDOMClass(instance);
+
+  MOZ_ASSERT(!domClass || clasp->mPrototypeID != prototypes::id::_ID_Count,
+             "Why do we have a hasInstance hook if we don't have a prototype "
+             "ID?");
+  *bp = domClass &&
+        domClass->mInterfaceChain[clasp->mDepth] == clasp->mPrototypeID;
+
+  return true;
+}
+
+JSBool
+InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue vp,
+                     JSBool* bp)
+{
+  if (!vp.isObject()) {
+    *bp = false;
+    return true;
+  }
+
+  return InterfaceHasInstance(cx, obj, js::UnwrapObject(&vp.toObject()), bp);
 }
 
 } // namespace dom

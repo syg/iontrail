@@ -3840,8 +3840,10 @@ EndSweepPhase(JSRuntime *rt, JSGCInvocationKind gckind, bool lastGC)
          * script and calls rt->destroyScriptHook, the hook can still access the
          * script's filename. See bug 323267.
          */
-        if (rt->gcIsFull)
+        if (rt->gcIsFull) {
             SweepScriptFilenames(rt);
+            SweepScriptData(rt);
+        }
 
         /* Clear out any small pools that we're hanging on to. */
         if (JSC::ExecutableAllocator *execAlloc = rt->maybeExecAlloc())
@@ -4337,13 +4339,6 @@ GCCycle(JSRuntime *rt, bool incremental, int64_t budget, JSGCInvocationKind gcki
         JS_ASSERT_IF(rt->gcMode == JSGC_MODE_GLOBAL, zone->isGCScheduled());
 #endif
 
-    /*
-     * Don't GC if we are reporting an OOM or in an interactive debugging
-     * session.
-     */
-    if (rt->mainThread.suppressGC)
-        return;
-
     AutoGCSession gcsession(rt);
 
     /*
@@ -4412,6 +4407,9 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
     JS_ASSERT(!ParallelJSActive());
 
     JS_AbortIfWrongThread(rt);
+
+    if (rt->mainThread.suppressGC)
+        return;
 
 #if JS_TRACE_LOGGING
     AutoTraceLog logger(TraceLogging::defaultLogger(),

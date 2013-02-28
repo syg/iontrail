@@ -798,6 +798,11 @@ let RIL = {
     this.iccInfo = {};
 
     /**
+     * CDMA specific information. ex. CDMA Network ID, CDMA System ID... etc.
+     */
+    this.cdmaHome = null;
+
+    /**
      * Application identification for apps in ICC.
      */
     this.aid = null;
@@ -1010,11 +1015,11 @@ let RIL = {
     Buf.sendParcel();
   },
 
-   /**
+  /**
    * Helper function for changing ICC locks.
    */
   iccSetCardLock: function iccSetCardLock(options) {
-    if (options.newPin !== undefined) {
+    if (options.newPin !== undefined) { // Change PIN lock.
       switch (options.lockType) {
         case "pin":
           this.changeICCPIN(options);
@@ -1027,14 +1032,27 @@ let RIL = {
           options.success = false;
           this.sendDOMMessage(options);
       }
-    } else { // Enable/Disable pin lock.
-      if (options.lockType != "pin") {
-        options.errorMsg = "Unsupported Card Lock.";
-        options.success = false;
-        this.sendDOMMessage(options);
-        return;
+    } else { // Enable/Disable lock.
+      switch (options.lockType) {
+        case "pin":
+          options.facility = ICC_CB_FACILITY_SIM;
+          options.password = options.pin;
+          break;
+        case "fdn":
+          options.facility = ICC_CB_FACILITY_FDN;
+          options.password = options.pin2;
+          break;
+        default:
+          options.errorMsg = "Unsupported Card Lock.";
+          options.success = false;
+          this.sendDOMMessage(options);
+          return;
       }
-      this.setICCPinLock(options);
+      options.enabled = options.enabled;
+      options.serviceClass = ICC_SERVICE_CLASS_VOICE |
+                             ICC_SERVICE_CLASS_DATA  |
+                             ICC_SERVICE_CLASS_FAX;
+      this.setICCFacilityLock(options);
     }
   },
 
@@ -1127,23 +1145,18 @@ let RIL = {
   iccGetCardLock: function iccGetCardLock(options) {
     switch (options.lockType) {
       case "pin":
-        this.getICCPinLock(options);
+        options.facility = ICC_CB_FACILITY_SIM;
+        break;
+      case "fdn":
+        options.facility = ICC_CB_FACILITY_FDN;
         break;
       default:
         options.errorMsg = "Unsupported Card Lock.";
         options.success = false;
         this.sendDOMMessage(options);
+        return;
     }
-  },
 
-  /**
-   * Get ICC Pin lock. A wrapper call to queryICCFacilityLock.
-   *
-   * @param requestId
-   *        Request Id from RadioInterfaceLayer.
-   */
-  getICCPinLock: function getICCPinLock(options) {
-    options.facility = ICC_CB_FACILITY_SIM;
     options.password = ""; // For query no need to provide pin.
     options.serviceClass = ICC_SERVICE_CLASS_VOICE |
                            ICC_SERVICE_CLASS_DATA  |
@@ -1173,26 +1186,6 @@ let RIL = {
       Buf.writeString(options.aid || this.aid);
     }
     Buf.sendParcel();
-  },
-
-  /**
-   * Set ICC Pin lock. A wrapper call to setICCFacilityLock.
-   *
-   * @param enabled
-   *        true to enable, false to disable.
-   * @param pin
-   *        Pin code.
-   * @param requestId
-   *        Request Id from RadioInterfaceLayer.
-   */
-  setICCPinLock: function setICCPinLock(options) {
-    options.facility = ICC_CB_FACILITY_SIM;
-    options.enabled = options.enabled;
-    options.password = options.pin;
-    options.serviceClass = ICC_SERVICE_CLASS_VOICE |
-                           ICC_SERVICE_CLASS_DATA  |
-                           ICC_SERVICE_CLASS_FAX;
-    this.setICCFacilityLock(options);
   },
 
   /**
@@ -1280,87 +1273,6 @@ let RIL = {
     Buf.writeUint32(1);
     Buf.writeString(aid || this.aid);
     Buf.sendParcel();
-  },
-
-  /**
-   * Choose network names using EF_OPL and EF_PNN
-   * See 3GPP TS 31.102 sec. 4.2.58 and sec. 4.2.59 for USIM,
-   *     3GPP TS 51.011 sec. 10.3.41 and sec. 10.3.42 for SIM.
-   */
-  updateNetworkName: function updateNetworkName() {
-    let iccInfoPriv = this.iccInfoPrivate;
-    let iccInfo = this.iccInfo;
-
-    // We won't update network name if voice registration isn't ready
-    // or PNN file haven't been retrieved.
-    if (!iccInfoPriv.PNN ||
-        !this.voiceRegistrationState.cell ||
-        this.voiceRegistrationState.cell.gsmLocationAreaCode == -1) {
-      return null;
-    }
-
-    let pnnEntry;
-    let lac = this.voiceRegistrationState.cell.gsmLocationAreaCode;
-    let mcc = this.operator.mcc;
-    let mnc = this.operator.mnc;
-
-    // According to 3GPP TS 31.102 Sec. 4.2.59 and 3GPP TS 51.011 Sec. 10.3.42,
-    // the ME shall use this EF_OPL in association with the EF_PNN in place
-    // of any network name stored within the ME's internal list and any network
-    // name received when registered to the PLMN.
-    if (iccInfoPriv.OPL) {
-      for (let i in iccInfoPriv.OPL) {
-        let opl = iccInfoPriv.OPL[i];
-        // Try to match the MCC/MNC.
-        if (mcc != opl.mcc || mnc != opl.mnc) {
-          continue;
-        }
-        // Try to match the location area code. If current local area code is
-        // covered by lac range that specified in the OPL entry, use the PNN
-        // that specified in the OPL entry.
-        if ((opl.lacTacStart == 0x0 && opl.lacTacEnd == 0xFFFE) ||
-            (opl.lacTacStart <= lac && opl.lacTacEnd >= lac)) {
-          if (opl.pnnRecordId == 0) {
-            // See 3GPP TS 31.102 Sec. 4.2.59 and 3GPP TS 51.011 Sec. 10.3.42,
-            // A value of '00' indicates that the name is to be taken from other
-            // sources.
-            return null;
-          }
-          pnnEntry = iccInfoPriv.PNN[opl.pnnRecordId - 1]
-          break;
-        }
-      }
-    }
-
-    // According to 3GPP TS 31.102 Sec. 4.2.58 and 3GPP TS 51.011 Sec. 10.3.41,
-    // the first record in this EF is used for the default network name when
-    // registered to the HPLMN.
-    // If we haven't get pnnEntry assigned, we should try to assign default
-    // value to it.
-    if (!pnnEntry && mcc == iccInfo.mcc && mnc == iccInfo.mnc) {
-      pnnEntry = iccInfoPriv.PNN[0]
-    }
-
-    if (DEBUG) {
-      if (pnnEntry) {
-        debug("updateNetworkName: Network names will be overriden: longName = " +
-              pnnEntry.fullName + ", shortName = " + pnnEntry.shortName);
-      } else {
-        debug("updateNetworkName: Network names will not be overriden");
-      }
-    }
-
-    // Return a new object to avoid global variable, PNN, be modified by accident.
-    let ret = null;
-
-    if (pnnEntry) {
-      ret = {
-        fullName: pnnEntry.fullName || "",
-        shortName: pnnEntry.shortName || "",
-      };
-    }
-
-    return ret;
   },
 
   /**
@@ -1556,6 +1468,70 @@ let RIL = {
   selectNetworkAuto: function selectNetworkAuto(options) {
     if (DEBUG) debug("Setting automatic network selection");
     Buf.simpleRequest(REQUEST_SET_NETWORK_SELECTION_AUTOMATIC, options);
+  },
+
+  /**
+   * Open Logical UICC channel (aid) for Secure Element access
+   */
+  iccOpenChannel: function iccOpenChannel(options) {
+    if (DEBUG) {
+      debug("iccOpenChannel: " + JSON.stringify(options));
+    }
+
+    let token = Buf.newParcel(REQUEST_SIM_OPEN_CHANNEL, options);
+    Buf.writeString(options.aid);
+    Buf.sendParcel();
+  },
+
+/**
+   * Exchange APDU data on an open Logical UICC channel
+   */
+  iccExchangeAPDU: function iccExchangeAPDU(options) {
+    if (DEBUG) debug("iccExchangeAPDU: " + JSON.stringify(options));
+
+    var cla = options.apdu.cla;
+    var command = options.apdu.command;
+    var channel = options.channel;
+    var path = options.apdu.path;
+    var data = options.apdu.data;
+    var data2 = options.apdu.data2;
+    if (path == null || path === undefined) {
+      var path = "";
+    }
+    if (data == null || data === undefined) {
+      var data = "";
+    }
+    if (data2 == null || data2 === undefined) {
+      var data2 = "";
+    }
+    var p1 = options.apdu.p1;
+    var p2 = options.apdu.p2;
+    var p3 = options.apdu.p3; // Extra
+
+    Buf.newParcel(REQUEST_SIM_ACCESS_CHANNEL, options);
+    Buf.writeUint32(cla);
+    Buf.writeUint32(command);
+    Buf.writeUint32(channel);
+    Buf.writeString(path); // path
+    Buf.writeUint32(p1);
+    Buf.writeUint32(p2);
+    Buf.writeUint32(p3);
+    Buf.writeString(data); // generic data field.
+    Buf.writeString(data2);
+
+    Buf.sendParcel();
+  },
+
+  /**
+   * Close Logical UICC channel
+   */
+  iccCloseChannel: function iccCloseChannel(options) {
+    if (DEBUG) debug("iccCloseChannel: " + JSON.stringify(options));
+
+    Buf.newParcel(REQUEST_SIM_CLOSE_CHANNEL, options);
+    Buf.writeUint32(1);
+    Buf.writeUint32(options.channel);
+    Buf.sendParcel();
   },
 
   /**
@@ -2807,8 +2783,8 @@ let RIL = {
       return;
     }
 
-    // TODO: Bug 726098, change to use cdmaSubscriptionAppIndex when in CDMA.
-    let index = iccStatus.gsmUmtsSubscriptionAppIndex;
+    let index = this._isCdma ? iccStatus.cdmaSubscriptionAppIndex :
+                               iccStatus.gsmUmtsSubscriptionAppIndex;
     let app = iccStatus.apps[index];
     if (!app) {
       if (DEBUG) {
@@ -2861,10 +2837,14 @@ let RIL = {
       // Other types of ICC we can send Terminal_Profile immediately.
       if (this.appType == CARD_APPTYPE_SIM) {
         ICCRecordHelper.getICCPhase();
-      } else {
+        ICCRecordHelper.fetchICCRecords();
+      } else if (this.appType == CARD_APPTYPE_USIM) {
         this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        ICCRecordHelper.fetchICCRecords();
+      } else if (this.appType == CARD_APPTYPE_RUIM) {
+        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        RuimRecordHelper.fetchRuimRecords();
       }
-      ICCRecordHelper.fetchICCRecords();
       this.reportStkServiceIsRunning();
     }
 
@@ -3023,10 +3003,7 @@ let RIL = {
       RIL.getSMSCAddress();
     }
 
-    // TODO: This zombie code branch that will be raised from the dead once
-    // we add explicit CDMA support everywhere (bug 726098).
-    let cdma = false;
-    if (cdma) {
+    if (this._isCdma) {
       let baseStationId = RIL.parseInt(state[4]);
       let baseStationLatitude = RIL.parseInt(state[5]);
       let baseStationLongitude = RIL.parseInt(state[6]);
@@ -3075,24 +3052,8 @@ let RIL = {
         this.operator.shortName !== shortName ||
         thisTuple !== networkTuple) {
 
-      let networkName = this.updateNetworkName();
-      if (networkName) {
-        this.operator.longName = networkName.fullName;
-        this.operator.shortName = networkName.shortName;
-      } else {
-        this.operator.longName = longName;
-        this.operator.shortName = shortName;
-      }
-
       this.operator.mcc = 0;
       this.operator.mnc = 0;
-
-      // According to ril.h, the operator fields will be NULL when the operator
-      // is not currently registered. We can avoid trying to parse the numeric
-      // tuple in that case.
-      if (DEBUG && !longName) {
-        debug("Operator is currently unregistered");
-      }
 
       if (networkTuple) {
         try {
@@ -3100,7 +3061,39 @@ let RIL = {
         } catch (e) {
           debug("Error processing operator tuple: " + e);
         }
+      } else {
+        // According to ril.h, the operator fields will be NULL when the operator
+        // is not currently registered. We can avoid trying to parse the numeric
+        // tuple in that case.
+        if (DEBUG) {
+          debug("Operator is currently unregistered");
+        }
       }
+
+      let networkName;
+      // We won't get network name using PNN and OPL if voice registration isn't ready
+      if (this.voiceRegistrationState.cell &&
+          this.voiceRegistrationState.cell.gsmLocationAreaCode != -1) {
+        networkName = ICCUtilsHelper.getNetworkNameFromICC(
+          this.operator.mcc,
+          this.operator.mnc,
+          this.voiceRegistrationState.cell.gsmLocationAreaCode);
+      }
+
+      if (networkName) {
+        if (DEBUG) {
+          debug("Operator names will be overriden: " +
+                "longName = " + networkName.fullName + ", " +
+                "shortName = " + networkName.shortName);
+        }
+
+        this.operator.longName = networkName.fullName;
+        this.operator.shortName = networkName.shortName;
+      } else {
+        this.operator.longName = longName;
+        this.operator.shortName = shortName;
+      }
+
       if (ICCUtilsHelper.updateDisplayCondition()) {
         ICCUtilsHelper.handleICCInfoChange();
       }
@@ -4761,6 +4754,42 @@ RIL[REQUEST_SET_FACILITY_LOCK] = function REQUEST_SET_FACILITY_LOCK(length, opti
   this.sendDOMMessage(options);
 };
 RIL[REQUEST_CHANGE_BARRING_PASSWORD] = null;
+RIL[REQUEST_SIM_OPEN_CHANNEL] = function REQUEST_SIM_OPEN_CHANNEL(length, options) {
+  if (options.rilRequestError) {
+    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendDOMMessage(options);
+    return;
+  }
+
+  options.channel = Buf.readUint32();
+  if (DEBUG) debug("Setting channel number in options: " + options.channel);
+  this.sendDOMMessage(options);
+};
+RIL[REQUEST_SIM_CLOSE_CHANNEL] = function REQUEST_SIM_CLOSE_CHANNEL(length, options) {
+  if (options.rilRequestError) {
+    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendDOMMessage(options);
+    return;
+  }
+
+  // No return value
+  this.sendDOMMessage(options);
+};
+RIL[REQUEST_SIM_ACCESS_CHANNEL] = function REQUEST_SIM_ACCESS_CHANNEL(length, options) {
+  if (options.rilRequestError) {
+    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendDOMMessage(options);
+  }
+
+  options.sw1 = Buf.readUint32();
+  options.sw2 = Buf.readUint32();
+  options.simResponse = Buf.readString();
+  if (DEBUG) {
+    debug("Setting return values for RIL[REQUEST_SIM_ACCESS_CHANNEL]: ["
+          + options.sw1 + "," + options.sw2 + ", " + options.simResponse + "]");
+  }
+  this.sendDOMMessage(options);
+};
 RIL[REQUEST_QUERY_NETWORK_SELECTION_MODE] = function REQUEST_QUERY_NETWORK_SELECTION_MODE(length, options) {
   this._receivedNetworkInfo(NETWORK_INFO_NETWORK_SELECTION_MODE);
 
@@ -7489,6 +7518,11 @@ let StkCommandParamsFactory = {
       textMsg.responseNeeded = true;
     }
 
+    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_DURATION, ctlvs);
+    if (ctlv) {
+      textMsg.duration = ctlv.value;
+    }
+
     // High priority.
     if (cmdDetails.commandQualifier & 0x01) {
       textMsg.isHighPriority = true;
@@ -7652,6 +7686,12 @@ let StkCommandParamsFactory = {
       throw new Error("Stk Set Up Call: Required value missing : Adress");
     }
     call.address = ctlv.value.number;
+
+    // see 3GPP TS 31.111 section 6.4.13
+    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_DURATION, ctlvs);
+    if (ctlv) {
+      call.duration = ctlv.value;
+    }
 
     return call;
   },
@@ -8508,6 +8548,19 @@ let ICCFileHelper = {
   },
 
   /**
+   * This function handles EFs for RUIM
+   */
+  getRuimEFPath: function getRuimEFPath(fileId) {
+    switch(fileId) {
+      case ICC_EF_CSIM_CDMAHOME:
+      case ICC_EF_CSIM_CST:
+        return EF_PATH_MF_SIM + EF_PATH_DF_CDMA;
+      default:
+        return null;
+    }
+  },
+
+  /**
    * Helper function for getting the pathId for the specific ICC record
    * depeding on which type of ICC card we are using.
    *
@@ -8516,13 +8569,7 @@ let ICCFileHelper = {
    * @return The pathId or null in case of an error or invalid input.
    */
   getEFPath: function getEFPath(fileId) {
-    // TODO: Bug 726098, change to use cdmaSubscriptionAppIndex when in CDMA.
-    let index = RIL.iccStatus.gsmUmtsSubscriptionAppIndex;
-    if (index == -1) {
-      return null;
-    }
-    let app = RIL.iccStatus.apps[index];
-    if (!app) {
+    if (RIL.appType == null) {
       return null;
     }
 
@@ -8531,15 +8578,17 @@ let ICCFileHelper = {
       return path;
     }
 
-    switch (app.app_type) {
+    switch (RIL.appType) {
       case CARD_APPTYPE_SIM:
         return this.getSimEFPath(fileId);
       case CARD_APPTYPE_USIM:
         return this.getUSimEFPath(fileId);
+      case CARD_APPTYPE_RUIM:
+        return this.getRuimEFPath(fileId);
       default:
         return null;
     }
-  },
+  }
 };
 
 /**
@@ -9638,6 +9687,75 @@ let ICCRecordHelper = {
  */
 let ICCUtilsHelper = {
   /**
+   * Get network names by using EF_OPL and EF_PNN
+   *
+   * @See 3GPP TS 31.102 sec. 4.2.58 and sec. 4.2.59 for USIM,
+   *      3GPP TS 51.011 sec. 10.3.41 and sec. 10.3.42 for SIM.
+   *
+   * @param mcc   The mobile country code of the network.
+   * @param mnc   The mobile network code of the network.
+   * @param lac   The location area code of the network.
+   */
+  getNetworkNameFromICC: function getNetworkNameFromICC(mcc, mnc, lac) {
+    let iccInfoPriv = RIL.iccInfoPrivate;
+    let iccInfo = RIL.iccInfo;
+    let pnnEntry;
+
+    if (!mcc || !mnc || !lac) {
+      return null;
+    }
+
+    // We won't get network name if there is no PNN file.
+    if (!iccInfoPriv.PNN) {
+      return null;
+    }
+
+    // According to 3GPP TS 31.102 Sec. 4.2.59 and 3GPP TS 51.011 Sec. 10.3.42,
+    // the ME shall use this EF_OPL in association with the EF_PNN in place
+    // of any network name stored within the ME's internal list and any network
+    // name received when registered to the PLMN.
+    let length = iccInfoPriv.OPL ? iccInfoPriv.OPL.length : 0;
+    for (let i = 0; i < length; i++) {
+      let opl = iccInfoPriv.OPL[i];
+      // Try to match the MCC/MNC.
+      if (mcc != opl.mcc || mnc != opl.mnc) {
+        continue;
+      }
+      // Try to match the location area code. If current local area code is
+      // covered by lac range that specified in the OPL entry, use the PNN
+      // that specified in the OPL entry.
+      if ((opl.lacTacStart == 0x0 && opl.lacTacEnd == 0xFFFE) ||
+          (opl.lacTacStart <= lac && opl.lacTacEnd >= lac)) {
+        if (opl.pnnRecordId == 0) {
+          // See 3GPP TS 31.102 Sec. 4.2.59 and 3GPP TS 51.011 Sec. 10.3.42,
+          // A value of '00' indicates that the name is to be taken from other
+          // sources.
+          return null;
+        }
+        pnnEntry = iccInfoPriv.PNN[opl.pnnRecordId - 1]
+        break;
+      }
+    }
+
+    // According to 3GPP TS 31.102 Sec. 4.2.58 and 3GPP TS 51.011 Sec. 10.3.41,
+    // the first record in this EF is used for the default network name when
+    // registered to the HPLMN.
+    // If we haven't get pnnEntry assigned, we should try to assign default
+    // value to it.
+    if (!pnnEntry && mcc == iccInfo.mcc && mnc == iccInfo.mnc) {
+      pnnEntry = iccInfoPriv.PNN[0]
+    }
+
+    if (!pnnEntry) {
+      return null;
+    }
+
+    // Return a new object to avoid global variable, PNN, be modified by accident.
+    return {fullName: pnnEntry.fullName || "",
+            shortName: pnnEntry.shortName || ""};
+  },
+
+  /**
    * This will compute the spnDisplay field of the network.
    * See TS 22.101 Annex A and TS 51.011 10.3.11 for details.
    *
@@ -9790,9 +9908,10 @@ let ICCUtilsHelper = {
    * @return true if the service is enabled, false otherwise.
    */
   isICCServiceAvailable: function isICCServiceAvailable(geckoService) {
-    let serviceTable = RIL.iccInfoPrivate.sst;
+    let serviceTable = RIL._isCdma ? RIL.iccInfoPrivate.cst:
+                                     RIL.iccInfoPrivate.sst;
     let index, bitmask;
-    if (RIL.appType == CARD_APPTYPE_SIM) {
+    if (RIL.appType == CARD_APPTYPE_SIM || RIL.appType == CARD_APPTYPE_RUIM) {
       /**
        * Service id is valid in 1..N, and 2 bits are used to code each service.
        *
@@ -9807,14 +9926,19 @@ let ICCUtilsHelper = {
        *
        * @see 3GPP TS 51.011 10.3.7.
        */
-      let simService = GECKO_ICC_SERVICES.sim[geckoService];
+      let simService;
+      if (RIL.appType == CARD_APPTYPE_SIM) {
+        simService = GECKO_ICC_SERVICES.sim[geckoService];
+      } else {
+        simService = GECKO_ICC_SERVICES.ruim[geckoService];
+      }
       if (!simService) {
         return false;
       }
       simService -= 1;
       index = Math.floor(simService / 4);
       bitmask = 2 << ((simService % 4) << 1);
-    } else {
+    } else if (RIL.appType == CARD_APPTYPE_USIM) {
       /**
        * Service id is valid in 1..N, and 1 bit is used to code each service.
        *
@@ -10152,6 +10276,73 @@ let ICCContactHelper = {
       ICCRecordHelper.readIAP(fileId, contact.recordId, gotIapCb, onerror);
     }
   },
+};
+
+let RuimRecordHelper = {
+  fetchRuimRecords: function fetchRuimRecords() {
+    ICCRecordHelper.getICCID();
+    RIL.getIMSI();
+    this.readCST();
+    this.readCDMAHome();
+  },
+
+  /**
+   * Read CDMAHOME for CSIM.
+   * See 3GPP2 C.S0023 Sec. 3.4.8.
+   */
+  readCDMAHome: function readCDMAHome() {
+    function callback(options) {
+      let strLen = Buf.readUint32();
+      let tempOctet = GsmPDUHelper.readHexOctet();
+      cdmaHomeSystemId.push(((GsmPDUHelper.readHexOctet() & 0x7f) << 8) | tempOctet);
+      tempOctet = GsmPDUHelper.readHexOctet();
+      cdmaHomeNetworkId.push(((GsmPDUHelper.readHexOctet() & 0xff) << 8) | tempOctet);
+
+      // Consuming the last octet: band class.
+      Buf.seekIncoming(PDU_HEX_OCTET_SIZE);
+
+      Buf.readStringDelimiter(strLen);
+      if (options.p1 < options.totalRecords) {
+        ICCIOHelper.loadNextRecord(options);
+      } else {
+        if (DEBUG) {
+          debug("CDMAHome system id: " + JSON.stringify(cdmaHomeSystemId));
+          debug("CDMAHome network id: " + JSON.stringify(cdmaHomeNetworkId));
+        }
+        RIL.cdmaHome = {
+          systemId: cdmaHomeSystemId,
+          networkId: cdmaHomeNetworkId
+        };
+      }
+    }
+
+    let cdmaHomeSystemId = [], cdmaHomeNetworkId = [];
+    ICCIOHelper.loadLinearFixedEF({fileId: ICC_EF_CSIM_CDMAHOME,
+                                   callback: callback.bind(this)});
+  },
+
+  /**
+   * Read CDMA Service Table.
+   * See 3GPP2 C.S0023 Sec. 3.4.18
+   */
+  readCST: function readCST() {
+    function callback() {
+      let strLen = Buf.readUint32();
+      // Each octet is encoded into two chars.
+      RIL.iccInfoPrivate.cst = GsmPDUHelper.readHexOctetArray(strLen / 2);
+      Buf.readStringDelimiter(strLen);
+
+      if (DEBUG) {
+        let str = "";
+        for (let i = 0; i < RIL.iccInfoPrivate.cst.length; i++) {
+          str += RIL.iccInfoPrivate.cst[i] + ", ";
+        }
+        debug("CST: " + str);
+      }
+    }
+    ICCIOHelper.loadTransparentEF({fileId: ICC_EF_CSIM_CST,
+                                   callback: callback.bind(this)});
+  }
 };
 
 /**

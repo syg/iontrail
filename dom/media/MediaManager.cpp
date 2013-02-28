@@ -61,7 +61,7 @@ public:
   ErrorCallbackRunnable(
     already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
     already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
-    const nsString& aErrorMsg, uint64_t aWindowID)
+    const nsAString& aErrorMsg, uint64_t aWindowID)
     : mSuccess(aSuccess)
     , mError(aError)
     , mErrorMsg(aErrorMsg)
@@ -257,14 +257,14 @@ MediaDevice::GetSource()
  * A subclass that we only use to stash internal pointers to MediaStreamGraph objects
  * that need to be cleaned up.
  */
-class nsDOMUserMediaStream : public nsDOMLocalMediaStream
+class nsDOMUserMediaStream : public DOMLocalMediaStream
 {
 public:
   static already_AddRefed<nsDOMUserMediaStream>
-  CreateTrackUnionStream(uint32_t aHintContents)
+  CreateTrackUnionStream(nsIDOMWindow* aWindow, uint32_t aHintContents)
   {
     nsRefPtr<nsDOMUserMediaStream> stream = new nsDOMUserMediaStream();
-    stream->InitTrackUnionStream(aHintContents);
+    stream->InitTrackUnionStream(aWindow, aHintContents);
     return stream.forget();
   }
 
@@ -280,12 +280,11 @@ public:
     }
   }
 
-  NS_IMETHODIMP Stop()
+  virtual void Stop()
   {
     if (mSourceStream) {
       mSourceStream->EndAllTrackAndFinish();
     }
-    return NS_OK;
   }
 
   // The actual MediaStream is a TrackUnionStream. But these resources need to be
@@ -332,21 +331,23 @@ public:
   Run()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
+    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
+      (nsGlobalWindow::GetInnerWindowWithId(mWindowID));
 
     // We're on main-thread, and the windowlist can only
     // be invalidated from the main-thread (see OnNavigation)
     StreamListeners* listeners = mManager->GetWindowListeners(mWindowID);
-    if (!listeners) {
+    if (!listeners || !window || !window->GetExtantDoc()) {
       // This window is no longer live.  mListener has already been removed
       return NS_OK;
     }
 
     // Create a media stream.
-    uint32_t hints = (mAudioSource ? nsDOMMediaStream::HINT_CONTENTS_AUDIO : 0);
-    hints |= (mVideoSource ? nsDOMMediaStream::HINT_CONTENTS_VIDEO : 0);
+    uint32_t hints = (mAudioSource ? DOMMediaStream::HINT_CONTENTS_AUDIO : 0);
+    hints |= (mVideoSource ? DOMMediaStream::HINT_CONTENTS_VIDEO : 0);
 
     nsRefPtr<nsDOMUserMediaStream> trackunion =
-      nsDOMUserMediaStream::CreateTrackUnionStream(hints);
+      nsDOMUserMediaStream::CreateTrackUnionStream(window, hints);
     if (!trackunion) {
       nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
       LOG(("Returning error for getUserMedia() - no stream"));
@@ -364,11 +365,7 @@ public:
     trackunion->mSourceStream = stream;
     trackunion->mPort = port.forget();
 
-    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
-      (nsGlobalWindow::GetInnerWindowWithId(mWindowID));
-    if (window && window->GetExtantDoc()) {
-      trackunion->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
-    }
+    trackunion->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
 
     // The listener was added at the begining in an inactive state.
     // Activate our listener. We'll call Start() on the source when get a callback
@@ -556,7 +553,7 @@ public:
   }
 
   nsresult
-  Denied()
+  Denied(const nsAString& aErrorMsg)
   {
       // We add a disabled listener to the StreamListeners array until accepted
       // If this was the only active MediaStream, remove the window from the list.
@@ -564,7 +561,7 @@ public:
       // This is safe since we're on main-thread, and the window can only
       // be invalidated from the main-thread (see OnNavigation)
       nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
-      error->OnError(NS_LITERAL_STRING("PERMISSION_DENIED"));
+      error->OnError(aErrorMsg);
 
       // Should happen *after* error runs for consistency, but may not matter
       nsRefPtr<MediaManager> manager(MediaManager::GetInstance());
@@ -573,7 +570,7 @@ public:
       // This will re-check the window being alive on main-thread
       // Note: we must remove the listener on MainThread as well
       NS_DispatchToMainThread(new ErrorCallbackRunnable(
-        mSuccess, mError, NS_LITERAL_STRING("PERMISSION_DENIED"), mWindowID
+        mSuccess, mError, aErrorMsg, mWindowID
       ));
 
       // MUST happen after ErrorCallbackRunnable Run()s, as it checks the active window list
@@ -616,14 +613,18 @@ public:
         return NS_ERROR_FAILURE;
       }
 
+      /**
+       * We're allowing multiple tabs to access the same camera for parity
+       * with Chrome.  See bug 811757 for some of the issues surrounding
+       * this decision.  To disallow, we'd filter by IsAvailable() as we used
+       * to.
+       */
       // Pick the first available device.
       for (uint32_t i = 0; i < count; i++) {
         nsRefPtr<MediaEngineVideoSource> vSource = videoSources[i];
-        if (vSource->IsAvailable()) {
-          found = true;
-          mVideoDevice = new MediaDevice(videoSources[i]);
-          break;
-        }
+        found = true;
+        mVideoDevice = new MediaDevice(videoSources[i]);
+        break;
       }
 
       if (!found) {
@@ -650,11 +651,9 @@ public:
 
       for (uint32_t i = 0; i < count; i++) {
         nsRefPtr<MediaEngineAudioSource> aSource = audioSources[i];
-        if (aSource->IsAvailable()) {
-          found = true;
-          mAudioDevice = new MediaDevice(audioSources[i]);
-          break;
-        }
+        found = true;
+        mAudioDevice = new MediaDevice(audioSources[i]);
+        break;
       }
 
       if (!found) {
@@ -913,7 +912,7 @@ MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
       uint32_t permission;
       nsCOMPtr<nsIDocument> doc = aWindow->GetExtantDoc();
       pm->TestPermission(doc->NodePrincipal(), &permission);
-      if ((permission == nsIPopupWindowManager::DENY_POPUP)) {
+      if (permission == nsIPopupWindowManager::DENY_POPUP) {
         nsCOMPtr<nsIDOMDocument> domDoc = aWindow->GetExtantDocument();
         nsGlobalWindow::FirePopupBlockedEvent(
           domDoc, aWindow, nullptr, EmptyString(), EmptyString()
@@ -1128,6 +1127,31 @@ MediaManager::RemoveFromWindowList(uint64_t aWindowID,
   if (listeners->Length() == 0) {
     RemoveWindowID(aWindowID);
     // listeners has been deleted here
+
+    // get outer windowID
+    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
+      (nsGlobalWindow::GetInnerWindowWithId(aWindowID));
+    if (window) {
+      nsPIDOMWindow *outer = window->GetOuterWindow();
+      if (outer) {
+        uint64_t outerID = outer->WindowID();
+
+        // Notify the UI that this window no longer has gUM active
+        char windowBuffer[32];
+        PR_snprintf(windowBuffer, sizeof(windowBuffer), "%llu", outerID);
+        nsAutoString data;
+        data.Append(NS_ConvertUTF8toUTF16(windowBuffer));
+
+        nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+        obs->NotifyObservers(nullptr, "recording-window-ended", data.get());
+        LOG(("Sent recording-window-ended for window %llu (outer %llu)",
+             aWindowID, outerID));
+      } else {
+        LOG(("No outer window for inner %llu", aWindowID));
+      }
+    } else {
+      LOG(("No inner window for %llu", aWindowID));
+    }
   }
 }
 
@@ -1175,7 +1199,7 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
       array->Count(&len);
       MOZ_ASSERT(len);
       if (!len) {
-        gUMRunnable->Denied(); // neither audio nor video were selected
+        gUMRunnable->Denied(NS_LITERAL_STRING("PERMISSION_DENIED")); // neither audio nor video were selected
         return NS_OK;
       }
       for (uint32_t i = 0; i < len; i++) {
@@ -1203,6 +1227,16 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
   }
 
   if (!strcmp(aTopic, "getUserMedia:response:deny")) {
+    nsString errorMessage(NS_LITERAL_STRING("PERMISSION_DENIED"));
+
+    if (aSubject) {
+      nsCOMPtr<nsISupportsString> msg(do_QueryInterface(aSubject));
+      MOZ_ASSERT(msg);
+      msg->GetData(errorMessage);
+      if (errorMessage.IsEmpty())
+        errorMessage.Assign(NS_LITERAL_STRING("UNKNOWN_ERROR"));
+    }
+
     nsString key(aData);
     nsRefPtr<nsRunnable> runnable;
     if (!mActiveCallbacks.Get(key, getter_AddRefs(runnable))) {
@@ -1212,7 +1246,7 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
 
     GetUserMediaRunnable* gUMRunnable =
       static_cast<GetUserMediaRunnable*>(runnable.get());
-    gUMRunnable->Denied();
+    gUMRunnable->Denied(errorMessage);
     return NS_OK;
   }
 

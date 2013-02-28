@@ -457,6 +457,7 @@ ScriptAnalysis::analyzeBytecode(JSContext *cx)
           /* Additional opcodes which can be compiled but which can't be inlined. */
           case JSOP_ARGUMENTS:
           case JSOP_FUNAPPLY:
+          case JSOP_CALLEE:
             isJaegerInlineable = false;
             break;
           case JSOP_THROW:
@@ -1908,15 +1909,40 @@ ScriptAnalysis::needsArgsObj(JSContext *cx)
     JS_ASSERT(script_->argumentsHasVarBinding());
 
     /*
-     * Since let variables and dynamic name access are not tracked, we cannot
-     * soundly perform this analysis in their presence. Generators can be
-     * suspended when the speculation fails, so disallow it also.
+     * Always construct arguments objects when in debug mode and for generator
+     * scripts (generators can be suspended when speculation fails).
      */
-    if (script_->bindingsAccessedDynamically || script_->funHasAnyAliasedFormal ||
-        localsAliasStack() || cx->compartment->debugMode() || script_->isGenerator)
-    {
+    if (cx->compartment->debugMode() || script_->isGenerator)
         return true;
-    }
+
+    /*
+     * If the script has dynamic name accesses which could reach 'arguments',
+     * the parser will already have checked to ensure there are no explicit
+     * uses of 'arguments' in the function. If there are such uses, the script
+     * will be marked as definitely needing an arguments object.
+     *
+     * New accesses on 'arguments' can occur through 'eval' or the debugger
+     * statement. In the former case, we will dynamically detect the use and
+     * mark the arguments optimization as having failed.
+     */
+    if (script_->bindingsAccessedDynamically)
+        return false;
+
+    /*
+     * Since let variables and are not tracked, we cannot soundly perform this
+     * analysis in their presence.
+     */
+    if (localsAliasStack())
+        return true;
+
+    /*
+     * If a script has explicit mentions of 'arguments' and formals which may
+     * be stored as part of a call object, don't use lazy arguments. The
+     * compiler can then assume that accesses through arguments[i] will be on
+     * unaliased variables.
+     */
+    if (script_->funHasAnyAliasedFormal)
+        return true;
 
     unsigned pcOff = script_->argumentsBytecode() - script_->code;
 

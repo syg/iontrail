@@ -21,11 +21,11 @@ class UnreachableCodeElimination
     MIRGenerator *mir_;
     MIRGraph &graph_;
     uint32_t marked_;
-    uint32_t initialNumBlocks_;
     bool redundantPhis_;
+    bool rerunAliasAnalysis_;
 
     bool prunePointlessBranchesAndMarkReachableBlocks();
-    void removeUsesFromUnmarkedBlocks(MDefinition *instr);
+    void checkDependencyAndRemoveUsesFromUnmarkedBlocks(MDefinition *instr);
     bool removeUnmarkedBlocksAndClearDominators();
     bool removeUnmarkedBlocksAndCleanup();
 
@@ -34,8 +34,8 @@ class UnreachableCodeElimination
       : mir_(mir),
         graph_(graph),
         marked_(0),
-        initialNumBlocks_(graph.numBlocks()),
-        redundantPhis_(false)
+        redundantPhis_(false),
+        rerunAliasAnalysis_(false)
     {}
 
     // Walks the graph and discovers what is reachable. Removes everything else.
@@ -46,8 +46,9 @@ class UnreachableCodeElimination
     // are marked.
     bool removeUnmarkedBlocks(size_t marked);
 
-    // Was everything reachable? Only valid to call after analyze() has been called.
-    bool everythingWasReachable();
+    // Did we rerun alias analysis? Used as a hint to re-run other
+    // optimization phases.
+    bool reranAliasAnalysis();
 };
 
 } /* namespace ion */

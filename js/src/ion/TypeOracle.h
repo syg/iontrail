@@ -100,9 +100,10 @@ class TypeOracle
     virtual bool elementReadIsPacked(UnrootedScript script, jsbytecode *pc) {
         return false;
     }
-    virtual void elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult) {
+    virtual void elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult, bool *intIndex) {
         *cacheable = false;
         *monitorResult = true;
+        *intIndex = false;
     }
     virtual bool setElementHasWrittenHoles(UnrootedScript script, jsbytecode *pc) {
         return true;
@@ -161,6 +162,9 @@ class TypeOracle
     }
     virtual bool canInlineCall(HandleScript caller, jsbytecode *pc) {
         return false;
+    }
+    virtual types::TypeBarrier *callArgsBarrier(HandleScript caller, jsbytecode *pc) {
+        return NULL;
     }
     virtual bool canEnterInlinedFunction(RawScript caller, jsbytecode *pc, RawFunction callee) {
         return false;
@@ -256,7 +260,7 @@ class TypeInferenceOracle : public TypeOracle
     bool elementReadShouldAlwaysLoadDoubles(UnrootedScript script, jsbytecode *pc);
     bool elementReadHasExtraIndexedProperty(UnrootedScript, jsbytecode *pc);
     bool elementReadIsPacked(UnrootedScript script, jsbytecode *pc);
-    void elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult);
+    void elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult, bool *intIndex);
     bool elementWriteIsDenseNative(HandleScript script, jsbytecode *pc);
     bool elementWriteIsDenseNative(types::StackTypeSet *obj, types::StackTypeSet *id);
     bool elementWriteIsTypedArray(RawScript script, jsbytecode *pc, int *arrayType);
@@ -272,6 +276,7 @@ class TypeInferenceOracle : public TypeOracle
     MIRType elementWrite(UnrootedScript script, jsbytecode *pc);
     bool canInlineCalls();
     bool canInlineCall(HandleScript caller, jsbytecode *pc);
+    types::TypeBarrier *callArgsBarrier(HandleScript caller, jsbytecode *pc);
     bool canEnterInlinedFunction(RawScript caller, jsbytecode *pc, RawFunction callee);
     types::StackTypeSet *aliasedVarBarrier(UnrootedScript script, jsbytecode *pc, types::StackTypeSet **barrier);
 

@@ -13,14 +13,13 @@
 #include "nsAccUtils.h"
 #include "nsCoreUtils.h"
 #include "nsIAccessibleEvent.h"
-#include "nsIAccessibleRelation.h"
 #include "nsWinUtils.h"
+#include "ServiceProvider.h"
 #include "Relation.h"
 #include "Role.h"
 #include "RootAccessible.h"
 #include "sdnAccessible.h"
 #include "States.h"
-#include "uiaRawElmProvider.h"
 
 #ifdef A11Y_LOG
 #include "Logging.h"
@@ -90,7 +89,7 @@ AccessibleWrap::QueryInterface(REFIID iid, void** ppv)
 
     *ppv = static_cast<IEnumVARIANT*>(new ChildrenEnumVariant(this));
   } else if (IID_IServiceProvider == iid)
-    *ppv = static_cast<IServiceProvider*>(this);
+    *ppv = new ServiceProvider(this);
   else if (IID_IAccessible2 == iid && !Compatibility::IsIA2Off())
     *ppv = static_cast<IAccessible2*>(this);
   else if (IID_ISimpleDOMNode == iid) {
@@ -125,32 +124,6 @@ AccessibleWrap::QueryInterface(REFIID iid, void** ppv)
   return S_OK;
 
   A11Y_TRYBLOCK_END
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// IServiceProvider
-
-STDMETHODIMP
-AccessibleWrap::QueryService(REFGUID aGuidService, REFIID aIID,
-                             void** aInstancePtr)
-{
-  if (!aInstancePtr)
-    return E_INVALIDARG;
-
-  *aInstancePtr = NULL;
-
-  // UIA IAccessibleEx
-  if (aGuidService == IID_IAccessibleEx &&
-      Preferences::GetBool("accessibility.uia.enable")) {
-    uiaRawElmProvider* accEx = new uiaRawElmProvider(this);
-    HRESULT hr = accEx->QueryInterface(aIID, aInstancePtr);
-    if (FAILED(hr))
-      delete accEx;
-
-    return hr;
-  }
-
-  return nsAccessNodeWrap::QueryService(aGuidService, aIID, aInstancePtr);
 }
 
 //-----------------------------------------------------
@@ -1074,9 +1047,8 @@ AccessibleWrap::get_nRelations(long *aNRelations)
   if (IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  for (uint32_t relType = nsIAccessibleRelation::RELATION_FIRST;
-       relType <= nsIAccessibleRelation::RELATION_LAST; relType++) {
-    Relation rel = RelationByType(relType);
+  for (unsigned int idx = 0; idx < ArrayLength(sRelationTypesForIA2); idx++) {
+    Relation rel = RelationByType(sRelationTypesForIA2[idx]);
     if (rel.Next())
       (*aNRelations)++;
   }
@@ -1100,8 +1072,8 @@ AccessibleWrap::get_relation(long aRelationIndex,
     return CO_E_OBJNOTCONNECTED;
 
   long relIdx = 0;
-  for (uint32_t relType = nsIAccessibleRelation::RELATION_FIRST;
-       relType <= nsIAccessibleRelation::RELATION_LAST; relType++) {
+  for (unsigned int idx = 0; idx < ArrayLength(sRelationTypesForIA2); idx++) {
+    uint32_t relType = sRelationTypesForIA2[idx];
     Relation rel = RelationByType(relType);
     nsRefPtr<ia2AccessibleRelation> ia2Relation =
       new ia2AccessibleRelation(relType, &rel);
@@ -1135,9 +1107,9 @@ AccessibleWrap::get_relations(long aMaxRelations,
   if (IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  for (uint32_t relType = nsIAccessibleRelation::RELATION_FIRST;
-       relType <= nsIAccessibleRelation::RELATION_LAST &&
-       *aNRelations < aMaxRelations; relType++) {
+  for (unsigned int idx = 0; idx < ArrayLength(sRelationTypesForIA2) &&
+       *aNRelations < aMaxRelations; idx++) {
+    uint32_t relType = sRelationTypesForIA2[idx];
     Relation rel = RelationByType(relType);
     nsRefPtr<ia2AccessibleRelation> ia2Rel =
       new ia2AccessibleRelation(relType, &rel);

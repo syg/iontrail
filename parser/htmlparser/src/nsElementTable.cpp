@@ -408,6 +408,15 @@ const nsHTMLElement gHTMLElements[] = {
     /*special parents,kids*/            &gInTable,&gColgroupKids,
   },
   {
+    /*tag*/                             eHTMLTag_data,
+    /*req-parent excl-parent*/          eHTMLTag_unknown,eHTMLTag_unknown,
+    /*rootnodes,endrootnodes*/          &gRootTags,&gRootTags,
+    /*autoclose starttags and endtags*/ 0,0,0,0,
+    /*parent,incl,exclgroups*/          kPhrase, (kSelf|kInlineEntity), kNone,
+    /*special props, prop-range*/       0, kDefaultPropRange,
+    /*special parents,kids*/            0,0,
+  },
+  {
     /*tag*/                             eHTMLTag_datalist,
     /*requiredAncestor*/                eHTMLTag_unknown, eHTMLTag_unknown,
     /*rootnodes,endrootnodes*/          &gRootTags,&gRootTags,
@@ -1200,6 +1209,15 @@ const nsHTMLElement gHTMLElements[] = {
     /*parent,incl,exclgroups*/          kNone, kNone, kSelf,
     /*special props, prop-range*/       (kNoPropagate|kBadContentWatch|kNoStyleLeaksIn|kNoStyleLeaksOut), kNoPropRange,
     /*special parents,kids*/            &gInTable,&gTableElemKids,
+  },
+  {
+    /*tag*/                             eHTMLTag_time,
+    /*req-parent excl-parent*/          eHTMLTag_unknown,eHTMLTag_unknown,
+    /*rootnodes,endrootnodes*/          &gRootTags,&gRootTags,
+    /*autoclose starttags and endtags*/ 0,0,0,0,
+    /*parent,incl,exclgroups*/          kPhrase, (kSelf|kInlineEntity), kNone,
+    /*special props, prop-range*/       0, kDefaultPropRange,
+    /*special parents,kids*/            0,0,
   },
   {
     /*tag*/                             eHTMLTag_title,

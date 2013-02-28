@@ -36,24 +36,27 @@ LICM::analyze()
             continue;
 
         // Attempt to optimize loop.
-        Loop loop(mir, header->backedge(), header, graph);
+        Loop loop(mir, header->backedge(), header);
 
         Loop::LoopReturn lr = loop.init();
         if (lr == Loop::LoopReturn_Error)
             return false;
-        if (lr == Loop::LoopReturn_Skip)
+        if (lr == Loop::LoopReturn_Skip) {
+            graph.unmarkBlocks();
             continue;
+        }
 
         if (!loop.optimize())
             return false;
+
+        graph.unmarkBlocks();
     }
 
     return true;
 }
 
-Loop::Loop(MIRGenerator *mir, MBasicBlock *footer, MBasicBlock *header, MIRGraph &graph)
+Loop::Loop(MIRGenerator *mir, MBasicBlock *footer, MBasicBlock *header)
   : mir(mir),
-    graph(graph),
     footer_(footer),
     header_(header)
 {
@@ -73,7 +76,6 @@ Loop::init()
     if (lr == LoopReturn_Error)
         return LoopReturn_Error;
 
-    graph.unmarkBlocks();
     return lr;
 }
 
@@ -194,14 +196,17 @@ Loop::hoistInstructions(InstructionQueue &toHoist)
 bool
 Loop::isInLoop(MDefinition *ins)
 {
-    return ins->block()->id() >= header_->id();
+    return ins->block()->isMarked();
 }
 
 bool
 Loop::isLoopInvariant(MInstruction *ins)
 {
-    if (!isHoistable(ins))
+    if (!isHoistable(ins)) {
+        if (IonSpewEnabled(IonSpew_LICM))
+            fprintf(IonSpewFile, "not hoistable\n");
         return false;
+    }
 
     // Don't hoist if this instruction depends on a store inside the loop.
     if (ins->dependency() && isInLoop(ins->dependency())) {

@@ -46,11 +46,13 @@ CurrentScriptFileLineOrigin(JSContext *cx, const char **file, unsigned *linenop,
 {
     if (opt == CALLED_FROM_JSOP_EVAL) {
         AutoAssertNoGC nogc;
-        JS_ASSERT(JSOp(*cx->regs().pc) == JSOP_EVAL);
-        JS_ASSERT(*(cx->regs().pc + JSOP_EVAL_LENGTH) == JSOP_LINENO);
-        UnrootedScript script = cx->fp()->script();
+        JSScript *script = NULL;
+        jsbytecode *pc = NULL;
+        types::TypeScript::GetPcScript(cx, &script, &pc);
+        JS_ASSERT(JSOp(*pc) == JSOP_EVAL);
+        JS_ASSERT(*(pc + JSOP_EVAL_LENGTH) == JSOP_LINENO);
         *file = script->filename;
-        *linenop = GET_UINT16(cx->regs().pc + JSOP_EVAL_LENGTH);
+        *linenop = GET_UINT16(pc + JSOP_EVAL_LENGTH);
         *origin = script->originPrincipals;
         return;
     }
@@ -77,6 +79,22 @@ MarkScriptFilename(JSRuntime *rt, const char *filename)
         ScriptFilenameEntry::fromFilename(filename)->marked = true;
 }
 
+inline void
+MarkScriptBytecode(JSRuntime *rt, const jsbytecode *bytecode)
+{
+    /*
+     * As an invariant, a ScriptBytecodeEntry should not be 'marked' outside of
+     * a GC. Since SweepScriptBytecodes is only called during a full gc,
+     * to preserve this invariant, only mark during a full gc.
+     */
+    if (rt->gcIsFull)
+        SharedScriptData::fromBytecode(bytecode)->marked = true;
+}
+
+void
+SetFrameArgumentsObject(JSContext *cx, AbstractFramePtr frame,
+                        HandleScript script, JSObject *argsobj);
+
 } // namespace js
 
 inline void
@@ -98,6 +116,16 @@ JSScript::getCallerFunction()
 {
     JS_ASSERT(savedCallerFun);
     return getFunction(0);
+}
+
+inline JSFunction *
+JSScript::functionOrCallerFunction()
+{
+    if (function())
+        return function();
+    if (savedCallerFun)
+        return getCallerFunction();
+    return NULL;
 }
 
 inline js::RegExpObject *
@@ -176,6 +204,20 @@ inline JSPrincipals *
 JSScript::principals()
 {
     return compartment()->principals;
+}
+
+inline JSFunction *
+JSScript::originalFunction() const {
+    if (!isCallsiteClone)
+        return NULL;
+    return enclosingScopeOrOriginalFunction_->toFunction();
+}
+
+inline void
+JSScript::setOriginalFunctionObject(JSObject *fun) {
+    JS_ASSERT(isCallsiteClone);
+    JS_ASSERT(fun->isFunction());
+    enclosingScopeOrOriginalFunction_ = fun;
 }
 
 #endif /* jsscriptinlines_h___ */

@@ -180,9 +180,6 @@ public:
     void SetLayerClient(JNIEnv* env, jobject jobj);
     AndroidGeckoLayerClient &GetLayerClient() { return *mLayerClient; }
 
-    void SetSurfaceView(jobject jobj);
-    AndroidGeckoSurfaceView& SurfaceView() { return mSurfaceView; }
-
     bool GetHandlersForURL(const char *aURL, 
                              nsIMutableArray* handlersArray = nullptr,
                              nsIHandlerApp **aDefaultApp = nullptr,
@@ -257,9 +254,6 @@ public:
 
     bool GetShowPasswordSetting();
 
-    /* See GLHelpers.java as to why this is needed */
-    void *CallEglCreateWindowSurface(void *dpy, void *config, AndroidGeckoSurfaceView& surfaceView);
-
     // Switch Java to composite with the Gecko Compositor thread
     void RegisterCompositor(JNIEnv* env = NULL, bool resetting = false);
     EGLSurface ProvideEGLSurface(bool waitUntilValid);
@@ -302,8 +296,6 @@ public:
     void *AcquireNativeWindowFromSurfaceTexture(JNIEnv* aEnv, jobject aSurface);
     void ReleaseNativeWindowForSurfaceTexture(void *window);
 
-    bool SetNativeWindowFormat(void *window, int width, int height, int format);
-
     bool LockWindow(void *window, unsigned char **bits, int *width, int *height, int *format, int *stride);
     bool UnlockWindow(void *window);
     
@@ -311,6 +303,7 @@ public:
 
     void CheckURIVisited(const nsAString& uri);
     void MarkURIVisited(const nsAString& uri);
+    void SetURITitle(const nsAString& uri, const nsAString& title);
 
     bool InitCamera(const nsCString& contentType, uint32_t camera, uint32_t *width, uint32_t *height, uint32_t *fps);
 
@@ -380,9 +373,6 @@ protected:
     // the JNIEnv for the main thread
     JNIEnv *mJNIEnv;
     void *mThread;
-
-    // the GeckoSurfaceView
-    AndroidGeckoSurfaceView mSurfaceView;
 
     AndroidGeckoLayerClient *mLayerClient;
 
@@ -465,6 +455,7 @@ protected:
     jmethodID jHandleGeckoMessage;
     jmethodID jCheckUriVisited;
     jmethodID jMarkUriVisited;
+    jmethodID jSetUriTitle;
     jmethodID jAddPluginView;
     jmethodID jRemovePluginView;
     jmethodID jCreateSurface;
@@ -504,14 +495,6 @@ protected:
     // For native surface stuff
     jclass jSurfaceClass;
     jfieldID jSurfacePointerField;
-
-    // stuff we need for CallEglCreateWindowSurface
-    jclass jEGLSurfaceImplClass;
-    jclass jEGLContextImplClass;
-    jclass jEGLConfigImplClass;
-    jclass jEGLDisplayImplClass;
-    jclass jEGLContextClass;
-    jclass jEGL10Class;
 
     jclass jLayerView;
     jmethodID jRegisterCompositorMethod;

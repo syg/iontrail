@@ -794,10 +794,8 @@ struct Skippable
     return NS_OK;                                                              \
   }
 
-#define NS_IMPL_CYCLE_COLLECTION_0(_class)                                     \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_0(_class)                                     \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                               \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+// NS_IMPL_CYCLE_COLLECTION_0 is not defined because most of the time it doesn't
+// make sense to add something to the CC that doesn't traverse to anything.
 
 #define NS_IMPL_CYCLE_COLLECTION_1(_class, _f)                                 \
  NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(_class)                                 \
@@ -943,12 +941,6 @@ struct Skippable
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f9)                                        \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-#define NS_IMPL_CYCLE_COLLECTION_INHERITED_0(_class, _base)                    \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(_class, _base)                \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_END                                           \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(_class, _base)              \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
 #define NS_IMPL_CYCLE_COLLECTION_INHERITED_1(_class, _base, _f1)               \
  NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(_class, _base)                \
  NS_IMPL_CYCLE_COLLECTION_UNLINK(_f1)                                          \
@@ -1067,39 +1059,6 @@ struct Skippable
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f6)                                        \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f7)                                        \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f8)                                        \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-// NS_IMPL_CYCLE_COLLECTION_NATIVE_0 is intentionally not defined, because
-// if you need it, something is probably wrong.
-
-#define NS_IMPL_CYCLE_COLLECTION_NATIVE_1(_class, _f)                          \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(_class)                                 \
- NS_IMPL_CYCLE_COLLECTION_UNLINK(_f)                                           \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_END                                           \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                               \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f)                                         \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-#define NS_IMPL_CYCLE_COLLECTION_NATIVE_2(_class, _f1, _f2)                    \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(_class)                                 \
- NS_IMPL_CYCLE_COLLECTION_UNLINK(_f1)                                          \
- NS_IMPL_CYCLE_COLLECTION_UNLINK(_f2)                                          \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_END                                           \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                               \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f1)                                        \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f2)                                        \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-#define NS_IMPL_CYCLE_COLLECTION_NATIVE_3(_class, _f1, _f2, _f3)               \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(_class)                                 \
- NS_IMPL_CYCLE_COLLECTION_UNLINK(_f1)                                          \
- NS_IMPL_CYCLE_COLLECTION_UNLINK(_f2)                                          \
- NS_IMPL_CYCLE_COLLECTION_UNLINK(_f3)                                          \
- NS_IMPL_CYCLE_COLLECTION_UNLINK_END                                           \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                               \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f1)                                        \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f2)                                        \
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(_f3)                                        \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 #define NS_CYCLE_COLLECTION_NOTE_EDGE_NAME CycleCollectionNoteEdgeName

@@ -163,7 +163,7 @@ public:
 
   virtual ~TestObserver() {}
 
-  std::vector<nsDOMMediaStream *> GetStreams() { return streams; }
+  std::vector<DOMMediaStream *> GetStreams() { return streams; }
 
   NS_DECL_ISUPPORTS
   NS_DECL_IPEERCONNECTIONOBSERVER
@@ -177,7 +177,7 @@ public:
 
 private:
   sipcc::PeerConnectionImpl *pc;
-  std::vector<nsDOMMediaStream *> streams;
+  std::vector<DOMMediaStream *> streams;
 };
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(TestObserver,
@@ -320,7 +320,7 @@ TestObserver::OnAddStream(nsIDOMMediaStream *stream, const char *type)
 {
   PR_ASSERT(stream);
 
-  nsDOMMediaStream *ms = static_cast<nsDOMMediaStream *>(stream);
+  DOMMediaStream *ms = static_cast<DOMMediaStream *>(stream);
 
   cout << "OnAddStream called hints=" << ms->GetHintContents() << " type=" << type << " thread=" <<
     PR_GetCurrentThread() << endl ;
@@ -534,7 +534,7 @@ class SignalingAgent {
     pObserver = new TestObserver(pc);
     ASSERT_TRUE(pObserver);
 
-    sipcc::RTCConfiguration cfg;
+    sipcc::IceConfiguration cfg;
     cfg.addServer("23.21.150.121", 3478);
     ASSERT_EQ(pc->Initialize(pObserver, nullptr, cfg, thread), NS_OK);
 
@@ -562,7 +562,7 @@ class SignalingAgent {
     if (!pObserver)
       return false;
 
-    sipcc::RTCConfiguration cfg;
+    sipcc::IceConfiguration cfg;
     cfg.addServer("23.21.150.121", 3478);
     if (NS_FAILED(pc->Initialize(pObserver, nullptr, cfg, thread)))
       return false;
@@ -652,16 +652,16 @@ class SignalingAgent {
     ASSERT_TRUE(NS_SUCCEEDED(ret));
 
     // store in object to be used by RemoveStream
-    nsRefPtr<nsDOMMediaStream> domMediaStream = new nsDOMMediaStream(audio_stream);
+    nsRefPtr<DOMMediaStream> domMediaStream = new DOMMediaStream(audio_stream);
     domMediaStream_ = domMediaStream;
 
     uint32_t aHintContents = 0;
 
     if (offerFlags & OFFER_AUDIO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_AUDIO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_AUDIO;
     }
     if (offerFlags & OFFER_VIDEO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_VIDEO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_VIDEO;
     }
 
     domMediaStream->SetHintContents(aHintContents);
@@ -692,15 +692,15 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
                                         DONT_CHECK_VIDEO|
                                         DONT_CHECK_DATA) {
     // Create a media stream as if it came from GUM
-    nsRefPtr<nsDOMMediaStream> domMediaStream = new nsDOMMediaStream();
+    nsRefPtr<DOMMediaStream> domMediaStream = new DOMMediaStream();
 
     uint32_t aHintContents = 0;
 
     if (offerAnswerFlags & ANSWER_AUDIO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_AUDIO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_AUDIO;
     }
     if (offerAnswerFlags & ANSWER_VIDEO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_VIDEO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_VIDEO;
     }
 
     domMediaStream->SetHintContents(aHintContents);
@@ -746,20 +746,26 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
     offer_ = pObserver->lastString;
   }
 
-  void SetRemote(TestObserver::Action action, std::string remote) {
+  void SetRemote(TestObserver::Action action, std::string remote,
+                 bool ignoreError = false) {
     pObserver->state = TestObserver::stateNoResponse;
     ASSERT_EQ(pc->SetRemoteDescription(action, remote.c_str()), NS_OK);
     ASSERT_TRUE_WAIT(pObserver->state != TestObserver::stateNoResponse,
                      kDefaultTimeout);
-    ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    if (!ignoreError) {
+      ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    }
   }
 
-  void SetLocal(TestObserver::Action action, std::string local) {
+  void SetLocal(TestObserver::Action action, std::string local,
+                bool ignoreError = false) {
     pObserver->state = TestObserver::stateNoResponse;
     ASSERT_EQ(pc->SetLocalDescription(action, local.c_str()), NS_OK);
     ASSERT_TRUE_WAIT(pObserver->state != TestObserver::stateNoResponse,
                      kDefaultTimeout);
-    ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    if (!ignoreError) {
+      ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    }
   }
 
   void DoTrickleIce(ParsedSDP &sdp) {
@@ -815,7 +821,7 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
   }
 
   int GetPacketsReceived(int stream) {
-    std::vector<nsDOMMediaStream *> streams = pObserver->GetStreams();
+    std::vector<DOMMediaStream *> streams = pObserver->GetStreams();
 
     if ((int) streams.size() <= stream) {
       return 0;
@@ -839,7 +845,7 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
   //Stops pulling audio data off the receivers.
   //Should be called before Cleanup of the peer connection.
   void CloseReceiveStreams() {
-    std::vector<nsDOMMediaStream *> streams =
+    std::vector<DOMMediaStream *> streams =
                             pObserver->GetStreams();
     for (size_t i = 0; i < streams.size(); i++) {
       streams[i]->GetStream()->AsSourceStream()->StopStream();
@@ -851,7 +857,7 @@ public:
   nsRefPtr<TestObserver> pObserver;
   char* offer_;
   char* answer_;
-  nsRefPtr<nsDOMMediaStream> domMediaStream_;
+  nsRefPtr<DOMMediaStream> domMediaStream_;
 
 private:
   void SDPSanityCheck(std::string sdp, uint32_t flags, bool offer)
@@ -1215,30 +1221,33 @@ TEST_F(SignalingTest, CreateOfferDontReceiveVideo)
               SHOULD_SENDRECV_AUDIO | SHOULD_SEND_VIDEO);
 }
 
-TEST_F(SignalingTest, CreateOfferRemoveAudioStream)
+// XXX Disabled pending resolution of Bug 840728
+TEST_F(SignalingTest, DISABLED_CreateOfferRemoveAudioStream)
 {
   sipcc::MediaConstraints constraints;
   constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
-  CreateOfferRemoveStream(constraints, nsDOMMediaStream::HINT_CONTENTS_AUDIO,
+  CreateOfferRemoveStream(constraints, DOMMediaStream::HINT_CONTENTS_AUDIO,
               SHOULD_RECV_AUDIO | SHOULD_SENDRECV_VIDEO);
 }
 
-TEST_F(SignalingTest, CreateOfferDontReceiveAudioRemoveAudioStream)
+// XXX Disabled pending resolution of Bug 840728
+TEST_F(SignalingTest, DISABLED_CreateOfferDontReceiveAudioRemoveAudioStream)
 {
   sipcc::MediaConstraints constraints;
   constraints.setBooleanConstraint("OfferToReceiveAudio", false, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
-  CreateOfferRemoveStream(constraints, nsDOMMediaStream::HINT_CONTENTS_AUDIO,
+  CreateOfferRemoveStream(constraints, DOMMediaStream::HINT_CONTENTS_AUDIO,
               SHOULD_SENDRECV_VIDEO);
 }
 
-TEST_F(SignalingTest, CreateOfferDontReceiveVideoRemoveVideoStream)
+// XXX Disabled pending resolution of Bug 840728
+TEST_F(SignalingTest, DISABLED_CreateOfferDontReceiveVideoRemoveVideoStream)
 {
   sipcc::MediaConstraints constraints;
   constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", false, false);
-  CreateOfferRemoveStream(constraints, nsDOMMediaStream::HINT_CONTENTS_VIDEO,
+  CreateOfferRemoveStream(constraints, DOMMediaStream::HINT_CONTENTS_VIDEO,
               SHOULD_SENDRECV_AUDIO);
 }
 
@@ -1919,6 +1928,57 @@ TEST_F(SignalingTest, ipAddrAnyOffer)
     ASSERT_NE(answer.find("a=sendrecv"), std::string::npos);
 }
 
+static void CreateSDPForBigOTests(std::string& offer, const char *number) {
+  offer =
+    "v=0\r\n"
+    "o=- ";
+  offer += number;
+  offer += " ";
+  offer += number;
+  offer += " IN IP4 127.0.0.1\r\n"
+    "s=-\r\n"
+    "b=AS:64\r\n"
+    "t=0 0\r\n"
+    "a=fingerprint:sha-256 F3:FA:20:C0:CD:48:C4:5F:02:5F:A5:D3:21:D0:2D:48:"
+      "7B:31:60:5C:5A:D8:0D:CD:78:78:6C:6D:CE:CC:0C:67\r\n"
+    "m=audio 9000 RTP/AVP 99\r\n"
+    "c=IN IP4 0.0.0.0\r\n"
+    "a=rtpmap:99 opus/48000/2\r\n"
+    "a=ice-ufrag:cYuakxkEKH+RApYE\r\n"
+    "a=ice-pwd:bwtpzLZD+3jbu8vQHvEa6Xuq\r\n"
+    "a=sendrecv\r\n";
+}
+
+TEST_F(SignalingTest, BigOValues)
+{
+  std::string offer;
+
+  CreateSDPForBigOTests(offer, "12345678901234567");
+
+  a2_.SetRemote(TestObserver::OFFER, offer);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateSuccess);
+}
+
+TEST_F(SignalingTest, BigOValuesExtraChars)
+{
+  std::string offer;
+
+  CreateSDPForBigOTests(offer, "12345678901234567FOOBAR");
+
+  a2_.SetRemote(TestObserver::OFFER, offer, true);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateError);
+}
+
+TEST_F(SignalingTest, BigOValuesTooBig)
+{
+  std::string offer;
+
+  CreateSDPForBigOTests(offer, "18446744073709551615");
+
+  a2_.SetRemote(TestObserver::OFFER, offer, true);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateError);
+}
+
 TEST_F(SignalingAgentTest, CreateUntilFailThenWait) {
   int i;
 
@@ -1929,6 +1989,60 @@ TEST_F(SignalingAgentTest, CreateUntilFailThenWait) {
   }
   std::cerr << "Failed after creating " << i << " PCs " << std::endl;
   PR_Sleep(10000);  // Wait to see if we crash
+}
+
+/*
+ * Test for Bug 843595
+ */
+TEST_F(SignalingTest, missingUfrag)
+{
+  sipcc::MediaConstraints constraints;
+  std::string offer =
+    "v=0\r\n"
+    "o=Mozilla-SIPUA 2208 0 IN IP4 0.0.0.0\r\n"
+    "s=SIP Call\r\n"
+    "t=0 0\r\n"
+    "a=ice-pwd:4450d5a4a5f097855c16fa079893be18\r\n"
+    "a=fingerprint:sha-256 23:9A:2E:43:94:42:CF:46:68:FC:62:F9:F4:48:61:DB:"
+      "2F:8C:C9:FF:6B:25:54:9D:41:09:EF:83:A8:19:FC:B6\r\n"
+    "m=audio 56187 RTP/SAVPF 109 0 8 101\r\n"
+    "c=IN IP4 77.9.79.167\r\n"
+    "a=rtpmap:109 opus/48000/2\r\n"
+    "a=ptime:20\r\n"
+    "a=rtpmap:0 PCMU/8000\r\n"
+    "a=rtpmap:8 PCMA/8000\r\n"
+    "a=rtpmap:101 telephone-event/8000\r\n"
+    "a=fmtp:101 0-15\r\n"
+    "a=sendrecv\r\n"
+    "a=candidate:0 1 UDP 2113601791 192.168.178.20 56187 typ host\r\n"
+    "a=candidate:1 1 UDP 1694236671 77.9.79.167 56187 typ srflx raddr "
+      "192.168.178.20 rport 56187\r\n"
+    "a=candidate:0 2 UDP 2113601790 192.168.178.20 52955 typ host\r\n"
+    "a=candidate:1 2 UDP 1694236670 77.9.79.167 52955 typ srflx raddr "
+      "192.168.178.20 rport 52955\r\n"
+    "m=video 49929 RTP/SAVPF 120\r\n"
+    "c=IN IP4 77.9.79.167\r\n"
+    "a=rtpmap:120 VP8/90000\r\n"
+    "a=recvonly\r\n"
+    "a=candidate:0 1 UDP 2113601791 192.168.178.20 49929 typ host\r\n"
+    "a=candidate:1 1 UDP 1694236671 77.9.79.167 49929 typ srflx raddr "
+      "192.168.178.20 rport 49929\r\n"
+    "a=candidate:0 2 UDP 2113601790 192.168.178.20 50769 typ host\r\n"
+    "a=candidate:1 2 UDP 1694236670 77.9.79.167 50769 typ srflx raddr "
+      "192.168.178.20 rport 50769\r\n"
+    "m=application 54054 SCTP/DTLS 5000 \r\n"
+    "c=IN IP4 77.9.79.167\r\n"
+    "a=fmtp:HuRUu]Dtcl\\zM,7(OmEU%O$gU]x/z\tD protocol=webrtc-datachannel;"
+      "streams=16\r\n"
+    "a=sendrecv\r\n";
+
+  a1_.SetLocal(TestObserver::OFFER, offer, true);
+  a2_.SetRemote(TestObserver::OFFER, offer, true);
+  a2_.CreateAnswer(constraints, offer, OFFER_AV | ANSWER_AV);
+  a2_.SetLocal(TestObserver::ANSWER, a2_.answer(), true);
+  a1_.SetRemote(TestObserver::ANSWER, a2_.answer(), true);
+  // We don't check anything in particular for success here -- simply not
+  // crashing by now is enough to declare success.
 }
 
 } // End namespace test.

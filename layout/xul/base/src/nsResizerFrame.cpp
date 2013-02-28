@@ -17,7 +17,6 @@
 #include "nsPresContext.h"
 #include "nsFrameManager.h"
 #include "nsIDocShell.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIBaseWindow.h"
 #include "nsPIDOMWindow.h"
@@ -83,7 +82,7 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
           // GetScreenRectInAppUnits returns the border box rectangle, so
           // adjust to get the desired content rectangle.
           nsRect rect = frameToResize->GetScreenRectInAppUnits();
-          switch (frameToResize->GetStylePosition()->mBoxSizing) {
+          switch (frameToResize->StylePosition()->mBoxSizing) {
             case NS_STYLE_BOX_SIZING_CONTENT:
               rect.Deflate(frameToResize->GetUsedPadding());
             case NS_STYLE_BOX_SIZING_PADDING:
@@ -364,11 +363,10 @@ nsResizerFrame::GetContentToResize(nsIPresShell* aPresShell, nsIBaseWindow** aWi
     // get the document and the window - should this be cached?
     nsPIDOMWindow *domWindow = aPresShell->GetDocument()->GetWindow();
     if (domWindow) {
-      nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
-        do_QueryInterface(domWindow->GetDocShell());
-      if (docShellAsItem) {
+      nsCOMPtr<nsIDocShell> docShell = domWindow->GetDocShell();
+      if (docShell) {
         nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-        docShellAsItem->GetTreeOwner(getter_AddRefs(treeOwner));
+        docShell->GetTreeOwner(getter_AddRefs(treeOwner));
         if (treeOwner) {
           CallQueryInterface(treeOwner, aWindow);
         }
@@ -531,7 +529,7 @@ nsResizerFrame::GetDirection()
                                                 strings, eCaseMatters);
   if(index < 0)
     return directions[0]; // default: topleft
-  else if (index >= 8 && GetStyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
+  else if (index >= 8 && StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
     // Directions 8 and higher are RTL-aware directions and should reverse the
     // horizontal component if RTL.
     Direction direction = directions[index];

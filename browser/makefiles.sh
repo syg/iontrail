@@ -27,7 +27,6 @@ browser/components/places/Makefile
 browser/components/places/src/Makefile
 browser/components/preferences/Makefile
 browser/components/privatebrowsing/Makefile
-browser/components/privatebrowsing/src/Makefile
 browser/components/search/Makefile
 browser/components/sessionstore/Makefile
 browser/components/sessionstore/src/Makefile
@@ -36,7 +35,6 @@ browser/components/shell/Makefile
 browser/components/shell/public/Makefile
 browser/components/shell/src/Makefile
 browser/components/tabview/Makefile
-browser/components/thumbnails/Makefile
 browser/devtools/Makefile
 browser/devtools/debugger/Makefile
 browser/devtools/inspector/Makefile
@@ -80,18 +78,18 @@ fi
 
 if [ "$MOZ_WIDGET_TOOLKIT" = "gtk2" -o "$MOZ_WIDGET_TOOLKIT" = "qt" ]; then
   add_makefiles "
-    browser/themes/gnomestripe/Makefile
-    browser/themes/gnomestripe/communicator/Makefile
+    browser/themes/linux/Makefile
+    browser/themes/linux/communicator/Makefile
   "
 elif [ "$MOZ_WIDGET_TOOLKIT" = "cocoa" ]; then
   add_makefiles "
-    browser/themes/pinstripe/Makefile
-    browser/themes/pinstripe/communicator/Makefile
+    browser/themes/osx/Makefile
+    browser/themes/osx/communicator/Makefile
   "
 else
   add_makefiles "
-    browser/themes/winstripe/Makefile
-    browser/themes/winstripe/communicator/Makefile
+    browser/themes/windows/Makefile
+    browser/themes/windows/communicator/Makefile
   "
 fi
 
@@ -118,7 +116,6 @@ if [ "$ENABLE_TESTS" ]; then
     browser/components/privatebrowsing/test/browser/Makefile
     browser/components/tabview/test/Makefile
     browser/components/test/Makefile
-    browser/components/thumbnails/test/Makefile
     browser/devtools/debugger/test/Makefile
     browser/devtools/inspector/test/Makefile
     browser/devtools/scratchpad/test/Makefile

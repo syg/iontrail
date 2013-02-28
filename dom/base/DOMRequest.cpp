@@ -13,9 +13,12 @@
 #include "nsDOMEvent.h"
 #include "nsContentUtils.h"
 #include "nsThreadUtils.h"
+#include "DOMCursor.h"
 
 using mozilla::dom::DOMRequest;
 using mozilla::dom::DOMRequestService;
+using mozilla::dom::DOMCursor;
+using mozilla::AutoPushJSContext;
 
 DOMRequest::DOMRequest(nsIDOMWindow* aWindow)
   : mResult(JSVAL_VOID)
@@ -194,7 +197,16 @@ DOMRequestService::CreateRequest(nsIDOMWindow* aWindow,
 {
   NS_ENSURE_STATE(aWindow);
   NS_ADDREF(*aRequest = new DOMRequest(aWindow));
-  
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+DOMRequestService::CreateCursor(nsIDOMWindow* aWindow,
+                                nsICursorContinueCallback* aCallback,
+                                nsIDOMDOMCursor** aCursor) {
+  NS_ADDREF(*aCursor = new DOMCursor(aWindow, aCallback));
+
   return NS_OK;
 }
 
@@ -229,9 +241,10 @@ public:
     NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
     nsresult rv;
     nsIScriptContext* sc = mReq->GetContextForEventHandlers(&rv);
-    MOZ_ASSERT(NS_SUCCEEDED(rv) && sc->GetNativeContext());
-    JSAutoRequest ar(sc->GetNativeContext());
-    JS_AddValueRoot(sc->GetNativeContext(), &mResult);
+    AutoPushJSContext cx(sc->GetNativeContext());
+    MOZ_ASSERT(NS_SUCCEEDED(rv) && cx);
+    JSAutoRequest ar(cx);
+    JS_AddValueRoot(cx, &mResult);
   }
 
   NS_IMETHODIMP
@@ -246,12 +259,13 @@ public:
     NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
     nsresult rv;
     nsIScriptContext* sc = mReq->GetContextForEventHandlers(&rv);
-    MOZ_ASSERT(NS_SUCCEEDED(rv) && sc->GetNativeContext());
+    AutoPushJSContext cx(sc->GetNativeContext());
+    MOZ_ASSERT(NS_SUCCEEDED(rv) && cx);
 
     // We need to build a new request, otherwise we assert since there won't be
     // a request available yet.
-    JSAutoRequest ar(sc->GetNativeContext());
-    JS_RemoveValueRoot(sc->GetNativeContext(), &mResult);
+    JSAutoRequest ar(cx);
+    JS_RemoveValueRoot(cx, &mResult);
   }
 private:
   nsRefPtr<DOMRequest> mReq;
@@ -304,5 +318,13 @@ DOMRequestService::FireErrorAsync(nsIDOMDOMRequest* aRequest,
     NS_WARNING("Failed to dispatch to main thread!");
     return NS_ERROR_FAILURE;
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+DOMRequestService::FireDone(nsIDOMDOMCursor* aCursor) {
+  NS_ENSURE_STATE(aCursor);
+  static_cast<DOMCursor*>(aCursor)->FireDone();
+
   return NS_OK;
 }

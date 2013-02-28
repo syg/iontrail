@@ -174,8 +174,6 @@ public class TabsProvider extends ContentProvider {
             debug("Upgrading tabs.db: " + db.getPath() + " from " +
                     oldVersion + " to " + newVersion);
 
-            db.beginTransaction();
-
             // We have to do incremental upgrades until we reach the current
             // database schema version.
             for (int v = oldVersion + 1; v <= newVersion; v++) {
@@ -185,9 +183,6 @@ public class TabsProvider extends ContentProvider {
                         break;
                  }
              }
-
-             db.setTransactionSuccessful();
-             db.endTransaction();
         }
 
         @Override
@@ -299,6 +294,7 @@ public class TabsProvider extends ContentProvider {
         debug("Creating TabsProvider");
 
         GeckoBackgroundThread.post(new Runnable() {
+            @Override
             public void run() {
                 // Kick this off early. It is synchronized so that other callers will wait
                 try {

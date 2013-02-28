@@ -16,7 +16,6 @@
 #include "nsHTMLSelectElement.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(OptGroup)
-DOMCI_NODE_DATA(HTMLOptGroupElement, mozilla::dom::HTMLOptGroupElement)
 
 namespace mozilla {
 namespace dom {
@@ -52,7 +51,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLOptGroupElement)
                                    nsIDOMHTMLOptGroupElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLOptGroupElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLOptGroupElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLOptGroupElement)
@@ -74,7 +73,7 @@ HTMLOptGroupElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 
   nsIFrame* frame = GetPrimaryFrame();
   if (frame) {
-    const nsStyleUserInterface* uiStyle = frame->GetStyleUserInterface();
+    const nsStyleUserInterface* uiStyle = frame->StyleUserInterface();
     if (uiStyle->mUserInput == NS_STYLE_USER_INPUT_NONE ||
         uiStyle->mUserInput == NS_STYLE_USER_INPUT_DISABLED) {
       return NS_OK;

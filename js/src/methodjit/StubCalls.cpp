@@ -201,7 +201,7 @@ stubs::ImplicitThis(VMFrame &f, PropertyName *name_)
     if (!LookupNameWithGlobalDefault(f.cx, name, scopeObj, &obj))
         THROW();
 
-    if (!ComputeImplicitThis(f.cx, obj, &f.regs.sp[0]))
+    if (!ComputeImplicitThis(f.cx, obj, MutableHandleValue::fromMarkedLocation(&f.regs.sp[0])))
         THROW();
 }
 
@@ -778,7 +778,7 @@ stubs::TriggerIonCompile(VMFrame &f)
     AssertCanGC();
     RootedScript script(f.cx, f.script());
 
-    if (ion::js_IonOptions.parallelCompilation) {
+    if (ion::js_IonOptions.parallelCompilation && !f.cx->runtime->profilingScripts) {
         if (script->hasIonScript()) {
             /*
              * Normally TriggerIonCompile is not called if !script->ion, but the
@@ -808,8 +808,7 @@ stubs::TriggerIonCompile(VMFrame &f)
             compileStatus = ion::CanEnterAtBranch(f.cx, script, f.cx->fp(), osrPC,
                                                   f.fp()->isConstructing());
         } else {
-            compileStatus = ion::CanEnter(f.cx, script, f.cx->fp(), f.fp()->isConstructing(),
-                                          /* newType = */ false);
+            compileStatus = ion::CanEnter(f.cx, script, f.cx->fp(), f.fp()->isConstructing());
         }
 
         if (compileStatus != ion::Method_Compiled) {
@@ -1000,12 +999,13 @@ stubs::InitElem(VMFrame &f)
 }
 
 void JS_FASTCALL
-stubs::RegExp(VMFrame &f, JSObject *regex)
+stubs::RegExp(VMFrame &f, JSObject *regexArg)
 {
     /*
      * Push a regexp object cloned from the regexp literal object mapped by the
      * bytecode at pc.
      */
+    RootedObject regex(f.cx, regexArg);
     RootedObject proto(f.cx, f.fp()->global().getOrCreateRegExpPrototype(f.cx));
     if (!proto)
         THROW();

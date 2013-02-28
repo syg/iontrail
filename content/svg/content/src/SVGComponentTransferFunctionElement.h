@@ -16,9 +16,6 @@
 { 0xafab106d, 0xbc18, 0x4f7f, \
   { 0x9e, 0x29, 0xfe, 0xb4, 0xb0, 0x16, 0x5f, 0xf4 } }
 
-nsresult NS_NewSVGComponentTransferFunctionElement(
-  nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo);
-
 namespace mozilla {
 
 class DOMSVGAnimatedNumberList;
@@ -29,8 +26,6 @@ typedef SVGFEUnstyledElement SVGComponentTransferFunctionElementBase;
 
 class SVGComponentTransferFunctionElement : public SVGComponentTransferFunctionElementBase
 {
-  friend nsresult (::NS_NewSVGComponentTransferFunctionElement(
-    nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo));
 protected:
   SVGComponentTransferFunctionElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : SVGComponentTransferFunctionElementBase(aNodeInfo)
@@ -116,8 +111,6 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   virtual JSObject*
@@ -157,8 +150,6 @@ public:
   NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
 
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
@@ -200,8 +191,6 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   virtual JSObject*
@@ -241,8 +230,6 @@ public:
   NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
 
   virtual nsIDOMNode* AsDOMNode() { return this; }
 

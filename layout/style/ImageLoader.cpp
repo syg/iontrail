@@ -43,10 +43,27 @@ ImageLoader::SetAnimationModeEnumerator(nsISupports* aKey, FrameSet* aValue,
   return PL_DHASH_NEXT;
 }
 
+static PLDHashOperator
+ClearImageHashSet(nsPtrHashKey<ImageLoader::Image>* aKey, void* aClosure)
+{
+  nsIDocument* doc = static_cast<nsIDocument*>(aClosure);
+  ImageLoader::Image* image = aKey->GetKey();
+
+  imgIRequest* request = image->mRequests.GetWeak(doc);
+  if (request) {
+    request->CancelAndForgetObserver(NS_BINDING_ABORTED);
+  }
+
+  image->mRequests.Remove(doc);
+
+  return PL_DHASH_REMOVE;
+}
+
 void
 ImageLoader::DropDocumentReference()
 {
-  ClearAll();
+  ClearFrames();
+  mImages.EnumerateEntries(&ClearImageHashSet, mDocument);
   mDocument = nullptr;
 }
 
@@ -100,11 +117,12 @@ ImageLoader::AssociateRequestToFrame(imgIRequest* aRequest,
   }
 
   // Add these to the sets, but only if they're not already there.
-  uint32_t i;
-  if (!frameSet->GreatestIndexLtEq(aFrame, i)) {
+  uint32_t i = frameSet->IndexOfFirstElementGt(aFrame);
+  if (i == 0 || aFrame != frameSet->ElementAt(i-1)) {
     frameSet->InsertElementAt(i, aFrame);
   }
-  if (!requestSet->GreatestIndexLtEq(aRequest, i)) {
+  i = requestSet->IndexOfFirstElementGt(aRequest);
+  if (i == 0 || aRequest != requestSet->ElementAt(i-1)) {
     requestSet->InsertElementAt(i, aRequest);
   }
 }
@@ -220,28 +238,11 @@ ImageLoader::SetAnimationMode(uint16_t aMode)
   mRequestToFrameMap.EnumerateRead(SetAnimationModeEnumerator, &aMode);
 }
 
-static PLDHashOperator
-ClearImageHashSet(nsPtrHashKey<ImageLoader::Image>* aKey, void* aClosure)
-{
-  nsIDocument* doc = static_cast<nsIDocument*>(aClosure);
-  ImageLoader::Image* image = aKey->GetKey();
-
-  imgIRequest* request = image->mRequests.GetWeak(doc);
-  if (request) {
-    request->CancelAndForgetObserver(NS_BINDING_ABORTED);
-  }
-
-  image->mRequests.Remove(doc);
-
-  return PL_DHASH_REMOVE;
-}
-
 void
-ImageLoader::ClearAll()
+ImageLoader::ClearFrames()
 {
   mRequestToFrameMap.Clear();
   mFrameToRequestMap.Clear();
-  mImages.EnumerateEntries(&ClearImageHashSet, mDocument);
 }
 
 void
@@ -340,7 +341,7 @@ ImageLoader::DoRedraw(FrameSet* aFrameSet)
   for (FrameSet::size_type i = 0; i < length; i++) {
     nsIFrame* frame = aFrameSet->ElementAt(i);
 
-    if (frame->GetStyleVisibility()->IsVisible()) {
+    if (frame->StyleVisibility()->IsVisible()) {
       FrameLayerBuilder::IterateRetainedDataFor(frame, InvalidateImagesCallback);
     }
   }

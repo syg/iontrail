@@ -22,6 +22,8 @@
 #include "RootAccessible.h"
 #include "States.h"
 #include "StyleInfo.h"
+#include "TableAccessible.h"
+#include "TableCellAccessible.h"
 #include "TreeWalker.h"
 
 #include "nsContentUtils.h"
@@ -618,7 +620,7 @@ Accessible::VisibilityState()
 
   // Walk the parent frame chain to see if there's invisible parent or the frame
   // is in background tab.
-  if (!frame->GetStyleVisibility()->IsVisible())
+  if (!frame->StyleVisibility()->IsVisible())
     return states::INVISIBLE;
 
   nsIFrame* curFrame = frame;
@@ -658,7 +660,7 @@ Accessible::VisibilityState()
 
     if (!parentFrame) {
       parentFrame = nsLayoutUtils::GetCrossDocParentFrame(curFrame);
-      if (parentFrame && !parentFrame->GetStyleVisibility()->IsVisible())
+      if (parentFrame && !parentFrame->StyleVisibility()->IsVisible())
         return states::INVISIBLE;
     }
 
@@ -715,7 +717,7 @@ Accessible::NativeState()
     // XXX we should look at layout for non XUL box frames, but need to decide
     // how that interacts with ARIA.
     if (HasOwnContent() && mContent->IsXUL() && frame->IsBoxFrame()) {
-      const nsStyleXUL* xulStyle = frame->GetStyleXUL();
+      const nsStyleXUL* xulStyle = frame->StyleXUL();
       if (xulStyle && frame->IsBoxFrame()) {
         // In XUL all boxes are either vertical or horizontal
         if (xulStyle->mBoxOrient == NS_STYLE_BOX_ORIENT_VERTICAL)
@@ -1535,7 +1537,7 @@ Accessible::State()
   if (!frame)
     return state;
 
-  const nsStyleDisplay* display = frame->GetStyleDisplay();
+  const nsStyleDisplay* display = frame->StyleDisplay();
   if (display && display->mOpacity == 1.0f &&
       !(state & states::INVISIBLE)) {
     state |= states::OPAQUE1;
@@ -1597,6 +1599,22 @@ Accessible::ApplyARIAState(uint64_t* aState) const
   if (aria::MapToState(mRoleMapEntry->attributeMap1, element, aState) &&
       aria::MapToState(mRoleMapEntry->attributeMap2, element, aState))
     aria::MapToState(mRoleMapEntry->attributeMap3, element, aState);
+
+  // ARIA gridcell inherits editable/readonly states from the grid until it's
+  // overridden.
+  if (mRoleMapEntry->Is(nsGkAtoms::gridcell) &&
+      !(*aState & (states::READONLY | states::EDITABLE))) {
+    const TableCellAccessible* cell = AsTableCell();
+    if (cell) {
+      TableAccessible* table = cell->Table();
+      if (table) {
+        Accessible* grid = table->AsAccessible();
+        uint64_t gridState = 0;
+        grid->ApplyARIAState(&gridState);
+        *aState |= (gridState & (states::READONLY | states::EDITABLE));
+      }
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -1652,7 +1670,7 @@ Accessible::Value(nsString& aValue)
     }
 
     if (option)
-      nsTextEquivUtils::GetNameFromSubtree(option, aValue);
+      nsTextEquivUtils::GetTextEquivFromSubtree(option, aValue);
   }
 }
 
@@ -1949,16 +1967,6 @@ Accessible::RelationByType(uint32_t aType)
   // Relationships are defined on the same content node that the role would be
   // defined on.
   switch (aType) {
-    case nsIAccessibleRelation::RELATION_LABEL_FOR: {
-      Relation rel(new RelatedAccIterator(Document(), mContent,
-                                          nsGkAtoms::aria_labelledby));
-      if (mContent->Tag() == nsGkAtoms::label)
-        rel.AppendIter(new IDRefsIterator(mDoc, mContent, mContent->IsHTML() ?
-                                          nsGkAtoms::_for :
-                                          nsGkAtoms::control));
-
-      return rel;
-    }
     case nsIAccessibleRelation::RELATION_LABELLED_BY: {
       Relation rel(new IDRefsIterator(mDoc, mContent,
                                       nsGkAtoms::aria_labelledby));
@@ -1970,6 +1978,18 @@ Accessible::RelationByType(uint32_t aType)
 
       return rel;
     }
+
+    case nsIAccessibleRelation::RELATION_LABEL_FOR: {
+      Relation rel(new RelatedAccIterator(Document(), mContent,
+                                          nsGkAtoms::aria_labelledby));
+      if (mContent->Tag() == nsGkAtoms::label)
+        rel.AppendIter(new IDRefsIterator(mDoc, mContent, mContent->IsHTML() ?
+          nsGkAtoms::_for :
+          nsGkAtoms::control));
+
+      return rel;
+    }
+
     case nsIAccessibleRelation::RELATION_DESCRIBED_BY: {
       Relation rel(new IDRefsIterator(mDoc, mContent,
                                       nsGkAtoms::aria_describedby));
@@ -1978,6 +1998,7 @@ Accessible::RelationByType(uint32_t aType)
 
       return rel;
     }
+
     case nsIAccessibleRelation::RELATION_DESCRIPTION_FOR: {
       Relation rel(new RelatedAccIterator(Document(), mContent,
                                           nsGkAtoms::aria_describedby));
@@ -1992,19 +2013,16 @@ Accessible::RelationByType(uint32_t aType)
 
       return rel;
     }
+
     case nsIAccessibleRelation::RELATION_NODE_CHILD_OF: {
       Relation rel(new RelatedAccIterator(Document(), mContent,
                                           nsGkAtoms::aria_owns));
-      
+
       // This is an ARIA tree or treegrid that doesn't use owns, so we need to
       // get the parent the hard way.
       if (mRoleMapEntry && (mRoleMapEntry->role == roles::OUTLINEITEM || 
                             mRoleMapEntry->role == roles::ROW)) {
-        AccGroupInfo* groupInfo = GetGroupInfo();
-        if (!groupInfo)
-          return rel;
-
-        rel.AppendTarget(groupInfo->ConceptualParent());
+        rel.AppendTarget(GetGroupInfo()->ConceptualParent());
       }
 
       // If accessible is in its own Window, or is the root of a document,
@@ -2025,21 +2043,52 @@ Accessible::RelationByType(uint32_t aType)
 
       return rel;
     }
+
+    case nsIAccessibleRelation::RELATION_NODE_PARENT_OF: {
+      Relation rel(new IDRefsIterator(mDoc, mContent, nsGkAtoms::aria_owns));
+
+      // ARIA tree or treegrid can do the hierarchy by @aria-level, ARIA trees
+      // also can be organized by groups.
+      if (mRoleMapEntry &&
+          (mRoleMapEntry->role == roles::OUTLINEITEM ||
+           mRoleMapEntry->role == roles::ROW ||
+           mRoleMapEntry->role == roles::OUTLINE ||
+           mRoleMapEntry->role == roles::TREE_TABLE)) {
+        rel.AppendIter(new ItemIterator(this));
+      }
+
+      return rel;
+    }
+
     case nsIAccessibleRelation::RELATION_CONTROLLED_BY:
       return Relation(new RelatedAccIterator(Document(), mContent,
                                              nsGkAtoms::aria_controls));
+
     case nsIAccessibleRelation::RELATION_CONTROLLER_FOR: {
       Relation rel(new IDRefsIterator(mDoc, mContent,
                                       nsGkAtoms::aria_controls));
       rel.AppendIter(new HTMLOutputIterator(Document(), mContent));
       return rel;
     }
+
     case nsIAccessibleRelation::RELATION_FLOWS_TO:
       return Relation(new IDRefsIterator(mDoc, mContent,
                                          nsGkAtoms::aria_flowto));
+
     case nsIAccessibleRelation::RELATION_FLOWS_FROM:
       return Relation(new RelatedAccIterator(Document(), mContent,
                                              nsGkAtoms::aria_flowto));
+
+    case nsIAccessibleRelation::RELATION_MEMBER_OF:
+          return Relation(mDoc, GetAtomicRegion());
+
+    case nsIAccessibleRelation::RELATION_SUBWINDOW_OF:
+    case nsIAccessibleRelation::RELATION_EMBEDS:
+    case nsIAccessibleRelation::RELATION_EMBEDDED_BY:
+    case nsIAccessibleRelation::RELATION_POPUP_FOR:
+    case nsIAccessibleRelation::RELATION_PARENT_WINDOW_OF:
+      return Relation();
+
     case nsIAccessibleRelation::RELATION_DEFAULT_BUTTON: {
       if (mContent->IsHTML()) {
         // HTML form controls implements nsIFormControl interface.
@@ -2087,15 +2136,9 @@ Accessible::RelationByType(uint32_t aType)
       }
       return Relation();
     }
-    case nsIAccessibleRelation::RELATION_MEMBER_OF:
-      return Relation(mDoc, GetAtomicRegion());
-    case nsIAccessibleRelation::RELATION_SUBWINDOW_OF:
-    case nsIAccessibleRelation::RELATION_EMBEDS:
-    case nsIAccessibleRelation::RELATION_EMBEDDED_BY:
-    case nsIAccessibleRelation::RELATION_POPUP_FOR:
-    case nsIAccessibleRelation::RELATION_PARENT_WINDOW_OF:
+
     default:
-    return Relation();
+      return Relation();
   }
 }
 
@@ -2111,12 +2154,29 @@ Accessible::GetRelations(nsIArray **aRelations)
   nsCOMPtr<nsIMutableArray> relations = do_CreateInstance(NS_ARRAY_CONTRACTID);
   NS_ENSURE_TRUE(relations, NS_ERROR_OUT_OF_MEMORY);
 
-  for (uint32_t relType = nsIAccessibleRelation::RELATION_FIRST;
-       relType < nsIAccessibleRelation::RELATION_LAST;
-       ++relType) {
+  static const uint32_t relationTypes[] = {
+    nsIAccessibleRelation::RELATION_LABELLED_BY,
+    nsIAccessibleRelation::RELATION_LABEL_FOR,
+    nsIAccessibleRelation::RELATION_DESCRIBED_BY,
+    nsIAccessibleRelation::RELATION_DESCRIPTION_FOR,
+    nsIAccessibleRelation::RELATION_NODE_CHILD_OF,
+    nsIAccessibleRelation::RELATION_NODE_PARENT_OF,
+    nsIAccessibleRelation::RELATION_CONTROLLED_BY,
+    nsIAccessibleRelation::RELATION_CONTROLLER_FOR,
+    nsIAccessibleRelation::RELATION_FLOWS_TO,
+    nsIAccessibleRelation::RELATION_FLOWS_FROM,
+    nsIAccessibleRelation::RELATION_MEMBER_OF,
+    nsIAccessibleRelation::RELATION_SUBWINDOW_OF,
+    nsIAccessibleRelation::RELATION_EMBEDS,
+    nsIAccessibleRelation::RELATION_EMBEDDED_BY,
+    nsIAccessibleRelation::RELATION_POPUP_FOR,
+    nsIAccessibleRelation::RELATION_PARENT_WINDOW_OF,
+    nsIAccessibleRelation::RELATION_DEFAULT_BUTTON
+  };
 
+  for (uint32_t idx = 0; idx < ArrayLength(relationTypes); idx++) {
     nsCOMPtr<nsIAccessibleRelation> relation;
-    nsresult rv = GetRelationByType(relType, getter_AddRefs(relation));
+    nsresult rv = GetRelationByType(relationTypes[idx], getter_AddRefs(relation));
 
     if (NS_SUCCEEDED(rv) && relation) {
       uint32_t targets = 0;

@@ -750,10 +750,6 @@ JSObject::setSingletonType(JSContext *cx, js::HandleObject obj)
     if (!cx->typeInferenceEnabled())
         return true;
 
-    JS_ASSERT(!obj->hasLazyType());
-    JS_ASSERT_IF(obj->getTaggedProto().isObject(),
-                 obj->type() == obj->getTaggedProto().toObject()->getNewType(cx, obj->getClass()));
-
     js::types::TypeObject *type = cx->compartment->getLazyType(cx, obj->getClass(), obj->getTaggedProto());
     if (!type)
         return false;
@@ -766,8 +762,10 @@ inline js::types::TypeObject *
 JSObject::getType(JSContext *cx)
 {
     JS_ASSERT(cx->compartment == compartment());
-    if (hasLazyType())
-        return makeLazyType(cx);
+    if (hasLazyType()) {
+        js::RootedObject self(cx, this);
+        return makeLazyType(cx, self);
+    }
     return type_;
 }
 

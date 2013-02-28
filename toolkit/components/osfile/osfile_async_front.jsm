@@ -27,9 +27,7 @@ let LOG = OS.Shared.LOG.bind(OS.Shared, "Controller");
 let isTypedArray = OS.Shared.isTypedArray;
 
 // A simple flag used to control debugging messages.
-// FIXME: Once this library has been battle-tested, this flag will
-// either be removed or replaced with a preference.
-const DEBUG = false;
+let DEBUG = OS.Shared.DEBUG;
 
 // The constructor for file errors.
 let OSError;
@@ -52,11 +50,12 @@ Components.utils.import("resource://gre/modules/commonjs/sdk/core/promise.js", t
 // The implementation of communications
 Components.utils.import("resource://gre/modules/osfile/_PromiseWorker.jsm", this);
 
+Components.utils.import("resource://gre/modules/Services.jsm", this);
+
 // If profileDir is not available, osfile.jsm has been imported before the
 // profile is setup. In this case, we need to observe "profile-do-change"
 // and set OS.Constants.Path.profileDir as soon as it becomes available.
 if (!("profileDir" in OS.Constants.Path) || !("localProfileDir" in OS.Constants.Path)) {
-  Components.utils.import("resource://gre/modules/Services.jsm", this);
   let observer = function observer() {
     Services.obs.removeObserver(observer, "profile-do-change");
 
@@ -91,8 +90,7 @@ const noOptions = {};
 
 
 let worker = new PromiseWorker(
-  "resource://gre/modules/osfile/osfile_async_worker.js",
-  DEBUG?LOG:null);
+  "resource://gre/modules/osfile/osfile_async_worker.js", LOG);
 let Scheduler = {
   post: function post(...args) {
     let promise = worker.post.apply(worker, args);
@@ -109,6 +107,55 @@ let Scheduler = {
     );
   }
 };
+
+// Update worker's DEBUG flag if it's true.
+if (DEBUG === true) {
+  Scheduler.post("SET_DEBUG", [DEBUG]);
+}
+
+// Define a new getter and setter for OS.Shared.DEBUG to be able to watch
+// for changes to it and update worker's DEBUG accordingly.
+Object.defineProperty(OS.Shared, "DEBUG", {
+    configurable: true,
+    get: function () {
+        return DEBUG;
+    },
+    set: function (newVal) {
+        Scheduler.post("SET_DEBUG", [newVal]);
+        DEBUG = newVal;
+    }
+});
+
+/**
+ * An observer function to be used to monitor web-workers-shutdown events.
+ */
+let webWorkersShutdownObserver = function webWorkersShutdownObserver() {
+  // Send a "System_shutdown" message to the worker.
+  Scheduler.post("System_shutdown").then(function onSuccess(opened) {
+    let msg = "";
+    if (opened.openedFiles.length > 0) {
+      msg += "The following files are still opened:\n" +
+        opened.openedFiles.join("\n");
+    }
+    if (opened.openedDirectoryIterators.length > 0) {
+      msg += "The following directory iterators are still opened:\n" +
+        opened.openedDirectoryIterators.join("\n");
+    }
+    // Only log if file descriptors leaks detected.
+    if (msg) {
+      LOG("WARNING: File descriptors leaks detected.\n" + msg);
+    }
+  });
+};
+
+// Attaching an observer listening to the "web-workers-shutdown".
+Services.obs.addObserver(webWorkersShutdownObserver, "web-workers-shutdown",
+  false);
+// Attaching the same observer listening to the
+// "test.osfile.web-workers-shutdown".
+// Note: This is used for testing purposes.
+Services.obs.addObserver(webWorkersShutdownObserver,
+  "test.osfile.web-workers-shutdown", false);
 
 /**
  * Representation of a file, with asynchronous methods.
@@ -478,6 +525,14 @@ File.exists = function exists(path) {
  * until the contents are fully written, the destination file is
  * not modified.
  *
+ * By default, files are flushed for additional safety, i.e. to lower
+ * the risks of losing data in case the device is suddenly removed or
+ * in case of sudden shutdown. This additional safety is important
+ * for user-critical data (e.g. preferences, application data, etc.)
+ * but comes at a performance cost. For non-critical data (e.g. cache,
+ * thumbnails, etc.), you may wish to deactivate flushing by passing
+ * option |flush: false|.
+ *
  * Important note: In the current implementation, option |tmpPath|
  * is required. This requirement should disappear as part of bug 793660.
  *
@@ -490,6 +545,13 @@ File.exists = function exists(path) {
  * - {string} tmpPath The path at which to write the temporary file.
  * - {bool} noOverwrite - If set, this function will fail if a file already
  * exists at |path|. The |tmpPath| is not overwritten if |path| exist.
+ * - {bool} flush - If set to |false|, the function will not flush the
+ * file. This improves performance considerably, but the resulting
+ * behavior is slightly less safe: if the system shuts down improperly
+ * (typically due to a kernel freeze or a power failure) or if the
+ * device is disconnected or removed before the buffer is flushed, the
+ * file may be corrupted.
+ *
  *
  * @return {promise}
  * @resolves {number} The number of bytes actually written.
@@ -536,6 +598,14 @@ File.Info.fromMsg = function fromMsg(value) {
 };
 
 /**
+ * Get worker's current DEBUG flag.
+ * Note: This is used for testing purposes.
+ */
+File.GET_DEBUG = function GET_DEBUG() {
+  return Scheduler.post("GET_DEBUG");
+};
+
+/**
  * Iterate asynchronously through a directory
  *
  * @constructor
@@ -557,6 +627,18 @@ let DirectoryIterator = function DirectoryIterator(path, options) {
   this._isClosed = false;
 };
 DirectoryIterator.prototype = {
+  /**
+   * Determine whether the directory exists.
+   *
+   * @resolves {boolean}
+   */
+  exists: function exists() {
+    return this._itmsg.then(
+      function onSuccess(iterator) {
+        return Scheduler.post("DirectoryIterator_prototype_exists", [iterator]);
+      }
+    );
+  },
   /**
    * Get the next entry in the directory.
    *
@@ -658,7 +740,6 @@ DirectoryIterator.prototype = {
    */
   _next: function _next(iterator) {
     if (this._isClosed) {
-      LOG("DirectoryIterator._next", "closed");
       return this._itmsg;
     }
     let self = this;

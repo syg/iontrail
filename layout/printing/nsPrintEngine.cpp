@@ -101,8 +101,6 @@ static const char kPrintingPromptService[] = "@mozilla.org/embedcomp/printingpro
 #include "nsIMarkupDocumentViewer.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIDocShellTreeItem.h"
-#include "nsIDocShellTreeNode.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIBaseWindow.h"
@@ -237,7 +235,8 @@ nsPrintEngine::nsPrintEngine() :
   mLoadCounter(0),
   mDidLoadDataForPrinting(false),
   mIsDestroying(false),
-  mDisallowSelectionPrint(false)
+  mDisallowSelectionPrint(false),
+  mNoMarginBoxes(false)
 {
 }
 
@@ -476,6 +475,21 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
   mPrt->mPrintSettings->SetIsCancelled(false);
   mPrt->mPrintSettings->GetShrinkToFit(&mPrt->mShrinkToFit);
 
+  // In the case the margin boxes are not printed store the print settings for
+  // the footer/header to be used as default print setting for follow up prints.
+  mPrt->mPrintSettings->SetPersistMarginBoxSettings(!mNoMarginBoxes);
+
+  if (mNoMarginBoxes) {
+    // Set the footer/header to blank.
+    const PRUnichar* emptyString = EmptyString().get();
+    mPrt->mPrintSettings->SetHeaderStrLeft(emptyString);
+    mPrt->mPrintSettings->SetHeaderStrCenter(emptyString);
+    mPrt->mPrintSettings->SetHeaderStrRight(emptyString);
+    mPrt->mPrintSettings->SetFooterStrLeft(emptyString);
+    mPrt->mPrintSettings->SetFooterStrCenter(emptyString);
+    mPrt->mPrintSettings->SetFooterStrRight(emptyString);
+  }
+
   if (aIsPrintPreview) {
     SetIsCreatingPrintPreview(true);
     SetIsPrintPreview(true);
@@ -529,9 +543,8 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
     mPrt->mPrintObject->mFrameType = mPrt->mIsParentAFrameSet ? eFrameSet : eDoc;
 
     // Build the "tree" of PrintObjects
-    nsCOMPtr<nsIDocShellTreeNode> parentAsNode =
-      do_QueryInterface(mPrt->mPrintObject->mDocShell);
-    BuildDocTree(parentAsNode, &mPrt->mPrintDocList, mPrt->mPrintObject);
+    BuildDocTree(mPrt->mPrintObject->mDocShell, &mPrt->mPrintDocList,
+                 mPrt->mPrintObject);
   }
 
   if (!aIsPrintPreview) {
@@ -603,13 +616,16 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
         // ShowPrintDialog triggers an event loop which means we can't assume
         // that the state of this->{anything} matches the state we've checked
         // above. Including that a given {thing} is non null.
+        if (!mPrt) {
+          return NS_ERROR_FAILURE;
+        }
 
         if (NS_SUCCEEDED(rv)) {
           // since we got the dialog and it worked then make sure we 
           // are telling GFX we want to print silent
           printSilently = true;
 
-          if (mPrt && mPrt->mPrintSettings) {
+          if (mPrt->mPrintSettings) {
             // The user might have changed shrink-to-fit in the print dialog, so update our copy of its state
             mPrt->mPrintSettings->GetShrinkToFit(&mPrt->mShrinkToFit);
           }
@@ -1037,11 +1053,10 @@ nsPrintEngine::ShowPrintProgress(bool aIsForPrinting, bool& aDoNotify)
       nsPIDOMWindow *domWin = mDocument->GetWindow(); 
       if (!domWin) return;
 
-      nsCOMPtr<nsIDocShellTreeItem> docShellItem =
-        do_QueryInterface(domWin->GetDocShell());
-      if (!docShellItem) return;
+      nsCOMPtr<nsIDocShell> docShell = domWin->GetDocShell();
+      if (!docShell) return;
       nsCOMPtr<nsIDocShellTreeOwner> owner;
-      docShellItem->GetTreeOwner(getter_AddRefs(owner));
+      docShell->GetTreeOwner(getter_AddRefs(owner));
       nsCOMPtr<nsIWebBrowserChrome> browserChrome = do_GetInterface(owner);
       if (!browserChrome) return;
       bool isModal = true;
@@ -1111,8 +1126,7 @@ bool
 nsPrintEngine::IsParentAFrameSet(nsIDocShell * aParent)
 {
   // See if the incoming doc is the root document
-  nsCOMPtr<nsIDocShellTreeItem> parentAsItem(do_QueryInterface(aParent));
-  if (!parentAsItem) return false;
+  if (!aParent) return false;
 
   // When it is the top level document we need to check
   // to see if it contains a frameset. If it does, then
@@ -1862,7 +1876,7 @@ nsPrintEngine::ReflowDocList(nsPrintObject* aPO, bool aSetPixelScale)
   // Check to see if the subdocument's element has been hidden by the parent document
   if (aPO->mParent && aPO->mParent->mPresShell) {
     nsIFrame* frame = aPO->mContent ? aPO->mContent->GetPrimaryFrame() : nullptr;
-    if (!frame || !frame->GetStyleVisibility()->IsVisible()) {
+    if (!frame || !frame->StyleVisibility()->IsVisible()) {
       SetPrintPO(aPO, false);
       aPO->mInvisible = true;
       return NS_OK;
@@ -3125,25 +3139,23 @@ nsPrintEngine::IsWindowsInOurSubTree(nsPIDOMWindow * window)
 
   // now check to make sure it is in "our" tree of docshells
   if (window) {
-    nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
-      do_QueryInterface(window->GetDocShell());
+    nsCOMPtr<nsIDocShell> docShell = window->GetDocShell();
 
-    if (docShellAsItem) {
+    if (docShell) {
       // get this DocViewer docshell
       nsCOMPtr<nsIDocShell> thisDVDocShell(do_QueryReferent(mContainer));
       while (!found) {
-        nsCOMPtr<nsIDocShell> parentDocshell(do_QueryInterface(docShellAsItem));
-        if (parentDocshell) {
-          if (parentDocshell == thisDVDocShell) {
+        if (docShell) {
+          if (docShell == thisDVDocShell) {
             found = true;
             break;
           }
         } else {
           break; // at top of tree
         }
-        nsCOMPtr<nsIDocShellTreeItem> docShellParent;
-        docShellAsItem->GetSameTypeParent(getter_AddRefs(docShellParent));
-        docShellAsItem = docShellParent;
+        nsCOMPtr<nsIDocShellTreeItem> docShellItemParent;
+        docShell->GetSameTypeParent(getter_AddRefs(docShellItemParent));
+        docShell = do_QueryInterface(docShellItemParent);
       } // while
     }
   } // scriptobj

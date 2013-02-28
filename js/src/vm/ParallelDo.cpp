@@ -20,6 +20,10 @@
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 
+#ifdef JS_ION
+#include "ion/ParallelArrayAnalysis.h"
+#endif // ION
+
 #if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
 #include "ion/Ion.h"
 #include "ion/MIR.h"
@@ -27,7 +31,7 @@
 #include "ion/IonCompartment.h"
 
 #include "prprf.h"
-#endif
+#endif // DEBUG && THREADSAFE && ION
 
 using namespace js;
 using namespace js::parallel;
@@ -358,6 +362,7 @@ parallel::SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
 
 #endif // DEBUG && JS_THREADSAFE && JS_ION
 
+#ifdef JS_ION
 class AutoEnterWarmup
 {
     JSRuntime *runtime_;
@@ -404,6 +409,7 @@ class ParallelIonInvoke
         return !result.isMagic();
     }
 };
+#endif // JS_ION
 
 class ParallelDo : public ForkJoinOp
 {
@@ -423,6 +429,13 @@ class ParallelDo : public ForkJoinOp
         pendingInvalidations(cx)
     { }
 
+#ifndef JS_ION
+    ExecutionStatus apply() {
+        if (!executeSequentially())
+            return ExecutionFatal;
+        return ExecutionSequential;
+    }
+#else
     ExecutionStatus apply() {
         SpewBeginOp(cx_, "ParallelDo");
 
@@ -553,6 +566,7 @@ class ParallelDo : public ForkJoinOp
         AutoEnterWarmup warmup(cx_->runtime);
         return executeSequentially();
     }
+#endif // JS_ION
 
     bool executeSequentially() {
         uint32_t numSlices = ForkJoinSlices(cx_);
@@ -574,6 +588,10 @@ class ParallelDo : public ForkJoinOp
     }
 
     virtual bool parallel(ForkJoinSlice &slice) {
+#ifndef JS_ION
+        JS_NOT_REACHED("Parallel execution without ion");
+        return false;
+#else
         Spew(SpewOps, "Up");
 
         // Make a new IonContext for the slice, which is needed if we need to
@@ -619,6 +637,7 @@ class ParallelDo : public ForkJoinOp
         Spew(SpewOps, "Down");
 
         return ok;
+#endif // JS_ION
     }
 
     inline bool hasScript(Vector<types::RecompileInfo> &scripts, JSScript *script) {
@@ -669,4 +688,3 @@ js::parallel::Do(JSContext *cx, CallArgs &args)
 
     return true;
 }
-

@@ -32,8 +32,7 @@
  * loaded data fire before the call returns. If FLAG_SYNC_DECODE is not passed,
  * all, some, or none of the notifications may fire before the call returns.
  */
-class imgDecoderObserver : public mozilla::RefCounted<imgDecoderObserver>,
-                           public mozilla::SupportsWeakPtr<imgDecoderObserver>
+class imgDecoderObserver : public mozilla::RefCounted<imgDecoderObserver>
 {
 public:
   virtual ~imgDecoderObserver() = 0;
@@ -110,6 +109,11 @@ public:
    * image will initiate a new series of progressive decode notifications.
    */
   virtual void OnDiscard() = 0;
+
+  /**
+   * Called when we are asked to Draw an image that is not locked.
+   */
+  virtual void OnUnlockedDraw() = 0;
 };
 
 // We must define a destructor because derived classes call our destructor from

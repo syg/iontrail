@@ -167,6 +167,12 @@ var BrowserApp = {
   _tabs: [],
   _selectedTab: null,
 
+  get isTablet() {
+    let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
+    delete this.isTablet;
+    return this.isTablet = sysInfo.get("tablet");
+  },
+
   deck: null,
 
   startup: function startup() {
@@ -279,15 +285,7 @@ var BrowserApp = {
     let status = this.startupStatus();
     if (pinned) {
       WebAppRT.init(status, url, function(aUrl) {
-        if (aUrl) {
-          BrowserApp.addTab(aUrl);
-        } else {
-          let uri = Services.io.newURI(url, null, null);
-          if (!uri)
-            return;
-          Cc["@mozilla.org/uriloader/external-protocol-service;1"].getService(Ci.nsIExternalProtocolService).getProtocolHandlerInfo(uri.scheme).launchWithURI(uri);
-          BrowserApp.quit();
-        }
+        BrowserApp.addTab(aUrl);
       });
     } else {
       SearchEngines.init();
@@ -569,7 +567,7 @@ var BrowserApp = {
 
     let tab = this.selectedTab;
     if (!tab)
-      return true;
+      return false;
     return tab.contentDocumentIsDisplayed;
   },
 
@@ -681,9 +679,7 @@ var BrowserApp = {
       if (tab) {
         let message = {
           type: "Content:LoadError",
-          tabID: tab.id,
-          uri: aBrowser.currentURI.spec,
-          title: aBrowser.contentTitle
+          tabID: tab.id
         };
         sendMessageToJava(message);
         dump("Handled load error: " + e)
@@ -1081,9 +1077,11 @@ var BrowserApp = {
 
   scrollToFocusedInput: function(aBrowser, aAllowZoom = true) {
     let focused = this.getFocusedInput(aBrowser);
+
     if (focused) {
-      // _zoomToElement will handle not sending any message if this input is already mostly filling the screen
-      BrowserEventHandler._zoomToElement(focused, -1, false, aAllowZoom);
+       // _zoomToElement will handle not sending any message if this input is already mostly filling the screen
+      BrowserEventHandler._zoomToElement(focused, -1, false,
+          aAllowZoom && !this.isTablet && !ViewportHandler.getViewportMetadata(aBrowser.contentWindow).hasMetaViewport);
     }
   },
 
@@ -1318,6 +1316,13 @@ var NativeWindow = {
       type: "Dex:Load",
       zipfile: zipFile,
       impl: implClass || "Main"
+    });
+  },
+
+  unloadDex: function(zipFile) {
+    sendMessageToJava({
+      type: "Dex:Unload",
+      zipfile: zipFile
     });
   },
 
@@ -2916,9 +2921,7 @@ Tab.prototype = {
       } catch(e) {
         let message = {
           type: "Content:LoadError",
-          tabID: this.id,
-          uri: this.browser.currentURI.spec,
-          title: this.browser.contentTitle
+          tabID: this.id
         };
         sendMessageToJava(message);
         dump("Handled load error: " + e);
@@ -2947,7 +2950,7 @@ Tab.prototype = {
       sendMessageToJava({
         type: "DesktopMode:Changed",
         desktopMode: aDesktopMode,
-        tabId: this.id
+        tabID: this.id
       });
     }
 
@@ -3443,6 +3446,10 @@ Tab.prototype = {
             list.push("[" + rel + "]");
         }
 
+        // We only care about icon links
+        if (list.indexOf("[icon]") == -1)
+          return;
+
         // We want to get the largest icon size possible for our UI.
         let maxSize = 0;
 
@@ -3503,7 +3510,7 @@ Tab.prototype = {
           aEvent.preventDefault();
 
           sendMessageToJava({
-            type: "DOMWindowClose",
+            type: "Tab:Close",
             tabID: this.id
           });
         }
@@ -4276,14 +4283,14 @@ var BrowserEventHandler = {
   /* Zoom to an element, optionally keeping a particular part of it
    * in view if it is really tall.
    */
-  _zoomToElement: function(aElement, aClickY = -1, aCanZoomOut = true, aCanZoomIn = true) {
+  _zoomToElement: function(aElement, aClickY = -1, aCanZoomOut = true, aCanScrollHorizontally = true) {
     const margin = 15;
     let rect = ElementTouchHelper.getBoundingContentRect(aElement);
 
     let viewport = BrowserApp.selectedTab.getViewport();
-    let bRect = new Rect(aCanZoomIn ? Math.max(viewport.cssPageLeft, rect.x - margin) : viewport.cssPageLeft,
+    let bRect = new Rect(aCanScrollHorizontally ? Math.max(viewport.cssPageLeft, rect.x - margin) : viewport.cssX,
                          rect.y,
-                         aCanZoomIn ? rect.w + 2 * margin : viewport.cssWidth,
+                         aCanScrollHorizontally ? rect.w + 2 * margin : viewport.cssWidth,
                          rect.h);
     // constrict the rect to the screen's right edge
     bRect.width = Math.min(bRect.width, viewport.cssPageRight - bRect.x);
@@ -5475,6 +5482,7 @@ var ViewportHandler = {
 
     // Note: These values will be NaN if parseFloat or parseInt doesn't find a number.
     // Remember that NaN is contagious: Math.max(1, NaN) == Math.min(1, NaN) == NaN.
+    let hasMetaViewport = true;
     let scale = parseFloat(windowUtils.getDocumentMetadata("viewport-initial-scale"));
     let minScale = parseFloat(windowUtils.getDocumentMetadata("viewport-minimum-scale"));
     let maxScale = parseFloat(windowUtils.getDocumentMetadata("viewport-maximum-scale"));
@@ -5502,6 +5510,7 @@ var ViewportHandler = {
       if (doctype && /(WAP|WML|Mobile)/.test(doctype.publicId))
         return { defaultZoom: 1, autoSize: true, allowZoom: true };
 
+      hasMetaViewport = false;
       let defaultZoom = Services.prefs.getIntPref("browser.viewport.defaultZoom");
       if (defaultZoom >= 0) {
         scale = defaultZoom / 1000;
@@ -5526,7 +5535,8 @@ var ViewportHandler = {
       width: width,
       height: height,
       autoSize: autoSize,
-      allowZoom: allowZoom
+      allowZoom: allowZoom,
+      hasMetaViewport: hasMetaViewport
     };
   },
 
@@ -6164,6 +6174,19 @@ var PluginHelper = {
     NativeWindow.doorhanger.show(message, "ask-to-play-plugins", buttons, aTab.id, options);
   },
 
+  delayAndShowDoorHanger: function(aTab) {
+    // To avoid showing the doorhanger if there are also visible plugin
+    // overlays on the page, delay showing the doorhanger to check if
+    // visible plugins get added in the near future.
+    if (!aTab.pluginDoorhangerTimeout) {
+      aTab.pluginDoorhangerTimeout = setTimeout(function() {
+        if (this.shouldShowPluginDoorhanger) {
+          PluginHelper.showDoorHanger(this);
+        }
+      }.bind(aTab), 500);
+    }
+  },
+
   playAllPlugins: function(aContentWindow) {
     let cwu = aContentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                             .getInterface(Ci.nsIDOMWindowUtils);
@@ -6177,8 +6200,7 @@ var PluginHelper = {
 
   playPlugin: function(plugin) {
     let objLoadingContent = plugin.QueryInterface(Ci.nsIObjectLoadingContent);
-    if (!objLoadingContent.activated &&
-        objLoadingContent.pluginFallbackType !== Ci.nsIObjectLoadingContent.PLUGIN_PLAY_PREVIEW)
+    if (!objLoadingContent.activated)
       objLoadingContent.playPlugin();
   },
 
@@ -6276,17 +6298,7 @@ var PluginHelper = {
         // If the plugin is hidden, or if the overlay is too small, show a 
         // doorhanger notification
         if (PluginHelper.isTooSmall(plugin, overlay)) {
-          // To avoid showing the doorhanger if there are also visible plugin
-          // overlays on the page, delay showing the doorhanger to check if
-          // visible plugins get added in the near future.
-          if (!aTab.pluginDoorhangerTimeout) {
-            aTab.pluginDoorhangerTimeout = setTimeout(function() {
-              if (this.shouldShowPluginDoorhanger) {
-                PluginHelper.showDoorHanger(this);
-              }
-            }.bind(aTab), 500);
-          }
-
+          PluginHelper.delayAndShowDoorHanger(aTab);
         } else {
           // There's a large enough visible overlay that we don't need to show
           // the doorhanger.
@@ -6310,6 +6322,24 @@ var PluginHelper = {
 
       case "PluginPlayPreview": {
         let previewContent = doc.getAnonymousElementByAttribute(plugin, "class", "previewPluginContent");
+        let pluginHost = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
+        let mimeType = PluginHelper.getPluginMimeType(plugin);
+        let playPreviewInfo = pluginHost.getPlayPreviewInfo(mimeType);
+
+        if (!playPreviewInfo.ignoreCTP) {
+          // Check if plugins have already been activated for this page, or if
+          // the user has set a permission to always play plugins on the site
+          if (aTab.clickToPlayPluginsActivated ||
+              Services.perms.testPermission(aTab.browser.currentURI, "plugins") ==
+              Services.perms.ALLOW_ACTION) {
+            PluginHelper.playPlugin(plugin);
+            return;
+          }
+
+          // Always show door hanger for play preview plugins
+          PluginHelper.delayAndShowDoorHanger(aTab);
+        }
+
         let iframe = previewContent.getElementsByClassName("previewPluginContentFrame")[0];
         if (!iframe) {
           // lazy initialization of the iframe
@@ -6317,9 +6347,7 @@ var PluginHelper = {
           iframe.className = "previewPluginContentFrame";
           previewContent.appendChild(iframe);
         }
-        let mimeType = PluginHelper.getPluginMimeType(plugin);
-        let playPreviewUri = "data:application/x-moz-playpreview;," + mimeType;
-        iframe.src = playPreviewUri;
+        iframe.src = playPreviewInfo.redirectURL;
 
         // MozPlayPlugin event can be dispatched from the extension chrome
         // code to replace the preview content with the native plugin
@@ -8124,7 +8152,11 @@ var MemoryObserver = {
 };
 
 var Distribution = {
+  // File used to store campaign data
   _file: null,
+
+  // Path to distribution directory for distribution customizations
+  _path: null,
 
   init: function dc_init() {
     Services.obs.addObserver(this, "Distribution:Set", false);
@@ -8132,7 +8164,7 @@ var Distribution = {
     Services.obs.addObserver(this, "Campaign:Set", false);
 
     // Look for file outside the APK:
-    // /data/data/org.mozilla.fennec/distribution.json
+    // /data/data/org.mozilla.xxx/distribution.json
     this._file = Services.dirsvc.get("XCurProcD", Ci.nsIFile);
     this._file.append("distribution.json");
     this.readJSON(this._file, this.update);
@@ -8147,6 +8179,8 @@ var Distribution = {
   observe: function dc_observe(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "Distribution:Set":
+        this._path = aData;
+
         // Reload the default prefs so we can observe "prefservice:after-app-defaults"
         Services.prefs.QueryInterface(Ci.nsIObserver).observe(null, "reload-default-prefs", null);
         break;
@@ -8187,10 +8221,16 @@ var Distribution = {
   },
 
   getPrefs: function dc_getPrefs() {
-    // Look for preferences file outside the APK:
-    // /data/data/org.mozilla.fennec/distribution/preferences.json
-    let file = Services.dirsvc.get("XCurProcD", Ci.nsIFile);
-    file.append("distribution");
+    let file;
+    if (this._path) {
+      file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+      file.initWithPath(this._path);
+    } else {
+      // If a path isn't specified, look in the data directory:
+      // /data/data/org.mozilla.xxx/distribution
+      file = Services.dirsvc.get("XCurProcD", Ci.nsIFile);
+      file.append("distribution");
+    }
     file.append("preferences.json");
 
     this.readJSON(file, this.applyPrefs);
@@ -8256,6 +8296,8 @@ var Distribution = {
         defaults.setComplexValue(key, Ci.nsIPrefLocalizedString, localizedString);
       } catch (e) { /* ignore bad prefs and move on */ }
     }
+
+    sendMessageToJava({ type: "Distribution:Set:OK" });
   },
 
   // aFile is an nsIFile

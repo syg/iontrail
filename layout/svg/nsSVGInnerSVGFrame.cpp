@@ -67,7 +67,7 @@ nsSVGInnerSVGFrame::PaintSVG(nsRenderingContext *aContext,
 
   gfxContextAutoSaveRestore autoSR;
 
-  if (GetStyleDisplay()->IsScrollableOverflow()) {
+  if (StyleDisplay()->IsScrollableOverflow()) {
     float x, y, width, height;
     static_cast<SVGSVGElement*>(mContent)->
       GetAnimatedLengthValues(&x, &y, &width, &height, nullptr);
@@ -136,11 +136,11 @@ nsSVGInnerSVGFrame::NotifySVGChanged(uint32_t aFlags)
 
     if (!(aFlags & TRANSFORM_CHANGED) &&
         (xOrYIsPercentage ||
-         (widthOrHeightIsPercentage && svg->HasViewBox()))) {
+         (widthOrHeightIsPercentage && svg->HasViewBoxRect()))) {
       aFlags |= TRANSFORM_CHANGED;
     }
 
-    if (svg->HasViewBox() || !widthOrHeightIsPercentage) {
+    if (svg->HasViewBoxRect() || !widthOrHeightIsPercentage) {
       // Remove COORD_CONTEXT_CHANGED, since we establish the coordinate
       // context for our descendants and this notification won't change its
       // dimensions:
@@ -223,7 +223,7 @@ nsSVGInnerSVGFrame::GetFrameForPoint(const nsPoint &aPoint)
                "If display lists are enabled, only hit-testing of non-display "
                "SVG should take this code path");
 
-  if (GetStyleDisplay()->IsScrollableOverflow()) {
+  if (StyleDisplay()->IsScrollableOverflow()) {
     nsSVGElement *content = static_cast<nsSVGElement*>(mContent);
     nsSVGContainerFrame *parent = static_cast<nsSVGContainerFrame*>(mParent);
 

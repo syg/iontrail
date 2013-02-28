@@ -29,7 +29,7 @@ public class MenuItemActionBar extends ImageButton
     }
 
     @Override
-    public View getLayout() {
+    public View getView() {
         return this;
     }
 

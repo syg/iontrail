@@ -72,7 +72,6 @@
 #include "nsIEditActionListener.h"      // for nsIEditActionListener
 #include "nsIEditorObserver.h"          // for nsIEditorObserver
 #include "nsIEditorSpellCheck.h"        // for nsIEditorSpellCheck
-#include "nsIEnumerator.h"              // for nsIEnumerator, etc
 #include "nsIFrame.h"                   // for nsIFrame
 #include "nsIInlineSpellChecker.h"      // for nsIInlineSpellChecker, etc
 #include "nsIMEStateManager.h"          // for nsIMEStateManager
@@ -102,7 +101,7 @@
 #include "nsStyleContext.h"             // for nsStyleContext
 #include "nsStyleSheetTxns.h"           // for AddStyleSheetTxn, etc
 #include "nsStyleStruct.h"              // for nsStyleDisplay, nsStyleText, etc
-#include "nsStyleStructFwd.h"           // for nsIFrame::GetStyleUIReset, etc
+#include "nsStyleStructFwd.h"           // for nsIFrame::StyleUIReset, etc
 #include "nsTextEditUtils.h"            // for nsTextEditUtils
 #include "nsThreadUtils.h"              // for nsRunnable
 #include "nsTransactionManager.h"       // for nsTransactionManager
@@ -2108,7 +2107,7 @@ nsEditor::GetPreferredIMEState(IMEState *aState)
   nsIFrame* frame = content->GetPrimaryFrame();
   NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
 
-  switch (frame->GetStyleUIReset()->mIMEMode) {
+  switch (frame->StyleUIReset()->mIMEMode) {
     case NS_STYLE_IME_MODE_AUTO:
       if (IsPasswordEditor())
         aState->mEnabled = IMEState::PASSWORD;
@@ -3654,7 +3653,7 @@ IsElementVisible(dom::Element* aElement)
     nsComputedDOMStyle::GetStyleContextForElementNoFlush(aElement,
                                                          nullptr, nullptr);
   if (styleContext) {
-    return styleContext->GetStyleDisplay()->mDisplay != NS_STYLE_DISPLAY_NONE;
+    return styleContext->StyleDisplay()->mDisplay != NS_STYLE_DISPLAY_NONE;
   }
   return false;
 }
@@ -3892,21 +3891,13 @@ nsEditor::GetStartNodeAndOffset(nsISelection *aSelection,
   *outStartNode = nullptr;
   *outStartOffset = 0;
 
-  nsCOMPtr<nsISelectionPrivate>selPrivate(do_QueryInterface(aSelection));
-  nsCOMPtr<nsIEnumerator> enumerator;
-  nsresult result = selPrivate->GetEnumerator(getter_AddRefs(enumerator));
-  NS_ENSURE_SUCCESS(result, result);
-  NS_ENSURE_TRUE(enumerator, NS_ERROR_FAILURE);
+  Selection* selection = static_cast<Selection*>(aSelection);
+  NS_ENSURE_TRUE(selection->GetRangeCount(), NS_ERROR_FAILURE);
 
-  enumerator->First(); 
-  nsCOMPtr<nsISupports> currentItem;
-  result = enumerator->CurrentItem(getter_AddRefs(currentItem));
-  NS_ENSURE_SUCCESS(result, result);
-
-  nsCOMPtr<nsIDOMRange> range( do_QueryInterface(currentItem) );
+  nsRange* range = selection->GetRangeAt(0);
   NS_ENSURE_TRUE(range, NS_ERROR_FAILURE);
 
-  result = range->GetStartContainer(outStartNode);
+  nsresult result = range->GetStartContainer(outStartNode);
   NS_ENSURE_SUCCESS(result, result);
 
   result = range->GetStartOffset(outStartOffset);
@@ -3928,18 +3919,11 @@ nsEditor::GetEndNodeAndOffset(nsISelection *aSelection,
 
   *outEndNode = nullptr;
     
-  nsCOMPtr<nsISelectionPrivate>selPrivate(do_QueryInterface(aSelection));
-  nsCOMPtr<nsIEnumerator> enumerator;
-  nsresult result = selPrivate->GetEnumerator(getter_AddRefs(enumerator));
-  if (NS_FAILED(result) || !enumerator)
-    return NS_ERROR_FAILURE;
-    
-  enumerator->First(); 
-  nsCOMPtr<nsISupports> currentItem;
-  if (NS_FAILED(enumerator->CurrentItem(getter_AddRefs(currentItem))))
-    return NS_ERROR_FAILURE;
+  Selection* selection = static_cast<Selection*>(aSelection);
+  NS_ENSURE_TRUE(selection, NS_ERROR_FAILURE);
+  NS_ENSURE_TRUE(selection->GetRangeCount(), NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDOMRange> range( do_QueryInterface(currentItem) );
+  nsRange* range = selection->GetRangeAt(0);
   NS_ENSURE_TRUE(range, NS_ERROR_FAILURE);
     
   if (NS_FAILED(range->GetEndContainer(outEndNode)))
@@ -3985,7 +3969,7 @@ nsEditor::IsPreformatted(nsIDOMNode *aNode, bool *aResult)
     return NS_OK;
   }
 
-  const nsStyleText* styleText = elementStyle->GetStyleText();
+  const nsStyleText* styleText = elementStyle->StyleText();
 
   *aResult = styleText->WhiteSpaceIsSignificant();
   return NS_OK;
@@ -4582,9 +4566,8 @@ nsEditor::CreateTxnForDeleteSelection(EDirection aAction,
   // allocate the out-param transaction
   nsRefPtr<EditAggregateTxn> aggTxn = new EditAggregateTxn();
 
-  nsSelectionIterator iter(selection);
-  for (iter.First(); iter.IsDone() != NS_OK; iter.Next()) {
-    nsRefPtr<nsRange> range = iter.CurrentItem();
+  for (int32_t rangeIdx = 0; rangeIdx < selection->GetRangeCount(); ++rangeIdx) {
+    nsRefPtr<nsRange> range = selection->GetRangeAt(rangeIdx);
     NS_ENSURE_STATE(range);
 
     // Same with range as with selection; if it is collapsed and action
@@ -5072,7 +5055,7 @@ nsEditor::DetermineCurrentDirection()
 
     // Set the flag here, to enable us to use the same code path below.
     // It will be flipped before returning from the function.
-    if (frame->GetStyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
+    if (frame->StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
       mFlags |= nsIPlaintextEditor::eEditorRightToLeft;
     } else {
       mFlags |= nsIPlaintextEditor::eEditorLeftToRight;

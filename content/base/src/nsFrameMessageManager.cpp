@@ -651,7 +651,7 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
           continue;
         }
         nsCxPusher pusher;
-        NS_ENSURE_STATE(pusher.Push(ctx, false));
+        pusher.Push(ctx);
 
         JSAutoRequest ar(ctx);
         JSAutoCompartment ac(ctx, object);
@@ -1111,7 +1111,8 @@ nsFrameScriptExecutor::TryCacheLoadAndCompileScript(const nsAString& aURL,
 }
 
 bool
-nsFrameScriptExecutor::InitTabChildGlobalInternal(nsISupports* aScope)
+nsFrameScriptExecutor::InitTabChildGlobalInternal(nsISupports* aScope,
+                                                  const nsACString& aID)
 {
   
   nsCOMPtr<nsIJSRuntimeService> runtimeSvc = 
@@ -1151,6 +1152,11 @@ nsFrameScriptExecutor::InitTabChildGlobalInternal(nsISupports* aScope)
   NS_ENSURE_SUCCESS(rv, false);
 
   JS_SetGlobalObject(cx, global);
+
+  // Set the location information for the new global, so that tools like
+  // about:memory may use that information.
+  xpc::SetLocationForGlobal(global, aID);
+
   DidCreateCx();
   return true;
 }

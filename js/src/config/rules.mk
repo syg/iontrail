@@ -95,6 +95,20 @@ ifndef INCLUDED_TESTS_MOCHITEST_MK #{
   include $(topsrcdir)/config/makefiles/mochitest.mk
 endif #}
 
+ifdef MOZ_ENABLE_GTEST
+ifdef GTEST_CPPSRCS
+CPPSRCS += $(GTEST_CPPSRCS)
+endif
+
+ifdef GTEST_CSRCS
+CSRCS += $(GTEST_CSRCS)
+endif
+
+ifdef GTEST_CMMSRCS
+CMMSRCS += $(GTEST_CMMSRCS)
+endif
+endif
+
 ifdef CPP_UNIT_TESTS
 
 # Compile the tests to $(DIST)/bin.  Make lots of niceties available by default
@@ -1207,23 +1221,23 @@ ifneq (,$(DIST_SUBDIR)$(XPI_NAME)$(LIBXUL_SDK))
 PREF_DIR = defaults/preferences
 endif
 
-ifneq ($(PREF_JS_EXPORTS),)
 # on win32, pref files need CRLF line endings... see bug 206029
 ifeq (WINNT,$(OS_ARCH))
-PREF_PPFLAGS = --line-endings=crlf
-endif
-
-ifndef NO_DIST_INSTALL
-PREF_JS_EXPORTS_PATH := $(FINAL_TARGET)/$(PREF_DIR)
-PREF_JS_EXPORTS_FLAGS := $(PREF_PPFLAGS)
-PP_TARGETS += PREF_JS_EXPORTS
-endif
+PREF_PPFLAGS += --line-endings=crlf
 endif
 
 # Set a flag that can be used in pref files to disable features if
 # we are not building for Aurora or Nightly.
 ifeq (,$(findstring a,$(GRE_MILESTONE)))
 PREF_PPFLAGS += -DRELEASE_BUILD
+endif
+
+ifneq ($(PREF_JS_EXPORTS),)
+ifndef NO_DIST_INSTALL
+PREF_JS_EXPORTS_PATH := $(FINAL_TARGET)/$(PREF_DIR)
+PREF_JS_EXPORTS_FLAGS := $(PREF_PPFLAGS)
+PP_TARGETS += PREF_JS_EXPORTS
+endif
 endif
 
 ################################################################################

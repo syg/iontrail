@@ -89,7 +89,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsIEditorDocShell.h"
 #include "nsEventDispatcher.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsIControllers.h"
@@ -334,7 +333,7 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
                                                                   nullptr);
   NS_ENSURE_TRUE(sc, false);
 
-  *aResult = sc->GetStyleDisplay()->mBinding;
+  *aResult = sc->StyleDisplay()->mBinding;
 
   return true;
 }
@@ -594,7 +593,7 @@ static nsSize GetScrollRectSizeForOverflowVisibleFrame(nsIFrame* aFrame)
   nsLayoutUtils::UnionChildOverflow(aFrame, overflowAreas);
   return nsLayoutUtils::GetScrolledRect(aFrame,
       overflowAreas.ScrollableOverflow(), paddingRect.Size(),
-      aFrame->GetStyleVisibility()->mDirection).Size();
+      aFrame->StyleVisibility()->mDirection).Size();
 }
 
 int32_t
@@ -642,7 +641,7 @@ Element::GetClientAreaRect()
   }
 
   if (styledFrame &&
-      (styledFrame->GetStyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
+      (styledFrame->StyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
        styledFrame->IsFrameOfType(nsIFrame::eReplaced))) {
     // Special case code to make client area work even when there isn't
     // a scroll view, see bug 180552, bug 227567.
@@ -1299,7 +1298,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
                                       nsContentUtils::eDOM_PROPERTIES,
                                       "RemovedFullScreenElement");
       // Fully exit full-screen.
-      nsIDocument::ExitFullScreen(false);
+      nsIDocument::ExitFullscreen(OwnerDoc(), /* async */ false);
     }
     if (HasPointerLock()) {
       nsIDocument::UnlockPointer();

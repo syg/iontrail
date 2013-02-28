@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.graphics.drawable.Drawable;
 import android.view.ActionProvider;
 import android.view.ContextMenu;
+import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.SubMenu;
 import android.view.View;
@@ -27,7 +28,7 @@ public class GeckoMenuItem implements MenuItem, View.OnClickListener {
         public void setOnClickListener(View.OnClickListener listener);
         public void setSubMenuIndicator(boolean hasSubMenu);
         public void setVisibility(int visible);
-        public View getLayout();
+        public View getView();
     }
 
     public static interface OnShowAsActionChangedListener {
@@ -42,7 +43,7 @@ public class GeckoMenuItem implements MenuItem, View.OnClickListener {
     private Context mContext;
     private int mId;
     private int mOrder;
-    private GeckoMenuItem.Layout mLayout;
+    private Layout mLayout;
     private boolean mActionItem;
     private CharSequence mTitle;
     private CharSequence mTitleCondensed;
@@ -60,7 +61,7 @@ public class GeckoMenuItem implements MenuItem, View.OnClickListener {
 
     public GeckoMenuItem(Context context, int id) {
         mContext = context;
-        mLayout = new MenuItemDefault(context, null);
+        mLayout = (MenuItemDefault) LayoutInflater.from(mContext).inflate(R.layout.menu_item, null);
         mLayout.setId(id);
 
         mId = id;
@@ -131,7 +132,7 @@ public class GeckoMenuItem implements MenuItem, View.OnClickListener {
     }
 
     public View getLayout() {
-        return mLayout.getLayout();
+        return mLayout.getView();
     }
 
     public void setMenu(GeckoMenu menu) {
@@ -295,7 +296,7 @@ public class GeckoMenuItem implements MenuItem, View.OnClickListener {
             mLayout = new MenuItemActionBar(mContext, null);
         } else {
             // Change the type to default
-            mLayout = new MenuItemDefault(mContext, null);
+            mLayout = (MenuItemDefault) LayoutInflater.from(mContext).inflate(R.layout.menu_item, null);
         }
 
         mActionItem = (actionEnum > 0);         

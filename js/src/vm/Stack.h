@@ -297,6 +297,7 @@ class AbstractFramePtr
     inline bool hasArgsObj() const;
     inline ArgumentsObject &argsObj() const;
     inline void initArgsObj(ArgumentsObject &argsobj) const;
+    inline bool useNewType() const;
 
     inline bool copyRawFrameSlots(AutoValueVector *vec) const;
 
@@ -307,7 +308,8 @@ class AbstractFramePtr
 
     inline bool prevUpToDate() const;
     inline void setPrevUpToDate() const;
-    inline AbstractFramePtr evalPrev() const;
+
+    JSObject *evalPrevScopeChain(JSRuntime *rt) const;
 
     inline void *maybeHookData() const;
     inline void setHookData(void *data) const;
@@ -388,10 +390,13 @@ class StackFrame
         HAS_PUSHED_SPS_FRAME = 0x100000,  /* SPS was notified of enty */
 
         /* Ion frame state */
-        RUNNING_IN_ION       = 0x200000,  /* frame is running in Ion */
-        CALLING_INTO_ION     = 0x400000,  /* frame is calling into Ion */
+        RUNNING_IN_ION     =   0x200000,  /* frame is running in Ion */
+        CALLING_INTO_ION   =   0x400000,  /* frame is calling into Ion */
 
-        JIT_REVISED_STACK    = 0x800000   /* sp was revised by JIT for lowered apply */
+        JIT_REVISED_STACK  =   0x800000,  /* sp was revised by JIT for lowered apply */
+
+        /* Miscellaneous state. */
+        USE_NEW_TYPE       =  0x1000000   /* Use new type for constructed |this| object. */
     };
 
   private:
@@ -488,12 +493,9 @@ class StackFrame
      * over-recursed) after pushing the stack frame but before 'prologue' is
      * called or completes fully. To simplify usage, 'epilogue' does not assume
      * 'prologue' has completed and handles all the intermediate state details.
-     *
-     * The 'newType' option indicates whether the constructed 'this' value (if
-     * there is one) should be given a new singleton type.
      */
 
-    bool prologue(JSContext *cx, bool newType);
+    bool prologue(JSContext *cx);
     void epilogue(JSContext *cx);
 
     /* Subsets of 'prologue' called from jit code. */
@@ -627,7 +629,7 @@ class StackFrame
     inline bool forEachCanonicalActualArg(Op op, unsigned start = 0, unsigned count = unsigned(-1));
     template <class Op> inline bool forEachFormalArg(Op op);
 
-
+    void cleanupTornValues();
 
     /*
      * Arguments object
@@ -1049,6 +1051,15 @@ class StackFrame
     bool hasArgsObj() const {
         JS_ASSERT(script()->needsArgsObj());
         return flags_ & HAS_ARGS_OBJ;
+    }
+
+    void setUseNewType() {
+        JS_ASSERT(isConstructing());
+        flags_ |= USE_NEW_TYPE;
+    }
+    bool useNewType() const {
+        JS_ASSERT(isConstructing());
+        return flags_ & USE_NEW_TYPE;
     }
 
     /*
@@ -1675,8 +1686,8 @@ class ContextStack
                          InitialFrameFlags initial, InvokeFrameGuard *ifg);
 
     /* Called by Execute for execution of eval or global code. */
-    bool pushExecuteFrame(JSContext *cx, JSScript *script, const Value &thisv,
-                          JSObject &scopeChain, ExecuteType type,
+    bool pushExecuteFrame(JSContext *cx, HandleScript script, const Value &thisv,
+                          HandleObject scopeChain, ExecuteType type,
                           AbstractFramePtr evalInFrame, ExecuteFrameGuard *efg);
 
     /* Allocate actual argument space for the bailed frame */

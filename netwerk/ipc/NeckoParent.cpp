@@ -17,10 +17,12 @@
 #include "mozilla/dom/network/TCPSocketParent.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/LoadContext.h"
+#include "mozilla/AppProcessChecker.h"
 #include "nsPrintfCString.h"
 #include "nsHTMLDNSPrefetch.h"
 #include "nsIAppsService.h"
 #include "nsEscape.h"
+#include "RemoteOpenFileParent.h"
 
 using mozilla::dom::TabParent;
 using mozilla::net::PTCPSocketParent;
@@ -273,6 +275,11 @@ NeckoParent::AllocPTCPSocket(const nsString& aHost,
                    KILLING CHILD PROCESS\n");
     return nullptr;
   }
+  if (aBrowser && !AssertAppProcessPermission(aBrowser, "tcp-socket")) {
+    printf_stderr("NeckoParent::AllocPTCPSocket: FATAL error: app doesn't permit tcp-socket connections \
+                   KILLING CHILD PROCESS\n");
+    return nullptr;
+  }
   TCPSocketParent* p = new TCPSocketParent();
   p->AddRef();
   return p;
@@ -287,7 +294,7 @@ NeckoParent::RecvPTCPSocketConstructor(PTCPSocketParent* aActor,
                                        PBrowserParent* aBrowser)
 {
   return static_cast<TCPSocketParent*>(aActor)->
-      Init(aHost, aPort, useSSL, aBinaryType, aBrowser);
+      Init(aHost, aPort, useSSL, aBinaryType);
 }
 
 bool
@@ -404,6 +411,14 @@ NeckoParent::AllocPRemoteOpenFile(const URIParams& aURI,
 }
 
 bool
+NeckoParent::RecvPRemoteOpenFileConstructor(PRemoteOpenFileParent* aActor,
+                                            const URIParams& aFileURI,
+                                            PBrowserParent* aBrowser)
+{
+  return static_cast<RemoteOpenFileParent*>(aActor)->OpenSendCloseDelete();
+}
+
+bool
 NeckoParent::DeallocPRemoteOpenFile(PRemoteOpenFileParent* actor)
 {
   delete actor;
@@ -428,4 +443,3 @@ NeckoParent::RecvCancelHTMLDNSPrefetch(const nsString& hostname,
 }
 
 }} // mozilla::net
-

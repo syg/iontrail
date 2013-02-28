@@ -78,14 +78,6 @@ IonBuilder::inlineNativeCall(CallInfo &callInfo, JSNative native)
     if (native == regexp_test)
         return inlineRegExpTest(callInfo);
 
-    // Parallel Array
-    if (native == intrinsic_UnsafeSetElement)
-        return inlineUnsafeSetElement(callInfo);
-    if (native == testingFunc_parallelJSActive)
-        return inlineForceSequentialOrParallelJSActive(callInfo);
-    if (native == intrinsic_NewDenseArray)
-        return inlineNewDenseArray(callInfo);
-
     // Self-hosting
     if (native == intrinsic_ThrowError)
         return inlineThrowError(callInfo);
@@ -97,7 +89,7 @@ IonBuilder::inlineNativeCall(CallInfo &callInfo, JSNative native)
     // Parallel Array
     if (native == intrinsic_UnsafeSetElement)
         return inlineUnsafeSetElement(callInfo);
-    if (native == intrinsic_ForceSequential)
+    if (native == intrinsic_ShouldForceSequential)
         return inlineForceSequentialOrParallelJSActive(callInfo);
     if (native == testingFunc_parallelJSActive)
         return inlineForceSequentialOrParallelJSActive(callInfo);

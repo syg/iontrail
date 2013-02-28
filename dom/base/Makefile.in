@@ -25,9 +25,6 @@ DIRS = \
 EXTRA_COMPONENTS = \
   SiteSpecificUserAgent.js \
   SiteSpecificUserAgent.manifest \
-  $(NULL)
-
-EXTRA_PP_COMPONENTS = \
   ConsoleAPI.js \
   ConsoleAPI.manifest \
   $(NULL)
@@ -44,6 +41,7 @@ EXTRA_JS_MODULES += \
 XPIDLSRCS = \
   nsIDOMDOMError.idl \
   nsIDOMDOMRequest.idl \
+  nsIDOMDOMCursor.idl \
   nsIEntropyCollector.idl \
   nsIScriptChannel.idl \
   nsISiteSpecificUserAgent.idl \
@@ -78,12 +76,14 @@ EXPORTS = \
   nsContentPermissionHelper.h \
   nsStructuredCloneContainer.h \
   nsWindowMemoryReporter.h \
+  Crypto.h \
   $(NULL)
 
 EXPORTS_NAMESPACES = mozilla/dom
 EXPORTS_mozilla/dom = \
   DOMError.h \
   DOMRequest.h \
+  DOMCursor.h \
   StructuredCloneTags.h \
   ScreenOrientation.h \
   URL.h \
@@ -115,8 +115,10 @@ CPPSRCS =			\
 	nsDOMNavigationTiming.cpp \
 	nsPerformance.cpp	\
 	nsWindowMemoryReporter.cpp \
+	Crypto.cpp \
 	DOMError.cpp \
 	DOMRequest.cpp \
+	DOMCursor.cpp \
 	Navigator.cpp \
 	URL.cpp \
 	$(NULL)

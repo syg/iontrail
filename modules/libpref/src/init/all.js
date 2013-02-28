@@ -180,8 +180,10 @@ pref("media.gstreamer.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
-pref("media.peerconnection.enabled", false);
+pref("media.peerconnection.enabled", true);
 pref("media.navigator.permission.disabled", false);
+pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:23.21.150.121\"}]");
+pref("media.peerconnection.use_document_iceservers", true);
 // These values (aec, agc, and noice) are from media/webrtc/trunk/webrtc/common_types.h
 // kXxxUnchanged = 0, kXxxDefault = 1, and higher values are specific to each 
 // setting (for Xxx = Ec, Agc, or Ns).  Defaults are all set to kXxxDefault here.
@@ -230,9 +232,7 @@ pref("gfx.filter.nearest.force-enabled", false);
 // whether to always search all font cmaps during system font fallback
 pref("gfx.font_rendering.fallback.always_use_cmaps", false);
 
-#ifdef MOZ_GRAPHITE
-pref("gfx.font_rendering.graphite.enabled", false);
-#endif
+pref("gfx.font_rendering.graphite.enabled", true);
 
 // Check intl/unicharutil/util/nsUnicodeProperties.h for definitions of script bits
 // in the ShapingType enumeration
@@ -354,6 +354,9 @@ pref("browser.frames.enabled", true);
 
 // Number of characters to consider emphasizing for rich autocomplete results
 pref("toolkit.autocomplete.richBoundaryCutoff", 200);
+
+// Variable controlling logging for osfile.
+pref("toolkit.osfile.log", false);
 
 pref("toolkit.scrollbox.smoothScroll", true);
 pref("toolkit.scrollbox.scrollIncrement", 20);
@@ -707,7 +710,7 @@ pref("dom.min_background_timeout_value", 1000);
 pref("dom.experimental_bindings", true);
 
 // Run content XBL in a separate scope.
-pref("dom.xbl_scopes", false);
+pref("dom.xbl_scopes", true);
 
 // Don't use new input types
 pref("dom.experimental_forms", false);
@@ -1283,7 +1286,13 @@ pref("network.proxy.socks_remote_dns",      false);
 pref("network.proxy.no_proxies_on",         "localhost, 127.0.0.1");
 pref("network.proxy.failover_timeout",      1800); // 30 minutes
 pref("network.online",                      true); //online/offline
-pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontUse
+pref("network.cookie.cookieBehavior",       3); // 0-Accept, 1-dontAcceptForeign, 2-dontUse, 3-limitForeign
+#ifdef ANDROID
+pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
+#endif
+#ifdef MOZ_WIDGET_GONK
+pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
+#endif
 pref("network.cookie.thirdparty.sessionOnly", false);
 pref("network.cookie.lifetimePolicy",       0); // accept normally, 1-askBeforeAccepting, 2-acceptForSession,3-acceptForNDays
 pref("network.cookie.alwaysAcceptSessionCookies", false);
@@ -1680,7 +1689,11 @@ pref("layout.css.supports-rule.enabled", true);
 #endif
 
 // Is support for CSS Flexbox enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.flexbox.enabled", false);
+#else
 pref("layout.css.flexbox.enabled", true);
+#endif
 
 // Are sets of prefixed properties supported?
 pref("layout.css.prefixes.border-image", true);
@@ -1812,6 +1825,7 @@ pref("dom.ipc.plugins.java.enabled", false);
 #endif
 
 pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
+pref("dom.ipc.plugins.reportCrashURL", true);
 
 pref("dom.ipc.processCount", 1);
 
@@ -2388,9 +2402,6 @@ pref("print.print_extra_margin", 90); // twips (90 twips is an eigth of an inch)
 
 // Whether to extend the native dialog with information on printing frames.
 pref("print.extend_native_print_dialog", true);
-
-// Locate Java by scanning the Sun JRE installation directory with a minimum version
-pref("plugin.scan.SunJRE", "1.6");
 
 // Locate plugins by scanning the Adobe Acrobat installation directory with a minimum version
 pref("plugin.scan.Acrobat", "5.0");
@@ -3852,13 +3863,13 @@ pref("image.mem.max_ms_before_yield", 5);
 pref("image.mem.max_decoded_image_kb", 51200);
 
 // WebGL prefs
+pref("gl.msaa-level", 2);
 pref("webgl.force-enabled", false);
 pref("webgl.disabled", false);
 pref("webgl.shader_validator", true);
 pref("webgl.prefer-native-gl", false);
 pref("webgl.min_capability_mode", false);
 pref("webgl.disable-extensions", false);
-pref("webgl.msaa-level", 2);
 pref("webgl.msaa-force", false);
 pref("webgl.prefer-16bpp", false);
 pref("webgl.default-no-alpha", false);
@@ -3971,7 +3982,6 @@ pref("alerts.disableSlidingEffect", false);
 // DOM full-screen API.
 pref("full-screen-api.enabled", false);
 pref("full-screen-api.allow-trusted-requests-only", true);
-pref("full-screen-api.exit-on-deactivate", true);
 pref("full-screen-api.pointer-lock.enabled", true);
 
 // DOM idle observers API
@@ -4099,6 +4109,14 @@ pref("dom.placeholder.show_on_focus", true);
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
 
+//Retrieval mode for MMS
+//manual: Manual retrieval mode.
+//automatic: Automatic retrieval mode.
+//never: Never retrieval mode.
+pref("dom.mms.retrieval_mode", "manual");
+pref("dom.mms.retrievalRetryCount", 3);
+pref("dom.mms.retrievalRetryInterval", 300000);
+
 // If the user puts a finger down on an element and we think the user
 // might be executing a pan gesture, how long do we wait before
 // tentatively deciding the gesture is actually a tap and activating
@@ -4108,3 +4126,9 @@ pref("ui.touch_activation.delay_ms", 100);
 // nsMemoryInfoDumper can watch a fifo in the temp directory and take various
 // actions when the fifo is written to.  Disable this in general.
 pref("memory_info_dumper.watch_fifo", false);
+
+#ifdef MOZ_CAPTIVEDETECT
+pref("captivedetect.maxWaitingTime", 5000);
+pref("captivedetect.pollingTime", 3000);
+pref("captivedetect.maxRetryCount", 5);
+#endif

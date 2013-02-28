@@ -21,6 +21,8 @@
 <pre id="test">
 <script type="application/javascript">
 
+SimpleTest.expectAssertions(1); // bug 845552
+
 /** Tests for Bug 545812 **/
 
 // Ensure the full-screen api is enabled, and will be disabled on test exit.
@@ -34,6 +36,7 @@ SpecialPowers.setBoolPref("full-screen-api.allow-trusted-requests-only", false);
 // run in an iframe, which by default will not have the allowfullscreen
 // attribute set, so full-screen won't work.
 var gTestWindows = [
+  "file_fullscreen-multiple.html",
   "file_fullscreen-rollback.html",
   "file_fullscreen-esc-exit.html",
   "file_fullscreen-denied.html",

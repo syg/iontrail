@@ -47,9 +47,7 @@ if (typeof Components != "undefined") {
       libc = ctypes.open(libc_candidates[i]);
       break;
     } catch (x) {
-      if (exports.OS.Shared.DEBUG) {
-        LOG("Could not open libc "+libc_candidates[i]);
-      }
+      LOG("Could not open libc ", libc_candidates[i]);
     }
   }
   if (!libc) {
@@ -315,5 +313,9 @@ if (typeof Components != "undefined") {
 
   OSError.exists = function exists(operation) {
     return new OSError(operation, OS.Constants.libc.EEXIST);
+  };
+
+  OSError.noSuchFile = function noSuchFile(operation) {
+    return new OSError(operation, OS.Constants.libc.ENOENT);
   };
 })(this);

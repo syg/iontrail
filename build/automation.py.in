@@ -443,6 +443,7 @@ user_pref("browser.ui.layout.tablet", 0); // force tablet UI off
 user_pref("dom.allow_scripts_to_close_windows", true);
 user_pref("dom.disable_open_during_load", false);
 user_pref("dom.experimental_forms", true); // on for testing
+user_pref("dom.experimental_forms_range", true); // on for testing
 user_pref("dom.max_script_run_time", 0); // no slow script dialogs
 user_pref("hangmonitor.timeout", 0); // no hang monitor
 user_pref("dom.max_chrome_script_run_time", 0);
@@ -532,6 +533,10 @@ user_pref("network.activity.blipIntervalMilliseconds", 250);
 
 // Don't allow the Data Reporting service to prompt for policy acceptance.
 user_pref("datareporting.policy.dataSubmissionPolicyBypassAcceptance", true);
+
+// Point Firefox Health Report at a local server. We don't care if it actually
+// works. It just can't hit the default production endpoint.
+user_pref("datareporting.healthreport.documentServerURI", "http://%(server)s/healthreport/");
 
 // Make sure CSS error reporting is enabled for tests
 user_pref("layout.css.report_errors", true);
@@ -819,6 +824,14 @@ user_pref("camino.use_system_proxy_settings", false); // Camino-only, harmless t
     env['GNOME_DISABLE_CRASH_DIALOG'] = '1'
     env['XRE_NO_WINDOWS_CRASH_DIALOG'] = '1'
     env['NS_TRACE_MALLOC_DISABLE_STACKS'] = '1'
+
+    # Additional temporary logging while we try to debug some intermittent
+    # WebRTC conditions. This is necessary to troubleshoot bugs 841496,
+    # 841150, and 839677 (at least)
+    env['NSPR_LOG_MODULES'] = 'signaling:3,mtransport:3'
+    env['R_LOG_LEVEL'] = '5'
+    env['R_LOG_DESTINATION'] = 'stderr'
+    env['R_LOG_VERBOSE'] = '1'
 
     # ASan specific environment stuff
     if self.IS_ASAN and (self.IS_LINUX or self.IS_MAC):
@@ -1291,3 +1304,4 @@ user_pref("camino.use_system_proxy_settings", false); // Camino-only, harmless t
   def elf_arm(self, filename):
     data = open(filename, 'rb').read(20)
     return data[:4] == "\x7fELF" and ord(data[18]) == 40 # EM_ARM
+

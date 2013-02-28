@@ -230,6 +230,39 @@ ConsoleListener::Observe(nsIConsoleMessage* aMessage)
     return NS_OK;
 }
 
+class SystemMessageHandledObserver MOZ_FINAL : public nsIObserver
+{
+public:
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIOBSERVER
+
+    void Init();
+};
+
+void SystemMessageHandledObserver::Init()
+{
+    nsCOMPtr<nsIObserverService> os =
+        mozilla::services::GetObserverService();
+
+    if (os) {
+        os->AddObserver(this, "SystemMessageManager:HandleMessageDone",
+                        /* ownsWeak */ false);
+    }
+}
+
+NS_IMETHODIMP
+SystemMessageHandledObserver::Observe(nsISupports* aSubject,
+                                      const char* aTopic,
+                                      const PRUnichar* aData)
+{
+    if (ContentChild::GetSingleton()) {
+        ContentChild::GetSingleton()->SendSystemMessageHandled();
+    }
+    return NS_OK;
+}
+
+NS_IMPL_ISUPPORTS1(SystemMessageHandledObserver, nsIObserver)
+
 ContentChild* ContentChild::sSingleton;
 
 ContentChild::ContentChild()
@@ -347,6 +380,11 @@ ContentChild::InitXPCOM()
 
     DebugOnly<FileUpdateDispatcher*> observer = FileUpdateDispatcher::GetSingleton();
     NS_ASSERTION(observer, "FileUpdateDispatcher is null");
+
+    // This object is held alive by the observer service.
+    nsRefPtr<SystemMessageHandledObserver> sysMsgObserver =
+        new SystemMessageHandledObserver();
+    sysMsgObserver->Init();
 }
 
 PMemoryReportRequestChild*
@@ -527,6 +565,37 @@ PBrowserChild*
 ContentChild::AllocPBrowser(const IPCTabContext& aContext,
                             const uint32_t& aChromeFlags)
 {
+    // We'll happily accept any kind of IPCTabContext here; we don't need to
+    // check that it's of a certain type for security purposes, because we
+    // believe whatever the parent process tells us.
+
+    nsRefPtr<TabChild> child = TabChild::Create(TabContext(aContext), aChromeFlags);
+
+    // The ref here is released in DeallocPBrowser.
+    return child.forget().get();
+}
+
+bool
+ContentChild::RecvPBrowserConstructor(PBrowserChild* actor,
+                                      const IPCTabContext& context,
+                                      const uint32_t& chromeFlags)
+{
+    // This runs after AllocPBrowser() returns and the IPC machinery for this
+    // PBrowserChild has been set up.
+    //
+    // We have to NotifyObservers("tab-child-created") before we
+    // TemporarilyLockProcessPriority because the NotifyObservers call may cause
+    // us to initialize the ProcessPriorityManager, and
+    // TemporarilyLockProcessPriority only works after the
+    // ProcessPriorityManager has been initialized.
+
+    nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+    if (os) {
+        nsITabChild* tc =
+            static_cast<nsITabChild*>(static_cast<TabChild*>(actor));
+        os->NotifyObservers(tc, "tab-child-created", nullptr);
+    }
+
     static bool hasRunOnce = false;
     if (!hasRunOnce) {
         hasRunOnce = true;
@@ -535,22 +604,17 @@ ContentChild::AllocPBrowser(const IPCTabContext& aContext,
         sFirstIdleTask = NewRunnableFunction(FirstIdle);
         MessageLoop::current()->PostIdleTask(FROM_HERE, sFirstIdleTask);
 
-        // If we are the preallocated process transforming into an app process,
-        // we'll have background priority at this point.  Give ourselves a
-        // priority boost for a few seconds, so we don't get killed while we're
-        // loading our first TabChild.
-        TemporarilySetProcessPriorityToForeground();
+        // We are either a brand-new process loading its first PBrowser, or we
+        // are the preallocated process transforming into a particular
+        // app/browser.  Either way, our parent has already set our process
+        // priority, and we want to leave it there for a few seconds while we
+        // start up.
+        TemporarilyLockProcessPriority();
     }
 
-    // We'll happily accept any kind of IPCTabContext here; we don't need to
-    // check that it's of a certain type for security purposes, because we
-    // believe whatever the parent process tells us.
-
-    nsRefPtr<TabChild> child = TabChild::Create(TabContext(aContext), aChromeFlags);
-
-    // The ref here is released below.
-    return child.forget().get();
+    return true;
 }
+
 
 bool
 ContentChild::DeallocPBrowser(PBrowserChild* iframe)

@@ -58,7 +58,8 @@ void nsCounterChangeNode::Calc(nsCounterList *aList)
         mValueAfter = mChangeValue;
     } else {
         NS_ASSERTION(mType == INCREMENT, "invalid type");
-        mValueAfter = aList->ValueBefore(this) + mChangeValue;
+        mValueAfter = nsCounterManager::IncrementCounter(aList->ValueBefore(this),
+                                                         mChangeValue);
     }
 }
 
@@ -186,7 +187,7 @@ nsCounterManager::nsCounterManager()
 bool
 nsCounterManager::AddCounterResetsAndIncrements(nsIFrame *aFrame)
 {
-    const nsStyleContent *styleContent = aFrame->GetStyleContent();
+    const nsStyleContent *styleContent = aFrame->StyleContent();
     if (!styleContent->CounterIncrementCount() &&
         !styleContent->CounterResetCount())
         return false;

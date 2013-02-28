@@ -22,7 +22,6 @@
 #include "nsCOMPtr.h"
 #include "nsIAccessible.h"
 #include "nsIAccessibleEvent.h"
-#include "nsIWinAccessNode.h"
 #include "nsIDOMElement.h"
 #include "nsIContent.h"
 #include "nsAccessNode.h"
@@ -54,26 +53,14 @@ namespace a11y {
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
 #endif
 
-class nsAccessNodeWrap : public nsAccessNode,
-                         public nsIWinAccessNode,
-                         public IServiceProvider
+class nsAccessNodeWrap : public nsAccessNode
 {
   public:
     NS_DECL_ISUPPORTS_INHERITED
-    NS_DECL_NSIWINACCESSNODE
 
 public: // construction, destruction
   nsAccessNodeWrap(nsIContent* aContent, DocAccessible* aDoc);
   virtual ~nsAccessNodeWrap();
-
-  // IUnknown
-  virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID aIID,
-                                                   void** aInstancePtr);
-
-  // IServiceProvider
-  virtual HRESULT STDMETHODCALLTYPE QueryService(REFGUID aGuidService,
-                                                 REFIID aIID,
-                                                 void** aInstancePtr);
 
     static int FilterA11yExceptions(unsigned int aCode, EXCEPTION_POINTERS *aExceptionInfo);
 

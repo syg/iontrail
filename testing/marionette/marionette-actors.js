@@ -185,7 +185,11 @@ MarionetteDriverActor.prototype = {
   switchToGlobalMessageManager: function MDA_switchToGlobalMM() {
     if (this.currentRemoteFrame !== null) {
       this.removeMessageManagerListeners(this.messageManager);
-      this.sendAsync("sleepSession");
+      try {
+        // this can fail if the frame is already gone
+        this.sendAsync("sleepSession");
+      }
+      catch(e) {}
     }
     this.messageManager = this.globalMessageManager;
     this.currentRemoteFrame = null;
@@ -877,9 +881,6 @@ MarionetteDriverActor.prototype = {
     marionette.command_id = this.command_id;
 
     function chromeAsyncReturnFunc(value, status) {
-      logger.info("chromeAsyncReturn");
-      logger.info("that.command_id=" + that.command_id);
-      logger.info("marionette.command_id=" + marionette.command_id);
       if (that._emu_cbs && Object.keys(that._emu_cbs).length) {
         value = "Emulator callback still pending when finish() called";
         status = 500;
@@ -1208,7 +1209,7 @@ MarionetteDriverActor.prototype = {
       }
     }
     else {
-      if ((aRequest.value == null) && (aRequest.element == null) &&
+      if ((!aRequest.value) && (!aRequest.element) &&
           (this.currentRemoteFrame !== null)) {
         // We're currently using a ChromeMessageSender for a remote frame, so this
         // request indicates we need to switch back to the top-level (parent) frame.
@@ -1905,7 +1906,6 @@ MarionetteDriverActor.prototype = {
       return;
     }
     try {
-      logger.info("calling callback");
       cb(message.result);
     }
     catch(e) {

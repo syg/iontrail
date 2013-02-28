@@ -16,10 +16,10 @@ import android.widget.TextView;
 import android.widget.RelativeLayout;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.view.animation.AnimationUtils;
 import android.view.animation.AnimationUtils;
 import android.view.animation.Animation;
 import android.widget.ImageView;
@@ -32,6 +32,7 @@ import java.io.File;
 import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
+import org.mozilla.gecko.GeckoThread;
 import org.mozilla.gecko.WebAppAllocator;
 import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
@@ -39,10 +40,11 @@ import org.mozilla.gecko.R;
 import org.json.JSONObject;
 
 public class WebApp extends GeckoApp {
+    private static final String LOGTAG = "WebApp";
+
     private URL mOrigin;
     private TextView mTitlebarText = null;
     private View mTitlebar = null;
-    private static final String LOGTAG = "WebApp";
     private View mSplashscreen = null;
 
     protected int getIndex() { return 0; }
@@ -57,8 +59,10 @@ public class WebApp extends GeckoApp {
     public void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
-        overridePendingTransition(R.anim.grow_fade_in_center, android.R.anim.fade_out);
-        showSplash();
+        if (!GeckoThread.checkLaunchState(GeckoThread.LaunchState.GeckoRunning)) {
+            overridePendingTransition(R.anim.grow_fade_in_center, android.R.anim.fade_out);
+            showSplash();
+        }
 
         String action = getIntent().getAction();
         Bundle extras = getIntent().getExtras();
@@ -85,6 +89,22 @@ public class WebApp extends GeckoApp {
                 Log.e(LOGTAG, "Unable to parse intent url: ", ex);
             }
         }
+    }
+
+    @Override
+    protected void initializeChrome(String uri, boolean isExternalURL) {
+        String action = getIntent().getAction();
+        if (GeckoApp.ACTION_WEBAPP_PREFIX.equals(action)) {
+            // This action assumes the uri is not an installed WebApp. We will
+            // use the WebAppAllocator to register the uri with an Android
+            // process so it can run chromeless.
+            int index = WebAppAllocator.getInstance(this).findAndAllocateIndex(uri, "App", (Bitmap) null);
+            Intent appIntent = GeckoAppShell.getWebAppIntent(index, uri);
+            startActivity(appIntent);
+            finish();
+        }
+
+        super.initializeChrome(uri, isExternalURL);
     }
 
     private void showSplash() {
@@ -129,14 +149,17 @@ public class WebApp extends GeckoApp {
         }
     }
 
+    @Override
     public String getPackageName() {
         return "@ANDROID_PACKAGE_NAME@";
     }
 
+    @Override
     public String getContentProcessName() {
         return "@MOZ_CHILD_PROCESS_NAME@";
     }
 
+    @Override
     public String getDefaultUAString() {
         String deviceType = "Mobile";
         if (GeckoAppShell.isTablet())
@@ -144,6 +167,7 @@ public class WebApp extends GeckoApp {
         return "Mozilla/5.0 (Android; " + deviceType + "; rv:@MOZ_APP_VERSION@) Gecko/@MOZ_APP_VERSION@ Firefox/@MOZ_APP_VERSION@";
     }
 
+    @Override
     public String getUAStringForHost(String host) {
         // With our standard UA String, we get a 200 response code and 
         // client-side redirect from t.co. This bot-like UA gives us a 
@@ -211,10 +235,13 @@ public class WebApp extends GeckoApp {
                 if (mSplashscreen.getVisibility() == View.VISIBLE) {
                     Animation fadeout = AnimationUtils.loadAnimation(this, android.R.anim.fade_out);
                     fadeout.setAnimationListener(new Animation.AnimationListener() {
+                        @Override
                         public void onAnimationEnd(Animation animation) {
                           mSplashscreen.setVisibility(View.GONE);
                         }
+                        @Override
                         public void onAnimationRepeat(Animation animation) { }
+                        @Override
                         public void onAnimationStart(Animation animation) { }
                     });
                     mSplashscreen.startAnimation(fadeout);
@@ -233,9 +260,9 @@ public class WebApp extends GeckoApp {
         super.onTabChanged(tab, msg, data);
     }
 
+    @Override
     protected void connectGeckoLayerClient() {
         super.connectGeckoLayerClient();
         getLayerView().setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 };
-

@@ -22,7 +22,7 @@ pref("metro.debug.selection.dumpRanges", false);
 pref("metro.debug.selection.dumpEvents", false);
 
 // Form helper options: 0 = disabled, 1 = enabled, 2 = dynamic depending on screen size
-pref("formhelper.mode", 1);
+pref("formhelper.mode", 0);
 // Auto zoom to form elements when they take focus 
 pref("formhelper.autozoom", true);
 // Auto zoom to the caret
@@ -223,9 +223,8 @@ pref("accessibility.browsewithcaret", false);
 // successfully applied.
 pref("app.update.showInstalledUI", false);
 
-// Whether the character encoding menu is under the main Firefox button. This
-// preference is a string so that localizers can alter it.
-pref("browser.menu.showCharacterEncoding", "chrome://browser/locale/browser.properties");
+// Whether the character encoding options are displayed in the app bar.
+pref("browser.menu.showCharacterEncoding", false);
 pref("intl.charsetmenu.browser.static", "chrome://browser/locale/browser.properties");
 
 // pointer to the default engine name

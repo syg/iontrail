@@ -39,9 +39,6 @@ const DEFAULT_WIFI_INTERFACE_NAME = "wlan0";
 const TETHERING_TYPE_WIFI = "WiFi";
 const TETHERING_TYPE_USB  = "USB";
 
-const USB_FUNCTION_RNDIS = "rndis,adb";
-const USB_FUNCTION_ADB   = "adb";
-
 // 1xx - Requested action is proceeding
 const NETD_COMMAND_PROCEEDING   = 100;
 // 2xx - Requested action has been successfully completed
@@ -398,11 +395,12 @@ NetworkManager.prototype = {
       return;
     }
 
-    // If the active network is already of the preferred type, nothing to do.
+    // The active network is already our preferred type.
     if (this.active &&
         this.active.state == Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED &&
         this.active.type == this._preferredNetworkType) {
-      debug("Active network is already our preferred type. Not doing anything.");
+      debug("Active network is already our preferred type.");
+      this.setDefaultRouteAndDNS(oldActive);
       return;
     }
 
@@ -580,7 +578,7 @@ NetworkManager.prototype = {
 
     if (!enable) {
       this.tetheringSettings[SETTINGS_USB_ENABLED] = false;
-      this.setUSBFunction(false, USB_FUNCTION_ADB, this.setUSBFunctionResult);
+      this.enableUsbRndis(false, this.enableUsbRndisResult);
       return;
     }
 
@@ -601,7 +599,7 @@ NetworkManager.prototype = {
       this._tetheringInterface[TETHERING_TYPE_USB].externalInterface = mobile.name;
     }
     this.tetheringSettings[SETTINGS_USB_ENABLED] = true;
-    this.setUSBFunction(true, USB_FUNCTION_RNDIS, this.setUSBFunctionResult);
+    this.enableUsbRndis(true, this.enableUsbRndisResult);
   },
 
   getWifiTetheringParameters: function getWifiTetheringParameters(enable, tetheringinterface) {
@@ -781,7 +779,7 @@ NetworkManager.prototype = {
         resultReason: "Invalid parameters"
       };
       this.usbTetheringResultReport(params);
-      this.setUSBFunction(false, USB_FUNCTION_ADB, null);
+      this.enableUsbRndis(false, null);
       return;
     }
 
@@ -791,7 +789,7 @@ NetworkManager.prototype = {
     this.controlMessage(params, this.usbTetheringResultReport);
   },
 
-  setUSBFunctionResult: function setUSBFunctionResult(data) {
+  enableUsbRndisResult: function enableUsbRndisResult(data) {
     let result = data.result;
     let enable = data.enable;
     if (result) {
@@ -807,12 +805,11 @@ NetworkManager.prototype = {
     }
   },
   // Switch usb function by modifying property of persist.sys.usb.config.
-  setUSBFunction: function setUSBFunction(enable, usbfunc, callback) {
-    debug("Set usb function to " + usbfunc);
+  enableUsbRndis: function enableUsbRndis(enable, callback) {
+    debug("enableUsbRndis: " + enable);
 
     let params = {
-      cmd: "setUSBFunction",
-      usbfunc: usbfunc,
+      cmd: "enableUsbRndis",
       enable: enable
     };
     // Ask net work to report the result when this value is set to true.
@@ -850,7 +847,7 @@ let CaptivePortalDetectionHelper = (function() {
   let _ongoingInterface = null;
   let _available = ("nsICaptivePortalDetector" in Ci);
   let getService = function () {
-    return Cc['@mozilla.org/services/captive-detector;1'].getService(Ci.nsICaptivePortalDetector);
+    return Cc['@mozilla.org/toolkit/captive-detector;1'].getService(Ci.nsICaptivePortalDetector);
   };
 
   let _performDetection = function (interfaceName, callback) {

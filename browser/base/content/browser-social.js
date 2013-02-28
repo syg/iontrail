@@ -31,7 +31,20 @@ let SocialUI = {
       SocialChatBar.update();
     });
 
-    Social.init(this._providerReady.bind(this));
+    SocialChatBar.init();
+    SocialShareButton.init();
+    SocialMenu.init();
+    SocialToolbar.init();
+    SocialSidebar.init();
+
+    Social.init();
+    // If social was previously initialized it isn't going to notify observers
+    // about the provider being set or the list of providers changing, so
+    // handle those now.
+    if (Social.provider) {
+      this.observe(null, "social:provider-set", Social.provider.origin);
+      this.observe(null, "social:providers-changed", null);
+    }
   },
 
   // Called on window unload
@@ -46,18 +59,6 @@ let SocialUI = {
 
     Services.prefs.removeObserver("social.sidebar.open", this);
     Services.prefs.removeObserver("social.toast-notifications.enabled", this);
-  },
-
-  // Called once, after window load, once Social.jsm's provider has been set.
-  _providerReady: function SocialUI_providerReady() {
-    this._updateActiveUI();
-    this._updateMenuItems();
-
-    SocialChatBar.update();
-    SocialShareButton.init();
-    SocialMenu.populate();
-    SocialToolbar.init();
-    SocialSidebar.init();
   },
 
   // Social.provider has changed, update any state that depends on it.
@@ -243,6 +244,15 @@ let SocialUI = {
                                                         [provider.name, brandShortName]);
       description.value = message;
 
+      let icon = document.getElementById("social-activation-icon");
+      if (provider.icon64URL || provider.icon32URL) {
+        icon.setAttribute('src', provider.icon64URL || provider.icon32URL);
+        icon.hidden = false;
+      } else {
+        icon.removeAttribute('src');
+        icon.hidden = true;
+      }
+
       let notificationPanel = SocialUI.notificationPanel;
       // Set the origin being activated and the previously active one, to allow undo
       notificationPanel.setAttribute("origin", provider.origin);
@@ -326,6 +336,8 @@ let SocialUI = {
 }
 
 let SocialChatBar = {
+  init: function() {
+  },
   get chatbar() {
     return document.getElementById("pinnedchats");
   },
@@ -547,7 +559,6 @@ let SocialFlyout = {
 let SocialShareButton = {
   // Called once, after window load, when the Social.provider object is initialized
   init: function SSB_init() {
-    this.updateProvider();
   },
 
   // Called when the Social.provider changes
@@ -694,6 +705,9 @@ let SocialShareButton = {
 };
 
 var SocialMenu = {
+  init: function SocialMenu_init() {
+  },
+
   populate: function SocialMenu_populate() {
     let submenu = document.getElementById("menu_social-statusarea-popup");
     let ambientMenuItems = submenu.getElementsByClassName("ambient-menuitem");
@@ -731,8 +745,6 @@ var SocialToolbar = {
     let accesskey = gNavigatorBundle.getString("social.removeProvider.accesskey");
     let removeCommand = document.getElementById("Social:Remove");
     removeCommand.setAttribute("accesskey", accesskey);
-
-    this.updateProvider();
     this._dynamicResizer = new DynamicResizeWatcher();
   },
 
@@ -1064,7 +1076,6 @@ var SocialSidebar = {
     Social.setErrorListener(sbrowser, this.setSidebarErrorMessage.bind(this));
     // setting isAppTab causes clicks on untargeted links to open new tabs
     sbrowser.docShell.isAppTab = true;
-    this.update();
   },
 
   // Whether the sidebar can be shown for this window.

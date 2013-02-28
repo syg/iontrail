@@ -153,8 +153,14 @@ ProfileCreationTimeAccessor.prototype = {
           }
         }
       }
+
+      function onStatFailure(e) {
+        // Never mind.
+        self._log.debug("Stat failure: " + CommonUtils.exceptionStr(e));
+      }
+
       return OS.File.stat(entry.path)
-                    .then(onStatSuccess);
+                    .then(onStatSuccess, onStatFailure);
     }
 
     let promise = iterator.forEach(onEntry);
@@ -185,9 +191,9 @@ ProfileMetadataMeasurement.prototype = {
   name: DEFAULT_PROFILE_MEASUREMENT_NAME,
   version: 1,
 
-  configureStorage: function () {
+  fields: {
     // Profile creation date. Number of days since Unix epoch.
-    return this.registerStorageField("profileCreation", this.storage.FIELD_LAST_NUMERIC);
+    profileCreation: {type: Metrics.Storage.FIELD_LAST_NUMERIC},
   },
 };
 
@@ -214,7 +220,7 @@ ProfileMetadataProvider.prototype = {
 
   measurementTypes: [ProfileMetadataMeasurement],
 
-  constantOnly: true,
+  pullOnly: true,
 
   getProfileCreationDays: function () {
     let accessor = new ProfileCreationTimeAccessor(null, this._log);

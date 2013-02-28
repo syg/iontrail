@@ -382,13 +382,15 @@ TypeInferenceOracle::elementReadIsPacked(UnrootedScript script, jsbytecode *pc)
 }
 
 void
-TypeInferenceOracle::elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult)
+TypeInferenceOracle::elementReadGeneric(UnrootedScript script, jsbytecode *pc, bool *cacheable, bool *monitorResult, bool *intIndex)
 {
     MIRType obj = getMIRType(script->analysis()->poppedTypes(pc, 1));
     MIRType id = getMIRType(script->analysis()->poppedTypes(pc, 0));
 
     *cacheable = (obj == MIRType_Object &&
                   (id == MIRType_Value || id == MIRType_Int32 || id == MIRType_String));
+
+    *intIndex = id == MIRType_Int32;
 
     // Turn off cacheing if the element is int32 and we've seen non-native objects as the target
     // of this getelem.
@@ -552,7 +554,7 @@ StackTypeSet *
 TypeInferenceOracle::getCallTarget(UnrootedScript caller, uint32_t argc, jsbytecode *pc)
 {
     JS_ASSERT(caller == this->script());
-    JS_ASSERT(js_CodeSpec[*pc].format & JOF_INVOKE && JSOp(*pc) != JSOP_EVAL);
+    JS_ASSERT(js_CodeSpec[*pc].format & JOF_INVOKE);
 
     ScriptAnalysis *analysis = script()->analysis();
     return analysis->poppedTypes(pc, argc + 1);
@@ -585,12 +587,14 @@ TypeInferenceOracle::canInlineCall(HandleScript caller, jsbytecode *pc)
     // Ignore code->monitoredTypes, as we know the caller is foo
     if (op != JSOP_FUNAPPLY && code->monitoredTypes)
         return false;
-
-    // Gets removed in Bug 796114
-    if (caller->analysis()->typeBarriers(cx, pc))
-        return false;
-
     return true;
+}
+
+types::TypeBarrier*
+TypeInferenceOracle::callArgsBarrier(HandleScript caller, jsbytecode *pc)
+{
+    JS_ASSERT(types::IsInlinableCall(pc));
+    return caller->analysis()->typeBarriers(cx, pc);
 }
 
 bool
@@ -599,9 +603,11 @@ TypeInferenceOracle::canEnterInlinedFunction(RawScript caller, jsbytecode *pc, R
     AssertCanGC();
     RootedScript targetScript(cx, target->nonLazyScript());
 
-    // Always permit the empty script.
-    if (targetScript->length == 1)
-        return true;
+    // Make sure empty script has type information, to allow inlining in more cases.
+    if (targetScript->length == 1) {
+        if (!targetScript->ensureRanInference(cx))
+            return false;
+    }
 
     if (!targetScript->hasAnalysis() ||
         !targetScript->analysis()->ranInference() ||

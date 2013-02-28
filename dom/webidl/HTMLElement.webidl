@@ -13,10 +13,7 @@
  */
 
 interface DOMStringMap;
-interface HTMLMenuElement;
 
-// Hack to make sure that we initialize the touch prefs properly
-[PrefControlled]
 interface HTMLElement : Element {
   // metadata attributes
            attribute DOMString title;
@@ -104,17 +101,17 @@ partial interface HTMLElement {
 
 [NoInterfaceObject]
 interface TouchEventHandlers {
-  [SetterThrows,Pref="dom.w3c_touch_events.expose"]
+  [SetterThrows,Func="nsGenericHTMLElement::TouchEventsEnabled"]
            attribute EventHandler ontouchstart;
-  [SetterThrows,Pref="dom.w3c_touch_events.expose"]
+  [SetterThrows,Func="nsGenericHTMLElement::TouchEventsEnabled"]
            attribute EventHandler ontouchend;
-  [SetterThrows,Pref="dom.w3c_touch_events.expose"]
+  [SetterThrows,Func="nsGenericHTMLElement::TouchEventsEnabled"]
            attribute EventHandler ontouchmove;
-  [SetterThrows,Pref="dom.w3c_touch_events.expose"]
+  [SetterThrows,Func="nsGenericHTMLElement::TouchEventsEnabled"]
            attribute EventHandler ontouchenter;
-  [SetterThrows,Pref="dom.w3c_touch_events.expose"]
+  [SetterThrows,Func="nsGenericHTMLElement::TouchEventsEnabled"]
            attribute EventHandler ontouchleave;
-  [SetterThrows,Pref="dom.w3c_touch_events.expose"]
+  [SetterThrows,Func="nsGenericHTMLElement::TouchEventsEnabled"]
            attribute EventHandler ontouchcancel;
 };
 

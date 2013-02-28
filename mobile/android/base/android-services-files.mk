@@ -20,6 +20,7 @@ SYNC_JAVA_FILES := \
   background/announcements/AnnouncementsService.java \
   background/announcements/AnnouncementsStartReceiver.java \
   background/BackgroundConstants.java \
+  background/BackgroundService.java \
   sync/AlreadySyncingException.java \
   sync/CollectionKeys.java \
   sync/CommandProcessor.java \
@@ -304,6 +305,10 @@ SYNC_RES_LAYOUT := \
 
 SYNC_RES_VALUES := \
   res/values/sync_styles.xml \
+  $(NULL)
+
+SYNC_RES_VALUES_V11 := \
+  res/values-v11/sync_styles.xml \
   $(NULL)
 
 SYNC_RES_VALUES_LARGE_V11 := \

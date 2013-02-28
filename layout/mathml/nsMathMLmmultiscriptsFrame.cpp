@@ -141,7 +141,7 @@ nsMathMLmmultiscriptsFrame::Place(nsRenderingContext& aRenderingContext,
   ProcessAttributes();
 
   // get x-height (an ex)
-  const nsStyleFont* font = GetStyleFont();
+  const nsStyleFont* font = StyleFont();
   nsRefPtr<nsFontMetrics> fm;
   nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm));
   aRenderingContext.SetFont(fm);
@@ -359,11 +359,11 @@ nsMathMLmmultiscriptsFrame::Place(nsRenderingContext& aRenderingContext,
     childFrame = childFrame->GetNextSibling();
   }
   // note: width=0 if all sup-sub pairs match correctly
-  if ((0 != width) || !baseFrame || !subScriptFrame || !supScriptFrame) {
+  if ((0 != width) || !baseFrame) {
     // report an error, encourage people to get their markups in order
     if (aPlaceOrigin) {
-      if (count <= 1 || (count == 2 && mprescriptsFrame)) {
-        ReportErrorToConsole("NoSubSup");
+      if (!baseFrame) {
+        ReportErrorToConsole("NoBase");
       } else {
         ReportErrorToConsole("SubSupMismatch");
       }

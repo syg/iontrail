@@ -20,6 +20,8 @@
 #include "xpcpublic.h"
 #include "nsXBLPrototypeBinding.h"
 
+using namespace mozilla;
+
 nsXBLProtoImplMethod::nsXBLProtoImplMethod(const PRUnichar* aName) :
   nsXBLProtoImplMember(aName), 
   mUncompiledMethod(BIT_UNCOMPILED)
@@ -121,8 +123,7 @@ nsXBLProtoImplMethod::InstallMember(JSContext* aCx,
         !::JS_DefineUCProperty(aCx, aTargetClassObject,
                                static_cast<const jschar*>(mName),
                                name.Length(), OBJECT_TO_JSVAL(method),
-                               NULL, NULL,
-                               JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT)) {
+                               NULL, NULL, JSPROP_ENUMERATE)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   }
@@ -193,7 +194,7 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
   }
 
   JSObject* methodObject = nullptr;
-  JSContext* cx = aContext->GetNativeContext();
+  AutoPushJSContext cx(aContext->GetNativeContext());
   JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, aClassObject);
   JS::CompileOptions options(cx);
@@ -288,7 +289,7 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
 
   nsAutoMicroTask mt;
 
-  JSContext* cx = context->GetNativeContext();
+  AutoPushJSContext cx(context->GetNativeContext());
 
   JSObject* globalObject = global->GetGlobalJSObject();
 

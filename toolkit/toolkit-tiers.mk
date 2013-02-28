@@ -6,7 +6,25 @@ ifdef LIBXUL_SDK
 $(error toolkit-tiers.mk is not compatible with --enable-libxul-sdk=)
 endif
 
-include $(topsrcdir)/config/nspr/build.mk
+TIERS += nspr
+
+ifndef MOZ_NATIVE_NSPR
+tier_nspr_staticdirs += nsprpub
+tier_nspr_dirs += config/nspr
+endif
+
+TIERS += nss
+
+ifndef MOZ_NATIVE_SQLITE
+tier_nss_dirs += db/sqlite3/src
+endif
+
+ifdef MOZ_PSM
+ifndef MOZ_NATIVE_NSS
+tier_nss_dirs += security/build
+endif
+endif
+
 include $(topsrcdir)/config/js/build.mk
 
 TIERS += platform
@@ -24,16 +42,6 @@ tier_platform_staticdirs += modules/freetype2
 endif
 
 tier_platform_dirs += xpcom
-
-ifndef MOZ_NATIVE_SQLITE
-tier_platform_dirs += db/sqlite3/src
-endif
-
-ifdef MOZ_PSM
-tier_platform_dirs += \
-  security/build \
-  $(NULL)
-endif
 
 tier_platform_dirs += \
 		modules/libpref \
@@ -191,6 +199,10 @@ endif
 
 ifdef ENABLE_TESTS
 tier_platform_dirs += testing/specialpowers
+endif
+
+ifdef MOZ_ENABLE_GTEST
+tier_platform_dirs += testing/gtest
 endif
 
 tier_platform_dirs	+= \

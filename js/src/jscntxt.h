@@ -569,7 +569,7 @@ struct MallocProvider
 namespace gc {
 class MarkingValidator;
 } // namespace gc
-
+class JS_FRIEND_API(AutoEnterPolicy);
 } // namespace js
 
 struct JSRuntime : js::RuntimeFriendFields,
@@ -1177,6 +1177,7 @@ struct JSRuntime : js::RuntimeFriendFields,
     js::PreserveWrapperCallback            preserveWrapperCallback;
 
     js::ScriptFilenameTable scriptFilenameTable;
+    js::ScriptDataTable scriptDataTable;
 
 #ifdef DEBUG
     size_t              noGCOrAllocationCheck;
@@ -1311,7 +1312,11 @@ struct JSRuntime : js::RuntimeFriendFields,
         return 0;
 #endif
     }
+#ifdef DEBUG
+  public:
+    js::AutoEnterPolicy *enteredPolicy;
 
+#endif
   private:
     /*
      * Used to ensure that compartments created at the same time get different
@@ -2252,23 +2257,23 @@ class RuntimeAllocPolicy
  */
 class ContextAllocPolicy
 {
-    JSContext *const cx;
+    JSContext *const cx_;
 
   public:
-    ContextAllocPolicy(JSContext *cx) : cx(cx) {}
-    JSContext *context() const { return cx; }
-    void *malloc_(size_t bytes) { return cx->malloc_(bytes); }
-    void *calloc_(size_t bytes) { return cx->calloc_(bytes); }
-    void *realloc_(void *p, size_t oldBytes, size_t bytes) { return cx->realloc_(p, oldBytes, bytes); }
+    ContextAllocPolicy(JSContext *cx) : cx_(cx) {}
+    JSContext *context() const { return cx_; }
+    void *malloc_(size_t bytes) { return cx_->malloc_(bytes); }
+    void *calloc_(size_t bytes) { return cx_->calloc_(bytes); }
+    void *realloc_(void *p, size_t oldBytes, size_t bytes) { return cx_->realloc_(p, oldBytes, bytes); }
     void free_(void *p) { js_free(p); }
-    void reportAllocOverflow() const { js_ReportAllocationOverflow(cx); }
+    void reportAllocOverflow() const { js_ReportAllocationOverflow(cx_); }
 };
 
 JSBool intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp);
 JSBool intrinsic_UnsafeSetElement(JSContext *cx, unsigned argc, Value *vp);
-JSBool intrinsic_ForceSequential(JSContext *cx, unsigned argc, Value *vp);
-JSBool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_ShouldForceSequential(JSContext *cx, unsigned argc, Value *vp);
 
 #ifdef DEBUG
 JSBool intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp);

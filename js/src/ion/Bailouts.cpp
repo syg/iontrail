@@ -247,8 +247,6 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     }
 #endif
 
-    SnapshotIterator iter(it);
-
     // Set a flag to avoid bailing out on every iteration or function call. Ion can
     // compile and run the script again after an invalidation.
     it.ionScript()->setBailoutExpected();
@@ -295,6 +293,8 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
 
     if (it.isConstructing())
         fp->setConstructing();
+
+    SnapshotIterator iter(it);
 
     while (true) {
         IonSpew(IonSpew_Bailouts, " restoring frame");
@@ -494,7 +494,7 @@ ion::RecompileForInlining()
         return BAILOUT_RETURN_FATAL_ERROR;
 
     // Invalidation should not reset the use count.
-    JS_ASSERT(script->getUseCount() >= js_IonOptions.usesBeforeInlining);
+    JS_ASSERT(script->getUseCount() >= js_IonOptions.usesBeforeInlining());
 
     return true;
 }
@@ -615,14 +615,11 @@ ion::ThunkToInterpreter(Value *vp)
                     resumeMode = JSINTERP_RETHROW;
                     break;
                 }
-                InternalBindingsHandle bindings(script, &script->bindings);
-                const unsigned var = Bindings::argumentsVarIndex(cx, bindings);
                 // The arguments is a local binding and needsArgsObj does not
                 // check if it is clobbered. Ensure that the local binding
                 // restored during bailout before storing the arguments object
                 // to the slot.
-                if (fp->unaliasedLocal(var).isMagic(JS_OPTIMIZED_ARGUMENTS))
-                    fp->unaliasedLocal(var) = ObjectValue(*argsobj);
+                SetFrameArgumentsObject(cx, fp, script, argsobj);
             }
             ++iter;
         } while (fp != br->entryfp());

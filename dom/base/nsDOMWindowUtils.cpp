@@ -1440,6 +1440,40 @@ nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aSc
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::GetScrollbarSize(bool aFlushLayout, int32_t* aWidth,
+                                                      int32_t* aHeight)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  *aWidth = 0;
+  *aHeight = 0;
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
+  NS_ENSURE_STATE(doc);
+
+  if (aFlushLayout) {
+    doc->FlushPendingNotifications(Flush_Layout);
+  }
+
+  nsIPresShell* presShell = doc->GetShell();
+  NS_ENSURE_TRUE(presShell, NS_ERROR_NOT_AVAILABLE);
+
+  nsIScrollableFrame* scrollFrame = presShell->GetRootScrollFrameAsScrollable();
+  NS_ENSURE_TRUE(scrollFrame, NS_OK);
+
+  nsMargin sizes = scrollFrame->GetActualScrollbarSizes();
+  *aWidth = nsPresContext::AppUnitsToIntCSSPixels(sizes.LeftRight());
+  *aHeight = nsPresContext::AppUnitsToIntCSSPixels(sizes.TopBottom());
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::GetRootBounds(nsIDOMClientRect** aResult)
 {
   if (!nsContentUtils::IsCallerChrome()) {
@@ -2924,7 +2958,7 @@ nsDOMWindowUtils::ExitFullscreen()
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  nsIDocument::ExitFullScreen(/* async = */ false);
+  nsIDocument::ExitFullscreen(nullptr, /* async */ false);
   return NS_OK;
 }
 

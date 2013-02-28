@@ -11,6 +11,10 @@
 
 <script>
 <![CDATA[
+if (navigator.platform.startsWith("Linux")) {
+  SimpleTest.expectAssertions(0, 2);
+}
+
 SimpleTest.waitForExplicitFinish();
 
 function checkAttributes(elem, label, accesskey, disabled, hidden, isAfter)

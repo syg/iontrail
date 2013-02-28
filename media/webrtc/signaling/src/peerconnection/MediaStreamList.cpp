@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "CSFLog.h"
 #include "base/basictypes.h"
 #include "MediaStreamList.h"
 #ifdef MOZILLA_INTERNAL_API
@@ -50,7 +51,7 @@ MediaStreamList::WrapObject(JSContext* cx, ErrorResult& error)
 }
 
 template<class T>
-static nsIDOMMediaStream*
+static DOMMediaStream*
 GetStreamFromInfo(T* info, bool& found)
 {
   if (!info) {
@@ -62,7 +63,7 @@ GetStreamFromInfo(T* info, bool& found)
   return info->GetMediaStream();
 }
 
-nsIDOMMediaStream*
+DOMMediaStream*
 MediaStreamList::IndexedGetter(uint32_t index, bool& found)
 {
   if (mType == Local) {

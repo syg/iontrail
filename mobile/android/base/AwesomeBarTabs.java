@@ -6,6 +6,7 @@
 package org.mozilla.gecko;
 
 import android.content.Context;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.support.v4.view.ViewPager;
 import android.support.v4.view.PagerAdapter;
@@ -32,7 +33,6 @@ public class AwesomeBarTabs extends TabHost
     private View.OnTouchListener mListTouchListener;
     private boolean mSearching = false;
     private String mTarget;
-    private Background mBackground;
     private ViewPager mViewPager;
     private AwesomePagerAdapter mPagerAdapter;
     
@@ -130,14 +130,13 @@ public class AwesomeBarTabs extends TabHost
         setup();
 
         mListTouchListener = new View.OnTouchListener() {
+            @Override
             public boolean onTouch(View view, MotionEvent event) {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN)
                     hideSoftInput(view);
                 return false;
             }
         };
-
-        mBackground = (Background) findViewById(R.id.awesomebar_background);
 
         mTabs = new AwesomeBarTab[] {
             new AllPagesTab(mContext),
@@ -174,7 +173,7 @@ public class AwesomeBarTabs extends TabHost
 
         styleSelectedTab();
 
-        // Initialize "App Pages" list with no filter
+        // Initialize "All Pages" list with no filter
         filter("");
     }
 
@@ -198,6 +197,16 @@ public class AwesomeBarTabs extends TabHost
     @Override
     public void onLightweightThemeReset() {
         styleSelectedTab();
+    }
+
+    @Override
+    public void setCurrentTabByTag(String tag) {
+        for (int i = 0; i < mTabs.length; i++) {
+            if (tag.equals(mTabs[i].getTag())) {
+                mViewPager.setCurrentItem(i);
+                break;
+            }
+        }
     }
 
     private void styleSelectedTab() {
@@ -256,6 +265,7 @@ public class AwesomeBarTabs extends TabHost
         // this MUST be done after tw.addView to overwrite the listener added by tabWidget
         // which delegates to TabHost (which we don't have)
         indicatorView.setOnClickListener(new View.OnClickListener() {
+            @Override
             public void onClick(View v) {
                 mViewPager.setCurrentItem(contentId, true);
             }
@@ -328,15 +338,15 @@ public class AwesomeBarTabs extends TabHost
         if (mTarget.equals(AwesomeBar.Target.CURRENT_TAB.name())) {
             Tab tab = Tabs.getInstance().getSelectedTab();
             if (tab != null && tab.isPrivate())
-                mBackground.setPrivateMode(true);
+                ((BackgroundLayout) findViewById(R.id.tab_widget_container)).setPrivateMode(true);
         }
     }
 
-    public static class Background extends GeckoLinearLayout
-                                   implements LightweightTheme.OnChangeListener { 
+    public static class BackgroundLayout extends GeckoLinearLayout
+                                         implements LightweightTheme.OnChangeListener { 
         private GeckoActivity mActivity;
 
-        public Background(Context context, AttributeSet attrs) {
+        public BackgroundLayout(Context context, AttributeSet attrs) {
             super(context, attrs);
             mActivity = (GeckoActivity) context;
         }
@@ -362,7 +372,7 @@ public class AwesomeBarTabs extends TabHost
             drawable.setAlpha(255, 0);
 
             StateListDrawable stateList = new StateListDrawable();
-            stateList.addState(new int[] { R.attr.state_private }, mActivity.getResources().getDrawable(R.drawable.abouthome_bg_pb_repeat));
+            stateList.addState(new int[] { R.attr.state_private }, new ColorDrawable(mActivity.getResources().getColor(R.color.background_normal)));
             stateList.addState(new int[] {}, drawable);
 
             int[] padding =  new int[] { getPaddingLeft(),
@@ -381,7 +391,7 @@ public class AwesomeBarTabs extends TabHost
                                          getPaddingRight(),
                                          getPaddingBottom()
                                        };
-            setBackgroundResource(R.drawable.awesomebar_tabs_bg);
+            setBackgroundResource(R.drawable.address_bar_bg);
             setPadding(padding[0], padding[1], padding[2], padding[3]);
         }
 

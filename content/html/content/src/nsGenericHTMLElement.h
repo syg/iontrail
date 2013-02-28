@@ -23,7 +23,6 @@ class nsIFrame;
 class nsIStyleRule;
 class nsChildContentList;
 class nsDOMCSSDeclaration;
-class nsHTMLMenuElement;
 class nsIDOMCSSStyleDeclaration;
 class nsIURI;
 class nsIFormControlFrame;
@@ -41,6 +40,7 @@ class nsDOMSettableTokenList;
 namespace mozilla {
 namespace dom{
 class HTMLPropertiesCollection;
+class HTMLMenuElement;
 }
 }
 
@@ -220,7 +220,7 @@ public:
     }
     return false;
   }
-  nsHTMLMenuElement* GetContextMenu() const;
+  mozilla::dom::HTMLMenuElement* GetContextMenu() const;
   bool Spellcheck();
   void SetSpellcheck(bool aSpellcheck, mozilla::ErrorResult& aError)
   {
@@ -723,7 +723,7 @@ public:
 
   virtual bool IsLabelable() const;
 
-  static bool PrefEnabled();
+  static bool TouchEventsEnabled(JSContext* /* unused */, JSObject* /* unused */);
 
 protected:
   /**
@@ -1058,6 +1058,8 @@ public:
   virtual ~nsGenericHTMLFormElement();
 
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
+
+  nsINode* GetParentObject() const;
 
   virtual bool IsNodeOfType(uint32_t aFlags) const;
   virtual void SaveSubtreeState();
@@ -1913,6 +1915,7 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(Body)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Button)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Canvas)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Mod)
+NS_DECLARE_NS_NEW_HTML_ELEMENT(Data)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(DataList)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Div)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(FieldSet)
@@ -1960,6 +1963,7 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(Tbody)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(TextArea)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Tfoot)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Thead)
+NS_DECLARE_NS_NEW_HTML_ELEMENT(Time)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Title)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Unknown)
 #if defined(MOZ_MEDIA)

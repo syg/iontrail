@@ -509,7 +509,7 @@ ToDisassemblySource(JSContext *cx, jsval v, JSAutoByteString *bytes)
             JSString *str = JS_DecompileFunction(cx, obj->toFunction(), JS_DONT_PRETTY_PRINT);
             if (!str)
                 return false;
-            return bytes->encode(cx, str);
+            return bytes->encodeLatin1(cx, str);
         }
 
         if (obj->isRegExp()) {
@@ -517,7 +517,7 @@ ToDisassemblySource(JSContext *cx, jsval v, JSAutoByteString *bytes)
             if (!source)
                 return false;
             JS::Anchor<JSString *> anchor(source);
-            return bytes->encode(cx, source);
+            return bytes->encodeLatin1(cx, source);
         }
     }
 
@@ -1225,9 +1225,6 @@ ExpressionDecompiler::decompilePC(jsbytecode *pc)
         return false;
 
     JSOp op = (JSOp)*pc;
-
-    // None of these stack-writing ops generates novel values.
-    JS_ASSERT(op != JSOP_CASE && op != JSOP_DUP && op != JSOP_DUP2);
 
     if (const char *token = CodeToken[op]) {
         // Handle simple cases of binary and unary operators.
@@ -2085,7 +2082,7 @@ extern bool
 js::IsValidBytecodeOffset(JSContext *cx, JSScript *script, size_t offset)
 {
     // This could be faster (by following jump instructions if the target is <= offset).
-    for (BytecodeRange r(script); !r.empty(); r.popFront()) {
+    for (BytecodeRange r(cx, script); !r.empty(); r.popFront()) {
         size_t here = r.frontOffset();
         if (here >= offset)
             return here == offset;
@@ -2256,6 +2253,9 @@ GetPCCountJSON(JSContext *cx, const ScriptAndCounts &sac, StringBuffer &buf)
         return false;
 
     buf.append(str);
+
+    AppendJSONProperty(buf, "line");
+    NumberValueToStringBuffer(cx, Int32Value(script->lineno), buf);
 
     AppendJSONProperty(buf, "opcodes");
     buf.append('[');

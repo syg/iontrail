@@ -290,7 +290,7 @@ IonCompartment::getVMWrapper(const VMFunction &f)
 
     JS_ASSERT(rt->functionWrappers_);
     JS_ASSERT(rt->functionWrappers_->initialized());
-    IonRuntime::VMWrapperMap::Ptr p = rt->functionWrappers_->lookup(&f);
+    IonRuntime::VMWrapperMap::Ptr p = rt->functionWrappers_->readonlyThreadsafeLookup(&f);
     JS_ASSERT(p);
 
     return p->value;
@@ -452,22 +452,24 @@ IonScript::IonScript()
     invalidateEpilogueDataOffset_(0),
     bailoutExpected_(false),
     hasInvalidatedCallTarget_(false),
-    snapshots_(0),
-    snapshotsSize_(0),
-    bailoutTable_(0),
-    bailoutEntries_(0),
-    constantTable_(0),
-    constantEntries_(0),
+    runtimeData_(0),
+    runtimeSize_(0),
+    cacheIndex_(0),
+    cacheEntries_(0),
     safepointIndexOffset_(0),
     safepointIndexEntries_(0),
-    frameSlots_(0),
-    frameSize_(0),
-    osiIndexOffset_(0),
-    osiIndexEntries_(0),
-    cacheList_(0),
-    cacheEntries_(0),
     safepointsStart_(0),
     safepointsSize_(0),
+    frameSlots_(0),
+    frameSize_(0),
+    bailoutTable_(0),
+    bailoutEntries_(0),
+    osiIndexOffset_(0),
+    osiIndexEntries_(0),
+    snapshots_(0),
+    snapshotsSize_(0),
+    constantTable_(0),
+    constantEntries_(0),
     scriptList_(0),
     scriptEntries_(0),
     callTargetList_(0),
@@ -483,8 +485,8 @@ static const int DataAlignment = 4;
 IonScript *
 IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t snapshotsSize,
                size_t bailoutEntries, size_t constants, size_t safepointIndices,
-               size_t osiIndices, size_t cacheEntries, size_t safepointsSize,
-               size_t scriptEntries, size_t callTargetEntries)
+               size_t osiIndices, size_t cacheEntries, size_t runtimeSize,
+               size_t safepointsSize, size_t scriptEntries, size_t callTargetEntries)
 {
     if (snapshotsSize >= MAX_BUFFER_SIZE ||
         (bailoutEntries >= MAX_BUFFER_SIZE / sizeof(uint32_t)))
@@ -501,7 +503,8 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     size_t paddedConstantsSize = AlignBytes(constants * sizeof(Value), DataAlignment);
     size_t paddedSafepointIndicesSize = AlignBytes(safepointIndices * sizeof(SafepointIndex), DataAlignment);
     size_t paddedOsiIndicesSize = AlignBytes(osiIndices * sizeof(OsiIndex), DataAlignment);
-    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(IonCache), DataAlignment);
+    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(uint32_t), DataAlignment);
+    size_t paddedRuntimeSize = AlignBytes(runtimeSize, DataAlignment);
     size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
     size_t paddedScriptSize = AlignBytes(scriptEntries * sizeof(RawScript), DataAlignment);
     size_t paddedCallTargetSize = AlignBytes(callTargetEntries * sizeof(RawScript), DataAlignment);
@@ -511,6 +514,7 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
                    paddedSafepointIndicesSize+
                    paddedOsiIndicesSize +
                    paddedCacheEntriesSize +
+                   paddedRuntimeSize +
                    paddedSafepointSize +
                    paddedScriptSize +
                    paddedCallTargetSize;
@@ -523,33 +527,37 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
 
     uint32_t offsetCursor = sizeof(IonScript);
 
-    script->snapshots_ = offsetCursor;
-    script->snapshotsSize_ = snapshotsSize;
-    offsetCursor += paddedSnapshotsSize;
+    script->runtimeData_ = offsetCursor;
+    script->runtimeSize_ = runtimeSize;
+    offsetCursor += paddedRuntimeSize;
 
-    script->bailoutTable_ = offsetCursor;
-    script->bailoutEntries_ = bailoutEntries;
-    offsetCursor += paddedBailoutSize;
-
-    script->constantTable_ = offsetCursor;
-    script->constantEntries_ = constants;
-    offsetCursor += paddedConstantsSize;
+    script->cacheIndex_ = offsetCursor;
+    script->cacheEntries_ = cacheEntries;
+    offsetCursor += paddedCacheEntriesSize;
 
     script->safepointIndexOffset_ = offsetCursor;
     script->safepointIndexEntries_ = safepointIndices;
     offsetCursor += paddedSafepointIndicesSize;
 
+    script->safepointsStart_ = offsetCursor;
+    script->safepointsSize_ = safepointsSize;
+    offsetCursor += paddedSafepointSize;
+
+    script->bailoutTable_ = offsetCursor;
+    script->bailoutEntries_ = bailoutEntries;
+    offsetCursor += paddedBailoutSize;
+
     script->osiIndexOffset_ = offsetCursor;
     script->osiIndexEntries_ = osiIndices;
     offsetCursor += paddedOsiIndicesSize;
 
-    script->cacheList_ = offsetCursor;
-    script->cacheEntries_ = cacheEntries;
-    offsetCursor += paddedCacheEntriesSize;
+    script->snapshots_ = offsetCursor;
+    script->snapshotsSize_ = snapshotsSize;
+    offsetCursor += paddedSnapshotsSize;
 
-    script->safepointsStart_ = offsetCursor;
-    script->safepointsSize_ = safepointsSize;
-    offsetCursor += paddedSafepointSize;
+    script->constantTable_ = offsetCursor;
+    script->constantEntries_ = constants;
+    offsetCursor += paddedConstantsSize;
 
     script->scriptList_ = offsetCursor;
     script->scriptEntries_ = scriptEntries;
@@ -624,11 +632,9 @@ IonScript::copyCallTargetEntries(JSScript **callTargets)
 void
 IonScript::copySafepointIndices(const SafepointIndex *si, MacroAssembler &masm)
 {
-    /*
-     * Jumps in the caches reflect the offset of those jumps in the compiled
-     * code, not the absolute positions of the jumps. Update according to the
-     * final code address now.
-     */
+    // Jumps in the caches reflect the offset of those jumps in the compiled
+    // code, not the absolute positions of the jumps. Update according to the
+    // final code address now.
     SafepointIndex *table = safepointIndices();
     memcpy(table, si, safepointIndexEntries_ * sizeof(SafepointIndex));
     for (size_t i = 0; i < safepointIndexEntries_; i++)
@@ -644,15 +650,19 @@ IonScript::copyOsiIndices(const OsiIndex *oi, MacroAssembler &masm)
 }
 
 void
-IonScript::copyCacheEntries(const IonCache *caches, MacroAssembler &masm)
+IonScript::copyRuntimeData(const uint8_t *data)
 {
-    memcpy(cacheList(), caches, numCaches() * sizeof(IonCache));
+    memcpy(runtimeData(), data, runtimeSize());
+}
 
-    /*
-     * Jumps in the caches reflect the offset of those jumps in the compiled
-     * code, not the absolute positions of the jumps. Update according to the
-     * final code address now.
-     */
+void
+IonScript::copyCacheEntries(const uint32_t *caches, MacroAssembler &masm)
+{
+    memcpy(cacheIndex(), caches, numCaches() * sizeof(uint32_t));
+
+    // Jumps in the caches reflect the offset of those jumps in the compiled
+    // code, not the absolute positions of the jumps. Update according to the
+    // final code address now.
     for (size_t i = 0; i < numCaches(); i++)
         getCache(i).updateBaseAddress(method_, masm);
 }
@@ -893,26 +903,15 @@ OptimizeMIR(MIRGenerator *mir)
 
         // It's important for optimizations to re-run GVN (and in turn alias
         // analysis) after UCE if we eliminated branches.
-        if (!uce.everythingWasReachable() && (js_IonOptions.licm || js_IonOptions.gvn)) {
-            AliasAnalysis alias(mir, graph);
-            if (!alias.analyze())
+        if (uce.reranAliasAnalysis() && js_IonOptions.gvn) {
+            ValueNumberer gvn(mir, graph, js_IonOptions.gvnIsOptimistic);
+            if (!gvn.clear() || !gvn.analyze())
                 return false;
-            IonSpewPass("Alias analysis (after UCE)");
+            IonSpewPass("GVN (after UCE)");
             AssertExtendedGraphCoherency(graph);
 
-            if (mir->shouldCancel("Alias analysis (after UCE)"))
+            if (mir->shouldCancel("GVN (after UCE)"))
                 return false;
-
-            if (js_IonOptions.gvn) {
-                ValueNumberer gvn(mir, graph, js_IonOptions.gvnIsOptimistic);
-                if (!gvn.clear() || !gvn.analyze())
-                    return false;
-                IonSpewPass("GVN (after UCE)");
-                AssertExtendedGraphCoherency(graph);
-
-                if (mir->shouldCancel("GVN (after UCE)"))
-                    return false;
-            }
         }
     }
 
@@ -951,6 +950,14 @@ OptimizeMIR(MIRGenerator *mir)
         AssertExtendedGraphCoherency(graph);
 
         if (mir->shouldCancel("RA De-Beta"))
+            return false;
+
+        if (!r.truncate())
+            return false;
+        IonSpewPass("Truncate Doubles");
+        AssertExtendedGraphCoherency(graph);
+
+        if (mir->shouldCancel("Truncate Doubles"))
             return false;
     }
 
@@ -1226,13 +1233,19 @@ OffThreadCompilationAvailable(JSContext *cx)
 {
     // Even if off thread compilation is enabled, compilation must still occur
     // on the main thread in some cases. Do not compile off thread during an
-    // incremental GC, as this may trip incremental read barriers. Also skip
-    // off thread compilation if script execution is being profiled, as
+    // incremental GC, as this may trip incremental read barriers.
+    //
+    // Skip off thread compilation if PC count profiling is enabled, as
     // CodeGenerator::maybeCreateScriptCounts will not attach script profiles
     // when running off thread.
+    //
+    // Also skip off thread compilation if the SPS profiler is enabled, as it
+    // stores strings in the spsProfiler data structure, which is not protected
+    // by a lock.
     return OffThreadCompilationEnabled(cx)
         && cx->runtime->gcIncrementalState == gc::NO_INCREMENTAL
-        && !cx->runtime->profilingScripts;
+        && !cx->runtime->profilingScripts
+        && !cx->runtime->spsProfiler.enabled();
 }
 
 AbortReason
@@ -1480,8 +1493,7 @@ ion::CanEnterAtBranch(JSContext *cx, JSScript *script, AbstractFramePtr fp,
 }
 
 MethodStatus
-ion::CanEnter(JSContext *cx, JSScript *script, AbstractFramePtr fp,
-              bool isConstructing, bool newType)
+ion::CanEnter(JSContext *cx, JSScript *script, AbstractFramePtr fp, bool isConstructing)
 {
     JS_ASSERT(ion::IsEnabled(cx));
 
@@ -1503,8 +1515,8 @@ ion::CanEnter(JSContext *cx, JSScript *script, AbstractFramePtr fp,
     if (isConstructing && fp.thisValue().isPrimitive()) {
         RootedScript scriptRoot(cx, script);
         RootedObject callee(cx, &fp.callee());
-        RootedObject obj(cx, CreateThisForFunction(cx, callee, newType));
-        if (!obj)
+        RootedObject obj(cx, CreateThisForFunction(cx, callee, fp.useNewType()));
+        if (!obj || !ion::IsEnabled(cx)) // Note: OOM under CreateThis can disable TI.
             return Method_Skipped;
         fp.thisValue().setObject(*obj);
         script = scriptRoot;
@@ -1727,6 +1739,8 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
 
     void *calleeToken;
     if (fp->isFunctionFrame()) {
+        fp->cleanupTornValues();
+
         // CountArgSlot include |this| and the |scopeChain|.
         maxArgc = CountArgSlots(fp->fun()) - 1; // -1 = discard |scopeChain|
         maxArgv = fp->formals() - 1;            // -1 = include |this|

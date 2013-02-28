@@ -287,9 +287,9 @@ nsSVGOuterSVGFrame::GetIntrinsicRatio()
   const nsSVGViewBoxRect* viewbox = nullptr;
 
   // The logic here should match HasViewBox().
-  if (viewElement && viewElement->mViewBox.IsExplicitlySet()) {
+  if (viewElement && viewElement->mViewBox.HasRect()) {
     viewbox = &viewElement->mViewBox.GetAnimValue();
-  } else if (content->mViewBox.IsExplicitlySet()) {
+  } else if (content->mViewBox.HasRect()) {
     viewbox = &content->mViewBox.GetAnimValue();
   }
 
@@ -627,7 +627,7 @@ nsDisplayOuterSVG::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
 static inline bool
 DependsOnIntrinsicSize(const nsIFrame* aEmbeddingFrame)
 {
-  const nsStylePosition *pos = aEmbeddingFrame->GetStylePosition();
+  const nsStylePosition *pos = aEmbeddingFrame->StylePosition();
   const nsStyleCoord &width = pos->mWidth;
   const nsStyleCoord &height = pos->mHeight;
 
@@ -688,17 +688,16 @@ nsSVGOuterSVGFrame::AttributeChanged(int32_t  aNameSpaceID,
 //----------------------------------------------------------------------
 // painting
 
-NS_IMETHODIMP
+void
 nsSVGOuterSVGFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                      const nsRect&           aDirtyRect,
                                      const nsDisplayListSet& aLists)
 {
   if (GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) {
-    return NS_OK;
+    return;
   }
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   nsDisplayList childItems;
 
@@ -708,13 +707,10 @@ nsSVGOuterSVGFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     nsDisplayList *nonContentList = &childItems;
     nsDisplayListSet set(nonContentList, nonContentList, nonContentList,
                          &childItems, nonContentList, nonContentList);
-    nsresult rv =
-      BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, set);
-    NS_ENSURE_SUCCESS(rv, rv);
+    BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, set);
   } else {
-    rv = childItems.AppendNewToTop(
-           new (aBuilder) nsDisplayOuterSVG(aBuilder, this));
-    NS_ENSURE_SUCCESS(rv, rv);
+    childItems.AppendNewToTop(
+      new (aBuilder) nsDisplayOuterSVG(aBuilder, this));
   }
 
   // Clip to our _content_ box:
@@ -722,12 +718,9 @@ nsSVGOuterSVGFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     GetContentRectRelativeToSelf() + aBuilder->ToReferenceFrame(this);
   nsDisplayClip* item =
     new (aBuilder) nsDisplayClip(aBuilder, this, &childItems, clipRect);
-  rv = childItems.AppendNewToTop(item);
-  NS_ENSURE_SUCCESS(rv, rv);
+  childItems.AppendNewToTop(item);
 
   WrapReplacedContentForBorderRadius(aBuilder, &childItems, aLists);
-
-  return NS_OK;
 }
 
 nsSplittableType
@@ -761,7 +754,7 @@ nsSVGOuterSVGFrame::NotifyViewportOrTransformChanged(uint32_t aFlags)
   SVGSVGElement *content = static_cast<SVGSVGElement*>(mContent);
 
   if (aFlags & COORD_CONTEXT_CHANGED) {
-    if (content->HasViewBox()) {
+    if (content->HasViewBoxRect()) {
       // Percentage lengths on children resolve against the viewBox rect so we
       // don't need to notify them of the viewport change, but the viewBox
       // transform will have changed, so we need to notify them of that instead.

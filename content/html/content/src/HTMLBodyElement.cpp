@@ -19,12 +19,10 @@
 #include "nsMappedAttributes.h"
 #include "nsRuleData.h"
 #include "nsIDocShell.h"
-#include "nsIEditorDocShell.h"
 #include "nsRuleWalker.h"
 #include "nsGlobalWindow.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Body)
-DOMCI_NODE_DATA(HTMLBodyElement, mozilla::dom::HTMLBodyElement)
 
 namespace mozilla {
 namespace dom {
@@ -209,7 +207,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLBodyElement)
   NS_HTML_CONTENT_INTERFACE_TABLE1(HTMLBodyElement, nsIDOMHTMLBodyElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLBodyElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLBodyElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLBodyElement)
 
@@ -476,12 +474,12 @@ HTMLBodyElement::GetAssociatedEditor()
   }
 
   nsCOMPtr<nsISupports> container = presContext->GetContainer();
-  nsCOMPtr<nsIEditorDocShell> editorDocShell = do_QueryInterface(container);
-  if (!editorDocShell) {
+  nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
+  if (!docShell) {
     return nullptr;
   }
 
-  editorDocShell->GetEditor(getter_AddRefs(editor));
+  docShell->GetEditor(getter_AddRefs(editor));
   return editor.forget();
 }
 

@@ -16,6 +16,7 @@
 
 class nsDisplaySVGText;
 class nsRenderingContext;
+class nsSVGTextFrame2;
 class nsTextFrame;
 
 typedef nsSVGDisplayContainerFrame nsSVGTextFrame2Base;
@@ -114,6 +115,19 @@ private:
   }
 };
 
+/**
+ * A runnable to mark glyph positions as needing to be recomputed
+ * and to invalid the bounds of the nsSVGTextFrame2 frame.
+ */
+class GlyphMetricsUpdater : public nsRunnable {
+public:
+  NS_DECL_NSIRUNNABLE
+  GlyphMetricsUpdater(nsSVGTextFrame2* aFrame) : mFrame(aFrame) { }
+  void Revoke() { mFrame = nullptr; }
+private:
+  nsSVGTextFrame2* mFrame;
+};
+
 }
 
 /**
@@ -155,6 +169,7 @@ class nsSVGTextFrame2 : public nsSVGTextFrame2Base
   friend nsIFrame*
   NS_NewSVGTextFrame2(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
+  friend class mozilla::GlyphMetricsUpdater;
   friend class mozilla::TextFrameIterator;
   friend class mozilla::TextNodeCorrespondenceRecorder;
   friend struct mozilla::TextRenderedRun;
@@ -182,6 +197,8 @@ public:
                   nsIFrame*   aParent,
                   nsIFrame*   aPrevInFlow);
 
+  virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
+
   NS_IMETHOD AttributeChanged(int32_t aNamespaceID,
                               nsIAtom* aAttribute,
                               int32_t aModType);
@@ -196,9 +213,9 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                              const nsRect&           aDirtyRect,
-                              const nsDisplayListSet& aLists);
+  virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                                const nsRect&           aDirtyRect,
+                                const nsDisplayListSet& aLists) MOZ_OVERRIDE;
 
   /**
    * Get the "type" of the frame
@@ -379,6 +396,22 @@ private:
   void DoGlyphPositioning();
 
   /**
+   * Converts the specified index into mPositions to an addressable
+   * character index (as can be used with the SVG DOM text methods)
+   * relative to the specified text child content element.
+   *
+   * @param aIndex The global character index.
+   * @param aContent The descendant text child content element that
+   *   the returned addressable index will be relative to; null
+   *   means the same as the <text> element.
+   * @return The addressable index, or -1 if the index cannot be
+   *   represented as an addressable index relative to aContent.
+   */
+  int32_t
+  ConvertTextElementCharIndexToAddressableIndex(int32_t aIndex,
+                                                nsIContent* aContent);
+
+  /**
    * Recursive helper for ResolvePositions below.
    *
    * @param aContent The current node.
@@ -522,6 +555,12 @@ private:
    * The MutationObserver we have registered for the <text> element subtree.
    */
   MutationObserver mMutationObserver;
+
+  /**
+   * The runnable we have dispatched to perform the work of
+   * NotifyGlyphMetricsChange.
+   */
+  nsRefPtr<GlyphMetricsUpdater> mGlyphMetricsUpdater;
 
   /**
    * Cached canvasTM value.

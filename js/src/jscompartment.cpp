@@ -63,8 +63,8 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     hold(false),
     isSystem(false),
     lastCodeRelease(0),
-    analysisLifoAlloc(LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
-    typeLifoAlloc(LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
+    analysisLifoAlloc(ANALYSIS_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
+    typeLifoAlloc(TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
     data(NULL),
     active(false),
     scheduledForDestruction(false),
@@ -123,7 +123,7 @@ JSCompartment::init(JSContext *cx)
     activeAnalysis = false;
     types.init(cx);
 
-    if (!crossCompartmentWrappers.init())
+    if (!crossCompartmentWrappers.init(0))
         return false;
 
     if (!regExps.init(cx))
@@ -136,7 +136,7 @@ JSCompartment::init(JSContext *cx)
     if (!enumerators)
         return false;
 
-    return debuggees.init();
+    return debuggees.init(0);
 }
 
 void
@@ -433,6 +433,7 @@ JSCompartment::wrap(JSContext *cx, JSObject **objp, JSObject *existingArg)
 bool
 JSCompartment::wrapId(JSContext *cx, jsid *idp)
 {
+    MOZ_ASSERT(*idp != JSID_VOID, "JSID_VOID is an out-of-band sentinel value");
     if (JSID_IS_INT(*idp))
         return true;
     RootedValue value(cx, IdToValue(*idp));

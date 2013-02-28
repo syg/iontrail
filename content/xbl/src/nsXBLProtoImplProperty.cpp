@@ -9,6 +9,7 @@
 #include "nsIContent.h"
 #include "nsXBLProtoImplProperty.h"
 #include "nsUnicharUtils.h"
+#include "nsContentUtils.h"
 #include "nsReadableUtils.h"
 #include "nsIScriptContext.h"
 #include "nsJSUtils.h"
@@ -16,6 +17,8 @@
 #include "nsXBLPrototypeBinding.h"
 #include "nsXBLSerialize.h"
 #include "xpcpublic.h"
+
+using namespace mozilla;
 
 nsXBLProtoImplProperty::nsXBLProtoImplProperty(const PRUnichar* aName,
                                                const PRUnichar* aGetter, 
@@ -171,7 +174,7 @@ nsXBLProtoImplProperty::InstallMember(JSContext *aCx,
                                name.Length(), JSVAL_VOID,
                                JS_DATA_TO_FUNC_PTR(JSPropertyOp, getter),
                                JS_DATA_TO_FUNC_PTR(JSStrictPropertyOp, setter),
-                               mJSAttributes | JSPROP_PERMANENT | JSPROP_READONLY))
+                               mJSAttributes))
       return NS_ERROR_OUT_OF_MEMORY;
   }
   return NS_OK;
@@ -207,7 +210,7 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
     if (!getter.IsEmpty()) {
       // Compile into a temp object so we don't wipe out mGetterText
       JSObject* getterObject = nullptr;
-      JSContext* cx = aContext->GetNativeContext();
+      AutoPushJSContext cx(aContext->GetNativeContext());
       JSAutoRequest ar(cx);
       JSAutoCompartment ac(cx, aClassObject);
       JS::CompileOptions options(cx);
@@ -257,7 +260,7 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
     if (!setter.IsEmpty()) {
       // Compile into a temp object so we don't wipe out mSetterText
       JSObject* setterObject = nullptr;
-      JSContext* cx = aContext->GetNativeContext();
+      AutoPushJSContext cx(aContext->GetNativeContext());
       JSAutoRequest ar(cx);
       JSAutoCompartment ac(cx, aClassObject);
       JS::CompileOptions options(cx);

@@ -10,6 +10,7 @@
 
 #include "nsINode.h"
 
+#include "AccessCheck.h"
 #include "jsapi.h"
 #include "mozAutoDocUpdate.h"
 #include "mozilla/CORSMode.h"
@@ -58,7 +59,6 @@
 #include "nsIDOMMutationEvent.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMUserDataHandler.h"
-#include "nsIEditorDocShell.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
 #include "nsIFrame.h"
@@ -97,10 +97,11 @@
 #include "nsXBLInsertionPoint.h"
 #include "nsXBLPrototypeBinding.h"
 #include "prprf.h"
+#include "xpcprivate.h" // XBLScopesEnabled
 #include "xpcpublic.h"
 #include "nsCSSRuleProcessor.h"
 #include "nsCSSParser.h"
-#include "nsHTMLLegendElement.h"
+#include "HTMLLegendElement.h"
 #include "nsWrapperCacheInlines.h"
 #include "WrapperFactory.h"
 #include "DocumentType.h"
@@ -718,6 +719,16 @@ nsINode::GetUserData(JSContext* aCx, const nsAString& aKey, ErrorResult& aError)
   aError = nsContentUtils::XPConnect()->VariantToJS(aCx, GetWrapper(), data,
                                                     &result);
   return result;
+}
+
+//static
+bool
+nsINode::ShouldExposeUserData(JSContext* aCx, JSObject* /* unused */)
+{
+  JSCompartment* compartment = js::GetContextCompartment(aCx);
+  return xpc::AccessCheck::isChrome(compartment) ||
+         xpc::IsXBLScope(compartment) ||
+         !XPCJSRuntime::Get()->XBLScopesEnabled();
 }
 
 uint16_t
