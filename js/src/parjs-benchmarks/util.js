@@ -2,6 +2,13 @@ DEFAULT_WARMUP = 10
 DEFAULT_MEASURE = 3
 MODE = MODE || "compare" // MODE is often set on the command-line by run.sh
 
+/**
+ * label: for the printouts
+ * w: warmup runs
+ * m: measurement runs
+ * seq: closure to compute sequentially
+ * par: closure to compute in parallel
+ */
 function benchmark(label, w, m, seq, par) {
   var SEQ = 1
   var PAR = 2
