@@ -110,9 +110,11 @@ function assertStructuralEq(e1, e2) {
       assertEqParallelArrayArray(e2, e1);
     } else if (e1 instanceof ParallelArray && e2 instanceof Array) {
       assertEqParallelArrayArray(e1, e2);
-    } else if (e1 instanceof RectArray && e2 instanceof RectArray) {
+    } else if (typeof(RectArray) != "undefined" &&
+               e1 instanceof RectArray && e2 instanceof RectArray) {
       assertEqRectArray(e1, e2);
-    } else if (e1 instanceof WrapArray && e2 instanceof WrapArray) {
+    } else if (typeof(WrapArray) != "undefined" &&
+               e1 instanceof WrapArray && e2 instanceof WrapArray) {
       assertEqWrapArray(e1, e2);
     } else if (e1 instanceof Array && e2 instanceof Array) {
       assertEqArray(e1, e2);
