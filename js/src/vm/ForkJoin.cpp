@@ -301,6 +301,7 @@ ForkJoinShared::init()
 ForkJoinShared::~ForkJoinShared()
 {
     PR_DestroyCondVar(rendezvousEnd_);
+    PR_DestroyLock(cxLock_);
 
     while (allocators_.length() > 0)
         js_delete(allocators_.popCopy());
