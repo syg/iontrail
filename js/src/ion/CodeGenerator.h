@@ -231,6 +231,9 @@ class CodeGenerator : public CodeGeneratorSpecific
     // Inline caches visitors.
     bool visitOutOfLineCache(OutOfLineUpdateCache *ool);
 
+    bool addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
+                             PropertyName *name, TypedOrValueRegister output,
+                             bool allowGetters);
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins);
     bool visitGetPropertyCacheT(LGetPropertyCacheT *ins);
     bool visitGetElementCacheV(LGetElementCacheV *ins);

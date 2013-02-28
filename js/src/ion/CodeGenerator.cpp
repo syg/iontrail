@@ -4729,14 +4729,10 @@ CodeGenerator::visitNameIC(OutOfLineUpdateCache *ool, NameIC *ic)
 }
 
 bool
-CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins)
+CodeGenerator::addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
+                                   PropertyName *name, TypedOrValueRegister output,
+                                   bool allowGetters)
 {
-    RegisterSet liveRegs = ins->safepoint()->liveRegs();
-    Register objReg = ToRegister(ins->getOperand(0));
-    PropertyName *name = ins->mir()->name();
-    bool allowGetters = ins->mir()->allowGetters();
-    TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
-
     switch (gen->info().executionMode()) {
       case SequentialExecution: {
         GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
@@ -4752,6 +4748,18 @@ CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins)
 }
 
 bool
+CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins)
+{
+    RegisterSet liveRegs = ins->safepoint()->liveRegs();
+    Register objReg = ToRegister(ins->getOperand(0));
+    PropertyName *name = ins->mir()->name();
+    bool allowGetters = ins->mir()->allowGetters();
+    TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
+
+    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters);
+}
+
+bool
 CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins)
 {
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
@@ -4760,18 +4768,7 @@ CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins)
     bool allowGetters = ins->mir()->allowGetters();
     TypedOrValueRegister output(ins->mir()->type(), ToAnyRegister(ins->getDef(0)));
 
-    switch (gen->info().executionMode()) {
-      case SequentialExecution: {
-        GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
-        return addCache(ins, allocateCache(cache));
-      }
-      case ParallelExecution: {
-        ParGetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
-        return addCache(ins, allocateCache(cache));
-      }
-      default:
-        JS_NOT_REACHED("Bad execution mode");
-    }
+    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters);
 }
 
 typedef bool (*GetPropertyICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
