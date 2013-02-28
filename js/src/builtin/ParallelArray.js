@@ -263,7 +263,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
     //
     // - Breaking out of named blocks does not currently work (bug 684384);
     // - Unreachable Code Elim. can't properly handle if (a && b) (bug 669796)
-    if (ForceSequential())
+    if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
@@ -352,7 +352,7 @@ function ParallelArrayMap(func, mode) {
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
 
-    if (ForceSequential())
+    if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
@@ -401,7 +401,7 @@ function ParallelArrayReduce(func, mode) {
     ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
-    if (ForceSequential())
+    if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
@@ -485,7 +485,7 @@ function ParallelArrayScan(func, mode) {
   var buffer = NewDenseArray(length);
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
-    if (ForceSequential())
+    if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
@@ -724,7 +724,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
-    if (ForceSequential())
+    if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
@@ -911,7 +911,7 @@ function ParallelArrayFilter(func, mode) {
   var length = self.shape[0];
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
-    if (ForceSequential())
+    if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
