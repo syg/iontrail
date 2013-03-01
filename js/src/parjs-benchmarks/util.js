@@ -58,7 +58,7 @@ function benchmark(label, w, m, seq, par) {
   if (mode(SEQ|PAR)) {
     print(label + " SEQ/PAR RATIO     : " + seqAvg/parAvg);
     print(label + " PAR/SEQ RATIO     : " + parAvg/seqAvg);
-    print(label + " SPEEDUP           : " +
+    print(label + " IMPROVEMENT       : " +
           (((seqAvg - parAvg) / seqAvg * 100.0) | 0) + "%");
   }
 
