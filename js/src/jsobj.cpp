@@ -3896,8 +3896,6 @@ LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *prop
                 *propp = shape;
                 return true;
             }
-
-            return false;
         }
 
         /* Fail if there's a resolve hook. */

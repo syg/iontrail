@@ -372,8 +372,7 @@ CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Regi
     AssertCanGC();
 
     // Different execution modes have different sets of VM functions.
-    JS_ASSERT_IF(fun.parallel, gen->info().executionMode() == ParallelExecution);
-    JS_ASSERT_IF(!fun.parallel, gen->info().executionMode() == SequentialExecution);
+    JS_ASSERT(fun.executionMode == gen->info().executionMode());
 
 #ifdef DEBUG
     if (ins->mirRaw()) {

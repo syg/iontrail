@@ -21,7 +21,7 @@ MacroAssemblerX64::setupABICall(uint32_t args)
     inCall_ = true;
 
     args_ = args;
-    passedIntArgs_ = 0; 
+    passedIntArgs_ = 0;
     passedFloatArgs_ = 0;
     stackForCall_ = ShadowStackSpace;
 }
@@ -180,7 +180,7 @@ MacroAssemblerX64::callWithABI(Address fun, Result result)
 }
 
 void
-MacroAssemblerX64::handleExceptionWithHandler(void *handler)
+MacroAssemblerX64::handleFailureWithHandler(void *handler)
 {
     // Reserve space for exception information.
     subq(Imm32(sizeof(ResumeFromException)), rsp);
@@ -200,13 +200,13 @@ MacroAssemblerX64::handleExceptionWithHandler(void *handler)
 void
 MacroAssemblerX64::handleException()
 {
-    handleExceptionWithHandler(JS_FUNC_TO_DATA_PTR(void *, ion::HandleException));
+    handleFailureWithHandler(JS_FUNC_TO_DATA_PTR(void *, ion::HandleException));
 }
 
 void
-MacroAssemblerX64::handleParException()
+MacroAssemblerX64::handleParallelFailure()
 {
-    handleExceptionWithHandler(JS_FUNC_TO_DATA_PTR(void *, ion::HandleParException));
+    handleFailureWithHandler(JS_FUNC_TO_DATA_PTR(void *, ion::HandleParallelFailure));
 }
 
 Assembler::Condition

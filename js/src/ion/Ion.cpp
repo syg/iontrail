@@ -753,6 +753,7 @@ IonScript::Trace(JSTracer *trc, IonScript *script)
 void
 IonScript::Destroy(FreeOp *fop, IonScript *script)
 {
+    script->destroyCaches();
     fop->free_(script);
 }
 
@@ -780,6 +781,13 @@ IonScript::purgeCaches(JSCompartment *c)
     AutoFlushCache afc("purgeCaches");
     for (size_t i = 0; i < numCaches(); i++)
         getCache(i).reset();
+}
+
+void
+IonScript::destroyCaches()
+{
+    for (size_t i = 0; i < numCaches(); i++)
+        getCache(i).destroy();
 }
 
 void

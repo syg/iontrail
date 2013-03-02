@@ -425,6 +425,7 @@ struct IonScript
     }
     void toggleBarriers(bool enabled);
     void purgeCaches(JSCompartment *c);
+    void destroyCaches();
     void copySnapshots(const SnapshotWriter *writer);
     void copyBailoutTable(const SnapshotOffset *table);
     void copyConstants(const HeapValue *vp);
@@ -666,4 +667,3 @@ IsMarked(const ion::VMFunction *)
 } // namespace js
 
 #endif // jsion_coderef_h__
-

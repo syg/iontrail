@@ -224,7 +224,7 @@ class FrameSizeClass
 
     explicit FrameSizeClass(uint32_t class_) : class_(class_)
     { }
-  
+
   public:
     FrameSizeClass()
     { }
@@ -261,7 +261,7 @@ struct ResumeFromException
 };
 
 void HandleException(ResumeFromException *rfe);
-void HandleParException(ResumeFromException *rfe);
+void HandleParallelFailure(ResumeFromException *rfe);
 
 void EnsureExitFrame(IonCommonFrameLayout *frame);
 
@@ -323,4 +323,3 @@ ReadFrameDoubleSlot(IonJSFrameLayout *fp, int32_t slot)
 } /* namespace js */
 
 #endif // jsion_frames_h__
-

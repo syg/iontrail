@@ -370,11 +370,11 @@ ion::HandleException(ResumeFromException *rfe)
 }
 
 void
-ion::HandleParException(ResumeFromException *rfe)
+ion::HandleParallelFailure(ResumeFromException *rfe)
 {
     ForkJoinSlice *slice = ForkJoinSlice::Current();
     IonFrameIterator iter(slice->perThreadData->ionTop);
-    
+
     while (!iter.isEntry()) {
         parallel::Spew(parallel::SpewBailouts, "Bailing from VM reentry");
         if (!slice->abortedScript && iter.isScripted())

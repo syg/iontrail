@@ -8,8 +8,6 @@
 #ifndef jsion_caches_h__
 #define jsion_caches_h__
 
-#include "vm/ForkJoin.h"
-
 #include "IonCode.h"
 #include "TypeOracle.h"
 #include "Registers.h"
@@ -18,6 +16,10 @@ class JSFunction;
 class JSScript;
 
 namespace js {
+
+struct ForkJoinSlice;
+class LockedJSContext;
+
 namespace ion {
 
 #define IONCACHE_KIND_LIST(_)                                   \
@@ -27,7 +29,7 @@ namespace ion {
     _(BindName)                                                 \
     _(Name)                                                     \
     _(CallsiteClone)                                            \
-    _(ParGetProperty)
+    _(ParallelGetProperty)
 
 // Forward declarations of Cache kinds.
 #define FORWARD_DECLARE(kind) class kind##IC;
@@ -157,10 +159,6 @@ class IonCache
     static const size_t REJOIN_LABEL_OFFSET = 0;
 #endif
 
-    // A set of all objects that are stubbed. Used to detect duplicates in
-    // parallel execution.
-    ObjectSet *stubbedObjects_;
-
     // Location of this operation, NULL for idempotent caches.
     JSScript *script;
     jsbytecode *pc;
@@ -196,15 +194,9 @@ class IonCache
         initialJump_(),
         lastJump_(),
         fallbackLabel_(),
-        stubbedObjects_(NULL),
         script(NULL),
         pc(NULL)
     {
-    }
-
-    ~IonCache() {
-        if (stubbedObjects_)
-            js_delete(stubbedObjects_);
     }
 
     void disable();
@@ -234,7 +226,10 @@ class IonCache
     void updateBaseAddress(IonCode *code, MacroAssembler &masm);
 
     // Reset the cache around garbage collection.
-    void reset();
+    virtual void reset();
+
+    // Destroy any extra resources the cache uses upon IonCode finalization.
+    virtual void destroy() { }
 
     bool canAttachStub() const {
         return stubCount_ < MAX_STUBS;
@@ -276,6 +271,10 @@ class IonCache
         idempotent_ = true;
     }
 
+    bool isAllocated() {
+        return fallbackLabel().isSet();
+    }
+
     void setScriptedLocation(UnrootedScript script, jsbytecode *pc) {
         JS_ASSERT(!idempotent_);
         this->script = script;
@@ -285,21 +284,6 @@ class IonCache
     void getScriptedLocation(MutableHandleScript pscript, jsbytecode **ppc) {
         pscript.set(script);
         *ppc = pc;
-    }
-
-    bool initStubbedObjects(JSContext *cx) {
-        // Note: to avoid double freeing, only initialize stubbedObjects after
-        // the cache has been allocated (copied) into the cacheList.
-        if (!stubbedObjects_) {
-            stubbedObjects_ = cx->new_<ObjectSet>(cx);
-            return stubbedObjects_ && stubbedObjects_->init();
-        }
-        return true;
-    }
-
-    ObjectSet *stubbedObjects() const {
-        JS_ASSERT_IF(stubbedObjects_, stubbedObjects_->initialized());
-        return stubbedObjects_;
     }
 };
 
@@ -378,23 +362,6 @@ class GetPropertyIC : public IonCache
     bool attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
 
     static bool update(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
-};
-
-class ParGetPropertyIC : public GetPropertyIC
-{
-   public:
-    ParGetPropertyIC(RegisterSet liveRegs,
-                     Register object, PropertyName *name,
-                     TypedOrValueRegister output,
-                     bool allowGetters)
-      : GetPropertyIC(liveRegs, object, name, output, allowGetters)
-    {
-    }
-
-    CACHE_HEADER(ParGetProperty)
-
-    static bool update(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
-                       MutableHandleValue vp);
 };
 
 class SetPropertyIC : public IonCache
@@ -611,6 +578,57 @@ class CallsiteCloneIC : public IonCache
     bool attach(JSContext *cx, IonScript *ion, HandleFunction original, HandleFunction clone);
 
     static JSObject *update(JSContext *cx, size_t cacheIndex, HandleObject callee);
+};
+
+// Parallel ICs adhere to the invariant of parallel mode execution that any
+// bailout restarts the entire parallel computation instead of resuming in the
+// interpreter. Thus, the meaning of returning false in parallel ICs is "bail
+// out of the entire parallel execution" for any reason, error or
+// otherwise. Specifically, invalidations are handled by the parallel
+// execution at large and are unsafe to be called from within the parallel
+// ICs.
+//
+// Re-entry into the VM is unsafe in general in parallel, and each parallel
+// cache must have a special, pure path for VM entry carved out for the
+// functionality they need. These paths are generally marked by the suffix
+// "pure" and return false if they otherwise would have been effectful.
+
+class ParallelGetPropertyIC : public GetPropertyIC
+{
+  protected:
+    // A set of all objects that are stubbed. Used to detect duplicates in
+    // parallel execution.
+    ObjectSet *stubbedObjects_;
+
+   public:
+    ParallelGetPropertyIC(RegisterSet liveRegs,
+                          Register object, PropertyName *name,
+                          TypedOrValueRegister output,
+                          bool allowGetters)
+      : GetPropertyIC(liveRegs, object, name, output, allowGetters),
+        stubbedObjects_(NULL)
+    {
+    }
+
+    CACHE_HEADER(ParallelGetProperty)
+
+    void reset();
+    void destroy();
+
+    bool initStubbedObjects(JSContext *cx);
+    ObjectSet *stubbedObjects() const {
+        JS_ASSERT_IF(stubbedObjects_, stubbedObjects_->initialized());
+        return stubbedObjects_;
+    }
+
+    // Returns false if we should bail out of parallel execution due to either
+    // error or inability to get the property on |obj| in a pure manner.
+    bool tryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion, HandleObject obj,
+                                    HandlePropertyName name, const SafepointIndex *safepointIndex,
+                                    void *returnAddr);
+
+    static bool update(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
+                       MutableHandleValue vp);
 };
 
 #undef CACHE_HEADER

@@ -504,6 +504,10 @@ class CodeLocationLabel
 
     void repoint(IonCode *code, MacroAssembler *masm = NULL);
 
+    bool isSet() {
+        return raw_ != (uint8_t *) 0xdeadc0de;
+    }
+
     uint8_t *raw() {
         JS_ASSERT(absolute_ && raw_ != (uint8_t *) 0xdeadc0de);
         return raw_;
@@ -519,4 +523,3 @@ class CodeLocationLabel
 } // namespace js
 
 #endif // jsion_assembler_shared_h__
-

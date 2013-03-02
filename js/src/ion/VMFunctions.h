@@ -9,9 +9,11 @@
 #define jsion_vm_functions_h__
 
 #include "jspubtd.h"
-#include "vm/ForkJoin.h"
 
 namespace js {
+
+class ForkJoinSlice;
+
 namespace ion {
 
 enum DataType {
@@ -89,8 +91,8 @@ struct VMFunction
     // arguments of the VM wrapper.
     uint64_t argumentRootTypes;
 
-    // Does this function take a ForkJoinSlice * instead of a JSContext *?
-    bool parallel;
+    // Does this function take a ForkJoinSlice * or a JSContext *?
+    ExecutionMode executionMode;
 
     uint32_t argc() const {
         // JSContext * + args + (OutParam? *)
@@ -160,19 +162,20 @@ struct VMFunction
         argumentProperties(0),
         outParam(Type_Void),
         returnType(Type_Void),
-        parallel(false)
+        executionMode(SequentialExecution)
     {
     }
 
     VMFunction(void *wrapped, uint32_t explicitArgs, uint32_t argumentProperties, uint64_t argRootTypes,
-               DataType outParam, DataType returnType, bool parallel = false)
+               DataType outParam, DataType returnType,
+               ExecutionMode executionMode = SequentialExecution)
       : wrapped(wrapped),
         explicitArgs(explicitArgs),
         argumentProperties(argumentProperties),
         outParam(outParam),
         returnType(returnType),
         argumentRootTypes(argRootTypes),
-        parallel(parallel)
+        executionMode(executionMode)
     {
         // Check for valid failure/return type.
         JS_ASSERT_IF(outParam != Type_Void, returnType == Type_Bool);
@@ -288,7 +291,7 @@ template <> struct OutParamToDataType<MutableHandleValue> { static const DataTyp
 #define SEP_OR(_) |
 #define NOTHING(_)
 
-#define FUNCTION_INFO_STRUCT_BODY(ForEachNb, IsPar)                                     \
+#define FUNCTION_INFO_STRUCT_BODY(ForEachNb, ExecMode)                                  \
     static inline DataType returnType() {                                               \
         return TypeToDataType<R>::result;                                               \
     }                                                                                   \
@@ -310,7 +313,7 @@ template <> struct OutParamToDataType<MutableHandleValue> { static const DataTyp
     FunctionInfo(pf fun)                                                                \
         : VMFunction(JS_FUNC_TO_DATA_PTR(void *, fun), explicitArgs(),                  \
                      argumentProperties(),argumentRootTypes(),                          \
-                     outParam(), returnType(), IsPar)                                   \
+                     outParam(), returnType(), ExecMode)                                \
     { }
 
 template <typename Fun>
@@ -368,7 +371,7 @@ struct FunctionInfo<R (*)(ForkJoinSlice *)> : public VMFunction {
     FunctionInfo(pf fun)
       : VMFunction(JS_FUNC_TO_DATA_PTR(void *, fun), explicitArgs(),
                    argumentProperties(), argumentRootTypes(),
-                   outParam(), returnType(), true)
+                   outParam(), returnType(), ParallelExecution)
     { }
 };
 
@@ -377,62 +380,62 @@ struct FunctionInfo<R (*)(ForkJoinSlice *)> : public VMFunction {
 template <class R, class A1>
 struct FunctionInfo<R (*)(JSContext *, A1)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1, false)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1, SequentialExecution)
 };
 
 template <class R, class A1, class A2>
 struct FunctionInfo<R (*)(JSContext *, A1, A2)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2, false)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2, SequentialExecution)
 };
 
 template <class R, class A1, class A2, class A3>
 struct FunctionInfo<R (*)(JSContext *, A1, A2, A3)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3, false)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3, SequentialExecution)
 };
 
 template <class R, class A1, class A2, class A3, class A4>
 struct FunctionInfo<R (*)(JSContext *, A1, A2, A3, A4)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3, A4);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4, false)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4, SequentialExecution)
 };
 
 template <class R, class A1, class A2, class A3, class A4, class A5>
     struct FunctionInfo<R (*)(JSContext *, A1, A2, A3, A4, A5)> : public VMFunction {
     typedef R (*pf)(JSContext *, A1, A2, A3, A4, A5);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5, false)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5, SequentialExecution)
 };
 
 // Parallel versions.
 template <class R, class A1>
 struct FunctionInfo<R (*)(ForkJoinSlice *, A1)> : public VMFunction {
     typedef R (*pf)(ForkJoinSlice *, A1);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1, true)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_1, ParallelExecution)
 };
 
 template <class R, class A1, class A2>
 struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2)> : public VMFunction {
     typedef R (*pf)(ForkJoinSlice *, A1, A2);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2, true)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_2, ParallelExecution)
 };
 
 template <class R, class A1, class A2, class A3>
 struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2, A3)> : public VMFunction {
     typedef R (*pf)(ForkJoinSlice *, A1, A2, A3);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3, true)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_3, ParallelExecution)
 };
 
 template <class R, class A1, class A2, class A3, class A4>
 struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2, A3, A4)> : public VMFunction {
     typedef R (*pf)(ForkJoinSlice *, A1, A2, A3, A4);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4, true)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_4, ParallelExecution)
 };
 
 template <class R, class A1, class A2, class A3, class A4, class A5>
     struct FunctionInfo<R (*)(ForkJoinSlice *, A1, A2, A3, A4, A5)> : public VMFunction {
     typedef R (*pf)(ForkJoinSlice *, A1, A2, A3, A4, A5);
-    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5, true)
+    FUNCTION_INFO_STRUCT_BODY(FOR_EACH_ARGS_5, ParallelExecution)
 };
 
 #undef FUNCTION_INFO_STRUCT_BODY
@@ -538,4 +541,3 @@ void GetDynamicName(JSContext *cx, JSObject *scopeChain, JSString *str, Value *v
 } // namespace js
 
 #endif // jsion_vm_functions_h_
-

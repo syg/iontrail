@@ -1033,12 +1033,37 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
     return true;
 }
 
-static bool
-ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
-                              ParGetPropertyIC &cache, HandleObject obj,
-                              HandlePropertyName name,
-                              const SafepointIndex *safepointIndex,
-                              void *returnAddr)
+void
+ParallelGetPropertyIC::reset()
+{
+    GetPropertyIC::reset();
+    if (stubbedObjects_)
+        stubbedObjects_->clear();
+}
+
+void
+ParallelGetPropertyIC::destroy()
+{
+    if (stubbedObjects_)
+        js_delete(stubbedObjects_);
+}
+
+bool
+ParallelGetPropertyIC::initStubbedObjects(JSContext *cx)
+{
+    JS_ASSERT(isAllocated());
+    if (!stubbedObjects_) {
+        stubbedObjects_ = cx->new_<ObjectSet>(cx);
+        return stubbedObjects_ && stubbedObjects_->init();
+    }
+    return true;
+}
+
+bool
+ParallelGetPropertyIC::tryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
+                                                  HandleObject obj, HandlePropertyName name,
+                                                  const SafepointIndex *safepointIndex,
+                                                  void *returnAddr)
 {
     RootedObject checkObj(cx, obj);
     bool isListBase = IsCacheableListBase(obj);
@@ -1051,7 +1076,7 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
     // If the cache is idempotent, watch out for resolve hooks or non-native
     // objects on the proto chain. We check this before calling lookupProperty,
     // to make sure no effectful lookup hooks or resolve hooks are called.
-    if (cache.idempotent() && !checkObj->hasIdempotentProtoChain())
+    if (idempotent() && !checkObj->hasIdempotentProtoChain())
         return false;
 
     // Bail if we have hooks.
@@ -1065,7 +1090,7 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
 
     RootedScript script(cx);
     jsbytecode *pc;
-    cache.getScriptedLocation(&script, &pc);
+    getScriptedLocation(&script, &pc);
 
     // In parallel execution we can't cache getters due to possible
     // side-effects, so only check if we can cache slot reads.
@@ -1075,7 +1100,7 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
     // {Lookup,Get}PropertyPure. If it turns out we have a workload that
     // requires them, we should add them.
     if (IsCacheableGetPropReadSlot(obj, holder, shape) ||
-        IsCacheableNoProperty(obj, holder, shape, pc, cache.output())) {
+        IsCacheableNoProperty(obj, holder, shape, pc, output())) {
         // With Proxies, we cannot garantee any property access as the proxy can
         // mask any property from the prototype chain.
         if (obj->isProxy())
@@ -1087,7 +1112,7 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
     // "undefined" type, see the propertySet comment in jsinfer.h. We can't
     // monitor the return type inside an idempotent cache though, so we don't
     // handle this case.
-    if (cache.idempotent() &&
+    if (idempotent() &&
         holder &&
         holder->hasSingletonType() &&
         holder->getSlot(shape->slot()).isUndefined())
@@ -1095,17 +1120,14 @@ ParTryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
         return false;
     }
 
-    if (!cache.canAttachStub())
-        return true;
-
-    return cache.attachReadSlot(cx, ion, obj, holder, shape);
+    return attachReadSlot(cx, ion, obj, holder, shape);
 }
 
 bool
-ParGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
-                         HandleObject obj, MutableHandleValue vp)
+ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
+                              HandleObject obj, MutableHandleValue vp)
 {
-    AutoFlushCache afc("ParGetPropertyCache");
+    AutoFlushCache afc("ParallelGetPropertyCache");
     PerThreadData *pt = slice->perThreadData;
 
     const SafepointIndex *safepointIndex;
@@ -1113,7 +1135,7 @@ ParGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
     RootedScript topScript(pt, GetTopIonJSScript(pt, &safepointIndex, &returnAddr));
     IonScript *ion = topScript->parallelIonScript();
 
-    ParGetPropertyIC &cache = ion->getCache(cacheIndex).toParGetProperty();
+    ParallelGetPropertyIC &cache = ion->getCache(cacheIndex).toParallelGetProperty();
     RootedPropertyName name(pt, cache.name());
 
     RootedScript script(pt);
@@ -1121,7 +1143,7 @@ ParGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
     cache.getScriptedLocation(&script, &pc);
 
     // Grab the property early, as the pure path is fast anyways and doesn't
-    // need a lock.
+    // need a lock. If we can't do it purely, bail out of parallel execution.
     if (!GetPropertyPure(obj, NameToId(name), vp.address()))
         return false;
 
@@ -1131,30 +1153,32 @@ ParGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
         // new jitcode uses a global ExecutableAllocator tied to the runtime.
         LockedJSContext cx(slice);
 
-        // Check if we have already stubbed the current object to avoid attaching
-        // a duplicate stub.
-        if (!cache.initStubbedObjects(cx))
-            return false;
-        ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
-        if (p)
-            return true;
-        if (!cache.stubbedObjects()->add(p, obj))
-            return false;
+        if (cache.canAttachStub()) {
+            // Check if we have already stubbed the current object to avoid
+            // attaching a duplicate stub.
+            if (!cache.initStubbedObjects(cx))
+                return false;
+            ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
+            if (p)
+                return true;
+            if (!cache.stubbedObjects()->add(p, obj))
+                return false;
 
-        // See note about the stub limit in GetPropertyCache.
-        if (!ParTryAttachNativeGetPropStub(cx, ion, cache, obj, name,
-                                           safepointIndex, returnAddr))
-        {
-            // Bail out if we can't find the property.
-            parallel::Spew(parallel::SpewBailouts,
-                           "Marking idempotent cache as invalidated in parallel %s:%d",
-                           topScript->filename, topScript->lineno);
+            // See note about the stub limit in GetPropertyCache.
+            if (!cache.tryAttachNativeGetPropStub(cx, ion, obj, name,
+                                                  safepointIndex, returnAddr))
+            {
+                // Bail out if we can't find the property.
+                parallel::Spew(parallel::SpewBailouts,
+                               "Marking idempotent cache as invalidated in parallel %s:%d",
+                               topScript->filename, topScript->lineno);
 
-            topScript->invalidatedIdempotentCache = true;
+                topScript->invalidatedIdempotentCache = true;
 
-            // ParallelDo will take care of invalidating all bailed out scripts,
-            // so just bail out now.
-            return false;
+                // ParallelDo will take care of invalidating all bailed out
+                // scripts, so just bail out now.
+                return false;
+            }
         }
 
         if (!cache.idempotent()) {

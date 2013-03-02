@@ -4739,7 +4739,7 @@ CodeGenerator::addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Regi
         return addCache(ins, allocateCache(cache));
       }
       case ParallelExecution: {
-        ParGetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
+        ParallelGetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
         return addCache(ins, allocateCache(cache));
       }
       default:
@@ -4793,12 +4793,12 @@ CodeGenerator::visitGetPropertyIC(OutOfLineUpdateCache *ool, GetPropertyIC *ic)
     return true;
 }
 
-typedef bool (*ParGetPropertyICFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
-const VMFunction ParGetPropertyIC::UpdateInfo =
-    FunctionInfo<ParGetPropertyICFn>(ParGetPropertyIC::update);
+typedef bool (*ParallelGetPropertyICFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
+const VMFunction ParallelGetPropertyIC::UpdateInfo =
+    FunctionInfo<ParallelGetPropertyICFn>(ParallelGetPropertyIC::update);
 
 bool
-CodeGenerator::visitParGetPropertyIC(OutOfLineUpdateCache *ool, ParGetPropertyIC *ic)
+CodeGenerator::visitParallelGetPropertyIC(OutOfLineUpdateCache *ool, ParallelGetPropertyIC *ic)
 {
     AssertCanGC();
     LInstruction *lir = ool->lir();
@@ -4806,7 +4806,7 @@ CodeGenerator::visitParGetPropertyIC(OutOfLineUpdateCache *ool, ParGetPropertyIC
 
     pushArg(ic->object());
     pushArg(Imm32(ool->getCacheIndex()));
-    if (!callVM(ParGetPropertyIC::UpdateInfo, lir))
+    if (!callVM(ParallelGetPropertyIC::UpdateInfo, lir))
         return false;
     StoreValueTo(ic->output()).generate(this);
     restoreLiveIgnore(lir, StoreValueTo(ic->output()).clobbered());
@@ -5791,4 +5791,3 @@ CodeGenerator::visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool)
 
 } // namespace ion
 } // namespace js
-

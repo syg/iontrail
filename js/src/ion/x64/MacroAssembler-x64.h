@@ -887,9 +887,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void callWithABI(void *fun, Result result = GENERAL);
     void callWithABI(Address fun, Result result = GENERAL);
 
-    void handleExceptionWithHandler(void *handler);
+    void handleFailureWithHandler(void *handler);
     void handleException();
-    void handleParException();
+    void handleParallelFailure();
 
     void makeFrameDescriptor(Register frameSizeReg, FrameType type) {
         shlq(Imm32(FRAMESIZE_SHIFT), frameSizeReg);
@@ -931,4 +931,3 @@ typedef MacroAssemblerX64 MacroAssemblerSpecific;
 } // namespace js
 
 #endif // jsion_macro_assembler_x64_h__
-

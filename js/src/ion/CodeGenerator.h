@@ -246,7 +246,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCallsiteCloneCache(LCallsiteCloneCache *ins);
 
     bool visitGetPropertyIC(OutOfLineUpdateCache *ool, GetPropertyIC *ic);
-    bool visitParGetPropertyIC(OutOfLineUpdateCache *ool, ParGetPropertyIC *ic);
+    bool visitParallelGetPropertyIC(OutOfLineUpdateCache *ool, ParallelGetPropertyIC *ic);
     bool visitSetPropertyIC(OutOfLineUpdateCache *ool, SetPropertyIC *ic);
     bool visitGetElementIC(OutOfLineUpdateCache *ool, GetElementIC *ic);
     bool visitBindNameIC(OutOfLineUpdateCache *ool, BindNameIC *ic);
