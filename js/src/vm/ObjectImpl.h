@@ -1225,13 +1225,13 @@ class ObjectImpl : public gc::Cell
      * Contextless; can be called from parallel code. Returns false if the
      * operation would have been effectful.
      */
-    bool nativeLookupPure(jsid id, Shape **shapep);
-    inline bool nativeLookupPure(PropertyId pid, Shape **shapep);
-    inline bool nativeLookupPure(PropertyName *name, Shape **shapep);
+    UnrootedShape nativeLookupPure(jsid id);
+    inline UnrootedShape nativeLookupPure(PropertyId pid);
+    inline UnrootedShape nativeLookupPure(PropertyName *name);
 
-    inline bool nativeContainsPure(jsid id, bool *contains);
-    inline bool nativeContainsPure(PropertyName* name, bool *contains);
-    inline bool nativeContainsPure(Shape* shape, bool *contains);
+    inline bool nativeContainsPure(jsid id);
+    inline bool nativeContainsPure(PropertyName* name);
+    inline bool nativeContainsPure(Shape* shape);
 
     inline JSClass *getJSClass() const;
     inline bool hasClass(const Class *c) const;

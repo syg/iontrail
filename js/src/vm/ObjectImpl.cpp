@@ -299,12 +299,12 @@ js::ObjectImpl::nativeLookup(JSContext *cx, jsid id)
     return Shape::search(cx, lastProperty(), id, &spp);
 }
 
-bool
-js::ObjectImpl::nativeLookupPure(jsid id, Shape **shapep)
+UnrootedShape
+js::ObjectImpl::nativeLookupPure(jsid id)
 {
     AutoAssertNoGC nogc;
     MOZ_ASSERT(isNative());
-    return Shape::searchNoHashify(lastProperty(), id, shapep);
+    return Shape::searchNoHashify(lastProperty(), id);
 }
 
 void

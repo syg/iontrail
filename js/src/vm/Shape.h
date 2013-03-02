@@ -498,7 +498,7 @@ class Shape : public js::gc::Cell
 
     static inline UnrootedShape search(JSContext *cx, Shape *start, jsid id,
                                        Shape ***pspp, bool adding = false);
-    static inline bool searchNoHashify(Shape *start, jsid id, Shape **shapep);
+    static inline UnrootedShape searchNoHashify(Shape *start, jsid id);
 
     inline void removeFromDictionary(JSObject *obj);
     inline void insertIntoDictionary(HeapPtrShape *dictp);
@@ -1097,46 +1097,32 @@ Shape::search(JSContext *cx, Shape *start, jsid id, Shape ***pspp, bool adding)
  * Keep this function in sync with search. It should return false whenever
  * search would transition to a ShapeTable.
  */
-inline bool
-Shape::searchNoHashify(Shape *start, jsid id, Shape **shapep)
+inline UnrootedShape
+Shape::searchNoHashify(Shape *start, jsid id)
 {
     AutoAssertNoGC nogc;
     Shape **spp;
 
-    *shapep = NULL;
-
     if (start->inDictionary()) {
         spp = start->table().search(id, false);
-        *shapep = SHAPE_FETCH(spp);
-        return true;
+        return SHAPE_FETCH(spp);
     }
 
+    /*
+     * If we have a table, search in the shape table, else do a linear
+     * search. We never hashify into a table in parallel.
+     */
     if (start->hasTable()) {
         spp = start->table().search(id, false);
-        *shapep = SHAPE_FETCH(spp);
-        return true;
-    }
-
-    /* We bail instead of hashifying, as that would be effectful on the shape. */
-    if (start->numLinearSearches() == LINEAR_SEARCHES_MAX) {
-        if (start->isBigEnoughForAShapeTable())
-            return false;
-    } else {
-        /*
-         * Note that we let the linear searches be bumped racily. This is not
-         * incorrect, as the number of linear searches is a heuristic anyways.
-         */
-        start->incrementNumLinearSearches();
+        return SHAPE_FETCH(spp);
     }
 
     for (UnrootedShape shape = start; shape; shape = shape->parent) {
-        if (shape->propidRef() == id) {
-            *shapep = shape;
-            return true;
-        }
+        if (shape->propidRef() == id)
+            return shape;
     }
 
-    return true;
+    return UnrootedShape(NULL);
 }
 
 template<> struct RootKind<Shape *> : SpecificRootKind<Shape *, THING_ROOT_SHAPE> {};

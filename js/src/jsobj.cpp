@@ -3878,6 +3878,9 @@ LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *prop
 {
     AutoAssertNoGC nogc;
 
+    if (!obj->isNative())
+        return false;
+
     RawObject current = obj;
     while (true) {
         /* Search for a native dense element or property. */
@@ -3888,15 +3891,13 @@ LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *prop
                 return true;
             }
 
-            RawShape shape;
-            if (!current->nativeLookupPure(id, &shape))
-                return false;
-
-            if (shape) {
+            if (RawShape shape = current->nativeLookupPure(id)) {
                 *objp = current;
                 *propp = shape;
                 return true;
             }
+
+            return false;
         }
 
         /* Fail if there's a resolve hook. */
@@ -3927,13 +3928,6 @@ NativeGetPureInline(RawObject pobj, RawShape shape, Value *vp)
     if (shape->hasSlot()) {
         *vp = pobj->nativeGetSlot(shape->slot());
         JS_ASSERT(!vp->isMagic());
-        /*
-         * XXX: Unfortunately the below assert can't be checked since we have
-         * no cx and it'd probably be unsafe.
-         *
-         * JS_ASSERT_IF(!pobj->hasSingletonType() && shape->hasDefaultGetter(),
-         *              js::types::TypeHasProperty(cx, pobj->type(), shape->propid(), vp));
-         */
     } else {
         vp->setUndefined();
     }
@@ -3977,32 +3971,16 @@ js::GetPropertyPure(RawObject obj, jsid id, Value *vp)
         /* Do we have a non-stub class op hook? */
         if (obj->getClass()->getProperty && obj->getClass()->getProperty != JS_PropertyStub)
             return false;
-
-        /* Did we skip a non-native object? */
-        RawObject current = obj;
-        while (current) {
-            if (!current->isNative())
-                return false;
-            current = current->getProto();
-        }
-
         vp->setUndefined();
         return true;
     }
-
-    /* Fail if the object isn't native. */
-    if (!obj2->isNative())
-        return false;
 
     if (IsImplicitDenseElement(shape)) {
         *vp = obj2->getDenseElement(JSID_TO_INT(id));
         return true;
     }
 
-    if (!NativeGetPureInline(obj2, shape, vp))
-        return false;
-
-    return true;
+    return NativeGetPureInline(obj2, shape, vp);
 }
 
 JSBool
@@ -5214,4 +5192,3 @@ js_DumpBacktrace(JSContext *cx)
     }
     fprintf(stdout, "%s", sprinter.string());
 }
-

@@ -70,42 +70,34 @@ js::ObjectImpl::nativeContains(JSContext *cx, Shape *shape)
     return nativeLookup(cx, shape->propid()) == shape;
 }
 
-inline bool
-js::ObjectImpl::nativeLookupPure(PropertyId pid, Shape **shapep)
+inline js::UnrootedShape
+js::ObjectImpl::nativeLookupPure(PropertyId pid)
 {
-    return nativeLookupPure(pid.asId(), shapep);
+    return nativeLookupPure(pid.asId());
+}
+
+inline js::UnrootedShape
+js::ObjectImpl::nativeLookupPure(PropertyName *name)
+{
+    return nativeLookupPure(NameToId(name));
 }
 
 inline bool
-js::ObjectImpl::nativeLookupPure(PropertyName *name, Shape **shapep)
+js::ObjectImpl::nativeContainsPure(jsid id)
 {
-    return nativeLookupPure(NameToId(name), shapep);
+    return nativeLookupPure(id) != NULL;
 }
 
 inline bool
-js::ObjectImpl::nativeContainsPure(jsid id, bool *contains)
+js::ObjectImpl::nativeContainsPure(PropertyName *name)
 {
-    Shape *shape;
-    if (!nativeLookupPure(id, &shape))
-        return false;
-    *contains = !!shape;
-    return true;
+    return nativeContainsPure(NameToId(name));
 }
 
 inline bool
-js::ObjectImpl::nativeContainsPure(PropertyName *name, bool *contains)
+js::ObjectImpl::nativeContainsPure(Shape *shape)
 {
-    return nativeContainsPure(NameToId(name), contains);
-}
-
-inline bool
-js::ObjectImpl::nativeContainsPure(Shape *shape, bool *contains)
-{
-    Shape *shape2;
-    if (!nativeLookupPure(shape->propid(), &shape2))
-        return false;
-    *contains = shape == shape2;
-    return true;
+    return nativeLookupPure(shape->propid()) == shape;
 }
 
 inline bool
