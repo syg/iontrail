@@ -798,7 +798,7 @@ MacroAssembler::enterParallelExitFrameAndLoadSlice(const VMFunction *f, Register
         movePtr(ReturnReg, slice);
     // Load the PerThreadData from from the slice.
     loadPtr(Address(slice, offsetof(ForkJoinSlice, perThreadData)), scratch);
-    linkParExitFrame(scratch);
+    linkParallelExitFrame(scratch);
     // Push the ioncode.
     exitCodePatch_ = PushWithPatch(ImmWord(-1));
     // Push the VMFunction pointer, to mark arguments.
@@ -824,6 +824,29 @@ MacroAssembler::enterExitFrameAndLoadContext(const VMFunction *f, Register cxReg
 }
 
 void
+MacroAssembler::handleFailure(ExecutionMode executionMode)
+{
+    // Re-entry code is irrelevant because the exception will leave the
+    // running function and never come back
+    if (sps_)
+        sps_->skipNextReenter();
+    leaveSPSFrame();
+    switch (executionMode) {
+      case SequentialExecution:
+        MacroAssemblerSpecific::handleException();
+        break;
+      case ParallelExecution:
+        MacroAssemblerSpecific::handleParallelFailure();
+        break;
+      default:
+        JS_NOT_REACHED("unknown execution mode");
+    }
+    // Doesn't actually emit code, but balances the leave()
+    if (sps_)
+        sps_->reenter(*this, InvalidReg);
+}
+
+void
 MacroAssembler::tagCallee(Register callee, ExecutionMode mode)
 {
     switch (mode) {
@@ -831,7 +854,7 @@ MacroAssembler::tagCallee(Register callee, ExecutionMode mode)
         // CalleeToken_Function is untagged, so we don't need to do anything.
         return;
       case ParallelExecution:
-        orPtr(Imm32(CalleeToken_ParFunction), callee);
+        orPtr(Imm32(CalleeToken_ParallelFunction), callee);
         return;
       default:
         JS_NOT_REACHED("unknown execution mode");

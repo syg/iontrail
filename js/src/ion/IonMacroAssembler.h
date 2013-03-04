@@ -592,26 +592,7 @@ class MacroAssembler : public MacroAssemblerSpecific
             sps_->reenter(*this, InvalidReg);
     }
 
-    void handleFailure(ExecutionMode executionMode) {
-        // Re-entry code is irrelevant because the exception will leave the
-        // running function and never come back
-        if (sps_)
-            sps_->skipNextReenter();
-        leaveSPSFrame();
-        switch (executionMode) {
-          case SequentialExecution:
-            MacroAssemblerSpecific::handleException();
-            break;
-          case ParallelExecution:
-            MacroAssemblerSpecific::handleParallelFailure();
-            break;
-          default:
-            JS_NOT_REACHED("unknown execution mode");
-        }
-        // Doesn't actually emit code, but balances the leave()
-        if (sps_)
-            sps_->reenter(*this, InvalidReg);
-    }
+    void handleFailure(ExecutionMode executionMode);
 
     // see above comment for what is returned
     uint32_t callIon(const Register &callee) {

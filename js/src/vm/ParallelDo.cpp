@@ -400,7 +400,7 @@ class ParallelIonInvoke
         IonCode *code = ion->method();
         jitcode_ = code->raw();
         enter_ = cx->compartment->ionCompartment()->enterJIT();
-        calleeToken_ = ParCalleeToToken(callee);
+        calleeToken_ = CalleeToParallelToken(callee);
     }
 
     bool invoke() {

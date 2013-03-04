@@ -64,7 +64,7 @@ IonFrameIterator::checkInvalidation(IonScript **ionScriptOut) const
     // IonScript if the frame has since been invalidated.
     IonScript *currentIonScript;
     bool hasIonScript;
-    if (isParFunctionFrame()) {
+    if (isParallelFunctionFrame()) {
         currentIonScript = script->parallelIon;
         hasIonScript = script->hasParallelIonScript();
     } else {
@@ -94,11 +94,11 @@ JSFunction *
 IonFrameIterator::callee() const
 {
     if (isScripted()) {
-        JS_ASSERT(isFunctionFrame() || isParFunctionFrame());
+        JS_ASSERT(isFunctionFrame() || isParallelFunctionFrame());
         if (isFunctionFrame())
             return CalleeTokenToFunction(calleeToken());
         else
-            return CalleeTokenToParFunction(calleeToken());
+            return CalleeTokenToParallelFunction(calleeToken());
     }
 
     JS_ASSERT(isNative());
@@ -108,7 +108,7 @@ IonFrameIterator::callee() const
 JSFunction *
 IonFrameIterator::maybeCallee() const
 {
-    if ((isScripted() && (isFunctionFrame() || isParFunctionFrame())) || isNative())
+    if ((isScripted() && (isFunctionFrame() || isParallelFunctionFrame())) || isNative())
         return callee();
     return NULL;
 }
@@ -152,9 +152,9 @@ IonFrameIterator::isFunctionFrame() const
 }
 
 bool
-IonFrameIterator::isParFunctionFrame() const
+IonFrameIterator::isParallelFunctionFrame() const
 {
-    return GetCalleeTokenTag(calleeToken()) == CalleeToken_ParFunction;
+    return GetCalleeTokenTag(calleeToken()) == CalleeToken_ParallelFunction;
 }
 
 bool
@@ -926,7 +926,7 @@ IonFrameIterator::ionScript() const
       case CalleeToken_Function:
       case CalleeToken_Script:
         return script()->ionScript();
-      case CalleeToken_ParFunction:
+      case CalleeToken_ParallelFunction:
         return script()->parallelIonScript();
       default:
         JS_NOT_REACHED("unknown callee token type");

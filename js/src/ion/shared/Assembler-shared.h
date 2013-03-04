@@ -509,11 +509,11 @@ class CodeLocationLabel
     }
 
     uint8_t *raw() {
-        JS_ASSERT(absolute_ && raw_ != (uint8_t *) 0xdeadc0de);
+        JS_ASSERT(absolute_ && isSet());
         return raw_;
     }
     uint8_t *offset() {
-        JS_ASSERT(!absolute_ && raw_ != (uint8_t *) 0xdeadc0de);
+        JS_ASSERT(!absolute_ && isSet());
         return raw_;
     }
 };

@@ -121,7 +121,7 @@ class IonFrameIterator
         return type_ == IonFrame_Entry;
     }
     bool isFunctionFrame() const;
-    bool isParFunctionFrame() const;
+    bool isParallelFunctionFrame() const;
 
     bool isConstructing() const;
 
@@ -323,4 +323,3 @@ class InlineFrameIterator
 } // namespace js
 
 #endif // jsion_frames_iterator_h__
-

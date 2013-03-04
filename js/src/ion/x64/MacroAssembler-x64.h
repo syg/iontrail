@@ -912,7 +912,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
 
     // Save an exit frame to the thread data of the current thread, given a
     // register that holds a PerThreadData *.
-    void linkParExitFrame(const Register &pt) {
+    void linkParallelExitFrame(const Register &pt) {
         mov(StackPointer, Operand(pt, offsetof(PerThreadData, ionTop)));
     }
 
