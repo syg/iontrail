@@ -22,6 +22,7 @@ if sys.platform == "win32":
   os.linesep = '\n'
 
 import Expression
+from StupidLexer import StupidLexer
 
 __all__ = ['Preprocessor', 'preprocess']
 
@@ -36,6 +37,25 @@ class Preprocessor:
       self.line = cpp.context['LINE']
       self.key = MSG
       RuntimeError.__init__(self, (self.file, self.line, self.key, context))
+  class Macro:
+    def __init__(self, name, params, body):
+      self.name = name
+      self.params = params
+      self.body = str(body)
+    def badInvoke(self, cpp):
+      return Preprocessor.Error(cpp, 'BAD_MACRO_INVOKE', self.name)
+    def expand(self, args):
+      subst = dict(zip(self.params, args))
+      lexer = StupidLexer(self.body)
+      token = lexer.get()
+      expanded = ''
+      while token is not None:
+        if token in subst:
+          expanded += subst[token]
+        else:
+          expanded += token
+        token = lexer.get()
+      return expanded
   def __init__(self):
     self.context = Expression.Context()
     for k,v in {'FILE': '',
@@ -75,7 +95,7 @@ class Preprocessor:
     self.out = sys.stdout
     self.setMarker('#')
     self.LE = '\n'
-    self.varsubst = re.compile('@(?P<VAR>\w+)@', re.U)
+    self.varsubst = re.compile('@(?P<VAR>\w+)(\((?P<args>.+)\))?@', re.U)
 
   def warnUnused(self, file):
     if self.actionLevel == 0:
@@ -247,7 +267,7 @@ class Preprocessor:
 
   # Variables
   def do_define(self, args):
-    m = re.match('(?P<name>\w+)(?:\s(?P<value>.*))?', args, re.U)
+    m = re.match('(?P<name>\w+)(\((?P<params>[\w$,]+)\))?(?:\s(?P<value>.*))?', args, re.U)
     if not m:
       raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
     val = 1
@@ -257,6 +277,11 @@ class Preprocessor:
         val = int(val)
       except:
         pass
+    if m.group('params'):
+      params = m.group('params').split(',')
+      if len([p for p in params if StupidLexer.isident(p)]) != len(params):
+        raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
+      val = Preprocessor.Macro(m.group('name'), params, val)
     self.context[m.group('name')] = val
   def do_undef(self, args):
     m = re.match('(?P<name>\w+)$', args, re.U)
@@ -367,6 +392,9 @@ class Preprocessor:
   def do_literal(self, args):
     self.write(args + self.LE)
   def do_filter(self, args):
+    # Note that the order which filters are specified is the order in which
+    # they're executed. This has semantic meaning: we usually want to strip
+    # comments before expanding macros.
     filters = [f for f in args.split(' ') if hasattr(self, 'filter_' + f)]
     if len(filters) == 0:
       return
@@ -374,7 +402,6 @@ class Preprocessor:
     for f in filters:
       current[f] = getattr(self, 'filter_' + f)
     filterNames = current.keys()
-    filterNames.sort()
     self.filters = [(fn, current[fn]) for fn in filterNames]
     return
   def do_unfilter(self, args):
@@ -384,7 +411,6 @@ class Preprocessor:
       if f in current:
         del current[f]
     filterNames = current.keys()
-    filterNames.sort()
     self.filters = [(fn, current[fn]) for fn in filterNames]
     return
   # Filters
@@ -445,17 +471,72 @@ class Preprocessor:
     return re.sub(' +', ' ', aLine).strip(' ')
   # substition
   #   helper to be used by both substition and attemptSubstitution
+  #   This filter is designed to be used in mutual exclusion with macros
   def filter_substitution(self, aLine, fatal=True):
     def repl(matchobj):
       varname = matchobj.group('VAR')
       if varname in self.context:
-        return str(self.context[varname])
+        macro = self.context[varname]
+        # Trying to invoke a non-function-like macro or not providing
+        # arguments to a function-like macro are errors when fatal is True.
+        if matchobj.group('args'):
+          if isinstance(macro, Preprocessor.Macro):
+            args = matchobj.group('args').split(',')
+            if len(args) != len(macro.params):
+              raise macro.badInvoke(self)
+            # Note that unlike filter_macros, this doesn't expand until fixed
+            # point!
+            return macro.expand(args)
+          if fatal:
+            raise macro.badInvoke(self)
+          return matchobj.group(0)
+        elif isinstance(macro, Preprocessor.Macro):
+          if fatal:
+            raise Preprocessor.Error(cpp, 'BAD_MACRO_INVOKE', varname)
+          return matchobj.group(0)
+        return str(macro)
       if fatal:
         raise Preprocessor.Error(self, 'UNDEFINED_VAR', varname)
       return matchobj.group(0)
     return self.varsubst.sub(repl, aLine)
   def filter_attemptSubstitution(self, aLine):
     return self.filter_substitution(aLine, fatal=False)
+  # macros
+  #   Tokenized substitution with support for function-like macros
+  #   This filter is designed to be used in mutual exclusion with substitution
+  def filter_macros(self, aLine):
+    lexer = StupidLexer(aLine)
+    token = lexer.get()
+    line = ''
+    while token is not None:
+      if token in self.context:
+        macro = self.context[token]
+        if isinstance(macro, Preprocessor.Macro):
+          if lexer.get() != '(':
+            raise macro.badInvoke(self)
+          token2 = lexer.get()
+          args = []
+          arg = ''
+          while token2 != ')':
+            if lexer.done():
+              raise macro.badInvoke(self)
+            if token2 == ',':
+              args.append(arg)
+              arg = ''
+            else:
+              arg += token2
+            token2 = lexer.get()
+          args.append(arg)
+          if len(args) != len(macro.params):
+            raise macro.badInvoke(self)
+          # Expand until fixed point.
+          line += self.filter_macros(macro.expand(args))
+        else:
+          line += str(macro)
+      else:
+        line += token
+      token = lexer.get()
+    return line
   # File ops
   def do_include(self, args, filters=True):
     """
