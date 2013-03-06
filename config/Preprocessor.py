@@ -44,6 +44,7 @@ class Preprocessor:
       self.context[k] = v
     self.actionLevel = 0
     self.disableLevel = 0
+    self.openSlashStar = False
     # ifStates can be
     #  0: hadTrue
     #  1: wantsTrue
@@ -403,6 +404,41 @@ class Preprocessor:
     if rest:
       aLine += '\n'
     return aLine
+  # slashstar
+  #   Strips everything between /* */
+  def filter_slashstar(self, aLine):
+    lexer = StupidLexer(aLine)
+    token = lexer.get()
+    # Close open /*-comments
+    if self.openSlashStar:
+      while not lexer.done() and not (token == '*' and lexer.peek() == '/'):
+        token = lexer.get()
+      if lexer.done():
+        return '\n'
+      self.openSlashStar = False
+      # Eat '/'
+      lexer.get()
+      token = lexer.get()
+    line = ''
+    while token is not None:
+      # Note that this is not nested, which matches JS behavior.
+      if token == '/' and lexer.peek() == '*':
+        # Eat '*'
+        lexer.get()
+        while not lexer.done() and not (lexer.get() == '*' and lexer.peek() == '/'):
+          pass
+        if lexer.done():
+          self.openSlashStar = True
+          if not line:
+            return '\n'
+          return line
+        # Eat '/'
+        lexer.get()
+        continue
+      line += token
+      token = lexer.get()
+    return line
+
   # spaces
   #   Collapses sequences of spaces into a single space
   def filter_spaces(self, aLine):
