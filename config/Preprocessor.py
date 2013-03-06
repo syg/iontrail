@@ -75,7 +75,7 @@ class Preprocessor:
     self.setMarker('#')
     self.LE = '\n'
     self.varsubst = re.compile('@(?P<VAR>\w+)@', re.U)
-  
+
   def warnUnused(self, file):
     if self.actionLevel == 0:
       sys.stderr.write('{0}: WARNING: no preprocessor directives found\n'.format(file))
@@ -88,7 +88,7 @@ class Preprocessor:
     Set the line endings to be used for output.
     """
     self.LE = {'cr': '\x0D', 'lf': '\x0A', 'crlf': '\x0D\x0A'}[aLE]
-  
+
   def setMarker(self, aMarker):
     """
     Set the marker to be used for processing directives.
@@ -98,7 +98,7 @@ class Preprocessor:
     self.marker = aMarker
     if aMarker:
       self.instruction = re.compile('{0}(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
-                                    .format(aMarker), 
+                                    .format(aMarker),
                                     re.U)
       self.comment = re.compile(aMarker, re.U)
     else:
@@ -106,7 +106,7 @@ class Preprocessor:
         def match(self, *args):
           return False
       self.instruction = self.comment = NoMatch()
-  
+
   def clone(self):
     """
     Create a clone of the current processor, including line ending
@@ -118,12 +118,12 @@ class Preprocessor:
     rv.LE = self.LE
     rv.out = self.out
     return rv
-  
+
   def applyFilters(self, aLine):
     for f in self.filters:
       aLine = f[1](aLine)
     return aLine
-  
+
   def write(self, aLine):
     """
     Internal method for handling output.
@@ -143,7 +143,7 @@ class Preprocessor:
     # with universal line ending support, at least for files.
     filteredLine = re.sub('\n', self.LE, filteredLine)
     self.out.write(filteredLine)
-  
+
   def handleCommandLine(self, args, defaultToStdin = False):
     """
     Parse a commandline into this parser.
@@ -243,7 +243,7 @@ class Preprocessor:
 
   # Instruction handlers
   # These are named do_'instruction name' and take one argument
-  
+
   # Variables
   def do_define(self, args):
     m = re.match('(?P<name>\w+)(?:\s(?P<value>.*))?', args, re.U)
@@ -457,9 +457,16 @@ class Preprocessor:
       self.context['DIRECTORY'] = os.path.dirname(abspath)
     self.context['LINE'] = 0
     self.writtenLines = 0
+    line = ''
     for l in args:
+      # Handle line continuations with \
+      if l.rstrip().endswith('\\'):
+        line += l[:l.rindex('\\')]
+        continue
+      line += l
       self.context['LINE'] += 1
-      self.handleLine(l)
+      self.handleLine(line)
+      line = ''
     args.close()
     self.context['FILE'] = oldFile
     self.checkLineNumbers = oldCheckLineNumbers
