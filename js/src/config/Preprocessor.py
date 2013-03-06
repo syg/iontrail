@@ -38,10 +38,11 @@ class Preprocessor:
       self.key = MSG
       RuntimeError.__init__(self, (self.file, self.line, self.key, context))
   class Macro:
-    def __init__(self, name, params, body):
+    def __init__(self, name, params, body, meta = False):
       self.name = name
       self.params = params
       self.body = str(body)
+      self.meta = meta
     def badInvoke(self, cpp):
       return Preprocessor.Error(cpp, 'BAD_MACRO_INVOKE', self.name)
     def expand(self, args):
@@ -76,6 +77,7 @@ class Preprocessor:
     self.cmds = {}
     for cmd, level in {'define': 0,
                        'undef': 0,
+                       'defmeta': 0,
                        'if': sys.maxint,
                        'ifdef': sys.maxint,
                        'ifndef': sys.maxint,
@@ -118,7 +120,7 @@ class Preprocessor:
     """
     self.marker = aMarker
     if aMarker:
-      self.instruction = re.compile('{0}(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
+      self.instruction = re.compile('{0}\s*(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
                                     .format(aMarker),
                                     re.U)
       self.comment = re.compile(aMarker, re.U)
@@ -269,7 +271,7 @@ class Preprocessor:
       if cmd not in self.cmds:
         raise Preprocessor.Error(self, 'INVALID_CMD', aLine)
       level, cmd = self.cmds[cmd]
-      if (level >= self.disableLevel):
+      if (level >= self.disableLevel) and not self.openSlashStar:
         cmd(args)
       if cmd != 'literal':
         self.actionLevel = 2
@@ -282,7 +284,7 @@ class Preprocessor:
 
   # Variables
   def do_define(self, args):
-    m = re.match('(?P<name>\w+)(\((?P<params>[^)]+)\))?(?:\s(?P<value>.*))?', args, re.U)
+    m = re.match('(?P<name>\w+)(\((?P<params>[^)]+)\))?(?:\s+(?P<value>.*))?', args, re.U)
     if not m:
       raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
     val = 1
@@ -304,6 +306,22 @@ class Preprocessor:
       raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
     if args in self.context:
       del self.context[args]
+  def do_defmeta(self, args):
+    # A defmeta directive is a macro whose output line is processed again
+    # under filter_macros. Such macros must always be function-like. This
+    # allows for not-very-expressive macro-generating macros that is useful
+    # for js.msg in self-hosted JS code.
+    #
+    # These are _not_ processed for a directive again under
+    # filter_substitution.
+    m = re.match('(?P<name>\w+)(\((?P<params>[^)]+)\))(?:\s+(?P<value>.*))', args, re.U)
+    if not m:
+      raise Preprocessor.Error(self, 'SYNTAX_DEFMETA', args)
+    params = [p.strip() for p in m.group('params').split(',')]
+    if len([p for p in params if StupidLexer.isident(p)]) != len(params):
+      raise Preprocessor.Error(self, 'SYNTAX_DEFMETA', args)
+    val = Preprocessor.Macro(m.group('name'), params, m.group('value'), True)
+    self.context[m.group('name')] = val
   # Logic
   def ensure_not_else(self):
     if len(self.ifStates) == 0 or self.ifStates[-1] == 2:
@@ -544,7 +562,11 @@ class Preprocessor:
           if len(args) != len(macro.params):
             raise macro.badInvoke(self)
           # Expand until fixed point.
-          line += self.filter_macros(macro.expand(args))
+          expanded = macro.expand(args)
+          if macro.meta:
+            self.handleLine(expanded)
+          else:
+            line += expanded
         else:
           line += str(macro)
       else:
@@ -588,6 +610,9 @@ class Preprocessor:
       self.context['DIRECTORY'] = os.path.dirname(abspath)
     self.context['LINE'] = 0
     self.writtenLines = 0
+    if self.checkLineNumbers:
+      self.out.write('//@line 1 "{file}"{le}'.format(file=self.context['FILE'],
+                                                     le=self.LE))
     line = ''
     for l in args:
       # Handle line continuations with \
