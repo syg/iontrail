@@ -182,6 +182,10 @@ class Preprocessor:
     p = self.getCommandLineParser()
     (options, args) = p.parse_args(args=args)
     includes = options.I
+    imacros = options.M
+    if imacros:
+      for f in imacros:
+        self.do_include(f, False, True)
     if options.output:
       dir = os.path.dirname(options.output)
       if dir and not os.path.exists(dir):
@@ -227,6 +231,8 @@ class Preprocessor:
     p = OptionParser()
     p.add_option('-I', action='append', type="string", default = [],
                  metavar="FILENAME", help='Include file')
+    p.add_option('-M', action='append', type="string", default=[],
+                 metavar="FILENAME", help='Include file for macros only (throw away output)')
     p.add_option('-E', action='callback', callback=handleE,
                  help='Import the environment into the defined variables')
     p.add_option('-D', action='callback', callback=handleD, type="string",
@@ -246,7 +252,7 @@ class Preprocessor:
                  help='Use the specified marker instead of #')
     return p
 
-  def handleLine(self, aLine):
+  def handleLine(self, aLine, silent = False):
     """
     Handle a single line of input (internal).
     """
@@ -267,7 +273,7 @@ class Preprocessor:
         cmd(args)
       if cmd != 'literal':
         self.actionLevel = 2
-    elif self.disableLevel == 0 and not self.comment.match(aLine):
+    elif not silent and self.disableLevel == 0 and not self.comment.match(aLine):
       self.write(aLine)
     pass
 
@@ -546,7 +552,7 @@ class Preprocessor:
       token = lexer.get()
     return line
   # File ops
-  def do_include(self, args, filters=True):
+  def do_include(self, args, filters = True, silent = False):
     """
     Preprocess a given file.
     args can either be a file name, or a file-like object.
@@ -590,7 +596,7 @@ class Preprocessor:
         continue
       line += l
       self.context['LINE'] += 1
-      self.handleLine(line)
+      self.handleLine(line, silent)
       line = ''
     args.close()
     self.context['FILE'] = oldFile
