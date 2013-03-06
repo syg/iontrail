@@ -437,8 +437,10 @@ class Preprocessor:
     token = lexer.get()
     # Close open /*-comments
     if self.openSlashStar:
+      lexer.match_re = False
       while not lexer.done() and not (token == '*' and lexer.peek() == '/'):
         token = lexer.get()
+      lexer.match_re = True
       if lexer.done():
         return '\n'
       self.openSlashStar = False

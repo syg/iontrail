@@ -24,6 +24,7 @@ class StupidLexer:
   def __init__(self, line):
     self.line = line
     self.cursor = 0
+    self.match_re = True
 
   def getc(self):
     c = self.line[self.cursor]
@@ -69,7 +70,7 @@ class StupidLexer:
 
     # Process regexp literals with backtracking, probably accurate enough for
     # JS.
-    if c == '/':
+    if self.match_re and c == '/':
       save = self.cursor
       found = False
       while not self.done():
