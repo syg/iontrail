@@ -564,7 +564,6 @@ WebGLContext::SetDimensions(int32_t width, int32_t height)
     // we'll end up displaying random memory
     gl->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, 0);
 
-    gl->fViewport(0, 0, mWidth, mHeight);
     gl->fClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     gl->fClearDepth(1.0f);
     gl->fClearStencil(0);
@@ -1032,7 +1031,15 @@ WebGLContext::GetExtension(JSContext *cx, const nsAString& aName, ErrorResult& r
     {
         ext = WEBGL_lose_context;
     }
+    else if (CompareWebGLExtensionName(name, "WEBGL_lose_context"))
+    {
+        ext = WEBGL_lose_context;
+    }
     else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_compressed_texture_s3tc"))
+    {
+        ext = WEBGL_compressed_texture_s3tc;
+    }
+    else if (CompareWebGLExtensionName(name, "WEBGL_compressed_texture_s3tc"))
     {
         ext = WEBGL_compressed_texture_s3tc;
     }
@@ -1049,6 +1056,10 @@ WebGLContext::GetExtension(JSContext *cx, const nsAString& aName, ErrorResult& r
         ext = WEBGL_debug_renderer_info;
     }
     else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_depth_texture"))
+    {
+        ext = WEBGL_depth_texture;
+    }
+    else if (CompareWebGLExtensionName(name, "WEBGL_depth_texture"))
     {
         ext = WEBGL_depth_texture;
     }
@@ -1438,8 +1449,12 @@ WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString>
         arr.AppendElement(NS_LITERAL_STRING("EXT_texture_filter_anisotropic"));
     if (IsExtensionSupported(cx, WEBGL_lose_context))
         arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_lose_context"));
+    if (IsExtensionSupported(cx, WEBGL_lose_context))
+        arr.AppendElement(NS_LITERAL_STRING("WEBGL_lose_context"));
     if (IsExtensionSupported(cx, WEBGL_compressed_texture_s3tc))
         arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_compressed_texture_s3tc"));
+    if (IsExtensionSupported(cx, WEBGL_compressed_texture_s3tc))
+        arr.AppendElement(NS_LITERAL_STRING("WEBGL_compressed_texture_s3tc"));
     if (IsExtensionSupported(cx, WEBGL_compressed_texture_atc))
         arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_compressed_texture_atc"));
     if (IsExtensionSupported(cx, WEBGL_compressed_texture_pvrtc))
@@ -1448,6 +1463,8 @@ WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString>
         arr.AppendElement(NS_LITERAL_STRING("WEBGL_debug_renderer_info"));
     if (IsExtensionSupported(cx, WEBGL_depth_texture))
         arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_depth_texture"));
+    if (IsExtensionSupported(cx, WEBGL_depth_texture))
+        arr.AppendElement(NS_LITERAL_STRING("WEBGL_depth_texture"));
 }
 
 //

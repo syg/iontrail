@@ -21,43 +21,6 @@ include $(DEPTH)/config/autoconf.mk
 
 default::
 
-TIERS += base
-
-#
-# tier "base" - basic setup
-#
-tier_base_dirs = \
-  config \
-  build \
-  probes \
-  mfbt \
-  python \
-  $(NULL)
-
-ifndef LIBXUL_SDK
-ifeq (android,$(MOZ_WIDGET_TOOLKIT))
-tier_base_dirs += \
-  other-licenses/android \
-  $(NULL)
-endif
-ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
-tier_base_dirs += \
-  other-licenses/android \
-  $(NULL)
-endif
-
-ifdef MOZ_MEMORY
-tier_base_dirs += memory
-endif
-ifndef MOZ_NATIVE_ZLIB
-tier_base_dirs += modules/zlib
-endif
-tier_base_dirs += \
-  mozglue \
-  memory/mozalloc \
-  $(NULL)
-endif
-
 ifdef COMPILE_ENVIRONMENT
 include $(topsrcdir)/$(MOZ_BUILD_APP)/build.mk
 endif
@@ -210,3 +173,10 @@ scheck::
 endif
 
 js/src/Makefile: subsrcdir := js/src
+
+ifdef ENABLE_TESTS
+# Incorporate static tier directories into tests. This should be incorporated
+# into moz.build files someday.
+check::
+	$(call SUBMAKE,$@,js/src)
+endif

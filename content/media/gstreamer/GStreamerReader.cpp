@@ -10,7 +10,7 @@
 #include "MediaResource.h"
 #include "GStreamerReader.h"
 #include "VideoUtils.h"
-#include "nsTimeRanges.h"
+#include "mozilla/dom/TimeRanges.h"
 #include "mozilla/Preferences.h"
 
 namespace mozilla {
@@ -216,7 +216,7 @@ nsresult GStreamerReader::ReadMetadata(VideoInfo* aInfo,
   g_object_get(mPlayBin, "flags", &default_flags, NULL);
 
   GstMessage *message = NULL;
-  for (int i=0; i < G_N_ELEMENTS(flags); i++) {
+  for (unsigned int i = 0; i < G_N_ELEMENTS(flags); i++) {
     current_flags = default_flags & flags[i];
     g_object_set(G_OBJECT(mPlayBin), "flags", current_flags, NULL);
 
@@ -512,8 +512,8 @@ nsresult GStreamerReader::Seek(int64_t aTarget,
   return DecodeToTarget(aTarget);
 }
 
-nsresult GStreamerReader::GetBuffered(nsTimeRanges* aBuffered,
-                                        int64_t aStartTime)
+nsresult GStreamerReader::GetBuffered(TimeRanges* aBuffered,
+                                      int64_t aStartTime)
 {
   if (!mInfo.mHasVideo && !mInfo.mHasAudio) {
     return NS_OK;
@@ -534,7 +534,6 @@ nsresult GStreamerReader::GetBuffered(nsTimeRanges* aBuffered,
   if (resource->IsDataCachedToEndOfResource(0)) {
     /* fast path for local or completely cached files */
     gint64 duration = 0;
-    GstFormat format = GST_FORMAT_TIME;
 
     duration = QueryDuration();
     double end = (double) duration / GST_MSECOND;
@@ -556,7 +555,7 @@ nsresult GStreamerReader::GetBuffered(nsTimeRanges* aBuffered,
       endOffset, &format, &endTime) || format != GST_FORMAT_TIME)
       continue;
 
-    double start = start = (double) GST_TIME_AS_USECONDS (startTime) / GST_MSECOND;
+    double start = (double) GST_TIME_AS_USECONDS (startTime) / GST_MSECOND;
     double end = (double) GST_TIME_AS_USECONDS (endTime) / GST_MSECOND;
     LOG(PR_LOG_DEBUG, ("adding range [%f, %f] for [%li %li] size %li",
           start, end, startOffset, endOffset, resourceLength));

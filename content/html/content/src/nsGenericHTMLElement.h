@@ -517,14 +517,6 @@ public:
   static void MapCommonAttributesInto(const nsMappedAttributes* aAttributes, 
                                       nsRuleData* aRuleData);
 
-  /**
-   * This method is used by embed elements because they should ignore the hidden
-   * attribute for the moment.
-   * TODO: This should be removed when bug 614825 will be fixed.
-   */
-  static void MapCommonAttributesExceptHiddenInto(const nsMappedAttributes* aAttributes,
-                                                  nsRuleData* aRuleData);
-
   static const MappedAttributeEntry sCommonAttributeMap[];
   static const MappedAttributeEntry sImageMarginSizeAttributeMap[];
   static const MappedAttributeEntry sImageBorderAttributeMap[];
@@ -795,6 +787,12 @@ protected:
   void GetHTMLURIAttr(nsIAtom* aName, nsAString& aResult) const
   {
     GetURIAttr(aName, nullptr, aResult);
+  }
+  uint32_t GetHTMLUnsignedIntAttr(nsIAtom* aName, uint32_t aDefault)
+  {
+    uint32_t result;
+    GetUnsignedIntAttr(aName, aDefault, &result);
+    return result;
   }
 
   void SetHTMLAttr(nsIAtom* aName, const nsAString& aValue)

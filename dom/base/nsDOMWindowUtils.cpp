@@ -595,6 +595,26 @@ ToWidgetPoint(float aX, float aY, const nsPoint& aOffset,
                     NSToIntRound((aY*appPerCSS + aOffset.y)/appPerDev));
 }
 
+static inline int16_t
+GetButtonsFlagForButton(int32_t aButton)
+{
+  switch (aButton) {
+    case nsMouseEvent::eLeftButton:
+      return nsMouseEvent::eLeftButtonFlag;
+    case nsMouseEvent::eMiddleButton:
+      return nsMouseEvent::eMiddleButtonFlag;
+    case nsMouseEvent::eRightButton:
+      return nsMouseEvent::eRightButtonFlag;
+    case 4:
+      return nsMouseEvent::e4thButtonFlag;
+    case 5:
+      return nsMouseEvent::e5thButtonFlag;
+    default:
+      NS_ERROR("Button not known.");
+      return 0;
+  }
+}
+
 NS_IMETHODIMP
 nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
                                        float aX,
@@ -647,6 +667,7 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
                        nsMouseEvent::eContextMenuKey : nsMouseEvent::eNormal);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.button = aButton;
+  event.buttons = GetButtonsFlagForButton(aButton);
   event.widget = widget;
   event.pressure = aPressure;
   event.inputSource = aInputSourceArg;
@@ -3011,8 +3032,9 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
   }
 
   // Get the target frame at the client coordinates passed to us
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  nsIntPoint pt(aX, aY);
+  nsPoint offset;
+  nsCOMPtr<nsIWidget> widget = GetWidget(&offset);
+  nsIntPoint pt = ToWidgetPoint(aX, aY, offset, GetPresContext());
   nsPoint ptInRoot =
     nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, pt, rootFrame);
   nsIFrame* targetFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, ptInRoot);

@@ -17,12 +17,10 @@
 
 interface Attr;
 interface Comment;
-interface NodeIterator;
 interface Range;
 interface StyleSheetList;
 interface Touch;
 interface TouchList;
-interface TreeWalker;
 interface WindowProxy;
 interface nsISupports;
 
@@ -228,6 +226,12 @@ partial interface Document {
 partial interface Document {
     readonly attribute Element? mozPointerLockElement;
     void mozExitPointerLock ();
+};
+
+//http://dvcs.w3.org/hg/webcomponents/raw-file/tip/spec/custom/index.html#dfn-document-register
+partial interface Document {
+    [Throws, Pref="dom.webcomponents.enabled"]
+    object register(DOMString name, optional ElementRegistrationOptions options);
 };
 
 // http://dvcs.w3.org/hg/webperf/raw-file/tip/specs/PageVisibility/Overview.html#sec-document-interface

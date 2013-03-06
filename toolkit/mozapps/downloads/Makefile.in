@@ -21,12 +21,6 @@ EXTRA_JS_MODULES = \
   DownloadUtils.jsm \
   $(NULL)
 
-ifeq ($(OS_ARCH),WINNT)
-EXTRA_JS_MODULES += \
-  DownloadTaskbarProgress.jsm \
-  $(NULL)
-endif
-
-TEST_DIRS += tests
+EXTRA_PP_JS_MODULES = DownloadTaskbarProgress.jsm
 
 include $(topsrcdir)/config/rules.mk

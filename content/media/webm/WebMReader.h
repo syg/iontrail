@@ -136,7 +136,7 @@ public:
   virtual nsresult ReadMetadata(VideoInfo* aInfo,
                                 MetadataTags** aTags);
   virtual nsresult Seek(int64_t aTime, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime);
-  virtual nsresult GetBuffered(nsTimeRanges* aBuffered, int64_t aStartTime);
+  virtual nsresult GetBuffered(TimeRanges* aBuffered, int64_t aStartTime);
   virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset);
 
 #ifdef MOZ_DASH
@@ -333,6 +333,10 @@ private:
   // if the reader reached the switch access point. Accessed on the decode
   // thread only.
   int64_t mCurrentOffset;
+
+  // Index of next cluster to be read. Used to determine the starting offset of
+  // the next cluster. Accessed on the decode thread only.
+  uint32_t mNextCluster;
 
   // Set in |NextPacket| if we read a packet from the next reader. If true in
   // |PushVideoPacket|, we will push the packet onto the next reader's

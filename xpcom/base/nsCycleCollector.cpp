@@ -123,6 +123,7 @@
 #include "nsIMemoryReporter.h"
 #include "nsIFile.h"
 #include "nsDirectoryServiceDefs.h"
+#include "nsMemoryInfoDumper.h"
 #include "xpcpublic.h"
 #include "nsXPCOMPrivate.h"
 #include "sampler.h"
@@ -131,9 +132,6 @@
 #ifdef WIN32
 #include <io.h>
 #include <process.h>
-#endif
-#ifdef ANDROID
-#include <sys/stat.h>
 #endif
 
 #ifdef XP_WIN
@@ -1407,36 +1405,16 @@ private:
             mFilenameIdentifier.IsEmpty() ? "" : ".",
             NS_ConvertUTF16toUTF8(mFilenameIdentifier).get());
 
-        // Get the log directory either from $MOZ_CC_LOG_DIRECTORY or from our
-        // platform's temp directory.
+        // Get the log directory either from $MOZ_CC_LOG_DIRECTORY or from
+        // the fallback directories in OpenTempFile.
         nsCOMPtr<nsIFile> logFile;
         if (char* env = PR_GetEnv("MOZ_CC_LOG_DIRECTORY")) {
             NS_NewNativeLocalFile(nsCString(env), /* followLinks = */ true,
                                   getter_AddRefs(logFile));
-        } else {
-            // Ask NSPR to point us to the temp directory.
-            NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(logFile));
         }
-        NS_ENSURE_TRUE(logFile, nullptr);
-
-        nsresult rv = logFile->AppendNative(filename);
+        nsresult rv = nsMemoryInfoDumper::OpenTempFile(filename,
+                                                       getter_AddRefs(logFile));
         NS_ENSURE_SUCCESS(rv, nullptr);
-
-        rv = logFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0644);
-        NS_ENSURE_SUCCESS(rv, nullptr);
-#ifdef ANDROID
-        {
-            // On android the default system umask is 0077 which makes these files
-            // unreadable to the shell user. In order to pull the dumps off a non-rooted
-            // device we need to chmod them to something world-readable.
-            // XXX why not logFile->SetPermissions(0644);
-            nsAutoCString path;
-            rv = logFile->GetNativePath(path);
-            if (NS_SUCCEEDED(rv)) {
-                chmod(path.get(), 0644);
-            }
-        }
-#endif
 
         return logFile.forget();
     }
@@ -2565,11 +2543,6 @@ nsCycleCollector::BeginCollection(bool aMergeCompartments,
                                             pi->mInternalRefs);
                 }
             }
-        }
-
-        if (mJSRuntime) {
-            mJSRuntime->FinishTraverse();
-            timeLog.Checkpoint("mJSRuntime->FinishTraverse()");
         }
     } else {
         mScanInProgress = false;

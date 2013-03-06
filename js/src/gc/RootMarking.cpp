@@ -47,7 +47,10 @@ static inline void
 MarkExactStackRoot(JSTracer *trc, Rooted<void*> *rooter, ThingRootKind kind)
 {
     void **addr = (void **)rooter->address();
-    if (!*addr)
+    if (IsNullTaggedPointer(*addr))
+        return;
+
+    if (kind == THING_ROOT_OBJECT && *addr == Proxy::LazyProto)
         return;
 
     switch (kind) {
@@ -82,7 +85,7 @@ MarkExactStackRoots(JSTracer *trc)
         for (ContextIter cx(trc->runtime); !cx.done(); cx.next())
             MarkExactStackRootList(trc, cx->thingGCRooters[i], ThingRootKind(i));
 
-        MarkExactStackRootList(trc, trc->runtime->mainThread->thingGCRooters[i], ThingRootKind(i));
+        MarkExactStackRootList(trc, trc->runtime->mainThread.thingGCRooters[i], ThingRootKind(i));
     }
 }
 #endif /* JSGC_USE_EXACT_ROOTING */

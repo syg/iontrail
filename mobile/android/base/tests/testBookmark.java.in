@@ -76,18 +76,12 @@ public class testBookmark extends PixelTest  {
         blockForGeckoReady();
 
         // Open the bookmark list and check the root folder view
-        ListView bookmarksList = getBookmarksList();
+        ListView bookmarksList = getBookmarksList(ABOUT_HOME_URL, 4);
 
-        // Wait for bookmark to appear in list
-        mSolo.waitForText(ABOUT_HOME_URL);
-
-        mAsserter.ok(bookmarksList != null, "checking that bookmarks list exists", "bookmarks list exists");
+        mAsserter.ok(bookmarksList != null, "checking that bookmarks list exists", "bookmarks list exists and has 4 children (the default bookmarks)");
 
         // No folders should be visible if no desktop bookmarks exist
         int count = bookmarksList.getAdapter().getCount();
-        mAsserter.is(count, 4,
-            "bookmarks list has 4 children (the default bookmarks)");
-
         for (int i = 0; i < count; i++) {
             Cursor c = (Cursor)bookmarksList.getItemAtPosition(i);
             String url = c.getString(c.getColumnIndexOrThrow("url"));
@@ -96,7 +90,7 @@ public class testBookmark extends PixelTest  {
         }
 
         insertOneBookmark();
-        mSolo.waitForText(BOOKMARK_TITLE);
+        waitForText(BOOKMARK_TITLE);
 
         mAsserter.is(bookmarksList.getAdapter().getCount(), 5,
             "bookmarks list has 5 children (the default bookmarks and the new one)");
@@ -160,7 +154,7 @@ public class testBookmark extends PixelTest  {
     private void toggleBookmark() {
         getInstrumentation().waitForIdleSync();
         mActions.sendSpecialKey(Actions.SpecialKey.MENU);
-        mSolo.waitForText("Bookmark");
+        waitForText("Bookmark");
         mSolo.clickOnText("Bookmark");
     }
 

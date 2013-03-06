@@ -282,8 +282,13 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             @Override
             public void onClick(View view) {
                 Tab tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null)
-                    tab.readerMode();
+                if (tab != null) {
+                    if (ReaderModeUtils.isAboutReader(tab.getURL())) {
+                        tab.doBack();
+                    } else {
+                        tab.readerMode();
+                    }
+                }
             }
         });
 
@@ -333,7 +338,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                     mActivity.openOptionsMenu();
                 }
             });
+        }
 
+        if (!mActivity.isTablet()) {
             // Set a touch delegate to Tabs button, so the touch events on its tail
             // are passed to the menu button.
             mLayout.post(new Runnable() {
@@ -342,8 +349,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                     int height = mTabs.getHeight();
                     int width = mTabs.getWidth();
                     int tail = (width - height) / 2;
-                    Rect bounds = new Rect(width - tail, 0, width, height);
-                    mTabs.setTouchDelegate(new TailTouchDelegate(bounds, mMenu));
+
+                    Rect leftBounds = new Rect(0, 0, tail, height);
+                    Rect rightBounds = new Rect(width - tail, 0, width, height);
+
+                    TailTouchDelegate delegate = new TailTouchDelegate(leftBounds, mAddressBarView);
+
+                    if (mHasSoftMenuButton)
+                        delegate.add(rightBounds, mMenu);
+
+                    mTabs.setTouchDelegate(delegate);
                 }
             });
         }
@@ -412,6 +427,8 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                     updateBackButton(tab.canDoBack());
                     updateForwardButton(tab.canDoForward());
                     setProgressVisibility(false);
+                    // Reset the title in case we haven't navigated to a new page yet.
+                    setTitle(tab.getDisplayTitle());
                 }
                 break;
             case RESTORED:
@@ -536,7 +553,13 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         return translation;
     }
 
-    public void fromAwesomeBarSearch() {
+    public void fromAwesomeBarSearch(String url) {
+        // Update the title with the url that was just entered. Don't update the title if
+        // the AwesomeBar activity was cancelled, or if the user entered an empty string.
+        if (url != null && url.length() > 0) {
+            setTitle(url);
+        }
+
         if (mActivity.isTablet() || Build.VERSION.SDK_INT < 11) {
             return;
         }
@@ -578,6 +601,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         proxy.setAlpha(1);
 
         final PropertyAnimator contentAnimator = new PropertyAnimator(250);
+        contentAnimator.setUseHardwareLayer(false);
 
         // Shrink the awesome entry back to its original size
         contentAnimator.attach(mAwesomeBarRightEdge,
@@ -659,6 +683,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         }
 
         final PropertyAnimator contentAnimator = new PropertyAnimator(250);
+        contentAnimator.setUseHardwareLayer(false);
 
         int translation = prepareAwesomeBarAnimation();
 
@@ -920,12 +945,21 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
         // Handle the viewing mode page actions
         setSiteSecurityVisibility(mShowSiteSecurity && !isLoading);
-        mReader.setVisibility(mShowReader && !isLoading ? View.VISIBLE : View.GONE);
+
+        // Handle the readerMode image and visibility: We show the reader mode button if 1) you can
+        // enter reader mode for current page or 2) if you're already in reader mode and can exit back,
+        // in which case we show the reader mode "close" (reader_active) icon.
+        boolean exitableReaderMode = false;
+        Tab tab = Tabs.getInstance().getSelectedTab();
+        if (tab != null)
+            exitableReaderMode = ReaderModeUtils.isAboutReader(tab.getURL()) && tab.canDoBack();
+        mReader.setImageResource(exitableReaderMode ? R.drawable.reader_active : R.drawable.reader);
+        mReader.setVisibility(!isLoading && (mShowReader || exitableReaderMode) ? View.VISIBLE : View.GONE);
 
         // We want title to fill the whole space available for it when there are icons
         // being shown on the right side of the toolbar as the icons already have some
         // padding in them. This is just to avoid wasting space when icons are shown.
-        mTitle.setPadding(0, 0, (!mShowReader && !isLoading ? mTitlePadding : 0), 0);
+        mTitle.setPadding(0, 0, (!isLoading && !(mShowReader || exitableReaderMode) ? mTitlePadding : 0), 0);
 
         updateFocusOrder();
     }
@@ -995,17 +1029,18 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         }
     }
 
-    public void setTitle(CharSequence title) {
+    private void setTitle(CharSequence title) {
         Tab tab = Tabs.getInstance().getSelectedTab();
 
         // Keep the title unchanged if the tab is entering reader mode
         if (tab != null && tab.isEnteringReaderMode())
             return;
 
-        // Setting a null title will ensure we just see
-        // the "Enter Search or Address" placeholder text
-        if (tab != null && ("about:home".equals(tab.getURL()) ||
-                            "about:privatebrowsing".equals(tab.getURL())))
+        // Setting a null title will ensure we just see the "Enter Search or Address"
+        // placeholder text. Because "about:home" and "about:privatebrowsing" don't
+        // have titles, their display titles will always match their URLs.
+        if (tab != null && ("about:home".equals(title) ||
+                            "about:privatebrowsing".equals(title)))
             title = null;
 
         mTitle.setText(title);
@@ -1248,25 +1283,12 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         return true;
     }
 
-    public static class RightEdge extends GeckoFrameLayout
-                                  implements LightweightTheme.OnChangeListener { 
+    public static class RightEdge extends GeckoFrameLayout {
         private BrowserApp mActivity;
 
         public RightEdge(Context context, AttributeSet attrs) {
             super(context, attrs);
             mActivity = (BrowserApp) context;
-        }
-
-        @Override
-        public void onAttachedToWindow() {
-            super.onAttachedToWindow();
-            mActivity.getLightweightTheme().addListener(this);
-        }
-
-        @Override
-        public void onDetachedFromWindow() {
-            super.onDetachedFromWindow();
-            mActivity.getLightweightTheme().removeListener(this);
         }
 
         @Override
@@ -1297,12 +1319,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                                        };
             setBackgroundResource(R.drawable.address_bar_bg);
             setPadding(padding[0], padding[1], padding[2], padding[3]);
-        }
-
-        @Override
-        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-            super.onLayout(changed, left, top, right, bottom);
-            onLightweightThemeChanged();
         }
     }
 }

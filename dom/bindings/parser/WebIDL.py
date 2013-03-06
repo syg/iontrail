@@ -670,7 +670,10 @@ class IDLInterface(IDLObjectWithScope):
                 self.members.append(unforgeableAttr)
 
         # Ensure that there's at most one of each {named,indexed}
-        # {getter,setter,creator,deleter} and at most one stringifier.
+        # {getter,setter,creator,deleter}, at most one stringifier,
+        # and at most one legacycaller.  Note that this last is not
+        # quite per spec, but in practice no one overloads
+        # legacycallers.
         specialMembersSeen = {}
         for member in self.members:
             if not member.isMethod():
@@ -686,10 +689,12 @@ class IDLInterface(IDLObjectWithScope):
                 memberType = "deleters"
             elif member.isStringifier():
                 memberType = "stringifiers"
+            elif member.isLegacycaller():
+                memberType = "legacycallers"
             else:
                 continue
 
-            if memberType != "stringifiers":
+            if memberType != "stringifiers" and memberType != "legacycallers":
                 if member.isNamed():
                     memberType = "named " + memberType
                 else:
@@ -1023,7 +1028,65 @@ class IDLDictionary(IDLObjectWithScope):
                                       [member.location, inheritedMember.location])
 
     def validate(self):
-        pass
+        def typeContainsDictionary(memberType, dictionary):
+            """
+            Returns a tuple whose:
+
+                - First element is a Boolean value indicating whether
+                  memberType contains dictionary.
+
+                - Second element is:
+                    A list of locations that leads from the type that was passed in
+                    the memberType argument, to the dictionary being validated,
+                    if the boolean value in the first element is True.
+
+                    None, if the boolean value in the first element is False.
+            """
+
+            if memberType.nullable() or \
+               memberType.isArray() or \
+               memberType.isSequence():
+                return typeContainsDictionary(memberType.inner, dictionary)
+
+            if memberType.isDictionary():
+                if memberType.inner == dictionary:
+                    return (True, [memberType.location])
+
+                (contains, locations) = dictionaryContainsDictionary(memberType.inner, \
+                                                                     dictionary)
+                if contains:
+                    return (True, [memberType.location] + locations)
+
+            if memberType.isUnion():
+                for member in memberType.flatMemberTypes:
+                    (contains, locations) = typeContainsDictionary(member, dictionary)
+                    if contains:
+                        return (True, locations)
+
+            return (False, None)
+
+        def dictionaryContainsDictionary(dictMember, dictionary):
+            for member in dictMember.members:
+                (contains, locations) = typeContainsDictionary(member.type, dictionary)
+                if contains:
+                    return (True, [member.location] + locations)
+
+            if dictMember.parent:
+                if dictMember.parent == dictionary:
+                    return (True, [dictMember.location])
+                else:
+                    (contains, locations) = dictionaryContainsDictionary(dictMember.parent, dictionary)
+                    if contains:
+                        return (True, [dictMember.location] + locations)
+
+            return (False, None)
+
+        for member in self.members:
+            (contains, locations) = typeContainsDictionary(member.type, self)
+            if contains:
+                raise WebIDLError("Dictionary %s has member with itself as type." %
+                                  self.identifier.name,
+                                  [member.location] + locations)
 
     def addExtendedAttributes(self, attrs):
         assert len(attrs) == 0

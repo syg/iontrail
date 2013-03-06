@@ -12,7 +12,7 @@
  *
  * see DASHDecoder.cpp for info on DASH interaction with the media engine.*/
 
-#include "nsTimeRanges.h"
+#include "mozilla/dom/TimeRanges.h"
 #include "VideoFrameContainer.h"
 #include "AbstractMediaDecoder.h"
 #include "DASHReader.h"
@@ -308,7 +308,7 @@ DASHReader::Seek(int64_t aTime,
 }
 
 nsresult
-DASHReader::GetBuffered(nsTimeRanges* aBuffered,
+DASHReader::GetBuffered(TimeRanges* aBuffered,
                         int64_t aStartTime)
 {
   NS_ENSURE_ARG(aBuffered);
@@ -316,7 +316,7 @@ DASHReader::GetBuffered(nsTimeRanges* aBuffered,
   MediaResource* resource = nullptr;
   AbstractMediaDecoder* decoder = nullptr;
 
-  nsTimeRanges audioBuffered, videoBuffered;
+  TimeRanges audioBuffered, videoBuffered;
   uint32_t audioRangeCount = 0, videoRangeCount = 0;
   bool audioCachedAtEnd = false, videoCachedAtEnd = false;
 
@@ -427,7 +427,7 @@ DASHReader::GetBuffered(nsTimeRanges* aBuffered,
     videoEndTime = videoBuffered.GetFinalEndTime();
     NS_ENSURE_TRUE(videoEndTime > 0, NS_ERROR_ILLEGAL_VALUE);
 
-    // API for nsTimeRanges requires extending through adding and normalizing.
+    // API for TimeRanges requires extending through adding and normalizing.
     if (videoCachedAtEnd && audioEndTime > videoEndTime) {
       videoBuffered.Add(videoEndTime, audioEndTime);
       videoBuffered.Normalize();
@@ -660,5 +660,19 @@ DASHReader::PrepareToDecode()
   }
 }
 
-} // namespace mozilla
+DASHRepReader*
+DASHReader::GetReaderForSubsegment(uint32_t aSubsegmentIdx)
+{
+  NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
+  DASHDecoder* dashDecoder = static_cast<DASHDecoder*>(mDecoder);
+  int32_t repIdx =
+    dashDecoder->GetRepIdxForVideoSubsegmentLoadAfterSeek((int32_t)aSubsegmentIdx);
+  if (0 <= repIdx && repIdx < mVideoReaders.Length()) {
+    return mVideoReaders[repIdx];
+  } else {
+    return nullptr;
+  }
+}
 
+
+} // namespace mozilla

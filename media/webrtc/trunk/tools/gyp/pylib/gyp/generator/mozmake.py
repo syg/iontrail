@@ -2,9 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# Python 2.5 needs this for the with statement.
-from __future__ import with_statement
-
 import collections
 import gyp
 import gyp.common
@@ -35,6 +32,8 @@ topsrcdir	= %(topsrcdir)s
 srcdir          = %(srcdir)s
 VPATH           = %(srcdir)s
 
+EXTERNALLY_MANAGED_MAKE_FILE := 1
+
 """
 
 COMMON_FOOTER = """
@@ -55,11 +54,13 @@ CFLAGS += $(CPPFLAGS_Debug) $(CFLAGS_Debug)
 CXXFLAGS += $(CPPFLAGS_Debug) $(CXXFLAGS_Debug)
 DEFINES += $(DEFINES_Debug)
 LOCAL_INCLUDES += $(INCLUDES_Debug)
+ASFLAGS += $(ASFLAGS_Debug)
 else # non-MOZ_DEBUG
 CFLAGS += $(CPPFLAGS_Release) $(CFLAGS_Release)
 CXXFLAGS += $(CPPFLAGS_Release) $(CXXFLAGS_Release)
 DEFINES += $(DEFINES_Release)
 LOCAL_INCLUDES += $(INCLUDES_Release)
+ASFLAGS += $(ASFLAGS_Release)
 endif
 
 ifeq (WINNT,$(OS_TARGET))
@@ -166,6 +167,10 @@ def striplib(name):
     return name[3:]
   return name
 
+AS_EXTENSIONS = set([
+  '.s',
+  '.S'
+])
 CPLUSPLUS_EXTENSIONS = set([
   '.cc',
   '.cpp',
@@ -320,12 +325,15 @@ class MakefileGenerator(object):
       cflags_mozilla = config.get('cflags_mozilla')
       if cflags_mozilla:
         data['CPPFLAGS_%s' % configname] = cflags_mozilla
+      asflags_mozilla = config.get('asflags_mozilla')
+      if asflags_mozilla:
+        data['ASFLAGS_%s' % configname] = asflags_mozilla
     sources = {
       'CPPSRCS': {'exts': CPLUSPLUS_EXTENSIONS, 'files': []},
       'CSRCS': {'exts': ['.c'], 'files': []},
       'CMSRCS': {'exts': ['.m'], 'files': []},
       'CMMSRCS': {'exts': ['.mm'], 'files': []},
-      'ASFILES': {'exts': ['.s'], 'files': []},
+      'SSRCS': {'exts': AS_EXTENSIONS, 'files': []},
       }
     copy_srcs = []
     for s in spec.get('sources', []):

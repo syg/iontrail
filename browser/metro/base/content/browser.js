@@ -476,6 +476,10 @@ var Browser = {
     tab.browser.messageManager.sendAsyncMessage("Browser:CanUnload", {});
   },
 
+  savePage: function() {
+    ContentAreaUtils.saveDocument(this.selectedBrowser.contentWindow.document);
+  },
+
   _doCloseTab: function _doCloseTab(aTab) {
     let nextTab = this._getNextTab(aTab);
     if (!nextTab)
@@ -967,7 +971,7 @@ var Browser = {
 
       case "Browser:TapOnSelection":
         if (!InputSourceHelper.isPrecise) {
-          if (SelectionHelperUI.isActive()) {
+          if (SelectionHelperUI.isActive) {
             SelectionHelperUI.shutdown();
           }
           if (SelectionHelperUI.canHandle(aMessage)) {

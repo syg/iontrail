@@ -15,12 +15,6 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE		= test_necko
 
-DIRS            = \
-                  httpserver \
-                  browser \
-                  $(NULL)
-
-
 CPPSRCS = \
   TestIncrementalDownload.cpp \
   TestStreamLoader.cpp \
@@ -56,6 +50,7 @@ SIMPLE_PROGRAMS := $(CPPSRCS:.cpp=$(BIN_SUFFIX))
 
 CPP_UNIT_TESTS = \
 		 TestSTSParser.cpp \
+		 TestUDPServerSocket.cpp \
 		 $(NULL)
 
 include $(topsrcdir)/config/config.mk

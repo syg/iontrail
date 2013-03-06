@@ -232,6 +232,8 @@ interface TestExampleInterface {
   sequence<any> receiveAnySequence();
   sequence<any>? receiveNullableAnySequence();
 
+  void passSequenceOfSequences(sequence<sequence<long>> arg);
+
   // Typed array types
   void passArrayBuffer(ArrayBuffer arg);
   void passNullableArrayBuffer(ArrayBuffer? arg);
@@ -420,6 +422,7 @@ interface TestExampleInterface {
   [Throws] attribute boolean throwingAttr;
   [GetterThrows] attribute boolean throwingGetterAttr;
   [SetterThrows] attribute boolean throwingSetterAttr;
+  legacycaller short(unsigned long arg1, TestInterface arg2);
 
   // If you add things here, add them to TestCodeGen as well
 };

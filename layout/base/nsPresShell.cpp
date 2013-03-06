@@ -2886,6 +2886,12 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
   nsIContent *anchorTarget = content;
 #endif
 
+  nsIScrollableFrame* rootScroll = GetRootScrollFrameAsScrollable();
+  if (rootScroll && rootScroll->DidHistoryRestore()) {
+    // Scroll position restored from history trumps scrolling to anchor.
+    aScroll = false;
+  }
+
   if (content) {
     if (aScroll) {
       rv = ScrollContentIntoView(content,
@@ -2974,16 +2980,16 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
 nsresult
 PresShell::ScrollToAnchor()
 {
-  if (!mLastAnchorScrolledTo)
+  if (!mLastAnchorScrolledTo) {
     return NS_OK;
-
+  }
   NS_ASSERTION(mDidInitialize, "should have done initial reflow by now");
 
   nsIScrollableFrame* rootScroll = GetRootScrollFrameAsScrollable();
   if (!rootScroll ||
-      mLastAnchorScrollPositionY != rootScroll->GetScrollPosition().y)
+      mLastAnchorScrollPositionY != rootScroll->GetScrollPosition().y) {
     return NS_OK;
-
+  }
   nsresult rv = ScrollContentIntoView(mLastAnchorScrolledTo,
                                       ScrollAxis(SCROLL_TOP, SCROLL_ALWAYS),
                                       ScrollAxis(),
@@ -4763,8 +4769,7 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   // selection.
   nsRefPtr<nsFrameSelection> frameSelection;
   if (aSelection) {
-    nsCOMPtr<nsISelectionPrivate> selpriv = do_QueryInterface(aSelection);
-    selpriv->GetFrameSelection(getter_AddRefs(frameSelection));
+    frameSelection = static_cast<Selection*>(aSelection)->GetFrameSelection();
   }
   else {
     frameSelection = FrameSelection();
@@ -5512,6 +5517,12 @@ PresShell::Paint(nsView*        aViewToPaint,
   LayerManager* layerManager =
     aViewToPaint->GetWidget()->GetLayerManager(&isRetainingManager);
   NS_ASSERTION(layerManager, "Must be in paint event");
+
+  if (!layerManager) {
+    // Crash so we get a good stack on how this code is getting triggered.
+    // See bug 847002 for details.
+    MOZ_CRASH();
+  }
 
   // Whether or not we should set first paint when painting is
   // suppressed is debatable. For now we'll do it because
@@ -6625,10 +6636,9 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
       case NS_KEY_UP: {
         nsIDocument *doc = mCurrentEventContent ?
                            mCurrentEventContent->OwnerDoc() : nullptr;
-        nsIDocument* root = nullptr;
+        nsIDocument* fullscreenAncestor = nullptr;
         if (static_cast<const nsKeyEvent*>(aEvent)->keyCode == NS_VK_ESCAPE &&
-            (root = nsContentUtils::GetRootDocument(doc)) &&
-            root->IsFullScreenDoc()) {
+            (fullscreenAncestor = nsContentUtils::GetFullscreenAncestor(doc))) {
           // Prevent default action on ESC key press when exiting
           // DOM fullscreen mode. This prevents the browser ESC key
           // handler from stopping all loads in the document, which
@@ -6638,9 +6648,16 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
 
           if (aEvent->message == NS_KEY_UP) {
             // ESC key released while in DOM fullscreen mode.
-            // Fully exit all browser windows and documents from
-            // fullscreen mode.
-            nsIDocument::ExitFullscreen(nullptr, /* async */ true);
+            // If fullscreen is running in content-only mode, exit the target
+            // doctree branch from fullscreen, otherwise fully exit all
+            // browser windows and documents from fullscreen mode.
+            // Note: in the content-only fullscreen case, we pass the
+            // fullscreenAncestor since |doc| may not actually be fullscreen
+            // here, and ExitFullscreen() has no affect when passed a
+            // non-fullscreen document.
+            nsIDocument::ExitFullscreen(
+              nsContentUtils::IsFullscreenApiContentOnly() ? fullscreenAncestor : nullptr,
+              /* async */ true);
           }
         }
         // Else not full-screen mode or key code is unrestricted, fall

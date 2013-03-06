@@ -9,25 +9,11 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DIRS = $(NULL)
-
 # Include config.mk explicitly so we can override FINAL_TARGET.
 include $(topsrcdir)/config/config.mk
 
 # Place webapprt resources in a separate app dir
 DIST_SUBDIR = webapprt
-
-ifneq (,$(filter WINNT,$(OS_ARCH)))
-DIRS += win
-else
-ifeq ($(OS_ARCH),Darwin)
-DIRS += mac
-else
-ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
-DIRS += gtk2
-endif # gtk2
-endif # mac
-endif # windows
 
 EXTRA_COMPONENTS := \
   components.manifest \
@@ -46,9 +32,7 @@ EXTRA_JS_MODULES = \
 PREF_JS_EXPORTS = $(srcdir)/prefs.js \
                   $(NULL)
 
-TEST_DIRS += \
-  test \
-  $(NULL)
+GENERATED_DIRS_libs = $(FINAL_TARGET)
 
 include $(topsrcdir)/config/rules.mk
 
@@ -60,7 +44,7 @@ ifdef MOZILLA_OFFICIAL
 DEFINES += -DMOZILLA_OFFICIAL
 endif
 
-libs:: $(call mkdir_deps,$(FINAL_TARGET))
+libs::
 	$(PYTHON) $(MOZILLA_DIR)/config/buildlist.py $(FINAL_TARGET)/chrome.manifest "resource webapprt ./"
 
 GRE_MILESTONE := $(shell tail -n 1 $(topsrcdir)/config/milestone.txt 2>/dev/null || tail -1 $(topsrcdir)/config/milestone.txt)

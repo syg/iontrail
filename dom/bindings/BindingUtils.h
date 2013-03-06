@@ -696,6 +696,15 @@ GetWrapperCache(void* p)
   return NULL;
 }
 
+// Helper template for smart pointers to resolve ambiguity between
+// GetWrappeCache(void*) and GetWrapperCache(const ParentObject&).
+template <template <typename> class SmartPtr, typename T>
+inline nsWrapperCache*
+GetWrapperCache(const SmartPtr<T>& aObject)
+{
+  return GetWrapperCache(aObject.get());
+}
+
 /**
  * A method to handle new-binding wrap failure, by possibly falling back to
  * wrapping as a non-new-binding object.
@@ -1556,6 +1565,20 @@ public:
     void Destroy() {
       storage.addr()->~T();
     }
+};
+
+// Class for simple sequence arguments, only used internally by codegen.
+template<typename T>
+class AutoSequence : public AutoFallibleTArray<T, 16>
+{
+public:
+  AutoSequence() : AutoFallibleTArray<T, 16>()
+  {}
+
+  // Allow converting to const sequences as needed
+  operator const Sequence<T>&() const {
+    return *reinterpret_cast<const Sequence<T>*>(this);
+  }
 };
 
 inline bool

@@ -506,7 +506,7 @@ protected:
   nsDataHashtable<nsPtrHashKey<const nsINode>, Accessible*>
     mNodeToAccessibleMap;
 
-    nsCOMPtr<nsIDocument> mDocumentNode;
+  nsIDocument* mDocumentNode;
     nsCOMPtr<nsITimer> mScrollWatchTimer;
     uint16_t mScrollPositionChangedTicks; // Used for tracking scroll events
 
@@ -561,11 +561,19 @@ protected:
     AttrRelProvider& operator =(const AttrRelProvider&);
   };
 
+  typedef nsTArray<nsAutoPtr<AttrRelProvider> > AttrRelProviderArray;
+  typedef nsClassHashtable<nsStringHashKey, AttrRelProviderArray>
+    DependentIDsHashtable;
+
   /**
    * The cache of IDs pointed by relation attributes.
    */
-  typedef nsTArray<nsAutoPtr<AttrRelProvider> > AttrRelProviderArray;
-  nsClassHashtable<nsStringHashKey, AttrRelProviderArray> mDependentIDsHash;
+  DependentIDsHashtable mDependentIDsHash;
+
+  static PLDHashOperator
+    CycleCollectorTraverseDepIDsEntry(const nsAString& aKey,
+                                      AttrRelProviderArray* aProviders,
+                                      void* aUserArg);
 
   friend class RelatedAccIterator;
 

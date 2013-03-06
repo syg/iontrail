@@ -21,7 +21,7 @@
 #include "mozilla/CORSMode.h"
 #include "DOMMediaStream.h"
 #include "mozilla/Mutex.h"
-#include "nsTimeRanges.h"
+#include "mozilla/dom/TimeRanges.h"
 #include "nsIDOMWakeLock.h"
 #include "AudioChannelCommon.h"
 #include "DecoderTraits.h"
@@ -378,12 +378,6 @@ protected:
    * The stream will never finish.
    */
   already_AddRefed<DOMMediaStream> CaptureStreamInternal(bool aFinishWhenEnded);
-
-  /**
-   * Create a decoder for the given aMIMEType. Returns null if we
-   * were unable to create the decoder.
-   */
-  already_AddRefed<MediaDecoder> CreateDecoder(const nsACString& aMIMEType);
 
   /**
    * Initialize a decoder as a clone of an existing decoder in another
@@ -777,7 +771,7 @@ protected:
   nsAutoPtr<AudioStream> mAudioStream;
 
   // Range of time played.
-  nsTimeRanges mPlayed;
+  mozilla::dom::TimeRanges mPlayed;
 
   // Stores the time at the start of the current 'played' range.
   double mCurrentPlayRangeStart;

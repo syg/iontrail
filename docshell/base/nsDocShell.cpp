@@ -872,9 +872,9 @@ void
 nsDocShell::DestroyChildren()
 {
     nsCOMPtr<nsIDocShellTreeItem> shell;
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; i++) {
-        shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        shell = do_QueryObject(iter.GetNext());
         NS_ASSERTION(shell, "docshell has null child");
 
         if (shell) {
@@ -1890,6 +1890,74 @@ nsDocShell::GetCharset(char** aCharset)
 }
 
 NS_IMETHODIMP
+nsDocShell::GatherCharsetMenuTelemetry()
+{
+  nsCOMPtr<nsIContentViewer> viewer;
+  GetContentViewer(getter_AddRefs(viewer));
+  if (!viewer) {
+    return NS_OK;
+  }
+
+  nsIDocument* doc = viewer->GetDocument();
+  if (!doc || doc->WillIgnoreCharsetOverride()) {
+    return NS_OK;
+  }
+
+  Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_USED, true);
+
+  bool isFileURL = false;
+  nsIURI* url = doc->GetOriginalURI();
+  if (url) {
+    url->SchemeIs("file", &isFileURL);
+  }
+
+  int32_t charsetSource = doc->GetDocumentCharacterSetSource();
+  switch (charsetSource) {
+    case kCharsetFromWeakDocTypeDefault:
+    case kCharsetFromUserDefault:
+    case kCharsetFromDocTypeDefault:
+    case kCharsetFromCache:
+    case kCharsetFromParentFrame:
+    case kCharsetFromHintPrevDoc:
+      // Changing charset on an unlabeled doc.
+      if (isFileURL) {
+        Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 0);
+      } else {
+        Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 1);
+      }
+      break;
+    case kCharsetFromAutoDetection:
+      // Changing charset on unlabeled doc where chardet fired
+      if (isFileURL) {
+        Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 2);
+      } else {
+        Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 3);
+      }
+      break;
+    case kCharsetFromMetaPrescan:
+    case kCharsetFromMetaTag:
+    case kCharsetFromChannel:
+      // Changing charset on a doc that had a charset label.
+      Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 4);
+      break;
+    case kCharsetFromParentForced:
+    case kCharsetFromUserForced:
+      // Changing charset on a document that already had an override.
+      Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 5);
+      break;
+    case kCharsetFromIrreversibleAutoDetection:
+    case kCharsetFromOtherComponent:
+    case kCharsetFromByteOrderMark:
+    case kCharsetUninitialized:
+    default:
+      // Bug. This isn't supposed to happen.
+      Telemetry::Accumulate(Telemetry::CHARSET_OVERRIDE_SITUATION, 6);
+      break;
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDocShell::SetCharset(const char* aCharset)
 {
     // set the default charset
@@ -2080,9 +2148,9 @@ nsDocShell::SetPrivateBrowsing(bool aUsePrivateBrowsing)
         }
     }
 
-    uint32_t count = mChildList.Length();
-    for (uint32_t i = 0; i < count; ++i) {
-        nsCOMPtr<nsILoadContext> shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsILoadContext> shell = do_QueryObject(iter.GetNext());
         if (shell) {
             shell->SetPrivateBrowsing(aUsePrivateBrowsing);
         }
@@ -2116,9 +2184,9 @@ nsDocShell::SetAffectPrivateSessionLifetime(bool aAffectLifetime)
     }
     mAffectPrivateSessionLifetime = aAffectLifetime;
 
-    uint32_t count = mChildList.Length();
-    for (uint32_t i = 0; i < count; ++i) {
-        nsCOMPtr<nsIDocShell> shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> shell = do_QueryObject(iter.GetNext());
         if (shell) {
             shell->SetAffectPrivateSessionLifetime(aAffectLifetime);
         }
@@ -2488,9 +2556,9 @@ nsDocShell::HistoryPurged(int32_t aNumEntries)
     mPreviousTransIndex = std::max(-1, mPreviousTransIndex - aNumEntries);
     mLoadedTransIndex = std::max(0, mLoadedTransIndex - aNumEntries);
 
-    uint32_t count = mChildList.Length();
-    for (uint32_t i = 0; i < count; ++i) {
-        nsCOMPtr<nsIDocShell> shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> shell = do_QueryObject(iter.GetNext());
         if (shell) {
             shell->HistoryPurged(aNumEntries);
         }
@@ -2518,9 +2586,9 @@ nsDocShell::HistoryTransactionRemoved(int32_t aIndex)
         --mLoadedTransIndex;
     }
                             
-    uint32_t count = mChildList.Length();
-    for (uint32_t i = 0; i < count; ++i) {
-        nsCOMPtr<nsIDocShell> shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> shell = do_QueryObject(iter.GetNext());
         if (shell) {
             static_cast<nsDocShell*>(shell.get())->
                 HistoryTransactionRemoved(aIndex);
@@ -3403,9 +3471,9 @@ nsDocShell::SetTreeOwner(nsIDocShellTreeOwner * aTreeOwner)
 
     mTreeOwner = aTreeOwner;    // Weak reference per API
 
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; i++) {
-        nsCOMPtr<nsIDocShellTreeItem> child = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShellTreeItem> child = do_QueryObject(iter.GetNext());
         NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
         int32_t childType = ~mItemType; // Set it to not us in case the get fails
         child->GetItemType(&childType); // We don't care if this fails, if it does we won't set the owner
@@ -3602,7 +3670,7 @@ nsDocShell::GetChildAt(int32_t aIndex, nsIDocShellTreeItem ** aChild)
     }
 #endif
 
-    nsIDocumentLoader* child = SafeChildAt(aIndex);
+    nsIDocumentLoader* child = ChildAt(aIndex);
     NS_ENSURE_TRUE(child, NS_ERROR_UNEXPECTED);
     
     return CallQueryInterface(child, aChild);
@@ -3624,9 +3692,9 @@ nsDocShell::FindChildWithName(const PRUnichar * aName,
         return NS_OK;
 
     nsXPIDLString childName;
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; i++) {
-        nsCOMPtr<nsIDocShellTreeItem> child = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShellTreeItem> child = do_QueryObject(iter.GetNext());
         NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
         int32_t childType;
         child->GetItemType(&childType);
@@ -4676,9 +4744,9 @@ nsDocShell::Stop(uint32_t aStopFlags)
         Stop();
     }
 
-    uint32_t count = mChildList.Length();
-    for (uint32_t n = 0; n < count; n++) {
-        nsCOMPtr<nsIWebNavigation> shellAsNav(do_QueryInterface(ChildAt(n)));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIWebNavigation> shellAsNav(do_QueryObject(iter.GetNext()));
         if (shellAsNav)
             shellAsNav->Stop(aStopFlags);
     }
@@ -5290,9 +5358,9 @@ nsDocShell::SetIsActive(bool aIsActive)
 
   // Recursively tell all of our children, but don't tell <iframe mozbrowser>
   // children; they handle their state separately.
-  uint32_t n = mChildList.Length();
-  for (uint32_t i = 0; i < n; ++i) {
-      nsCOMPtr<nsIDocShell> docshell = do_QueryInterface(ChildAt(i));
+  nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+  while (iter.HasMore()) {
+      nsCOMPtr<nsIDocShell> docshell = do_QueryObject(iter.GetNext());
       if (!docshell) {
           continue;
       }
@@ -6213,9 +6281,9 @@ nsDocShell::SuspendRefreshURIs()
     }
 
     // Suspend refresh URIs for our child shells as well.
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; ++i) {
-        nsCOMPtr<nsIDocShell> shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> shell = do_QueryObject(iter.GetNext());
         if (shell)
             shell->SuspendRefreshURIs();
     }
@@ -6229,9 +6297,9 @@ nsDocShell::ResumeRefreshURIs()
     RefreshURIFromQueue();
 
     // Resume refresh URIs for our child shells as well.
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; ++i) {
-        nsCOMPtr<nsIDocShell> shell = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> shell = do_QueryObject(iter.GetNext());
         if (shell)
             shell->ResumeRefreshURIs();
     }
@@ -7276,9 +7344,9 @@ nsDocShell::BeginRestore(nsIContentViewer *aContentViewer, bool aTop)
 nsresult
 nsDocShell::BeginRestoreChildren()
 {
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; ++i) {
-        nsCOMPtr<nsIDocShell> child = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> child = do_QueryObject(iter.GetNext());
         if (child) {
             nsresult rv = child->BeginRestore(nullptr, false);
             NS_ENSURE_SUCCESS(rv, rv);
@@ -7293,9 +7361,9 @@ nsDocShell::FinishRestore()
     // First we call finishRestore() on our children.  In the simulated load,
     // all of the child frames finish loading before the main document.
 
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; ++i) {
-        nsCOMPtr<nsIDocShell> child = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> child = do_QueryObject(iter.GetNext());
         if (child) {
             child->FinishRestore();
         }
@@ -7798,9 +7866,9 @@ nsDocShell::RestoreFromHistory()
 
     // Meta-refresh timers have been restarted for this shell, but not
     // for our children.  Walk the child shells and restart their timers.
-    uint32_t n = mChildList.Length();
-    for (uint32_t i = 0; i < n; ++i) {
-        nsCOMPtr<nsIDocShell> child = do_QueryInterface(ChildAt(i));
+    nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
+    while (iter.HasMore()) {
+        nsCOMPtr<nsIDocShell> child = do_QueryObject(iter.GetNext());
         if (child)
             child->ResumeRefreshURIs();
     }
@@ -10811,10 +10879,9 @@ nsDocShell::WalkHistoryEntries(nsISHEntry *aRootEntry,
             // Walk the children of aRootShell and see if one of them
             // has srcChild as a SHEntry.
 
-            uint32_t childCount = aRootShell->mChildList.Length();
-            for (uint32_t j = 0; j < childCount; ++j) {
-                nsDocShell *child =
-                    static_cast<nsDocShell*>(aRootShell->ChildAt(j));
+            nsTObserverArray<nsDocLoader*>::ForwardIterator iter(aRootShell->mChildList);
+            while (iter.HasMore()) {
+                nsDocShell *child = static_cast<nsDocShell*>(iter.GetNext());
 
                 if (child->HasHistoryEntry(childEntry)) {
                     childShell = child;

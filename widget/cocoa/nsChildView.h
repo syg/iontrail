@@ -259,6 +259,7 @@ typedef NSInteger NSEventGestureAxis;
   float mCumulativeRotation;
 
   BOOL mDidForceRefreshOpenGL;
+  BOOL mWaitingForPaint;
 
   // Support for fluid swipe tracking.
 #ifdef __LP64__
@@ -428,7 +429,7 @@ public:
   NS_IMETHOD              DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus);
 
   virtual bool            ComputeShouldAccelerate(bool aDefault);
-  virtual bool            UseOffMainThreadCompositing();
+  virtual bool            ShouldUseOffMainThreadCompositing();
 
   NS_IMETHOD        SetCursor(nsCursor aCursor);
   NS_IMETHOD        SetCursor(imgIContainer* aCursor, uint32_t aHotspotX, uint32_t aHotspotY);

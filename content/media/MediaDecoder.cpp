@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "MediaDecoder.h"
+#include "mozilla/FloatingPoint.h"
+#include "mozilla/MathAlgorithms.h"
 #include <limits>
 #include "nsNetUtil.h"
 #include "AudioStream.h"
@@ -14,16 +16,13 @@
 #include "nsTArray.h"
 #include "VideoUtils.h"
 #include "MediaDecoderStateMachine.h"
-#include "nsTimeRanges.h"
+#include "mozilla/dom/TimeRanges.h"
 #include "nsContentUtils.h"
 #include "ImageContainer.h"
 #include "MediaResource.h"
 #include "nsError.h"
 #include "mozilla/Preferences.h"
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
 #include <algorithm>
-#include <mozilla/FloatingPoint.h>
 
 #ifdef MOZ_WMF
 #include "WMFDecoder.h"
@@ -344,6 +343,7 @@ MediaDecoder::MediaDecoder() :
   mFrameBufferLength(0),
   mPinnedForSeek(false),
   mShuttingDown(false),
+  mPausedForPlaybackRateNull(false),
   mAudioChannelType(AUDIO_CHANNEL_NORMAL)
 {
   MOZ_COUNT_CTOR(MediaDecoder);
@@ -538,7 +538,9 @@ nsresult MediaDecoder::Play()
  * not null, is set to the index of the range which ends immediately before aValue
  * (and can be -1 if aValue is before aRanges.Start(0)).
  */
-static bool IsInRanges(nsTimeRanges& aRanges, double aValue, int32_t& aIntervalIndex) {
+static bool
+IsInRanges(TimeRanges& aRanges, double aValue, int32_t& aIntervalIndex)
+{
   uint32_t length;
   aRanges.GetLength(&length);
   for (uint32_t i = 0; i < length; i++) {
@@ -565,7 +567,7 @@ nsresult MediaDecoder::Seek(double aTime)
 
   NS_ABORT_IF_FALSE(aTime >= 0.0, "Cannot seek to a negative value.");
 
-  nsTimeRanges seekable;
+  TimeRanges seekable;
   nsresult res;
   uint32_t length = 0;
   res = GetSeekable(&seekable);
@@ -592,11 +594,11 @@ nsresult MediaDecoder::Seek(double aTime)
         NS_ENSURE_SUCCESS(res, NS_OK);
         res = seekable.Start(range + 1, &rightBound);
         NS_ENSURE_SUCCESS(res, NS_OK);
-        double distanceLeft = std::abs(leftBound - aTime);
-        double distanceRight = std::abs(rightBound - aTime);
+        double distanceLeft = Abs(leftBound - aTime);
+        double distanceRight = Abs(rightBound - aTime);
         if (distanceLeft == distanceRight) {
-          distanceLeft = std::abs(leftBound - mCurrentTime);
-          distanceRight = std::abs(rightBound - mCurrentTime);
+          distanceLeft = Abs(leftBound - mCurrentTime);
+          distanceRight = Abs(rightBound - mCurrentTime);
         } 
         aTime = (distanceLeft < distanceRight) ? leftBound : rightBound;
       } else {
@@ -1282,7 +1284,7 @@ bool MediaDecoder::IsMediaSeekable()
   return mMediaSeekable;
 }
 
-nsresult MediaDecoder::GetSeekable(nsTimeRanges* aSeekable)
+nsresult MediaDecoder::GetSeekable(TimeRanges* aSeekable)
 {
   //TODO : change 0.0 to GetInitialTime() when available
   double initialTime = 0.0;
@@ -1442,7 +1444,7 @@ void MediaDecoder::Invalidate()
 
 // Constructs the time ranges representing what segments of the media
 // are buffered and playable.
-nsresult MediaDecoder::GetBuffered(nsTimeRanges* aBuffered) {
+nsresult MediaDecoder::GetBuffered(TimeRanges* aBuffered) {
   if (mDecoderStateMachine) {
     return mDecoderStateMachine->GetBuffered(aBuffered);
   }

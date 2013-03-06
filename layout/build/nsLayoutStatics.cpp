@@ -192,8 +192,6 @@ nsLayoutStatics::Initialize()
     return rv;
   }
 
-  inDOMView::InitAtoms();
-
 #endif
 
   nsMathMLOperators::AddRefTable();
@@ -332,7 +330,6 @@ nsLayoutStatics::Shutdown()
 
   nsAttrValue::Shutdown();
   nsContentUtils::Shutdown();
-  nsNodeInfo::ClearCache();
   nsLayoutStylesheetCache::Shutdown();
   NS_NameSpaceManagerShutdown();
 

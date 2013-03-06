@@ -20,6 +20,9 @@
 #include "XPCWrapper.h"
 #include "XrayWrapper.h"
 
+#include "mozilla/dom/HTMLObjectElement.h"
+#include "mozilla/dom/HTMLObjectElementBinding.h"
+
 namespace mozilla {
 namespace dom {
 
@@ -1530,7 +1533,11 @@ ReparentWrapper(JSContext* aCx, JSObject* aObj)
     MOZ_CRASH();
   }
 
-  // We might need to call a hook here similar to PostTransplant.
+  HTMLObjectElement* htmlobject;
+  nsresult rv = UnwrapObject<HTMLObjectElement>(aCx, aObj, htmlobject);
+  if (NS_SUCCEEDED(rv)) {
+    htmlobject->SetupProtoChain(aCx, aObj);
+  }
 
   // Now we can just fix up the parent and return the wrapper
 
@@ -1596,14 +1603,43 @@ InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSObject* instance,
   const DOMIfaceAndProtoJSClass* clasp =
     DOMIfaceAndProtoJSClass::FromJSClass(js::GetObjectClass(obj));
 
-  const DOMClass* domClass = GetDOMClass(instance);
+  const DOMClass* domClass = GetDOMClass(js::UnwrapObject(instance));
 
   MOZ_ASSERT(!domClass || clasp->mPrototypeID != prototypes::id::_ID_Count,
              "Why do we have a hasInstance hook if we don't have a prototype "
              "ID?");
-  *bp = domClass &&
-        domClass->mInterfaceChain[clasp->mDepth] == clasp->mPrototypeID;
 
+  if (domClass &&
+      domClass->mInterfaceChain[clasp->mDepth] == clasp->mPrototypeID) {
+    *bp = true;
+    return true;
+  }
+
+  jsval protov;
+  DebugOnly<bool> ok = JS_GetProperty(cx, obj, "prototype", &protov);
+  MOZ_ASSERT(ok, "Someone messed with our prototype property?");
+
+  JSObject *interfacePrototype = &protov.toObject();
+  MOZ_ASSERT(IsDOMIfaceAndProtoClass(js::GetObjectClass(interfacePrototype)),
+             "Someone messed with our prototype property?");
+
+  JSObject* proto;
+  if (!JS_GetPrototype(cx, instance, &proto)) {
+    return false;
+  }
+
+  while (proto) {
+    if (proto == interfacePrototype) {
+      *bp = true;
+      return true;
+    }
+
+    if (!JS_GetPrototype(cx, proto, &proto)) {
+      return false;
+    }
+  }
+
+  *bp = false;
   return true;
 }
 
@@ -1616,7 +1652,7 @@ InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue vp,
     return true;
   }
 
-  return InterfaceHasInstance(cx, obj, js::UnwrapObject(&vp.toObject()), bp);
+  return InterfaceHasInstance(cx, obj, &vp.toObject(), bp);
 }
 
 } // namespace dom

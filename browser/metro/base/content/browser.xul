@@ -67,6 +67,8 @@
     <command id="cmd_go" oncommand="CommandUpdater.doCommand(this.id);"/>
     <command id="cmd_openLocation" oncommand="CommandUpdater.doCommand(this.id);"/>
     <command id="cmd_home" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_openFile" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_savePage" oncommand="CommandUpdater.doCommand(this.id);"/>
 
     <!-- tabs -->
     <command id="cmd_newTab" oncommand="CommandUpdater.doCommand(this.id);"/>
@@ -133,6 +135,8 @@
     <key id="key_focusURL" key="l" modifiers="accel" command="cmd_openLocation"/>
     <key id="key_focusURL2" key="&urlbar.accesskey;" modifiers="alt" command="cmd_openLocation"/>
     <key id="key_home" keycode="VK_HOME" modifiers="accel" command="cmd_home"/>
+    <key id="key_open" key="o" modifiers="accel" command="cmd_openFile"/>
+    <key id="key_save" key="s" modifiers="accel" command="cmd_savePage"/>
 
     <!-- misc -->
     <key id="key_zoomin" key="+" modifiers="accel" command="cmd_zoomin"/>
@@ -419,13 +423,33 @@
       </deck>
     </vbox>
 
-    <flyoutpanel id="about-flyoutpanel" headertext="&aboutHeader.title;">
+  <!-- Selection overlay - this should be below any content that can have selectable text -->
+  <!-- onclick addresses dom bug 835175, str in bug 832957 -->
+  <box onclick="false" class="selection-overlay-hidden" id="selection-overlay"/>
+
+  <flyoutpanel id="about-flyoutpanel" headertext="&aboutHeader.title;">
         <label id="about-product-label" value="&aboutHeader.product.label;"/>
         <label value="&aboutHeader.company.label;"/>
 #expand <label id="about-version-label">__MOZ_APP_VERSION__</label>
         <label id="about-policy-label"
                onclick="if (event.button == 0) { Browser.onAboutPolicyClick(); }"
                class="text-link" value="&aboutHeader.policy.label;"/>
+    </flyoutpanel>
+
+    <flyoutpanel id="sync-flyoutpanel" headertext="&syncHeader.title;">
+      <setting id="sync-connect" title="&sync.notconnected;" type="control">
+        <button label="&sync.connect;" oncommand="WeaveGlue.tryConnect();" />
+      </setting>
+      <setting id="sync-connected" class="setting-group" title="&sync.connected;" type="control" collapsed="true">
+        <button id="sync-pairdevice" label="&sync.pair.title;" oncommand="SyncPairDevice.open();" />
+      </setting>
+      <setting id="sync-sync" class="setting-subgroup" type="control" collapsed="true">
+        <button id="sync-syncButton" label="&sync.syncNow;" oncommand="WeaveGlue.sync();"/>
+      </setting>
+      <setting id="sync-device" class="setting-subgroup" type="string" title="&sync.deviceName;" onchange="WeaveGlue.changeName(this);" collapsed="true"/>
+      <setting id="sync-disconnect" class="setting-subgroup" type="control" collapsed="true">
+        <button label="&sync.disconnect;" oncommand="WeaveGlue.disconnect();" />
+      </setting>
     </flyoutpanel>
 
     <flyoutpanel id="prefs-flyoutpanel" headertext="&optionsHeader.title;">
@@ -454,23 +478,6 @@
       </settings>
 
       <setting id="prefs-master-password" title="&optionsHeader.privacy.masterPassword.label;" type="bool" oncommand="MasterPasswordUI.show(this.value);"/>
-
-      <settings id="prefs-sync" label="&sync.title;">
-        <setting id="sync-connect" title="&sync.notconnected;" type="control">
-          <button label="&sync.connect;" oncommand="WeaveGlue.tryConnect();" />
-        </setting>
-        <setting id="sync-connected" class="setting-group" title="&sync.connected;" type="control" collapsed="true">
-          <button id="sync-pairdevice" label="&sync.pair.title;" oncommand="SyncPairDevice.open();" />
-          <button id="sync-details" label="&sync.details;" type="checkbox" autocheck="false" checked="false" oncommand="WeaveGlue.showDetails();" />
-        </setting>
-        <setting id="sync-sync" class="setting-subgroup" type="control" collapsed="true">
-          <button id="sync-syncButton" label="&sync.syncNow;" oncommand="WeaveGlue.sync();"/>
-        </setting>
-        <setting id="sync-device" class="setting-subgroup" type="string" title="&sync.deviceName;" onchange="WeaveGlue.changeName(this);" collapsed="true"/>
-        <setting id="sync-disconnect" class="setting-subgroup" type="control" collapsed="true">
-          <button label="&sync.disconnect;" oncommand="WeaveGlue.disconnect();" />
-        </setting>
-      </settings>
     </flyoutpanel>
 
     <!-- Form Helper form validation helper popup -->
@@ -569,6 +576,8 @@
         <richlistbox id="context-commands" bindingType="contextmenu" flex="1">
           <!-- priority="low" items are hidden by default when a context is being displayed
                for two or more media types. (e.g. a linked image) -->
+          <!-- content types preceeded by '!' act as exclusion rules, the menu item will not 
+               be displayed if the content type is present. -->
           <!-- Note the order of richlistitem here is important as it is reflected in the
                menu itself. -->
           <!-- ux spec: https://bug782810.bugzilla.mozilla.org/attachment.cgi?id=714804 -->
@@ -582,8 +591,8 @@
           <richlistitem id="context-paste" type="paste" onclick="ContextCommands.paste();">
             <label value="&contextTextPaste.label;"/>
           </richlistitem>
-          <!-- Search Bing for "..." -->
-          <richlistitem id="context-search" type="copy,selected-text" onclick="ContextCommands.searchText(this);">
+          <!-- Search Bing for "(text..)", displayed on selected content text only -->
+          <richlistitem id="context-search" type="selected-text,!input-text" onclick="ContextCommands.searchText(this);">
             <label id="context-search-label" value=""/>
           </richlistitem>
           <!-- only display if there is text on the clipboard and the target is the urlbar -->
@@ -680,9 +689,6 @@
         <description id="alerts-text" flex="1"/>
       </vbox>
     </hbox>
-
-    <!-- Selection overlay - this should be below any content that can have selectable text -->
-    <box class="selection-overlay-hidden" id="selection-overlay"/>
   </stack>
 
   <svg:svg height="0">

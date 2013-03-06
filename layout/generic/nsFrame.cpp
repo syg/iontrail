@@ -4196,9 +4196,10 @@ void
 nsFrame::FinishReflowWithAbsoluteFrames(nsPresContext*           aPresContext,
                                         nsHTMLReflowMetrics&     aDesiredSize,
                                         const nsHTMLReflowState& aReflowState,
-                                        nsReflowStatus&          aStatus)
+                                        nsReflowStatus&          aStatus,
+                                        bool                     aConstrainHeight)
 {
-  ReflowAbsoluteFrames(aPresContext, aDesiredSize, aReflowState, aStatus);
+  ReflowAbsoluteFrames(aPresContext, aDesiredSize, aReflowState, aStatus, aConstrainHeight);
 
   FinishAndStoreOverflow(&aDesiredSize);
 }
@@ -4207,7 +4208,8 @@ void
 nsFrame::ReflowAbsoluteFrames(nsPresContext*           aPresContext,
                               nsHTMLReflowMetrics&     aDesiredSize,
                               const nsHTMLReflowState& aReflowState,
-                              nsReflowStatus&          aStatus)
+                              nsReflowStatus&          aStatus,
+                              bool                     aConstrainHeight)
 {
   if (HasAbsolutelyPositionedChildren()) {
     nsAbsoluteContainingBlock* absoluteContainer = GetAbsoluteContainingBlock();
@@ -4228,7 +4230,7 @@ nsFrame::ReflowAbsoluteFrames(nsPresContext*           aPresContext,
 
     absoluteContainer->Reflow(container, aPresContext, aReflowState, aStatus,
                               containingBlockWidth, containingBlockHeight,
-                              true, true, true, // XXX could be optimized
+                              aConstrainHeight, true, true, // XXX could be optimized
                               &aDesiredSize.mOverflowAreas);
   }
 }
@@ -8088,12 +8090,8 @@ nsFrame::BoxMetrics() const
   return metrics;
 }
 
-/**
- * Adds the NS_FRAME_IN_POPUP state bit to the current frame,
- * and all descendant frames (including cross-doc ones).
- */
-static void
-AddInPopupStateBitToDescendants(nsIFrame* aFrame)
+/* static */ void
+nsIFrame::AddInPopupStateBitToDescendants(nsIFrame* aFrame)
 {
   aFrame->AddStateBits(NS_FRAME_IN_POPUP);
 
@@ -8109,17 +8107,11 @@ AddInPopupStateBitToDescendants(nsIFrame* aFrame)
   }
 }
 
-/**
- * Removes the NS_FRAME_IN_POPUP state bit from the current
- * frames and all descendant frames (including cross-doc ones),
- * unless the frame is a popup itself.
- */
-static void
-RemoveInPopupStateBitFromDescendants(nsIFrame* aFrame)
+/* static */ void
+nsIFrame::RemoveInPopupStateBitFromDescendants(nsIFrame* aFrame)
 {
   if (!aFrame->HasAnyStateBits(NS_FRAME_IN_POPUP) ||
-      aFrame->GetType() == nsGkAtoms::listControlFrame ||
-      aFrame->GetType() == nsGkAtoms::menuPopupFrame) {
+      nsLayoutUtils::IsPopup(aFrame)) {
     return;
   }
 

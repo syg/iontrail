@@ -46,7 +46,8 @@ let Elements = {};
   ["progress",           "progress-control"],
   ["contentNavigator",   "content-navigator"],
   ["aboutFlyout",        "about-flyoutpanel"],
-  ["prefsFlyout",        "prefs-flyoutpanel"]
+  ["prefsFlyout",        "prefs-flyoutpanel"],
+  ["syncFlyout",         "sync-flyoutpanel"]
 ].forEach(function (aElementGlobal) {
   let [name, id] = aElementGlobal;
   XPCOMUtils.defineLazyGetter(Elements, name, function() {
@@ -757,6 +758,32 @@ var BrowserUI = {
     }
   },
 
+  openFile: function() {
+    try {
+      const nsIFilePicker = Ci.nsIFilePicker;
+      let fp = Cc["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
+      let self = this;
+      let fpCallback = function fpCallback_done(aResult) {
+        if (aResult == nsIFilePicker.returnOK) {
+          self.goToURI(fp.fileURL.spec);
+        }
+      };
+
+      let windowTitle = Strings.browser.GetStringFromName("browserForOpenLocation");
+      fp.init(window, windowTitle, nsIFilePicker.modeOpen);
+      fp.appendFilters(nsIFilePicker.filterAll | nsIFilePicker.filterText |
+                       nsIFilePicker.filterImages | nsIFilePicker.filterXML |
+                       nsIFilePicker.filterHTML);
+      fp.open(fpCallback);
+    } catch (ex) {
+      dump ('BrowserUI openFile exception: ' + ex + '\n');
+    }
+  },
+
+  savePage: function() {
+    Browser.savePage();
+  },
+
   receiveMessage: function receiveMessage(aMessage) {
     let browser = aMessage.target;
     let json = aMessage.json;
@@ -811,6 +838,8 @@ var BrowserUI = {
       case "cmd_zoomout":
       case "cmd_volumeLeft":
       case "cmd_volumeRight":
+      case "cmd_openFile":
+      case "cmd_savePage":
         isSupported = true;
         break;
       default:
@@ -933,6 +962,12 @@ var BrowserUI = {
       case "cmd_volumeRight":
         // Zoom out (portrait) or in (landscape)
         Browser.zoom(Util.isPortrait() ? 1 : -1);
+        break;
+      case "cmd_openFile":
+        this.openFile();
+        break;
+      case "cmd_savePage":
+        this.savePage();
         break;
     }
   }
@@ -1306,6 +1341,18 @@ var StartUI = {
   }
 };
 
+var SyncPanelUI = {
+  init: function() {
+    // Run some setup code the first time the panel is shown.
+    Elements.syncFlyout.addEventListener("PopupChanged", function onShow(aEvent) {
+      if (aEvent.detail && aEvent.popup === Elements.syncFlyout) {
+        Elements.syncFlyout.removeEventListener("PopupChanged", onShow, false);
+        WeaveGlue.init();
+      }
+    }, false);
+  }
+};
+
 var FlyoutPanelsUI = {
   get _aboutVersionLabel() {
     return document.getElementById('about-version-label');
@@ -1325,11 +1372,13 @@ var FlyoutPanelsUI = {
   init: function() {
     this._initAboutPanel();
     PreferencesPanelView.init();
+    SyncPanelUI.init();
   },
 
   hide: function() {
     Elements.aboutFlyout.hide();
     Elements.prefsFlyout.hide();
+    Elements.syncFlyout.hide();
   }
 };
 
@@ -1608,6 +1657,11 @@ var SettingsCharm = {
     this.addEntry({
         label: Strings.browser.GetStringFromName("optionsCharm"),
         onselected: function() Elements.prefsFlyout.show()
+    });
+    // Sync 
+    this.addEntry({
+        label: Strings.browser.GetStringFromName("syncCharm"),
+        onselected: function() Elements.syncFlyout.show()
     });
     // About
     this.addEntry({

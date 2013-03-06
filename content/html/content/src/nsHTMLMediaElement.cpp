@@ -5,12 +5,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsHTMLMediaElement.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Util.h"
 
 #include "base/basictypes.h"
 #include "nsIDOMHTMLMediaElement.h"
 #include "nsIDOMHTMLSourceElement.h"
-#include "nsTimeRanges.h"
+#include "TimeRanges.h"
 #include "nsGenericHTMLElement.h"
 #include "nsAttrValueInlines.h"
 #include "nsPresContext.h"
@@ -72,38 +73,7 @@
 
 #include "ImageContainer.h"
 #include "nsIPowerManagerService.h"
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
 #include <algorithm>
-
-#ifdef MOZ_OGG
-#include "OggDecoder.h"
-#endif
-#ifdef MOZ_WAVE
-#include "WaveDecoder.h"
-#endif
-#ifdef MOZ_WEBM
-#include "WebMDecoder.h"
-#endif
-#ifdef MOZ_RAW
-#include "RawDecoder.h"
-#endif
-#ifdef MOZ_GSTREAMER
-#include "GStreamerDecoder.h"
-#endif
-#ifdef MOZ_MEDIA_PLUGINS
-#include "MediaPluginHost.h"
-#include "MediaPluginDecoder.h"
-#endif
-#ifdef MOZ_WIDGET_GONK
-#include "MediaOmxDecoder.h"
-#endif
-#ifdef MOZ_DASH
-#include "DASHDecoder.h"
-#endif
-#ifdef MOZ_WMF
-#include "WMFDecoder.h"
-#endif
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gMediaElementLog;
@@ -1352,7 +1322,7 @@ NS_IMETHODIMP nsHTMLMediaElement::GetDuration(double *aDuration)
 /* readonly attribute nsIDOMHTMLTimeRanges seekable; */
 NS_IMETHODIMP nsHTMLMediaElement::GetSeekable(nsIDOMTimeRanges** aSeekable)
 {
-  nsRefPtr<nsTimeRanges> ranges = new nsTimeRanges();
+  nsRefPtr<TimeRanges> ranges = new TimeRanges();
   if (mDecoder && mReadyState > nsIDOMHTMLMediaElement::HAVE_NOTHING) {
     mDecoder->GetSeekable(ranges);
   }
@@ -1372,7 +1342,7 @@ NS_IMETHODIMP nsHTMLMediaElement::GetPaused(bool *aPaused)
 /* readonly attribute nsIDOMHTMLTimeRanges played; */
 NS_IMETHODIMP nsHTMLMediaElement::GetPlayed(nsIDOMTimeRanges** aPlayed)
 {
-  nsTimeRanges* ranges = new nsTimeRanges();
+  TimeRanges* ranges = new TimeRanges();
   NS_ADDREF(*aPlayed = ranges);
 
   uint32_t timeRangeCount = 0;
@@ -2195,89 +2165,6 @@ nsHTMLMediaElement::CanPlayType(const nsAString& aType, nsAString& aResult)
   return NS_OK;
 }
 
-already_AddRefed<MediaDecoder>
-nsHTMLMediaElement::CreateDecoder(const nsACString& aType)
-{
-  // If you change this list to add support for new decoders for codecs that
-  // can be used by <audio>, please consider updating MediaDecodeTask::CreateDecoder
-  // as well.
-
-#ifdef MOZ_GSTREAMER
-  if (DecoderTraits::IsGStreamerSupportedType(aType)) {
-    nsRefPtr<GStreamerDecoder> decoder = new GStreamerDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_RAW
-  if (DecoderTraits::IsRawType(aType)) {
-    nsRefPtr<RawDecoder> decoder = new RawDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_OGG
-  if (DecoderTraits::IsOggType(aType)) {
-    nsRefPtr<OggDecoder> decoder = new OggDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_WAVE
-  if (DecoderTraits::IsWaveType(aType)) {
-    nsRefPtr<WaveDecoder> decoder = new WaveDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_WIDGET_GONK
-  if (DecoderTraits::IsOmxSupportedType(aType)) {
-    nsRefPtr<MediaOmxDecoder> decoder = new MediaOmxDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_MEDIA_PLUGINS
-  if (MediaDecoder::IsMediaPluginsEnabled() && GetMediaPluginHost()->FindDecoder(aType, NULL)) {
-    nsRefPtr<MediaPluginDecoder> decoder = new MediaPluginDecoder(aType);
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_WEBM
-  if (DecoderTraits::IsWebMType(aType)) {
-    nsRefPtr<WebMDecoder> decoder = new WebMDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_DASH
-  if (DecoderTraits::IsDASHMPDType(aType)) {
-    nsRefPtr<DASHDecoder> decoder = new DASHDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-#ifdef MOZ_WMF
-  if (DecoderTraits::IsWMFSupportedType(aType)) {
-    nsRefPtr<WMFDecoder> decoder = new WMFDecoder();
-    if (decoder->Init(this)) {
-      return decoder.forget();
-    }
-  }
-#endif
-
-  return nullptr;
-}
-
 nsresult nsHTMLMediaElement::InitializeDecoderAsClone(MediaDecoder* aOriginal)
 {
   NS_ASSERTION(mLoadingSrc, "mLoadingSrc must already be set");
@@ -2324,7 +2211,7 @@ nsresult nsHTMLMediaElement::InitializeDecoderForChannel(nsIChannel *aChannel,
   aChannel->GetContentType(mimeType);
   NS_ASSERTION(!mimeType.IsEmpty(), "We should have the Content-Type.");
 
-  nsRefPtr<MediaDecoder> decoder = CreateDecoder(mimeType);
+  nsRefPtr<MediaDecoder> decoder = DecoderTraits::CreateDecoder(mimeType, this);
   if (!decoder) {
     nsAutoString src;
     GetCurrentSrc(src);
@@ -3408,7 +3295,7 @@ nsHTMLMediaElement::CopyInnerTo(Element* aDest)
 
 nsresult nsHTMLMediaElement::GetBuffered(nsIDOMTimeRanges** aBuffered)
 {
-  nsRefPtr<nsTimeRanges> ranges = new nsTimeRanges();
+  nsRefPtr<TimeRanges> ranges = new TimeRanges();
   if (mReadyState > nsIDOMHTMLMediaElement::HAVE_NOTHING && mDecoder) {
     // If GetBuffered fails we ignore the error result and just return the
     // time ranges we found up till the error.
@@ -3520,10 +3407,10 @@ static double ClampPlaybackRate(double aPlaybackRate)
   if (aPlaybackRate == 0.0) {
     return aPlaybackRate;
   }
-  if (std::abs(aPlaybackRate) < MIN_PLAYBACKRATE) {
+  if (Abs(aPlaybackRate) < MIN_PLAYBACKRATE) {
     return aPlaybackRate < 0 ? -MIN_PLAYBACKRATE : MIN_PLAYBACKRATE;
   }
-  if (std::abs(aPlaybackRate) > MAX_PLAYBACKRATE) {
+  if (Abs(aPlaybackRate) > MAX_PLAYBACKRATE) {
     return aPlaybackRate < 0 ? -MAX_PLAYBACKRATE : MAX_PLAYBACKRATE;
   }
   return aPlaybackRate;
