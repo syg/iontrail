@@ -145,6 +145,15 @@ class Preprocessor:
       aLine = f[1](aLine)
     return aLine
 
+  # The order is important for running some filters. We want slashslash before
+  # everything (especially slashstar, as being after it may cause /*-comments
+  # to never be closed), and macros after everything.
+  def sortFilters(self, filters):
+    return sorted(filters, key=lambda name: { 'slashstar': 0,
+                                              'substitution': 100,
+                                              'attemptSubstitution': 100,
+                                              'macros': 200 }.get(name, 50))
+
   def write(self, aLine):
     """
     Internal method for handling output.
@@ -267,7 +276,7 @@ class Preprocessor:
 
   # Variables
   def do_define(self, args):
-    m = re.match('(?P<name>\w+)(\((?P<params>[\w$,]+)\))?(?:\s(?P<value>.*))?', args, re.U)
+    m = re.match('(?P<name>\w+)(\((?P<params>[^)]+)\))?(?:\s(?P<value>.*))?', args, re.U)
     if not m:
       raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
     val = 1
@@ -278,7 +287,7 @@ class Preprocessor:
       except:
         pass
     if m.group('params'):
-      params = m.group('params').split(',')
+      params = [p.strip() for p in m.group('params').split(',')]
       if len([p for p in params if StupidLexer.isident(p)]) != len(params):
         raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
       val = Preprocessor.Macro(m.group('name'), params, val)
@@ -392,16 +401,13 @@ class Preprocessor:
   def do_literal(self, args):
     self.write(args + self.LE)
   def do_filter(self, args):
-    # Note that the order which filters are specified is the order in which
-    # they're executed. This has semantic meaning: we usually want to strip
-    # comments before expanding macros.
     filters = [f for f in args.split(' ') if hasattr(self, 'filter_' + f)]
     if len(filters) == 0:
       return
     current = dict(self.filters)
     for f in filters:
       current[f] = getattr(self, 'filter_' + f)
-    filterNames = current.keys()
+    filterNames = self.sortFilters(current.keys())
     self.filters = [(fn, current[fn]) for fn in filterNames]
     return
   def do_unfilter(self, args):
@@ -410,7 +416,7 @@ class Preprocessor:
     for f in filters:
       if f in current:
         del current[f]
-    filterNames = current.keys()
+    filterNames = self.sortFilters(current.keys())
     self.filters = [(fn, current[fn]) for fn in filterNames]
     return
   # Filters
@@ -483,7 +489,7 @@ class Preprocessor:
         # arguments to a function-like macro are errors when fatal is True.
         if matchobj.group('args'):
           if isinstance(macro, Preprocessor.Macro):
-            args = matchobj.group('args').split(',')
+            args = [a.strip() for a in matchobj.group('args').split(',')]
             if len(args) != len(macro.params):
               raise macro.badInvoke(self)
             # Note that unlike filter_macros, this doesn't expand until fixed
@@ -523,7 +529,7 @@ class Preprocessor:
             if lexer.done():
               raise macro.badInvoke(self)
             if token2 == ',':
-              args.append(arg)
+              args.append(arg.strip())
               arg = ''
             else:
               arg += token2
