@@ -18,6 +18,10 @@
          JSMSG_EMPTY_ARRAY_REDUCE: false,
 */
 
+/* Construct the message table using macro-definining macros. */
+
+/* Utility macros */
+#define TO_UINT32(x) (x >>> 0)
 
 /* cache built-in functions before applications can change them */
 var std_isFinite = isFinite;

@@ -954,6 +954,7 @@ export:: selfhosting
 selfhosting:: selfhosted.out.h
 
 selfhosting_srcs := \
+	$(srcdir)/builtin/SelfHosted.js \
   $(srcdir)/builtin/Utilities.js \
   $(srcdir)/builtin/Array.js \
   $(srcdir)/builtin/ParallelArray.js \
@@ -964,17 +965,15 @@ selfhosting_srcs := \
 selfhosted_out_h_deps := \
   $(selfhosting_srcs) \
   $(srcdir)/js.msg \
-  $(srcdir)/builtin/macros.py \
-  $(srcdir)/builtin/js2c.py \
   $(srcdir)/builtin/embedjs.py
 
 ifeq ($(MOZ_DEBUG),1)
-selfhosting_embed_flags += -d
+selfhosting_embed_flags += -DDEBUG
 endif
 
 selfhosted.out.h: $(selfhosted_out_h_deps)
-	$(PYTHON) $(srcdir)/builtin/embedjs.py $(selfhosting_embed_flags) $@ \
-	  $(srcdir)/js.msg $(srcdir)/builtin/macros.py $(selfhosting_srcs)
+	$(PYTHON) $(srcdir)/builtin/embedjs.py $(selfhosting_embed_flags) -o $@ \
+	  $(srcdir)/builtin/SelfHosted.js
 
 ###############################################
 # BEGIN kludges for the Nitro assembler
@@ -1016,4 +1015,3 @@ endif
 #
 # END kludges for the Nitro assembler
 ###############################################
-

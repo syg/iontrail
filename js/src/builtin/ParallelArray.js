@@ -2,6 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// The mode asserts options object.
+#define TRY_PARALLEL(MODE) \
+  ((!MODE || MODE.mode === "par"))
+#define CHECK_SEQUENTIAL(MODE) \
+  do { if (MODE) CheckSequential(MODE) } while(false) \
+
+// Slice array: see ComputeAllSliceBounds()
+#define SLICE_INFO(START, END) START, END, START, 0
+#define SLICE_START(ID) ((ID << 2) + 0)
+#define SLICE_END(ID) ((ID << 2) + 1)
+#define SLICE_POS(ID) ((ID << 2) + 2)
+
+// How many items at a time do we do recomp. for parallel execution.
+// Note that filter currently assumes that this is no greater than 32
+// in order to make use of a bitset.
+#define CHUNK_SHIFT 5
+#define CHUNK_SIZE 32
+
 /**
  * Determine the number of chunks of size CHUNK_SIZE;
  * note that the final chunk may be smaller than CHUNK_SIZE.
