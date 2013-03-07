@@ -525,10 +525,7 @@ JSRuntime::initSelfHosting(JSContext *cx)
         if (script)
             ok = Execute(cx, script, *shg.get(), &rv);
     } else {
-#if defined(DEBUG) || !defined(USE_ZLIB)
-        const char *src = selfhosted::rawSources;
-        uint32_t srcLen = selfhosted::GetRawScriptsSize();
-#else
+#ifdef USE_ZLIB
         const unsigned char *compressed = selfhosted::compressedSources;
         uint32_t compressedLen = selfhosted::GetCompressedSize();
         uint32_t srcLen = selfhosted::GetRawScriptsSize();
@@ -538,6 +535,9 @@ JSRuntime::initSelfHosting(JSContext *cx)
         {
             return false;
         }
+#else
+        const char *src = selfhosted::rawSources;
+        uint32_t srcLen = selfhosted::GetRawScriptsSize();
 #endif
         ok = Evaluate(cx, shg, options, src, srcLen, &rv);
     }

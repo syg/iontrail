@@ -18,7 +18,11 @@
          JSMSG_EMPTY_ARRAY_REDUCE: false,
 */
 
-/* Construct the message table using macro-definining macros. */
+/* Build the message table using a macro-definining macro. */
+#defmeta MSG_DEF(name, id, _, _, _) \
+  #define name id
+#include ../js.msg
+#undef MSG_DEF
 
 /* Utility macros */
 #define TO_UINT32(x) (x >>> 0)
@@ -136,4 +140,3 @@ function assert(b, info) {
     if (!b)
         AssertionFailed(info);
 }
-

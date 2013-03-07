@@ -100,15 +100,7 @@ def embed(sources, c_out, js_out, env):
   with open(js_out, 'w') as output:
     output.write(processed)
   with open(c_out, 'w') as output:
-    if 'DEBUG' in env or not ('USE_ZLIB' in env):
-      data = ToCAsciiArray(processed)
-      output.write(HEADER_TEMPLATE % {
-          'sources_data': data,
-          'sources_declaration': RAW_SOURCES_DECLARATION,
-          'compressed_total_length': 0,
-          'raw_total_length': len(processed)
-      })
-    else:
+    if 'USE_ZLIB' in env:
       import zlib
       compressed = zlib.compress(processed)
       data = ToCArray(compressed)
@@ -116,6 +108,14 @@ def embed(sources, c_out, js_out, env):
           'sources_data': data,
           'sources_declaration': COMPRESSED_SOURCES_DECLARATION,
           'compressed_total_length': len(compressed),
+          'raw_total_length': len(processed)
+      })
+    else:
+      data = ToCAsciiArray(processed)
+      output.write(HEADER_TEMPLATE % {
+          'sources_data': data,
+          'sources_declaration': RAW_SOURCES_DECLARATION,
+          'compressed_total_length': 0,
           'raw_total_length': len(processed)
       })
 

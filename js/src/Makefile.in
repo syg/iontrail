@@ -954,7 +954,6 @@ export:: selfhosting
 selfhosting:: selfhosted.out.h
 
 selfhosting_srcs := \
-	$(srcdir)/builtin/SelfHosted.js \
   $(srcdir)/builtin/Utilities.js \
   $(srcdir)/builtin/Array.js \
   $(srcdir)/builtin/ParallelArray.js \
@@ -977,7 +976,7 @@ endif
 
 selfhosted.out.h: $(selfhosted_out_h_deps)
 	$(PYTHON) $(srcdir)/builtin/embedjs.py $(selfhosting_embed_flags) -o $@ \
-	  $(srcdir)/builtin/SelfHosted.js
+	  $(selfhosting_srcs)
 
 ###############################################
 # BEGIN kludges for the Nitro assembler
