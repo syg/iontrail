@@ -49,7 +49,11 @@ enum ParCompareResult {
 };
 ParCompareResult ParCompareStrings(JSString *str1, JSString *str2);
 
-void ParallelAbort(JSScript *script);
+void ParallelAbort(ParallelBailoutCause cause,
+                   JSScript *script,
+                   jsbytecode *bytecode);
+
+void PropagateParallelAbort(JSScript *script);
 
 void TraceLIR(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
               const char *lirOpName, const char *mirOpName,

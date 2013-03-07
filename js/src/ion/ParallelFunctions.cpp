@@ -121,24 +121,30 @@ bool
 ion::ParCheckOverRecursed(ForkJoinSlice *slice)
 {
     JS_ASSERT(ForkJoinSlice::Current() == slice);
+    int stackDummy_;
 
-    // When an interrupt is triggered, we currently overwrite the
-    // stack limit with a sentinel value that brings us here.
+    // When an interrupt is triggered, the main thread stack limit is
+    // overwritten with a sentinel value that brings us here.
     // Therefore, we must check whether this is really a stack overrun
     // and, if not, check whether an interrupt is needed.
+    //
+    // When not on the main thread, we don't overwrite the stack
+    // limit, but we do still call into this routine if the interrupt
+    // flag is set, so we still need to double check.
+
+    uintptr_t realStackLimit;
     if (slice->isMainThread()) {
-        int stackDummy_;
-        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(slice->runtime()), &stackDummy_))
-            return false;
-        return ParCheckInterrupt(slice);
+        realStackLimit = js::GetNativeStackLimit(slice->runtime());
     } else {
-        // FIXME---we don't ovewrite the stack limit for worker
-        // threads, which means that technically they can recurse
-        // forever---or at least a long time---without ever checking
-        // the interrupt.  it also means that if we get here on a
-        // worker thread, this is a real stack overrun!
+        realStackLimit = slice->perThreadData->ionStackLimit;
+    }
+
+    if (!JS_CHECK_STACK_SIZE(realStackLimit, &stackDummy_)) {
+        slice->bailoutRecord->setCause(ParallelBailoutOverRecursed, NULL, NULL);
         return false;
     }
+
+    return ParCheckInterrupt(slice);
 }
 
 bool
@@ -146,8 +152,14 @@ ion::ParCheckInterrupt(ForkJoinSlice *slice)
 {
     JS_ASSERT(ForkJoinSlice::Current() == slice);
     bool result = slice->check();
-    if (!result)
+    if (!result) {
+        // Do not set the cause here.  Either it was set by this
+        // thread already by some code that then triggered an abort,
+        // or else we are just picking up an abort from some other
+        // thread.  Either way we have nothing useful to contribute so
+        // we might as well leave our bailout case unset.
         return false;
+    }
     return true;
 }
 
@@ -201,22 +213,28 @@ ion::ParCompareStrings(JSString *str1, JSString *str2)
 }
 
 void
-ion::ParallelAbort(JSScript *script)
+ion::ParallelAbort(ParallelBailoutCause cause,
+                   JSScript *script,
+                   jsbytecode *bytecode)
 {
     JS_ASSERT(ParallelJSActive());
-
+    JS_ASSERT(script != NULL);
     ForkJoinSlice *slice = ForkJoinSlice::Current();
 
-    Spew(SpewBailouts, "Parallel abort in %p:%s:%d", script, script->filename, script->lineno);
+    Spew(SpewBailouts, "Parallel abort with cause %d in %p:%s:%d at line %d",
+         cause, script, script->filename, script->lineno);
 
-    // If slice->abortedScript isn't set yet, we have just aborted the
-    // innermost script, so set it. If it is set, then we have already aborted
-    // an inner script and are unwinding the stack, so mark the caller as
-    // needing to check its call targets for recompiles.
-    if (!slice->abortedScript)
-        slice->abortedScript = script;
-    else
-        script->parallelIonScript()->setHasInvalidatedCallTarget();
+    JS_ASSERT(slice->bailoutRecord->depth == 0);
+    slice->bailoutRecord->setCause(cause, script, bytecode);
+}
+
+void
+ion::PropagateParallelAbort(JSScript *script)
+{
+    JS_ASSERT(ParallelJSActive());
+    ForkJoinSlice *slice = ForkJoinSlice::Current();
+    script->parallelIonScript()->setHasInvalidatedCallTarget();
+    slice->bailoutRecord->addTrace(script, NULL);
 }
 
 void
