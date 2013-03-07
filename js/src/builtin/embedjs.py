@@ -64,15 +64,27 @@ HEADER_TEMPLATE = """\
 
 namespace js {
 namespace selfhosted {
-  static const char sources[] = { %(sources_data)s };
+  static const char data[] = { %(sources_data)s };
 
-  static const char* raw_sources = reinterpret_cast<const char*>(sources);
+%(sources_declaration)s
+
+  uint32_t GetCompressedSize() {
+    return %(compressed_total_length)i;
+  }
 
   uint32_t GetRawScriptsSize() {
     return %(raw_total_length)i;
   }
 } // selfhosted
 } // js
+"""
+
+RAW_SOURCES_DECLARATION = """\
+  static const char *rawSources = reinterpret_cast<const char *>(data);
+"""
+
+COMPRESSED_SOURCES_DECLARATION = """\
+  static const unsigned char *compressedSources = reinterpret_cast<const unsigned char *>(data);
 """
 
 def embed(sources, c_out, js_out, env):
@@ -88,16 +100,25 @@ def embed(sources, c_out, js_out, env):
   with open(js_out, 'w') as output:
     output.write(processed)
   with open(c_out, 'w') as output:
-    if 'DEBUG' in env:
+    if 'DEBUG' in env or not ('USE_ZLIB' in env):
       data = ToCAsciiArray(processed)
+      output.write(HEADER_TEMPLATE % {
+          'sources_data': data,
+          'sources_declaration': RAW_SOURCES_DECLARATION,
+          'compressed_total_length': 0,
+          'raw_total_length': len(processed)
+      })
     else:
       import zlib
-      processed = zlib.compress(processed)
-      data = ToCArray(processed)
-    output.write(HEADER_TEMPLATE % {
-        'sources_data': data,
-        'raw_total_length': len(processed)
-    })
+      compressed = zlib.compress(processed)
+      data = ToCArray(compressed)
+      output.write(HEADER_TEMPLATE % {
+          'sources_data': data,
+          'sources_declaration': COMPRESSED_SOURCES_DECLARATION,
+          'compressed_total_length': len(compressed),
+          'raw_total_length': len(processed)
+      })
+
   pp.out.close()
 
 def main():

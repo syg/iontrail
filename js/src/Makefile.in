@@ -971,6 +971,10 @@ ifeq ($(MOZ_DEBUG),1)
 selfhosting_embed_flags += -DDEBUG
 endif
 
+ifneq (,$(MOZ_ZLIB_LIBS)$(MOZ_GLUE_LDFLAGS))
+selfhosting_embed_flags += -DUSE_ZLIB
+endif
+
 selfhosted.out.h: $(selfhosted_out_h_deps)
 	$(PYTHON) $(srcdir)/builtin/embedjs.py $(selfhosting_embed_flags) -o $@ \
 	  $(srcdir)/builtin/SelfHosted.js

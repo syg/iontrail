@@ -525,8 +525,20 @@ JSRuntime::initSelfHosting(JSContext *cx)
         if (script)
             ok = Execute(cx, script, *shg.get(), &rv);
     } else {
-        const char *src = selfhosted::raw_sources;
+#if defined(DEBUG) || !defined(USE_ZLIB)
+        const char *src = selfhosted::rawSources;
         uint32_t srcLen = selfhosted::GetRawScriptsSize();
+#else
+        const unsigned char *compressed = selfhosted::compressedSources;
+        uint32_t compressedLen = selfhosted::GetCompressedSize();
+        uint32_t srcLen = selfhosted::GetRawScriptsSize();
+        ScopedJSFreePtr<char> src(reinterpret_cast<char *>(cx->malloc_(srcLen)));
+        if (!src || !DecompressString(compressed, compressedLen,
+                                      reinterpret_cast<unsigned char *>(src.get()), srcLen))
+        {
+            return false;
+        }
+#endif
         ok = Evaluate(cx, shg, options, src, srcLen, &rv);
     }
     JS_SetErrorReporter(cx, oldReporter);
