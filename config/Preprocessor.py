@@ -463,14 +463,12 @@ class Preprocessor:
   # slashstar
   #   Strips everything between /* */
   def filter_slashstar(self, aLine):
-    lexer = StupidLexer(aLine)
+    lexer = StupidLexer(aLine, False)
     token = lexer.get()
     # Close open /*-comments
     if self.openSlashStar:
-      lexer.match_re = False
       while not lexer.done() and not (token == '*' and lexer.peek() == '/'):
         token = lexer.get()
-      lexer.match_re = True
       if lexer.done():
         return '\n'
       self.openSlashStar = False
@@ -492,6 +490,7 @@ class Preprocessor:
           return line
         # Eat '/'
         lexer.get()
+        token = lexer.get()
         continue
       line += token
       token = lexer.get()

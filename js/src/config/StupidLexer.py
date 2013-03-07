@@ -21,10 +21,10 @@ class StupidLexer:
     return (StupidLexer.isidentc(ident[0], True) and
             all([StupidLexer.isidentc(c) for c in ident[1:]]))
 
-  def __init__(self, line):
+  def __init__(self, line, match_re = True):
     self.line = line
     self.cursor = 0
-    self.match_re = True
+    self.match_re = match_re
 
   def getc(self):
     c = self.line[self.cursor]
