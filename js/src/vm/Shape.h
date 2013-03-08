@@ -1101,19 +1101,13 @@ inline UnrootedShape
 Shape::searchNoHashify(Shape *start, jsid id)
 {
     AutoAssertNoGC nogc;
-    Shape **spp;
-
-    if (start->inDictionary()) {
-        spp = start->table().search(id, false);
-        return SHAPE_FETCH(spp);
-    }
 
     /*
      * If we have a table, search in the shape table, else do a linear
      * search. We never hashify into a table in parallel.
      */
     if (start->hasTable()) {
-        spp = start->table().search(id, false);
+        Shape **spp = start->table().search(id, false);
         return SHAPE_FETCH(spp);
     }
 
