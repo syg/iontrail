@@ -125,15 +125,9 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
     JS_ASSERT(canAttachStub());
     incrementStubCount();
 
-    rejoinOffset.fixup(&masm);
-    CodeLocationJump rejoinJump(code, rejoinOffset);
-
-    // Update the success path to continue after the IC initial jump.
-    PatchJump(rejoinJump, rejoinLabel());
-
-    // Patch the previous exitJump of the last stub, or the jump from the
-    // codeGen, to jump into the newly allocated code.
-    PatchJump(lastJump_, CodeLocationLabel(code));
+    // Patch the exit jumps before patching entry jumps, to avoid threads
+    // racing on entering stubs with invalid exit jumps in parallel execution.
+    CodeLocationJump prevLastJump = lastJump_;
 
     // If this path is not taken, we are producing an entry which can no longer
     // go back into the update function.
@@ -149,6 +143,15 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
         // new stub.
         lastJump_ = exitJump;
     }
+
+    // Patch the previous exitJump of the last stub, or the jump from the
+    // codeGen, to jump into the newly allocated code.
+    PatchJump(prevLastJump, CodeLocationLabel(code));
+
+    // Update the success path to continue after the IC initial jump.
+    rejoinOffset.fixup(&masm);
+    CodeLocationJump rejoinJump(code, rejoinOffset);
+    PatchJump(rejoinJump, rejoinLabel());
 
     // Replace the STUB_ADDR constant by the address of the generated stub, such
     // as it can be kept alive even if the cache is flushed (see
