@@ -18,7 +18,7 @@
          JSMSG_EMPTY_ARRAY_REDUCE: false,
 */
 
-/* Build the message table using a macro-definining macro. */
+/* Build the message table using a macro-defining macro. */
 #defmeta MSG_DEF(name, id, _, _, _) \
   #define name id
 #include ../js.msg
