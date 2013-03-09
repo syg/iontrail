@@ -349,8 +349,10 @@ ParallelCompileContext::analyzeAndGrowWorklist(MIRGenerator *mir, MIRGraph &grap
                 // prove unsafe.
                 instr = *ins++;
 
-                if (!instr->accept(&visitor))
+                if (!instr->accept(&visitor)) {
+                    SpewMIR(instr, "Unaccepted");
                     return false;
+                }
             }
 
             if (!visitor.unsafe()) {

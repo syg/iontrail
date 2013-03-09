@@ -22,6 +22,7 @@ if sys.platform == "win32":
   os.linesep = '\n'
 
 import Expression
+from StupidLexer import StupidLexer
 
 __all__ = ['Preprocessor', 'preprocess']
 
@@ -36,6 +37,26 @@ class Preprocessor:
       self.line = cpp.context['LINE']
       self.key = MSG
       RuntimeError.__init__(self, (self.file, self.line, self.key, context))
+  class Macro:
+    def __init__(self, name, params, body, meta = False):
+      self.name = name
+      self.params = params
+      self.body = str(body)
+      self.meta = meta
+    def badInvoke(self, cpp):
+      return Preprocessor.Error(cpp, 'BAD_MACRO_INVOKE', self.name)
+    def expand(self, args):
+      subst = dict(zip(self.params, args))
+      lexer = StupidLexer(self.body)
+      token = lexer.get()
+      expanded = ''
+      while token is not None:
+        if token in subst:
+          expanded += subst[token]
+        else:
+          expanded += token
+        token = lexer.get()
+      return expanded
   def __init__(self):
     self.context = Expression.Context()
     for k,v in {'FILE': '',
@@ -44,6 +65,7 @@ class Preprocessor:
       self.context[k] = v
     self.actionLevel = 0
     self.disableLevel = 0
+    self.openSlashStar = False
     # ifStates can be
     #  0: hadTrue
     #  1: wantsTrue
@@ -55,6 +77,7 @@ class Preprocessor:
     self.cmds = {}
     for cmd, level in {'define': 0,
                        'undef': 0,
+                       'defmeta': 0,
                        'if': sys.maxint,
                        'ifdef': sys.maxint,
                        'ifndef': sys.maxint,
@@ -74,8 +97,8 @@ class Preprocessor:
     self.out = sys.stdout
     self.setMarker('#')
     self.LE = '\n'
-    self.varsubst = re.compile('@(?P<VAR>\w+)@', re.U)
-  
+    self.varsubst = re.compile('@(?P<VAR>\w+)(\((?P<args>.+)\))?@', re.U)
+
   def warnUnused(self, file):
     if self.actionLevel == 0:
       sys.stderr.write('{0}: WARNING: no preprocessor directives found\n'.format(file))
@@ -88,7 +111,7 @@ class Preprocessor:
     Set the line endings to be used for output.
     """
     self.LE = {'cr': '\x0D', 'lf': '\x0A', 'crlf': '\x0D\x0A'}[aLE]
-  
+
   def setMarker(self, aMarker):
     """
     Set the marker to be used for processing directives.
@@ -97,8 +120,8 @@ class Preprocessor:
     """
     self.marker = aMarker
     if aMarker:
-      self.instruction = re.compile('{0}(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
-                                    .format(aMarker), 
+      self.instruction = re.compile('{0}\s*(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
+                                    .format(aMarker),
                                     re.U)
       self.comment = re.compile(aMarker, re.U)
     else:
@@ -106,7 +129,7 @@ class Preprocessor:
         def match(self, *args):
           return False
       self.instruction = self.comment = NoMatch()
-  
+
   def clone(self):
     """
     Create a clone of the current processor, including line ending
@@ -118,12 +141,21 @@ class Preprocessor:
     rv.LE = self.LE
     rv.out = self.out
     return rv
-  
+
   def applyFilters(self, aLine):
     for f in self.filters:
       aLine = f[1](aLine)
     return aLine
-  
+
+  # The order is important for running some filters. We want slashslash before
+  # everything (especially slashstar, as being after it may cause /*-comments
+  # to never be closed), and macros after everything.
+  def sortFilters(self, filters):
+    return sorted(filters, key=lambda name: { 'slashstar': 0,
+                                              'substitution': 100,
+                                              'attemptSubstitution': 100,
+                                              'macros': 200 }.get(name, 50))
+
   def write(self, aLine):
     """
     Internal method for handling output.
@@ -143,7 +175,7 @@ class Preprocessor:
     # with universal line ending support, at least for files.
     filteredLine = re.sub('\n', self.LE, filteredLine)
     self.out.write(filteredLine)
-  
+
   def handleCommandLine(self, args, defaultToStdin = False):
     """
     Parse a commandline into this parser.
@@ -152,6 +184,10 @@ class Preprocessor:
     p = self.getCommandLineParser()
     (options, args) = p.parse_args(args=args)
     includes = options.I
+    imacros = options.M
+    if imacros:
+      for f in imacros:
+        self.do_include(f, False, True)
     if options.output:
       dir = os.path.dirname(options.output)
       if dir and not os.path.exists(dir):
@@ -197,6 +233,8 @@ class Preprocessor:
     p = OptionParser()
     p.add_option('-I', action='append', type="string", default = [],
                  metavar="FILENAME", help='Include file')
+    p.add_option('-M', action='append', type="string", default=[],
+                 metavar="FILENAME", help='Include file for macros only (throw away output)')
     p.add_option('-E', action='callback', callback=handleE,
                  help='Import the environment into the defined variables')
     p.add_option('-D', action='callback', callback=handleD, type="string",
@@ -216,7 +254,7 @@ class Preprocessor:
                  help='Use the specified marker instead of #')
     return p
 
-  def handleLine(self, aLine):
+  def handleLine(self, aLine, silent = False):
     """
     Handle a single line of input (internal).
     """
@@ -233,20 +271,20 @@ class Preprocessor:
       if cmd not in self.cmds:
         raise Preprocessor.Error(self, 'INVALID_CMD', aLine)
       level, cmd = self.cmds[cmd]
-      if (level >= self.disableLevel):
+      if (level >= self.disableLevel) and not self.openSlashStar:
         cmd(args)
       if cmd != 'literal':
         self.actionLevel = 2
-    elif self.disableLevel == 0 and not self.comment.match(aLine):
+    elif not silent and self.disableLevel == 0 and not self.comment.match(aLine):
       self.write(aLine)
     pass
 
   # Instruction handlers
   # These are named do_'instruction name' and take one argument
-  
+
   # Variables
   def do_define(self, args):
-    m = re.match('(?P<name>\w+)(?:\s(?P<value>.*))?', args, re.U)
+    m = re.match('(?P<name>\w+)(\((?P<params>[^)]+)\))?(?:\s+(?P<value>.*))?', args, re.U)
     if not m:
       raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
     val = 1
@@ -256,6 +294,11 @@ class Preprocessor:
         val = int(val)
       except:
         pass
+    if m.group('params'):
+      params = [p.strip() for p in m.group('params').split(',')]
+      if len([p for p in params if StupidLexer.isident(p)]) != len(params):
+        raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
+      val = Preprocessor.Macro(m.group('name'), params, val)
     self.context[m.group('name')] = val
   def do_undef(self, args):
     m = re.match('(?P<name>\w+)$', args, re.U)
@@ -263,6 +306,22 @@ class Preprocessor:
       raise Preprocessor.Error(self, 'SYNTAX_DEF', args)
     if args in self.context:
       del self.context[args]
+  def do_defmeta(self, args):
+    # A defmeta directive is a macro whose output line is processed again
+    # under filter_macros. Such macros must always be function-like. This
+    # allows for not-very-expressive macro-generating macros that is useful
+    # for js.msg in self-hosted JS code.
+    #
+    # These are _not_ processed for a directive again under
+    # filter_substitution.
+    m = re.match('(?P<name>\w+)(\((?P<params>[^)]+)\))(?:\s+(?P<value>.*))', args, re.U)
+    if not m:
+      raise Preprocessor.Error(self, 'SYNTAX_DEFMETA', args)
+    params = [p.strip() for p in m.group('params').split(',')]
+    if len([p for p in params if StupidLexer.isident(p)]) != len(params):
+      raise Preprocessor.Error(self, 'SYNTAX_DEFMETA', args)
+    val = Preprocessor.Macro(m.group('name'), params, m.group('value'), True)
+    self.context[m.group('name')] = val
   # Logic
   def ensure_not_else(self):
     if len(self.ifStates) == 0 or self.ifStates[-1] == 2:
@@ -372,8 +431,7 @@ class Preprocessor:
     current = dict(self.filters)
     for f in filters:
       current[f] = getattr(self, 'filter_' + f)
-    filterNames = current.keys()
-    filterNames.sort()
+    filterNames = self.sortFilters(current.keys())
     self.filters = [(fn, current[fn]) for fn in filterNames]
     return
   def do_unfilter(self, args):
@@ -382,8 +440,7 @@ class Preprocessor:
     for f in filters:
       if f in current:
         del current[f]
-    filterNames = current.keys()
-    filterNames.sort()
+    filterNames = self.sortFilters(current.keys())
     self.filters = [(fn, current[fn]) for fn in filterNames]
     return
   # Filters
@@ -403,25 +460,120 @@ class Preprocessor:
     if rest:
       aLine += '\n'
     return aLine
+  # slashstar
+  #   Strips everything between /* */
+  def filter_slashstar(self, aLine):
+    lexer = StupidLexer(aLine, False)
+    token = lexer.get()
+    # Close open /*-comments
+    if self.openSlashStar:
+      while not lexer.done() and not (token == '*' and lexer.peek() == '/'):
+        token = lexer.get()
+      if lexer.done():
+        return '\n'
+      self.openSlashStar = False
+      # Eat '/'
+      lexer.get()
+      token = lexer.get()
+    line = ''
+    while token is not None:
+      # Note that this is not nested, which matches JS behavior.
+      if token == '/' and lexer.peek() == '*':
+        # Eat '*'
+        lexer.get()
+        while not lexer.done() and not (lexer.get() == '*' and lexer.peek() == '/'):
+          pass
+        if lexer.done():
+          self.openSlashStar = True
+          if not line:
+            return '\n'
+          return line
+        # Eat '/'
+        lexer.get()
+        token = lexer.get()
+        continue
+      line += token
+      token = lexer.get()
+    return line
+
   # spaces
   #   Collapses sequences of spaces into a single space
   def filter_spaces(self, aLine):
     return re.sub(' +', ' ', aLine).strip(' ')
   # substition
   #   helper to be used by both substition and attemptSubstitution
+  #   This filter is designed to be used in mutual exclusion with macros
   def filter_substitution(self, aLine, fatal=True):
     def repl(matchobj):
       varname = matchobj.group('VAR')
       if varname in self.context:
-        return str(self.context[varname])
+        macro = self.context[varname]
+        # Trying to invoke a non-function-like macro or not providing
+        # arguments to a function-like macro are errors when fatal is True.
+        if matchobj.group('args'):
+          if isinstance(macro, Preprocessor.Macro):
+            args = [a.strip() for a in matchobj.group('args').split(',')]
+            if len(args) != len(macro.params):
+              raise macro.badInvoke(self)
+            # Note that unlike filter_macros, this doesn't expand until fixed
+            # point!
+            return macro.expand(args)
+          if fatal:
+            raise macro.badInvoke(self)
+          return matchobj.group(0)
+        elif isinstance(macro, Preprocessor.Macro):
+          if fatal:
+            raise Preprocessor.Error(cpp, 'BAD_MACRO_INVOKE', varname)
+          return matchobj.group(0)
+        return str(macro)
       if fatal:
         raise Preprocessor.Error(self, 'UNDEFINED_VAR', varname)
       return matchobj.group(0)
     return self.varsubst.sub(repl, aLine)
   def filter_attemptSubstitution(self, aLine):
     return self.filter_substitution(aLine, fatal=False)
+  # macros
+  #   Tokenized substitution with support for function-like macros
+  #   This filter is designed to be used in mutual exclusion with substitution
+  def filter_macros(self, aLine):
+    lexer = StupidLexer(aLine)
+    token = lexer.get()
+    line = ''
+    while token is not None:
+      if token in self.context:
+        macro = self.context[token]
+        if isinstance(macro, Preprocessor.Macro):
+          if lexer.get() != '(':
+            raise macro.badInvoke(self)
+          token2 = lexer.get()
+          args = []
+          arg = ''
+          while token2 != ')':
+            if lexer.done():
+              raise macro.badInvoke(self)
+            if token2 == ',':
+              args.append(arg.strip())
+              arg = ''
+            else:
+              arg += token2
+            token2 = lexer.get()
+          args.append(arg)
+          if len(args) != len(macro.params):
+            raise macro.badInvoke(self)
+          # Expand until fixed point.
+          expanded = macro.expand(args)
+          if macro.meta:
+            self.handleLine(expanded)
+          else:
+            line += expanded
+        else:
+          line += str(macro)
+      else:
+        line += token
+      token = lexer.get()
+    return line
   # File ops
-  def do_include(self, args, filters=True):
+  def do_include(self, args, filters = True, silent = False):
     """
     Preprocess a given file.
     args can either be a file name, or a file-like object.
@@ -457,9 +609,19 @@ class Preprocessor:
       self.context['DIRECTORY'] = os.path.dirname(abspath)
     self.context['LINE'] = 0
     self.writtenLines = 0
+    if self.checkLineNumbers:
+      self.out.write('//@line 1 "{file}"{le}'.format(file=self.context['FILE'],
+                                                     le=self.LE))
+    line = ''
     for l in args:
+      # Handle line continuations with \
+      if l.rstrip().endswith('\\'):
+        line += l[:l.rindex('\\')]
+        continue
+      line += l
       self.context['LINE'] += 1
-      self.handleLine(l)
+      self.handleLine(line, silent)
+      line = ''
     args.close()
     self.context['FILE'] = oldFile
     self.checkLineNumbers = oldCheckLineNumbers
