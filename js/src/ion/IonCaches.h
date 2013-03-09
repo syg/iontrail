@@ -246,13 +246,12 @@ class IonCache
     // this function returns CACHE_FLUSHED. In case of allocation issue this
     // function returns LINK_ERROR.
     LinkStatus linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code);
-
     // Fixup variables and update jumps in the list of stubs.  Increment the
     // number of attached stubs accordingly.
     void attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
                     CodeOffsetJump *exitOffset, CodeOffsetLabel *stubOffset = NULL);
 
-    // Combine both linkCode and attachStub into one function. In addition, it
+    // Combine both linkStub and attachStub into one function. In addition, it
     // produces a spew augmented with the attachKind string.
     bool linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
                            const char *attachKind, CodeOffsetJump &rejoinOffset,
@@ -303,7 +302,21 @@ class IonCache
 // Subclasses of IonCache for the various kinds of caches. These do not define
 // new data members; all caches must be of the same size.
 
-class GetPropertyIC : public IonCache
+class GeneratePropertyStubHelper;
+
+// Shared base class by GetPropertyIC and GetElementIC
+class ReadSlotCache : public IonCache
+{
+  protected:
+    void generateReadSlot(JSContext *cx, MacroAssembler &masm,
+                          GeneratePropertyStubHelper &helper);
+
+  public:
+    virtual Register object() const = 0;
+    virtual TypedOrValueRegister output() const = 0;
+};
+
+class GetPropertyIC : public ReadSlotCache
 {
   protected:
     // Registers live after the cache, excluding output registers. The initial
@@ -316,6 +329,11 @@ class GetPropertyIC : public IonCache
     bool allowGetters_ : 1;
     bool hasArrayLengthStub_ : 1;
     bool hasTypedArrayLengthStub_ : 1;
+
+    bool generateCallGetter(JSContext *cx, MacroAssembler &masm,
+                            GeneratePropertyStubHelper &helper,
+                            PropertyName *propName, RegisterSet &liveRegs,
+                            void *returnAddr, jsbytecode *pc);
 
   public:
     GetPropertyIC(RegisterSet liveRegs,
@@ -417,7 +435,7 @@ class SetPropertyIC : public IonCache
     update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value);
 };
 
-class GetElementIC : public IonCache
+class GetElementIC : public ReadSlotCache
 {
   protected:
     Register object_;
