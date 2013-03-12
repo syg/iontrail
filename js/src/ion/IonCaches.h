@@ -117,6 +117,8 @@ class IonCacheVisitor
 class IonCache
 {
   public:
+    class StubPatcher;
+
     enum Kind {
 #   define DEFINE_CACHEKINDS(ickind) Cache_##ickind,
         IONCACHE_KIND_LIST(DEFINE_CACHEKINDS)
@@ -248,15 +250,16 @@ class IonCache
     LinkStatus linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code);
     // Fixup variables and update jumps in the list of stubs.  Increment the
     // number of attached stubs accordingly.
-    void attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
-                    CodeOffsetJump *exitOffset, CodeOffsetLabel *stubOffset = NULL);
+    void attachStub(MacroAssembler &masm, StubPatcher &patcher, IonCode *code);
 
     // Combine both linkStub and attachStub into one function. In addition, it
     // produces a spew augmented with the attachKind string.
-    bool linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
-                           const char *attachKind, CodeOffsetJump &rejoinOffset,
-                           CodeOffsetJump *exitOffset, CodeOffsetLabel *stubOffset = NULL);
+    bool linkAndAttachStub(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
+                           IonScript *ion, const char *attachKind);
 
+    bool isAllocated() {
+        return fallbackLabel().isSet();
+    }
     bool pure() {
         return pure_;
     }
@@ -268,10 +271,6 @@ class IonCache
         JS_ASSERT(!script);
         JS_ASSERT(!pc);
         idempotent_ = true;
-    }
-
-    bool isAllocated() {
-        return fallbackLabel().isSet();
     }
 
     void setScriptedLocation(RawScript script, jsbytecode *pc) {
@@ -302,21 +301,7 @@ class IonCache
 // Subclasses of IonCache for the various kinds of caches. These do not define
 // new data members; all caches must be of the same size.
 
-class GeneratePropertyStubHelper;
-
-// Shared base class by GetPropertyIC and GetElementIC
-class ReadSlotCache : public IonCache
-{
-  protected:
-    void generateReadSlot(JSContext *cx, MacroAssembler &masm,
-                          GeneratePropertyStubHelper &helper);
-
-  public:
-    virtual Register object() const = 0;
-    virtual TypedOrValueRegister output() const = 0;
-};
-
-class GetPropertyIC : public ReadSlotCache
+class GetPropertyIC : public IonCache
 {
   protected:
     // Registers live after the cache, excluding output registers. The initial
@@ -330,10 +315,10 @@ class GetPropertyIC : public ReadSlotCache
     bool hasArrayLengthStub_ : 1;
     bool hasTypedArrayLengthStub_ : 1;
 
-    bool generateCallGetter(JSContext *cx, MacroAssembler &masm,
-                            GeneratePropertyStubHelper &helper,
-                            PropertyName *propName, RegisterSet &liveRegs,
-                            void *returnAddr, jsbytecode *pc);
+    bool generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
+                            JSObject *obj, JSObject *holder, Shape *shape,
+                            PropertyName *propName, RegisterSet &liveRegs, void *returnAddr,
+                            jsbytecode *pc, Label *nonRepatchFailures = NULL);
 
   public:
     GetPropertyIC(RegisterSet liveRegs,
@@ -435,7 +420,7 @@ class SetPropertyIC : public IonCache
     update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value);
 };
 
-class GetElementIC : public ReadSlotCache
+class GetElementIC : public IonCache
 {
   protected:
     Register object_;

@@ -110,25 +110,111 @@ IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode 
 
 const size_t IonCache::MAX_STUBS = 16;
 
-// Value used instead of the IonCode self-reference of generated stubs. This
-// value is needed for marking calls made inside stubs. This value would be
-// replaced by the attachStub function after the allocation of the IonCode. The
-// self-reference is used to keep the stub path alive even if the IonScript is
-// invalidated or if the IC is flushed.
-const ImmWord STUB_ADDR = ImmWord(uintptr_t(0xdeadc0de));
+class IonCache::StubPatcher
+{
+  protected:
+    bool hasExitOffset_ : 1;
+    bool hasStubCodePatchOffset_ : 1;
+
+    RepatchLabel failures_;
+
+    CodeOffsetJump exitOffset_;
+    CodeOffsetJump rejoinOffset_;
+    CodeOffsetLabel stubCodePatchOffset_;
+
+  public:
+    StubPatcher()
+      : hasExitOffset_(false),
+        hasStubCodePatchOffset_(false),
+        failures_(),
+        exitOffset_(),
+        rejoinOffset_(),
+        stubCodePatchOffset_()
+    { }
+
+    // Value used instead of the IonCode self-reference of generated
+    // stubs. This value is needed for marking calls made inside stubs. This
+    // value would be replaced by the attachStub function after the allocation
+    // of the IonCode. The self-reference is used to keep the stub path alive
+    // even if the IonScript is invalidated or if the IC is flushed.
+    static const ImmWord STUB_ADDR;
+
+    template <class T1, class T2>
+    void branchExit(MacroAssembler &masm, Assembler::Condition cond, T1 op1, T2 op2) {
+        exitOffset_ = masm.branchPtrWithPatch(cond, op1, op2, &failures_);
+        hasExitOffset_ = true;
+    }
+
+    void jumpRejoin(MacroAssembler &masm) {
+        RepatchLabel rejoin;
+        rejoinOffset_ = masm.jumpWithPatch(&rejoin);
+        masm.bind(&rejoin);
+    }
+
+    void jumpExit(MacroAssembler &masm) {
+        RepatchLabel exit;
+        exitOffset_ = masm.jumpWithPatch(&exit);
+        hasExitOffset_ = true;
+        masm.bind(&exit);
+    }
+
+    void bindFailures(MacroAssembler &masm) {
+        masm.bind(&failures_);
+    }
+
+    void pushStubCodePatch(MacroAssembler &masm) {
+        // Push the IonCode pointer for the stub we're generating.
+        // WARNING:
+        // WARNING: If IonCode ever becomes relocatable, the following code is incorrect.
+        // WARNING: Note that we're not marking the pointer being pushed as an ImmGCPtr.
+        // WARNING: This is not a marking issue since the stub IonCode won't be collected
+        // WARNING: between the time it's called and when we get here, but it would fail
+        // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
+        // WARNING: value here.
+        // WARNING:
+        stubCodePatchOffset_ = masm.PushWithPatch(STUB_ADDR);
+        hasStubCodePatchOffset_ = true;
+    }
+
+    void patchRejoin(MacroAssembler &masm, IonCode *code, CodeLocationLabel rejoinLabel) {
+        rejoinOffset_.fixup(&masm);
+        CodeLocationJump rejoinJump(code, rejoinOffset_);
+        PatchJump(rejoinJump, rejoinLabel);
+    }
+
+    bool hasExitOffset() {
+        return hasExitOffset_;
+    }
+
+    CodeLocationJump patchExit(MacroAssembler &masm, IonCode *code, CodeLocationLabel exitLabel) {
+        JS_ASSERT(hasExitOffset());
+
+        exitOffset_.fixup(&masm);
+        CodeLocationJump exitJump(code, exitOffset_);
+        PatchJump(exitJump, exitLabel);
+
+        return exitJump;
+    }
+
+    void patchStubCode(MacroAssembler &masm, IonCode *code) {
+        if (hasStubCodePatchOffset_) {
+            stubCodePatchOffset_.fixup(&masm);
+            Assembler::patchDataWithValueCheck(CodeLocationLabel(code, stubCodePatchOffset_),
+                                               ImmWord(uintptr_t(code)), STUB_ADDR);
+        }
+    }
+};
+
+const ImmWord IonCache::StubPatcher::STUB_ADDR = ImmWord(uintptr_t(0xdeadc0de));
 
 void
-IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
-                     CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
+IonCache::attachStub(MacroAssembler &masm, StubPatcher &patcher, IonCode *code)
 {
     JS_ASSERT(canAttachStub());
     incrementStubCount();
 
-    rejoinOffset.fixup(&masm);
-    CodeLocationJump rejoinJump(code, rejoinOffset);
-
     // Update the success path to continue after the IC initial jump.
-    PatchJump(rejoinJump, rejoinLabel());
+    patcher.patchRejoin(masm, code, rejoinLabel());
 
     // Patch the previous exitJump of the last stub, or the jump from the
     // codeGen, to jump into the newly allocated code.
@@ -136,40 +222,29 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
 
     // If this path is not taken, we are producing an entry which can no longer
     // go back into the update function.
-    if (exitOffset) {
-        exitOffset->fixup(&masm);
-        CodeLocationJump exitJump(code, *exitOffset);
-
+    if (patcher.hasExitOffset()) {
         // When the last stub fails, it fallback to the ool call which can
-        // produce a stub.
-        PatchJump(exitJump, fallbackLabel());
-
-        // Next time we generate a stub, we will patch the exitJump to try the
-        // new stub.
-        lastJump_ = exitJump;
+        // produce a stub. Next time we generate a stub, we will patch the
+        // exit to try the new stub.
+        lastJump_ = patcher.patchExit(masm, code, fallbackLabel());
     }
 
     // Replace the STUB_ADDR constant by the address of the generated stub, such
     // as it can be kept alive even if the cache is flushed (see
     // MarkIonExitFrame).
-    if (stubLabel) {
-        stubLabel->fixup(&masm);
-        Assembler::patchDataWithValueCheck(CodeLocationLabel(code, *stubLabel),
-                                           ImmWord(uintptr_t(code)), STUB_ADDR);
-    }
+    patcher.patchStubCode(masm, code);
 }
 
 bool
-IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
-                            const char *attachKind, CodeOffsetJump &rejoinOffset,
-                            CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
+IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
+                            IonScript *ion, const char *attachKind)
 {
     IonCode *code = NULL;
     LinkStatus status = linkCode(cx, masm, ion, &code);
     if (status != LINK_GOOD)
         return status != LINK_ERROR;
 
-    attachStub(masm, code, rejoinOffset, exitOffset, stubLabel);
+    attachStub(masm, patcher, code);
 
     IonSpew(IonSpew_InlineCaches, "Generated %s %s stub at %p",
             attachKind, CacheName(kind()), code->raw());
@@ -330,99 +405,19 @@ IsCacheableGetPropCallPropertyOp(JSObject *obj, JSObject *holder, RawShape shape
     return true;
 }
 
-// Base helper class to help hold state while generating readSlot and
-// callGetter stubs.
-class ion::GeneratePropertyStubHelper
+static void
+GenerateReadSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubPatcher &patcher,
+                 JSObject *obj, JSObject *holder, Shape *shape, Register object,
+                 TypedOrValueRegister output, Label *nonRepatchFailures = NULL)
 {
-  protected:
-    MacroAssembler &masm_;
-    JSObject *object_;
-    JSObject *holder_;
-    Shape *shape_;
-    Label *nonRepatchFailures_;
-
-  public:
-    GeneratePropertyStubHelper(MacroAssembler &masm, JSObject *object, JSObject *holder,
-                               Shape *shape, Label *nonRepatchFailures = NULL)
-      : masm_(masm),
-        object_(object),
-        holder_(holder),
-        shape_(shape),
-        nonRepatchFailures_(nonRepatchFailures)
-    { }
-
-    JSObject *object() { return object_; }
-    JSObject *holder() { return holder_; }
-    Shape *shape() { return shape_; }
-    Label *nonRepatchFailures() { return nonRepatchFailures_; }
-
-    virtual void branchExit(Assembler::Condition cond, Address addr, ImmGCPtr ptr) = 0;
-    virtual void jumpRejoin() = 0;
-    virtual void jumpExit() = 0;
-    virtual void bindFailures() = 0;
-    virtual void pushStubCodePatch(const ImmWord &word) = 0;
-};
-
-class RepatchPropertyStubHelper : public GeneratePropertyStubHelper
-{
-    RepatchLabel failures_;
-
-  public:
-    RepatchPropertyStubHelper(MacroAssembler &masm, JSObject *object, JSObject *holder,
-                              Shape *shape, Label *nonRepatchFailures = NULL)
-      : GeneratePropertyStubHelper(masm, object, holder, shape, nonRepatchFailures)
-    { }
-
-    // Output values.
-    CodeOffsetJump exitOffset;
-    CodeOffsetJump rejoinOffset;
-    CodeOffsetLabel stubCodePatchOffset;
-
-    void branchExit(Assembler::Condition cond, Address addr, ImmGCPtr ptr) {
-        exitOffset = masm_.branchPtrWithPatch(cond, addr, ptr, &failures_);
-    }
-
-    void jumpRejoin() {
-        RepatchLabel rejoin_;
-        rejoinOffset = masm_.jumpWithPatch(&rejoin_);
-        masm_.bind(&rejoin_);
-    }
-
-    void jumpExit() {
-        RepatchLabel exit_;
-        exitOffset = masm_.jumpWithPatch(&exit_);
-        masm_.bind(&exit_);
-    }
-
-    void bindFailures() {
-        masm_.bind(&failures_);
-    }
-
-    void pushStubCodePatch(const ImmWord &word) {
-        stubCodePatchOffset = masm_.PushWithPatch(STUB_ADDR);
-    }
-};
-
-void
-ReadSlotCache::generateReadSlot(JSContext *cx, MacroAssembler &masm,
-                                GeneratePropertyStubHelper &helper)
-{
-    JSObject *obj = helper.object();
-    JSObject *holder = helper.holder();
-    Shape *shape = helper.shape();
-    Label *nonRepatchFailures = helper.nonRepatchFailures();
-
-    Register object = this->object();
-    TypedOrValueRegister output = this->output();
-
     // If there's a single jump to |failures|, we can patch the shape guard
     // jump directly. Otherwise, jump to the end of the stub, so there's a
     // common point to patch.
 
     bool multipleFailureJumps = (nonRepatchFailures != NULL) && nonRepatchFailures->used();
-    helper.branchExit(Assembler::NotEqual,
-                      Address(object, JSObject::offsetOfShape()),
-                      ImmGCPtr(obj->lastProperty()));
+    patcher.branchExit(masm, Assembler::NotEqual,
+                       Address(object, JSObject::offsetOfShape()),
+                       ImmGCPtr(obj->lastProperty()));
 
     bool restoreScratch = false;
     Register scratchReg = Register::FromCode(0); // Quell compiler warning.
@@ -504,18 +499,18 @@ ReadSlotCache::generateReadSlot(JSContext *cx, MacroAssembler &masm,
     if (restoreScratch)
         masm.pop(scratchReg);
 
-    helper.jumpRejoin();
+    patcher.jumpRejoin(masm);
 
     if (obj != holder || multipleFailureJumps) {
         masm.bind(&prototypeFailures);
         if (restoreScratch)
             masm.pop(scratchReg);
-        helper.bindFailures();
+        patcher.bindFailures(masm);
         if (multipleFailureJumps)
             masm.bind(nonRepatchFailures);
-        helper.jumpExit();
+        patcher.jumpExit(masm);
     } else {
-        helper.bindFailures();
+        patcher.bindFailures(masm);
     }
 }
 
@@ -525,26 +520,21 @@ GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSOb
 {
     MacroAssembler masm(cx);
 
-    RepatchPropertyStubHelper helper(masm, obj, holder, shape);
-    generateReadSlot(cx, masm, helper);
+    StubPatcher patcher;
+    GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output());
 
     const char *attachKind = "non idempotent reading";
     if (idempotent())
         attachKind = "idempotent reading";
-    return linkAndAttachStub(cx, masm, ion, attachKind, helper.rejoinOffset, &helper.exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, attachKind);
 }
 
 bool
-GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm,
-                                  GeneratePropertyStubHelper &helper,
+GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
+                                  JSObject *obj, JSObject *holder, Shape *shape,
                                   PropertyName *propName, RegisterSet &liveRegs,
-                                  void *returnAddr, jsbytecode *pc)
+                                  void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures)
 {
-    JSObject *obj = helper.object();
-    JSObject *holder = helper.holder();
-    Shape *shape = helper.shape();
-    Label *nonRepatchFailures = helper.nonRepatchFailures();
-
     Register object = this->object();
     TypedOrValueRegister output = this->output();
 
@@ -663,16 +653,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm,
 
     Label success, exception;
 
-    // Push the IonCode pointer for the stub we're generating.
-    // WARNING:
-    // WARNING: If IonCode ever becomes relocatable, the following code is incorrect.
-    // WARNING: Note that we're not marking the pointer being pushed as an ImmGCPtr.
-    // WARNING: This is not a marking issue since the stub IonCode won't be collected
-    // WARNING: between the time it's called and when we get here, but it would fail
-    // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
-    // WARNING: value here.
-    // WARNING:
-    helper.pushStubCodePatch(STUB_ADDR);
+    patcher.pushStubCodePatch(masm);
 
     if (callNative) {
         JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
@@ -787,7 +768,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm,
     masm.PopRegsInMask(liveRegs);
 
     // Rejoin jump.
-    helper.jumpRejoin();
+    patcher.jumpRejoin(masm);
 
     // Exit jump.
     masm.bind(&prototypeFailures);
@@ -796,7 +777,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm,
     masm.bind(&stubFailure);
     if (nonRepatchFailures)
         masm.bind(nonRepatchFailures);
-    helper.jumpExit();
+    patcher.jumpExit(masm);
 
     return true;
 }
@@ -815,15 +796,17 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
     // properly constructed.
     masm.setFramePushed(ion->frameSize());
 
-    RepatchPropertyStubHelper helper(masm, obj, holder, shape);
-    if (!generateCallGetter(cx, masm, helper, name(), liveRegs_, returnAddr, pc))
+    StubPatcher patcher;
+    if (!generateCallGetter(cx, masm, patcher, obj, holder, shape, name(),
+                            liveRegs_, returnAddr, pc))
+    {
          return false;
+    }
 
     const char *attachKind = "non idempotent calling";
     if (idempotent())
         attachKind = "idempotent calling";
-    return linkAndAttachStub(cx, masm, ion, attachKind, helper.rejoinOffset, &helper.exitOffset,
-                             &helper.stubCodePatchOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, attachKind);
 }
 
 bool
@@ -834,6 +817,7 @@ GetPropertyIC::attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj)
 
     Label failures;
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     // Guard object is a dense array.
     RootedObject globalObj(cx, &script->global());
@@ -862,19 +846,15 @@ GetPropertyIC::attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj)
         masm.tagValue(JSVAL_TYPE_INT32, outReg, output().valueReg());
 
     /* Success. */
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
     /* Failure. */
     masm.bind(&failures);
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
-    masm.bind(&exit_);
+    patcher.jumpExit(masm);
 
     JS_ASSERT(!hasArrayLengthStub_);
     hasArrayLengthStub_ = true;
-    return linkAndAttachStub(cx, masm, ion, "array length", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "array length");
 }
 
 bool
@@ -885,6 +865,7 @@ GetPropertyIC::attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *o
 
     Label failures;
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     Register tmpReg;
     if (output().hasValue()) {
@@ -904,19 +885,15 @@ GetPropertyIC::attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *o
     masm.loadTypedOrValue(Address(object(), TypedArray::lengthOffset()), output());
 
     /* Success. */
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
     /* Failure. */
     masm.bind(&failures);
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
-    masm.bind(&exit_);
+    patcher.jumpExit(masm);
 
     JS_ASSERT(!hasTypedArrayLengthStub_);
     hasTypedArrayLengthStub_ = true;
-    return linkAndAttachStub(cx, masm, ion, "typed array length", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "typed array length");
 }
 
 static bool
@@ -1296,14 +1273,12 @@ SetPropertyIC::attachNativeExisting(JSContext *cx, IonScript *ion,
                                     HandleObject obj, HandleShape shape)
 {
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset =
-        masm.branchPtrWithPatch(Assembler::NotEqual,
-                                Address(object(), JSObject::offsetOfShape()),
-                                ImmGCPtr(obj->lastProperty()),
-                                &exit_);
-    masm.bind(&exit_);
+    patcher.branchExit(masm, Assembler::NotEqual,
+                       Address(object(), JSObject::offsetOfShape()),
+                       ImmGCPtr(obj->lastProperty()));
+    patcher.bindFailures(masm);
 
     if (obj->isFixedSlot(shape->slot())) {
         Address addr(object(), JSObject::getFixedSlotOffset(shape->slot()));
@@ -1324,11 +1299,9 @@ SetPropertyIC::attachNativeExisting(JSContext *cx, IonScript *ion,
         masm.storeConstantOrRegister(value(), addr);
     }
 
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "setting", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "setting");
 }
 
 bool
@@ -1337,6 +1310,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
                                 void *returnAddr)
 {
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     // Need to set correct framePushed on the masm so that exit frame descriptors are
     // properly constructed.
@@ -1407,16 +1381,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
 
     Label success, exception;
 
-    // Push the IonCode pointer for the stub we're generating.
-    // WARNING:
-    // WARNING: If IonCode ever becomes relocatable, the following code is incorrect.
-    // WARNING: Note that we're not marking the pointer being pushed as an ImmGCPtr.
-    // WARNING: This is not a marking issue since the stub IonCode won't be collected
-    // WARNING: between the time it's called and when we get here, but it would fail
-    // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
-    // WARNING: value here.
-    // WARNING:
-    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(STUB_ADDR);
+    patcher.pushStubCodePatch(masm);
 
     StrictPropertyOp target = shape->setterOp();
     JS_ASSERT(target);
@@ -1480,18 +1445,13 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
     masm.PopRegsInMask(liveRegs_);
 
     // Rejoin jump.
-    RepatchLabel rejoin;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin);
-    masm.bind(&rejoin);
+    patcher.jumpRejoin(masm);
 
     // Exit jump.
     masm.bind(&failure);
-    RepatchLabel exit;
-    CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit);
-    masm.bind(&exit);
+    patcher.jumpExit(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "calling", rejoinOffset, &exitOffset,
-                             &stubCodePatchOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "calling");
 }
 
 bool
@@ -1500,6 +1460,7 @@ SetPropertyIC::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj,
                                   HandleShape propShape)
 {
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     Label failures;
 
@@ -1551,20 +1512,16 @@ SetPropertyIC::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj,
     }
 
     /* Success. */
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
     /* Failure. */
     masm.bind(&protoFailures);
     masm.pop(object());
     masm.bind(&failures);
 
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
-    masm.bind(&exit_);
+    patcher.jumpExit(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "adding", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "adding");
 }
 
 static bool
@@ -1764,10 +1721,11 @@ GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
     ValueOperand val = index().reg().valueReg();
     masm.branchTestValue(Assembler::NotEqual, val, idval, &nonRepatchFailures);
 
-    RepatchPropertyStubHelper helper(masm, obj, holder, shape, &nonRepatchFailures);
-    generateReadSlot(cx, masm, helper);
+    StubPatcher patcher;
+    GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output(),
+                     &nonRepatchFailures);
 
-    return linkAndAttachStub(cx, masm, ion, "property", helper.rejoinOffset, &helper.exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "property");
 }
 
 bool
@@ -1778,6 +1736,7 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
 
     Label failures;
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     Register scratchReg = output().scratchReg().gpr();
     JS_ASSERT(scratchReg != InvalidReg);
@@ -1821,21 +1780,17 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
                                  output(), true, &hole);
 
     masm.pop(object());
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
     // All failures flow to here.
     masm.bind(&hole);
     masm.pop(object());
     masm.bind(&failures);
 
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
-    masm.bind(&exit_);
+    patcher.jumpExit(masm);
 
     setHasDenseStub();
-    return linkAndAttachStub(cx, masm, ion, "dense array", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "dense array");
 }
 
 bool
@@ -1847,6 +1802,7 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
 
     Label failures;
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     // The array type is the object within the table of typed array classes.
     int arrayType = TypedArray::type(obj);
@@ -1903,20 +1859,16 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
                                 elementReg, &popAndFail);
 
     masm.pop(object());
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
     // Restore the object before continuing to the next stub.
     masm.bind(&popAndFail);
     masm.pop(object());
     masm.bind(&failures);
 
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
-    masm.bind(&exit_);
+    patcher.jumpExit(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "typed array", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "typed array");
 }
 
 bool
@@ -1989,19 +1941,17 @@ BindNameIC::attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain)
     JS_ASSERT(scopeChain->isGlobal());
 
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     // Guard on the scope chain.
-    RepatchLabel exit_;
-    CodeOffsetJump exitOffset = masm.branchPtrWithPatch(Assembler::NotEqual, scopeChainReg(),
-                                                        ImmGCPtr(scopeChain), &exit_);
-    masm.bind(&exit_);
+    patcher.branchExit(masm, Assembler::NotEqual, scopeChainReg(),
+                       ImmGCPtr(scopeChain));
+    patcher.bindFailures(masm);
     masm.movePtr(ImmGCPtr(scopeChain), outputReg());
 
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "global", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "global");
 }
 
 static inline void
@@ -2058,15 +2008,13 @@ BindNameIC::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain,
     JS_ASSERT(IsCacheableNonGlobalScope(scopeChain));
 
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     // Guard on the shape of the scope chain.
-    RepatchLabel failures;
     Label nonRepatchFailures;
-    CodeOffsetJump exitOffset =
-        masm.branchPtrWithPatch(Assembler::NotEqual,
-                                Address(scopeChainReg(), JSObject::offsetOfShape()),
-                                ImmGCPtr(scopeChain->lastProperty()),
-                                &failures);
+    patcher.branchExit(masm, Assembler::NotEqual,
+                       Address(scopeChainReg(), JSObject::offsetOfShape()),
+                       ImmGCPtr(scopeChain->lastProperty()));
 
     if (holder != scopeChain) {
         JSObject *parent = &scopeChain->asScope().enclosingScope();
@@ -2079,20 +2027,15 @@ BindNameIC::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain,
 
     // At this point outputReg holds the object on which the property
     // was found, so we're done.
-    RepatchLabel rejoin_;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
-    masm.bind(&rejoin_);
+    patcher.jumpRejoin(masm);
 
     // All failures flow to here, so there is a common point to patch.
-    masm.bind(&failures);
+    patcher.bindFailures(masm);
     masm.bind(&nonRepatchFailures);
-    if (holder != scopeChain) {
-        RepatchLabel exit_;
-        exitOffset = masm.jumpWithPatch(&exit_);
-        masm.bind(&exit_);
-    }
+    if (holder != scopeChain)
+        patcher.jumpExit(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "non-global", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "non-global");
 }
 
 static bool
@@ -2157,6 +2100,7 @@ NameIC::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObj
 {
     MacroAssembler masm(cx);
     Label failures;
+    StubPatcher patcher;
 
     Register scratchReg = outputReg().valueReg().scratchReg();
 
@@ -2174,22 +2118,14 @@ NameIC::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObj
         masm.loadTypedOrValue(addr, outputReg());
     }
 
-    RepatchLabel rejoin;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin);
-    masm.bind(&rejoin);
-
-    CodeOffsetJump exitOffset;
+    patcher.jumpRejoin(masm);
 
     if (failures.used()) {
         masm.bind(&failures);
-
-        RepatchLabel exit;
-        exitOffset = masm.jumpWithPatch(&exit);
-        masm.bind(&exit);
+        patcher.jumpExit(masm);
     }
 
-    return linkAndAttachStub(cx, masm, ion, "generic", rejoinOffset,
-                             (failures.bound() ? &exitOffset : NULL));
+    return linkAndAttachStub(cx, masm, patcher, ion, "generic");
 }
 
 static bool
@@ -2278,21 +2214,19 @@ CallsiteCloneIC::attach(JSContext *cx, IonScript *ion, HandleFunction original,
                         HandleFunction clone)
 {
     MacroAssembler masm(cx);
+    StubPatcher patcher;
 
     // Guard against object identity on the original.
-    RepatchLabel exit;
-    CodeOffsetJump exitOffset = masm.branchPtrWithPatch(Assembler::NotEqual, calleeReg(),
-                                                        ImmWord(uintptr_t(original.get())), &exit);
-    masm.bind(&exit);
+    patcher.branchExit(masm, Assembler::NotEqual, calleeReg(),
+                       ImmWord(uintptr_t(original.get())));
+    patcher.bindFailures(masm);
 
     // Load the clone.
     masm.movePtr(ImmWord(uintptr_t(clone.get())), outputReg());
 
-    RepatchLabel rejoin;
-    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin);
-    masm.bind(&rejoin);
+    patcher.jumpRejoin(masm);
 
-    return linkAndAttachStub(cx, masm, ion, "generic", rejoinOffset, &exitOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, "generic");
 }
 
 JSObject *
