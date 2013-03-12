@@ -15,7 +15,10 @@ DIST_FILES = package-name.txt
 include $(topsrcdir)/mobile/android/base/android-services-files.mk
 
 MOZGLUE_JAVA_FILES := \
+  mozglue/ByteBufferInputStream.java \
   mozglue/DirectBufferAllocator.java \
+  mozglue/NativeReference.java \
+  mozglue/NativeZip.java \
   $(NULL)
 
 MOZGLUE_PP_JAVA_FILES := \
@@ -59,6 +62,7 @@ FENNEC_JAVA_FILES = \
   BrowserApp.java \
   BrowserToolbar.java \
   BrowserToolbarBackground.java \
+  BrowserToolbarLayout.java \
   CameraImageResultHandler.java \
   CameraVideoResultHandler.java \
   CanvasDelegate.java \
@@ -68,6 +72,7 @@ FENNEC_JAVA_FILES = \
   db/LocalBrowserDB.java \
   db/DBUtils.java \
   Distribution.java \
+  Divider.java \
   DoorHanger.java \
   DoorHangerPopup.java \
   Favicons.java \
@@ -113,6 +118,8 @@ FENNEC_JAVA_FILES = \
   MenuPanel.java \
   MenuPopup.java \
   MultiChoicePreference.java \
+  NotificationService.java \
+  NotificationServiceClient.java \
   NSSBridge.java \
   CustomEditText.java \
   OnInterceptTouchListener.java \
@@ -407,6 +414,7 @@ RES_LAYOUT = \
   res/layout/datetime_picker.xml \
   res/layout/doorhangerpopup.xml \
   res/layout/doorhanger.xml \
+  res/layout/doorhanger_button.xml \
   res/layout/find_in_page_content.xml \
   res/layout/font_size_preference.xml \
   res/layout/gecko_appwidget.xml \
@@ -591,9 +599,6 @@ RES_DRAWABLE_MDPI = \
   res/drawable-mdpi/address_bar_url_default_pb.9.png \
   res/drawable-mdpi/address_bar_url_pressed.9.png \
   res/drawable-mdpi/address_bar_url_pressed_pb.9.png \
-  res/drawable-mdpi/doorhanger_arrow.png \
-  res/drawable-mdpi/doorhanger_bg.9.png \
-  res/drawable-mdpi/doorhanger_shadow_bg.9.png \
   res/drawable-mdpi/doorhanger_popup_bg.9.png \
   res/drawable-mdpi/find_close.png \
   res/drawable-mdpi/find_next.png \
@@ -693,9 +698,6 @@ RES_DRAWABLE_HDPI = \
   res/drawable-hdpi/address_bar_url_default_pb.9.png \
   res/drawable-hdpi/address_bar_url_pressed.9.png \
   res/drawable-hdpi/address_bar_url_pressed_pb.9.png \
-  res/drawable-hdpi/doorhanger_arrow.png \
-  res/drawable-hdpi/doorhanger_bg.9.png \
-  res/drawable-hdpi/doorhanger_shadow_bg.9.png \
   res/drawable-hdpi/doorhanger_popup_bg.9.png \
   res/drawable-hdpi/find_close.png \
   res/drawable-hdpi/find_next.png \
@@ -780,9 +782,6 @@ RES_DRAWABLE_XHDPI = \
   res/drawable-xhdpi/tab_thumbnail_default.png \
   res/drawable-xhdpi/tab_thumbnail_shadow.png \
   res/drawable-xhdpi/tabs_carat.png \
-  res/drawable-xhdpi/doorhanger_arrow.png \
-  res/drawable-xhdpi/doorhanger_bg.9.png \
-  res/drawable-xhdpi/doorhanger_shadow_bg.9.png \
   res/drawable-xhdpi/doorhanger_popup_bg.9.png \
   res/drawable-xhdpi/find_close.png \
   res/drawable-xhdpi/find_next.png \
@@ -911,6 +910,7 @@ RES_DRAWABLE_LARGE_LAND_V11 = \
   $(NULL)
 
 RES_DRAWABLE_LARGE_MDPI_V11 = \
+  res/drawable-large-mdpi-v11/doorhanger_popup_bg.9.png \
   res/drawable-large-mdpi-v11/ic_menu_reload.png \
   res/drawable-large-mdpi-v11/ic_menu_forward.png \
   res/drawable-large-mdpi-v11/menu.png \
@@ -920,6 +920,7 @@ RES_DRAWABLE_LARGE_MDPI_V11 = \
   $(NULL)
 
 RES_DRAWABLE_LARGE_HDPI_V11 = \
+  res/drawable-large-hdpi-v11/doorhanger_popup_bg.9.png \
   res/drawable-large-hdpi-v11/ic_menu_reload.png \
   res/drawable-large-hdpi-v11/ic_menu_forward.png \
   res/drawable-large-hdpi-v11/menu.png \
@@ -929,6 +930,7 @@ RES_DRAWABLE_LARGE_HDPI_V11 = \
   $(NULL)
 
 RES_DRAWABLE_LARGE_XHDPI_V11 = \
+  res/drawable-large-xhdpi-v11/doorhanger_popup_bg.9.png \
   res/drawable-large-xhdpi-v11/ic_menu_reload.png \
   res/drawable-large-xhdpi-v11/ic_menu_forward.png \
   res/drawable-large-xhdpi-v11/menu.png \
@@ -1089,10 +1091,10 @@ jars/gecko-mozglue.jar: $(addprefix $(srcdir)/,$(MOZGLUE_JAVA_FILES)) $(MOZGLUE_
 	$(JAVAC) $(JAVAC_FLAGS) -Xlint:all -d classes/gecko-mozglue $(addprefix $(srcdir)/,$(MOZGLUE_JAVA_FILES)) $(MOZGLUE_PP_JAVA_FILES)
 	$(JAR) cMf jars/gecko-mozglue.jar -C classes/gecko-mozglue .
 
-jars/gecko-util.jar: $(addprefix $(srcdir)/,$(UTIL_JAVA_FILES)) jars
+jars/gecko-util.jar: jars/gecko-mozglue.jar $(addprefix $(srcdir)/,$(UTIL_JAVA_FILES)) jars
 	@echo "JAR gecko-util.jar"
 	$(NSINSTALL) -D classes/gecko-util
-	$(JAVAC) $(JAVAC_FLAGS) -Xlint:all,-deprecation -d classes/gecko-util $(addprefix $(srcdir)/,$(UTIL_JAVA_FILES))
+	$(JAVAC) $(JAVAC_FLAGS) -Xlint:all,-deprecation -d classes/gecko-util -classpath "jars/gecko-mozglue.jar" $(addprefix $(srcdir)/,$(UTIL_JAVA_FILES))
 	$(JAR) cMf jars/gecko-util.jar -C classes/gecko-util .
 
 jars/sync-thirdparty.jar: $(addprefix $(srcdir)/,$(SYNC_THIRDPARTY_JAVA_FILES)) jars
@@ -1214,10 +1216,6 @@ $(RES_BRANDING_DRAWABLE_XHDPI): $(addprefix $(topsrcdir)/,$(MOZ_BRANDING_DRAWABL
 	$(NSINSTALL) -D res/drawable-xhdpi
 	$(NSINSTALL) $^ res/drawable-xhdpi/
 
-res/values/defaults.xml: $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/res/values/defaults.xml
-	$(NSINSTALL) -D res/values
-	$(NSINSTALL) $^  res/values
-
 $(RES_DIRS):
 	$(RM) -r $@
 	$(NSINSTALL) -D $@
@@ -1227,10 +1225,10 @@ $(RESOURCES): $(RES_DIRS) $(subst res/,$(srcdir)/resources/,$(RESOURCES))
 	$(NSINSTALL) $(subst res/,$(srcdir)/resources/,$@) $(dir $@)
 
 
-R.java: $(MOZ_APP_ICON) $(RESOURCES) $(RES_DRAWABLE) $(RES_BRANDING_DRAWABLE_MDPI) $(RES_BRANDING_DRAWABLE_HDPI) $(RES_BRANDING_DRAWABLE_XHDPI) $(PP_RES_XML) res/values/defaults.xml res/drawable-mdpi/icon.png res/drawable-hdpi/icon.png res/drawable-xhdpi/icon.png res/drawable-xxhdpi/icon.png res/values/strings.xml AndroidManifest.xml FORCE
+R.java: $(MOZ_APP_ICON) $(RESOURCES) $(RES_DRAWABLE) $(RES_BRANDING_DRAWABLE_MDPI) $(RES_BRANDING_DRAWABLE_HDPI) $(RES_BRANDING_DRAWABLE_XHDPI) $(PP_RES_XML) res/drawable-mdpi/icon.png res/drawable-hdpi/icon.png res/drawable-xhdpi/icon.png res/drawable-xxhdpi/icon.png res/values/strings.xml AndroidManifest.xml FORCE
 	$(AAPT) package -f -M AndroidManifest.xml -I $(ANDROID_SDK)/android.jar -S res -J . --custom-package org.mozilla.gecko
 
-gecko.ap_: AndroidManifest.xml res/drawable-mdpi/icon.png res/drawable-hdpi/icon.png res/drawable-xhdpi/icon.png res/drawable-xxhdpi/icon.png $(RESOURCES) $(RES_DRAWABLE) $(RES_BRANDING_DRAWABLE_MDPI) $(RES_BRANDING_DRAWABLE_HDPI) $(RES_BRANDING_DRAWABLE_XHDPI) $(PP_RES_XML) res/values/defaults.xml res/values/strings.xml FORCE
+gecko.ap_: AndroidManifest.xml res/drawable-mdpi/icon.png res/drawable-hdpi/icon.png res/drawable-xhdpi/icon.png res/drawable-xxhdpi/icon.png $(RESOURCES) $(RES_DRAWABLE) $(RES_BRANDING_DRAWABLE_MDPI) $(RES_BRANDING_DRAWABLE_HDPI) $(RES_BRANDING_DRAWABLE_XHDPI) $(PP_RES_XML) res/values/strings.xml FORCE
 	$(AAPT) package -f -M AndroidManifest.xml -I $(ANDROID_SDK)/android.jar  -S res -F $@
 
 libs:: classes.dex package-name.txt jni-stubs.inc

@@ -25,10 +25,9 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(DOMImplementation)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(DOMImplementation)
 
 JSObject*
-DOMImplementation::WrapObject(JSContext* aCx, JSObject* aScope,
-                              bool* aTriedToWrap)
+DOMImplementation::WrapObject(JSContext* aCx, JSObject* aScope)
 {
-  return DOMImplementationBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return DOMImplementationBinding::Wrap(aCx, aScope, this);
 }
 
 bool
@@ -90,10 +89,6 @@ DOMImplementation::CreateDocument(const nsAString& aNamespaceURI,
           !aNamespaceURI.EqualsLiteral("http://www.w3.org/XML/1998/namespace")))) {
       return NS_ERROR_DOM_NAMESPACE_ERR;
     }
-  }
-  else if (DOMStringIsNull(aQualifiedName) &&
-           !DOMStringIsNull(aNamespaceURI)) {
-    return NS_ERROR_DOM_NAMESPACE_ERR;
   }
 
   nsCOMPtr<nsIScriptGlobalObject> scriptHandlingObject =

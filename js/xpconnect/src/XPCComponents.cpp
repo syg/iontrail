@@ -2700,7 +2700,7 @@ nsXPCComponents_Utils::LookupMethod(const JS::Value& object,
     // first param must be a JSObject
     if (!object.isObject())
         return NS_ERROR_XPC_BAD_CONVERT_JS;
-    js::RootedObject obj(cx, &object.toObject());
+    JS::RootedObject obj(cx, &object.toObject());
 
     // second param must be a string.
     if (!JSVAL_IS_STRING(name))
@@ -2708,15 +2708,14 @@ nsXPCComponents_Utils::LookupMethod(const JS::Value& object,
     JSString *methodName = name.toString();
     jsid methodId = INTERNED_STRING_TO_JSID(cx, JS_InternJSString(cx, methodName));
 
-    // If |obj| is a cross-compartment wrapper, try to puncture it. If this fails,
-    // we don't have full access to the other compartment, in which case we throw.
-    // Otherwise, enter the compartment.
-    if (js::IsCrossCompartmentWrapper(obj)) {
-        obj = js::UnwrapOneChecked(obj);
-        if (!obj)
-            return NS_ERROR_XPC_BAD_CONVERT_JS;
+    // If |obj| is a security wrapper, try to unwrap it. If this fails, we
+    // don't have full acccess to the object, in which case we throw.
+    // Otherwise, enter a compartment, since we may have just unwrapped a CCW.
+    obj = js::UnwrapObjectChecked(obj);
+    if (!obj) {
+        JS_ReportError(cx, "Permission denied to unwrap object");
+        return NS_ERROR_XPC_BAD_CONVERT_JS;
     }
-
     {
         // Enter the target compartment.
         JSAutoCompartment ac(cx, obj);
@@ -3140,8 +3139,8 @@ xpc::SandboxProxyHandler::getPropertyDescriptor(JSContext *cx, JSObject *proxy,
                                                 PropertyDescriptor *desc,
                                                 unsigned flags)
 {
-    js::RootedObject obj(cx, wrappedObject(proxy));
-    js::RootedId id(cx, id_);
+    JS::RootedObject obj(cx, wrappedObject(proxy));
+    JS::RootedId id(cx, id_);
 
     MOZ_ASSERT(js::GetObjectCompartment(obj) == js::GetObjectCompartment(proxy));
     if (!JS_GetPropertyDescriptorById(cx, obj, id,
@@ -3914,7 +3913,7 @@ xpc_EvalInSandbox(JSContext *cx, JSObject *sandbox, const nsAString& source,
         JS::CompileOptions options(sandcx);
         options.setPrincipals(nsJSPrincipals::get(prin))
                .setFileAndLine(filename, lineNo);
-        js::RootedObject rootedSandbox(sandcx, sandbox);
+        JS::RootedObject rootedSandbox(sandcx, sandbox);
         ok = JS::Evaluate(sandcx, rootedSandbox, options,
                           PromiseFlatString(source).get(), source.Length(), &v);
         if (ok && returnStringOnly && !(JSVAL_IS_VOID(v))) {
@@ -4127,7 +4126,7 @@ nsXPCComponents_Utils::GetGlobalForObject(const JS::Value& object,
   // a wrapper for the foreign global. So we need to unwrap before getting the
   // parent, enter the compartment for the duration of the call, and wrap the
   // result.
-  js::Rooted<JSObject*> obj(cx, JSVAL_TO_OBJECT(object));
+  JS::Rooted<JSObject*> obj(cx, JSVAL_TO_OBJECT(object));
   obj = js::UnwrapObject(obj);
   {
     JSAutoCompartment ac(cx, obj);
@@ -4456,7 +4455,6 @@ SetBoolOption(JSContext* cx, uint32_t aOption, bool aValue)
 
 GENERATE_JSOPTION_GETTER_SETTER(Strict, JSOPTION_STRICT)
 GENERATE_JSOPTION_GETTER_SETTER(Werror, JSOPTION_WERROR)
-GENERATE_JSOPTION_GETTER_SETTER(Atline, JSOPTION_ATLINE)
 GENERATE_JSOPTION_GETTER_SETTER(Methodjit, JSOPTION_METHODJIT)
 GENERATE_JSOPTION_GETTER_SETTER(Methodjit_always, JSOPTION_METHODJIT_ALWAYS)
 GENERATE_JSOPTION_GETTER_SETTER(Strict_mode, JSOPTION_STRICT_MODE)

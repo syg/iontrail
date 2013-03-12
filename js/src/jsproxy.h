@@ -77,6 +77,14 @@ class JS_FRIEND_API(BaseProxyHandler) {
         return false;
     }
 
+    virtual bool finalizeInBackground(HandleValue priv) {
+        /*
+         * Called on creation of a proxy to determine whether its finalize
+         * method can be finalized on the background thread.
+         */
+        return true;
+    }
+
     /* Policy enforcement traps.
      *
      * enter() allows the policy to specify whether the caller may perform |act|
@@ -318,13 +326,6 @@ SetProxyHandler(RawObject obj, BaseProxyHandler *handler)
 {
     JS_ASSERT(IsProxy(obj));
     SetReservedSlot(obj, JSSLOT_PROXY_HANDLER, PrivateValue(handler));
-}
-
-inline void
-SetProxyPrivate(RawObject obj, const Value &value)
-{
-    JS_ASSERT(IsProxy(obj));
-    SetReservedSlot(obj, JSSLOT_PROXY_PRIVATE, value);
 }
 
 inline void

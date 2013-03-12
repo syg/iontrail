@@ -99,6 +99,7 @@ protected:
     nscoord mExpectedWidthLeftOver;
     nscoord mColGap;
     nscoord mColMaxHeight;
+    bool mIsBalancing;
   };
 
   /**
@@ -433,7 +434,8 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState,
   printf("*** nsColumnSetFrame::ChooseColumnStrategy: numColumns=%d, colWidth=%d, expectedWidthLeftOver=%d, colHeight=%d, colGap=%d\n",
          numColumns, colWidth, expectedWidthLeftOver, colHeight, colGap);
 #endif
-  ReflowConfig config = { numColumns, colWidth, expectedWidthLeftOver, colGap, colHeight };
+  ReflowConfig config = { numColumns, colWidth, expectedWidthLeftOver, colGap,
+                          colHeight, isBalancing };
   return config;
 }
 
@@ -749,8 +751,8 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
 
 
       if ((contentBottom > aReflowState.mComputedMaxHeight ||
-          contentBottom > aReflowState.ComputedHeight()) &&
-          aConfig.mBalanceColCount < INT32_MAX) {
+           contentBottom > aReflowState.ComputedHeight()) &&
+           aConfig.mBalanceColCount < INT32_MAX) {
         // We overflowed vertically, but have not exceeded the number
         // of columns. If we're balancing, then we should try reverting
         // to auto instead.
@@ -758,25 +760,17 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
       }
 
       if (columnCount >= aConfig.mBalanceColCount) {
-        if (contentBottom >= aReflowState.availableHeight) {
-          // No more columns allowed here. Stop.
-          aStatus |= NS_FRAME_REFLOW_NEXTINFLOW;
-          kidNextInFlow->AddStateBits(NS_FRAME_IS_DIRTY);
-          // Move any of our leftover columns to our overflow list. Our
-          // next-in-flow will eventually pick them up.
-          const nsFrameList& continuationColumns = mFrames.RemoveFramesAfter(child);
-          if (continuationColumns.NotEmpty()) {
-            SetOverflowFrames(PresContext(), continuationColumns);
-          }
-          child = nullptr;
-          break;
-        } else if (contentBottom > aReflowState.mComputedMaxHeight ||
-                   contentBottom > aReflowState.ComputedHeight()) {
-          aColData.mShouldRevertToAuto = true;
-        } else {
-          // The number of columns required is too high.
-          allFit = false;
+        // No more columns allowed here. Stop.
+        aStatus |= NS_FRAME_REFLOW_NEXTINFLOW;
+        kidNextInFlow->AddStateBits(NS_FRAME_IS_DIRTY);
+        // Move any of our leftover columns to our overflow list. Our
+        // next-in-flow will eventually pick them up.
+        const nsFrameList& continuationColumns = mFrames.RemoveFramesAfter(child);
+        if (continuationColumns.NotEmpty()) {
+          SetOverflowFrames(PresContext(), continuationColumns);
         }
+        child = nullptr;
+        break;
       }
     }
 
@@ -920,7 +914,6 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
   //------------ Handle Incremental Reflow -----------------
 
   ReflowConfig config = ChooseColumnStrategy(aReflowState);
-  bool isBalancing = config.mBalanceColCount < INT32_MAX;
   
   // If balancing, then we allow the last column to grow to unbounded
   // height during the first reflow. This gives us a way to estimate
@@ -929,7 +922,7 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
   // if we have a next in flow because we don't want to suck all its
   // content back here and then have to push it out again!
   nsIFrame* nextInFlow = GetNextInFlow();
-  bool unboundedLastColumn = isBalancing && !nextInFlow;
+  bool unboundedLastColumn = config.mIsBalancing && !nextInFlow;
   nsCollapsingMargin carriedOutBottomMargin;
   ColumnBalanceData colData;
   colData.mShouldRevertToAuto = false;
@@ -943,13 +936,13 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
   do {
     if (colData.mShouldRevertToAuto) {
       config = ChooseColumnStrategy(aReflowState, true);
-      isBalancing = false;
+      config.mIsBalancing = false;
     }
 
     bool feasible = ReflowChildren(aDesiredSize, aReflowState,
       aStatus, config, unboundedLastColumn, &carriedOutBottomMargin, colData);
 
-    if (isBalancing && !aPresContext->HasPendingInterrupt()) {
+    if (config.mIsBalancing && !aPresContext->HasPendingInterrupt()) {
       nscoord availableContentHeight = GetAvailableContentHeight(aReflowState);
 
       // Termination of the algorithm below is guaranteed because

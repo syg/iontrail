@@ -604,7 +604,7 @@ class MIRGraph
     MStart *osrStart() {
         return osrStart_;
     }
-    bool addScript(UnrootedScript script) {
+    bool addScript(RawScript script) {
         // The same script may be inlined multiple times, add it only once.
         for (size_t i = 0; i < scripts_.length(); i++) {
             if (scripts_[i] == script)
@@ -618,7 +618,7 @@ class MIRGraph
     JSScript **scripts() {
         return scripts_.begin();
     }
-    bool addCallTarget(UnrootedScript script) {
+    bool addCallTarget(RawScript script) {
         for (size_t i = 0; i < callTargets_.length(); i++) {
             if (callTargets_[i] == script)
                 return true;
@@ -704,4 +704,3 @@ class MDefinitionIterator
 } // namespace js
 
 #endif // jsion_mirgraph_h__
-

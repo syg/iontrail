@@ -1154,12 +1154,11 @@ FindElementBackground(nsIFrame* aForFrame, nsIFrame* aRootElementFrame,
 }
 
 bool
-nsCSSRendering::FindBackground(nsPresContext* aPresContext,
-                               nsIFrame* aForFrame,
+nsCSSRendering::FindBackground(nsIFrame* aForFrame,
                                nsStyleContext** aBackgroundSC)
 {
   nsIFrame* rootElementFrame =
-    aPresContext->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
+    aForFrame->PresContext()->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
   if (IsCanvasFrame(aForFrame)) {
     *aBackgroundSC = FindCanvasBackground(aForFrame, rootElementFrame);
     return true;
@@ -1241,8 +1240,8 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
     skipGfxRect = nsLayoutUtils::RectToGfxRect(paddingRect, twipsPerPixel);
   } else if (hasBorderRadius) {
     skipGfxRect.Deflate(gfxMargin(
-        0, std::max(borderRadii[C_TL].height, borderRadii[C_TR].height),
-        0, std::max(borderRadii[C_BL].height, borderRadii[C_BR].height)));
+        std::max(borderRadii[C_TL].height, borderRadii[C_TR].height), 0,
+        std::max(borderRadii[C_BL].height, borderRadii[C_BR].height), 0));
   }
 
   for (uint32_t i = shadows->Length(); i > 0; --i) {
@@ -1466,9 +1465,9 @@ nsCSSRendering::PaintBoxShadowInner(nsPresContext* aPresContext,
     skipRect.Deflate(blurMargin);
     gfxRect skipGfxRect = nsLayoutUtils::RectToGfxRect(skipRect, twipsPerPixel);
     if (hasBorderRadius) {
-      skipGfxRect.Deflate(
-          gfxMargin(0, std::max(clipRectRadii[C_TL].height, clipRectRadii[C_TR].height),
-                    0, std::max(clipRectRadii[C_BL].height, clipRectRadii[C_BR].height)));
+      skipGfxRect.Deflate(gfxMargin(
+          std::max(clipRectRadii[C_TL].height, clipRectRadii[C_TR].height), 0,
+          std::max(clipRectRadii[C_BL].height, clipRectRadii[C_BR].height), 0));
     }
 
     // When there's a blur radius, gfxAlphaBoxBlur leaves the skiprect area
@@ -1547,7 +1546,7 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
                   "Frame is expected to be provided to PaintBackground");
 
   nsStyleContext *sc;
-  if (!FindBackground(aPresContext, aForFrame, &sc)) {
+  if (!FindBackground(aForFrame, &sc)) {
     // We don't want to bail out if moz-appearance is set on a root
     // node. If it has a parent content node, bail because it's not
     // a root, otherwise keep going in order to let the theme stuff
@@ -1584,7 +1583,7 @@ nsCSSRendering::PaintBackgroundColor(nsPresContext* aPresContext,
                   "Frame is expected to be provided to PaintBackground");
 
   nsStyleContext *sc;
-  if (!FindBackground(aPresContext, aForFrame, &sc)) {
+  if (!FindBackground(aForFrame, &sc)) {
     // We don't want to bail out if moz-appearance is set on a root
     // node. If it has a parent content node, bail because it's not
     // a root, other wise keep going in order to let the theme stuff

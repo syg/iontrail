@@ -27,6 +27,10 @@ using namespace std;
 #include "runnable_utils.h"
 #include "nsStaticComponents.h"
 #include "nsIDOMRTCPeerConnection.h"
+#include "nsServiceManagerUtils.h"
+#include "nsNetUtil.h"
+#include "nsIIOService.h"
+#include "nsIDNSService.h"
 #include "nsWeakReference.h"
 #include "nricectx.h"
 
@@ -124,7 +128,7 @@ static bool SetupGlobalThread() {
   if (!gThread) {
     nsIThread *thread;
 
-    nsresult rv = NS_NewThread(&thread);
+    nsresult rv = NS_NewNamedThread("pseudo-main",&thread);
     if (NS_FAILED(rv))
       return false;
 
@@ -1139,7 +1143,6 @@ public:
   SignalingAgent a1_;  // Canonically "caller"
   SignalingAgent a2_;  // Canonically "callee"
 };
-
 
 TEST_F(SignalingTest, JustInit)
 {

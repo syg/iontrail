@@ -34,6 +34,7 @@ class nsDOMAttributeMap;
 class nsIContent;
 class nsIDocument;
 class nsIDOMElement;
+class nsIDOMMozNamedAttrMap;
 class nsIDOMNodeList;
 class nsIDOMUserDataHandler;
 class nsIEditor;
@@ -363,7 +364,9 @@ public:
     /** nsHTMLMediaElement */
     eMEDIA               = 1 << 9,
     /** animation elements */
-    eANIMATION           = 1 << 10
+    eANIMATION           = 1 << 10,
+    /** filter elements that implement SVGFilterPrimitiveStandardAttributes */
+    eFILTER              = 1 << 11
   };
 
   /**
@@ -376,8 +379,7 @@ public:
    */
   virtual bool IsNodeOfType(uint32_t aFlags) const = 0;
 
-  virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope,
-                               bool *aTriedToWrap);
+  virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
 
 protected:
   /**
@@ -385,11 +387,9 @@ protected:
    * does some additional checks and fix-up that's common to all nodes. WrapNode
    * should just call the DOM binding's Wrap function.
    */
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope,
-                             bool *aTriedToWrap)
+  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope)
   {
     MOZ_ASSERT(!IsDOMBinding(), "Someone forgot to override WrapNode");
-    *aTriedToWrap = false;
     return nullptr;
   }
 
@@ -1654,7 +1654,7 @@ protected:
   nsresult GetOwnerDocument(nsIDOMDocument** aOwnerDocument);
   nsresult CompareDocumentPosition(nsIDOMNode* aOther,
                                    uint16_t* aReturn);
-  nsresult GetAttributes(nsIDOMNamedNodeMap** aAttributes);
+  nsresult GetAttributes(nsIDOMMozNamedAttrMap** aAttributes);
 
   nsresult ReplaceOrInsertBefore(bool aReplace, nsIDOMNode *aNewChild,
                                  nsIDOMNode *aRefChild, nsIDOMNode **aReturn);
@@ -1956,7 +1956,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsINode, NS_INODE_IID)
   { \
     return nsINode::GetNextSibling(aNextSibling); \
   } \
-  NS_IMETHOD GetAttributes(nsIDOMNamedNodeMap** aAttributes) __VA_ARGS__ \
+  NS_IMETHOD GetAttributes(nsIDOMMozNamedAttrMap** aAttributes) __VA_ARGS__ \
   { \
     return nsINode::GetAttributes(aAttributes); \
   } \

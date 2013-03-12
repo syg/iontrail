@@ -425,7 +425,7 @@ struct HasWrapObject
 private:
   typedef char yes[1];
   typedef char no[2];
-  typedef JSObject* (nsWrapperCache::*WrapObject)(JSContext*, JSObject*, bool*);
+  typedef JSObject* (nsWrapperCache::*WrapObject)(JSContext*, JSObject*);
   template<typename U, U> struct SFINAE;
   template <typename V> static no& Check(SFINAE<WrapObject, &V::WrapObject>*);
   template <typename V> static yes& Check(...);
@@ -586,13 +586,11 @@ WrapNewBindingObject(JSContext* cx, JSObject* scope, T* value, JS::Value* vp)
       return false;
     }
 
-    bool triedToWrap;
-    obj = value->WrapObject(cx, scope, &triedToWrap);
+    obj = value->WrapObject(cx, scope);
     if (!obj) {
-      // At this point, obj is null, so just return false.  We could
-      // try to communicate triedToWrap to the caller, but in practice
-      // callers seem to be testing JS_IsExceptionPending(cx) to
-      // figure out whether WrapObject() threw instead.
+      // At this point, obj is null, so just return false.
+      // Callers seem to be testing JS_IsExceptionPending(cx) to
+      // figure out whether WrapObject() threw.
       return false;
     }
   }
@@ -985,6 +983,13 @@ WrapObject<JSObject>(JSContext* cx, JSObject* scope, JSObject* p, JS::Value* vp)
   return true;
 }
 
+inline bool
+WrapObject(JSContext* cx, JSObject* scope, JSObject& p, JS::Value* vp)
+{
+  vp->setObject(p);
+  return true;
+}
+
 bool
 WrapCallbackInterface(JSContext *cx, JSObject *scope, nsISupports* callback,
                       JS::Value* vp);
@@ -1029,8 +1034,6 @@ struct WrapNativeParentFallback
   static inline JSObject* Wrap(JSContext* cx, JSObject* scope, T* parent,
                                nsWrapperCache* cache)
   {
-    MOZ_NOT_REACHED("Don't know how to deal with triedToWrap == false for "
-                    "non-nsISupports classes");
     return nullptr;
   }
 };
@@ -1062,17 +1065,13 @@ struct WrapNativeParentHelper
       return obj;
     }
 
-    bool triedToWrap;
     // Inline this here while we have non-dom objects in wrapper caches.
     if (!CouldBeDOMBinding(parent)) {
-      triedToWrap = false;
+      obj = WrapNativeParentFallback<T>::Wrap(cx, scope, parent, cache);
     } else {
-      obj = parent->WrapObject(cx, scope, &triedToWrap);
+      obj = parent->WrapObject(cx, scope);
     }
 
-    if (!triedToWrap) {
-      obj = WrapNativeParentFallback<T>::Wrap(cx, scope, parent, cache);
-    }
     return obj;
   }
 };
@@ -1412,7 +1411,7 @@ protected:
 #endif
 };
 
-class NonNullLazyRootedObject : public Maybe<js::RootedObject>
+class NonNullLazyRootedObject : public Maybe<JS::RootedObject>
 {
 public:
   operator JSObject&() const {
@@ -1421,7 +1420,7 @@ public:
   }
 };
 
-class LazyRootedObject : public Maybe<js::RootedObject>
+class LazyRootedObject : public Maybe<JS::RootedObject>
 {
 public:
   operator JSObject*() const {

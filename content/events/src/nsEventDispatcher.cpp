@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,7 +13,6 @@
 #include "nsError.h"
 #include "nsMutationEvent.h"
 #include NEW_H
-#include "nsFixedSizeAllocator.h"
 #include "nsINode.h"
 #include "nsPIDOMWindow.h"
 #include "nsFrameLoader.h"
@@ -27,8 +27,6 @@ using namespace mozilla;
 #define NS_TARGET_CHAIN_WANTS_WILL_HANDLE_EVENT (1 << 1)
 #define NS_TARGET_CHAIN_MAY_HAVE_MANAGER        (1 << 2)
 
-static nsEventTargetChainItem* gCachedETCI = nullptr;
-
 // nsEventTargetChainItem represents a single item in the event target chain.
 class nsEventTargetChainItem
 {
@@ -36,25 +34,32 @@ private:
   nsEventTargetChainItem(nsIDOMEventTarget* aTarget,
                          nsEventTargetChainItem* aChild = nullptr);
 
+  // This is the ETCI recycle pool, which is used to avoid some malloc/free
+  // churn.  It's implemented as a linked list.
+  static nsEventTargetChainItem* sEtciRecyclePool;
+  static uint32_t sNumRecycledEtcis;
+  static const uint32_t kMaxNumRecycledEtcis = 128;
+
 public:
-  static nsEventTargetChainItem* Create(nsFixedSizeAllocator* aAllocator, 
-                                        nsIDOMEventTarget* aTarget,
+  static nsEventTargetChainItem* Create(nsIDOMEventTarget* aTarget,
                                         nsEventTargetChainItem* aChild = nullptr)
   {
+    // Allocate from the ETCI recycle pool if possible.
     void* place = nullptr;
-    if (gCachedETCI) {
-      place = gCachedETCI;
-      gCachedETCI = gCachedETCI->mNext;
+    if (sNumRecycledEtcis > 0) {
+      MOZ_ASSERT(sEtciRecyclePool);
+      place = sEtciRecyclePool;
+      sEtciRecyclePool = sEtciRecyclePool->mNext;
+      --sNumRecycledEtcis;
     } else {
-      place = aAllocator->Alloc(sizeof(nsEventTargetChainItem));
+      place = malloc(sizeof(nsEventTargetChainItem));
     }
     return place
       ? ::new (place) nsEventTargetChainItem(aTarget, aChild)
       : nullptr;
   }
 
-  static void Destroy(nsFixedSizeAllocator* aAllocator,
-                      nsEventTargetChainItem* aItem)
+  static void Destroy(nsEventTargetChainItem* aItem)
   {
     // ::Destroy deletes ancestor chain.
     nsEventTargetChainItem* item = aItem;
@@ -62,13 +67,27 @@ public:
       item->mChild->mParent = nullptr;
       item->mChild = nullptr;
     }
+    // Put destroyed ETCIs into the recycle pool if it's not already full.
     while (item) {
       nsEventTargetChainItem* parent = item->mParent;
       item->~nsEventTargetChainItem();
-      item->mNext = gCachedETCI;
-      gCachedETCI = item;
-      --sCurrentEtciCount;
+      if (sNumRecycledEtcis < kMaxNumRecycledEtcis) {
+        item->mNext = sEtciRecyclePool;
+        sEtciRecyclePool = item;
+        ++sNumRecycledEtcis;
+      } else {
+        free(item);
+      }
       item = parent;
+    }
+  }
+
+  static void ShutdownRecyclePool()
+  {
+    while (sEtciRecyclePool) {
+      nsEventTargetChainItem* tmp = sEtciRecyclePool;
+      sEtciRecyclePool = sEtciRecyclePool->mNext;
+      free(tmp);
     }
   }
 
@@ -205,7 +224,7 @@ public:
   nsEventTargetChainItem*           mChild;
   union {
     nsEventTargetChainItem*         mParent;
-     // This is used only when caching ETCI objects.
+     // This is used only when recycling ETCIs.
     nsEventTargetChainItem*         mNext;
   };
   uint16_t                          mFlags;
@@ -220,8 +239,8 @@ public:
   static uint32_t                   sCurrentEtciCount;
 };
 
-uint32_t nsEventTargetChainItem::sMaxEtciCount = 0;
-uint32_t nsEventTargetChainItem::sCurrentEtciCount = 0;
+nsEventTargetChainItem* nsEventTargetChainItem::sEtciRecyclePool = nullptr;
+uint32_t nsEventTargetChainItem::sNumRecycledEtcis = 0;
 
 nsEventTargetChainItem::nsEventTargetChainItem(nsIDOMEventTarget* aTarget,
                                                nsEventTargetChainItem* aChild)
@@ -230,10 +249,6 @@ nsEventTargetChainItem::nsEventTargetChainItem(nsIDOMEventTarget* aTarget,
   MOZ_ASSERT(!aTarget || mTarget == aTarget->GetTargetForEventTargetChain());
   if (mChild) {
     mChild->mParent = this;
-  }
-
-  if (++sCurrentEtciCount > sMaxEtciCount) {
-    sMaxEtciCount = sCurrentEtciCount;
   }
 }
 
@@ -378,69 +393,13 @@ nsEventTargetChainItem::HandleEventTargetChain(
   return NS_OK;
 }
 
-#define NS_CHAIN_POOL_SIZE 128
-
-class ChainItemPool {
-public:
-  ChainItemPool() {
-    if (!sEtciPool) {
-      sEtciPool = new nsFixedSizeAllocator();
-      if (sEtciPool) {
-        static const size_t kBucketSizes[] = { sizeof(nsEventTargetChainItem) };
-        static const int32_t kNumBuckets = sizeof(kBucketSizes) / sizeof(size_t);
-        static const int32_t kInitialPoolSize =
-          sizeof(nsEventTargetChainItem) * NS_CHAIN_POOL_SIZE;
-        nsresult rv = sEtciPool->Init("EventTargetChainItem Pool", kBucketSizes,
-                                      kNumBuckets, kInitialPoolSize);
-        if (NS_FAILED(rv)) {
-          delete sEtciPool;
-          sEtciPool = nullptr;
-        }
-      }
-    }
-    if (sEtciPool) {
-      ++sEtciPoolUsers;
-    }
-  }
-
-  ~ChainItemPool() {
-    if (sEtciPool) {
-      --sEtciPoolUsers;
-    }
-    if (!sEtciPoolUsers) {
-      if (nsEventTargetChainItem::MaxEtciCount() > NS_CHAIN_POOL_SIZE) {
-        gCachedETCI = nullptr;
-        delete sEtciPool;
-        sEtciPool = nullptr;
-        nsEventTargetChainItem::ResetMaxEtciCount();
-      }
-    }
-  }
-
-  static void Shutdown()
-  {
-    if (!sEtciPoolUsers) {
-      gCachedETCI = nullptr;
-      delete sEtciPool;
-      sEtciPool = nullptr;
-      nsEventTargetChainItem::ResetMaxEtciCount();
-    }
-  }
-
-  nsFixedSizeAllocator* GetPool() { return sEtciPool; }
-
-  static nsFixedSizeAllocator* sEtciPool;
-  static int32_t               sEtciPoolUsers;
-};
-
-nsFixedSizeAllocator* ChainItemPool::sEtciPool = nullptr;
-int32_t ChainItemPool::sEtciPoolUsers = 0;
-
-void NS_ShutdownChainItemPool() { ChainItemPool::Shutdown(); }
+void NS_ShutdownEventTargetChainItemRecyclePool()
+{
+  nsEventTargetChainItem::ShutdownRecyclePool();
+}
 
 nsEventTargetChainItem*
-EventTargetChainItemForChromeTarget(ChainItemPool& aPool,
-                                    nsINode* aNode,
+EventTargetChainItemForChromeTarget(nsINode* aNode,
                                     nsEventTargetChainItem* aChild = nullptr)
 {
   if (!aNode->IsInDoc()) {
@@ -451,12 +410,11 @@ EventTargetChainItemForChromeTarget(ChainItemPool& aPool,
   NS_ENSURE_TRUE(piTarget, nullptr);
 
   nsEventTargetChainItem* etci =
-    nsEventTargetChainItem::Create(aPool.GetPool(),
-                                   piTarget->GetTargetForEventTargetChain(),
+    nsEventTargetChainItem::Create(piTarget->GetTargetForEventTargetChain(),
                                    aChild);
   NS_ENSURE_TRUE(etci, nullptr);
   if (!etci->IsValid()) {
-    nsEventTargetChainItem::Destroy(aPool.GetPool(), etci);
+    nsEventTargetChainItem::Destroy(etci);
     return nullptr;
   }
   return etci;
@@ -551,16 +509,13 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
   // If we have a PresContext, make sure it doesn't die before
   // event dispatching is finished.
   nsRefPtr<nsPresContext> kungFuDeathGrip(aPresContext);
-  ChainItemPool pool;
-  NS_ENSURE_TRUE(pool.GetPool(), NS_ERROR_OUT_OF_MEMORY);
 
   // Create the event target chain item for the event target.
   nsEventTargetChainItem* targetEtci =
-    nsEventTargetChainItem::Create(pool.GetPool(),
-                                   target->GetTargetForEventTargetChain());
+    nsEventTargetChainItem::Create(target->GetTargetForEventTargetChain());
   NS_ENSURE_TRUE(targetEtci, NS_ERROR_OUT_OF_MEMORY);
   if (!targetEtci->IsValid()) {
-    nsEventTargetChainItem::Destroy(pool.GetPool(), targetEtci);
+    nsEventTargetChainItem::Destroy(targetEtci);
     return NS_ERROR_FAILURE;
   }
 
@@ -603,8 +558,8 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
 
   if (!preVisitor.mCanHandle && preVisitor.mAutomaticChromeDispatch && content) {
     // Event target couldn't handle the event. Try to propagate to chrome.
-    nsEventTargetChainItem::Destroy(pool.GetPool(), targetEtci);
-    targetEtci = EventTargetChainItemForChromeTarget(pool, content);
+    nsEventTargetChainItem::Destroy(targetEtci);
+    targetEtci = EventTargetChainItemForChromeTarget(content);
     NS_ENSURE_STATE(targetEtci);
     targetEtci->PreHandleEvent(preVisitor);
   }
@@ -617,8 +572,7 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
     while (preVisitor.mParentTarget) {
       nsIDOMEventTarget* parentTarget = preVisitor.mParentTarget;
       nsEventTargetChainItem* parentEtci =
-        nsEventTargetChainItem::Create(pool.GetPool(), preVisitor.mParentTarget,
-                                       topEtci);
+        nsEventTargetChainItem::Create(preVisitor.mParentTarget, topEtci);
       if (!parentEtci) {
         rv = NS_ERROR_OUT_OF_MEMORY;
         break;
@@ -640,15 +594,14 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
       if (preVisitor.mCanHandle) {
         topEtci = parentEtci;
       } else {
-        nsEventTargetChainItem::Destroy(pool.GetPool(), parentEtci);
+        nsEventTargetChainItem::Destroy(parentEtci);
         parentEtci = nullptr;
         if (preVisitor.mAutomaticChromeDispatch && content) {
           // Even if the current target can't handle the event, try to
           // propagate to chrome.
           nsCOMPtr<nsINode> disabledTarget = do_QueryInterface(parentTarget);
           if (disabledTarget) {
-            parentEtci = EventTargetChainItemForChromeTarget(pool,
-                                                             disabledTarget,
+            parentEtci = EventTargetChainItemForChromeTarget(disabledTarget,
                                                              topEtci);
             if (parentEtci) {
               parentEtci->PreHandleEvent(preVisitor);
@@ -679,7 +632,7 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
                                              aCallback,
                                              false,
                                              &pusher);
-  
+
         preVisitor.mEventStatus = postVisitor.mEventStatus;
         // If the DOM event was created during event flow.
         if (!preVisitor.mDOMEvent && postVisitor.mDOMEvent) {
@@ -689,7 +642,7 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
     }
   }
 
-  nsEventTargetChainItem::Destroy(pool.GetPool(), targetEtci);
+  nsEventTargetChainItem::Destroy(targetEtci);
   targetEtci = nullptr;
 
   aEvent->mFlags.mIsBeingDispatched = false;
@@ -745,7 +698,8 @@ nsEventDispatcher::DispatchDOMEvent(nsISupports* aTarget,
 }
 
 /* static */ nsresult
-nsEventDispatcher::CreateEvent(nsPresContext* aPresContext,
+nsEventDispatcher::CreateEvent(mozilla::dom::EventTarget* aOwner,
+                               nsPresContext* aPresContext,
                                nsEvent* aEvent,
                                const nsAString& aEventType,
                                nsIDOMEvent** aDOMEvent)
@@ -755,64 +709,65 @@ nsEventDispatcher::CreateEvent(nsPresContext* aPresContext,
   if (aEvent) {
     switch(aEvent->eventStructType) {
     case NS_MUTATION_EVENT:
-      return NS_NewDOMMutationEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMMutationEvent(aDOMEvent, aOwner, aPresContext,
                                     static_cast<nsMutationEvent*>(aEvent));
     case NS_GUI_EVENT:
     case NS_SCROLLPORT_EVENT:
     case NS_UI_EVENT:
-      return NS_NewDOMUIEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMUIEvent(aDOMEvent, aOwner, aPresContext,
                               static_cast<nsGUIEvent*>(aEvent));
     case NS_SCROLLAREA_EVENT:
-      return NS_NewDOMScrollAreaEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMScrollAreaEvent(aDOMEvent, aOwner, aPresContext,
                                       static_cast<nsScrollAreaEvent *>(aEvent));
     case NS_KEY_EVENT:
-      return NS_NewDOMKeyboardEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMKeyboardEvent(aDOMEvent, aOwner, aPresContext,
                                     static_cast<nsKeyEvent*>(aEvent));
     case NS_COMPOSITION_EVENT:
       return NS_NewDOMCompositionEvent(
-        aDOMEvent, aPresContext, static_cast<nsCompositionEvent*>(aEvent));
+        aDOMEvent, aOwner,
+        aPresContext, static_cast<nsCompositionEvent*>(aEvent));
     case NS_MOUSE_EVENT:
-      return NS_NewDOMMouseEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMMouseEvent(aDOMEvent, aOwner, aPresContext,
                                  static_cast<nsInputEvent*>(aEvent));
     case NS_MOUSE_SCROLL_EVENT:
-      return NS_NewDOMMouseScrollEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMMouseScrollEvent(aDOMEvent, aOwner, aPresContext,
                                  static_cast<nsInputEvent*>(aEvent));
     case NS_WHEEL_EVENT:
-      return NS_NewDOMWheelEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMWheelEvent(aDOMEvent, aOwner, aPresContext,
                                  static_cast<widget::WheelEvent*>(aEvent));
     case NS_DRAG_EVENT:
-      return NS_NewDOMDragEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMDragEvent(aDOMEvent, aOwner, aPresContext,
                                  static_cast<nsDragEvent*>(aEvent));
     case NS_TEXT_EVENT:
-      return NS_NewDOMTextEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMTextEvent(aDOMEvent, aOwner, aPresContext,
                                 static_cast<nsTextEvent*>(aEvent));
-    case NS_SVG_EVENT:
-      return NS_NewDOMSVGEvent(aDOMEvent, aPresContext,
-                               aEvent);
+    case NS_CLIPBOARD_EVENT:
+      return NS_NewDOMClipboardEvent(aDOMEvent, aOwner, aPresContext,
+                                     static_cast<nsClipboardEvent*>(aEvent));
     case NS_SVGZOOM_EVENT:
-      return NS_NewDOMSVGZoomEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMSVGZoomEvent(aDOMEvent, aOwner, aPresContext,
                                    static_cast<nsGUIEvent*>(aEvent));
     case NS_SMIL_TIME_EVENT:
-      return NS_NewDOMTimeEvent(aDOMEvent, aPresContext, aEvent);
+      return NS_NewDOMTimeEvent(aDOMEvent, aOwner, aPresContext, aEvent);
 
     case NS_COMMAND_EVENT:
-      return NS_NewDOMCommandEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMCommandEvent(aDOMEvent, aOwner, aPresContext,
                                    static_cast<nsCommandEvent*>(aEvent));
     case NS_SIMPLE_GESTURE_EVENT:
-      return NS_NewDOMSimpleGestureEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMSimpleGestureEvent(aDOMEvent, aOwner, aPresContext,
                                          static_cast<nsSimpleGestureEvent*>(aEvent));
     case NS_TOUCH_EVENT:
-      return NS_NewDOMTouchEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMTouchEvent(aDOMEvent, aOwner, aPresContext,
                                  static_cast<nsTouchEvent*>(aEvent));
     case NS_TRANSITION_EVENT:
-      return NS_NewDOMTransitionEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMTransitionEvent(aDOMEvent, aOwner, aPresContext,
                                       static_cast<nsTransitionEvent*>(aEvent));
     case NS_ANIMATION_EVENT:
-      return NS_NewDOMAnimationEvent(aDOMEvent, aPresContext,
+      return NS_NewDOMAnimationEvent(aDOMEvent, aOwner, aPresContext,
                                      static_cast<nsAnimationEvent*>(aEvent));
     default:
       // For all other types of events, create a vanilla event object.
-      return NS_NewDOMEvent(aDOMEvent, aPresContext, aEvent);
+      return NS_NewDOMEvent(aDOMEvent, aOwner, aPresContext, aEvent);
     }
   }
 
@@ -821,95 +776,93 @@ nsEventDispatcher::CreateEvent(nsPresContext* aPresContext,
   if (aEventType.LowerCaseEqualsLiteral("mouseevent") ||
       aEventType.LowerCaseEqualsLiteral("mouseevents") ||
       aEventType.LowerCaseEqualsLiteral("popupevents"))
-    return NS_NewDOMMouseEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMMouseEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("mousescrollevents"))
-    return NS_NewDOMMouseScrollEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMMouseScrollEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("dragevent") ||
       aEventType.LowerCaseEqualsLiteral("dragevents"))
-    return NS_NewDOMDragEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMDragEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("keyboardevent") ||
       aEventType.LowerCaseEqualsLiteral("keyevents"))
-    return NS_NewDOMKeyboardEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMKeyboardEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("compositionevent"))
-    return NS_NewDOMCompositionEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMCompositionEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("mutationevent") ||
         aEventType.LowerCaseEqualsLiteral("mutationevents"))
-    return NS_NewDOMMutationEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMMutationEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("textevent") ||
       aEventType.LowerCaseEqualsLiteral("textevents"))
-    return NS_NewDOMTextEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMTextEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("popupblockedevents"))
-    return NS_NewDOMPopupBlockedEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMPopupBlockedEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("deviceorientationevent"))
-    return NS_NewDOMDeviceOrientationEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMDeviceOrientationEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("devicemotionevent"))
-    return NS_NewDOMDeviceMotionEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMDeviceMotionEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("uievent") ||
       aEventType.LowerCaseEqualsLiteral("uievents"))
-    return NS_NewDOMUIEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMUIEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("event") ||
       aEventType.LowerCaseEqualsLiteral("events") ||
-      aEventType.LowerCaseEqualsLiteral("htmlevents"))
-    return NS_NewDOMEvent(aDOMEvent, aPresContext, nullptr);
-  if (aEventType.LowerCaseEqualsLiteral("svgevent") ||
+      aEventType.LowerCaseEqualsLiteral("htmlevents") ||
+      aEventType.LowerCaseEqualsLiteral("svgevent") ||
       aEventType.LowerCaseEqualsLiteral("svgevents"))
-    return NS_NewDOMSVGEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("svgzoomevent") ||
       aEventType.LowerCaseEqualsLiteral("svgzoomevents"))
-    return NS_NewDOMSVGZoomEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMSVGZoomEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("timeevent") ||
       aEventType.LowerCaseEqualsLiteral("timeevents"))
-    return NS_NewDOMTimeEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMTimeEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("xulcommandevent") ||
       aEventType.LowerCaseEqualsLiteral("xulcommandevents"))
-    return NS_NewDOMXULCommandEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMXULCommandEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("commandevent") ||
       aEventType.LowerCaseEqualsLiteral("commandevents"))
-    return NS_NewDOMCommandEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMCommandEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("elementreplace"))
-    return NS_NewDOMElementReplaceEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMElementReplaceEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("datacontainerevent") ||
       aEventType.LowerCaseEqualsLiteral("datacontainerevents"))
-    return NS_NewDOMDataContainerEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMDataContainerEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("messageevent"))
-    return NS_NewDOMMessageEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMMessageEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("notifypaintevent"))
-    return NS_NewDOMNotifyPaintEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMNotifyPaintEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("simplegestureevent"))
-    return NS_NewDOMSimpleGestureEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMSimpleGestureEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("beforeunloadevent"))
-    return NS_NewDOMBeforeUnloadEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMBeforeUnloadEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("pagetransition"))
-    return NS_NewDOMPageTransitionEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMPageTransitionEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("domtransaction"))
-    return NS_NewDOMDOMTransactionEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMDOMTransactionEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("scrollareaevent"))
-    return NS_NewDOMScrollAreaEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMScrollAreaEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   // FIXME: Should get spec to say what the right string is here!  This
   // is probably wrong!
   if (aEventType.LowerCaseEqualsLiteral("transitionevent"))
-    return NS_NewDOMTransitionEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMTransitionEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("animationevent"))
-    return NS_NewDOMAnimationEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMAnimationEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("popstateevent"))
-    return NS_NewDOMPopStateEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMPopStateEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("mozaudioavailableevent"))
-    return NS_NewDOMAudioAvailableEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMAudioAvailableEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("closeevent"))
-    return NS_NewDOMCloseEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMCloseEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("touchevent") &&
       nsDOMTouchEvent::PrefEnabled())
-    return NS_NewDOMTouchEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMTouchEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("hashchangeevent"))
-    return NS_NewDOMHashChangeEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMHashChangeEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("customevent"))
-    return NS_NewDOMCustomEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMCustomEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("mozsmsevent"))
-    return NS_NewDOMMozSmsEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMMozSmsEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("storageevent")) {
-    return NS_NewDOMStorageEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMStorageEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   }
-    
 
   return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
 }

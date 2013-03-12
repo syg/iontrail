@@ -17,7 +17,6 @@ using namespace JS;
 Latin1CharsZ
 JS::LossyTwoByteCharsToNewLatin1CharsZ(JSContext *cx, TwoByteChars tbchars)
 {
-    AutoAssertNoGC nogc;
     JS_ASSERT(cx);
     size_t len = tbchars.length();
     unsigned char *latin1 = cx->pod_malloc<unsigned char>(len + 1);
@@ -145,7 +144,6 @@ bufferTooSmall:
 UTF8CharsZ
 JS::TwoByteCharsToNewUTF8CharsZ(JSContext *cx, TwoByteChars tbchars)
 {
-    AutoAssertNoGC nogc;
     JS_ASSERT(cx);
 
     /* Get required buffer size. */
@@ -154,6 +152,8 @@ JS::TwoByteCharsToNewUTF8CharsZ(JSContext *cx, TwoByteChars tbchars)
 
     /* Allocate buffer. */
     unsigned char *utf8 = cx->pod_malloc<unsigned char>(len + 1);
+    if (!utf8)
+        return UTF8CharsZ();
 
     /* Encode to UTF8. */
     DeflateStringToUTF8Buffer(cx, str, tbchars.length(), (char *)utf8, &len);

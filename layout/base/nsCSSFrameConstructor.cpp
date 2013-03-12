@@ -4917,8 +4917,7 @@ nsCSSFrameConstructor::FindSVGData(Element* aElement,
   // be created will be an nsInlineFrame, so it can never be a filter.
   bool parentIsFilter = aParentFrame &&
     aParentFrame->GetType() == nsGkAtoms::svgFilterFrame;
-  nsCOMPtr<nsIDOMSVGFilterPrimitiveStandardAttributes> filterPrimitive =
-    do_QueryInterface(aElement);
+  bool filterPrimitive = aElement->IsNodeOfType(nsINode::eFILTER);
   if ((parentIsFilter && !filterPrimitive) ||
       (!parentIsFilter && filterPrimitive)) {
     return &sSuppressData;
@@ -7963,7 +7962,7 @@ ApplyRenderingChangeToTree(nsPresContext* aPresContext,
   // If the frame's background is propagated to an ancestor, walk up to
   // that ancestor.
   nsStyleContext *bgSC;
-  while (!nsCSSRendering::FindBackground(aPresContext, aFrame, &bgSC)) {
+  while (!nsCSSRendering::FindBackground(aFrame, &bgSC)) {
     aFrame = aFrame->GetParent();
     NS_ASSERTION(aFrame, "root frame must paint");
   }
@@ -12637,6 +12636,23 @@ nsCSSFrameConstructor::RecomputePosition(nsIFrame* aFrame)
 
   // For relative positioning, we can simply update the frame rect
   if (display->mPosition == NS_STYLE_POSITION_RELATIVE) {
+    switch (display->mDisplay) {
+      case NS_STYLE_DISPLAY_TABLE_CAPTION:
+      case NS_STYLE_DISPLAY_TABLE_CELL:
+      case NS_STYLE_DISPLAY_TABLE_ROW:
+      case NS_STYLE_DISPLAY_TABLE_ROW_GROUP:
+      case NS_STYLE_DISPLAY_TABLE_HEADER_GROUP:
+      case NS_STYLE_DISPLAY_TABLE_FOOTER_GROUP:
+      case NS_STYLE_DISPLAY_TABLE_COLUMN:
+      case NS_STYLE_DISPLAY_TABLE_COLUMN_GROUP:
+        // We don't currently support relative positioning of inner
+        // table elements.  If we apply offsets to things we haven't
+        // previously offset, we'll get confused.  So bail.
+        return true;
+      default:
+        break;
+    }
+
     nsIFrame* cb = aFrame->GetContainingBlock();
     const nsSize size = cb->GetSize();
     const nsPoint oldOffsets = aFrame->GetRelativeOffset();

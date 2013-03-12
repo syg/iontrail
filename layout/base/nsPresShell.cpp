@@ -2914,7 +2914,7 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
     // Even if select anchor pref is false, we must still move the
     // caret there. That way tabbing will start from the new
     // location
-    nsRefPtr<nsIDOMRange> jumpToRange = new nsRange();
+    nsRefPtr<nsIDOMRange> jumpToRange = new nsRange(mDocument);
     while (content && content->GetFirstChild()) {
       content = content->GetFirstChild();
     }
@@ -4816,7 +4816,7 @@ PresShell::RenderNode(nsIDOMNode* aNode,
   if (!node->IsInDoc())
     return nullptr;
   
-  nsRefPtr<nsRange> range = new nsRange();
+  nsRefPtr<nsRange> range = new nsRange(node);
   if (NS_FAILED(range->SelectNode(aNode)))
     return nullptr;
 
@@ -5663,6 +5663,17 @@ nsIPresShell::SetCapturingContent(nsIContent* aContent, uint8_t aFlags)
   }
 }
 
+nsIContent*
+PresShell::GetCurrentEventContent()
+{
+  if (mCurrentEventContent &&
+      mCurrentEventContent->GetCurrentDoc() != mDocument) {
+    mCurrentEventContent = nullptr;
+    mCurrentEventFrame = nullptr;
+  }
+  return mCurrentEventContent;
+}
+
 nsIFrame*
 PresShell::GetCurrentEventFrame()
 {
@@ -5670,16 +5681,16 @@ PresShell::GetCurrentEventFrame()
     return nullptr;
   }
     
-  if (!mCurrentEventFrame && mCurrentEventContent) {
-    // Make sure the content still has a document reference. If not,
-    // then we assume it is no longer in the content tree and the
-    // frame shouldn't get an event, nor should we even assume its
-    // safe to try and find the frame.
-    if (mCurrentEventContent->GetDocument()) {
-      mCurrentEventFrame = mCurrentEventContent->GetPrimaryFrame();
-    }
+  // GetCurrentEventContent() makes sure the content is still in the
+  // same document that this pres shell belongs to. If not, then the
+  // frame shouldn't get an event, nor should we even assume its safe
+  // to try and find the frame.
+  nsIContent* content = GetCurrentEventContent();
+  if (!mCurrentEventFrame && content) {
+    mCurrentEventFrame = content->GetPrimaryFrame();
+    MOZ_ASSERT(!mCurrentEventFrame ||
+               mCurrentEventFrame->PresContext()->GetPresShell() == this);
   }
-
   return mCurrentEventFrame;
 }
 
@@ -5692,15 +5703,15 @@ PresShell::GetEventTargetFrame()
 already_AddRefed<nsIContent>
 PresShell::GetEventTargetContent(nsEvent* aEvent)
 {
-  nsIContent* content = nullptr;
-
-  if (mCurrentEventContent) {
-    content = mCurrentEventContent;
-    NS_IF_ADDREF(content);
+  nsIContent* content = GetCurrentEventContent();
+  if (content) {
+    NS_ADDREF(content);
   } else {
     nsIFrame* currentEventFrame = GetCurrentEventFrame();
     if (currentEventFrame) {
       currentEventFrame->GetContentForEvent(aEvent, &content);
+      NS_ASSERTION(!content || content->GetCurrentDoc() == mDocument,
+                   "handing out content from a different doc");
     } else {
       content = nullptr;
     }
@@ -5730,6 +5741,13 @@ PresShell::PopCurrentEventInfo()
     mCurrentEventFrameStack.RemoveElementAt(0);
     mCurrentEventContent = mCurrentEventContentStack.ObjectAt(0);
     mCurrentEventContentStack.RemoveObjectAt(0);
+
+    // Don't use it if it has moved to a different document.
+    if (mCurrentEventContent &&
+        mCurrentEventContent->GetCurrentDoc() != mDocument) {
+      mCurrentEventContent = nullptr;
+      mCurrentEventFrame = nullptr;
+    }
   }
 }
 
@@ -6444,7 +6462,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
         mCurrentEventContent = eventTarget;
       }
         
-      if (!mCurrentEventContent || !GetCurrentEventFrame() ||
+      if (!GetCurrentEventContent() || !GetCurrentEventFrame() ||
           InZombieDocument(mCurrentEventContent)) {
         rv = RetargetEventToParent(aEvent, aEventStatus);
         PopCurrentEventInfo();
@@ -6582,6 +6600,16 @@ nsresult
 PresShell::HandleEventWithTarget(nsEvent* aEvent, nsIFrame* aFrame,
                                  nsIContent* aContent, nsEventStatus* aStatus)
 {
+#if DEBUG
+  MOZ_ASSERT(!aFrame || aFrame->PresContext()->GetPresShell() == this,
+             "wrong shell");
+  if (aContent) {
+    nsIDocument* doc = aContent->GetCurrentDoc();
+    NS_ASSERTION(doc, "event for content that isn't in a document");
+    NS_ASSERTION(!doc || doc->GetShell() == this, "wrong shell");
+  }
+#endif
+
   PushCurrentEventInfo(aFrame, aContent);
   nsresult rv = HandleEventInternal(aEvent, aStatus);
   PopCurrentEventInfo();
@@ -6634,7 +6662,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
       case NS_KEY_PRESS:
       case NS_KEY_DOWN:
       case NS_KEY_UP: {
-        nsIDocument *doc = mCurrentEventContent ?
+        nsIDocument* doc = GetCurrentEventContent() ?
                            mCurrentEventContent->OwnerDoc() : nullptr;
         nsIDocument* fullscreenAncestor = nullptr;
         if (static_cast<const nsKeyEvent*>(aEvent)->keyCode == NS_VK_ESCAPE &&
@@ -6924,6 +6952,10 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
                                 &newEvent, nullptr, &tmpStatus, aEventCB);
     if (nsEventStatus_eConsumeNoDefault == tmpStatus) {
       preventDefault = true;
+    }
+
+    if (newEvent.mFlags.mMultipleActionsPrevented) {
+      touchEvent->mFlags.mMultipleActionsPrevented = true;
     }
 
     if (contentPresShell) {
@@ -9441,6 +9473,18 @@ PresShell::SizeOfTextRuns(nsMallocSizeOfFun aMallocSizeOf) const
 }
 
 void
+nsIPresShell::MarkFixedFramesForReflow(IntrinsicDirty aIntrinsicDirty)
+{
+  nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
+  if (rootFrame) {
+    const nsFrameList& childList = rootFrame->GetChildList(nsIFrame::kFixedList);
+    for (nsFrameList::Enumerator e(childList); !e.AtEnd(); e.Next()) {
+      FrameNeedsReflow(e.get(), aIntrinsicDirty, NS_FRAME_IS_DIRTY);
+    }
+  }
+}
+
+void
 nsIPresShell::SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aHeight)
 {
   if (!mScrollPositionClampingScrollPortSizeSet ||
@@ -9450,16 +9494,20 @@ nsIPresShell::SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aH
     mScrollPositionClampingScrollPortSize.width = aWidth;
     mScrollPositionClampingScrollPortSize.height = aHeight;
 
-    // Reflow fixed position children.
-    nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-    if (rootFrame) {
-      const nsFrameList& childList = rootFrame->GetChildList(nsIFrame::kFixedList);
-      for (nsIFrame* child = childList.FirstChild(); child;
-           child = child->GetNextSibling()) {
-        FrameNeedsReflow(child, eResize, NS_FRAME_IS_DIRTY);
-      }
-    }
+    MarkFixedFramesForReflow(eResize);
   }
+}
+
+void
+nsIPresShell::SetContentDocumentFixedPositionMargins(const nsMargin& aMargins)
+{
+  if (mContentDocumentFixedPositionMargins == aMargins) {
+    return;
+  }
+
+  mContentDocumentFixedPositionMargins = aMargins;
+
+  MarkFixedFramesForReflow(eResize);
 }
 
 void

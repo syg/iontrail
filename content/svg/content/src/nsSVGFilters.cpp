@@ -23,20 +23,18 @@
 #include "nsLayoutUtils.h"
 #include "nsSVGUtils.h"
 #include "nsStyleContext.h"
-#include "nsIDocument.h"
 #include "nsIFrame.h"
 #include "gfxContext.h"
 #include "gfxMatrix.h"
 #include "imgIContainer.h"
 #include "nsNetUtil.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "mozilla/dom/SVGFilterElement.h"
 #include "nsSVGString.h"
-#include "nsSVGEffects.h"
 #include "gfxUtils.h"
 #include "SVGContentUtils.h"
 #include <algorithm>
 #include "nsContentUtils.h"
+#include "mozilla/dom/SVGAnimatedLength.h"
 #include "mozilla/dom/SVGComponentTransferFunctionElement.h"
 #include "mozilla/dom/SVGFEFuncAElementBinding.h"
 #include "mozilla/dom/SVGFEFuncBElementBinding.h"
@@ -53,7 +51,7 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 
-static void
+void
 CopyDataRect(uint8_t *aDest, const uint8_t *aSrc, uint32_t aStride,
              const nsIntRect& aDataRect)
 {
@@ -62,18 +60,6 @@ CopyDataRect(uint8_t *aDest, const uint8_t *aSrc, uint32_t aStride,
            aSrc + y * aStride + 4 * aDataRect.x,
            4 * aDataRect.width);
   }
-}
-
-static void
-CopyRect(const nsSVGFE::Image* aDest, const nsSVGFE::Image* aSrc, const nsIntRect& aDataRect)
-{
-  NS_ASSERTION(aDest->mImage->Stride() == aSrc->mImage->Stride(), "stride mismatch");
-  NS_ASSERTION(aDest->mImage->GetSize() == aSrc->mImage->GetSize(), "size mismatch");
-  NS_ASSERTION(nsIntRect(0, 0, aDest->mImage->Width(), aDest->mImage->Height()).Contains(aDataRect),
-               "aDataRect out of bounds");
-
-  CopyDataRect(aDest->mImage->Data(), aSrc->mImage->Data(),
-               aSrc->mImage->Stride(), aDataRect);
 }
 
 static void
@@ -262,31 +248,66 @@ nsSVGFE::AttributeAffectsRendering(int32_t aNameSpaceID,
 /* readonly attribute nsIDOMSVGAnimatedLength x; */
 NS_IMETHODIMP nsSVGFE::GetX(nsIDOMSVGAnimatedLength * *aX)
 {
-  return mLengthAttributes[X].ToDOMAnimatedLength(aX, this);
+  *aX = X().get();
+  return NS_OK;
+}
+
+already_AddRefed<SVGAnimatedLength>
+nsSVGFE::X()
+{
+  return mLengthAttributes[ATTR_X].ToDOMAnimatedLength(this);
 }
 
 /* readonly attribute nsIDOMSVGAnimatedLength y; */
 NS_IMETHODIMP nsSVGFE::GetY(nsIDOMSVGAnimatedLength * *aY)
 {
-  return mLengthAttributes[Y].ToDOMAnimatedLength(aY, this);
+  *aY = Y().get();
+  return NS_OK;
+}
+
+already_AddRefed<SVGAnimatedLength>
+nsSVGFE::Y()
+{
+  return mLengthAttributes[ATTR_Y].ToDOMAnimatedLength(this);
 }
 
 /* readonly attribute nsIDOMSVGAnimatedLength width; */
 NS_IMETHODIMP nsSVGFE::GetWidth(nsIDOMSVGAnimatedLength * *aWidth)
 {
-  return mLengthAttributes[WIDTH].ToDOMAnimatedLength(aWidth, this);
+  *aWidth = Width().get();
+  return NS_OK;
+}
+
+already_AddRefed<SVGAnimatedLength>
+nsSVGFE::Width()
+{
+  return mLengthAttributes[ATTR_WIDTH].ToDOMAnimatedLength(this);
 }
 
 /* readonly attribute nsIDOMSVGAnimatedLength height; */
 NS_IMETHODIMP nsSVGFE::GetHeight(nsIDOMSVGAnimatedLength * *aHeight)
 {
-  return mLengthAttributes[HEIGHT].ToDOMAnimatedLength(aHeight, this);
+  *aHeight = Height().get();
+  return NS_OK;
+}
+
+already_AddRefed<SVGAnimatedLength>
+nsSVGFE::Height()
+{
+  return mLengthAttributes[ATTR_HEIGHT].ToDOMAnimatedLength(this);
 }
 
 /* readonly attribute nsIDOMSVGAnimatedString result; */
 NS_IMETHODIMP nsSVGFE::GetResult(nsIDOMSVGAnimatedString * *aResult)
 {
-  return GetResultImageName().ToDOMAnimatedString(aResult, this);
+  *aResult = Result().get();
+  return NS_OK;
+}
+
+already_AddRefed<nsIDOMSVGAnimatedString>
+nsSVGFE::Result()
+{
+  return GetResultImageName().ToDOMAnimatedString(this);
 }
 
 //----------------------------------------------------------------------
@@ -309,10 +330,10 @@ nsSVGFE::IsAttributeMapped(const nsIAtom* name) const
 /* virtual */ bool
 nsSVGFE::HasValidDimensions() const
 {
-  return (!mLengthAttributes[WIDTH].IsExplicitlySet() ||
-           mLengthAttributes[WIDTH].GetAnimValInSpecifiedUnits() > 0) &&
-         (!mLengthAttributes[HEIGHT].IsExplicitlySet() || 
-           mLengthAttributes[HEIGHT].GetAnimValInSpecifiedUnits() > 0);
+  return (!mLengthAttributes[ATTR_WIDTH].IsExplicitlySet() ||
+           mLengthAttributes[ATTR_WIDTH].GetAnimValInSpecifiedUnits() > 0) &&
+         (!mLengthAttributes[ATTR_HEIGHT].IsExplicitlySet() ||
+           mLengthAttributes[ATTR_HEIGHT].GetAnimValInSpecifiedUnits() > 0);
 }
 
 nsSVGElement::LengthAttributesInfo
@@ -801,223 +822,6 @@ nsSVGFEGaussianBlurElement::GetNumberPairInfo()
 
 nsSVGElement::StringAttributesInfo
 nsSVGFEGaussianBlurElement::GetStringInfo()
-{
-  return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
-}
-
-//---------------------Blend------------------------
-
-typedef nsSVGFE nsSVGFEBlendElementBase;
-
-class nsSVGFEBlendElement : public nsSVGFEBlendElementBase,
-                            public nsIDOMSVGFEBlendElement
-{
-  friend nsresult NS_NewSVGFEBlendElement(nsIContent **aResult,
-                                          already_AddRefed<nsINodeInfo> aNodeInfo);
-protected:
-  nsSVGFEBlendElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-    : nsSVGFEBlendElementBase(aNodeInfo) {}
-
-public:
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // FE Base
-  NS_FORWARD_NSIDOMSVGFILTERPRIMITIVESTANDARDATTRIBUTES(nsSVGFEBlendElementBase::)
-
-  virtual nsresult Filter(nsSVGFilterInstance* aInstance,
-                          const nsTArray<const Image*>& aSources,
-                          const Image* aTarget,
-                          const nsIntRect& aDataRect);
-  virtual bool AttributeAffectsRendering(
-          int32_t aNameSpaceID, nsIAtom* aAttribute) const;
-  virtual nsSVGString& GetResultImageName() { return mStringAttributes[RESULT]; }
-  virtual void GetSourceImageNames(nsTArray<nsSVGStringInfo>& aSources);
-
-  // Blend
-  NS_DECL_NSIDOMSVGFEBLENDELEMENT
-
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGFEBlendElementBase::)
-
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-protected:
-
-  virtual EnumAttributesInfo GetEnumInfo();
-  virtual StringAttributesInfo GetStringInfo();
-
-  enum { MODE };
-  nsSVGEnum mEnumAttributes[1];
-  static nsSVGEnumMapping sModeMap[];
-  static EnumInfo sEnumInfo[1];
-
-  enum { RESULT, IN1, IN2 };
-  nsSVGString mStringAttributes[3];
-  static StringInfo sStringInfo[3];
-};
-
-nsSVGEnumMapping nsSVGFEBlendElement::sModeMap[] = {
-  {&nsGkAtoms::normal, nsSVGFEBlendElement::SVG_MODE_NORMAL},
-  {&nsGkAtoms::multiply, nsSVGFEBlendElement::SVG_MODE_MULTIPLY},
-  {&nsGkAtoms::screen, nsSVGFEBlendElement::SVG_MODE_SCREEN},
-  {&nsGkAtoms::darken, nsSVGFEBlendElement::SVG_MODE_DARKEN},
-  {&nsGkAtoms::lighten, nsSVGFEBlendElement::SVG_MODE_LIGHTEN},
-  {nullptr, 0}
-};
-
-nsSVGElement::EnumInfo nsSVGFEBlendElement::sEnumInfo[1] =
-{
-  { &nsGkAtoms::mode,
-    sModeMap,
-    nsSVGFEBlendElement::SVG_MODE_NORMAL
-  }
-};
-
-nsSVGElement::StringInfo nsSVGFEBlendElement::sStringInfo[3] =
-{
-  { &nsGkAtoms::result, kNameSpaceID_None, true },
-  { &nsGkAtoms::in, kNameSpaceID_None, true },
-  { &nsGkAtoms::in2, kNameSpaceID_None, true }
-};
-
-NS_IMPL_NS_NEW_SVG_ELEMENT(FEBlend)
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ADDREF_INHERITED(nsSVGFEBlendElement,nsSVGFEBlendElementBase)
-NS_IMPL_RELEASE_INHERITED(nsSVGFEBlendElement,nsSVGFEBlendElementBase)
-
-DOMCI_NODE_DATA(SVGFEBlendElement, nsSVGFEBlendElement)
-
-NS_INTERFACE_TABLE_HEAD(nsSVGFEBlendElement)
-  NS_NODE_INTERFACE_TABLE5(nsSVGFEBlendElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement,
-                           nsIDOMSVGFilterPrimitiveStandardAttributes,
-                           nsIDOMSVGFEBlendElement)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGFEBlendElement)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGFEBlendElementBase)
-
-//----------------------------------------------------------------------
-// nsIDOMNode methods
-
-
-NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGFEBlendElement)
-
-//----------------------------------------------------------------------
-// nsIDOMSVGFEBlendElement methods
-
-/* readonly attribute nsIDOMSVGAnimatedString in1; */
-NS_IMETHODIMP nsSVGFEBlendElement::GetIn1(nsIDOMSVGAnimatedString * *aIn)
-{
-  return mStringAttributes[IN1].ToDOMAnimatedString(aIn, this);
-}
-
-/* readonly attribute nsIDOMSVGAnimatedString in2; */
-NS_IMETHODIMP nsSVGFEBlendElement::GetIn2(nsIDOMSVGAnimatedString * *aIn)
-{
-  return mStringAttributes[IN2].ToDOMAnimatedString(aIn, this);
-}
-
-/* readonly attribute nsIDOMSVGAnimatedEnumeration mode; */
-NS_IMETHODIMP nsSVGFEBlendElement::GetMode(nsIDOMSVGAnimatedEnumeration * *aMode)
-{
-  return mEnumAttributes[MODE].ToDOMAnimatedEnum(aMode, this);
-}
-
-nsresult
-nsSVGFEBlendElement::Filter(nsSVGFilterInstance* aInstance,
-                            const nsTArray<const Image*>& aSources,
-                            const Image* aTarget,
-                            const nsIntRect& rect)
-{
-  CopyRect(aTarget, aSources[0], rect);
-
-  uint8_t* sourceData = aSources[1]->mImage->Data();
-  uint8_t* targetData = aTarget->mImage->Data();
-  uint32_t stride = aTarget->mImage->Stride();
-
-  uint16_t mode = mEnumAttributes[MODE].GetAnimValue();
-
-  for (int32_t x = rect.x; x < rect.XMost(); x++) {
-    for (int32_t y = rect.y; y < rect.YMost(); y++) {
-      uint32_t targIndex = y * stride + 4 * x;
-      uint32_t qa = targetData[targIndex + GFX_ARGB32_OFFSET_A];
-      uint32_t qb = sourceData[targIndex + GFX_ARGB32_OFFSET_A];
-      for (int32_t i = std::min(GFX_ARGB32_OFFSET_B, GFX_ARGB32_OFFSET_R);
-           i <= std::max(GFX_ARGB32_OFFSET_B, GFX_ARGB32_OFFSET_R); i++) {
-        uint32_t ca = targetData[targIndex + i];
-        uint32_t cb = sourceData[targIndex + i];
-        uint32_t val;
-        switch (mode) {
-          case nsSVGFEBlendElement::SVG_MODE_NORMAL:
-            val = (255 - qa) * cb + 255 * ca;
-            break;
-          case nsSVGFEBlendElement::SVG_MODE_MULTIPLY:
-            val = ((255 - qa) * cb + (255 - qb + cb) * ca);
-            break;
-          case nsSVGFEBlendElement::SVG_MODE_SCREEN:
-            val = 255 * (cb + ca) - ca * cb;
-            break;
-          case nsSVGFEBlendElement::SVG_MODE_DARKEN:
-            val = std::min((255 - qa) * cb + 255 * ca,
-                         (255 - qb) * ca + 255 * cb);
-            break;
-          case nsSVGFEBlendElement::SVG_MODE_LIGHTEN:
-            val = std::max((255 - qa) * cb + 255 * ca,
-                         (255 - qb) * ca + 255 * cb);
-            break;
-          default:
-            return NS_ERROR_FAILURE;
-            break;
-        }
-        val = std::min(val / 255, 255U);
-        targetData[targIndex + i] =  static_cast<uint8_t>(val);
-      }
-      uint32_t alpha = 255 * 255 - (255 - qa) * (255 - qb);
-      FAST_DIVIDE_BY_255(targetData[targIndex + GFX_ARGB32_OFFSET_A], alpha);
-    }
-  }
-  return NS_OK;
-}
-
-bool
-nsSVGFEBlendElement::AttributeAffectsRendering(int32_t aNameSpaceID,
-                                               nsIAtom* aAttribute) const
-{
-  return nsSVGFEBlendElementBase::AttributeAffectsRendering(aNameSpaceID, aAttribute) ||
-         (aNameSpaceID == kNameSpaceID_None &&
-          (aAttribute == nsGkAtoms::in ||
-           aAttribute == nsGkAtoms::in2 ||
-           aAttribute == nsGkAtoms::mode));
-}
-
-void
-nsSVGFEBlendElement::GetSourceImageNames(nsTArray<nsSVGStringInfo>& aSources)
-{
-  aSources.AppendElement(nsSVGStringInfo(&mStringAttributes[IN1], this));
-  aSources.AppendElement(nsSVGStringInfo(&mStringAttributes[IN2], this));
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-nsSVGElement::EnumAttributesInfo
-nsSVGFEBlendElement::GetEnumInfo()
-{
-  return EnumAttributesInfo(mEnumAttributes, sEnumInfo,
-                            ArrayLength(sEnumInfo));
-}
-
-nsSVGElement::StringAttributesInfo
-nsSVGFEBlendElement::GetStringInfo()
 {
   return StringAttributesInfo(mStringAttributes, sStringInfo,
                               ArrayLength(sStringInfo));
@@ -2090,10 +1894,9 @@ NS_IMPL_ISUPPORTS_INHERITED5(SVGFEFuncRElement,
                              nsIDOMSVGFEFuncRElement)
 
 /* virtual */ JSObject*
-SVGFEFuncRElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                            bool* aTriedToWrap)
+SVGFEFuncRElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return SVGFEFuncRElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGFEFuncRElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom
@@ -2114,10 +1917,9 @@ NS_IMPL_ISUPPORTS_INHERITED5(SVGFEFuncGElement,
                              nsIDOMSVGFEFuncGElement)
 
 /* virtual */ JSObject*
-SVGFEFuncGElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                            bool* aTriedToWrap)
+SVGFEFuncGElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return SVGFEFuncGElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGFEFuncGElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom
@@ -2138,10 +1940,9 @@ NS_IMPL_ISUPPORTS_INHERITED5(SVGFEFuncBElement,
                              nsIDOMSVGFEFuncBElement)
 
 /* virtual */ JSObject*
-SVGFEFuncBElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                            bool* aTriedToWrap)
+SVGFEFuncBElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return SVGFEFuncBElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGFEFuncBElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom
@@ -2162,10 +1963,9 @@ NS_IMPL_ISUPPORTS_INHERITED5(SVGFEFuncAElement,
                              nsIDOMSVGFEFuncAElement)
 
 /* virtual */ JSObject*
-SVGFEFuncAElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                            bool* aTriedToWrap)
+SVGFEFuncAElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return SVGFEFuncAElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGFEFuncAElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom
@@ -2180,235 +1980,6 @@ NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGFEFuncAElement)
 
 } // namespace dom
 } // namespace mozilla
-
-//---------------------Merge------------------------
-
-typedef nsSVGFE nsSVGFEMergeElementBase;
-
-class nsSVGFEMergeElement : public nsSVGFEMergeElementBase,
-                            public nsIDOMSVGFEMergeElement
-{
-  friend nsresult NS_NewSVGFEMergeElement(nsIContent **aResult,
-                                          already_AddRefed<nsINodeInfo> aNodeInfo);
-protected:
-  nsSVGFEMergeElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-    : nsSVGFEMergeElementBase(aNodeInfo) {}
-
-public:
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // FE Base
-  NS_FORWARD_NSIDOMSVGFILTERPRIMITIVESTANDARDATTRIBUTES(nsSVGFEMergeElementBase::)
-
-  virtual nsresult Filter(nsSVGFilterInstance* aInstance,
-                          const nsTArray<const Image*>& aSources,
-                          const Image* aTarget,
-                          const nsIntRect& aDataRect);
-  virtual nsSVGString& GetResultImageName() { return mStringAttributes[RESULT]; }
-  virtual void GetSourceImageNames(nsTArray<nsSVGStringInfo>& aSources);
-
-  // Merge
-  NS_DECL_NSIDOMSVGFEMERGEELEMENT
-
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGFEMergeElementBase::)
-
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  // nsIContent
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-protected:
-  virtual StringAttributesInfo GetStringInfo();
-
-  enum { RESULT };
-  nsSVGString mStringAttributes[1];
-  static StringInfo sStringInfo[1];
-};
-
-typedef SVGFEUnstyledElement nsSVGFEMergeNodeElementBase;
-
-#define NS_SVG_FE_MERGE_NODE_CID \
-    { 0x413687ec, 0x77fd, 0x4077, \
-  { 0x9d, 0x7a, 0x97, 0x51, 0xa8, 0x4b, 0x7b, 0x40 } }
-
-class nsSVGFEMergeNodeElement : public nsSVGFEMergeNodeElementBase,
-                                public nsIDOMSVGFEMergeNodeElement
-{
-  friend nsresult NS_NewSVGFEMergeNodeElement(nsIContent **aResult,
-                                          already_AddRefed<nsINodeInfo> aNodeInfo);
-protected:
-  nsSVGFEMergeNodeElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-    : nsSVGFEMergeNodeElementBase(aNodeInfo) {}
-
-public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_SVG_FE_MERGE_NODE_CID)
-
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  NS_DECL_NSIDOMSVGFEMERGENODEELEMENT
-
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGFEMergeNodeElementBase::)
-
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual bool AttributeAffectsRendering(
-          int32_t aNameSpaceID, nsIAtom* aAttribute) const;
-
-  const nsSVGString* In1() { return &mStringAttributes[IN1]; }
-  
-  operator nsISupports*() { return static_cast<nsIContent*>(this); }
-
-  virtual nsXPCClassInfo* GetClassInfo();
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-protected:
-  virtual StringAttributesInfo GetStringInfo();
-
-  enum { IN1 };
-  nsSVGString mStringAttributes[1];
-  static StringInfo sStringInfo[1];
-};
-
-nsSVGElement::StringInfo nsSVGFEMergeElement::sStringInfo[1] =
-{
-  { &nsGkAtoms::result, kNameSpaceID_None, true }
-};
-
-NS_IMPL_NS_NEW_SVG_ELEMENT(FEMerge)
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ADDREF_INHERITED(nsSVGFEMergeElement,nsSVGFEMergeElementBase)
-NS_IMPL_RELEASE_INHERITED(nsSVGFEMergeElement,nsSVGFEMergeElementBase)
-
-DOMCI_NODE_DATA(SVGFEMergeElement, nsSVGFEMergeElement)
-
-NS_INTERFACE_TABLE_HEAD(nsSVGFEMergeElement)
-  NS_NODE_INTERFACE_TABLE5(nsSVGFEMergeElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement,
-                           nsIDOMSVGFilterPrimitiveStandardAttributes,
-                           nsIDOMSVGFEMergeElement)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGFEMergeElement)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGFEMergeElementBase)
-
-//----------------------------------------------------------------------
-// nsIDOMNode methods
-
-NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGFEMergeElement)
-
-nsresult
-nsSVGFEMergeElement::Filter(nsSVGFilterInstance *instance,
-                            const nsTArray<const Image*>& aSources,
-                            const Image* aTarget,
-                            const nsIntRect& rect)
-{
-  gfxContext ctx(aTarget->mImage);
-  ctx.Clip(aTarget->mFilterPrimitiveSubregion);
-
-  for (uint32_t i = 0; i < aSources.Length(); i++) {
-    ctx.SetSource(aSources[i]->mImage);
-    ctx.Paint();
-  }
-  return NS_OK;
-}
-
-void
-nsSVGFEMergeElement::GetSourceImageNames(nsTArray<nsSVGStringInfo>& aSources)
-{
-  for (nsIContent* child = nsINode::GetFirstChild();
-       child;
-       child = child->GetNextSibling()) {
-    nsRefPtr<nsSVGFEMergeNodeElement> node;
-    CallQueryInterface(child, (nsSVGFEMergeNodeElement**)getter_AddRefs(node));
-    if (node) {
-      aSources.AppendElement(nsSVGStringInfo(node->In1(), node));
-    }
-  }
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-nsSVGElement::StringAttributesInfo
-nsSVGFEMergeElement::GetStringInfo()
-{
-  return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
-}
-
-//---------------------Merge Node------------------------
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsSVGFEMergeNodeElement, NS_SVG_FE_MERGE_NODE_CID)
-
-nsSVGElement::StringInfo nsSVGFEMergeNodeElement::sStringInfo[1] =
-{
-  { &nsGkAtoms::in, kNameSpaceID_None, true }
-};
-
-NS_IMPL_NS_NEW_SVG_ELEMENT(FEMergeNode)
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ADDREF_INHERITED(nsSVGFEMergeNodeElement,nsSVGFEMergeNodeElementBase)
-NS_IMPL_RELEASE_INHERITED(nsSVGFEMergeNodeElement,nsSVGFEMergeNodeElementBase)
-
-DOMCI_NODE_DATA(SVGFEMergeNodeElement, nsSVGFEMergeNodeElement)
-
-NS_INTERFACE_TABLE_HEAD(nsSVGFEMergeNodeElement)
-  NS_NODE_INTERFACE_TABLE4(nsSVGFEMergeNodeElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement, nsIDOMSVGFEMergeNodeElement)
-   // nsISupports is an ambiguous base of nsSVGFE so we have to work
-   // around that
-   if ( aIID.Equals(NS_GET_IID(nsSVGFEMergeNodeElement)) )
-     foundInterface = static_cast<nsISupports*>(static_cast<void*>(this));
-   else
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGFEMergeNodeElement)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGFEMergeNodeElementBase)
-
-//----------------------------------------------------------------------
-// nsIDOMNode methods
-
-NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGFEMergeNodeElement)
-
-//----------------------------------------------------------------------
-// nsFEUnstyledElement methods
-
-bool
-nsSVGFEMergeNodeElement::AttributeAffectsRendering(int32_t aNameSpaceID,
-                                                   nsIAtom* aAttribute) const
-{
-  return aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::in;
-}
-
-//----------------------------------------------------------------------
-// nsIDOMSVGFEMergeNodeElement methods
-
-/* readonly attribute nsIDOMSVGAnimatedString in1; */
-NS_IMETHODIMP nsSVGFEMergeNodeElement::GetIn1(nsIDOMSVGAnimatedString * *aIn)
-{
-  return mStringAttributes[IN1].ToDOMAnimatedString(aIn, this);
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-nsSVGElement::StringAttributesInfo
-nsSVGFEMergeNodeElement::GetStringInfo()
-{
-  return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
-}
 
 //---------------------Offset------------------------
 
@@ -2609,642 +2180,6 @@ nsSVGFEOffsetElement::GetNumberInfo()
 
 nsSVGElement::StringAttributesInfo
 nsSVGFEOffsetElement::GetStringInfo()
-{
-  return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
-}
-
-//---------------------Flood------------------------
-
-typedef nsSVGFE nsSVGFEFloodElementBase;
-
-class nsSVGFEFloodElement : public nsSVGFEFloodElementBase,
-                            public nsIDOMSVGFEFloodElement
-{
-  friend nsresult NS_NewSVGFEFloodElement(nsIContent **aResult,
-                                          already_AddRefed<nsINodeInfo> aNodeInfo);
-protected:
-  nsSVGFEFloodElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-    : nsSVGFEFloodElementBase(aNodeInfo) {}
-
-public:
-  virtual bool SubregionIsUnionOfRegions() { return false; }
-
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // FE Base
-  NS_FORWARD_NSIDOMSVGFILTERPRIMITIVESTANDARDATTRIBUTES(nsSVGFEFloodElementBase::)
-
-  virtual nsresult Filter(nsSVGFilterInstance* aInstance,
-                          const nsTArray<const Image*>& aSources,
-                          const Image* aTarget,
-                          const nsIntRect& aDataRect);
-  virtual nsSVGString& GetResultImageName() { return mStringAttributes[RESULT]; }
-  virtual nsIntRect ComputeTargetBBox(const nsTArray<nsIntRect>& aSourceBBoxes,
-          const nsSVGFilterInstance& aInstance);
-
-  // Flood
-  NS_DECL_NSIDOMSVGFEFLOODELEMENT
-
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGFEFloodElementBase::)
-  
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  // nsIContent interface
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-protected:
-  virtual bool OperatesOnSRGB(nsSVGFilterInstance*,
-                              int32_t, Image*) { return true; }
-
-  virtual StringAttributesInfo GetStringInfo();
-
-  enum { RESULT };
-  nsSVGString mStringAttributes[1];
-  static StringInfo sStringInfo[1];
-};
-
-nsSVGElement::StringInfo nsSVGFEFloodElement::sStringInfo[1] =
-{
-  { &nsGkAtoms::result, kNameSpaceID_None, true }
-};
-
-NS_IMPL_NS_NEW_SVG_ELEMENT(FEFlood)
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ADDREF_INHERITED(nsSVGFEFloodElement,nsSVGFEFloodElementBase)
-NS_IMPL_RELEASE_INHERITED(nsSVGFEFloodElement,nsSVGFEFloodElementBase)
-
-DOMCI_NODE_DATA(SVGFEFloodElement, nsSVGFEFloodElement)
-
-NS_INTERFACE_TABLE_HEAD(nsSVGFEFloodElement)
-  NS_NODE_INTERFACE_TABLE5(nsSVGFEFloodElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement,
-                           nsIDOMSVGFilterPrimitiveStandardAttributes,
-                           nsIDOMSVGFEFloodElement)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGFEFloodElement)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGFEFloodElementBase)
-
-//----------------------------------------------------------------------
-// nsIDOMNode methods
-
-NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGFEFloodElement)
-
-
-//----------------------------------------------------------------------
-// nsIDOMSVGFEFloodElement methods
-
-nsresult
-nsSVGFEFloodElement::Filter(nsSVGFilterInstance *instance,
-                            const nsTArray<const Image*>& aSources,
-                            const Image* aTarget,
-                            const nsIntRect& aDataRect)
-{
-  nsIFrame* frame = GetPrimaryFrame();
-  if (!frame) return NS_ERROR_FAILURE;
-  nsStyleContext* style = frame->StyleContext();
-
-  nscolor floodColor = style->StyleSVGReset()->mFloodColor;
-  float floodOpacity = style->StyleSVGReset()->mFloodOpacity;
-
-  gfxContext ctx(aTarget->mImage);
-  ctx.SetColor(gfxRGBA(NS_GET_R(floodColor) / 255.0,
-                       NS_GET_G(floodColor) / 255.0,
-                       NS_GET_B(floodColor) / 255.0,
-                       NS_GET_A(floodColor) / 255.0 * floodOpacity));
-  ctx.Rectangle(aTarget->mFilterPrimitiveSubregion);
-  ctx.Fill();
-  return NS_OK;
-}
-
-nsIntRect
-nsSVGFEFloodElement::ComputeTargetBBox(const nsTArray<nsIntRect>& aSourceBBoxes,
-        const nsSVGFilterInstance& aInstance)
-{
-  return GetMaxRect();
-}
-
-//----------------------------------------------------------------------
-// nsIContent methods
-
-NS_IMETHODIMP_(bool)
-nsSVGFEFloodElement::IsAttributeMapped(const nsIAtom* name) const
-{
-  static const MappedAttributeEntry* const map[] = {
-    sFEFloodMap
-  };
-  
-  return FindAttributeDependence(name, map) ||
-    nsSVGFEFloodElementBase::IsAttributeMapped(name);
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-nsSVGElement::StringAttributesInfo
-nsSVGFEFloodElement::GetStringInfo()
-{
-  return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
-}
-
-//---------------------Tile------------------------
-
-typedef nsSVGFE nsSVGFETileElementBase;
-
-class nsSVGFETileElement : public nsSVGFETileElementBase,
-                           public nsIDOMSVGFETileElement
-{
-  friend nsresult NS_NewSVGFETileElement(nsIContent **aResult,
-                                         already_AddRefed<nsINodeInfo> aNodeInfo);
-protected:
-  nsSVGFETileElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-    : nsSVGFETileElementBase(aNodeInfo) {}
-
-public:
-  virtual bool SubregionIsUnionOfRegions() { return false; }
-
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // FE Base
-  NS_FORWARD_NSIDOMSVGFILTERPRIMITIVESTANDARDATTRIBUTES(nsSVGFETileElementBase::)
-
-  virtual nsresult Filter(nsSVGFilterInstance* aInstance,
-                          const nsTArray<const Image*>& aSources,
-                          const Image* aTarget,
-                          const nsIntRect& aDataRect);
-  virtual bool AttributeAffectsRendering(
-          int32_t aNameSpaceID, nsIAtom* aAttribute) const;
-  virtual nsSVGString& GetResultImageName() { return mStringAttributes[RESULT]; }
-  virtual void GetSourceImageNames(nsTArray<nsSVGStringInfo>& aSources);
-  virtual nsIntRect ComputeTargetBBox(const nsTArray<nsIntRect>& aSourceBBoxes,
-          const nsSVGFilterInstance& aInstance);
-  virtual void ComputeNeededSourceBBoxes(const nsIntRect& aTargetBBox,
-          nsTArray<nsIntRect>& aSourceBBoxes, const nsSVGFilterInstance& aInstance);
-  virtual nsIntRect ComputeChangeBBox(const nsTArray<nsIntRect>& aSourceChangeBoxes,
-          const nsSVGFilterInstance& aInstance);
-
-  // Tile
-  NS_DECL_NSIDOMSVGFETILEELEMENT
-
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGFETileElementBase::)
-
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-protected:
-  virtual StringAttributesInfo GetStringInfo();
-  
-  enum { RESULT, IN1 };
-  nsSVGString mStringAttributes[2];
-  static StringInfo sStringInfo[2];
-};
-
-nsSVGElement::StringInfo nsSVGFETileElement::sStringInfo[2] =
-{
-  { &nsGkAtoms::result, kNameSpaceID_None, true },
-  { &nsGkAtoms::in, kNameSpaceID_None, true }
-};
-
-NS_IMPL_NS_NEW_SVG_ELEMENT(FETile)
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ADDREF_INHERITED(nsSVGFETileElement,nsSVGFETileElementBase)
-NS_IMPL_RELEASE_INHERITED(nsSVGFETileElement,nsSVGFETileElementBase)
-
-DOMCI_NODE_DATA(SVGFETileElement, nsSVGFETileElement)
-
-NS_INTERFACE_TABLE_HEAD(nsSVGFETileElement)
-  NS_NODE_INTERFACE_TABLE5(nsSVGFETileElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement,
-                           nsIDOMSVGFilterPrimitiveStandardAttributes,
-                           nsIDOMSVGFETileElement)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGFETileElement)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGFETileElementBase)
-
-//----------------------------------------------------------------------
-// nsIDOMNode methods
-
-
-NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGFETileElement)
-
-
-//----------------------------------------------------------------------
-// nsSVGFETileElement methods
-
-/* readonly attribute nsIDOMSVGAnimatedString in1; */
-NS_IMETHODIMP nsSVGFETileElement::GetIn1(nsIDOMSVGAnimatedString * *aIn)
-{
-  return mStringAttributes[IN1].ToDOMAnimatedString(aIn, this);
-}
-
-void
-nsSVGFETileElement::GetSourceImageNames(nsTArray<nsSVGStringInfo>& aSources)
-{
-  aSources.AppendElement(nsSVGStringInfo(&mStringAttributes[IN1], this));
-}
-
-nsIntRect
-nsSVGFETileElement::ComputeTargetBBox(const nsTArray<nsIntRect>& aSourceBBoxes,
-        const nsSVGFilterInstance& aInstance)
-{
-  return GetMaxRect();
-}
-
-void
-nsSVGFETileElement::ComputeNeededSourceBBoxes(const nsIntRect& aTargetBBox,
-          nsTArray<nsIntRect>& aSourceBBoxes, const nsSVGFilterInstance& aInstance)
-{
-  // Just assume we need the entire source bounding box, so do nothing.
-}
-
-nsIntRect
-nsSVGFETileElement::ComputeChangeBBox(const nsTArray<nsIntRect>& aSourceChangeBoxes,
-                                      const nsSVGFilterInstance& aInstance)
-{
-  return GetMaxRect();
-}
-
-static int32_t WrapInterval(int32_t aVal, int32_t aMax)
-{
-  aVal = aVal % aMax;
-  return aVal < 0 ? aMax + aVal : aVal;
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-/*
- * This function computes the size of partial match on either side of the tile.
- * eg: If we are talking about the X-axis direction, then it computes, the 
- * size of the tile that would be copied to the lesser X-axis side (usually
- * left), the higher X-axis side (usualy right) and the centre.
- * This is needed because often, the tile doesn't exactly align to the target
- * region and is partially copied on the edges. This function computes the
- * dimensions of the partially copied regions in one axis.
- *
- * OUTPUT:
- * aLesserSidePartialMatchSize: The size of the partial match on the lesser
- *                              side of the axis being considered.
- *                              eg: for X-axis, usually left side and
- *                                  for Y-axis, usually top
- * aHigherSidePartialMatchSize: The size of the partial match on the higher
- *                              side of the axis being considered.
- *                              eg: for X-axis, usually right side and
- *                                  for Y-axis, usually bottom
- * aCentreSize: The size of the target area where the tile is copied in full.
- *              This lies between the lesser and higher side partial matches.
- *              (the partially matched areas may be of zero width)
- *
- * INPUT:
- * aLesserTargetExtent: Edge of the target area on the axis being considered
- *                      on the lesser side. (eg: usually left on the X-axis)
- * aTargetSize: Size of the target area on the axis being considered (eg:
- *              usually width for X-axis)
- * aLesserTileExtent: Edge of the tile on the axis being considered on the
- *                    lesser side.
- * aTileSize: Size of the tile on the axis being considered.
- */
-static inline void
-ComputePartialTileExtents(int32_t *aLesserSidePartialMatchSize,
-                          int32_t *aHigherSidePartialMatchSize,
-                          int32_t *aCentreSize,
-                          int32_t aLesserTargetExtent,
-                          int32_t aTargetSize,
-                          int32_t aLesserTileExtent,
-                          int32_t aTileSize)
-{
-  int32_t targetExtentMost = aLesserTargetExtent + aTargetSize;
-  int32_t tileExtentMost = aLesserTileExtent + aTileSize;
-
-  int32_t lesserSidePartialMatchSize;
-  if (aLesserTileExtent < aLesserTargetExtent) {
-    lesserSidePartialMatchSize = tileExtentMost - aLesserTargetExtent;
-  } else {
-    lesserSidePartialMatchSize = (aLesserTileExtent - aLesserTargetExtent) %
-                                    aTileSize;
-  }
-
-  int32_t higherSidePartialMatchSize;
-  if (lesserSidePartialMatchSize > aTargetSize) {
-    lesserSidePartialMatchSize = aTargetSize;
-    higherSidePartialMatchSize = 0;
-  } else if (tileExtentMost > targetExtentMost) {
-      higherSidePartialMatchSize = targetExtentMost - aLesserTileExtent;
-  } else {
-    higherSidePartialMatchSize = (targetExtentMost - tileExtentMost) %
-                                    aTileSize;
-  }
-
-  if (lesserSidePartialMatchSize + higherSidePartialMatchSize >
-        aTargetSize) {
-    higherSidePartialMatchSize = aTargetSize - lesserSidePartialMatchSize;
-  }
-
-  /*
-   * To understand the conditon below, let us consider the X-Axis:
-   * Lesser side is left and the Higher side is right.
-   * This implies:
-   * aTargetSize is rect.width.
-   * lesserSidePartialMatchSize would mean leftPartialTileWidth.
-   * higherSidePartialMatchSize would mean rightPartialTileWidth.
-   *
-   * leftPartialTileWidth == rect.width only happens when the tile entirely
-   * overlaps with the target area in the X-axis and exceeds its bounds by at
-   * least one pixel on the lower X-Axis side.
-   *
-   * leftPartialTileWidth + rightPartialTileWidth == rect.width only happens
-   * when the tile overlaps the target area in such a way that the edge of the
-   * tile on the higher X-Axis side cuts through the target area and there is no
-   * space for a complete tile in the X-Axis in the target area on either side
-   * of that edge. In this scenario, centre will be of zero width and the
-   * partial widths on left and right will add up to the width of the rect. In
-   * case the tile is bigger than the rect in the X-axis, it will get clipped
-   * and remain equal to rect.width.
-   *
-   * Therefore, those two conditions are separate cases which lead to centre
-   * being of zero width.
-   *
-   * The condition below is the same logic as above expressed independent of
-   * the axis in consideration.
-   */
-
-  int32_t centreSize;
-  if (lesserSidePartialMatchSize == aTargetSize ||
-        lesserSidePartialMatchSize + higherSidePartialMatchSize ==
-        aTargetSize) {
-    centreSize = 0;
-  } else {
-    centreSize = aTargetSize -
-                   (lesserSidePartialMatchSize + higherSidePartialMatchSize);
-  }
-
-  *aLesserSidePartialMatchSize = lesserSidePartialMatchSize;
-  *aHigherSidePartialMatchSize = higherSidePartialMatchSize;
-  *aCentreSize = centreSize;
-}
-
-static inline void
-TilePixels(uint8_t *aTargetData,
-           const uint8_t *aSourceData,
-           const nsIntRect &targetRegion,
-           const nsIntRect &aTile,
-           uint32_t aStride)
-{
-  if (targetRegion.IsEmpty()) {
-    return;
-  }
-
-  uint32_t tileRowCopyMemSize = aTile.width * 4;
-  uint32_t numTimesToCopyTileRows = targetRegion.width / aTile.width;
-
-  uint8_t *targetFirstRowOffset = aTargetData + 4 * targetRegion.x;
-  const uint8_t *tileFirstRowOffset = aSourceData + 4 * aTile.x;
-
-  int32_t tileYOffset = 0;
-  for (int32_t targetY = targetRegion.y;
-       targetY < targetRegion.YMost();
-       ++targetY) {
-    uint8_t *targetRowOffset = targetFirstRowOffset + aStride * targetY;
-    const uint8_t *tileRowOffset = tileFirstRowOffset +
-                                             aStride * (aTile.y + tileYOffset);
-
-    for (uint32_t i = 0; i < numTimesToCopyTileRows; ++i) {
-      memcpy(targetRowOffset + i * tileRowCopyMemSize,
-             tileRowOffset,
-             tileRowCopyMemSize);
-    }
-
-    tileYOffset = (tileYOffset + 1) % aTile.height;
-  }
-}
-
-nsresult
-nsSVGFETileElement::Filter(nsSVGFilterInstance *instance,
-                           const nsTArray<const Image*>& aSources,
-                           const Image* aTarget,
-                           const nsIntRect& rect)
-{
-  // XXX This code depends on the surface rect containing the filter
-  // primitive subregion. ComputeTargetBBox, ComputeNeededSourceBBoxes
-  // and ComputeChangeBBox are all pessimal, so that will normally be OK,
-  // but nothing clips mFilterPrimitiveSubregion so this should be changed.
-
-  nsIntRect tile;
-  bool res = gfxUtils::GfxRectToIntRect(aSources[0]->mFilterPrimitiveSubregion,
-                                        &tile);
-
-  NS_ENSURE_TRUE(res, NS_ERROR_FAILURE); // asserts on failure (not 
-  if (tile.IsEmpty())
-    return NS_OK;
-
-  const nsIntRect &surfaceRect = instance->GetSurfaceRect();
-  if (!tile.Intersects(surfaceRect)) {
-    // nothing to draw
-    return NS_OK;
-  }
-
-  // clip tile
-  tile = tile.Intersect(surfaceRect);
-
-  // Get it into surface space
-  tile -= surfaceRect.TopLeft();
-
-  uint8_t* sourceData = aSources[0]->mImage->Data();
-  uint8_t* targetData = aTarget->mImage->Data();
-  uint32_t stride = aTarget->mImage->Stride();
-
-  /*
-   * priority: left before right before centre
-   *             and
-   *           top before bottom before centre
-   *
-   * eg: If we have a target area which is 1.5 times the width of a tile,
-   *     then, based on alignment, we get:
-   *       'left and right'
-   *         or
-   *       'left and centre'
-   *
-   */
-
-  int32_t leftPartialTileWidth;
-  int32_t rightPartialTileWidth;
-  int32_t centreWidth;
-  ComputePartialTileExtents(&leftPartialTileWidth,
-                            &rightPartialTileWidth,
-                            &centreWidth,
-                            rect.x,
-                            rect.width,
-                            tile.x,
-                            tile.width);
-
-  int32_t topPartialTileHeight;
-  int32_t bottomPartialTileHeight;
-  int32_t centreHeight;
-  ComputePartialTileExtents(&topPartialTileHeight,
-                            &bottomPartialTileHeight,
-                            &centreHeight,
-                            rect.y,
-                            rect.height,
-                            tile.y,
-                            tile.height);
-
-  /* We have nine regions of the target area which have to be tiled differetly:
-   *
-   * Top Left,    Top Middle,    Top Right,
-   * Left Middle, Centre,        Right Middle,
-   * Bottom Left, Bottom Middle, Bottom Right
-   *
-   * + Centre is tiled by repeating the tiled image in full.
-   * + Top Left, Top Middle and Top Right:
-   *     Some of the rows from the top of the tile will be clipped here.
-   * + Bottom Left, Bottom Middle and Bottom Right:
-   *     Some of the rows from the bottom of the tile will be clipped here.
-   * + Top Left, Left Middle and Bottom left:
-   *     Some of the columns from the Left of the tile will be clipped here.
-   * + Top Right, Right Middle and Bottom Right:
-   *     Some of the columns from the right of the tile will be clipped here.
-   *
-   * If the sizes and positions of the target and tile are such that the tile
-   * aligns exactly on any (or all) of the edges, then some (or all) of the
-   * regions above (except Centre) will be zero sized.
-   */
-
-  nsIntRect targetRects[] = {
-    // Top Left
-    nsIntRect(rect.x, rect.y, leftPartialTileWidth, topPartialTileHeight),
-    // Top Middle
-    nsIntRect(rect.x + leftPartialTileWidth,
-              rect.y,
-              centreWidth,
-              topPartialTileHeight),
-    // Top Right
-    nsIntRect(rect.XMost() - rightPartialTileWidth,
-              rect.y,
-              rightPartialTileWidth,
-              topPartialTileHeight),
-    // Left Middle
-    nsIntRect(rect.x,
-              rect.y + topPartialTileHeight,
-              leftPartialTileWidth,
-              centreHeight),
-    // Centre
-    nsIntRect(rect.x + leftPartialTileWidth,
-              rect.y + topPartialTileHeight,
-              centreWidth,
-              centreHeight),
-    // Right Middle
-    nsIntRect(rect.XMost() - rightPartialTileWidth,
-              rect.y + topPartialTileHeight,
-              rightPartialTileWidth,
-              centreHeight),
-    // Bottom Left
-    nsIntRect(rect.x,
-              rect.YMost() - bottomPartialTileHeight,
-              leftPartialTileWidth,
-              bottomPartialTileHeight),
-    // Bottom Middle
-    nsIntRect(rect.x + leftPartialTileWidth,
-              rect.YMost() - bottomPartialTileHeight,
-              centreWidth,
-              bottomPartialTileHeight),
-    // Bottom Right
-    nsIntRect(rect.XMost() - rightPartialTileWidth,
-              rect.YMost() - bottomPartialTileHeight,
-              rightPartialTileWidth,
-              bottomPartialTileHeight)
-  };
-
-  nsIntRect tileRects[] = {
-    // Top Left
-    nsIntRect(tile.XMost() - leftPartialTileWidth,
-              tile.YMost() - topPartialTileHeight,
-              leftPartialTileWidth,
-              topPartialTileHeight),
-    // Top Middle
-    nsIntRect(tile.x,
-              tile.YMost() - topPartialTileHeight,
-              tile.width,
-              topPartialTileHeight),
-    // Top Right
-    nsIntRect(tile.x,
-              tile.YMost() - topPartialTileHeight,
-              rightPartialTileWidth,
-              topPartialTileHeight),
-    // Left Middle
-    nsIntRect(tile.XMost() - leftPartialTileWidth,
-              tile.y,
-              leftPartialTileWidth,
-              tile.height),
-    // Centre
-    nsIntRect(tile.x,
-              tile.y,
-              tile.width,
-              tile.height),
-    // Right Middle
-    nsIntRect(tile.x,
-              tile.y,
-              rightPartialTileWidth,
-              tile.height),
-    // Bottom Left
-    nsIntRect(tile.XMost() - leftPartialTileWidth,
-              tile.y,
-              leftPartialTileWidth,
-              bottomPartialTileHeight),
-    // Bottom Middle
-    nsIntRect(tile.x,
-              tile.y,
-              tile.width,
-              bottomPartialTileHeight),
-    // Bottom Right
-    nsIntRect(tile.x,
-              tile.y,
-              rightPartialTileWidth,
-              bottomPartialTileHeight)
-  };
-
-  for (uint32_t i = 0; i < ArrayLength(targetRects); ++i) {
-    TilePixels(targetData,
-               sourceData,
-               targetRects[i],
-               tileRects[i],
-               stride);
-  }
-
-  return NS_OK;
-}
-
-bool
-nsSVGFETileElement::AttributeAffectsRendering(int32_t aNameSpaceID,
-                                              nsIAtom* aAttribute) const
-{
-  return nsSVGFETileElementBase::AttributeAffectsRendering(aNameSpaceID, 
-                                                           aAttribute) ||
-           (aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::in);
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-nsSVGElement::StringAttributesInfo
-nsSVGFETileElement::GetStringInfo()
 {
   return StringAttributesInfo(mStringAttributes, sStringInfo,
                               ArrayLength(sStringInfo));
@@ -4392,6 +3327,12 @@ static int32_t BoundInterval(int32_t aVal, int32_t aMax)
 {
   aVal = std::max(aVal, 0);
   return std::min(aVal, aMax - 1);
+}
+
+static int32_t WrapInterval(int32_t aVal, int32_t aMax)
+{
+  aVal = aVal % aMax;
+  return aVal < 0 ? aMax + aVal : aVal;
 }
 
 static void
@@ -5715,314 +4656,6 @@ nsSVGFESpecularLightingElement::LightPixel(const float *N, const float *L,
     std::max(minAlpha, std::max(targetData[GFX_ARGB32_OFFSET_B],
                             std::max(targetData[GFX_ARGB32_OFFSET_G],
                                    targetData[GFX_ARGB32_OFFSET_R])));
-}
-
-//---------------------Image------------------------
-
-nsSVGElement::StringInfo nsSVGFEImageElement::sStringInfo[2] =
-{
-  { &nsGkAtoms::result, kNameSpaceID_None, true },
-  { &nsGkAtoms::href, kNameSpaceID_XLink, true }
-};
-
-NS_IMPL_NS_NEW_SVG_ELEMENT(FEImage)
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ADDREF_INHERITED(nsSVGFEImageElement,nsSVGFEImageElementBase)
-NS_IMPL_RELEASE_INHERITED(nsSVGFEImageElement,nsSVGFEImageElementBase)
-
-DOMCI_NODE_DATA(SVGFEImageElement, nsSVGFEImageElement)
-
-NS_INTERFACE_TABLE_HEAD(nsSVGFEImageElement)
-  NS_NODE_INTERFACE_TABLE9(nsSVGFEImageElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement,
-                           nsIDOMSVGFilterPrimitiveStandardAttributes,
-                           nsIDOMSVGFEImageElement, nsIDOMSVGURIReference,
-                           imgINotificationObserver, nsIImageLoadingContent,
-                           imgIOnloadBlocker)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGFEImageElement)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGFEImageElementBase)
-
-//----------------------------------------------------------------------
-// Implementation
-
-nsSVGFEImageElement::nsSVGFEImageElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-  : nsSVGFEImageElementBase(aNodeInfo)
-{
-  // We start out broken
-  AddStatesSilently(NS_EVENT_STATE_BROKEN);
-}
-
-nsSVGFEImageElement::~nsSVGFEImageElement()
-{
-  DestroyImageLoadingContent();
-}
-
-//----------------------------------------------------------------------
-
-nsresult
-nsSVGFEImageElement::LoadSVGImage(bool aForce, bool aNotify)
-{
-  // resolve href attribute
-  nsCOMPtr<nsIURI> baseURI = GetBaseURI();
-
-  nsAutoString href;
-  mStringAttributes[HREF].GetAnimValue(href, this);
-  href.Trim(" \t\n\r");
-
-  if (baseURI && !href.IsEmpty())
-    NS_MakeAbsoluteURI(href, href, baseURI);
-
-  // Make sure we don't get in a recursive death-spiral
-  nsIDocument* doc = OwnerDoc();
-  nsCOMPtr<nsIURI> hrefAsURI;
-  if (NS_SUCCEEDED(StringToURI(href, doc, getter_AddRefs(hrefAsURI)))) {
-    bool isEqual;
-    if (NS_SUCCEEDED(hrefAsURI->Equals(baseURI, &isEqual)) && isEqual) {
-      // Image URI matches our URI exactly! Bail out.
-      return NS_OK;
-    }
-  }
-
-  return LoadImage(href, aForce, aNotify);
-}
-
-//----------------------------------------------------------------------
-// nsIContent methods:
-
-NS_IMETHODIMP_(bool)
-nsSVGFEImageElement::IsAttributeMapped(const nsIAtom* name) const
-{
-  static const MappedAttributeEntry* const map[] = {
-    sGraphicsMap
-  };
-  
-  return FindAttributeDependence(name, map) ||
-    nsSVGFEImageElementBase::IsAttributeMapped(name);
-}
-
-nsresult
-nsSVGFEImageElement::AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
-                                  const nsAttrValue* aValue, bool aNotify)
-{
-  if (aNamespaceID == kNameSpaceID_XLink && aName == nsGkAtoms::href) {
-
-    // If there isn't a frame we still need to load the image in case
-    // the frame is created later e.g. by attaching to a document.
-    // If there is a frame then it should deal with loading as the image
-    // url may be animated.
-    if (!GetPrimaryFrame()) {
-
-      // Prevent setting image.src by exiting early
-      if (nsContentUtils::IsImageSrcSetDisabled()) {
-        return NS_OK;
-      }
-      if (aValue) {
-        LoadSVGImage(true, aNotify);
-      } else {
-        CancelImageRequests(aNotify);
-      }
-    }
-  }
-
-  return nsSVGFEImageElementBase::AfterSetAttr(aNamespaceID, aName,
-                                               aValue, aNotify);
-}
-
-void
-nsSVGFEImageElement::MaybeLoadSVGImage()
-{
-  if (mStringAttributes[HREF].IsExplicitlySet() &&
-      (NS_FAILED(LoadSVGImage(false, true)) ||
-       !LoadingEnabled())) {
-    CancelImageRequests(true);
-  }
-}
-
-nsresult
-nsSVGFEImageElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
-                                nsIContent* aBindingParent,
-                                bool aCompileEventHandlers)
-{
-  nsresult rv = nsSVGFEImageElementBase::BindToTree(aDocument, aParent,
-                                                    aBindingParent,
-                                                    aCompileEventHandlers);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsImageLoadingContent::BindToTree(aDocument, aParent, aBindingParent,
-                                    aCompileEventHandlers);
-
-  if (mStringAttributes[HREF].IsExplicitlySet()) {
-    // FIXME: Bug 660963 it would be nice if we could just have
-    // ClearBrokenState update our state and do it fast...
-    ClearBrokenState();
-    RemoveStatesSilently(NS_EVENT_STATE_BROKEN);
-    nsContentUtils::AddScriptRunner(
-      NS_NewRunnableMethod(this, &nsSVGFEImageElement::MaybeLoadSVGImage));
-  }
-
-  return rv;
-}
-
-void
-nsSVGFEImageElement::UnbindFromTree(bool aDeep, bool aNullParent)
-{
-  nsImageLoadingContent::UnbindFromTree(aDeep, aNullParent);
-  nsSVGFEImageElementBase::UnbindFromTree(aDeep, aNullParent);
-}
-
-nsEventStates
-nsSVGFEImageElement::IntrinsicState() const
-{
-  return nsSVGFEImageElementBase::IntrinsicState() |
-    nsImageLoadingContent::ImageState();
-}
-
-//----------------------------------------------------------------------
-// nsIDOMNode methods
-
-NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGFEImageElement)
-
-//----------------------------------------------------------------------
-// nsIDOMSVGURIReference methods:
-
-/* readonly attribute nsIDOMSVGAnimatedString href; */
-NS_IMETHODIMP
-nsSVGFEImageElement::GetHref(nsIDOMSVGAnimatedString * *aHref)
-{
-  return mStringAttributes[HREF].ToDOMAnimatedString(aHref, this);
-}
-
-//----------------------------------------------------------------------
-// nsIDOMSVGFEImageElement methods
-
-nsresult
-nsSVGFEImageElement::Filter(nsSVGFilterInstance *instance,
-                            const nsTArray<const Image*>& aSources,
-                            const Image* aTarget,
-                            const nsIntRect& rect)
-{
-  nsIFrame* frame = GetPrimaryFrame();
-  if (!frame) return NS_ERROR_FAILURE;
-
-  nsCOMPtr<imgIRequest> currentRequest;
-  GetRequest(nsIImageLoadingContent::CURRENT_REQUEST,
-             getter_AddRefs(currentRequest));
-
-  nsCOMPtr<imgIContainer> imageContainer;
-  if (currentRequest)
-    currentRequest->GetImage(getter_AddRefs(imageContainer));
-
-  nsRefPtr<gfxASurface> currentFrame;
-  if (imageContainer)
-    imageContainer->GetFrame(imgIContainer::FRAME_CURRENT,
-                             imgIContainer::FLAG_SYNC_DECODE,
-                             getter_AddRefs(currentFrame));
-
-  // We need to wrap the surface in a pattern to have somewhere to set the
-  // graphics filter.
-  nsRefPtr<gfxPattern> thebesPattern;
-  if (currentFrame)
-    thebesPattern = new gfxPattern(currentFrame);
-
-  if (thebesPattern) {
-    thebesPattern->SetFilter(nsLayoutUtils::GetGraphicsFilterForFrame(frame));
-
-    int32_t nativeWidth, nativeHeight;
-    imageContainer->GetWidth(&nativeWidth);
-    imageContainer->GetHeight(&nativeHeight);
-
-    const gfxRect& filterSubregion = aTarget->mFilterPrimitiveSubregion;
-
-    gfxMatrix viewBoxTM =
-      SVGContentUtils::GetViewBoxTransform(filterSubregion.Width(), filterSubregion.Height(),
-                                           0,0, nativeWidth, nativeHeight,
-                                           mPreserveAspectRatio);
-
-    gfxMatrix xyTM = gfxMatrix().Translate(gfxPoint(filterSubregion.X(), filterSubregion.Y()));
-
-    gfxMatrix TM = viewBoxTM * xyTM;
-    
-    nsRefPtr<gfxContext> ctx = new gfxContext(aTarget->mImage);
-    nsSVGUtils::CompositePatternMatrix(ctx, thebesPattern, TM, nativeWidth, nativeHeight, 1.0);
-  }
-
-  return NS_OK;
-}
-
-bool
-nsSVGFEImageElement::AttributeAffectsRendering(int32_t aNameSpaceID,
-                                               nsIAtom* aAttribute) const
-{
-  // nsGkAtoms::href is deliberately omitted as the frame has special
-  // handling to load the image
-  return nsSVGFEImageElementBase::AttributeAffectsRendering(aNameSpaceID, aAttribute) ||
-         (aNameSpaceID == kNameSpaceID_None &&
-          aAttribute == nsGkAtoms::preserveAspectRatio);
-}
-
-nsIntRect
-nsSVGFEImageElement::ComputeTargetBBox(const nsTArray<nsIntRect>& aSourceBBoxes,
-        const nsSVGFilterInstance& aInstance)
-{
-  // XXX can do better here ... we could check what we know of the source
-  // image bounds and compute an accurate bounding box for the filter
-  // primitive result.
-  return GetMaxRect();
-}
-
-//----------------------------------------------------------------------
-// nsSVGElement methods
-
-SVGAnimatedPreserveAspectRatio *
-nsSVGFEImageElement::GetPreserveAspectRatio()
-{
-  return &mPreserveAspectRatio;
-}
-
-nsSVGElement::StringAttributesInfo
-nsSVGFEImageElement::GetStringInfo()
-{
-  return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
-}
-
-//----------------------------------------------------------------------
-// imgINotificationObserver methods
-
-NS_IMETHODIMP
-nsSVGFEImageElement::Notify(imgIRequest* aRequest, int32_t aType, const nsIntRect* aData)
-{
-  nsresult rv = nsImageLoadingContent::Notify(aRequest, aType, aData);
-
-  if (aType == imgINotificationObserver::SIZE_AVAILABLE) {
-    // Request a decode
-    nsCOMPtr<imgIContainer> container;
-    aRequest->GetImage(getter_AddRefs(container));
-    NS_ABORT_IF_FALSE(container, "who sent the notification then?");
-    container->StartDecoding();
-  }
-
-  if (aType == imgINotificationObserver::LOAD_COMPLETE ||
-      aType == imgINotificationObserver::FRAME_UPDATE ||
-      aType == imgINotificationObserver::SIZE_AVAILABLE) {
-    Invalidate();
-  }
-
-  return rv;
-}
-
-//----------------------------------------------------------------------
-// helper methods
-
-void
-nsSVGFEImageElement::Invalidate()
-{
-  if (GetParent() && GetParent()->IsSVG(nsGkAtoms::filter)) {
-    static_cast<SVGFilterElement*>(GetParent())->Invalidate();
-  }
 }
 
 //---------------------Displacement------------------------

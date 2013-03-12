@@ -666,25 +666,6 @@ static JSBool js_NewRuntimeWasCalled = JS_FALSE;
 mozilla::ThreadLocal<PerThreadData *> js::TlsPerThreadData;
 
 #ifdef DEBUG
-JS_FRIEND_API(void)
-JS::EnterAssertNoGCScope()
-{
-    ++TlsPerThreadData.get()->gcAssertNoGCDepth;
-}
-
-JS_FRIEND_API(void)
-JS::LeaveAssertNoGCScope()
-{
-    --TlsPerThreadData.get()->gcAssertNoGCDepth;
-    JS_ASSERT(TlsPerThreadData.get()->gcAssertNoGCDepth >= 0);
-}
-
-JS_FRIEND_API(bool)
-JS::InNoGCScope()
-{
-    return TlsPerThreadData.get()->gcAssertNoGCDepth > 0;
-}
-
 JS_FRIEND_API(bool)
 JS::isGCEnabled()
 {
@@ -697,9 +678,6 @@ JS::NeedRelaxedRootChecks()
     return TlsPerThreadData.get()->gcRelaxRootChecks;
 }
 #else
-JS_FRIEND_API(void) JS::EnterAssertNoGCScope() {}
-JS_FRIEND_API(void) JS::LeaveAssertNoGCScope() {}
-JS_FRIEND_API(bool) JS::InNoGCScope() { return false; }
 JS_FRIEND_API(bool) JS::isGCEnabled() { return true; }
 JS_FRIEND_API(bool) JS::NeedRelaxedRootChecks() { return false; }
 #endif
@@ -711,7 +689,6 @@ js::PerThreadData::PerThreadData(JSRuntime *runtime)
     runtime_(runtime),
 #ifdef DEBUG
     gcRelaxRootChecks(false),
-    gcAssertNoGCDepth(0),
 #endif
     ionTop(NULL),
     ionJSContext(NULL),
@@ -806,6 +783,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcInterFrameGC(0),
     gcSliceBudget(SliceBudget::Unlimited),
     gcIncrementalEnabled(true),
+    gcGenerationalEnabled(true),
     gcManipulatingDeadZones(false),
     gcObjectsMarkedInDeadZones(0),
     gcPoke(false),
@@ -822,6 +800,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcIncrementalLimit(0),
 #endif
     gcValidate(true),
+    gcFullCompartmentChecks(false),
     gcCallback(NULL),
     gcSliceCallback(NULL),
     gcFinalizeCallback(NULL),
@@ -2914,9 +2893,6 @@ JS_SetGCParameter(JSRuntime *rt, JSGCParamKey key, uint32_t value)
       case JSGC_ALLOCATION_THRESHOLD:
         rt->gcAllocationThreshold = value * 1024 * 1024;
         break;
-      case JSGC_ENABLE_GENERATIONAL:
-        rt->gcGenerationalEnabled = bool(value);
-        break;
       default:
         JS_ASSERT(key == JSGC_MODE);
         rt->gcMode = JSGCMode(value);
@@ -3349,7 +3325,6 @@ JS_NewObject(JSContext *cx, JSClass *jsclasp, JSObject *protoArg, JSObject *pare
     JS_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
 
     JSObject *obj = NewObjectWithClassProto(cx, clasp, proto, parent);
-    AutoAssertNoGC nogc;
     if (obj) {
         TypeObjectFlags flags = 0;
         if (clasp->emulatesUndefined())
@@ -3380,7 +3355,6 @@ JS_NewObjectWithGivenProto(JSContext *cx, JSClass *jsclasp, JSObject *protoArg, 
     JS_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
 
     JSObject *obj = NewObjectWithGivenProto(cx, clasp, proto, parent);
-    AutoAssertNoGC nogc;
     if (obj)
         MarkTypeObjectUnknownProperties(cx, obj->type());
     return obj;
@@ -4421,15 +4395,15 @@ JS_DeleteProperty(JSContext *cx, JSObject *objArg, const char *name)
     return JS_DeleteProperty2(cx, objArg, name, &junk);
 }
 
-static UnrootedShape
+static RawShape
 LastConfigurableShape(JSObject *obj)
 {
-    for (Shape::Range r(obj->lastProperty()->all()); !r.empty(); r.popFront()) {
-        UnrootedShape shape = &r.front();
+    for (Shape::Range<NoGC> r(obj->lastProperty()); !r.empty(); r.popFront()) {
+        Shape *shape = &r.front();
         if (shape->configurable())
             return shape;
     }
-    return UnrootedShape(NULL);
+    return NULL;
 }
 
 JS_PUBLIC_API(void)
@@ -4453,8 +4427,8 @@ JS_ClearNonGlobalObject(JSContext *cx, JSObject *objArg)
     }
 
     /* Set all remaining writable plain data properties to undefined. */
-    for (Shape::Range r(obj->lastProperty()->all()); !r.empty(); r.popFront()) {
-        UnrootedShape shape = &r.front();
+    for (Shape::Range<NoGC> r(obj->lastProperty()); !r.empty(); r.popFront()) {
+        Shape *shape = &r.front();
         if (shape->isDataDescriptor() &&
             shape->writable() &&
             shape->hasDefaultSetter() &&
@@ -4534,7 +4508,7 @@ prop_iter_trace(JSTracer *trc, RawObject obj)
          * barrier here because the pointer is updated via setPrivate, which
          * always takes a barrier.
          */
-        UnrootedShape tmp = static_cast<RawShape>(pdata);
+        RawShape tmp = static_cast<RawShape>(pdata);
         MarkShapeUnbarriered(trc, &tmp, "prop iter shape");
         obj->setPrivateUnbarriered(tmp);
     } else {
@@ -4598,7 +4572,6 @@ JS_PUBLIC_API(JSBool)
 JS_NextProperty(JSContext *cx, JSObject *iterobjArg, jsid *idp)
 {
     RootedObject iterobj(cx, iterobjArg);
-    AutoAssertNoGC nogc;
 
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
@@ -4607,7 +4580,7 @@ JS_NextProperty(JSContext *cx, JSObject *iterobjArg, jsid *idp)
     if (i < 0) {
         /* Native case: private data is a property tree node pointer. */
         JS_ASSERT(iterobj->getParent()->isNative());
-        UnrootedShape shape = static_cast<RawShape>(iterobj->getPrivate());
+        RawShape shape = static_cast<RawShape>(iterobj->getPrivate());
 
         while (shape->previous() && !shape->enumerable())
             shape = shape->previous();
@@ -6138,7 +6111,6 @@ JS_DecodeBytes(JSContext *cx, const char *src, size_t srclen, jschar *dst, size_
 JS_PUBLIC_API(char *)
 JS_EncodeString(JSContext *cx, JSRawString str)
 {
-    AutoAssertNoGC nogc;
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
@@ -6152,7 +6124,6 @@ JS_EncodeString(JSContext *cx, JSRawString str)
 JS_PUBLIC_API(char *)
 JS_EncodeStringToUTF8(JSContext *cx, JSRawString str)
 {
-    AutoAssertNoGC nogc;
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
@@ -7041,8 +7012,6 @@ JS_IsIdentifier(JSContext *cx, JSString *str, JSBool *isIdentifier)
 JS_PUBLIC_API(JSBool)
 JS_DescribeScriptedCaller(JSContext *cx, JSScript **script, unsigned *lineno)
 {
-    AutoAssertNoGC nogc;
-
     if (script)
         *script = NULL;
     if (lineno)

@@ -237,7 +237,7 @@ struct EvalCacheHashPolicy
     typedef EvalCacheLookup Lookup;
 
     static HashNumber hash(const Lookup &l);
-    static bool match(UnrootedScript script, const EvalCacheLookup &l);
+    static bool match(RawScript script, const EvalCacheLookup &l);
 };
 
 typedef HashSet<RawScript, EvalCacheHashPolicy, SystemAllocPolicy> EvalCache;
@@ -355,7 +355,7 @@ class NewObjectCache
   private:
     inline bool lookup(Class *clasp, gc::Cell *key, gc::AllocKind kind, EntryIndex *pentry);
     inline void fill(EntryIndex entry, Class *clasp, gc::Cell *key, gc::AllocKind kind, JSObject *obj);
-    static inline void copyCachedToObject(JSObject *dst, JSObject *src);
+    static inline void copyCachedToObject(JSObject *dst, JSObject *src, gc::AllocKind kind);
 };
 
 /*
@@ -465,7 +465,6 @@ class PerThreadData : public js::PerThreadDataFriendFields
     js::Vector<SavedGCRoot, 0, js::SystemAllocPolicy> gcSavedRoots;
 
     bool                gcRelaxRootChecks;
-    int                 gcAssertNoGCDepth;
 #endif
 
     /*
@@ -779,7 +778,7 @@ struct JSRuntime : js::RuntimeFriendFields,
     js::RootedValueMap  gcRootsHash;
     js::GCLocks         gcLocksHash;
     unsigned            gcKeepAtoms;
-    size_t              gcBytes;
+    volatile size_t     gcBytes;
     size_t              gcMaxBytes;
     size_t              gcMaxMallocBytes;
 
@@ -935,7 +934,7 @@ struct JSRuntime : js::RuntimeFriendFields,
 
     bool                gcPoke;
 
-    js::HeapState       heapState;
+    volatile js::HeapState heapState;
 
     bool isHeapBusy() { return heapState != js::Idle; }
 
@@ -1000,6 +999,7 @@ struct JSRuntime : js::RuntimeFriendFields,
 #endif
 
     bool                gcValidate;
+    bool                gcFullCompartmentChecks;
 
     JSGCCallback        gcCallback;
     js::GCSliceCallback gcSliceCallback;
@@ -1592,7 +1592,6 @@ struct JSContext : js::ContextFriendFields,
 
     bool hasStrictOption() const { return hasOption(JSOPTION_STRICT); }
     bool hasWErrorOption() const { return hasOption(JSOPTION_WERROR); }
-    bool hasAtLineOption() const { return hasOption(JSOPTION_ATLINE); }
 
     js::LifoAlloc &tempLifoAlloc() { return runtime->tempLifoAlloc; }
     inline js::LifoAlloc &analysisLifoAlloc();
@@ -2205,7 +2204,7 @@ class AutoObjectHashSet : public AutoHashSetRooter<RawObject>
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
-class AutoAssertNoGCOrException : public AutoAssertNoGC
+class AutoAssertNoException
 {
 #ifdef DEBUG
     JSContext *cx;
@@ -2213,7 +2212,7 @@ class AutoAssertNoGCOrException : public AutoAssertNoGC
 #endif
 
   public:
-    AutoAssertNoGCOrException(JSContext *cx)
+    AutoAssertNoException(JSContext *cx)
 #ifdef DEBUG
       : cx(cx),
         hadException(cx->isExceptionPending())
@@ -2221,7 +2220,7 @@ class AutoAssertNoGCOrException : public AutoAssertNoGC
     {
     }
 
-    ~AutoAssertNoGCOrException()
+    ~AutoAssertNoException()
     {
         JS_ASSERT_IF(!hadException, !cx->isExceptionPending());
     }

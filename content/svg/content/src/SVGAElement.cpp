@@ -7,7 +7,6 @@
 
 #include "mozilla/dom/SVGAElement.h"
 #include "mozilla/dom/SVGAElementBinding.h"
-#include "nsIDOMSVGURIReference.h"
 #include "nsILink.h"
 #include "nsSVGString.h"
 #include "nsCOMPtr.h"
@@ -20,9 +19,9 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGAElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+SVGAElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return SVGAElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGAElementBinding::Wrap(aCx, aScope, this);
 }
 
 nsSVGElement::StringInfo SVGAElement::sStringInfo[2] =
@@ -35,11 +34,10 @@ nsSVGElement::StringInfo SVGAElement::sStringInfo[2] =
 //----------------------------------------------------------------------
 // nsISupports methods
 
-NS_IMPL_ISUPPORTS_INHERITED6(SVGAElement, SVGAElementBase,
+NS_IMPL_ISUPPORTS_INHERITED5(SVGAElement, SVGAElementBase,
                              nsIDOMNode,
                              nsIDOMElement,
                              nsIDOMSVGElement,
-                             nsIDOMSVGURIReference,
                              nsILink,
                              Link)
 
@@ -54,23 +52,10 @@ SVGAElement::SVGAElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   SetIsDOMBinding();
 }
 
-//----------------------------------------------------------------------
-// nsIDOMSVGURIReference methods
-
-/* readonly attribute nsIDOMSVGAnimatedString href; */
-NS_IMETHODIMP
-SVGAElement::GetHref(nsIDOMSVGAnimatedString * *aHref)
-{
-  *aHref = Href().get();
-  return NS_OK;
-}
-
 already_AddRefed<nsIDOMSVGAnimatedString>
 SVGAElement::Href()
 {
-  nsCOMPtr<nsIDOMSVGAnimatedString> href;
-  mStringAttributes[HREF].ToDOMAnimatedString(getter_AddRefs(href), this);
-  return href.forget();
+  return mStringAttributes[HREF].ToDOMAnimatedString(this);
 }
 
 //----------------------------------------------------------------------
@@ -99,9 +84,7 @@ NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGAElement)
 already_AddRefed<nsIDOMSVGAnimatedString>
 SVGAElement::Target()
 {
-  nsCOMPtr<nsIDOMSVGAnimatedString> target;
-  mStringAttributes[TARGET].ToDOMAnimatedString(getter_AddRefs(target), this);
-  return target.forget();
+  return mStringAttributes[TARGET].ToDOMAnimatedString(this);
 }
 
 void

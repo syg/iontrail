@@ -12,6 +12,7 @@ using namespace mozilla;
 jclass AndroidGeckoEvent::jGeckoEventClass = 0;
 jfieldID AndroidGeckoEvent::jActionField = 0;
 jfieldID AndroidGeckoEvent::jTypeField = 0;
+jfieldID AndroidGeckoEvent::jAckNeededField = 0;
 jfieldID AndroidGeckoEvent::jTimeField = 0;
 jfieldID AndroidGeckoEvent::jPoints = 0;
 jfieldID AndroidGeckoEvent::jPointIndicies = 0;
@@ -100,6 +101,10 @@ jclass AndroidViewTransform::jViewTransformClass = 0;
 jfieldID AndroidViewTransform::jXField = 0;
 jfieldID AndroidViewTransform::jYField = 0;
 jfieldID AndroidViewTransform::jScaleField = 0;
+jfieldID AndroidViewTransform::jFixedLayerMarginLeft = 0;
+jfieldID AndroidViewTransform::jFixedLayerMarginTop = 0;
+jfieldID AndroidViewTransform::jFixedLayerMarginRight = 0;
+jfieldID AndroidViewTransform::jFixedLayerMarginBottom = 0;
 
 jclass AndroidProgressiveUpdateData::jProgressiveUpdateDataClass = 0;
 jfieldID AndroidProgressiveUpdateData::jXField = 0;
@@ -201,6 +206,7 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
 
     jActionField = getField("mAction", "I");
     jTypeField = getField("mType", "I");
+    jAckNeededField = getField("mAckNeeded", "Z");
     jTimeField = getField("mTime", "J");
     jPoints = getField("mPoints", "[Landroid/graphics/Point;");
     jPointIndicies = getField("mPointIndicies", "[I");
@@ -365,6 +371,10 @@ AndroidViewTransform::InitViewTransformClass(JNIEnv *jEnv)
     jXField = getField("x", "F");
     jYField = getField("y", "F");
     jScaleField = getField("scale", "F");
+    jFixedLayerMarginLeft = getField("fixedLayerMarginLeft", "F");
+    jFixedLayerMarginTop = getField("fixedLayerMarginTop", "F");
+    jFixedLayerMarginRight = getField("fixedLayerMarginRight", "F");
+    jFixedLayerMarginBottom = getField("fixedLayerMarginBottom", "F");
 }
 
 void
@@ -492,6 +502,7 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
 
     mAction = jenv->GetIntField(jobj, jActionField);
     mType = jenv->GetIntField(jobj, jTypeField);
+    mAckNeeded = jenv->GetBooleanField(jobj, jAckNeededField);
 
     switch (mType) {
         case SIZE_CHANGED:
@@ -739,7 +750,8 @@ AndroidGeckoLayerClient::SetPageRect(const gfx::Rect& aCssPageRect)
 
 void
 AndroidGeckoLayerClient::SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
-                                          nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY)
+                                          nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY,
+                                          gfx::Margin& aFixedLayerMargins)
 {
     NS_ASSERTION(!isNull(), "SyncViewportInfo called on null layer client!");
     JNIEnv *env = GetJNIForThread();    // this is called on the compositor thread
@@ -762,6 +774,7 @@ AndroidGeckoLayerClient::SyncViewportInfo(const nsIntRect& aDisplayPort, float a
 
     aScrollOffset = nsIntPoint(viewTransform.GetX(env), viewTransform.GetY(env));
     aScaleX = aScaleY = viewTransform.GetScale(env);
+    viewTransform.GetFixedLayerMargins(env, aFixedLayerMargins);
 }
 
 bool
@@ -994,6 +1007,18 @@ AndroidViewTransform::GetScale(JNIEnv *env)
     if (!env)
         return 0.0f;
     return env->GetFloatField(wrapped_obj, jScaleField);
+}
+
+void
+AndroidViewTransform::GetFixedLayerMargins(JNIEnv *env, gfx::Margin &aFixedLayerMargins)
+{
+    if (!env)
+        return;
+
+    aFixedLayerMargins.top = env->GetFloatField(wrapped_obj, jFixedLayerMarginTop);
+    aFixedLayerMargins.right = env->GetFloatField(wrapped_obj, jFixedLayerMarginRight);
+    aFixedLayerMargins.bottom = env->GetFloatField(wrapped_obj, jFixedLayerMarginBottom);
+    aFixedLayerMargins.left = env->GetFloatField(wrapped_obj, jFixedLayerMarginLeft);
 }
 
 float

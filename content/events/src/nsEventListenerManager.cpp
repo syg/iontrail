@@ -840,7 +840,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
     options.setFileAndLine(url.get(), lineNo)
            .setVersion(SCRIPTVERSION_DEFAULT);
 
-    js::RootedObject rootedNull(cx, nullptr); // See bug 781070.
+    JS::RootedObject rootedNull(cx, nullptr); // See bug 781070.
     JSObject *handlerFun = nullptr;
     result = nsJSUtils::CompileFunction(cx, rootedNull, options,
                                         nsAtomCString(aListenerStruct->mTypeAtom),
@@ -959,8 +959,11 @@ nsEventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
       if (ls->IsListening(aEvent) &&
           (aEvent->mFlags.mIsTrusted || ls->mFlags.mAllowUntrustedEvents)) {
         if (!*aDOMEvent) {
-          nsEventDispatcher::CreateEvent(aPresContext, aEvent,
-                                         EmptyString(), aDOMEvent);
+          // This is tiny bit slow, but happens only once per event.
+          nsCOMPtr<mozilla::dom::EventTarget> et =
+            do_QueryInterface(aEvent->originalTarget);
+          nsEventDispatcher::CreateEvent(et, aPresContext,
+                                         aEvent, EmptyString(), aDOMEvent);
         }
         if (*aDOMEvent) {
           if (!aEvent->currentTarget) {

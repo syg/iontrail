@@ -97,6 +97,7 @@ using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
 
+using mozilla::net::nsMediaFragmentURIParser;
 
 // Number of milliseconds between timeupdate events as defined by spec
 #define TIMEUPDATE_MS 250
@@ -442,37 +443,20 @@ NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLMediaElement, Preload, preload, NULL)
 NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLMediaElement, MozAudioChannelType, mozaudiochannel, "normal")
 
 NS_IMETHODIMP
-nsHTMLMediaElement::GetMozSrcObject(JSContext* aCtx, jsval *aParams)
+nsHTMLMediaElement::GetMozSrcObject(nsIDOMMediaStream** aStream)
 {
-  if (mSrcAttrStream) {
-    NS_ASSERTION(mSrcAttrStream->GetStream(), "MediaStream should have been set up properly");
-    return nsContentUtils::WrapNative(aCtx, JS_GetGlobalForScopeChain(aCtx),
-                                      mSrcAttrStream, aParams);
-  }
-  *aParams = JSVAL_NULL;
+  NS_ASSERTION(!mSrcAttrStream || mSrcAttrStream->GetStream(),
+               "MediaStream should have been set up properly");
+  nsRefPtr<DOMMediaStream> stream = mSrcAttrStream;
+  stream.forget(aStream);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsHTMLMediaElement::SetMozSrcObject(JSContext* aCtx, const jsval & aParams)
+nsHTMLMediaElement::SetMozSrcObject(nsIDOMMediaStream* aStream)
 {
-  if (aParams.isNull()) {
-    mSrcAttrStream = nullptr;
-    Load();
-    return NS_OK;
-  }
-  if (aParams.isObject()) {
-    nsCOMPtr<nsIDOMMediaStream> stream;
-    stream = do_QueryInterface(nsContentUtils::XPConnect()->
-        GetNativeOfWrapper(aCtx, JSVAL_TO_OBJECT(aParams)));
-    if (stream) {
-      mSrcAttrStream = static_cast<DOMMediaStream*>(stream.get());
-      Load();
-      return NS_OK;
-    }
-  }
-  // Should we store unsupported values on the element's attribute anyway?
-  // Let's not.
+  mSrcAttrStream = static_cast<DOMMediaStream*>(aStream);
+  Load();
   return NS_OK;
 }
 
@@ -1406,7 +1390,7 @@ NS_IMETHODIMP nsHTMLMediaElement::GetVolume(double *aVolume)
 
 NS_IMETHODIMP nsHTMLMediaElement::SetVolume(double aVolume)
 {
-  if (aVolume < 0.0 || aVolume > 1.0)
+  if (!(aVolume >= 0.0 && aVolume <= 1.0))
     return NS_ERROR_DOM_INDEX_SIZE_ERR;
 
   if (aVolume == mVolume)
@@ -2501,24 +2485,15 @@ nsresult nsHTMLMediaElement::NewURIFromString(const nsAutoString& aURISpec, nsIU
 
 void nsHTMLMediaElement::ProcessMediaFragmentURI()
 {
-  nsAutoCString ref;
-  GetCurrentSpec(ref);
-  nsMediaFragmentURIParser parser(ref);
-  parser.Parse();
-  double start = parser.GetStartTime();
-  if (mDecoder) {
-    double end = parser.GetEndTime();
-    if (end < 0.0 || end > start) {
-      mFragmentEnd = end;
-    }
-    else {
-      start = -1.0;
-      end = -1.0;
-    }
+  nsMediaFragmentURIParser parser(mLoadingSrc);
+
+  if (mDecoder && parser.HasEndTime()) {
+    mFragmentEnd = parser.GetEndTime();
   }
-  if (start > 0.0) {
-    SetCurrentTime(start);
-    mFragmentStart = start;
+
+  if (parser.HasStartTime()) {
+    SetCurrentTime(parser.GetStartTime());
+    mFragmentStart = parser.GetStartTime();
   }
 }
 
@@ -3186,7 +3161,7 @@ nsIContent* nsHTMLMediaElement::GetNextSource()
   nsresult rv = NS_OK;
   if (!mSourcePointer) {
     // First time this has been run, create a selection to cover children.
-    mSourcePointer = new nsRange();
+    mSourcePointer = new nsRange(this);
 
     rv = mSourcePointer->SelectNodeContents(thisDomNode);
     if (NS_FAILED(rv)) return nullptr;
@@ -3443,7 +3418,9 @@ NS_IMETHODIMP nsHTMLMediaElement::GetPlaybackRate(double* aPlaybackRate)
 
 NS_IMETHODIMP nsHTMLMediaElement::SetPlaybackRate(double aPlaybackRate)
 {
-  if (aPlaybackRate < 0) {
+  // Changing the playback rate of a media that has more than two channels is
+  // not supported.
+  if (aPlaybackRate < 0 || (mChannels > 2 && aPlaybackRate != 1.0)) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 

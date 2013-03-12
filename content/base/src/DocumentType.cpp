@@ -8,8 +8,6 @@
  */
 
 #include "mozilla/dom/DocumentType.h"
-#include "nsDOMAttributeMap.h"
-#include "nsIDOMNamedNodeMap.h"
 #include "nsGkAtoms.h"
 #include "nsCOMPtr.h"
 #include "nsDOMString.h"
@@ -66,9 +64,9 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-DocumentType::WrapNode(JSContext *cx, JSObject *scope, bool *triedToWrap)
+DocumentType::WrapNode(JSContext *cx, JSObject *scope)
 {
-  return DocumentTypeBinding::Wrap(cx, scope, this, triedToWrap);
+  return DocumentTypeBinding::Wrap(cx, scope, this);
 }
 
 DocumentType::DocumentType(already_AddRefed<nsINodeInfo> aNodeInfo,

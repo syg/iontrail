@@ -149,10 +149,24 @@ MarkupView.prototype = {
         this.navigate(this._containers.get(this._rootNode.firstChild));
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_LEFT:
-        this.collapseNode(this._selectedContainer.node);
+        if (this._selectedContainer.expanded) {
+          this.collapseNode(this._selectedContainer.node);
+        } else {
+          let parent = this._selectionWalker().parentNode();
+          if (parent) {
+            this.navigate(parent.container);
+          }
+        }
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_RIGHT:
-        this.expandNode(this._selectedContainer.node);
+        if (!this._selectedContainer.expanded) {
+          this.expandNode(this._selectedContainer.node);
+        } else {
+          let next = this._selectionWalker().nextNode();
+          if (next) {
+            this.navigate(next.container);
+          }
+        }
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_UP:
         let prev = this._selectionWalker().previousNode();
@@ -630,7 +644,7 @@ MarkupView.prototype = {
     delete this._boundFocus;
 
     this._frame.contentWindow.removeEventListener("scroll", this._boundUpdatePreview, true);
-    this._frame.contentWindow.removeEventListener("resize", this._boundUpdatePreview, true);
+    this._frame.contentWindow.removeEventListener("resize", this._boundResizePreview, true);
     this._frame.contentWindow.removeEventListener("overflow", this._boundResizePreview, true);
     this._frame.contentWindow.removeEventListener("underflow", this._boundResizePreview, true);
     delete this._boundUpdatePreview;

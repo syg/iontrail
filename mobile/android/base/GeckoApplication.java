@@ -5,6 +5,7 @@
 package org.mozilla.gecko;
 
 import android.app.Application;
+import org.mozilla.gecko.mozglue.GeckoLoader;
 
 public class GeckoApplication extends Application {
 
@@ -30,6 +31,8 @@ public class GeckoApplication extends Application {
         GeckoBatteryManager.getInstance().start();
         GeckoNetworkManager.getInstance().init(getApplicationContext());
         MemoryMonitor.getInstance().init(getApplicationContext());
+        GeckoAppShell.setNotificationClient(new NotificationServiceClient(getApplicationContext()));
+
         mInited = true;
     }
 
@@ -59,6 +62,12 @@ public class GeckoApplication extends Application {
         GeckoNetworkManager.getInstance().start();
 
         mInBackground = false;
+    }
+
+    @Override
+    public void onCreate() {
+        GeckoLoader.loadMozGlue(getApplicationContext());
+        super.onCreate();
     }
 
     public boolean isApplicationInBackground() {

@@ -78,8 +78,8 @@ function AbstractHealthReporter(branch, policy, sessionRecorder) {
 
   this._storage = null;
   this._storageInProgress = false;
-  this._collector = null;
-  this._collectorInProgress = false;
+  this._providerManager = null;
+  this._providerManagerInProgress = false;
   this._initialized = false;
   this._initializeHadError = false;
   this._initializedDeferred = Promise.defer();
@@ -90,8 +90,6 @@ function AbstractHealthReporter(branch, policy, sessionRecorder) {
 
   this._errors = [];
 
-  this._pullOnlyProviders = {};
-  this._pullOnlyProvidersRegistered = false;
   this._lastDailyDate = null;
 
   // Yes, this will probably run concurrently with remaining constructor work.
@@ -164,34 +162,35 @@ AbstractHealthReporter.prototype = Object.freeze({
       return;
     }
 
-    Task.spawn(this._initializeCollector.bind(this))
-        .then(this._onCollectorInitialized.bind(this),
+    Task.spawn(this._initializeProviderManager.bind(this))
+        .then(this._onProviderManagerInitialized.bind(this),
               this._onInitError.bind(this));
   },
 
-  _initializeCollector: function () {
+  _initializeProviderManager: function () {
     if (this._collector) {
-      throw new Error("Collector has already been initialized.");
+      throw new Error("Provider manager has already been initialized.");
     }
 
-    this._log.info("Initializing collector.");
-    this._collector = new Metrics.Collector(this._storage);
-    this._collector.onProviderError = this._errors.push.bind(this._errors);
-    this._collectorInProgress = true;
+    this._log.info("Initializing provider manager.");
+    this._providerManager = new Metrics.ProviderManager(this._storage);
+    this._providerManager.onProviderError = this._recordError.bind(this);
+    this._providerManager.onProviderInit = this._initProvider.bind(this);
+    this._providerManagerInProgress = true;
 
     let catString = this._prefs.get("service.providerCategories") || "";
     if (catString.length) {
       for (let category of catString.split(",")) {
-        yield this.registerProvidersFromCategoryManager(category);
+        yield this._providerManager.registerProvidersFromCategoryManager(category);
       }
     }
   },
 
-  _onCollectorInitialized: function () {
+  _onProviderManagerInitialized: function () {
     TelemetryStopwatch.finish(this._initHistogram, this);
     delete this._initHistogram;
-    this._log.debug("Collector initialized.");
-    this._collectorInProgress = false;
+    this._log.debug("Provider manager initialized.");
+    this._providerManagerInProgress = false;
 
     if (this._shutdownRequested) {
       this._initiateShutdown();
@@ -241,8 +240,9 @@ AbstractHealthReporter.prototype = Object.freeze({
     if (this._initializeHadError) {
       this._log.warn("Initialization had error. Shutting down immediately.");
     } else {
-      if (this._collectorInProgress) {
-        this._log.warn("Collector is in progress of initializing. Waiting to finish.");
+      if (this._providerManagerInProcess) {
+        this._log.warn("Provider manager is in progress of initializing. " +
+                       "Waiting to finish.");
         return;
       }
 
@@ -269,21 +269,20 @@ AbstractHealthReporter.prototype = Object.freeze({
       Services.obs.removeObserver(this, "idle-daily");
     } catch (ex) { }
 
-    // If we have collectors, we need to shut down providers.
-    if (this._collector) {
-      let onShutdown = this._onCollectorShutdown.bind(this);
-      Task.spawn(this._shutdownCollector.bind(this))
+    if (this._providerManager) {
+      let onShutdown = this._onProviderManagerShutdown.bind(this);
+      Task.spawn(this._shutdownProviderManager.bind(this))
           .then(onShutdown, onShutdown);
       return;
     }
 
-    this._log.warn("Don't have collector. Proceeding to storage shutdown.");
+    this._log.warn("Don't have provider manager. Proceeding to storage shutdown.");
     this._shutdownStorage();
   },
 
-  _shutdownCollector: function () {
-    this._log.info("Shutting down collector.");
-    for (let provider of this._collector.providers) {
+  _shutdownProviderManager: function () {
+    this._log.info("Shutting down provider manager.");
+    for (let provider of this._providerManager.providers) {
       try {
         yield provider.shutdown();
       } catch (ex) {
@@ -293,9 +292,9 @@ AbstractHealthReporter.prototype = Object.freeze({
     }
   },
 
-  _onCollectorShutdown: function () {
-    this._log.info("Collector shut down.");
-    this._collector = null;
+  _onProviderManagerShutdown: function () {
+    this._log.info("Provider manager shut down.");
+    this._providerManager = null;
     this._shutdownStorage();
   },
 
@@ -397,176 +396,12 @@ AbstractHealthReporter.prototype = Object.freeze({
    * will likely not return anything.
    */
   getProvider: function (name) {
-    return this._collector.getProvider(name);
+    return this._providerManager.getProvider(name);
   },
 
-  /**
-   * Register a `Metrics.Provider` with this instance.
-   *
-   * This needs to be called or no data will be collected. See also
-   * `registerProvidersFromCategoryManager`.
-   *
-   * @param provider
-   *        (Metrics.Provider) The provider to register for collection.
-   */
-  registerProvider: function (provider) {
-    return this._collector.registerProvider(provider);
-  },
-
-  /**
-   * Registers a provider from its constructor function.
-   *
-   * If the provider is pull-only, it will be stashed away and
-   * initialized later. Null will be returned.
-   *
-   * If it is not pull-only, it will be initialized immediately and a
-   * promise will be returned. The promise will be resolved when the
-   * provider has finished initializing.
-   */
-  registerProviderFromType: function (type) {
-    let proto = type.prototype;
-    if (proto.pullOnly) {
-      this._log.info("Provider is pull-only. Deferring initialization: " +
-                     proto.name);
-      this._pullOnlyProviders[proto.name] = type;
-
-      return null;
-    }
-
-    let provider = this.initProviderFromType(type);
-    return this.registerProvider(provider);
-  },
-
-  /**
-   * Registers providers from a category manager category.
-   *
-   * This examines the specified category entries and registers found
-   * providers.
-   *
-   * Category entries are essentially JS modules and the name of the symbol
-   * within that module that is a `Metrics.Provider` instance.
-   *
-   * The category entry name is the name of the JS type for the provider. The
-   * value is the resource:// URI to import which makes this type available.
-   *
-   * Example entry:
-   *
-   *   FooProvider resource://gre/modules/foo.jsm
-   *
-   * One can register entries in the application's .manifest file. e.g.
-   *
-   *   category healthreport-js-provider FooProvider resource://gre/modules/foo.jsm
-   *
-   * Then to load them:
-   *
-   *   let reporter = getHealthReporter("healthreport.");
-   *   reporter.registerProvidersFromCategoryManager("healthreport-js-provider");
-   *
-   * @param category
-   *        (string) Name of category to query and load from.
-   */
-  registerProvidersFromCategoryManager: function (category) {
-    this._log.info("Registering providers from category: " + category);
-    let cm = Cc["@mozilla.org/categorymanager;1"]
-               .getService(Ci.nsICategoryManager);
-
-    let promises = [];
-    let enumerator = cm.enumerateCategory(category);
-    while (enumerator.hasMoreElements()) {
-      let entry = enumerator.getNext()
-                            .QueryInterface(Ci.nsISupportsCString)
-                            .toString();
-
-      let uri = cm.getCategoryEntry(category, entry);
-      this._log.info("Attempting to load provider from category manager: " +
-                     entry + " from " + uri);
-
-      try {
-        let ns = {};
-        Cu.import(uri, ns);
-
-        let promise = this.registerProviderFromType(ns[entry]);
-        if (promise) {
-          promises.push(promise);
-        }
-      } catch (ex) {
-        this._recordError("Error registering provider from category manager : " +
-                          entry + ": ", ex);
-        continue;
-      }
-    }
-
-    return Task.spawn(function wait() {
-      for (let promise of promises) {
-        yield promise;
-      }
-    });
-  },
-
-  initProviderFromType: function (providerType) {
-    let provider = new providerType();
+  _initProvider: function (provider) {
     provider.initPreferences(this._branch + "provider.");
     provider.healthReporter = this;
-
-    return provider;
-  },
-
-  /**
-   * Ensure that pull-only providers are registered.
-   */
-  ensurePullOnlyProvidersRegistered: function () {
-    if (this._pullOnlyProvidersRegistered) {
-      return Promise.resolve();
-    }
-
-    let onFinished = function () {
-      this._pullOnlyProvidersRegistered = true;
-
-      return Promise.resolve();
-    }.bind(this);
-
-    return Task.spawn(function registerPullProviders() {
-      for each (let providerType in this._pullOnlyProviders) {
-        try {
-          let provider = this.initProviderFromType(providerType);
-          yield this.registerProvider(provider);
-        } catch (ex) {
-          this._recordError("Error registering pull-only provider", ex);
-        }
-      }
-    }.bind(this)).then(onFinished, onFinished);
-  },
-
-  ensurePullOnlyProvidersUnregistered: function () {
-    if (!this._pullOnlyProvidersRegistered) {
-      return Promise.resolve();
-    }
-
-    let onFinished = function () {
-      this._pullOnlyProvidersRegistered = false;
-
-      return Promise.resolve();
-    }.bind(this);
-
-    return Task.spawn(function unregisterPullProviders() {
-      for (let provider of this._collector.providers) {
-        if (!provider.pullOnly) {
-          continue;
-        }
-
-        this._log.info("Shutting down pull-only provider: " +
-                       provider.name);
-
-        try {
-          yield provider.shutdown();
-        } catch (ex) {
-          this._recordError("Error when shutting down provider: " +
-                            provider.name, ex);
-        } finally {
-          this._collector.unregisterProvider(provider.name);
-        }
-      }
-    }.bind(this)).then(onFinished, onFinished);
   },
 
   /**
@@ -594,6 +429,36 @@ AbstractHealthReporter.prototype = Object.freeze({
       logMessage += ": " + CommonUtils.exceptionStr(ex);
     }
 
+    // Scrub out potentially identifying information from strings that could
+    // make the payload.
+    let appData = Services.dirsvc.get("UAppData", Ci.nsIFile);
+    let profile = Services.dirsvc.get("ProfD", Ci.nsIFile);
+
+    let appDataURI = Services.io.newFileURI(appData);
+    let profileURI = Services.io.newFileURI(profile);
+
+    // Order of operation is important here. We do the URI before the path version
+    // because the path may be a subset of the URI. We also have to check for the case
+    // where UAppData is underneath the profile directory (or vice-versa) so we
+    // don't substitute incomplete strings.
+
+    function replace(uri, path, thing) {
+      // Try is because .spec can throw on invalid URI.
+      try {
+        recordMessage = recordMessage.replace(uri.spec, '<' + thing + 'URI>', 'g');
+      } catch (ex) { }
+
+      recordMessage = recordMessage.replace(path, '<' + thing + 'Path>', 'g');
+    }
+
+    if (appData.path.contains(profile.path)) {
+      replace(appDataURI, appData.path, 'AppData');
+      replace(profileURI, profile.path, 'Profile');
+    } else {
+      replace(profileURI, profile.path, 'Profile');
+      replace(appDataURI, appData.path, 'AppData');
+    }
+
     this._log.warn(logMessage);
     this._errors.push(recordMessage);
   },
@@ -605,7 +470,7 @@ AbstractHealthReporter.prototype = Object.freeze({
     return Task.spawn(function doCollection() {
       try {
         TelemetryStopwatch.start(TELEMETRY_COLLECT_CONSTANT, this);
-        yield this._collector.collectConstantData();
+        yield this._providerManager.collectConstantData();
         TelemetryStopwatch.finish(TELEMETRY_COLLECT_CONSTANT, this);
       } catch (ex) {
         TelemetryStopwatch.cancel(TELEMETRY_COLLECT_CONSTANT, this);
@@ -625,7 +490,7 @@ AbstractHealthReporter.prototype = Object.freeze({
         try {
           TelemetryStopwatch.start(TELEMETRY_COLLECT_DAILY, this);
           this._lastDailyDate = new Date();
-          yield this._collector.collectDailyData();
+          yield this._providerManager.collectDailyData();
           TelemetryStopwatch.finish(TELEMETRY_COLLECT_DAILY, this);
         } catch (ex) {
           TelemetryStopwatch.cancel(TELEMETRY_COLLECT_DAILY, this);
@@ -652,7 +517,7 @@ AbstractHealthReporter.prototype = Object.freeze({
    */
   collectAndObtainJSONPayload: function (asObject=false) {
     return Task.spawn(function collectAndObtain() {
-      yield this.ensurePullOnlyProvidersRegistered();
+      yield this._providerManager.ensurePullOnlyProvidersRegistered();
 
       let payload;
       let error;
@@ -665,7 +530,7 @@ AbstractHealthReporter.prototype = Object.freeze({
         this._collectException("Error collecting and/or retrieving JSON payload",
                                ex);
       } finally {
-        yield this.ensurePullOnlyProvidersUnregistered();
+        yield this._providerManager.ensurePullOnlyProvidersUnregistered();
 
         if (error) {
           throw error;
@@ -729,7 +594,7 @@ AbstractHealthReporter.prototype = Object.freeze({
       o.lastPingDate = this._formatDate(lastPingDate);
     }
 
-    for (let provider of this._collector.providers) {
+    for (let provider of this._providerManager.providers) {
       let providerName = provider.name;
 
       let providerEntry = {
@@ -1068,7 +933,7 @@ HealthReporter.prototype = Object.freeze({
    */
   requestDataUpload: function (request) {
     return Task.spawn(function doUpload() {
-      yield this.ensurePullOnlyProvidersRegistered();
+      yield this._providerManager.ensurePullOnlyProvidersRegistered();
       try {
         yield this.collectMeasurements();
         try {
@@ -1077,7 +942,7 @@ HealthReporter.prototype = Object.freeze({
           this._onSubmitDataRequestFailure(ex);
         }
       } finally {
-        yield this.ensurePullOnlyProvidersUnregistered();
+        yield this._providerManager.ensurePullOnlyProvidersUnregistered();
       }
     }.bind(this));
   },

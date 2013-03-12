@@ -4,7 +4,7 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<org.mozilla.gecko.BrowserToolbarLayout xmlns:android="http://schemas.android.com/apk/res/android"
               xmlns:gecko="http://schemas.android.com/apk/res/@ANDROID_PACKAGE_NAME@"
               android:id="@+id/browser_toolbar"
               style="@style/BrowserToolbar">
@@ -55,7 +55,8 @@
                       android:layout_width="wrap_content"
                       android:layout_height="fill_parent"
                       android:orientation="horizontal"
-                      android:layout_toLeftOf="@id/menu"/>
+                      android:layout_toLeftOf="@id/menu"
+                      android:layout_alignWithParentIfMissing="true"/>
 
         <RelativeLayout style="@style/AddressBar.Button"
                         android:layout_toRightOf="@id/tabs"
@@ -179,4 +180,4 @@
 
     </RelativeLayout>
 
-</LinearLayout>
+</org.mozilla.gecko.BrowserToolbarLayout>

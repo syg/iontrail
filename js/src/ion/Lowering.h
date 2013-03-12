@@ -38,6 +38,12 @@ class LIRGenerator : public LIRGeneratorSpecific
     // The maximum depth, for framesizeclass determination.
     uint32_t maxargslots_;
 
+#ifdef DEBUG
+    // In debug builds, check MPrepareCall and MCall are properly
+    // nested. The argslots_ mechanism relies on this.
+    Vector<MPrepareCall *, 4, SystemAllocPolicy> prepareCallStack_;
+#endif
+
   public:
     LIRGenerator(MIRGenerator *gen, MIRGraph &graph, LIRGraph &lirGraph)
       : LIRGeneratorSpecific(gen, graph, lirGraph),
@@ -160,7 +166,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitStoreSlot(MStoreSlot *ins);
     bool visitTypeBarrier(MTypeBarrier *ins);
     bool visitMonitorTypes(MMonitorTypes *ins);
-    bool visitExcludeType(MExcludeType *ins);
     bool visitArrayLength(MArrayLength *ins);
     bool visitTypedArrayLength(MTypedArrayLength *ins);
     bool visitTypedArrayElements(MTypedArrayElements *ins);

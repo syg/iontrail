@@ -70,6 +70,7 @@ var Browser = {
     ScrollwheelModule.init(Elements.browsers);
     GestureModule.init();
     BrowserTouchHandler.init();
+    PopupBlockerObserver.init();
 
     // Warning, total hack ahead. All of the real-browser related scrolling code
     // lies in a pretend scrollbox here. Let's not land this as-is. Maybe it's time
@@ -564,7 +565,6 @@ var Browser = {
     } else {
       // Update all of our UI to reflect the new tab's location
       BrowserUI.updateURI();
-      IdentityUI.checkIdentity();
 
       let event = document.createEvent("Events");
       event.initEvent("TabSelect", true, false);
@@ -1224,8 +1224,22 @@ nsBrowserAccess.prototype = {
  * Handler for blocked popups, triggered by DOMUpdatePageReport events in browser.xml
  */
 var PopupBlockerObserver = {
-  onUpdatePageReport: function onUpdatePageReport(aEvent)
-  {
+  init: function init() {
+    Elements.browsers.addEventListener("mousedown", this, true);
+  },
+
+  handleEvent: function handleEvent(aEvent) {
+    switch (aEvent.type) {
+      case "mousedown":
+        let box = Browser.getNotificationBox();
+        let notification = box.getNotificationWithValue("popup-blocked");
+        if (notification)
+          box.removeNotification(notification);
+        break;
+    }
+  },
+
+  onUpdatePageReport: function onUpdatePageReport(aEvent) {
     var cBrowser = Browser.selectedBrowser;
     if (aEvent.originalTarget != cBrowser)
       return;
@@ -1260,17 +1274,18 @@ var PopupBlockerObserver = {
         else {
           var buttons = [
             {
-              label: strings.GetStringFromName("popupButtonAllowOnce"),
+              isDefault: false,
+              label: strings.GetStringFromName("popupButtonAllowOnce2"),
               accessKey: null,
               callback: function() { PopupBlockerObserver.showPopupsForSite(); }
             },
             {
-              label: strings.GetStringFromName("popupButtonAlwaysAllow2"),
+              label: strings.GetStringFromName("popupButtonAlwaysAllow3"),
               accessKey: null,
               callback: function() { PopupBlockerObserver.allowPopupsForSite(true); }
             },
             {
-              label: strings.GetStringFromName("popupButtonNeverWarn2"),
+              label: strings.GetStringFromName("popupButtonNeverWarn3"),
               accessKey: null,
               callback: function() { PopupBlockerObserver.allowPopupsForSite(false); }
             }
@@ -1278,7 +1293,7 @@ var PopupBlockerObserver = {
 
           const priority = notificationBox.PRIORITY_WARNING_MEDIUM;
           notificationBox.appendNotification(message, "popup-blocked",
-                                             "",
+                                             "chrome://browser/skin/images/infobar-popup.png",
                                              priority, buttons);
         }
       }
@@ -1891,7 +1906,7 @@ var ContentAreaObserver = {
       let [scrollbox, scrollInterface] = ScrollUtils.getScrollboxFromElement(currentElement);
       if (scrollbox && scrollInterface && currentElement && currentElement != scrollbox) {
         // retrieve the direct child of the scrollbox
-        while (currentElement.parentNode != scrollbox)
+        while (currentElement && currentElement.parentNode != scrollbox)
           currentElement = currentElement.parentNode;
   
         setTimeout(function() { scrollInterface.ensureElementIsVisible(currentElement) }, 0);

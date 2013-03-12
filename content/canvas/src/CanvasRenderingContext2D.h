@@ -139,8 +139,7 @@ public:
   CanvasRenderingContext2D();
   virtual ~CanvasRenderingContext2D();
 
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
-                               bool *triedToWrap);
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
 
   HTMLCanvasElement* GetCanvas() const
   {
@@ -715,6 +714,11 @@ protected:
     */
   uint32_t mInvalidateCount;
   static const uint32_t kCanvasMaxInvalidateCount = 100;
+
+
+#ifdef USE_SKIA
+  nsRefPtr<gl::GLContext> mGLContext;
+#endif
 
   /**
     * Returns true if a shadow should be drawn along with a

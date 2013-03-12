@@ -803,6 +803,11 @@ let RIL = {
     this.cdmaHome = null;
 
     /**
+     * CDMA Subscription information.
+     */
+    this.cdmaSubscription = {};
+
+    /**
      * Application identification for apps in ICC.
      */
     this.aid = null;
@@ -1245,13 +1250,23 @@ let RIL = {
     Buf.writeUint32(options.p1);
     Buf.writeUint32(options.p2);
     Buf.writeUint32(options.p3);
+
+    // Write data.
     if (options.command == ICC_COMMAND_UPDATE_RECORD &&
         options.dataWriter) {
       options.dataWriter(options.p3);
     } else {
       Buf.writeString(null);
     }
-    Buf.writeString(options.pin2 || null);
+
+    // Write pin2.
+    if (options.command == ICC_COMMAND_UPDATE_RECORD &&
+        options.p2) {
+      Buf.writeString(options.pin2);
+    } else {
+      Buf.writeString(null);
+    }
+
     if (!RILQUIRKS_V5_LEGACY) {
       Buf.writeString(options.aid || this.aid);
     }
@@ -1309,8 +1324,9 @@ let RIL = {
   /**
    * Update UICC Phonebook.
    *
-   * @param contactType   "ADN".
+   * @param contactType   "ADN" or "FDN".
    * @param contact       The contact will be updated.
+   * @param pin2          PIN2 is required for updating FDN.
    * @param requestId     Request id from RadioInterfaceLayer.
    */
   updateICCContact: function updateICCContact(options) {
@@ -1335,10 +1351,10 @@ let RIL = {
     // If not, inserts the contact into a free record.
     if (options.contact.recordId) {
       ICCContactHelper.updateICCContact(
-        this.appType, options.contactType, options.contact, onsuccess, onerror);
+        this.appType, options.contactType, options.contact, options.pin2, onsuccess, onerror);
     } else {
       ICCContactHelper.addICCContact(
-        this.appType, options.contactType, options.contact, onsuccess, onerror);
+        this.appType, options.contactType, options.contact, options.pin2, onsuccess, onerror);
     }
   },
 
@@ -1539,14 +1555,10 @@ let RIL = {
    */
   selectNetwork: function selectNetwork(options) {
     if (DEBUG) {
-      debug("Setting manual network selection: " + options.mcc + options.mnc);
+      debug("Setting manual network selection: " + options.mcc + ", " + options.mnc);
     }
 
-    // TODO: Bug 828307 - B2G RIL: Change to store MNC/MCC values from integer to string
-    let mnc = options.mnc.toString();
-    if (mnc.length == 1)
-      mnc = "0" + mnc;
-    let numeric = options.mcc.toString() + mnc;
+    let numeric = (options.mcc && options.mnc) ? options.mcc + options.mnc : null;
     Buf.newParcel(REQUEST_SET_NETWORK_SELECTION_MANUAL, options);
     Buf.writeString(numeric);
     Buf.sendParcel();
@@ -1600,7 +1612,7 @@ let RIL = {
         // Notify error in establishing the call with an invalid number.
         options.callIndex = -1;
         options.rilMessageType = "callError";
-        options.error =
+        options.errorMsg =
           RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[CALL_FAIL_UNOBTAINABLE_NUMBER];
         this.sendDOMMessage(options);
         return;
@@ -3043,8 +3055,8 @@ let RIL = {
         baseStationLatitude = baseStationLongitude = null;
       }
       let cssIndicator = RIL.parseInt(state[7]);
-      let systemId = RIL.parseInt(state[8]);
-      let networkId = RIL.parseInt(state[9]);
+      RIL.cdmaSubscription.systemId = RIL.parseInt(state[8]);
+      RIL.cdmaSubscription.networkId = RIL.parseInt(state[9]);
       let roamingIndicator = RIL.parseInt(state[10]);
       let systemIsInPRL = RIL.parseInt(state[11]);
       let defaultRoamingIndicator = RIL.parseInt(state[12]);
@@ -3078,14 +3090,14 @@ let RIL = {
     }
 
     let [longName, shortName, networkTuple] = operatorData;
-    let thisTuple = "" + this.operator.mcc + this.operator.mnc;
+    let thisTuple = this.operator.mcc + this.operator.mnc;
 
     if (this.operator.longName !== longName ||
         this.operator.shortName !== shortName ||
         thisTuple !== networkTuple) {
 
-      this.operator.mcc = 0;
-      this.operator.mnc = 0;
+      this.operator.mcc = null;
+      this.operator.mnc = null;
 
       if (networkTuple) {
         try {
@@ -3216,9 +3228,9 @@ let RIL = {
   _sendDataCallError: function _sendDataCallError(message, errorCode) {
     message.rilMessageType = "datacallerror";
     if (errorCode == ERROR_GENERIC_FAILURE) {
-      message.error = RIL_ERROR_TO_GECKO_ERROR[errorCode];
+      message.errorMsg = RIL_ERROR_TO_GECKO_ERROR[errorCode];
     } else {
-      message.error = RIL_DATACALL_FAILCAUSE_TO_GECKO_DATACALL_ERROR[errorCode];
+      message.errorMsg = RIL_DATACALL_FAILCAUSE_TO_GECKO_DATACALL_ERROR[errorCode];
     }
     this.sendDOMMessage(message);
   },
@@ -3313,7 +3325,8 @@ let RIL = {
       let network = {
         longName: strings[i],
         shortName: strings[i + 1],
-        mcc: 0, mnc: 0,
+        mcc: null,
+        mnc: null,
         state: null
       };
 
@@ -3345,24 +3358,16 @@ let RIL = {
    */
   _processNetworkTuple: function _processNetworkTuple(networkTuple, network) {
     let tupleLen = networkTuple.length;
-    let mcc = 0, mnc = 0;
 
     if (tupleLen == 5 || tupleLen == 6) {
-      mcc = parseInt(networkTuple.substr(0, 3), 10);
-      if (isNaN(mcc)) {
-        throw new Error("MCC could not be parsed from network tuple: " + networkTuple );
-      }
-
-      mnc = parseInt(networkTuple.substr(3), 10);
-      if (isNaN(mnc)) {
-        throw new Error("MNC could not be parsed from network tuple: " + networkTuple);
-      }
+      network.mcc = networkTuple.substr(0, 3);
+      network.mnc = networkTuple.substr(3);
     } else {
+      network.mcc = null;
+      network.mnc = null;
+
       throw new Error("Invalid network tuple (should be 5 or 6 digits): " + networkTuple);
     }
-
-    network.mcc = mcc;
-    network.mnc = mnc;
   },
 
   /**
@@ -3821,7 +3826,7 @@ let RIL = {
           this.sendDOMMessage({
             rilMessageType: "sms-send-failed",
             envelopeId: options.envelopeId,
-            error: options.rilRequestError,
+            errorMsg: options.rilRequestError,
           });
           break;
       }
@@ -4433,7 +4438,7 @@ RIL[REQUEST_LAST_CALL_FAIL_CAUSE] = function REQUEST_LAST_CALL_FAIL_CAUSE(length
       break;
     default:
       options.rilMessageType = "callError";
-      options.error = RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[failCause];
+      options.errorMsg = RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[failCause];
       this.sendDOMMessage(options);
       break;
   }
@@ -4719,7 +4724,7 @@ RIL[REQUEST_SET_FACILITY_LOCK] = function REQUEST_SET_FACILITY_LOCK(length, opti
 RIL[REQUEST_CHANGE_BARRING_PASSWORD] = null;
 RIL[REQUEST_SIM_OPEN_CHANNEL] = function REQUEST_SIM_OPEN_CHANNEL(length, options) {
   if (options.rilRequestError) {
-    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
     return;
   }
@@ -4785,7 +4790,7 @@ RIL[REQUEST_QUERY_NETWORK_SELECTION_MODE] = function REQUEST_QUERY_NETWORK_SELEC
 };
 RIL[REQUEST_SET_NETWORK_SELECTION_AUTOMATIC] = function REQUEST_SET_NETWORK_SELECTION_AUTOMATIC(length, options) {
   if (options.rilRequestError) {
-    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
     return;
   }
@@ -4794,7 +4799,7 @@ RIL[REQUEST_SET_NETWORK_SELECTION_AUTOMATIC] = function REQUEST_SET_NETWORK_SELE
 };
 RIL[REQUEST_SET_NETWORK_SELECTION_MANUAL] = function REQUEST_SET_NETWORK_SELECTION_MANUAL(length, options) {
   if (options.rilRequestError) {
-    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
     return;
   }
@@ -4803,7 +4808,7 @@ RIL[REQUEST_SET_NETWORK_SELECTION_MANUAL] = function REQUEST_SET_NETWORK_SELECTI
 };
 RIL[REQUEST_QUERY_AVAILABLE_NETWORKS] = function REQUEST_QUERY_AVAILABLE_NETWORKS(length, options) {
   if (options.rilRequestError) {
-    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
     return;
   }
@@ -8152,57 +8157,36 @@ let CdmaPDUHelper = {
     return header;
   },
 
-  /**
-   * User data subparameter decoder : User Data
-   *
-   * @see 3GGP2 C.S0015-B 2.0, 4.5.2 User Data
-   */
-  decodeUserDataMsg: function cdma_decodeUserDataMsg(hasUserHeader) {
-    let result = {},
-        encoding = BitBufferHelper.readBits(5);
-
-    if(encoding === PDU_CDMA_MSG_CODING_IS_91) {
-      let msgType = BitBufferHelper.readBits(8);
-    }
-
-    let msgBodySize = BitBufferHelper.readBits(8);
-    const langTable = PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
-    const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+  getCdmaMsgEncoding: function getCdmaMsgEncoding(encoding) {
     // Determine encoding method
     switch (encoding) {
       case PDU_CDMA_MSG_CODING_7BITS_ASCII:
       case PDU_CDMA_MSG_CODING_IA5:
       case PDU_CDMA_MSG_CODING_7BITS_GSM:
-        result.encoding = PDU_DCS_MSG_CODING_7BITS_ALPHABET;
-        break;
+        return PDU_DCS_MSG_CODING_7BITS_ALPHABET;
       case PDU_CDMA_MSG_CODING_OCTET:
       case PDU_CDMA_MSG_CODING_IS_91:
       case PDU_CDMA_MSG_CODING_LATIN_HEBREW:
       case PDU_CDMA_MSG_CODING_LATIN:
-        result.encoding = PDU_DCS_MSG_CODING_8BITS_ALPHABET;
-        break;
+        return PDU_DCS_MSG_CODING_8BITS_ALPHABET;
       case PDU_CDMA_MSG_CODING_UNICODE:
       case PDU_CDMA_MSG_CODING_SHIFT_JIS:
       case PDU_CDMA_MSG_CODING_KOREAN:
-        result.encoding = PDU_DCS_MSG_CODING_16BITS_ALPHABET;
-        break;
+        return PDU_DCS_MSG_CODING_16BITS_ALPHABET;
     }
+    return null;
+  },
 
-    // For segmented SMS, a user header is included before sms content
-    if (hasUserHeader) {
-      result.header = this.decodeUserDataHeader(result.encoding);
-      // header size is included in body size, they are decoded
-      msgBodySize -= result.header.length;
-    }
-
-    // Decode sms content
-    result.body = "";
+  decodeCdmaPDUMsg: function decodeCdmaPDUMsg(encoding, msgType, msgBodySize) {
+    const langTable = PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+    const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+    let result = "";
     let msgDigit;
     switch (encoding) {
       case PDU_CDMA_MSG_CODING_OCTET:         // TODO : Require Test
         while(msgBodySize > 0) {
           msgDigit = String.fromCharCode(BitBufferHelper.readBits(8));
-          result.body += msgDigit;
+          result += msgDigit;
           msgBodySize--;
         }
         break;
@@ -8214,7 +8198,7 @@ let CdmaPDUHelper = {
           case PDU_CDMA_MSG_CODING_IS_91_TYPE_VOICEMAIL_STATUS:
             while(msgBodySize > 0) {
               msgDigit = String.fromCharCode(BitBufferHelper.readBits(6) + 0x20);
-              result.body += msgDigit;
+              result += msgDigit;
               msgBodySize--;
             }
             break;
@@ -8229,7 +8213,7 @@ let CdmaPDUHelper = {
             for (let i = 0; i < addrInfo.addrLength; i++) {
               addrInfo.address.push(BitBufferHelper.readBits(4));
             }
-            result.body = this.decodeAddr(addrInfo);
+            result = this.decodeAddr(addrInfo);
             break;
         }
       case PDU_CDMA_MSG_CODING_7BITS_ASCII:
@@ -8247,14 +8231,14 @@ let CdmaPDUHelper = {
               msgDigit = langShiftTable[msgDigit];
             }
           }
-          result.body += msgDigit;
+          result += msgDigit;
           msgBodySize--;
         }
         break;
       case PDU_CDMA_MSG_CODING_UNICODE:
         while(msgBodySize > 0) {
           msgDigit = String.fromCharCode(BitBufferHelper.readBits(16));
-          result.body += msgDigit;
+          result += msgDigit;
           msgBodySize--;
         }
         break;
@@ -8268,7 +8252,7 @@ let CdmaPDUHelper = {
             msgBodySize--;
             msgDigit = langShiftTable[msgDigit];
           }
-          result.body += msgDigit;
+          result += msgDigit;
           msgBodySize--;
         }
         break;
@@ -8276,7 +8260,7 @@ let CdmaPDUHelper = {
         // Reference : http://en.wikipedia.org/wiki/ISO/IEC_8859-1
         while(msgBodySize > 0) {
           msgDigit = String.fromCharCode(BitBufferHelper.readBits(8));
-          result.body += msgDigit;
+          result += msgDigit;
           msgBodySize--;
         }
         break;
@@ -8295,7 +8279,7 @@ let CdmaPDUHelper = {
           } else {
             msgDigit = String.fromCharCode(msgDigit);
           }
-          result.body += msgDigit;
+          result += msgDigit;
           msgBodySize--;
         }
         break;
@@ -8307,6 +8291,35 @@ let CdmaPDUHelper = {
       default:
         break;
     }
+    return result;
+  },
+
+  /**
+   * User data subparameter decoder : User Data
+   *
+   * @see 3GGP2 C.S0015-B 2.0, 4.5.2 User Data
+   */
+  decodeUserDataMsg: function cdma_decodeUserDataMsg(hasUserHeader) {
+    let result = {},
+        encoding = BitBufferHelper.readBits(5),
+        msgType;
+
+    if(encoding === PDU_CDMA_MSG_CODING_IS_91) {
+      msgType = BitBufferHelper.readBits(8);
+    }
+    result.encoding = this.getCdmaMsgEncoding(encoding);
+
+    let msgBodySize = BitBufferHelper.readBits(8);
+
+    // For segmented SMS, a user header is included before sms content
+    if (hasUserHeader) {
+      result.header = this.decodeUserDataHeader(result.encoding);
+      // header size is included in body size, they are decoded
+      msgBodySize -= result.header.length;
+    }
+
+    // Decode sms content
+    result.body = this.decodeCdmaPDUMsg(encoding, msgType, msgBodySize);
 
     return result;
   },
@@ -9351,14 +9364,11 @@ let ComprehensionTlvHelper = {
     // shall be coded as '1111'".
 
     // MCC & MNC, 3 octets
-    let mcc = loc.mcc.toString();
-    let mnc = loc.mnc.toString();
-    if (mnc.length == 1) {
-      mnc = "F0" + mnc;
-    } else if (mnc.length == 2) {
-      mnc = "F" + mnc;
+    let mcc = loc.mcc, mnc;
+    if (loc.mnc.length == 2) {
+      mnc = "F" + loc.mnc;
     } else {
-      mnc = mnc[2] + mnc[0] + mnc[1];
+      mnc = loc.mnc[2] + loc.mnc[0] + loc.mnc[1];
     }
     GsmPDUHelper.writeSwappedNibbleBCD(mcc + mnc);
 
@@ -9623,6 +9633,7 @@ let ICCFileHelper = {
     switch(fileId) {
       case ICC_EF_CSIM_CDMAHOME:
       case ICC_EF_CSIM_CST:
+      case ICC_EF_CSIM_SPN:
         return EF_PATH_MF_SIM + EF_PATH_DF_CDMA;
       default:
         return null;
@@ -9671,24 +9682,33 @@ let ICCIOHelper = {
    *        The file to operate on, one of the ICC_EF_* constants.
    * @param recordNumber [optional]
    *        The number of the record shall be loaded.
+   * @param recordSize [optional]
+   *        The size of the record.
    * @param callback [optional]
    *        The callback function shall be called when the record(s) is read.
-   * @param this [optional]
-   *        The 'this' object when the callback is called.
    * @param onerror [optional]
    *        The callback function shall be called when failure.
    */
   loadLinearFixedEF: function loadLinearFixedEF(options) {
-    options.type = EF_TYPE_LINEAR_FIXED;
-    let cb = options.callback;
-    options.callback = function callback(options) {
-      options.callback = cb;
+    let cb;
+    function readRecord(options) {
       options.command = ICC_COMMAND_READ_RECORD;
       options.p1 = options.recordNumber || 1; // Record number
       options.p2 = READ_RECORD_ABSOLUTE_MODE;
       options.p3 = options.recordSize;
+      options.callback = cb || options.callback;
       RIL.iccIO(options);
-    }.bind(this);
+    }
+
+    options.type = EF_TYPE_LINEAR_FIXED;
+    options.pathId = ICCFileHelper.getEFPath(options.fileId);
+    if (options.recordSize) {
+      readRecord(options);
+      return;
+    }
+
+    cb = options.callback;
+    options.callback = readRecord.bind(this);
     this.getResponse(options);
   },
 
@@ -9709,6 +9729,8 @@ let ICCIOHelper = {
    *        The number of the record shall be updated.
    * @param dataWriter [optional]
    *        The function for writing string parameter for the ICC_COMMAND_UPDATE_RECORD.
+   * @param pin2 [optional]
+   *        PIN2 is required when updating ICC_EF_FDN.
    * @param callback [optional]
    *        The callback function shall be called when the record is updated.
    * @param onerror [optional]
@@ -9763,7 +9785,7 @@ let ICCIOHelper = {
    */
   getResponse: function getResponse(options) {
     options.command = ICC_COMMAND_GET_RESPONSE;
-    options.pathId = ICCFileHelper.getEFPath(options.fileId);
+    options.pathId = options.pathId || ICCFileHelper.getEFPath(options.fileId);
     if (!options.pathId) {
       throw new Error("Unknown pathId for " + options.fileId.toString(16));
     }
@@ -9997,9 +10019,9 @@ let ICCRecordHelper = {
       let imsi = RIL.iccInfoPrivate.imsi;
       if (imsi) {
         // MCC is the first 3 digits of IMSI.
-        RIL.iccInfo.mcc = parseInt(imsi.substr(0,3));
+        RIL.iccInfo.mcc = imsi.substr(0,3);
         // The 4th byte of the response is the length of MNC.
-        RIL.iccInfo.mnc = parseInt(imsi.substr(3, ad[3]));
+        RIL.iccInfo.mnc = imsi.substr(3, ad[3]);
         if (DEBUG) debug("MCC: " + RIL.iccInfo.mcc + " MNC: " + RIL.iccInfo.mnc);
         ICCUtilsHelper.handleICCInfoChange();
       }
@@ -10107,41 +10129,13 @@ let ICCRecordHelper = {
   },
 
   /**
-   * Read ICC FDN.
+   * Read ICC ADN like EF, i.e. EF_ADN, EF_FDN.
    *
+   * @param fileId      EF id of the ADN or FDN.
    * @param onsuccess   Callback to be called when success.
    * @param onerror     Callback to be called when error.
    */
-  readFDN: function readFDN(onsuccess, onerror) {
-    function callback(options) {
-      let contact = GsmPDUHelper.readAlphaIdDiallingNumber(options.recordSize);
-      if (contact) {
-        contacts.push(contact);
-      }
-
-      if (options.p1 < options.totalRecords) {
-        ICCIOHelper.loadNextRecord(options);
-      } else {
-        if (onsuccess) {
-          onsuccess(contacts);
-        }
-      }
-    }
-
-    let contacts = [];
-    ICCIOHelper.loadLinearFixedEF({fileId: ICC_EF_FDN,
-                                   callback: callback.bind(this),
-                                   onerror: onerror});
-  },
-
-  /**
-   * Read ICC ADN.
-   *
-   * @param fileId      EF id of the ADN.
-   * @param onsuccess   Callback to be called when success.
-   * @param onerror     Callback to be called when error.
-   */
-  readADN: function readADN(fileId, onsuccess, onerror) {
+  readADNLike: function readADNLike(fileId, onsuccess, onerror) {
     function callback(options) {
       let contact = GsmPDUHelper.readAlphaIdDiallingNumber(options.recordSize);
       if (contact) {
@@ -10154,7 +10148,7 @@ let ICCRecordHelper = {
       } else {
         if (DEBUG) {
           for (let i = 0; i < contacts.length; i++) {
-            debug("ADN[" + i + "] " + JSON.stringify(contacts[i]));
+            debug("contact [" + i + "] " + JSON.stringify(contacts[i]));
           }
         }
         if (onsuccess) {
@@ -10170,14 +10164,15 @@ let ICCRecordHelper = {
   },
 
   /**
-   * Update ICC ADN.
+   * Update ICC ADN like EFs, like EF_ADN, EF_FDN.
    *
-   * @param fileId      EF id of the ADN.
+   * @param fileId      EF id of the ADN or FDN.
    * @param contact     The contact will be updated. (Shall have recordId property)
+   * @param pin2        PIN2 is required when updating ICC_EF_FDN.
    * @param onsuccess   Callback to be called when success.
    * @param onerror     Callback to be called when error.
    */
-  updateADN: function updateADN(fileId, contact, onsuccess, onerror) {
+  updateADNLike: function updateADNLike(fileId, contact, pin2, onsuccess, onerror) {
     function dataWriter(recordSize) {
       GsmPDUHelper.writeAlphaIdDiallingNumber(recordSize,
                                               contact.alphaId,
@@ -10200,6 +10195,7 @@ let ICCRecordHelper = {
     ICCIOHelper.updateLinearFixedEF({fileId: fileId,
                                      recordNumber: contact.recordId,
                                      dataWriter: dataWriter.bind(this),
+                                     pin2: pin2,
                                      callback: callback.bind(this),
                                      onerror: onerror});
   },
@@ -10275,6 +10271,11 @@ let ICCRecordHelper = {
   },
 
   /**
+   * Cache EF_IAP record size.
+   */
+  _iapRecordSize: null,
+
+  /**
    * Read ICC EF_IAP. (Index Administration Phonebook)
    *
    * @see TS 131.102, clause 4.4.2.2
@@ -10288,6 +10289,7 @@ let ICCRecordHelper = {
     function callback(options) {
       let strLen = Buf.readUint32();
       let octetLen = strLen / 2;
+      this._iapRecordSize = options.recordSize;
 
       let iap = GsmPDUHelper.readHexOctetArray(octetLen);
       Buf.readStringDelimiter(strLen);
@@ -10299,9 +10301,15 @@ let ICCRecordHelper = {
 
     ICCIOHelper.loadLinearFixedEF({fileId: fileId,
                                    recordNumber: recordNumber,
+                                   recordSize: this._iapRecordSize,
                                    callback: callback.bind(this),
                                    onerror: onerror});
   },
+
+  /**
+   * Cache EF_Email record size.
+   */
+  _emailRecordSize: null,
 
   /**
    * Read USIM Phonebook EF_EMAIL.
@@ -10319,6 +10327,7 @@ let ICCRecordHelper = {
       let strLen = Buf.readUint32();
       let octetLen = strLen / 2;
       let email = null;
+      this._emailRecordSize = options.recordSize;
 
       // Read contact's email
       //
@@ -10346,9 +10355,15 @@ let ICCRecordHelper = {
 
     ICCIOHelper.loadLinearFixedEF({fileId: fileId,
                                    recordNumber: recordNumber,
+                                   recordSize: this._emailRecordSize,
                                    callback: callback.bind(this),
                                    onerror: onerror});
   },
+
+  /**
+   * Cache EF_ANR record size.
+   */
+  _anrRecordSize: null,
 
   /**
    * Read USIM Phonebook EF_ANR.
@@ -10366,6 +10381,7 @@ let ICCRecordHelper = {
       let strLen = Buf.readUint32();
       let octetLen = strLen / 2;
       let number = null;
+      this._anrRecordSize = options.recordSize;
 
       // Skip ANR Record ID.
       Buf.seekIncoming(1 * PDU_HEX_OCTET_SIZE);
@@ -10398,6 +10414,7 @@ let ICCRecordHelper = {
 
     ICCIOHelper.loadLinearFixedEF({fileId: fileId,
                                    recordNumber: recordNumber,
+                                   recordSize: this._anrRecordSize,
                                    callback: callback.bind(this),
                                    onerror: onerror});
   },
@@ -10602,11 +10619,11 @@ let ICCRecordHelper = {
           }
           if (i === 2) {
             // 0-2: MCC
-            oplElement.mcc = parseInt(buf);
+            oplElement.mcc = buf;
             buf = "";
           } else if (i === 5) {
             // 3-5: MNC
-            oplElement.mnc = parseInt(buf);
+            oplElement.mnc = buf;
           }
         }
         // LAC/TAC
@@ -10703,22 +10720,37 @@ let ICCRecordHelper = {
   },
 
   /**
-   * Get free ICC ADN record id.
+   * Get free record id.
    *
-   * @param fileId      EF id of the ADN.
+   * @param fileId      EF id.
    * @param onsuccess   Callback to be called when success.
    * @param onerror     Callback to be called when error.
    */
-  getADNFreeRecordId: function getADNFreeRecordId(fileId, onsuccess, onerror) {
+  getFreeRecordId: function getFreeRecordId(fileId, onsuccess, onerror) {
     function callback(options) {
-      let contact = GsmPDUHelper.readAlphaIdDiallingNumber(options.recordSize);
-      if (!contact) {
+      let strLen = Buf.readUint32();
+      let octetLen = strLen / 2;
+      let readLen = 0;
+
+      while (readLen < octetLen) {
+        let octet = GsmPDUHelper.readHexOctet();
+        readLen++;
+        if (octet != 0xff) {
+          break;
+        }
+      }
+
+      if (readLen == octetLen) {
         // Find free record.
         if (onsuccess) {
           onsuccess(options.p1);
         }
         return;
+      } else {
+        Buf.seekIncoming((octetLen - readLen) * PDU_HEX_OCTET_SIZE);
       }
+
+      Buf.readStringDelimiter(strLen);
 
       if (options.p1 < options.totalRecords) {
         ICCIOHelper.loadNextRecord(options);
@@ -10783,11 +10815,11 @@ let ICCRecordHelper = {
             }
             if (i === 2) {
               // 0-2: MCC
-              plmnEntry.mcc = parseInt(buf);
+              plmnEntry.mcc = buf;
               buf = "";
             } else if (i === 5) {
               // 3-5: MNC
-              plmnEntry.mnc = parseInt(buf);
+              plmnEntry.mnc = buf;
             }
           }
           if (DEBUG) debug("readPLMNEntries: PLMN = " + plmnEntry.mcc + ", " + plmnEntry.mnc);
@@ -10895,7 +10927,53 @@ let ICCUtilsHelper = {
     if (!iccSpn) {
       iccInfo.isDisplayNetworkNameRequired = true;
       iccInfo.isDisplaySpnRequired = false;
+    } else if (RIL._isCdma) {
+      // CDMA family display rule.
+      let cdmaHome = RIL.cdmaHome;
+      let sid = RIL.cdmaSubscription.systemId;
+      let nid = RIL.cdmaSubscription.networkId;
+
+      iccInfo.isDisplayNetworkNameRequired = false;
+
+      // If display condition is false, we don't even need to check network id
+      // or system id.
+      if (iccSpn.spnDisplayCondition == false) {
+        iccInfo.isDisplaySpnRequired = false;
+      } else {
+        // CDMA SPN Display condition dosen't specify whenever network name is
+        // reqired.
+        if (!cdmaHome ||
+            !cdmaHome.systemId ||
+            cdmaHome.systemId.length == 0 ||
+            cdmaHome.systemId.length != cdmaHome.networkId.length ||
+            !sid || !nid) {
+          // CDMA Home haven't been ready, or we haven't got the system id and
+          // network id of the network we register to, assuming we are in home
+          // network.
+          iccInfo.isDisplaySpnRequired = true;
+        } else {
+          // Determine if we are registered in the home service area.
+          // System ID and Network ID are described in 3GPP2 C.S0005 Sec. 2.6.5.2.
+          let inHomeArea = false;
+          for (let i = 0; i < cdmaHome.systemId.length; i++) {
+            let homeSid = cdmaHome.systemId[i],
+                homeNid = cdmaHome.networkId[i];
+            if (homeSid == 0 || homeNid == 0 // Reserved system id/network id
+               || homeSid != sid) {
+              continue;
+            }
+            // According to 3GPP2 C.S0005 Sec. 2.6.5.2, NID number 65535 means
+            // all networks in the system should be considered as home.
+            if (homeNid == 65535 || homeNid == nid) {
+              inHomeArea = true;
+              break;
+            }
+          }
+          iccInfo.isDisplaySpnRequired = inHomeArea;
+        }
+      }
     } else {
+      // GSM family display rule.
       let operatorMnc = RIL.operator.mnc;
       let operatorMcc = RIL.operator.mcc;
 
@@ -11131,7 +11209,7 @@ let ICCContactHelper = {
       case "ADN":
         switch (appType) {
           case CARD_APPTYPE_SIM:
-            this.readSimContacts(onsuccess, onerror);
+            ICCRecordHelper.readADNLike(ICC_EF_ADN, onsuccess, onerror);
             break;
           case CARD_APPTYPE_USIM:
             this.readUSimContacts(onsuccess, onerror);
@@ -11139,7 +11217,7 @@ let ICCContactHelper = {
         }
         break;
       case "FDN":
-        ICCRecordHelper.readFDN(onsuccess, onerror);
+        ICCRecordHelper.readADNLike(ICC_EF_FDN, onsuccess, onerror);
         break;
     }
   },
@@ -11148,7 +11226,7 @@ let ICCContactHelper = {
    * Helper function to find free contact record.
    *
    * @param appType       CARD_APPTYPE_SIM or CARD_APPTYPE_USIM.
-   * @param contactType   "ADN".
+   * @param contactType   "ADN" or "FDN".
    * @param onsuccess     Callback to be called when success.
    * @param onerror       Callback to be called when error.
    */
@@ -11157,18 +11235,21 @@ let ICCContactHelper = {
       case "ADN":
         switch (appType) {
           case CARD_APPTYPE_SIM:
-            ICCRecordHelper.getADNFreeRecordId(ICC_EF_ADN, onsuccess, onerror);
+            ICCRecordHelper.getFreeRecordId(ICC_EF_ADN, onsuccess, onerror);
             break;
           case CARD_APPTYPE_USIM:
             let gotPbrCb = function gotPbrCb(pbr) {
               if (pbr.adn) {
-                ICCRecordHelper.getADNFreeRecordId(pbr.adn.fileId, onsuccess, onerror);
+                ICCRecordHelper.getFreeRecordId(pbr.adn.fileId, onsuccess, onerror);
               }
             }.bind(this);
 
             ICCRecordHelper.readPBR(gotPbrCb, onerror);
             break;
         }
+        break;
+      case "FDN":
+        ICCRecordHelper.getFreeRecordId(ICC_EF_FDN, onsuccess, onerror);
         break;
       default:
         if (onerror) {
@@ -11182,15 +11263,16 @@ let ICCContactHelper = {
    * Helper function to add a new ICC contact.
    *
    * @param appType       CARD_APPTYPE_SIM or CARD_APPTYPE_USIM.
-   * @param contactType   "ADN"
+   * @param contactType   "ADN" or "FDN".
    * @param contact       The contact will be added.
+   * @param pin2          PIN2 is required for FDN.
    * @param onsuccess     Callback to be called when success.
    * @param onerror       Callback to be called when error.
    */
-  addICCContact: function addICCContact(appType, contactType, contact, onsuccess, onerror) {
+  addICCContact: function addICCContact(appType, contactType, contact, pin2, onsuccess, onerror) {
     let foundFreeCb = function foundFreeCb(recordId) {
       contact.recordId = recordId;
-      ICCContactHelper.updateICCContact(appType, contactType, contact, onsuccess, onerror);
+      ICCContactHelper.updateICCContact(appType, contactType, contact, pin2, onsuccess, onerror);
     }.bind(this);
 
     // Find free record first.
@@ -11201,22 +11283,26 @@ let ICCContactHelper = {
    * Helper function to update ICC contact.
    *
    * @param appType       CARD_APPTYPE_SIM or CARD_APPTYPE_USIM.
-   * @param contactType   "ADN".
+   * @param contactType   "ADN" or "FDN".
    * @param contact       The contact will be updated.
+   * @param pin2          PIN2 is required for FDN.
    * @param onsuccess     Callback to be called when success.
    * @param onerror       Callback to be called when error.
    */
-  updateICCContact: function updateICCContact(appType, contactType, contact, onsuccess, onerror) {
+  updateICCContact: function updateICCContact(appType, contactType, contact, pin2, onsuccess, onerror) {
     switch (contactType) {
       case "ADN":
         switch (appType) {
           case CARD_APPTYPE_SIM:
-            this.updateSimContact(contact, onsuccess, onerror);
+            ICCRecordHelper.updateADNLike(ICC_EF_ADN, contact, null, onsuccess, onerror);
             break;
           case CARD_APPTYPE_USIM:
             this.updateUSimContact(contact, onsuccess, onerror);
             break;
         }
+        break;
+      case "FDN":
+        ICCRecordHelper.updateADNLike(ICC_EF_FDN, contact, pin2, onsuccess, onerror);
         break;
       default:
         if (onerror) {
@@ -11240,7 +11326,7 @@ let ICCContactHelper = {
         }.bind(this);
 
         let fileId = pbr.adn.fileId;
-        ICCRecordHelper.readADN(fileId, gotAdnCb, onerror);
+        ICCRecordHelper.readADNLike(fileId, gotAdnCb, onerror);
       } else {
         let error = onerror || debug;
         error("Cannot access ADN.");
@@ -11400,16 +11486,6 @@ let ICCContactHelper = {
   },
 
   /**
-   * Read contacts from SIM.
-   *
-   * @param onsuccess     Callback to be called when success.
-   * @param onerror       Callback to be called when error.
-   */
-  readSimContacts: function readSimContacts(onsuccess, onerror) {
-    ICCRecordHelper.readADN(ICC_EF_ADN, onsuccess, onerror);
-  },
-
-  /**
    * Update USIM contact.
    *
    * @param contact       The contact will be updated.
@@ -11419,7 +11495,7 @@ let ICCContactHelper = {
   updateUSimContact: function updateUSimContact(contact, onsuccess, onerror) {
     let gotPbrCb = function gotPbrCb(pbr) {
       if (pbr.adn) {
-        ICCRecordHelper.updateADN(pbr.adn.fileId, contact, onsuccess, onerror);
+        ICCRecordHelper.updateADNLike(pbr.adn.fileId, contact, null, onsuccess, onerror);
       } else {
         if (onerror) {
           onerror("Cannot access ADN.");
@@ -11428,17 +11504,6 @@ let ICCContactHelper = {
     }.bind(this);
 
     ICCRecordHelper.readPBR(gotPbrCb, onerror);
-  },
-
-  /**
-   * Update SIM contact.
-   *
-   * @param contact       The contact will be updated.
-   * @param onsuccess     Callback to be called when success.
-   * @param onerror       Callback to be called when error.
-   */
-  updateSimContact: function updateSimContact(contact, onsuccess, onerror) {
-    ICCRecordHelper.updateADN(ICC_EF_ADN, contact, onsuccess, onerror);
   },
 };
 
@@ -11503,8 +11568,66 @@ let RuimRecordHelper = {
         }
         debug("CST: " + str);
       }
+
+      if (ICCUtilsHelper.isICCServiceAvailable("SPN")) {
+        if (DEBUG) debug("SPN: SPN is available");
+        this.readSPN();
+      }
     }
     ICCIOHelper.loadTransparentEF({fileId: ICC_EF_CSIM_CST,
+                                   callback: callback.bind(this)});
+  },
+
+  readSPN: function readSPN() {
+    function callback() {
+      let strLen = Buf.readUint32();
+      let octetLen = strLen / 2;
+      let displayCondition = GsmPDUHelper.readHexOctet();
+      let codingScheme = GsmPDUHelper.readHexOctet();
+      // Skip one octet: language indicator.
+      Buf.seekIncoming(PDU_HEX_OCTET_SIZE);
+      let readLen = 3;
+
+      // SPN String ends up with 0xff.
+      let userDataBuffer = [];
+
+      while (readLen < octetLen) {
+        let octet = GsmPDUHelper.readHexOctet();
+        readLen++;
+        if (octet == 0xff) {
+          break;
+        }
+        userDataBuffer.push(octet);
+      }
+
+      BitBufferHelper.startRead(userDataBuffer);
+
+      let msgLen;
+      switch (CdmaPDUHelper.getCdmaMsgEncoding(codingScheme)) {
+      case PDU_DCS_MSG_CODING_7BITS_ALPHABET:
+        msgLen = Math.floor(userDataBuffer.length * 8 / 7);
+        break;
+      case PDU_DCS_MSG_CODING_8BITS_ALPHABET:
+        msgLen = userDataBuffer.length;
+        break;
+      case PDU_DCS_MSG_CODING_16BITS_ALPHABET:
+        msgLen = Math.floor(userDataBuffer.length / 2);
+        break;
+      }
+
+      RIL.iccInfo.spn = CdmaPDUHelper.decodeCdmaPDUMsg(codingScheme, null, msgLen);
+      if (DEBUG) {
+        debug("CDMA SPN: " + RIL.iccInfo.spn +
+              ", Display condition: " + displayCondition);
+      }
+      RIL.iccInfoPrivate.SPN = {
+        spnDisplayCondition: displayCondition
+      };
+      Buf.seekIncoming((octetLen - readLen) * PDU_HEX_OCTET_SIZE);
+      Buf.readStringDelimiter(strLen);
+    }
+
+    ICCIOHelper.loadTransparentEF({fileId: ICC_EF_CSIM_SPN,
                                    callback: callback.bind(this)});
   }
 };

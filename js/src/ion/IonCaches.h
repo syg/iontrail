@@ -274,7 +274,7 @@ class IonCache
         return fallbackLabel().isSet();
     }
 
-    void setScriptedLocation(UnrootedScript script, jsbytecode *pc) {
+    void setScriptedLocation(RawScript script, jsbytecode *pc) {
         JS_ASSERT(!idempotent_);
         this->script = script;
         this->pc = pc;

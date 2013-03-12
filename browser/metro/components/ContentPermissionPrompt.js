@@ -11,31 +11,15 @@ Cu.import("resource://gre/modules/Services.jsm");
 
 const kCountBeforeWeRemember = 5;
 
-function setPagePermission(type, principal, allow) {
-  let pm = Services.perms;
-  let contentPrefs = Services.contentPrefs;
-  let contentPrefName = type + ".request.remember";
+const kEntities = {
+  "geolocation": "geolocation2",
+  "indexedDB": "offlineApps",
+  "indexedDBQuota": "indexedDBQuota"
+};
 
-  if (!contentPrefs.hasPref(principal.URI, contentPrefName))
-      contentPrefs.setPref(principal.URI, contentPrefName, 0);
-
-  let count = contentPrefs.getPref(principal.URI, contentPrefName);
-
-  if (allow == false)
-    count--;
-  else
-    count++;
-
-  contentPrefs.setPref(principal.URI, contentPrefName, count);
-  if (count == kCountBeforeWeRemember)
-    pm.addFromPrincipal(principal, type, Ci.nsIPermissionManager.ALLOW_ACTION);
-  else if (count == -kCountBeforeWeRemember)
-    pm.addFromPrincipal(principal, type, Ci.nsIPermissionManager.DENY_ACTION);
-}
-
-const kEntities = { "geolocation": "geolocation", "desktop-notification": "desktopNotification",
-                    "indexedDB": "offlineApps", "indexedDBQuota": "indexedDBQuota",
-                    "openWebappsManage": "openWebappsManage" };
+const kIcons = {
+  geolocation: "chrome://browser/skin/images/infobar-geolocation.png"
+};
 
 function ContentPermissionPrompt() {}
 
@@ -55,17 +39,20 @@ ContentPermissionPrompt.prototype = {
      return chromeWin;
   },
 
+  getChromeWindowForRequest: function getChromeWindowForRequest(aRequest) {
+    if (aRequest.window)
+      return this.getChromeWindow(aRequest.window.top).wrappedJSObject;
+    return aRequest.element.ownerDocument.defaultView;
+  },
+
   getNotificationBoxForRequest: function getNotificationBoxForRequest(request) {
-    let notificationBox = null;
+    let chromeWin = this.getChromeWindowForRequest(request);
     if (request.window) {
       let requestingWindow = request.window.top;
-      let chromeWin = this.getChromeWindow(requestingWindow).wrappedJSObject;
       let windowID = request.window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
       let browser = chromeWin.Browser.getBrowserForWindowId(windowID);
       return chromeWin.getNotificationBox(browser);
     }
-
-    let chromeWin = request.element.ownerDocument.defaultView;
     return chromeWin.Browser.getNotificationBox(request.element);
   },
 
@@ -96,20 +83,28 @@ ContentPermissionPrompt.prototype = {
       return;
 
     let entityName = kEntities[request.type];
+    let icon = kIcons[request.type] || "";
 
     let buttons = [{
       label: browserBundle.GetStringFromName(entityName + ".allow"),
-      accessKey: null,
+      accessKey: "",
       callback: function(notification) {
-        setPagePermission(request.type, request.principal, true);
         request.allow();
       }
     },
     {
-      label: browserBundle.GetStringFromName(entityName + ".dontAllow"),
-      accessKey: null,
+      label: browserBundle.GetStringFromName("contentPermissions.alwaysForSite"),
+      accessKey: "",
       callback: function(notification) {
-        setPagePermission(request.type, request.principal, false);
+        Services.perms.addFromPrincipal(request.principal, request.type, Ci.nsIPermissionManager.ALLOW_ACTION);
+        request.allow();
+      }
+    },
+    {
+      label: browserBundle.GetStringFromName("contentPermissions.neverForSite"),
+      accessKey: "",
+      callback: function(notification) {
+        Services.perms.addFromPrincipal(request.principal, request.type, Ci.nsIPermissionManager.DENY_ACTION);
         request.cancel();
       }
     }];
@@ -118,9 +113,23 @@ ContentPermissionPrompt.prototype = {
                                                      [request.principal.URI.host], 1);
     let newBar = notificationBox.appendNotification(message,
                                                     request.type,
-                                                    "", // Notifications in Fennec do not display images.
+                                                    icon,
                                                     notificationBox.PRIORITY_WARNING_MEDIUM,
                                                     buttons);
+
+    if (request.type == "geolocation") {
+      // Add the "learn more" link.
+      let link = newBar.ownerDocument.createElement("label");
+      link.setAttribute("value", browserBundle.GetStringFromName("geolocation.learnMore"));
+      link.setAttribute("class", "text-link notification-link");
+      newBar.insertBefore(link, newBar.firstChild);
+
+      let win = this.getChromeWindowForRequest(request);
+      link.addEventListener("click", function() {
+        let url = Services.urlFormatter.formatURLPref("browser.geolocation.warning.infoURL");
+        win.BrowserUI.newTab(url, win.Browser.selectedTab);
+      });
+    }
   }
 };
 

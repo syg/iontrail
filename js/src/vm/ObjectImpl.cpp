@@ -197,8 +197,8 @@ js::ObjectImpl::checkShapeConsistency()
 
     MOZ_ASSERT(isNative());
 
-    UnrootedShape shape = lastProperty();
-    UnrootedShape prev = NULL;
+    RawShape shape = lastProperty();
+    RawShape prev = NULL;
 
     if (inDictionaryMode()) {
         MOZ_ASSERT(shape->hasTable());
@@ -232,7 +232,7 @@ js::ObjectImpl::checkShapeConsistency()
             if (shape->hasTable()) {
                 ShapeTable &table = shape->table();
                 MOZ_ASSERT(shape->parent);
-                for (Shape::Range r(shape); !r.empty(); r.popFront()) {
+                for (Shape::Range<NoGC> r(shape); !r.empty(); r.popFront()) {
                     Shape **spp = table.search(r.front().propid(), false);
                     MOZ_ASSERT(SHAPE_FETCH(spp) == &r.front());
                 }
@@ -290,19 +290,17 @@ js::ObjectImpl::slotInRange(uint32_t slot, SentinelAllowed sentinel) const
  */
 MOZ_NEVER_INLINE
 #endif
-UnrootedShape
+RawShape
 js::ObjectImpl::nativeLookup(JSContext *cx, jsid id)
 {
-    AutoAssertNoGC nogc;
     MOZ_ASSERT(isNative());
     Shape **spp;
     return Shape::search(cx, lastProperty(), id, &spp);
 }
 
-UnrootedShape
+RawShape
 js::ObjectImpl::nativeLookupPure(jsid id)
 {
-    AutoAssertNoGC nogc;
     MOZ_ASSERT(isNative());
     return Shape::searchNoHashify(lastProperty(), id);
 }

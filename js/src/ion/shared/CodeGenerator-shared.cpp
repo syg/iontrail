@@ -369,8 +369,6 @@ CodeGeneratorShared::markOsiPoint(LOsiPoint *ins, uint32_t *callPointOffset)
 bool
 CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Register *dynStack)
 {
-    AssertCanGC();
-
     // Different execution modes have different sets of VM functions.
     JS_ASSERT(fun.executionMode == gen->info().executionMode());
 

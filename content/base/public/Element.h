@@ -51,7 +51,7 @@
 
 class nsIDOMEventListener;
 class nsIFrame;
-class nsIDOMNamedNodeMap;
+class nsIDOMMozNamedAttrMap;
 class nsIDOMCSSStyleDeclaration;
 class nsIURI;
 class nsINodeInfo;
@@ -419,7 +419,7 @@ public:
     return SetAttr(aNameSpaceID, aName, nullptr, aValue, aNotify);
   }
 
-  NS_IMETHOD GetAttributes(nsIDOMNamedNodeMap** aAttributes);
+  NS_IMETHOD GetAttributes(nsIDOMMozNamedAttrMap** aAttributes);
 
   /**
    * Helper for SetAttr/SetParsedAttr. This method will return true if aNotify
@@ -548,9 +548,9 @@ public:
   }
 
   nsDOMTokenList* GetClassList();
-  nsDOMAttributeMap* GetAttributes()
+  nsDOMAttributeMap* Attributes()
   {
-    nsDOMSlots *slots = DOMSlots();
+    nsDOMSlots* slots = DOMSlots();
     if (!slots->mAttributeMap) {
       slots->mAttributeMap = new nsDOMAttributeMap(this);
     }
@@ -887,8 +887,8 @@ public:
                            nsIDOMHTMLCollection** aResult);
   void GetClassList(nsISupports** aClassList);
 
-  virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope,
-                               bool *aTriedToWrap) MOZ_FINAL;
+  virtual JSObject* WrapObject(JSContext *aCx,
+                               JSObject *aScope) MOZ_FINAL MOZ_OVERRIDE;
 
   /**
    * Locate an nsIEditor rooted at this content node, if there is one.

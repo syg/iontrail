@@ -33,7 +33,6 @@ CPPSRCS		= \
 		DOMSVGTransform.cpp \
 		DOMSVGTransformList.cpp \
 		nsDOMSVGZoomEvent.cpp \
-		nsDOMSVGEvent.cpp \
 		nsISVGPoint.cpp \
 		nsSVGAngle.cpp \
 		nsSVGBoolean.cpp \
@@ -79,6 +78,12 @@ CPPSRCS		= \
 		SVGDescElement.cpp \
 		SVGElementFactory.cpp \
 		SVGEllipseElement.cpp \
+		SVGFEBlendElement.cpp \
+		SVGFEFloodElement.cpp \
+		SVGFEImageElement.cpp \
+		SVGFEMergeElement.cpp \
+		SVGFEMergeNodeElement.cpp \
+		SVGFETileElement.cpp \
 		SVGFilterElement.cpp \
 		SVGForeignObjectElement.cpp \
 		SVGFragmentIdentifier.cpp \
@@ -170,6 +175,12 @@ EXPORTS_mozilla/dom = \
 	SVGDefsElement.h \
 	SVGDescElement.h \
 	SVGEllipseElement.h \
+	SVGFEBlendElement.h \
+	SVGFEFloodElement.h \
+	SVGFEImageElement.h \
+	SVGFEMergeElement.h \
+	SVGFEMergeNodeElement.h \
+	SVGFETileElement.h \
 	SVGFilterElement.h \
 	SVGForeignObjectElement.h \
 	SVGGElement.h \

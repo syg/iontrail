@@ -201,14 +201,14 @@ XPCOMUtils.defineLazyGetter(this, "PageMenu", function() {
 * We can avoid adding multiple load event listeners and save some time by adding
 * one listener that calls all real handlers.
 */
-function pageShowEventHandlers(event) {
+function pageShowEventHandlers(persisted) {
   charsetLoadListener();
   XULBrowserWindow.asyncUpdateUI();
 
   // The PluginClickToPlay events are not fired when navigating using the
-  // BF cache. |event.persisted| is true when the page is loaded from the
+  // BF cache. |persisted| is true when the page is loaded from the
   // BF cache, so this code reshows the notification if necessary.
-  if (event.persisted)
+  if (persisted)
     gPluginHandler.reshowClickToPlayNotification();
 }
 
@@ -1399,7 +1399,7 @@ var gBrowserInit = {
     gBrowser.addEventListener("pageshow", function(event) {
       // Filter out events that are not about the document load we are interested in
       if (content && event.target == content.document)
-        setTimeout(pageShowEventHandlers, 0, event);
+        setTimeout(pageShowEventHandlers, 0, event.persisted);
     }, true);
 
     // Ensure login manager is up and running.
@@ -4771,6 +4771,11 @@ var TabsProgressListener = {
       if (!Object.getOwnPropertyDescriptor(window, "PopupNotifications").get)
         PopupNotifications.locationChange(aBrowser);
 
+      // Only handle background browsers as long as the selected browser is
+      // handled in XULBrowserWindow.onLocationChange (bug 839516).
+      if (aBrowser != gBrowser.selectedBrowser)
+        gBrowser.getNotificationBox(aBrowser).removeTransientNotifications();
+
       FullZoom.onLocationChange(aLocationURI, false, aBrowser);
     }
   },
@@ -6398,20 +6403,20 @@ function warnAboutClosingWindow() {
   // Figure out if there's at least one other browser window around.
   let e = Services.wm.getEnumerator("navigator:browser");
   let otherPBWindowExists = false;
-  let warnAboutClosingTabs = false;
+  let nonPopupPresent = false;
   while (e.hasMoreElements()) {
     let win = e.getNext();
     if (win != window) {
       if (isPBWindow && PrivateBrowsingUtils.isWindowPrivate(win))
         otherPBWindowExists = true;
       if (win.toolbar.visible)
-        warnAboutClosingTabs = true;
+        nonPopupPresent = true;
       // If the current window is not in private browsing mode we don't need to 
       // look for other pb windows, we can leave the loop when finding the 
       // first non-popup window. If however the current window is in private 
       // browsing mode then we need at least one other pb and one non-popup 
       // window to break out early.
-      if ((!isPBWindow || otherPBWindowExists) && warnAboutClosingTabs)
+      if ((!isPBWindow || otherPBWindowExists) && nonPopupPresent)
         break;
     }
   }
@@ -6426,7 +6431,8 @@ function warnAboutClosingWindow() {
     if (exitingCanceled.data)
       return false;
   }
-  if (warnAboutClosingTabs)
+
+  if (!isPBWindow && nonPopupPresent)
     return gBrowser.warnAboutClosingTabs(true);
 
   let os = Services.obs;
@@ -6444,7 +6450,7 @@ function warnAboutClosingWindow() {
   // OS X doesn't quit the application when the last window is closed, but keeps
   // the session alive. Hence don't prompt users to save tabs, but warn about
   // closing multiple tabs.
-  return gBrowser.warnAboutClosingTabs(true);
+  return isPBWindow || gBrowser.warnAboutClosingTabs(true);
 #else
   return true;
 #endif

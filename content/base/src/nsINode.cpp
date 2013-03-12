@@ -106,6 +106,7 @@
 #include "WrapperFactory.h"
 #include "DocumentType.h"
 #include <algorithm>
+#include "nsDOMEvent.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -2345,7 +2346,7 @@ nsINode::QuerySelectorAll(const nsAString& aSelector, ErrorResult& aResult)
 }
 
 JSObject*
-nsINode::WrapObject(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+nsINode::WrapObject(JSContext *aCx, JSObject *aScope)
 {
   MOZ_ASSERT(IsDOMBinding());
 
@@ -2363,11 +2364,10 @@ nsINode::WrapObject(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
       !hasHadScriptHandlingObject &&
       !nsContentUtils::IsCallerChrome()) {
     Throw<true>(aCx, NS_ERROR_UNEXPECTED);
-    *aTriedToWrap = true;
     return nullptr;
   }
 
-  JSObject* obj = WrapNode(aCx, aScope, aTriedToWrap);
+  JSObject* obj = WrapNode(aCx, aScope);
   if (obj && ChromeOnlyAccess() &&
       !nsContentUtils::IsSystemPrincipal(NodePrincipal()))
   {
@@ -2407,15 +2407,22 @@ nsINode::GetAttributes()
   if (!IsElement()) {
     return nullptr;
   }
-  return AsElement()->GetAttributes();
+  return AsElement()->Attributes();
 }
 
 nsresult
-nsINode::GetAttributes(nsIDOMNamedNodeMap** aAttributes)
+nsINode::GetAttributes(nsIDOMMozNamedAttrMap** aAttributes)
 {
-  if (!IsElement()) {
-    *aAttributes = nullptr;
-    return NS_OK;
-  }
-  return CallQueryInterface(GetAttributes(), aAttributes);
+  nsRefPtr<nsDOMAttributeMap> map = GetAttributes();
+  map.forget(aAttributes);
+  return NS_OK;
+}
+
+bool
+EventTarget::DispatchEvent(nsDOMEvent& aEvent,
+                           ErrorResult& aRv)
+{
+  bool result = false;
+  aRv = DispatchEvent(&aEvent, &result);
+  return result;
 }

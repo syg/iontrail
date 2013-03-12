@@ -129,7 +129,6 @@ class JS_PUBLIC_API(AutoGCRooter) {
         STRINGVECTOR =-17, /* js::AutoStringVector */
         SCRIPTVECTOR =-18, /* js::AutoScriptVector */
         PROPDESC =    -19, /* js::PropDesc::AutoRooter */
-        SHAPERANGE =  -20, /* js::Shape::Range::AutoRooter */
         STACKSHAPE =  -21, /* js::StackShape::AutoRooter */
         STACKBASESHAPE=-22,/* js::StackBaseShape::AutoRooter */
         GETTERSETTER =-24, /* js::AutoRooterGetterSetter */
@@ -1694,7 +1693,6 @@ namespace JS {
 JS_ALWAYS_INLINE bool
 ToNumber(JSContext *cx, const Value &v, double *out)
 {
-    AssertCanGC();
     AssertArgumentsAreSane(cx, v);
     {
         js::SkipRoot root(cx, &v);
@@ -1785,7 +1783,6 @@ namespace JS {
 JS_ALWAYS_INLINE bool
 ToUint16(JSContext *cx, const js::Value &v, uint16_t *out)
 {
-    AssertCanGC();
     AssertArgumentsAreSane(cx, v);
     {
         js::SkipRoot skip(cx, &v);
@@ -1802,7 +1799,6 @@ ToUint16(JSContext *cx, const js::Value &v, uint16_t *out)
 JS_ALWAYS_INLINE bool
 ToInt32(JSContext *cx, const js::Value &v, int32_t *out)
 {
-    AssertCanGC();
     AssertArgumentsAreSane(cx, v);
     {
         js::SkipRoot root(cx, &v);
@@ -1819,7 +1815,6 @@ ToInt32(JSContext *cx, const js::Value &v, int32_t *out)
 JS_ALWAYS_INLINE bool
 ToUint32(JSContext *cx, const js::Value &v, uint32_t *out)
 {
-    AssertCanGC();
     AssertArgumentsAreSane(cx, v);
     {
         js::SkipRoot root(cx, &v);
@@ -1836,7 +1831,6 @@ ToUint32(JSContext *cx, const js::Value &v, uint32_t *out)
 JS_ALWAYS_INLINE bool
 ToInt64(JSContext *cx, const js::Value &v, int64_t *out)
 {
-    AssertCanGC();
     AssertArgumentsAreSane(cx, v);
     {
         js::SkipRoot skip(cx, &v);
@@ -1854,7 +1848,6 @@ ToInt64(JSContext *cx, const js::Value &v, int64_t *out)
 JS_ALWAYS_INLINE bool
 ToUint64(JSContext *cx, const js::Value &v, uint64_t *out)
 {
-    AssertCanGC();
     AssertArgumentsAreSane(cx, v);
     {
         js::SkipRoot skip(cx, &v);
@@ -2103,10 +2096,8 @@ JS_StringToVersion(const char *string);
                                                    script once only; enables
                                                    compile-time scope chain
                                                    resolution of consts. */
-#define JSOPTION_ATLINE         JS_BIT(5)       /* //@line number ["filename"]
-                                                   option supported for the
-                                                   XUL preprocessor and kindred
-                                                   beasts. */
+
+/* JS_BIT(5) is currently unused. */
 
 /* JS_BIT(6) is currently unused. */
 
@@ -2667,13 +2658,18 @@ JSVAL_TRACE_KIND(jsval v)
 typedef void
 (* JSTraceCallback)(JSTracer *trc, void **thingp, JSGCTraceKind kind);
 
+enum WeakMapTraceKind {
+    DoNotTraceWeakMaps = 0,
+    TraceWeakMapValues = 1
+};
+
 struct JSTracer {
     JSRuntime           *runtime;
     JSTraceCallback     callback;
     JSTraceNamePrinter  debugPrinter;
     const void          *debugPrintArg;
     size_t              debugPrintIndex;
-    JSBool              eagerlyTraceWeakMaps;
+    WeakMapTraceKind    eagerlyTraceWeakMaps;
 #ifdef JS_GC_ZEAL
     void                *realLocation;
 #endif
@@ -2924,9 +2920,6 @@ typedef enum JSGCParamKey {
 
     /* Lower limit after which we limit the heap growth. */
     JSGC_ALLOCATION_THRESHOLD = 20,
-
-    /* Enable the generational GC. */
-    JSGC_ENABLE_GENERATIONAL = 21
 } JSGCParamKey;
 
 typedef enum JSGCMode {
@@ -3056,6 +3049,8 @@ struct JSClass {
 /* Reserved for embeddings. */
 #define JSCLASS_USERBIT2                (1<<(JSCLASS_HIGH_FLAGS_SHIFT+6))
 #define JSCLASS_USERBIT3                (1<<(JSCLASS_HIGH_FLAGS_SHIFT+7))
+
+#define JSCLASS_BACKGROUND_FINALIZE     (1<<(JSCLASS_HIGH_FLAGS_SHIFT+8))
 
 /*
  * Bits 26 through 31 are reserved for the CACHED_PROTO_KEY mechanism, see

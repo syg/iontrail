@@ -8,6 +8,7 @@
 #include "nscore.h"
 #include "nsPluginHost.h"
 
+#include <cstdlib>
 #include <stdio.h>
 #include "prio.h"
 #include "prmem.h"
@@ -87,8 +88,6 @@
 #include "nsIMIMEService.h"
 #include "nsCExternalHandlerService.h"
 #include "nsIFileChannel.h"
-
-#include "nsPluginSafety.h"
 
 #include "nsICharsetConverterManager.h"
 #include "nsIPlatformCharset.h"

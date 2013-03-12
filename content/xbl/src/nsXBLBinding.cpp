@@ -40,9 +40,6 @@
 
 #include "nsGkAtoms.h"
 
-#include "nsIDOMAttr.h"
-#include "nsIDOMNamedNodeMap.h"
-
 #include "nsXBLPrototypeHandler.h"
 
 #include "nsXBLPrototypeBinding.h"
@@ -1437,7 +1434,7 @@ nsXBLBinding::LookupMember(JSContext* aCx, JS::HandleId aId,
   // Enter the xbl scope and invoke the internal version.
   {
     JSAutoCompartment ac(aCx, xblScope);
-    js::RootedId id(aCx, aId);
+    JS::RootedId id(aCx, aId);
     if (!JS_WrapId(aCx, id.address()) ||
         !LookupMemberInternal(aCx, name, id, aDesc, xblScope))
     {
@@ -1467,7 +1464,7 @@ nsXBLBinding::LookupMemberInternal(JSContext* aCx, nsString& aName,
 
   // Find our class object. It's in a protected scope and permanent just in case,
   // so should be there no matter what.
-  js::RootedValue classObject(aCx);
+  JS::RootedValue classObject(aCx);
   if (!JS_GetProperty(aCx, aXBLScope, mJSClass->name, classObject.address())) {
     return false;
   }

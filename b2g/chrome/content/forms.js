@@ -264,9 +264,14 @@ let FormAssistant = {
           this.showKeyboard(target);
         break;
 
+      case "pagehide":
+        // We are only interested to the pagehide event from the root document.
+        if (target && target != content.document) {
+          break;
+        }
+        // fall through
       case "blur":
       case "submit":
-      case "pagehide":
         if (this.focusedElement)
           this.hideKeyboard();
         break;
@@ -589,7 +594,7 @@ function getSelectionRange(element) {
     // Get the selection range of <input> and <textarea> elements
     start = element.selectionStart;
     end = element.selectionEnd;
-  } else {
+  } else if (isContentEditable(element)){
     // Get the selection range of contenteditable elements
     let win = element.ownerDocument.defaultView;
     let sel = win.getSelection();
