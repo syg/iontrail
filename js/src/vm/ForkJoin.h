@@ -62,6 +62,28 @@
 // parallel code encountered an unexpected path that cannot safely be executed
 // in parallel (writes to shared state, say).
 //
+// Bailout tracing and recording:
+//
+// When a bailout occurs, we have to record a bit of state so that we
+// can recover with grace.  The caller of ForkJoin is responsible for
+// passing in a.  This state falls into two categories: one is
+// mandatory state that we track unconditionally, the other is
+// optional state that we track only when we plan to inform the user
+// about why a bailout occurred.
+//
+// The mandatory state consists of two things.
+//
+// - First, we track the top-most script on the stack.  This script will be invalidated.
+//   As part of ParallelDo, the top-most script from each stack frame will be invalidated.
+//
+// - Second, for each script on the stack, we will set the flag
+//   HasInvalidatedCallTarget, indicating that some callee of this
+//   script was invalidated.  This flag is set as the stack is unwound during the bailout.
+//
+// The optional state consists of a backtrace of (script, bytecode)
+// pairs.  The rooting on these is currently screwed up and needs to
+// be fixed.
+//
 // Garbage collection and allocation:
 //
 // Code which executes on these parallel threads must be very careful
@@ -113,6 +135,7 @@ namespace js {
 enum ParallelResult { TP_SUCCESS, TP_RETRY_SEQUENTIALLY, TP_RETRY_AFTER_GC, TP_FATAL };
 
 struct ForkJoinOp;
+struct ParallelBailoutRecord;
 
 // Returns the number of slices that a fork-join op will have when
 // executed.
@@ -122,8 +145,8 @@ ForkJoinSlices(JSContext *cx);
 // Executes the given |TaskSet| in parallel using the runtime's |ThreadPool|,
 // returning upon completion.  In general, if there are |N| workers in the
 // threadpool, the problem will be divided into |N+1| slices, as the main
-// thread will also execute one slice.
-ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op);
+// thread will also execute one slice. |records| must be an array of |N| records.
+ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op, ParallelBailoutRecord *records);
 
 class PerThreadData;
 class ForkJoinShared;
@@ -143,6 +166,56 @@ struct IonLIRTraceData {
 };
 #endif
 
+enum ParallelBailoutCause {
+    ParallelBailoutNone,
+
+    // compiler returned Method_Skipped
+    ParallelBailoutCompilationSkipped,
+
+    // compiler returned Method_CantCompile
+    ParallelBailoutCompilationFailure,
+
+    // the periodic interrupt failed, which can mean that either
+    // another thread canceled, the user interrupted us, etc
+    ParallelBailoutInterrupt,
+
+    // an IC update failed
+    ParallelBailoutFailedIC,
+
+    // Heap busy flag was set during interrupt
+    ParallelBailoutHeapBusy,
+
+    ParallelBailoutCalledToUncompiledScript,
+    ParallelBailoutIllegalWrite,
+    ParallelBailoutAccessToIntrinsic,
+    ParallelBailoutOverRecursed,
+    ParallelBailoutOutOfMemory,
+    ParallelBailoutUnsupported,
+    ParallelBailoutUnsupportedStringComparison,
+    ParallelBailoutUnsupportedSparseArray,
+};
+
+struct ParallelBailoutTrace {
+    JSScript *script;
+    jsbytecode *bytecode;
+};
+
+// See "Bailouts" section in comment above.
+struct ParallelBailoutRecord {
+    JSScript *topScript;
+    ParallelBailoutCause cause;
+    uint32_t depth, maxDepth;
+    ParallelBailoutTrace *trace;
+
+    void init(JSContext *cx, uint32_t maxDepth, ParallelBailoutTrace *trace);
+    void reset(JSContext *cx);
+    void setCause(ParallelBailoutCause cause,
+                  JSScript *script,
+                  jsbytecode *pc);
+    void addTrace(JSScript *script,
+                  jsbytecode *pc);
+};
+
 struct ForkJoinSlice
 {
   public:
@@ -160,8 +233,7 @@ struct ForkJoinSlice
     // |perThreadData|.
     Allocator *const allocator;
 
-    // If we took a parallel bailout, the script that bailed out is stored here.
-    JSScript *abortedScript;
+    ParallelBailoutRecord *const bailoutRecord;
 
 #ifdef DEBUG
     // Records the last instr. to execute on this thread.
@@ -169,8 +241,10 @@ struct ForkJoinSlice
 #endif
 
     ForkJoinSlice(PerThreadData *perThreadData, uint32_t sliceId, uint32_t numSlices,
-                  Allocator *arenaLists, ForkJoinShared *shared);
+                  Allocator *arenaLists, ForkJoinShared *shared,
+                  ParallelBailoutRecord *bailoutRecord);
     ~ForkJoinSlice();
+
     // True if this is the main thread, false if it is one of the parallel workers.
     bool isMainThread();
 
@@ -224,13 +298,6 @@ struct ForkJoinSlice
     // Initialized by InitializeTLS()
     static unsigned ThreadPrivateIndex;
     static bool TLSInitialized;
-#endif
-
-#ifdef JS_THREADSAFE
-    // Sets the abort flag and adjusts ionStackLimit so as to cause
-    // the overrun check to fail.  This should lead to the operation
-    // as a whole aborting.
-    void triggerAbort();
 #endif
 
     ForkJoinShared *const shared;

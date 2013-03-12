@@ -370,8 +370,14 @@ ion::HandleParallelFailure(ResumeFromException *rfe)
 
     while (!iter.isEntry()) {
         parallel::Spew(parallel::SpewBailouts, "Bailing from VM reentry");
-        if (!slice->abortedScript && iter.isScripted())
-            slice->abortedScript = iter.script();
+        if (iter.isScripted()) {
+            slice->bailoutRecord->setCause(ParallelBailoutFailedIC, iter.script(), NULL);
+            break;
+        }
+        ++iter;
+    }
+
+    while (!iter.isEntry()) {
         ++iter;
     }
 
