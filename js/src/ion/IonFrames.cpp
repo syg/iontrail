@@ -23,8 +23,6 @@
 #include "Safepoints.h"
 #include "VMFunctions.h"
 
-#include "vm/ParallelDo.h"
-
 using namespace js;
 using namespace js::ion;
 

@@ -13,7 +13,6 @@
 
 #include "gc/Marking.h"
 
-#include "vm/ParallelDo.h"
 #include "vm/ForkJoin.h"
 #include "vm/ThreadPool.h"
 
@@ -262,7 +261,7 @@ static JSBool
 intrinsic_ParallelDo(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return parallel::Do(cx, args);
+    return ForkJoin(cx, args);
 }
 
 /*

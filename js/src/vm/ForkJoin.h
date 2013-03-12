@@ -11,6 +11,7 @@
 #include "jscntxt.h"
 #include "vm/ThreadPool.h"
 #include "jsgc.h"
+#include "ion/Ion.h"
 
 // ForkJoin
 //
@@ -127,32 +128,16 @@
 
 namespace js {
 
-// Parallel operations in general can have one of three states.  They may
-// succeed, fail, or "bail", where bail indicates that the code encountered an
-// unexpected condition and should be re-run sequentially.
-// Different subcategories of the "bail" state are encoded as variants of
-// TP_RETRY_*.
-enum ParallelResult { TP_SUCCESS, TP_RETRY_SEQUENTIALLY, TP_RETRY_AFTER_GC, TP_FATAL };
+///////////////////////////////////////////////////////////////////////////
+// The main Parallel Execution function.  This is exposed as the
+// intrinsic ParallelDo().
 
-struct ForkJoinOp;
-struct ParallelBailoutRecord;
+bool ForkJoin(JSContext *cx, CallArgs &args);
 
 // Returns the number of slices that a fork-join op will have when
 // executed.
 uint32_t
 ForkJoinSlices(JSContext *cx);
-
-// Executes the given |TaskSet| in parallel using the runtime's |ThreadPool|,
-// returning upon completion.  In general, if there are |N| workers in the
-// threadpool, the problem will be divided into |N+1| slices, as the main
-// thread will also execute one slice. |records| must be an array of |N| records.
-ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op, ParallelBailoutRecord *records);
-
-class PerThreadData;
-class ForkJoinShared;
-class AutoRendezvous;
-class AutoSetForkJoinSlice;
-class AutoMarkWorldStoppedForGC;
 
 #ifdef DEBUG
 struct IonLIRTraceData {
@@ -165,6 +150,9 @@ struct IonLIRTraceData {
     jsbytecode *pc;
 };
 #endif
+
+///////////////////////////////////////////////////////////////////////////
+// Bailout tracking
 
 enum ParallelBailoutCause {
     ParallelBailoutNone,
@@ -215,6 +203,11 @@ struct ParallelBailoutRecord {
     void addTrace(JSScript *script,
                   jsbytecode *pc);
 };
+
+///////////////////////////////////////////////////////////////////////////
+// Context
+
+struct ForkJoinShared;
 
 struct ForkJoinSlice
 {
@@ -314,18 +307,6 @@ public:
     void recordStackBase(uintptr_t *baseAddr);
 };
 
-// Generic interface for specifying divisible operations that can be
-// executed in a fork-join fashion.
-struct ForkJoinOp
-{
-  public:
-    // Invoked from each parallel thread to process one slice.  The
-    // |ForkJoinSlice| which is supplied will also be available using TLS.
-    //
-    // Returns true on success, false to halt parallel execution.
-    virtual bool parallel(ForkJoinSlice &slice) = 0;
-};
-
 // Locks a JSContext for its scope.
 class LockedJSContext
 {
@@ -358,6 +339,61 @@ ParallelJSActive()
 #endif
 }
 
+///////////////////////////////////////////////////////////////////////////
+// Debug Spew
+
+namespace parallel {
+
+enum ExecutionStatus {
+    // Parallel or seq execution terminated in a fatal way, operation failed
+    ExecutionFatal,
+
+    // Parallel exec failed and so we fell back to sequential
+    ExecutionSequential,
+
+    // Parallel exec was successful after some number of bailouts
+    ExecutionParallel
+};
+
+enum SpewChannel {
+    SpewOps,
+    SpewCompile,
+    SpewBailouts,
+    NumSpewChannels
+};
+
+#if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
+
+bool SpewEnabled(SpewChannel channel);
+void Spew(SpewChannel channel, const char *fmt, ...);
+void SpewBeginOp(JSContext *cx, const char *name);
+void SpewBailout(uint32_t count, ParallelBailoutCause cause);
+ExecutionStatus SpewEndOp(ExecutionStatus status);
+void SpewBeginCompile(HandleScript script);
+ion::MethodStatus SpewEndCompile(ion::MethodStatus status);
+void SpewMIR(ion::MDefinition *mir, const char *fmt, ...);
+void SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
+                   const char *lir, const char *mir, JSScript *script, jsbytecode *pc);
+
+#else
+
+static inline bool SpewEnabled(SpewChannel channel) { return false; }
+static inline void Spew(SpewChannel channel, const char *fmt, ...) { }
+static inline void SpewBeginOp(JSContext *cx, const char *name) { }
+static inline void SpewBailout(uint32_t count, ParallelBailoutCause cause) {}
+static inline ExecutionStatus SpewEndOp(ExecutionStatus status) { return status; }
+static inline void SpewBeginCompile(HandleScript script) { }
+#ifdef JS_ION
+static inline ion::MethodStatus SpewEndCompile(ion::MethodStatus status) { return status; }
+static inline void SpewMIR(ion::MDefinition *mir, const char *fmt, ...) { }
+#endif
+static inline void SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
+                                 const char *lir, const char *mir,
+                                 JSScript *script, jsbytecode *pc) { }
+
+#endif // DEBUG && JS_THREADSAFE && JS_ION
+
+} // namespace parallel
 } // namespace js
 
 /* static */ inline js::ForkJoinSlice *

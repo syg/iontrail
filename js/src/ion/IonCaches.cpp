@@ -15,7 +15,6 @@
 #include "VMFunctions.h"
 
 #include "vm/Shape.h"
-#include "vm/ParallelDo.h"
 
 #include "jsinterpinlines.h"
 

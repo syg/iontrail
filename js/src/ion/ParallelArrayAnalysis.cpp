@@ -15,8 +15,6 @@
 #include "UnreachableCodeElimination.h"
 #include "IonAnalysis.h"
 
-#include "vm/ParallelDo.h"
-
 #include "vm/Stack.h"
 
 namespace js {
