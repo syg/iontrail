@@ -42,7 +42,6 @@ class OutOfLineUpdateCache :
 {
   private:
     LInstruction *lir_;
-    RepatchLabel repatchEntry_;
     size_t cacheIndex_;
 
   public:
@@ -51,18 +50,11 @@ class OutOfLineUpdateCache :
         cacheIndex_(cacheIndex)
     { }
 
-    void bind(MacroAssembler *masm) {
-        masm->bind(&repatchEntry_);
-    }
-
     size_t getCacheIndex() const {
         return cacheIndex_;
     }
     LInstruction *lir() const {
         return lir_;
-    }
-    RepatchLabel *repatchEntry() {
-        return &repatchEntry_;
     }
 
     bool accept(CodeGenerator *codegen) {
@@ -79,30 +71,63 @@ class OutOfLineUpdateCache :
 #undef VISIT_CACHE_FUNCTION
 };
 
+class OutOfLineRepatchCache : public OutOfLineUpdateCache
+{
+    RepatchLabel repatchEntry_;
+
+  public:
+    OutOfLineRepatchCache(LInstruction *lir, size_t cacheIndex)
+      : OutOfLineUpdateCache(lir, cacheIndex)
+    { }
+
+    void bind(MacroAssembler *masm) {
+        masm->bind(&repatchEntry_);
+    }
+    RepatchLabel *repatchEntry() {
+        return &repatchEntry_;
+    }
+};
+
 // This function is declared here because it needs to instantiate an
 // OutOfLineUpdateCache, but we want to keep it visible inside the
 // CodeGeneratorShared such as we can specialize inline caches in function of
 // the architecture.
 bool
-CodeGeneratorShared::addCache(LInstruction *lir, size_t cacheIndex)
+CodeGeneratorShared::addRepatchCache(LInstruction *lir, size_t cacheIndex)
 {
-    IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
-    MInstruction *mir = lir->mirRaw()->toInstruction();
-    if (mir->resumePoint())
-        cache->setScriptedLocation(mir->block()->info().script(),
-                                   mir->resumePoint()->pc());
-    else
-        cache->setIdempotent();
+    IonCache *cache = getCache(cacheIndex);
+    setCacheInfo(cache, lir);
+
+    OutOfLineRepatchCache *ool = new OutOfLineRepatchCache(lir, cacheIndex);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    cache->setInlineJump(masm.jumpWithPatch(ool->repatchEntry()));
+    cache->setRejoinLabel(masm.labelForPatch());
+    masm.bind(ool->rejoin());
+
+    return true;
+}
+
+bool
+CodeGeneratorShared::addDispatchCache(LInstruction *lir, size_t cacheIndex, Register scratch)
+{
+    JS_ASSERT(cacheDispatchLabels_.length() == cacheIndex);
+
+    IonCache *cache = getCache(cacheIndex);
+    setCacheInfo(cache, lir);
 
     OutOfLineUpdateCache *ool = new OutOfLineUpdateCache(lir, cacheIndex);
     if (!addOutOfLineCode(ool))
         return false;
 
-    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
-    CodeOffsetLabel label = masm.labelForPatch();
+    if (!cacheDispatchLabels_.append(masm.moveWithPatch(ImmWord(uintptr_t(-1)), scratch)))
+        return false;
+    masm.loadPtr(Address(scratch, 0), scratch);
+    masm.jump(scratch);
+    cache->setRejoinLabel(masm.labelForPatch());
     masm.bind(ool->rejoin());
 
-    cache->setInlineJump(jump, label);
     return true;
 }
 
@@ -4458,6 +4483,10 @@ CodeGenerator::link()
     ExecutionMode executionMode = gen->info().executionMode();
     JS_ASSERT(!HasIonScript(script, executionMode));
 
+    // Either all ICs should be dispatch style or repatch style.
+    bool cachesUseDispatch = !cacheDispatchLabels_.empty();
+    JS_ASSERT(cacheList_.length() == cacheDispatchLabels_.length());
+
     uint32_t scriptFrameSize = frameClass_ == FrameSizeClass::None()
                            ? frameDepth_
                            : FrameSizeClass::FromDepth(frameDepth_).frameSize();
@@ -4473,7 +4502,7 @@ CodeGenerator::link()
                      safepointIndices_.length(), osiIndices_.length(),
                      cacheList_.length(), runtimeData_.length(),
                      safepoints_.size(), graph.mir().numScripts(),
-                     graph.mir().numCallTargets());
+                     graph.mir().numCallTargets(), cachesUseDispatch);
     SetIonScript(script, executionMode, ionScript);
 
     if (!ionScript)
@@ -4498,8 +4527,11 @@ CodeGenerator::link()
     // for generating inline caches during the execution.
     if (runtimeData_.length())
         ionScript->copyRuntimeData(&runtimeData_[0]);
-    if (cacheList_.length())
-        ionScript->copyCacheEntries(&cacheList_[0], masm);
+    if (cacheList_.length()) {
+        ionScript->copyCacheEntries(&cacheList_[0],
+                                    cachesUseDispatch ? &cacheDispatchLabels_[0] : NULL,
+                                    masm);
+    }
 
     // for marking during GC.
     if (safepointIndices_.length())
@@ -4695,7 +4727,7 @@ CodeGenerator::visitCallsiteCloneCache(LCallsiteCloneCache *ins)
     Register output = ToRegister(ins->output());
 
     CallsiteCloneIC cache(callee, mir->block()->info().script(), mir->callPc(), output);
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 typedef JSObject *(*CallsiteCloneICFn)(JSContext *, size_t, HandleObject);
@@ -4727,7 +4759,7 @@ CodeGenerator::visitGetNameCache(LGetNameCache *ins)
     bool isTypeOf = ins->mir()->accessKind() != MGetNameCache::NAME;
 
     NameIC cache(isTypeOf, scopeChain, ins->mir()->name(), output);
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 typedef bool (*NameICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
@@ -4758,11 +4790,13 @@ CodeGenerator::addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Regi
     switch (gen->info().executionMode()) {
       case SequentialExecution: {
         GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
-        return addCache(ins, allocateCache(cache));
+        return addRepatchCache(ins, allocateCache(cache));
       }
       case ParallelExecution: {
         ParallelGetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
-        return addCache(ins, allocateCache(cache));
+        // XXX: Output registers not yet specialized as float registers, need
+        // to change when they are.
+        return addDispatchCache(ins, allocateCache(cache), output.scratchReg().gpr());
       }
       default:
         JS_NOT_REACHED("Bad execution mode");
@@ -4844,7 +4878,7 @@ CodeGenerator::visitGetElementCacheV(LGetElementCacheV *ins)
 
     GetElementIC cache(obj, index, output, ins->mir()->monitoredResult());
 
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 bool
@@ -4856,7 +4890,7 @@ CodeGenerator::visitGetElementCacheT(LGetElementCacheT *ins)
 
     GetElementIC cache(obj, index, output, ins->mir()->monitoredResult());
 
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 typedef bool (*GetElementICFn)(JSContext *, size_t, HandleObject, HandleValue, MutableHandleValue);
@@ -4888,7 +4922,7 @@ CodeGenerator::visitBindNameCache(LBindNameCache *ins)
     Register output = ToRegister(ins->output());
     BindNameIC cache(scopeChain, ins->mir()->name(), output);
 
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 typedef JSObject *(*BindNameICFn)(JSContext *, size_t, HandleObject);
@@ -4963,7 +4997,7 @@ CodeGenerator::visitSetPropertyCacheV(LSetPropertyCacheV *ins)
 
     SetPropertyIC cache(liveRegs, objReg, ins->mir()->name(), value,
                         isSetName, ins->mir()->strict());
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 bool
@@ -4981,7 +5015,7 @@ CodeGenerator::visitSetPropertyCacheT(LSetPropertyCacheT *ins)
 
     SetPropertyIC cache(liveRegs, objReg, ins->mir()->name(), value,
                         isSetName, ins->mir()->strict());
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 typedef bool (*SetPropertyICFn)(JSContext *, size_t, HandleObject, HandleValue);

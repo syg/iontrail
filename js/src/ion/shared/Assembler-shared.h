@@ -436,6 +436,10 @@ class CodeLocationJump
 
     void repoint(IonCode *code, MacroAssembler* masm = NULL);
 
+    bool isSet() {
+        return raw_ != (uint8_t *) 0xdeadc0de;
+    }
+
     uint8_t *raw() const {
         JS_ASSERT(absolute_ && raw_ != (uint8_t *) 0xdeadc0de);
         return raw_;

@@ -619,5 +619,16 @@ CodeGeneratorShared::callTraceLIR(uint32_t blockIndex, LInstruction *lir,
     return true;
 }
 
+void
+CodeGeneratorShared::setCacheInfo(IonCache *cache, LInstruction *lir)
+{
+    MInstruction *mir = lir->mirRaw()->toInstruction();
+    if (mir->resumePoint())
+        cache->setScriptedLocation(mir->block()->info().script(),
+                                   mir->resumePoint()->pc());
+    else
+        cache->setIdempotent();
+}
+
 } // namespace ion
 } // namespace js

@@ -191,9 +191,11 @@ class IonCache
     // jump that will point to out-of-line code (such as the slow path, or
     // stubs), and the rejoinLabel is the position that all out-of-line paths
     // will rejoin to.
-    void setInlineJump(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
+    void setInlineJump(CodeOffsetJump initialJump) {
         initialJump_ = initialJump;
         lastJump_ = initialJump;
+    }
+    void setRejoinLabel(CodeOffsetLabel rejoinLabel) {
         rejoinLabel_ = rejoinLabel;
     }
 
@@ -206,6 +208,10 @@ class IonCache
 
     // Update labels once the code is copied and finalized.
     void updateBaseAddress(IonCode *code, MacroAssembler &masm);
+
+    // Update dispatch label and entry once the code is copied and finalized.
+    void updateDispatchLabelAndEntry(IonCode *code, CodeOffsetLabel &dispatchLabel,
+                                     uint8_t **dispatchEntry, MacroAssembler &masm);
 
     // Reset the cache around garbage collection.
     virtual void reset();
@@ -295,10 +301,12 @@ class GetPropertyIC : public IonCache
     bool hasArrayLengthStub_ : 1;
     bool hasTypedArrayLengthStub_ : 1;
 
+    bool attachReadSlotWithPatcher(JSContext *cx, StubPatcher &patcher, IonScript *ion,
+                                   JSObject *obj, JSObject *holder, HandleShape shape);
+
     bool generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
                             JSObject *obj, JSObject *holder, Shape *shape,
-                            PropertyName *propName, RegisterSet &liveRegs, void *returnAddr,
-                            jsbytecode *pc, Label *nonRepatchFailures = NULL);
+                            void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures = NULL);
 
   public:
     GetPropertyIC(RegisterSet liveRegs,
@@ -339,8 +347,8 @@ class GetPropertyIC : public IonCache
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                          HandleShape shape,
-                          const SafepointIndex *safepointIndex, void *returnAddr);
+                          HandleShape shape, const SafepointIndex *safepointIndex,
+                          void *returnAddr);
     bool attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
     bool attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
 
@@ -604,11 +612,10 @@ class ParallelGetPropertyIC : public GetPropertyIC
         return stubbedObjects_;
     }
 
-    // Returns false if we should bail out of parallel execution due to either
-    // error or inability to get the property on |obj| in a pure manner.
-    bool tryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion, HandleObject obj,
-                                    HandlePropertyName name, const SafepointIndex *safepointIndex,
-                                    void *returnAddr);
+    bool attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj, JSObject *holder,
+                        HandleShape shape, uint8_t **stubEntry);
+    bool tryAttachReadSlot(LockedJSContext &cx, IonScript *ion, HandleObject obj,
+                           HandlePropertyName name, uint8_t **stubEntry);
 
     static bool update(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
                        MutableHandleValue vp);

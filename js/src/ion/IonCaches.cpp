@@ -198,6 +198,9 @@ class IonCache::StubPatcher
 
 const ImmWord IonCache::StubPatcher::STUB_ADDR = ImmWord(uintptr_t(0xdeadc0de));
 
+// Repatch-style stubs are daisy chained in such a fashion that when
+// generating a new stub, the previous stub's exit jump is patched to the
+// entry of our new stub.
 class RepatchStubPatcher : public IonCache::StubPatcher
 {
     CodeLocationLabel exitLabel_;
@@ -233,6 +236,21 @@ class RepatchStubPatcher : public IonCache::StubPatcher
     }
 };
 
+// Dispatch-style stubs are daisy chained in reverse order as repatch-style
+// stubs and do not require patching jumps. A dispatch table is used, one per
+// cache, to store the first stub that should be jumped to.
+//
+// When new stubs are generated, the dispatch table is updated with the new
+// stub's code address. New stubs always jump to the previous value in the
+// dispatch table on exit.
+//
+// This style of stubs does not patch the already executing instruction
+// stream, does not need to worry about cache coherence of cached jump
+// addresses, and does not have to worry about aligning the exit jumps to
+// ensure atomic patching, at the expense of an extra memory read to load the
+// very first stub.
+//
+// The dispatch table itself is allocated in IonScript; see IonScript::New.
 class DispatchStubPatcher : public IonCache::StubPatcher
 {
     uint8_t **stubEntry_;
@@ -554,14 +572,11 @@ GenerateReadSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubPatcher &pat
 }
 
 bool
-GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                              HandleShape shape)
+GetPropertyIC::attachReadSlotWithPatcher(JSContext *cx, StubPatcher &patcher, IonScript *ion,
+                                         JSObject *obj, JSObject *holder, HandleShape shape)
 {
     MacroAssembler masm(cx);
-
-    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
     GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output());
-
     const char *attachKind = "non idempotent reading";
     if (idempotent())
         attachKind = "idempotent reading";
@@ -569,9 +584,16 @@ GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSOb
 }
 
 bool
+GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
+                              HandleShape shape)
+{
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
+    return attachReadSlotWithPatcher(cx, patcher, ion, obj, holder, shape);
+}
+
+bool
 GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
                                   JSObject *obj, JSObject *holder, Shape *shape,
-                                  PropertyName *propName, RegisterSet &liveRegs,
                                   void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures)
 {
     Register object = this->object();
@@ -608,7 +630,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
         JS_ASSERT_IF(expando, expando->isNative() && expando->getProto() == NULL);
 
         masm.loadValue(expandoAddr, tempVal);
-        if (expando && expando->nativeLookup(cx, propName)) {
+        if (expando && expando->nativeLookup(cx, name())) {
             // Reference object has an expando that doesn't define the name.
             // Check incoming object's expando and make sure it's an object.
 
@@ -667,7 +689,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
     // Now we're good to go to invoke the native call.
 
     // saveLive()
-    masm.PushRegsInMask(liveRegs);
+    masm.PushRegsInMask(liveRegs_);
 
     // Remaining registers should basically be free, but we need to use |object| still
     // so leave it alone.
@@ -804,7 +826,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
     JS_ASSERT(masm.framePushed() == initialStack);
 
     // restoreLive()
-    masm.PopRegsInMask(liveRegs);
+    masm.PopRegsInMask(liveRegs_);
 
     // Rejoin jump.
     patcher.jumpRejoin(masm);
@@ -836,11 +858,8 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
     masm.setFramePushed(ion->frameSize());
 
     RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
-    if (!generateCallGetter(cx, masm, patcher, obj, holder, shape, name(),
-                            liveRegs_, returnAddr, pc))
-    {
+    if (!generateCallGetter(cx, masm, patcher, obj, holder, shape, returnAddr, pc))
          return false;
-    }
 
     const char *attachKind = "non idempotent calling";
     if (idempotent())
@@ -1145,10 +1164,17 @@ ParallelGetPropertyIC::initStubbedObjects(JSContext *cx)
 }
 
 bool
-ParallelGetPropertyIC::tryAttachNativeGetPropStub(LockedJSContext &cx, IonScript *ion,
-                                                  HandleObject obj, HandlePropertyName name,
-                                                  const SafepointIndex *safepointIndex,
-                                                  void *returnAddr)
+ParallelGetPropertyIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj,
+                                      JSObject *holder, HandleShape shape, uint8_t **stubEntry)
+{
+    DispatchStubPatcher patcher(rejoinLabel_, stubEntry);
+    return attachReadSlotWithPatcher(cx, patcher, ion, obj, holder, shape);
+}
+
+bool
+ParallelGetPropertyIC::tryAttachReadSlot(LockedJSContext &cx, IonScript *ion,
+                                         HandleObject obj, HandlePropertyName name,
+                                         uint8_t **stubEntry)
 {
     RootedObject checkObj(cx, obj);
     bool isListBase = IsCacheableListBase(obj);
@@ -1205,7 +1231,7 @@ ParallelGetPropertyIC::tryAttachNativeGetPropStub(LockedJSContext &cx, IonScript
         return false;
     }
 
-    return attachReadSlot(cx, ion, obj, holder, shape);
+    return attachReadSlot(cx, ion, obj, holder, shape, stubEntry);
 }
 
 bool
@@ -1250,15 +1276,17 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
                 return false;
 
             // See note about the stub limit in GetPropertyCache.
-            if (!cache.tryAttachNativeGetPropStub(cx, ion, obj, name,
-                                                  safepointIndex, returnAddr))
+            if (!cache.tryAttachReadSlot(cx, ion, obj, name,
+                                         ion->getCacheDispatchEntry(cacheIndex)))
             {
-                // Bail out if we can't find the property.
-                parallel::Spew(parallel::SpewBailouts,
-                               "Marking idempotent cache as invalidated in parallel %s:%d",
-                               topScript->filename, topScript->lineno);
+                if (cache.idempotent()) {
+                    // Bail out if we can't find the property.
+                    parallel::Spew(parallel::SpewBailouts,
+                                   "Marking idempotent cache as invalidated in parallel %s:%d",
+                                   topScript->filename, topScript->lineno);
 
-                topScript->invalidatedIdempotentCache = true;
+                    topScript->invalidatedIdempotentCache = true;
+                }
 
                 // ParallelDo will take care of invalidating all bailed out
                 // scripts, so just bail out now.
@@ -1284,10 +1312,25 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
 void
 IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 {
-    initialJump_.repoint(code, &masm);
-    lastJump_.repoint(code, &masm);
+    // Dispatch caches do not have initial and last jumps set.
+    if (initialJump_.isSet()) {
+        JS_ASSERT(lastJump_.isSet());
+        initialJump_.repoint(code, &masm);
+        lastJump_.repoint(code, &masm);
+    }
     fallbackLabel_.repoint(code, &masm);
     rejoinLabel_.repoint(code, &masm);
+}
+
+void
+IonCache::updateDispatchLabelAndEntry(IonCode *code, CodeOffsetLabel &dispatchLabel,
+                                      uint8_t **stubEntry, MacroAssembler &masm)
+{
+    dispatchLabel.fixup(&masm);
+    Assembler::patchDataWithValueCheck(CodeLocationLabel(code, dispatchLabel),
+                                       ImmWord(uintptr_t(stubEntry)),
+                                       ImmWord(uintptr_t(-1)));
+    *stubEntry = fallbackLabel_.raw();
 }
 
 void
