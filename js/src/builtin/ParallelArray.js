@@ -291,7 +291,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
     var chunks = ComputeNumChunks(length);
     var numSlices = ParallelSlices();
     var info = ComputeAllSliceBounds(chunks, numSlices);
-    ParallelDo(constructSlice, CheckParallel(mode));
+    ForkJoin(constructSlice, CheckParallel(mode));
     return;
   }
 
@@ -378,7 +378,7 @@ function ParallelArrayMap(func, mode) {
     var chunks = ComputeNumChunks(length);
     var numSlices = ParallelSlices();
     var info = ComputeAllSliceBounds(chunks, numSlices);
-    ParallelDo(mapSlice, CheckParallel(mode));
+    ForkJoin(mapSlice, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
@@ -431,7 +431,7 @@ function ParallelArrayReduce(func, mode) {
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
     var subreductions = NewDenseArray(numSlices);
-    ParallelDo(reduceSlice, CheckParallel(mode));
+    ForkJoin(reduceSlice, CheckParallel(mode));
     var accumulator = subreductions[0];
     for (var i = 1; i < numSlices; i++)
       accumulator = func(accumulator, subreductions[i]);
@@ -515,7 +515,7 @@ function ParallelArrayScan(func, mode) {
     var info = ComputeAllSliceBounds(chunks, numSlices);
 
     // Scan slices individually (see comment on phase1()).
-    ParallelDo(phase1, CheckParallel(mode));
+    ForkJoin(phase1, CheckParallel(mode));
 
     // Compute intermediates array (see comment on phase2()).
     var intermediates = [];
@@ -532,7 +532,7 @@ function ParallelArrayScan(func, mode) {
     info[SLICE_END(numSlices - 1)] = std_Math_min(info[SLICE_END(numSlices - 1)], length);
 
     // Complete each slice using intermediates array (see comment on phase2()).
-    ParallelDo(phase2, CheckParallel(mode));
+    ForkJoin(phase2, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
@@ -790,7 +790,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     for (var i = 0; i < length; i++)
       buffer[i] = zero;
 
-    ParallelDo(fill, CheckParallel(mode));
+    ForkJoin(fill, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
     function fill(sliceId, numSlices, warmup) {
@@ -841,7 +841,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     for (var i = 0; i < length; i++)
       outputbuffer[i] = zero;
 
-    ParallelDo(fill, CheckParallel(mode));
+    ForkJoin(fill, CheckParallel(mode));
     mergeBuffers();
     return NewParallelArray(ParallelArrayView, [length], outputbuffer, 0);
 
@@ -951,7 +951,7 @@ function ParallelArrayFilter(func, mode) {
     for (var i = 0; i < numSlices; i++)
       counts[i] = 0;
     var survivors = NewDenseArray(chunks);
-    ParallelDo(findSurvivorsInSlice, CheckParallel(mode));
+    ForkJoin(findSurvivorsInSlice, CheckParallel(mode));
 
     // Step 2. Compress the slices into one contiguous set.
     var count = 0;
@@ -959,7 +959,7 @@ function ParallelArrayFilter(func, mode) {
       count += counts[i];
     var buffer = NewDenseArray(count);
     if (count > 0)
-      ParallelDo(copySurvivorsInSlice, CheckParallel(mode));
+      ForkJoin(copySurvivorsInSlice, CheckParallel(mode));
 
     return NewParallelArray(ParallelArrayView, [count], buffer, 0);
   }
@@ -1204,7 +1204,7 @@ function CheckSequential(mode) {
 
 /**
  * Internal debugging tool: returns a function to be supplied
- * ParallelDo() that will check that the parallel results
+ * ForkJoin() that will check that the parallel results
  * bailout/succeed as expected.  Returns null if not in no mode is
  * supplied.
  */

@@ -12,6 +12,10 @@
 #include "vm/Monitor.h"
 #include "gc/Marking.h"
 
+#ifdef JS_ION
+#  include "ion/ParallelArrayAnalysis.h"
+#endif
+
 #ifdef JS_THREADSAFE
 #  include "prthread.h"
 #  include "prprf.h"
@@ -22,7 +26,6 @@
 #  include "ion/MIR.h"
 #  include "ion/MIRGraph.h"
 #  include "ion/IonCompartment.h"
-#  include "ion/ParallelArrayAnalysis.h"
 #endif // DEBUG && THREADSAFE && ION
 
 // For extracting stack extent for each thread.
@@ -34,11 +37,123 @@
 #include "jsinferinlines.h"
 #include "jsinterpinlines.h"
 
+#if defined(JS_THREADSAFE) && defined(JS_ION)
+#  define JS_THREADSAFE_ION
+#endif
+
 using namespace js;
 using namespace js::parallel;
 using namespace js::ion;
 
+///////////////////////////////////////////////////////////////////////////
+// Degenerate configurations
+//
+// When JS_THREADSAFE or JS_ION is not defined, we simply run the
+// |func| callback sequentially.  We also forego the feedback
+// altogether.
+
+static bool
+ExecuteSequentially(JSContext *cx_, HandleValue funVal);
+
+#ifndef JS_THREADSAFE_ION
+bool
+js::ForkJoin(JSContext *cx, CallArgs &args)
+{
+    RootedValue argZero(cx, args[0]);
+    return ExecuteSequentially(cx, argZero);
+}
+
+uint32_t
+js::ForkJoinSlices(JSContext *cx)
+{
+    return 1; // just the main thread
+}
+
+JSContext *
+ForkJoinSlice::acquireContext()
+{
+    return NULL;
+}
+
+void
+ForkJoinSlice::releaseContext()
+{
+}
+
+bool
+ForkJoinSlice::isMainThread()
+{
+    return true;
+}
+
+bool
+ForkJoinSlice::InitializeTLS()
+{
+    return true;
+}
+
+JSRuntime *
+ForkJoinSlice::runtime()
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
+}
+
+void
+ParallelBailoutRecord::setCause(ParallelBailoutCause cause,
+                                JSScript *script,
+                                jsbytecode *pc)
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
+}
+
+bool
+ForkJoinSlice::check()
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
+    return true;
+}
+#endif // JS_THREADSAFE_ION
+
+///////////////////////////////////////////////////////////////////////////
+// All configurations
+//
+// Some code that is shared between degenerate and parallel configurations.
+
+static bool
+ExecuteSequentially(JSContext *cx, HandleValue funVal)
+{
+    uint32_t numSlices = ForkJoinSlices(cx);
+    FastInvokeGuard fig(cx, funVal);
+    for (uint32_t i = 0; i < numSlices; i++) {
+        InvokeArgsGuard &args = fig.args();
+        if (!args.pushed() && !cx->stack.pushInvokeArgs(cx, 3, &args))
+            return false;
+        args.setCallee(funVal);
+        args.setThis(UndefinedValue());
+        args[0].setInt32(i);
+        args[1].setInt32(numSlices);
+        args[2].setBoolean(!!cx->runtime->parallelWarmup);
+        if (!fig.invoke(cx))
+            return false;
+    }
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////
+// Parallel configurations
+//
+// The remainder of this file is specific to cases where both
+// JS_THREADSAFE and JS_ION are enabled.
+
+#ifdef JS_THREADSAFE_ION
+
+///////////////////////////////////////////////////////////////////////////
+// Class Declarations and Function Prototypes
+
 namespace js {
+
+unsigned ForkJoinSlice::ThreadPrivateIndex;
+bool ForkJoinSlice::TLSInitialized;
 
 // Parallel operations in general can have one of three states.  They may
 // succeed, fail, or "bail", where bail indicates that the code encountered an
@@ -47,36 +162,43 @@ namespace js {
 // TP_RETRY_*.
 enum ParallelResult { TP_SUCCESS, TP_RETRY_SEQUENTIALLY, TP_RETRY_AFTER_GC, TP_FATAL };
 
-// Generic interface for specifying divisible operations that can be
-// executed in a fork-join fashion.
-struct ForkJoinOp
+class ParallelDo
 {
   public:
-    // Invoked from each parallel thread to process one slice.  The
-    // |ForkJoinSlice| which is supplied will also be available using TLS.
-    //
-    // Returns true on success, false to halt parallel execution.
-    virtual bool parallel(ForkJoinSlice &slice) = 0;
-};
+    // For tests, make sure to keep this in sync with minItemsTestingThreshold.
+    const static uint32_t MAX_BAILOUTS = 3;
+    uint32_t bailouts;
+    ParallelBailoutCause cause;
 
-// Executes the given |TaskSet| in parallel using the runtime's |ThreadPool|,
-// returning upon completion.  In general, if there are |N| workers in the
-// threadpool, the problem will be divided into |N+1| slices, as the main
-// thread will also execute one slice. |records| must be an array of |N| records.
-ParallelResult ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op, ParallelBailoutRecord *records);
+    ParallelDo(JSContext *cx, HandleObject fun);
+    ExecutionStatus apply();
 
-} // namespace js
+  private:
+    JSContext *cx_;
+    HeapPtrObject fun_;
+    Vector<ParallelBailoutRecord, 16> bailoutRecords;
 
-#ifdef JS_THREADSAFE
+    bool executeSequentially();
 
-class js::ForkJoinShared : public TaskExecutor, public Monitor
+    MethodStatus compileForParallelExecution();
+    ExecutionStatus disqualifyFromParallelExecution();
+    void determineBailoutCause();
+    bool invalidateBailedOutScripts();
+    bool warmupForParallelExecution();
+    ParallelResult executeInParallel();
+    inline bool hasScript(Vector<types::RecompileInfo> &scripts,
+                          JSScript *script);
+
+}; // class ParallelDo
+
+class ForkJoinShared : public TaskExecutor, public Monitor
 {
     /////////////////////////////////////////////////////////////////////////
     // Constant fields
 
     JSContext *const cx_;          // Current context
     ThreadPool *const threadPool_; // The thread pool.
-    ForkJoinOp &op_;               // User-defined operations to be perf. in par.
+    HandleObject fun_;             // The JavaScript function to execute.
     const uint32_t numSlices_;     // Total number of threads.
     PRCondVar *rendezvousEnd_;     // Cond. var used to signal end of rendezvous.
     PRLock *cxLock_;               // Locks cx_ for parallel VM calls.
@@ -159,7 +281,7 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
   public:
     ForkJoinShared(JSContext *cx,
                    ThreadPool *threadPool,
-                   ForkJoinOp &op,
+                   HandleObject fun,
                    uint32_t numSlices,
                    uint32_t uncompleted,
                    ParallelBailoutRecord *records);
@@ -200,9 +322,18 @@ class js::ForkJoinShared : public TaskExecutor, public Monitor
 
     void addSlice(ForkJoinSlice *slice);
     void removeSlice(ForkJoinSlice *slice);
+}; // class ForkJoinShared
+
+class AutoEnterWarmup
+{
+    JSRuntime *runtime_;
+
+  public:
+    AutoEnterWarmup(JSRuntime *runtime) : runtime_(runtime) { runtime_->parallelWarmup++; }
+    ~AutoEnterWarmup() { runtime_->parallelWarmup--; }
 };
 
-class js::AutoRendezvous
+class AutoRendezvous
 {
   private:
     ForkJoinSlice &threadCx;
@@ -219,10 +350,7 @@ class js::AutoRendezvous
     }
 };
 
-unsigned ForkJoinSlice::ThreadPrivateIndex;
-bool ForkJoinSlice::TLSInitialized;
-
-class js::AutoSetForkJoinSlice
+class AutoSetForkJoinSlice
 {
   public:
     AutoSetForkJoinSlice(ForkJoinSlice *threadCx) {
@@ -234,7 +362,7 @@ class js::AutoSetForkJoinSlice
     }
 };
 
-class js::AutoMarkWorldStoppedForGC
+class AutoMarkWorldStoppedForGC
 {
   private:
     ForkJoinSlice &threadCx;
@@ -258,19 +386,348 @@ class js::AutoMarkWorldStoppedForGC
 
 };
 
+} // namespace js
+
+///////////////////////////////////////////////////////////////////////////
+// js::ForkJoin() and ParallelDo class
+//
+// These are the top-level objects that manage the parallel execution.
+// They handle parallel compilation (if necessary), triggering
+// parallel execution, and recovering from bailouts.
+
+bool
+js::ForkJoin(JSContext *cx, CallArgs &args)
+{
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().isFunction());
+
+    RootedObject fun(cx, &args[0].toObject());
+    ParallelDo op(cx, fun);
+    ExecutionStatus status = op.apply();
+    if (status == ExecutionFatal)
+        return false;
+
+    if (args[1].isObject()) {
+        RootedObject feedback(cx, &args[1].toObject());
+        if (feedback && feedback->isFunction()) {
+            InvokeArgsGuard feedbackArgs;
+            if (!cx->stack.pushInvokeArgs(cx, 3, &feedbackArgs))
+                return false;
+
+            const char *resultString;
+            switch (status) {
+              case ExecutionParallel:
+                resultString = (op.bailouts == 0 ? "success" : "bailout");
+                break;
+
+              case ExecutionFatal:
+              case ExecutionSequential:
+                resultString = "disqualified";
+                break;
+            }
+            feedbackArgs.setCallee(ObjectValue(*feedback));
+            feedbackArgs.setThis(UndefinedValue());
+            feedbackArgs[0].setString(JS_NewStringCopyZ(cx, resultString));
+            feedbackArgs[1].setInt32(op.bailouts);
+            feedbackArgs[2].setInt32(op.cause);
+            if (!Invoke(cx, feedbackArgs))
+                return false;
+        }
+    }
+
+    return true;
+}
+
+js::ParallelDo::ParallelDo(JSContext *cx, HandleObject fun)
+  : bailouts(0),
+    cause(ParallelBailoutNone),
+    cx_(cx),
+    fun_(fun),
+    bailoutRecords(cx)
+{ }
+
+ExecutionStatus
+js::ParallelDo::apply()
+{
+    SpewBeginOp(cx_, "ParallelDo");
+
+    uint32_t slices = ForkJoinSlices(cx_);
+
+    if (!ion::IsEnabled(cx_))
+        return SpewEndOp(disqualifyFromParallelExecution());
+
+    if (!bailoutRecords.resize(slices))
+        return SpewEndOp(ExecutionFatal);
+
+    for (uint32_t i = 0; i < slices; i++)
+        bailoutRecords[i].init(cx_, 0, NULL);
+
+    // Try to execute in parallel.  If a bailout occurs, re-warmup
+    // and then try again.  Repeat this a few times.
+    while (bailouts < MAX_BAILOUTS) {
+        for (uint32_t i = 0; i < slices; i++)
+            bailoutRecords[i].reset(cx_);
+
+        MethodStatus status = compileForParallelExecution();
+        if (status == Method_Error)
+            return SpewEndOp(ExecutionFatal);
+        if (status != Method_Compiled)
+            return SpewEndOp(disqualifyFromParallelExecution());
+
+        ParallelResult result = executeInParallel();
+        switch (result) {
+          case TP_RETRY_AFTER_GC:
+            Spew(SpewBailouts, "Bailout due to GC request");
+            break;
+
+          case TP_RETRY_SEQUENTIALLY:
+            Spew(SpewBailouts, "Bailout not categorized");
+            break;
+
+          case TP_SUCCESS:
+            return SpewEndOp(ExecutionParallel);
+
+          case TP_FATAL:
+            return SpewEndOp(ExecutionFatal);
+        }
+
+        bailouts += 1;
+        determineBailoutCause();
+
+        SpewBailout(bailouts, cause);
+
+        if (!invalidateBailedOutScripts())
+            return SpewEndOp(ExecutionFatal);
+
+        if (!warmupForParallelExecution())
+            return SpewEndOp(ExecutionFatal);
+    }
+
+    // After enough tries, just execute sequentially.
+    return SpewEndOp(disqualifyFromParallelExecution());
+}
+
+bool
+js::ParallelDo::executeSequentially()
+{
+    RootedValue funVal(cx_, ObjectValue(*fun_));
+    return ExecuteSequentially(cx_, funVal);
+}
+
+MethodStatus
+js::ParallelDo::compileForParallelExecution()
+{
+    // The kernel should be a self-hosted function.
+    if (!fun_->isFunction())
+        return Method_Skipped;
+
+    RootedFunction callee(cx_, fun_->toFunction());
+
+    if (!callee->isInterpreted() || !callee->isSelfHostedBuiltin())
+        return Method_Skipped;
+
+    if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx_))
+        return Method_Error;
+
+    // If this function has not been run enough to enable parallel
+    // execution, perform a warmup.
+    RootedScript script(cx_, callee->nonLazyScript());
+    if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel) {
+        if (!warmupForParallelExecution())
+            return Method_Error;
+    }
+
+    if (script->hasParallelIonScript() &&
+        !script->parallelIonScript()->hasInvalidatedCallTarget())
+    {
+        Spew(SpewOps, "Already compiled");
+        return Method_Compiled;
+    }
+
+    Spew(SpewOps, "Compiling all reachable functions");
+
+    ParallelCompileContext compileContext(cx_);
+    if (!compileContext.appendToWorklist(script))
+        return Method_Error;
+
+    MethodStatus status = compileContext.compileTransitively();
+    if (status != Method_Compiled)
+        return status;
+
+    // it can happen that during transitive compilation, our
+    // callee's parallel ion script is invalidated or GC'd. So
+    // before we declare success, double check that it's still
+    // compiled!
+    if (!script->hasParallelIonScript())
+        return Method_Skipped;
+
+    return Method_Compiled;
+}
+
+ExecutionStatus
+js::ParallelDo::disqualifyFromParallelExecution()
+{
+    if (!executeSequentially())
+        return ExecutionFatal;
+    return ExecutionSequential;
+}
+
+void
+js::ParallelDo::determineBailoutCause()
+{
+    cause = ParallelBailoutNone;
+    for (uint32_t i = 0; i < bailoutRecords.length(); i++) {
+        if (bailoutRecords[i].cause == ParallelBailoutNone)
+            continue;
+
+        if (bailoutRecords[i].cause == ParallelBailoutInterrupt)
+            continue;
+
+        cause = bailoutRecords[i].cause;
+    }
+}
+
+bool
+js::ParallelDo::invalidateBailedOutScripts()
+{
+    RootedScript script(cx_, fun_->toFunction()->nonLazyScript());
+
+    // Sometimes the script is collected or invalidated already,
+    // for example when a full GC runs at an inconvenient time.
+    if (!script->hasParallelIonScript()) {
+        return true;
+    }
+
+    Vector<types::RecompileInfo> invalid(cx_);
+    for (uint32_t i = 0; i < bailoutRecords.length(); i++) {
+        JSScript *script = bailoutRecords[i].topScript;
+        if (script && !hasScript(invalid, script)) {
+            JS_ASSERT(script->hasParallelIonScript());
+            if (!invalid.append(script->parallelIonScript()->recompileInfo()))
+                return false;
+        }
+    }
+    Invalidate(cx_, invalid);
+    return true;
+}
+
+bool
+js::ParallelDo::warmupForParallelExecution()
+{
+    AutoEnterWarmup warmup(cx_->runtime);
+    return executeSequentially();
+}
+
+class AutoEnterParallelSection
+{
+  private:
+    JSContext *cx_;
+    uint8_t *prevIonTop_;
+
+  public:
+    AutoEnterParallelSection(JSContext *cx)
+      : cx_(cx),
+        prevIonTop_(cx->mainThread().ionTop)
+    {
+        // Note: we do not allow GC during parallel sections.
+        // Moreover, we do not wish to worry about making
+        // write barriers thread-safe.  Therefore, we guarantee
+        // that there is no incremental GC in progress:
+
+        if (IsIncrementalGCInProgress(cx->runtime)) {
+            PrepareForIncrementalGC(cx->runtime);
+            FinishIncrementalGC(cx->runtime, gcreason::API);
+        }
+
+        cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
+    }
+
+    ~AutoEnterParallelSection() {
+        cx_->mainThread().ionTop = prevIonTop_;
+    }
+};
+
+ParallelResult
+js::ParallelDo::executeInParallel()
+{
+    // Recursive use of the ThreadPool is not supported.
+    if (ForkJoinSlice::Current() != NULL)
+        return TP_RETRY_SEQUENTIALLY;
+
+    AutoEnterParallelSection enter(cx_);
+
+    ThreadPool *threadPool = &cx_->runtime->threadPool;
+    uint32_t numSlices = ForkJoinSlices(cx_);
+
+    RootedObject rootedFun(cx_, fun_);
+    ForkJoinShared shared(cx_, threadPool, rootedFun, numSlices, numSlices - 1, &bailoutRecords[0]);
+    if (!shared.init())
+        return TP_RETRY_SEQUENTIALLY;
+
+    return shared.execute();
+}
+
+bool
+js::ParallelDo::hasScript(Vector<types::RecompileInfo> &scripts, JSScript *script)
+{
+    for (uint32_t i = 0; i < scripts.length(); i++) {
+        if (scripts[i] == script->parallelIonScript()->recompileInfo())
+            return true;
+    }
+    return false;
+}
+
+// Can only enter callees with a valid IonScript.
+template <uint32_t maxArgc>
+class ParallelIonInvoke
+{
+    EnterIonCode enter_;
+    void *jitcode_;
+    void *calleeToken_;
+    Value argv_[maxArgc + 2];
+    uint32_t argc_;
+
+  public:
+    Value *args;
+
+    ParallelIonInvoke(JSContext *cx, HandleFunction callee, uint32_t argc)
+      : argc_(argc),
+        args(argv_ + 2)
+    {
+        JS_ASSERT(argc <= maxArgc + 2);
+
+        // Set 'callee' and 'this'.
+        argv_[0] = ObjectValue(*callee);
+        argv_[1] = UndefinedValue();
+
+        // Find JIT code pointer.
+        IonScript *ion = callee->nonLazyScript()->parallelIonScript();
+        IonCode *code = ion->method();
+        jitcode_ = code->raw();
+        enter_ = cx->compartment->ionCompartment()->enterJIT();
+        calleeToken_ = CalleeToParallelToken(callee);
+    }
+
+    bool invoke() {
+        Value result;
+        enter_(jitcode_, argc_ + 1, argv_ + 1, NULL, calleeToken_, &result);
+        return !result.isMagic();
+    }
+};
+
 /////////////////////////////////////////////////////////////////////////////
 // ForkJoinShared
 //
 
 ForkJoinShared::ForkJoinShared(JSContext *cx,
                                ThreadPool *threadPool,
-                               ForkJoinOp &op,
+                               HandleObject fun,
                                uint32_t numSlices,
                                uint32_t uncompleted,
                                ParallelBailoutRecord *records)
   : cx_(cx),
     threadPool_(threadPool),
-    op_(op),
+    fun_(fun),
     numSlices_(numSlices),
     rendezvousEnd_(NULL),
     cxLock_(NULL),
@@ -347,8 +804,11 @@ ForkJoinShared::init()
 
 ForkJoinShared::~ForkJoinShared()
 {
-    PR_DestroyCondVar(rendezvousEnd_);
-    PR_DestroyLock(cxLock_);
+    if (rendezvousEnd_)
+        PR_DestroyCondVar(rendezvousEnd_);
+
+    if (cxLock_)
+        PR_DestroyLock(cxLock_);
 
     while (allocators_.length() > 0)
         js_delete(allocators_.popCopy());
@@ -464,8 +924,45 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
                         this, &records_[threadId]);
     AutoSetForkJoinSlice autoContext(&slice);
 
-    if (!op_.parallel(slice))
+    Spew(SpewOps, "Up");
+
+    // Make a new IonContext for the slice, which is needed if we need to
+    // re-enter the VM.
+    IonContext icx(cx_, cx_->compartment, NULL);
+    uintptr_t *myStackTop = (uintptr_t*)&icx;
+
+    JS_ASSERT(slice.bailoutRecord->topScript == NULL);
+
+    // This works in concert with ForkJoinSlice::recordStackExtent
+    // to establish the stack extent for this slice.
+    slice.recordStackBase(myStackTop);
+
+    js::PerThreadData *pt = slice.perThreadData;
+    RootedObject fun(pt, fun_);
+    JS_ASSERT(fun->isFunction());
+    RootedFunction callee(cx_, fun->toFunction());
+    if (!callee->nonLazyScript()->hasParallelIonScript()) {
+        // Sometimes, particularly with GCZeal, the parallel ion
+        // script can be collected between starting the parallel
+        // op and reaching this point.  In that case, we just fail
+        // and fallback.
+        Spew(SpewOps, "Down (Script no longer present)");
+        slice.bailoutRecord->setCause(ParallelBailoutMainScriptNotPresent, NULL, NULL);
         setAbortFlag(false);
+    } else {
+        ParallelIonInvoke<3> fii(cx_, callee, 3);
+
+        fii.args[0] = Int32Value(slice.sliceId);
+        fii.args[1] = Int32Value(slice.numSlices);
+        fii.args[2] = BooleanValue(false);
+
+        bool ok = fii.invoke();
+        JS_ASSERT(ok == !slice.bailoutRecord->topScript);
+        if (!ok)
+            setAbortFlag(false);
+    }
+
+    Spew(SpewOps, "Down");
 }
 
 struct AutoInstallForkJoinStackExtents : public gc::StackExtents
@@ -694,8 +1191,6 @@ ForkJoinShared::requestZoneGC(Zone *zone,
     cx_->runtime->triggerOperationCallback();
 }
 
-#endif // JS_THREADSAFE
-
 /////////////////////////////////////////////////////////////////////////////
 // ForkJoinSlice
 //
@@ -736,67 +1231,45 @@ ForkJoinShared::removeSlice(ForkJoinSlice *slice)
 bool
 ForkJoinSlice::isMainThread()
 {
-#ifdef JS_THREADSAFE
     return perThreadData == &shared->runtime()->mainThread;
-#else
-    return true;
-#endif
 }
 
 JSRuntime *
 ForkJoinSlice::runtime()
 {
-#ifdef JS_THREADSAFE
     return shared->runtime();
-#else
-    return NULL;
-#endif
 }
 
 JSContext *
 ForkJoinSlice::acquireContext()
 {
-#ifdef JS_THREADSAFE
     return shared->acquireContext();
-#else
-    return NULL;
-#endif
 }
 
 void
 ForkJoinSlice::releaseContext()
 {
-#ifdef JS_THREADSAFE
     return shared->releaseContext();
-#endif
 }
 
 bool
 ForkJoinSlice::check()
 {
-#ifdef JS_THREADSAFE
     if (runtime()->interrupt)
         return shared->check(*this);
     else
         return true;
-#else
-    return false;
-#endif
 }
 
 bool
 ForkJoinSlice::InitializeTLS()
 {
-#ifdef JS_THREADSAFE
     if (!TLSInitialized) {
         TLSInitialized = true;
         PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
         return status == PR_SUCCESS;
     }
     return true;
-#else
-    return true;
-#endif
 }
 
 bool
@@ -844,85 +1317,23 @@ void ForkJoinSlice::recordStackBase(uintptr_t *baseAddr)
 void
 ForkJoinSlice::requestGC(gcreason::Reason reason)
 {
-#ifdef JS_THREADSAFE
     shared->requestGC(reason);
-#endif
 }
 
 void
 ForkJoinSlice::requestZoneGC(Zone *zone,
                              gcreason::Reason reason)
 {
-#ifdef JS_THREADSAFE
     shared->requestZoneGC(zone, reason);
-#endif
 }
 
 /////////////////////////////////////////////////////////////////////////////
 
-namespace js {
-class AutoEnterParallelSection
-{
-  private:
-    JSContext *cx_;
-    uint8_t *prevIonTop_;
-
-  public:
-    AutoEnterParallelSection(JSContext *cx)
-      : cx_(cx),
-        prevIonTop_(cx->mainThread().ionTop)
-    {
-        // Note: we do not allow GC during parallel sections.
-        // Moreover, we do not wish to worry about making
-        // write barriers thread-safe.  Therefore, we guarantee
-        // that there is no incremental GC in progress:
-
-        if (IsIncrementalGCInProgress(cx->runtime)) {
-            PrepareForIncrementalGC(cx->runtime);
-            FinishIncrementalGC(cx->runtime, gcreason::API);
-        }
-
-        cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
-    }
-
-    ~AutoEnterParallelSection() {
-        cx_->mainThread().ionTop = prevIonTop_;
-    }
-};
-}
-
 uint32_t
 js::ForkJoinSlices(JSContext *cx)
 {
-#ifndef JS_THREADSAFE
-    return 1;
-#else
     // Parallel workers plus this main thread.
     return cx->runtime->threadPool.numWorkers() + 1;
-#endif
-}
-
-ParallelResult
-js::ExecuteForkJoinOp(JSContext *cx, ForkJoinOp &op, ParallelBailoutRecord *records)
-{
-#ifdef JS_THREADSAFE
-    // Recursive use of the ThreadPool is not supported.
-    if (ForkJoinSlice::Current() != NULL)
-        return TP_RETRY_SEQUENTIALLY;
-
-    AutoEnterParallelSection enter(cx);
-
-    ThreadPool *threadPool = &cx->runtime->threadPool;
-    uint32_t numSlices = ForkJoinSlices(cx);
-
-    ForkJoinShared shared(cx, threadPool, op, numSlices, numSlices - 1, records);
-    if (!shared.init())
-        return TP_RETRY_SEQUENTIALLY;
-
-    return shared.execute();
-#else
-    return TP_RETRY_SEQUENTIALLY;
-#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -982,7 +1393,7 @@ js::ParallelBailoutRecord::addTrace(JSScript *script,
 // Debug spew
 //
 
-#if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
+#ifdef DEBUG
 
 static const char *
 ExecutionStatusToString(ExecutionStatus status)
@@ -1301,353 +1712,9 @@ parallel::SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
     spewer.spewBailoutIR(bblockId, lirId, lir, mir, script, pc);
 }
 
-#endif // DEBUG && JS_THREADSAFE && JS_ION
+#endif // DEBUG
 
-#ifdef JS_ION
-class AutoEnterWarmup
-{
-    JSRuntime *runtime_;
+#endif // JS_THREADSAFE_ION
 
-  public:
-    AutoEnterWarmup(JSRuntime *runtime) : runtime_(runtime) { runtime_->parallelWarmup++; }
-    ~AutoEnterWarmup() { runtime_->parallelWarmup--; }
-};
 
-// Can only enter callees with a valid IonScript.
-template <uint32_t maxArgc>
-class ParallelIonInvoke
-{
-    EnterIonCode enter_;
-    void *jitcode_;
-    void *calleeToken_;
-    Value argv_[maxArgc + 2];
-    uint32_t argc_;
-
-  public:
-    Value *args;
-
-    ParallelIonInvoke(JSContext *cx, HandleFunction callee, uint32_t argc)
-      : argc_(argc),
-        args(argv_ + 2)
-    {
-        JS_ASSERT(argc <= maxArgc + 2);
-
-        // Set 'callee' and 'this'.
-        argv_[0] = ObjectValue(*callee);
-        argv_[1] = UndefinedValue();
-
-        // Find JIT code pointer.
-        IonScript *ion = callee->nonLazyScript()->parallelIonScript();
-        IonCode *code = ion->method();
-        jitcode_ = code->raw();
-        enter_ = cx->compartment->ionCompartment()->enterJIT();
-        calleeToken_ = CalleeToParallelToken(callee);
-    }
-
-    bool invoke() {
-        Value result;
-        enter_(jitcode_, argc_ + 1, argv_ + 1, NULL, calleeToken_, &result);
-        return !result.isMagic();
-    }
-};
-#endif // JS_ION
-
-class ParallelDo : public ForkJoinOp
-{
-    JSContext *cx_;
-    HeapPtrObject fun_;
-    Vector<ParallelBailoutRecord, 16> bailoutRecords;
-
-  public:
-    // For tests, make sure to keep this in sync with minItemsTestingThreshold.
-    const static uint32_t MAX_BAILOUTS = 3;
-    uint32_t bailouts;
-    ParallelBailoutCause cause;
-
-    ParallelDo(JSContext *cx, HandleObject fun)
-      : cx_(cx),
-        fun_(fun),
-        bailoutRecords(cx),
-        bailouts(0),
-        cause(ParallelBailoutNone)
-    { }
-
-#ifndef JS_ION
-    ExecutionStatus apply() {
-        if (!executeSequentially())
-            return ExecutionFatal;
-        return ExecutionSequential;
-    }
-#else
-    ExecutionStatus apply() {
-        SpewBeginOp(cx_, "ParallelDo");
-
-        uint32_t slices = ForkJoinSlices(cx_);
-
-        if (!ion::IsEnabled(cx_))
-            return SpewEndOp(disqualifyFromParallelExecution());
-
-        if (!bailoutRecords.resize(slices))
-            return SpewEndOp(ExecutionFatal);
-
-        for (uint32_t i = 0; i < slices; i++)
-            bailoutRecords[i].init(cx_, 0, NULL);
-
-        // Try to execute in parallel.  If a bailout occurs, re-warmup
-        // and then try again.  Repeat this a few times.
-        while (bailouts < MAX_BAILOUTS) {
-            for (uint32_t i = 0; i < slices; i++)
-                bailoutRecords[i].reset(cx_);
-
-            MethodStatus status = compileForParallelExecution();
-            if (status == Method_Error)
-                return SpewEndOp(ExecutionFatal);
-            if (status != Method_Compiled)
-                return SpewEndOp(disqualifyFromParallelExecution());
-
-            ParallelResult result = js::ExecuteForkJoinOp(cx_, *this, &bailoutRecords[0]);
-            switch (result) {
-              case TP_RETRY_AFTER_GC:
-                Spew(SpewBailouts, "Bailout due to GC request");
-                break;
-
-              case TP_RETRY_SEQUENTIALLY:
-                Spew(SpewBailouts, "Bailout not categorized");
-                break;
-
-              case TP_SUCCESS:
-                return SpewEndOp(ExecutionParallel);
-
-              case TP_FATAL:
-                return SpewEndOp(ExecutionFatal);
-            }
-
-            bailouts += 1;
-            determineBailoutCause();
-
-            SpewBailout(bailouts, cause);
-
-            if (!invalidateBailedOutScripts())
-                return SpewEndOp(ExecutionFatal);
-
-            if (!warmupForParallelExecution())
-                return SpewEndOp(ExecutionFatal);
-        }
-
-        // After enough tries, just execute sequentially.
-        return SpewEndOp(disqualifyFromParallelExecution());
-    }
-
-    MethodStatus compileForParallelExecution() {
-        // The kernel should be a self-hosted function.
-        if (!fun_->isFunction())
-            return Method_Skipped;
-
-        RootedFunction callee(cx_, fun_->toFunction());
-
-        if (!callee->isInterpreted() || !callee->isSelfHostedBuiltin())
-            return Method_Skipped;
-
-        if (callee->isInterpretedLazy() && !callee->initializeLazyScript(cx_))
-            return Method_Error;
-
-        // If this function has not been run enough to enable parallel
-        // execution, perform a warmup.
-        RootedScript script(cx_, callee->nonLazyScript());
-        if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel) {
-            if (!warmupForParallelExecution())
-                return Method_Error;
-        }
-
-        if (script->hasParallelIonScript() &&
-            !script->parallelIonScript()->hasInvalidatedCallTarget())
-        {
-            Spew(SpewOps, "Already compiled");
-            return Method_Compiled;
-        }
-
-        Spew(SpewOps, "Compiling all reachable functions");
-
-        ParallelCompileContext compileContext(cx_);
-        if (!compileContext.appendToWorklist(script))
-            return Method_Error;
-
-        MethodStatus status = compileContext.compileTransitively();
-        if (status != Method_Compiled)
-            return status;
-
-        // it can happen that during transitive compilation, our
-        // callee's parallel ion script is invalidated or GC'd. So
-        // before we declare success, double check that it's still
-        // compiled!
-        if (!script->hasParallelIonScript())
-            return Method_Skipped;
-
-        return Method_Compiled;
-    }
-
-    ExecutionStatus disqualifyFromParallelExecution() {
-        if (!executeSequentially())
-            return ExecutionFatal;
-        return ExecutionSequential;
-    }
-
-    void determineBailoutCause() {
-        cause = ParallelBailoutNone;
-        for (uint32_t i = 0; i < bailoutRecords.length(); i++) {
-            if (bailoutRecords[i].cause == ParallelBailoutNone)
-                continue;
-
-            if (bailoutRecords[i].cause == ParallelBailoutInterrupt)
-                continue;
-
-            cause = bailoutRecords[i].cause;
-        }
-    }
-
-    bool invalidateBailedOutScripts() {
-        RootedScript script(cx_, fun_->toFunction()->nonLazyScript());
-
-        // Sometimes the script is collected or invalidated already,
-        // for example when a full GC runs at an inconvenient time.
-        if (!script->hasParallelIonScript()) {
-            return true;
-        }
-
-        Vector<types::RecompileInfo> invalid(cx_);
-        for (uint32_t i = 0; i < bailoutRecords.length(); i++) {
-            JSScript *script = bailoutRecords[i].topScript;
-            if (script && script->hasParallelIonScript() &&
-                !hasScript(invalid, script))
-            {
-                if (!invalid.append(script->parallelIonScript()->recompileInfo()))
-                    return false;
-            }
-        }
-        Invalidate(cx_, invalid);
-        return true;
-    }
-
-    bool warmupForParallelExecution() {
-        AutoEnterWarmup warmup(cx_->runtime);
-        return executeSequentially();
-    }
-#endif // JS_ION
-
-    bool executeSequentially() {
-        uint32_t numSlices = ForkJoinSlices(cx_);
-        RootedValue funVal(cx_, ObjectValue(*fun_));
-        FastInvokeGuard fig(cx_, funVal);
-        for (uint32_t i = 0; i < numSlices; i++) {
-            InvokeArgsGuard &args = fig.args();
-            if (!args.pushed() && !cx_->stack.pushInvokeArgs(cx_, 3, &args))
-                return false;
-            args.setCallee(funVal);
-            args.setThis(UndefinedValue());
-            args[0].setInt32(i);
-            args[1].setInt32(numSlices);
-            args[2].setBoolean(!!cx_->runtime->parallelWarmup);
-            if (!fig.invoke(cx_))
-                return false;
-        }
-        return true;
-    }
-
-    virtual bool parallel(ForkJoinSlice &slice) {
-#ifndef JS_ION
-        JS_NOT_REACHED("Parallel execution without ion");
-        return false;
-#else
-        Spew(SpewOps, "Up");
-
-        // Make a new IonContext for the slice, which is needed if we need to
-        // re-enter the VM.
-        IonContext icx(cx_, cx_->compartment, NULL);
-        uintptr_t *myStackTop = (uintptr_t*)&icx;
-
-        JS_ASSERT(slice.bailoutRecord->topScript == NULL);
-
-        // This works in concert with ForkJoinSlice::recordStackExtent
-        // to establish the stack extent for this slice.
-        slice.recordStackBase(myStackTop);
-
-        js::PerThreadData *pt = slice.perThreadData;
-        RootedObject fun(pt, fun_);
-        JS_ASSERT(fun->isFunction());
-        RootedFunction callee(cx_, fun->toFunction());
-        if (!callee->nonLazyScript()->hasParallelIonScript()) {
-            // Sometimes, particularly with GCZeal, the parallel ion
-            // script can be collected between starting the parallel
-            // op and reaching this point.  In that case, we just fail
-            // and fallback.
-            Spew(SpewOps, "Down (Script no longer present)");
-            return false;
-        }
-
-        ParallelIonInvoke<3> fii(cx_, callee, 3);
-
-        fii.args[0] = Int32Value(slice.sliceId);
-        fii.args[1] = Int32Value(slice.numSlices);
-        fii.args[2] = BooleanValue(false);
-
-        bool ok = fii.invoke();
-        JS_ASSERT(ok == !slice.bailoutRecord->topScript);
-
-        Spew(SpewOps, "Down");
-
-        return ok;
-#endif // JS_ION
-    }
-
-    inline bool hasScript(Vector<types::RecompileInfo> &scripts, JSScript *script) {
-        for (uint32_t i = 0; i < scripts.length(); i++) {
-            if (scripts[i] == script->parallelIonScript()->recompileInfo())
-                return true;
-        }
-        return false;
-    }
-};
-
-bool
-js::ForkJoin(JSContext *cx, CallArgs &args)
-{
-    JS_ASSERT(args[0].isObject());
-    JS_ASSERT(args[0].toObject().isFunction());
-
-    RootedObject fun(cx, &args[0].toObject());
-    ParallelDo op(cx, fun);
-    ExecutionStatus status = op.apply();
-    if (status == ExecutionFatal)
-        return false;
-
-    if (args[1].isObject()) {
-        RootedObject feedback(cx, &args[1].toObject());
-        if (feedback && feedback->isFunction()) {
-            InvokeArgsGuard feedbackArgs;
-            if (!cx->stack.pushInvokeArgs(cx, 3, &feedbackArgs))
-                return false;
-
-            const char *resultString;
-            switch (status) {
-              case ExecutionParallel:
-                resultString = (op.bailouts == 0 ? "success" : "bailout");
-                break;
-
-              case ExecutionFatal:
-              case ExecutionSequential:
-                resultString = "disqualified";
-                break;
-            }
-            feedbackArgs.setCallee(ObjectValue(*feedback));
-            feedbackArgs.setThis(UndefinedValue());
-            feedbackArgs[0].setString(JS_NewStringCopyZ(cx, resultString));
-            feedbackArgs[1].setInt32(op.bailouts);
-            feedbackArgs[2].setInt32(op.cause);
-            if (!Invoke(cx, feedbackArgs))
-                return false;
-        }
-    }
-
-    return true;
-}
 
