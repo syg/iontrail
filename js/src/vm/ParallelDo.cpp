@@ -579,7 +579,6 @@ class ParallelDo : public ForkJoinOp
             if (script && script->hasParallelIonScript() &&
                 !hasScript(invalid, script))
             {
-                JS_ASSERT(script->hasParallelIonScript());
                 if (!invalid.append(script->parallelIonScript()->recompileInfo()))
                     return false;
             }
