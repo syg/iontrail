@@ -116,6 +116,8 @@ class IonCache::StubPatcher
     bool hasExitOffset_ : 1;
     bool hasStubCodePatchOffset_ : 1;
 
+    CodeLocationLabel rejoinLabel_;
+
     RepatchLabel failures_;
 
     CodeOffsetJump exitOffset_;
@@ -123,9 +125,10 @@ class IonCache::StubPatcher
     CodeOffsetLabel stubCodePatchOffset_;
 
   public:
-    StubPatcher()
+    StubPatcher(CodeLocationLabel rejoinLabel)
       : hasExitOffset_(false),
         hasStubCodePatchOffset_(false),
+        rejoinLabel_(rejoinLabel),
         failures_(),
         exitOffset_(),
         rejoinOffset_(),
@@ -176,24 +179,10 @@ class IonCache::StubPatcher
         hasStubCodePatchOffset_ = true;
     }
 
-    void patchRejoin(MacroAssembler &masm, IonCode *code, CodeLocationLabel rejoinLabel) {
+    void patchRejoin(MacroAssembler &masm, IonCode *code) {
         rejoinOffset_.fixup(&masm);
         CodeLocationJump rejoinJump(code, rejoinOffset_);
-        PatchJump(rejoinJump, rejoinLabel);
-    }
-
-    bool hasExitOffset() {
-        return hasExitOffset_;
-    }
-
-    CodeLocationJump patchExit(MacroAssembler &masm, IonCode *code, CodeLocationLabel exitLabel) {
-        JS_ASSERT(hasExitOffset());
-
-        exitOffset_.fixup(&masm);
-        CodeLocationJump exitJump(code, exitOffset_);
-        PatchJump(exitJump, exitLabel);
-
-        return exitJump;
+        PatchJump(rejoinJump, rejoinLabel_);
     }
 
     void patchStubCode(MacroAssembler &masm, IonCode *code) {
@@ -203,9 +192,69 @@ class IonCache::StubPatcher
                                                ImmWord(uintptr_t(code)), STUB_ADDR);
         }
     }
+
+    virtual void patchExit(MacroAssembler &masm, IonCode *code) = 0;
 };
 
 const ImmWord IonCache::StubPatcher::STUB_ADDR = ImmWord(uintptr_t(0xdeadc0de));
+
+class RepatchStubPatcher : public IonCache::StubPatcher
+{
+    CodeLocationLabel exitLabel_;
+    CodeLocationJump *lastJump_;
+
+  public:
+    RepatchStubPatcher(CodeLocationLabel rejoinLabel, CodeLocationLabel exitLabel,
+                       CodeLocationJump *lastJump)
+      : StubPatcher(rejoinLabel),
+        exitLabel_(exitLabel),
+        lastJump_(lastJump)
+    {
+        JS_ASSERT(lastJump);
+    }
+
+    void patchExit(MacroAssembler &masm, IonCode *code) {
+        // Patch the previous exitJump of the last stub, or the jump from the
+        // codeGen, to jump into the newly allocated code.
+        PatchJump(*lastJump_, CodeLocationLabel(code));
+
+        // If this path is not taken, we are producing an entry which can no
+        // longer go back into the update function.
+        if (hasExitOffset_) {
+            exitOffset_.fixup(&masm);
+            CodeLocationJump exitJump(code, exitOffset_);
+            PatchJump(exitJump, exitLabel_);
+
+            // When the last stub fails, it fallback to the ool call which can
+            // produce a stub. Next time we generate a stub, we will patch the
+            // exit to try the new stub.
+            *lastJump_ = exitJump;
+        }
+    }
+};
+
+class DispatchStubPatcher : public IonCache::StubPatcher
+{
+    uint8_t **stubEntry_;
+
+  public:
+    DispatchStubPatcher(CodeLocationLabel rejoinLabel, uint8_t **stubEntry)
+      : StubPatcher(rejoinLabel),
+        stubEntry_(stubEntry)
+    {
+        JS_ASSERT(stubEntry);
+    }
+
+    void patchExit(MacroAssembler &masm, IonCode *code) {
+        if (hasExitOffset_) {
+            exitOffset_.fixup(&masm);
+            CodeLocationJump exitJump(code, exitOffset_);
+            PatchJump(exitJump, CodeLocationLabel(*stubEntry_));
+
+            *stubEntry_ = code->raw();
+        }
+    }
+};
 
 void
 IonCache::attachStub(MacroAssembler &masm, StubPatcher &patcher, IonCode *code)
@@ -214,20 +263,10 @@ IonCache::attachStub(MacroAssembler &masm, StubPatcher &patcher, IonCode *code)
     incrementStubCount();
 
     // Update the success path to continue after the IC initial jump.
-    patcher.patchRejoin(masm, code, rejoinLabel());
+    patcher.patchRejoin(masm, code);
 
-    // Patch the previous exitJump of the last stub, or the jump from the
-    // codeGen, to jump into the newly allocated code.
-    PatchJump(lastJump_, CodeLocationLabel(code));
-
-    // If this path is not taken, we are producing an entry which can no longer
-    // go back into the update function.
-    if (patcher.hasExitOffset()) {
-        // When the last stub fails, it fallback to the ool call which can
-        // produce a stub. Next time we generate a stub, we will patch the
-        // exit to try the new stub.
-        lastJump_ = patcher.patchExit(masm, code, fallbackLabel());
-    }
+    // Update the failure path.
+    patcher.patchExit(masm, code);
 
     // Replace the STUB_ADDR constant by the address of the generated stub, such
     // as it can be kept alive even if the cache is flushed (see
@@ -520,7 +559,7 @@ GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSOb
 {
     MacroAssembler masm(cx);
 
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
     GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output());
 
     const char *attachKind = "non idempotent reading";
@@ -796,7 +835,7 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
     // properly constructed.
     masm.setFramePushed(ion->frameSize());
 
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
     if (!generateCallGetter(cx, masm, patcher, obj, holder, shape, name(),
                             liveRegs_, returnAddr, pc))
     {
@@ -817,7 +856,7 @@ GetPropertyIC::attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj)
 
     Label failures;
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     // Guard object is a dense array.
     RootedObject globalObj(cx, &script->global());
@@ -865,7 +904,7 @@ GetPropertyIC::attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *o
 
     Label failures;
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     Register tmpReg;
     if (output().hasValue()) {
@@ -1248,6 +1287,7 @@ IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
     initialJump_.repoint(code, &masm);
     lastJump_.repoint(code, &masm);
     fallbackLabel_.repoint(code, &masm);
+    rejoinLabel_.repoint(code, &masm);
 }
 
 void
@@ -1273,7 +1313,7 @@ SetPropertyIC::attachNativeExisting(JSContext *cx, IonScript *ion,
                                     HandleObject obj, HandleShape shape)
 {
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     patcher.branchExit(masm, Assembler::NotEqual,
                        Address(object(), JSObject::offsetOfShape()),
@@ -1310,7 +1350,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
                                 void *returnAddr)
 {
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     // Need to set correct framePushed on the masm so that exit frame descriptors are
     // properly constructed.
@@ -1460,7 +1500,7 @@ SetPropertyIC::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj,
                                   HandleShape propShape)
 {
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     Label failures;
 
@@ -1721,7 +1761,7 @@ GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
     ValueOperand val = index().reg().valueReg();
     masm.branchTestValue(Assembler::NotEqual, val, idval, &nonRepatchFailures);
 
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
     GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output(),
                      &nonRepatchFailures);
 
@@ -1736,7 +1776,7 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
 
     Label failures;
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     Register scratchReg = output().scratchReg().gpr();
     JS_ASSERT(scratchReg != InvalidReg);
@@ -1802,7 +1842,7 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
 
     Label failures;
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     // The array type is the object within the table of typed array classes.
     int arrayType = TypedArray::type(obj);
@@ -1941,7 +1981,7 @@ BindNameIC::attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain)
     JS_ASSERT(scopeChain->isGlobal());
 
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     // Guard on the scope chain.
     patcher.branchExit(masm, Assembler::NotEqual, scopeChainReg(),
@@ -2008,7 +2048,7 @@ BindNameIC::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain,
     JS_ASSERT(IsCacheableNonGlobalScope(scopeChain));
 
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     // Guard on the shape of the scope chain.
     Label nonRepatchFailures;
@@ -2100,7 +2140,7 @@ NameIC::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObj
 {
     MacroAssembler masm(cx);
     Label failures;
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     Register scratchReg = outputReg().valueReg().scratchReg();
 
@@ -2214,7 +2254,7 @@ CallsiteCloneIC::attach(JSContext *cx, IonScript *ion, HandleFunction original,
                         HandleFunction clone)
 {
     MacroAssembler masm(cx);
-    StubPatcher patcher;
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
 
     // Guard against object identity on the original.
     patcher.branchExit(masm, Assembler::NotEqual, calleeReg(),

@@ -153,13 +153,7 @@ class IonCache
     CodeLocationJump initialJump_;
     CodeLocationJump lastJump_;
     CodeLocationLabel fallbackLabel_;
-
-    // Offset from the initial jump to the rejoin label.
-#ifdef JS_CPU_ARM
-    static const size_t REJOIN_LABEL_OFFSET = 4;
-#else
-    static const size_t REJOIN_LABEL_OFFSET = 0;
-#endif
+    CodeLocationLabel rejoinLabel_;
 
     // Location of this operation, NULL for idempotent caches.
     JSScript *script;
@@ -171,19 +165,6 @@ class IonCache
         // The IC should stop generating stubs before wrapping stubCount.
         stubCount_++;
         JS_ASSERT(stubCount_);
-    }
-
-    CodeLocationLabel fallbackLabel() const {
-        return fallbackLabel_;
-    }
-    CodeLocationLabel rejoinLabel() const {
-        uint8_t *ptr = initialJump_.raw();
-#ifdef JS_CPU_ARM
-        uint32_t i = 0;
-        while (i < REJOIN_LABEL_OFFSET)
-            ptr = Assembler::nextInstruction(ptr, &i);
-#endif
-        return CodeLocationLabel(ptr);
     }
 
   public:
@@ -213,8 +194,7 @@ class IonCache
     void setInlineJump(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
         initialJump_ = initialJump;
         lastJump_ = initialJump;
-
-        JS_ASSERT(rejoinLabel.offset() == initialJump.offset() + REJOIN_LABEL_OFFSET);
+        rejoinLabel_ = rejoinLabel;
     }
 
     // Set the initial 'out-of-line' jump state of the cache. The fallbackLabel is
@@ -258,7 +238,7 @@ class IonCache
                            IonScript *ion, const char *attachKind);
 
     bool isAllocated() {
-        return fallbackLabel().isSet();
+        return fallbackLabel_.isSet();
     }
     bool pure() {
         return pure_;
