@@ -265,10 +265,13 @@ class DispatchStubPatcher : public IonCache::StubPatcher
 
     void patchExit(MacroAssembler &masm, IonCode *code) {
         if (hasExitOffset_) {
+            // Jump to the previous entry in the stub dispatch table. We
+            // have not yet executed the code we're patching the jump in.
             exitOffset_.fixup(&masm);
             CodeLocationJump exitJump(code, exitOffset_);
             PatchJump(exitJump, CodeLocationLabel(*stubEntry_));
 
+            // Update the dispatch table.
             *stubEntry_ = code->raw();
         }
     }

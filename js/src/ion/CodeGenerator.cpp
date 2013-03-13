@@ -4485,7 +4485,7 @@ CodeGenerator::link()
 
     // Either all ICs should be dispatch style or repatch style.
     bool cachesUseDispatch = !cacheDispatchLabels_.empty();
-    JS_ASSERT(cacheList_.length() == cacheDispatchLabels_.length());
+    JS_ASSERT_IF(cachesUseDispatch, cacheList_.length() == cacheDispatchLabels_.length());
 
     uint32_t scriptFrameSize = frameClass_ == FrameSizeClass::None()
                            ? frameDepth_
