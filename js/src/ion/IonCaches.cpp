@@ -1169,7 +1169,6 @@ bool
 ParallelGetPropertyIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj,
                                       JSObject *holder, HandleShape shape, uint8_t **stubEntry)
 {
-    printf("here\n");
     DispatchStubPatcher patcher(rejoinLabel_, stubEntry);
     return attachReadSlotWithPatcher(cx, patcher, ion, obj, holder, shape);
 }
