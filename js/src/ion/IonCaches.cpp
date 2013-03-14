@@ -1176,30 +1176,32 @@ ParallelGetPropertyIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObj
 bool
 ParallelGetPropertyIC::tryAttachReadSlot(LockedJSContext &cx, IonScript *ion,
                                          HandleObject obj, HandlePropertyName name,
-                                         uint8_t **stubEntry)
+                                         uint8_t **stubEntry, bool *isCacheable)
 {
+    *isCacheable = false;
+
     RootedObject checkObj(cx, obj);
     bool isListBase = IsCacheableListBase(obj);
     if (isListBase)
         checkObj = obj->getTaggedProto().toObjectOrNull();
 
     if (!checkObj || !checkObj->isNative())
-        return false;
+        return true;
 
     // If the cache is idempotent, watch out for resolve hooks or non-native
     // objects on the proto chain. We check this before calling lookupProperty,
     // to make sure no effectful lookup hooks or resolve hooks are called.
     if (idempotent() && !checkObj->hasIdempotentProtoChain())
-        return false;
+        return true;
 
     // Bail if we have hooks.
     if (obj->getOps()->lookupProperty || obj->getOps()->lookupGeneric)
-        return false;
+        return true;
 
     RootedShape shape(cx);
     RootedObject holder(cx);
     if (!js::LookupPropertyPure(checkObj, NameToId(name), holder.address(), shape.address()))
-        return false;
+        return true;
 
     RootedScript script(cx);
     jsbytecode *pc;
@@ -1217,7 +1219,7 @@ ParallelGetPropertyIC::tryAttachReadSlot(LockedJSContext &cx, IonScript *ion,
         // With Proxies, we cannot garantee any property access as the proxy can
         // mask any property from the prototype chain.
         if (obj->isProxy())
-            return false;
+            return true;
     }
 
     // TI infers the possible types of native object properties. There's one
@@ -1230,13 +1232,15 @@ ParallelGetPropertyIC::tryAttachReadSlot(LockedJSContext &cx, IonScript *ion,
         holder->hasSingletonType() &&
         holder->getSlot(shape->slot()).isUndefined())
     {
-        return false;
+        return true;
     }
+
+    *isCacheable = true;
 
     return attachReadSlot(cx, ion, obj, holder, shape, stubEntry);
 }
 
-bool
+ParallelResult
 ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
                               HandleObject obj, MutableHandleValue vp)
 {
@@ -1258,7 +1262,7 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
     // Grab the property early, as the pure path is fast anyways and doesn't
     // need a lock. If we can't do it purely, bail out of parallel execution.
     if (!GetPropertyPure(obj, NameToId(name), vp.address()))
-        return false;
+        return TP_RETRY_SEQUENTIALLY;
 
     {
         // Lock the context before mutating the cache. Ideally we'd like to do
@@ -1270,17 +1274,22 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
             // Check if we have already stubbed the current object to avoid
             // attaching a duplicate stub.
             if (!cache.initStubbedObjects(cx))
-                return false;
+                return TP_FATAL;
             ObjectSet::AddPtr p = cache.stubbedObjects()->lookupForAdd(obj);
             if (p)
-                return true;
+                return TP_SUCCESS;
             if (!cache.stubbedObjects()->add(p, obj))
-                return false;
+                return TP_FATAL;
 
             // See note about the stub limit in GetPropertyCache.
+            bool isCacheable;
             if (!cache.tryAttachReadSlot(cx, ion, obj, name,
-                                         ion->getCacheDispatchEntry(cacheIndex)))
+                                         ion->getCacheDispatchEntry(cacheIndex), &isCacheable))
             {
+                return TP_FATAL;
+            }
+
+            if (!isCacheable) {
                 if (cache.idempotent()) {
                     // Bail out if we can't find the property.
                     parallel::Spew(parallel::SpewBailouts,
@@ -1292,7 +1301,7 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
 
                 // ParallelDo will take care of invalidating all bailed out
                 // scripts, so just bail out now.
-                return false;
+                return TP_RETRY_SEQUENTIALLY;
             }
         }
 
@@ -1300,7 +1309,7 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
 #if JS_HAS_NO_SUCH_METHOD
             // Straight up bail if there's this __noSuchMethod__ hook.
             if (JSOp(*pc) == JSOP_CALLPROP && JS_UNLIKELY(vp.isPrimitive()))
-                return false;
+                return TP_RETRY_SEQUENTIALLY;
 #endif
 
             // Monitor changes to cache entry.
@@ -1308,7 +1317,7 @@ ParallelGetPropertyIC::update(ForkJoinSlice *slice, size_t cacheIndex,
         }
     }
 
-    return true;
+    return TP_SUCCESS;
 }
 
 void

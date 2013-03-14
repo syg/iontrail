@@ -11,14 +11,12 @@
 #include "IonCode.h"
 #include "TypeOracle.h"
 #include "Registers.h"
+#include "vm/ForkJoin.h"
 
 class JSFunction;
 class JSScript;
 
 namespace js {
-
-struct ForkJoinSlice;
-class LockedJSContext;
 
 namespace ion {
 
@@ -615,10 +613,10 @@ class ParallelGetPropertyIC : public GetPropertyIC
     bool attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape, uint8_t **stubEntry);
     bool tryAttachReadSlot(LockedJSContext &cx, IonScript *ion, HandleObject obj,
-                           HandlePropertyName name, uint8_t **stubEntry);
+                           HandlePropertyName name, uint8_t **stubEntry, bool *isCacheable);
 
-    static bool update(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
-                       MutableHandleValue vp);
+    static ParallelResult update(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
+                                 MutableHandleValue vp);
 };
 
 #undef CACHE_HEADER

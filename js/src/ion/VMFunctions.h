@@ -22,7 +22,8 @@ enum DataType {
     Type_Int32,
     Type_Object,
     Type_Value,
-    Type_Handle
+    Type_Handle,
+    Type_ParallelResult
 };
 
 // Contains information about a virtual machine function that can be called
@@ -178,8 +179,13 @@ struct VMFunction
         executionMode(executionMode)
     {
         // Check for valid failure/return type.
-        JS_ASSERT_IF(outParam != Type_Void, returnType == Type_Bool);
-        JS_ASSERT(returnType == Type_Bool || returnType == Type_Object);
+        JS_ASSERT_IF(outParam != Type_Void && executionMode == SequentialExecution,
+                     returnType == Type_Bool);
+        JS_ASSERT_IF(outParam != Type_Void && executionMode == ParallelExecution,
+                     returnType == Type_ParallelResult);
+        JS_ASSERT(returnType == Type_Bool ||
+                  returnType == Type_Object ||
+                  returnType == Type_ParallelResult);
     }
 
     VMFunction(const VMFunction &o)
@@ -206,6 +212,7 @@ template <> struct TypeToDataType<HandleFunction> { static const DataType result
 template <> struct TypeToDataType<HandleScript> { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<HandleValue> { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<MutableHandleValue> { static const DataType result = Type_Handle; };
+template <> struct TypeToDataType<ParallelResult> { static const DataType result = Type_ParallelResult; };
 
 // Convert argument types to properties of the argument known by the jit.
 template <class T> struct TypeToArgProperties {

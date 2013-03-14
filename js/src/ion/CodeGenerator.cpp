@@ -4848,7 +4848,8 @@ CodeGenerator::visitGetPropertyIC(OutOfLineUpdateCache *ool, GetPropertyIC *ic)
     return true;
 }
 
-typedef bool (*ParallelGetPropertyICFn)(ForkJoinSlice *, size_t, HandleObject, MutableHandleValue);
+typedef ParallelResult (*ParallelGetPropertyICFn)(ForkJoinSlice *, size_t, HandleObject,
+                                                  MutableHandleValue);
 const VMFunction ParallelGetPropertyIC::UpdateInfo =
     FunctionInfo<ParallelGetPropertyICFn>(ParallelGetPropertyIC::update);
 

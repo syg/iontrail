@@ -1350,6 +1350,11 @@ GetPropertyHelper(JSContext *cx, HandleObject obj, PropertyName *name, uint32_t 
     return GetPropertyHelper(cx, obj, id, getHow, vp);
 }
 
+/*
+ * The -'Pure' suffixed functions are infallible, but returns false if purity
+ * could not be guaranteed.
+ */
+
 bool
 LookupPropertyPure(RawObject obj, jsid id, RawObject *objp, RawShape *propp);
 

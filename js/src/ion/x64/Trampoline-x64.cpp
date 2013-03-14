@@ -13,6 +13,7 @@
 #include "ion/Bailouts.h"
 #include "ion/VMFunctions.h"
 #include "ion/IonSpewer.h"
+#include "vm/ForkJoin.h"
 
 #include "jsscriptinlines.h"
 
@@ -476,6 +477,10 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
       case Type_Bool:
         masm.testb(rax, rax);
         masm.j(Assembler::Zero, &failure);
+        break;
+      case Type_ParallelResult:
+        masm.cmp32(rax, Imm32(TP_SUCCESS));
+        masm.j(Assembler::NotEqual, &failure);
         break;
       default:
         JS_NOT_REACHED("unknown failure kind");
