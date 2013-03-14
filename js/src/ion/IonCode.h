@@ -434,6 +434,13 @@ struct IonScript
         JS_ASSERT(index < cacheDispatchEntries_);
         return &cacheDispatchTable()[index];
     }
+    uint8_t **maybeGetCacheDispatchEntry(uint32_t index) {
+        // If caches are not dispatch style, there are 0 entries in the
+        // dispatch table.
+        if (cacheDispatchEntries_ > 0)
+            return getCacheDispatchEntry(index);
+        return NULL;
+    }
     size_t runtimeSize() const {
         return runtimeSize_;
     }

@@ -180,7 +180,7 @@ class IonCache
     {
     }
 
-    void disable();
+    void disable(uint8_t **stubEntry);
     inline bool isDisabled() const {
         return disabled_;
     }
@@ -212,7 +212,7 @@ class IonCache
                                      uint8_t **dispatchEntry, MacroAssembler &masm);
 
     // Reset the cache around garbage collection.
-    virtual void reset();
+    virtual void reset(uint8_t **stubEntry);
 
     // Destroy any extra resources the cache uses upon IonCode finalization.
     virtual void destroy() { }
@@ -601,7 +601,7 @@ class ParallelGetPropertyIC : public GetPropertyIC
 
     CACHE_HEADER(ParallelGetProperty)
 
-    void reset();
+    void reset(uint8_t **stubEntry);
     void destroy();
 
     bool initStubbedObjects(JSContext *cx);

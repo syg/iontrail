@@ -798,7 +798,7 @@ IonScript::purgeCaches(JSCompartment *c)
     js::ion::IonContext ictx(NULL, c, NULL);
     AutoFlushCache afc("purgeCaches");
     for (size_t i = 0; i < numCaches(); i++)
-        getCache(i).reset();
+        getCache(i).reset(maybeGetCacheDispatchEntry(i));
 }
 
 void

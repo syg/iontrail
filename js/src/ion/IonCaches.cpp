@@ -1140,9 +1140,9 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
 }
 
 void
-ParallelGetPropertyIC::reset()
+ParallelGetPropertyIC::reset(uint8_t **stubEntry)
 {
-    GetPropertyIC::reset();
+    GetPropertyIC::reset(stubEntry);
     if (stubbedObjects_)
         stubbedObjects_->clear();
 }
@@ -1169,6 +1169,7 @@ bool
 ParallelGetPropertyIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj,
                                       JSObject *holder, HandleShape shape, uint8_t **stubEntry)
 {
+    printf("here\n");
     DispatchStubPatcher patcher(rejoinLabel_, stubEntry);
     return attachReadSlotWithPatcher(cx, patcher, ion, obj, holder, shape);
 }
@@ -1345,21 +1346,28 @@ IonCache::updateDispatchLabelAndEntry(IonCode *code, CodeOffsetLabel &dispatchLa
 }
 
 void
-IonCache::disable()
+IonCache::disable(uint8_t **stubEntry)
 {
-    reset();
+    reset(stubEntry);
     this->disabled_ = 1;
 }
 
 void
-IonCache::reset()
+IonCache::reset(uint8_t **stubEntry)
 {
-    // Skip all generated stub by patching the original stub to go directly to
-    // the update function.
-    PatchJump(initialJump_, fallbackLabel_);
+    // For repatch caches, skip all generated stub by patching the original
+    // stub to go directly to the update function. For dispatch caches, reset
+    // the stubEntry to the fallback.
+    if (initialJump_.isSet()) {
+        JS_ASSERT(!stubEntry);
+        PatchJump(initialJump_, fallbackLabel_);
+        this->lastJump_ = initialJump_;
+    } else {
+        JS_ASSERT(stubEntry);
+        *stubEntry = fallbackLabel_.raw();
+    }
 
     this->stubCount_ = 0;
-    this->lastJump_ = initialJump_;
 }
 
 bool
@@ -2023,7 +2031,7 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
     // If no new attach was done, and we've reached maximum number of stubs, then
     // disable the cache.
     if (!attachedStub && !cache.canAttachStub())
-        cache.disable();
+        cache.disable(ion->maybeGetCacheDispatchEntry(cacheIndex));
 
     types::TypeScript::Monitor(cx, script, pc, res);
     return true;
