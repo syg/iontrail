@@ -594,11 +594,22 @@ js::ParallelDo::invalidateBailedOutScripts()
     Vector<types::RecompileInfo> invalid(cx_);
     for (uint32_t i = 0; i < bailoutRecords.length(); i++) {
         JSScript *script = bailoutRecords[i].topScript;
-        if (script && !hasScript(invalid, script)) {
-            JS_ASSERT(script->hasParallelIonScript());
-            if (!invalid.append(script->parallelIonScript()->recompileInfo()))
-                return false;
-        }
+
+        // No script to invalidate.
+        if (!script || !script->hasParallelIonScript())
+            continue;
+
+        // An interrupt is not the fault of the script, so don't
+        // invalidate it.
+        if (bailoutRecords[i].cause == ParallelBailoutInterrupt)
+            continue;
+
+        // Already invalidated.
+        if (hasScript(invalid, script))
+            continue;
+
+        if (!invalid.append(script->parallelIonScript()->recompileInfo()))
+            return false;
     }
     Invalidate(cx_, invalid);
     return true;
