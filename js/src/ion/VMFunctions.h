@@ -181,8 +181,7 @@ struct VMFunction
         // Check for valid failure/return type.
         JS_ASSERT_IF(outParam != Type_Void && executionMode == SequentialExecution,
                      returnType == Type_Bool);
-        JS_ASSERT_IF(outParam != Type_Void && executionMode == ParallelExecution,
-                     returnType == Type_ParallelResult);
+        JS_ASSERT_IF(executionMode == ParallelExecution, returnType == Type_ParallelResult);
         JS_ASSERT(returnType == Type_Bool ||
                   returnType == Type_Object ||
                   returnType == Type_ParallelResult);
