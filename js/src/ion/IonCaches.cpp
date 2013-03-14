@@ -595,7 +595,7 @@ GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSOb
 
 bool
 GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
-                                  JSObject *obj, JSObject *holder, Shape *shape,
+                                  JSObject *obj, JSObject *holder, HandleShape shape,
                                   void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures)
 {
     Register object = this->object();

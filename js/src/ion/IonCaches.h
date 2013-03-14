@@ -303,7 +303,7 @@ class GetPropertyIC : public IonCache
                                    JSObject *obj, JSObject *holder, HandleShape shape);
 
     bool generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
-                            JSObject *obj, JSObject *holder, Shape *shape,
+                            JSObject *obj, JSObject *holder, HandleShape shape,
                             void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures = NULL);
 
   public:
@@ -345,8 +345,8 @@ class GetPropertyIC : public IonCache
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                          HandleShape shape, const SafepointIndex *safepointIndex,
-                          void *returnAddr);
+                          HandleShape shape,
+                          const SafepointIndex *safepointIndex, void *returnAddr);
     bool attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
     bool attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
 
