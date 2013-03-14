@@ -120,7 +120,7 @@ class Preprocessor:
     """
     self.marker = aMarker
     if aMarker:
-      self.instruction = re.compile('{0}\s*(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
+      self.instruction = re.compile('{0}(?P<cmd>[a-z]+)(?:\s(?P<args>.*))?$'
                                     .format(aMarker),
                                     re.U)
       self.comment = re.compile(aMarker, re.U)
