@@ -376,6 +376,8 @@ ion::HandleParallelFailure(ResumeFromException *rfe)
     }
 
     while (!iter.isEntry()) {
+        if (iter.isScripted())
+            PropagateParallelAbort(iter.script());
         ++iter;
     }
 
