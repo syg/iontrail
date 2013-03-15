@@ -34,14 +34,12 @@
 # This utility converts JS files containing self-hosted builtins into a C
 # header file that can be embedded into SpiderMonkey.
 #
-# It expects error messages in the JS code to be referenced by their C enum
-# keys as literals.
+# It uses the C preprocessor to process its inputs.
 
 from __future__ import with_statement
-import re, sys, os, fileinput
-import StringIO
+import re, sys, os, fileinput, subprocess
+import tempfile
 from optparse import OptionParser
-import Preprocessor
 
 def ToCAsciiArray(lines):
   result = []
@@ -87,16 +85,19 @@ COMPRESSED_SOURCES_DECLARATION = """\
   static const unsigned char *compressedSources = reinterpret_cast<const unsigned char *>(data);
 """
 
-def embed(sources, c_out, js_out, env):
-  pp = Preprocessor.Preprocessor()
-  pp.out = StringIO.StringIO()
-  pp.setMarker('#')
-  for k in env:
-    pp.context[k] = env[k]
-  pp.do_filter('slashstar slashslash macros')
-  for source in sources:
-    pp.do_include(source)
-  processed = pp.out.getvalue()
+def embed(cpp, msgs, sources, c_out, js_out, env):
+  # Clang seems to complain and not output anything if the extension of the
+  # input is not something it recognizes, so just fake a .h here.
+  tmp = 'selfhosted.js.h'
+  with open(tmp, 'w') as output:
+    output.write('\n'.join([msgs] + ['#include "%(s)s"' % { 's': source } for source in sources]))
+  cmdline = cpp + ['-D%(k)s=%(v)s' % { 'k': k, 'v': env[k] } for k in env] + [tmp]
+  p = subprocess.Popen(cmdline, stdout=subprocess.PIPE)
+  processed = ''
+  for line in p.stdout:
+    if not line.startswith('#'):
+      processed += line
+  os.remove(tmp)
   with open(js_out, 'w') as output:
     output.write(processed)
   with open(c_out, 'w') as output:
@@ -119,7 +120,22 @@ def embed(sources, c_out, js_out, env):
           'raw_total_length': len(processed)
       })
 
-  pp.out.close()
+def process_msgs(cpp, msgs):
+  # Clang seems to complain and not output anything if the extension of the
+  # input is not something it recognizes, so just fake a .h here.
+  tmp = 'selfhosted.msg.h'
+  with open(tmp, 'w') as output:
+    output.write("""\
+#define hash #
+#define id(x) x
+#define hashify(x) id(hash)x
+#define MSG_DEF(name, id, argc, ex, msg) hashify(define) name id
+#include "%(msgs)s"
+""" % { 'msgs': msgs })
+  p = subprocess.Popen(cpp + [tmp], stdout=subprocess.PIPE)
+  processed = p.communicate()[0]
+  os.remove(tmp)
+  return processed
 
 def main():
   env = {}
@@ -131,15 +147,20 @@ def main():
   p = OptionParser(usage="%prog [options] file")
   p.add_option('-D', action='callback', callback=define_env, type="string",
                metavar='var=[val]', help='Define a variable')
+  p.add_option('-m', type='string', metavar='jsmsg', default='../js.msg',
+               help='js.msg file')
+  p.add_option('-p', type='string', metavar='cpp', help='Path to C preprocessor')
   p.add_option('-o', type='string', metavar='filename', default='selfhosted.out.h',
                help='C array header file')
-  p.add_option('-s', type='string', metavar='filename', default='selfhosted.js',
+  p.add_option('-s', type='string', metavar='jsfilename', default='selfhosted.js',
                help='Combined postprocessed JS file')
   (options, sources) = p.parse_args()
-  if not (options.o and options.s and sources):
+  if not (options.o and options.s and options.m and options.p and sources):
     p.print_help()
     exit(1)
-  embed(sources, options.o, options.s, env)
+  cpp = options.p.split(' ')
+  embed(cpp, process_msgs(cpp, options.m),
+        sources, options.o, options.s, env)
 
 if __name__ == "__main__":
   main()
