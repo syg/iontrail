@@ -257,6 +257,10 @@ class Assembler : public AssemblerX86Shared
         push(Imm32(word.value));
         return masm.currentOffset();
     }
+    CodeOffsetLabel moveWithPatch(const ImmWord &word, const Register &dest) {
+        movl(Imm32(word.value), dest);
+        return masm.currentOffset();
+    }
 
     void movl(const ImmGCPtr &ptr, const Register &dest) {
         masm.movl_i32r(ptr.value, dest.code());
@@ -421,4 +425,3 @@ GetTempRegForIntArg(uint32_t usedIntArgs, uint32_t usedFloatArgs, Register *out)
 } // namespace js
 
 #endif // jsion_cpu_x86_assembler_h__
-
