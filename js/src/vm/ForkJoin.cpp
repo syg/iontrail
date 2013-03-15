@@ -599,10 +599,17 @@ js::ParallelDo::invalidateBailedOutScripts()
         if (!script || !script->hasParallelIonScript())
             continue;
 
-        // An interrupt is not the fault of the script, so don't
-        // invalidate it.
-        if (bailoutRecords[i].cause == ParallelBailoutInterrupt)
-            continue;
+        switch (bailoutRecords[i].cause) {
+          // An interrupt is not the fault of the script, so don't
+          // invalidate it.
+          case ParallelBailoutInterrupt: continue;
+
+          // An illegal write will not be made legal by invalidation.
+          case ParallelBailoutIllegalWrite: continue;
+
+          // For other cases, consider invalidation.
+          default: break;
+        }
 
         // Already invalidated.
         if (hasScript(invalid, script))

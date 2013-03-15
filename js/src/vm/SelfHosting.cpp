@@ -244,11 +244,11 @@ intrinsic_ForkJoin(JSContext *cx, unsigned argc, Value *vp)
 }
 
 /*
- * ParallelSlices(): Returns the number of parallel slices that will
+ * ForkJoinSlices(): Returns the number of parallel slices that will
  * be created by ForkJoin().
  */
 static JSBool
-intrinsic_ParallelSlices(JSContext *cx, unsigned argc, Value *vp)
+intrinsic_ForkJoinSlices(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setInt32(ForkJoinSlices(cx));
@@ -448,8 +448,8 @@ JSFunctionSpec intrinsic_functions[] = {
     JS_FN("DecompileArg",         intrinsic_DecompileArg,         2,0),
     JS_FN("RuntimeDefaultLocale", intrinsic_RuntimeDefaultLocale, 0,0),
 
-    JS_FN("ForkJoin",             intrinsic_ForkJoin,           2,0),
-    JS_FN("ParallelSlices",       intrinsic_ParallelSlices,       0,0),
+    JS_FN("ForkJoin",             intrinsic_ForkJoin,             2,0),
+    JS_FN("ForkJoinSlices",       intrinsic_ForkJoinSlices,       0,0),
     JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
     JS_FN("NewDenseArray",        intrinsic_NewDenseArray,        1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),

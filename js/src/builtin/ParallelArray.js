@@ -289,7 +289,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     var info = ComputeAllSliceBounds(chunks, numSlices);
     ForkJoin(constructSlice, CheckParallel(mode));
     return;
@@ -376,7 +376,7 @@ function ParallelArrayMap(func, mode) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     var info = ComputeAllSliceBounds(chunks, numSlices);
     ForkJoin(mapSlice, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
@@ -425,7 +425,7 @@ function ParallelArrayReduce(func, mode) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     if (chunks < numSlices)
       break parallel;
 
@@ -509,7 +509,7 @@ function ParallelArrayScan(func, mode) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     if (chunks < numSlices)
       break parallel;
     var info = ComputeAllSliceBounds(chunks, numSlices);
@@ -779,7 +779,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
 
   function parDivideOutputRange() {
     var chunks = ComputeNumChunks(targetsLength);
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     var checkpoints = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
       checkpoints[i] = 0;
@@ -823,7 +823,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     // target array for fear of inducing a conflict where none existed
     // before.  Therefore, we must proceed not by chunks but rather by
     // individual indices,
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     var info = ComputeAllSliceBounds(targetsLength, numSlices);
 
     var localbuffers = NewDenseArray(numSlices);
@@ -935,7 +935,7 @@ function ParallelArrayFilter(func, mode) {
       break parallel;
 
     var chunks = ComputeNumChunks(length);
-    var numSlices = ParallelSlices();
+    var numSlices = ForkJoinSlices();
     if (chunks < numSlices * 2)
       break parallel;
 
