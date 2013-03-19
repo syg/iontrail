@@ -38,7 +38,7 @@
 
 from __future__ import with_statement
 import re, sys, os, fileinput, subprocess
-import tempfile
+import shlex
 from optparse import OptionParser
 
 def ToCAsciiArray(lines):
@@ -89,7 +89,7 @@ def embed(cpp, msgs, sources, c_out, js_out, env):
   # Clang seems to complain and not output anything if the extension of the
   # input is not something it recognizes, so just fake a .h here.
   tmp = 'selfhosted.js.h'
-  with open(tmp, 'w') as output:
+  with open(tmp, 'wb') as output:
     output.write('\n'.join([msgs] + ['#include "%(s)s"' % { 's': source } for source in sources]))
   cmdline = cpp + ['-D%(k)s=%(v)s' % { 'k': k, 'v': env[k] } for k in env] + [tmp]
   p = subprocess.Popen(cmdline, stdout=subprocess.PIPE)
@@ -124,7 +124,7 @@ def process_msgs(cpp, msgs):
   # Clang seems to complain and not output anything if the extension of the
   # input is not something it recognizes, so just fake a .h here.
   tmp = 'selfhosted.msg.h'
-  with open(tmp, 'w') as output:
+  with open(tmp, 'wb') as output:
     output.write("""\
 #define hash #
 #define id(x) x
@@ -155,10 +155,10 @@ def main():
   p.add_option('-s', type='string', metavar='jsfilename', default='selfhosted.js',
                help='Combined postprocessed JS file')
   (options, sources) = p.parse_args()
-  if not (options.o and options.s and options.m and options.p and sources):
+  if not (options.p and sources):
     p.print_help()
     exit(1)
-  cpp = options.p.split(' ')
+  cpp = shlex.split(options.p)
   embed(cpp, process_msgs(cpp, options.m),
         sources, options.o, options.s, env)
 
