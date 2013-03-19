@@ -385,9 +385,6 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Wrapper register set is a superset of Volatile register set.
     JS_STATIC_ASSERT((Register::Codes::VolatileMask & ~Register::Codes::WrapperMask) == 0);
 
-    // Scratch register.
-    Register temp = regs.getAny();
-
     // The context is the first argument.
     Register cxreg = IntArgReg0;
 
@@ -398,7 +395,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     //  +0  returnAddress
     //
     // We're aligned to an exit frame, so link it up.
-    masm.enterExitFrameAndLoadContext(&f, cxreg, temp, f.executionMode);
+    masm.enterExitFrameAndLoadContext(&f, cxreg, regs.getAny(), f.executionMode);
 
     // Save the current stack pointer as the base for copying arguments.
     Register argsBase = InvalidReg;
@@ -434,8 +431,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
     }
 
-    masm.setupUnalignedABICall(f.argc(), temp);
-
+    masm.setupUnalignedABICall(f.argc(), regs.getAny());
     masm.passABIArg(cxreg);
 
     size_t argDisp = 0;
