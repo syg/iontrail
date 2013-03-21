@@ -4,7 +4,7 @@ function makeObject(e, i, c) {
   var v = {element: e, index: i, collection: c};
 
   if (e == 512) // note: happens once
-    delete v.i;
+    delete v.index;
 
   return v;
 }

@@ -26,6 +26,7 @@
     macro(callee, callee, "callee") \
     macro(caller, caller, "caller") \
     macro(callFunction, callFunction, "callFunction") \
+    macro(caseFirst, caseFirst, "caseFirst") \
     macro(classPrototype, classPrototype, "prototype") \
     macro(Collator, Collator, "Collator") \
     macro(CollatorCompareGet, CollatorCompareGet, "Intl_Collator_compare_get") \
@@ -34,6 +35,8 @@
     macro(configurable, configurable, "configurable") \
     macro(construct, construct, "construct") \
     macro(constructor, constructor, "constructor") \
+    macro(currency, currency, "currency") \
+    macro(currencyDisplay, currencyDisplay, "currencyDisplay") \
     macro(DateTimeFormat, DateTimeFormat, "DateTimeFormat") \
     macro(DateTimeFormatFormatGet, DateTimeFormatFormatGet, "Intl_DateTimeFormat_format_get") \
     macro(decodeURI, decodeURI, "decodeURI") \
@@ -56,6 +59,7 @@
     macro(fix, fix, "fix") \
     macro(format, format, "format") \
     macro(get, get, "get") \
+    macro(getInternals, getInternals, "getInternals") \
     macro(getOwnPropertyDescriptor, getOwnPropertyDescriptor, "getOwnPropertyDescriptor") \
     macro(getOwnPropertyNames, getOwnPropertyNames, "getOwnPropertyNames") \
     macro(getPropertyDescriptor, getPropertyDescriptor, "getPropertyDescriptor") \
@@ -64,6 +68,7 @@
     macro(hasOwn, hasOwn, "hasOwn") \
     macro(hasOwnProperty, hasOwnProperty, "hasOwnProperty") \
     macro(ignoreCase, ignoreCase, "ignoreCase") \
+    macro(ignorePunctuation, ignorePunctuation, "ignorePunctuation") \
     macro(index, index, "index") \
     macro(InitializeCollator, InitializeCollator, "InitializeCollator") \
     macro(InitializeDateTimeFormat, InitializeDateTimeFormat, "InitializeDateTimeFormat") \
@@ -84,9 +89,15 @@
     macro(line, line, "line") \
     macro(lineNumber, lineNumber, "lineNumber") \
     macro(loc, loc, "loc") \
+    macro(locale, locale, "locale") \
     macro(lookupGetter, lookupGetter, "__lookupGetter__") \
     macro(lookupSetter, lookupSetter, "__lookupSetter__") \
+    macro(maximumFractionDigits, maximumFractionDigits, "maximumFractionDigits") \
+    macro(maximumSignificantDigits, maximumSignificantDigits, "maximumSignificantDigits") \
     macro(message, message, "message") \
+    macro(minimumFractionDigits, minimumFractionDigits, "minimumFractionDigits") \
+    macro(minimumIntegerDigits, minimumIntegerDigits, "minimumIntegerDigits") \
+    macro(minimumSignificantDigits, minimumSignificantDigits, "minimumSignificantDigits") \
     macro(module, module, "module") \
     macro(multiline, multiline, "multiline") \
     macro(name, name, "name") \
@@ -95,22 +106,27 @@
     macro(noSuchMethod, noSuchMethod, "__noSuchMethod__") \
     macro(NumberFormat, NumberFormat, "NumberFormat") \
     macro(NumberFormatFormatGet, NumberFormatFormatGet, "Intl_NumberFormat_format_get") \
+    macro(numeric, numeric, "numeric") \
     macro(objectNull, objectNull, "[object Null]") \
     macro(objectUndefined, objectUndefined, "[object Undefined]") \
     macro(of, of, "of") \
     macro(offset, offset, "offset") \
     macro(parseFloat, parseFloat, "parseFloat") \
     macro(parseInt, parseInt, "parseInt") \
+    macro(pattern, pattern, "pattern") \
     macro(propertyIsEnumerable, propertyIsEnumerable, "propertyIsEnumerable") \
     macro(proto, proto, "__proto__") \
     macro(return, return_, "return") \
+    macro(sensitivity, sensitivity, "sensitivity") \
     macro(set, set, "set") \
     macro(shape, shape, "shape") \
     macro(source, source, "source") \
     macro(stack, stack, "stack") \
     macro(sticky, sticky, "sticky") \
+    macro(style, style, "style") \
     macro(test, test, "test") \
     macro(throw, throw_, "throw") \
+    macro(timeZone, timeZone, "timeZone") \
     macro(toGMTString, toGMTString, "toGMTString") \
     macro(toISOString, toISOString, "toISOString") \
     macro(toJSON, toJSON, "toJSON") \
@@ -123,6 +139,9 @@
     macro(uneval, uneval, "uneval") \
     macro(unwatch, unwatch, "unwatch") \
     macro(url, url, "url") \
+    macro(usage, usage, "usage") \
+    macro(useGrouping, useGrouping, "useGrouping") \
+    macro(useAsm, useAsm, "use asm") \
     macro(useStrict, useStrict, "use strict") \
     macro(value, value, "value") \
     macro(valueOf, valueOf, "valueOf") \

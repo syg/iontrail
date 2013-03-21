@@ -13,3 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if CONFIG['MOZ_B2G_BT']:
+    MODULE = 'dom'
+    XPIDL_MODULE = 'dom_bluetooth'
+    XPIDL_SOURCES += [
+        'nsIDOMNavigatorBluetooth.idl',
+        'nsIDOMBluetoothManager.idl',
+        'nsIDOMBluetoothAdapter.idl',
+        'nsIDOMBluetoothDevice.idl',
+        'nsIDOMBluetoothDeviceEvent.idl',
+        'nsIDOMBluetoothDeviceAddressEvent.idl',
+    ]
+

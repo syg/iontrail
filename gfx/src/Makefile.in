@@ -10,7 +10,6 @@ VPATH       = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE         = gfx
 MODULE_NAME    = nsGfxModule
 LIBRARY_NAME   = gkgfx
 EXPORT_LIBRARY = 1
@@ -20,11 +19,6 @@ IS_COMPONENT   = 1
 ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
 endif # !_MSC_VER
-
-XPIDLSRCS = \
-	nsIFontEnumerator.idl \
-	nsIScriptableRegion.idl \
-	$(NULL)
 
 EXPORTS	= \
 	gfxCore.h \

@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// FIXME(bug 844882): Parallel array properties should not be exposed.
+
 // The mode asserts options object.
 #define TRY_PARALLEL(MODE) \
   ((!MODE || MODE.mode === "par"))
@@ -33,7 +35,7 @@ function ComputeNumChunks(length) {
 
 /**
  * Computes the bounds for slice |sliceIndex| of |numItems| items,
- * assuming |numSlices| total slices.  If numItems is not evenly
+ * assuming |numSlices| total slices. If numItems is not evenly
  * divisible by numSlices, then the final thread may have a bit of
  * extra work.
  */
@@ -45,18 +47,19 @@ function ComputeSliceBounds(numItems, sliceIndex, numSlices) {
 }
 
 /**
- * Divides |numItems| items amongst |numSlices| slices.  The result
+ * Divides |numItems| items amongst |numSlices| slices. The result
  * is an array containing multiple values per slice: the start
- * index, end index, current position, and some padding.  The
- * current position is initally the same as the start index.  To
+ * index, end index, current position, and some padding. The
+ * current position is initially the same as the start index. To
  * access the values for a particular slice, use the macros
  * SLICE_START() and so forth.
  */
 function ComputeAllSliceBounds(numItems, numSlices) {
+  // FIXME(bug 844890): Use typed arrays here.
   var info = [];
   for (var i = 0; i < numSlices; i++) {
     var [start, end] = ComputeSliceBounds(numItems, i, numSlices);
-    info.push(SLICE_INFO(start, end));
+    ARRAY_PUSH(info, SLICE_INFO(start, end));
   }
   return info;
 }
@@ -72,7 +75,7 @@ function ComputeProducts(shape) {
   var sdimensionality = shape.length;
   for (var i = sdimensionality - 1; i > 0; i--) {
     product *= shape[i];
-    products.push(product);
+    ARRAY_PUSH(products, product);
   }
   return products;
 }
@@ -153,44 +156,45 @@ function ParallelArrayConstructFromArray(buffer) {
 }
 
 /**
- * "Comprehension form": This is the function invoked for |new
- * ParallelArray(dim, fn)|.  If |dim| is a number, then it creates a
- * new 1-dimensional parallel array with shape |[dim]| where index |i|
- * is equal to |fn(i)|.  If |dim| is a vector, then it creates a new
- * N-dimensional parallel array where index |a, b, ... z| is equal to
- * |fn(a, b, ...z)|.
+ * Wrapper around |ParallelArrayConstructFromComprehension()| for the
+ * case where 2 arguments are supplied. This is typically what users will
+ * invoke. We provide an explicit two-argument version rather than
+ * relying on JS's semantics for absent arguments because it simplifies
+ * the ion code that does inlining of PA constructors.
  */
 function ParallelArrayConstructFromFunction(shape, func) {
-  if (typeof shape === "number") {
-    var length = shape >>> 0;
-    if (length !== shape)
-      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-    ParallelArrayBuild(this, [length], func);
-  } else {
-    var shape1 = [];
-    for (var i = 0, l = shape.length; i < l; i++) {
-      var s0 = shape[i];
-      var s1 = s0 >>> 0;
-      if (s1 !== s0)
-        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-      shape1[i] = s1;
-    }
-    ParallelArrayBuild(this, shape1, func);
-  }
+  return ParallelArrayConstructFromComprehension(this, shape, func, undefined);
 }
 
 /**
- * This is an internal version of the comprehension form where a
- * |mode| argument was supplied to specify whether parallel execution
- * was expected and so forth.  Only used during our internal unit
- * tests.
+ * Wrapper around |ParallelArrayConstructFromComprehension()| for the
+ * case where 3 arguments are supplied.
  */
 function ParallelArrayConstructFromFunctionMode(shape, func, mode) {
+  return ParallelArrayConstructFromComprehension(this, shape, func, mode);
+}
+
+/**
+ * "Comprehension form": This is the function invoked for |new
+ * ParallelArray(dim, fn)|. If |dim| is a number, then it creates a
+ * new 1-dimensional parallel array with shape |[dim]| where index |i|
+ * is equal to |fn(i)|. If |dim| is a vector, then it creates a new
+ * N-dimensional parallel array where index |a, b, ... z| is equal to
+ * |fn(a, b, ...z)|.
+ *
+ * The final |mode| argument is an internal argument used only
+ * during our unit-testing.
+ */
+function ParallelArrayConstructFromComprehension(self, shape, func, mode) {
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
   if (typeof shape === "number") {
     var length = shape >>> 0;
     if (length !== shape)
       ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-    ParallelArrayBuild(this, [length], func, mode);
+    ParallelArrayBuild(self, [length], func, mode);
+  } else if (!shape || typeof shape.length !== "number") {
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
   } else {
     var shape1 = [];
     for (var i = 0, l = shape.length; i < l; i++) {
@@ -200,14 +204,14 @@ function ParallelArrayConstructFromFunctionMode(shape, func, mode) {
         ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
       shape1[i] = s1;
     }
-    ParallelArrayBuild(this, shape1, func, mode);
+    ParallelArrayBuild(self, shape1, func, mode);
   }
 }
 
 /**
- * Internal function used when constructing new parallel arrays.  The
+ * Internal function used when constructing new parallel arrays. The
  * NewParallelArray() intrinsic takes a ctor function which it invokes
- * with the given shape, buffer, offset.  The this parameter will be
+ * with the given shape, buffer, offset. The |this| parameter will be
  * the newly constructed parallel array.
  */
 function ParallelArrayView(shape, buffer, offset) {
@@ -229,9 +233,9 @@ function ParallelArrayView(shape, buffer, offset) {
 }
 
 /**
- * Helper for the comprehension form.  Constructs an N-dimensional
- * array where |N == shape.length|.  |shape| must be an array of
- * integers.  The data for any given index vector |i| is determined by
+ * Helper for the comprehension form. Constructs an N-dimensional
+ * array where |N == shape.length|. |shape| must be an array of
+ * integers. The data for any given index vector |i| is determined by
  * |func(...i)|.
  */
 function ParallelArrayBuild(self, shape, func, mode) {
@@ -276,7 +280,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
 
   parallel: for (;;) {
     // Avoid parallel compilation if we are already nested in another
-    // parallel section or the user told us not to parallelize.  The
+    // parallel section or the user told us not to parallelize. The
     // use of a for (;;) loop is working around some ion limitations:
     //
     // - Breaking out of named blocks does not currently work (bug 684384);
@@ -296,7 +300,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
+  ASSERT_SEQUENTIAL_IS_OK(mode);
   computefunc(0, length);
   return;
 
@@ -322,7 +326,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
 
   function fill2(indexStart, indexEnd) {
     var x = (indexStart / yDimension) | 0;
-    var y = indexStart - x*yDimension;
+    var y = indexStart - x * yDimension;
     for (var i = indexStart; i < indexEnd; i++) {
       UnsafeSetElement(buffer, i, func(x, y));
       if (++y == yDimension) {
@@ -333,10 +337,10 @@ function ParallelArrayBuild(self, shape, func, mode) {
   }
 
   function fill3(indexStart, indexEnd) {
-    var x = (indexStart / (yDimension*zDimension)) | 0;
-    var r = indexStart - x*yDimension*zDimension;
+    var x = (indexStart / (yDimension * zDimension)) | 0;
+    var r = indexStart - x * yDimension * zDimension;
     var y = (r / zDimension) | 0;
-    var z = r - y*zDimension;
+    var z = r - y * zDimension;
     for (var i = indexStart; i < indexEnd; i++) {
       UnsafeSetElement(buffer, i, func(x, y, z));
       if (++z == zDimension) {
@@ -352,24 +356,27 @@ function ParallelArrayBuild(self, shape, func, mode) {
   function fillN(indexStart, indexEnd) {
     var indices = ComputeIndices(shape, indexStart);
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, func.apply(null, indices));
+      var result = callFunction(std_Function_apply, func, null, indices);
+      UnsafeSetElement(buffer, i, result);
       StepIndices(shape, indices);
     }
   }
 }
 
 /**
- * Creates a new parallel array by applying |func(e, i, c)| for each
- * element |e| with index |i| (|c| is the array itself).  Note that
+ * Creates a new parallel array by applying |func(e, i, self)| for each
+ * element |e| with index |i|. Note that
  * this always operates on the outermost dimension only.
  */
 function ParallelArrayMap(func, mode) {
+  // FIXME(bug 844887): Check |this instanceof ParallelArray|
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
   var self = this;
   var length = self.shape[0];
   var buffer = NewDenseArray(length);
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
-
     if (ShouldForceSequential())
       break parallel;
     if (!TRY_PARALLEL(mode))
@@ -383,16 +390,18 @@ function ParallelArrayMap(func, mode) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
-  for (var i = 0; i < length; i++)
+  ASSERT_SEQUENTIAL_IS_OK(mode);
+  for (var i = 0; i < length; i++) {
+    // Note: Unlike JS arrays, parallel arrays cannot have holes.
     buffer[i] = func(self.get(i), i, self);
+  }
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
   function mapSlice(sliceId, numSlices, warmup) {
     var chunkPos = info[SLICE_POS(sliceId)];
     var chunkEnd = info[SLICE_END(sliceId)];
 
-    if (warmup && chunkEnd > chunkPos)
+    if (warmup && chunkEnd > chunkPos + 1)
       chunkEnd = chunkPos + 1;
 
     while (chunkPos < chunkEnd) {
@@ -412,6 +421,9 @@ function ParallelArrayMap(func, mode) {
  * using the given reduction function.
  */
 function ParallelArrayReduce(func, mode) {
+  // FIXME(bug 844887): Check |this instanceof ParallelArray|
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
   var self = this;
   var length = self.shape[0];
 
@@ -439,7 +451,7 @@ function ParallelArrayReduce(func, mode) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
+  ASSERT_SEQUENTIAL_IS_OK(mode);
   var accumulator = self.get(0);
   for (var i = 1; i < length; i++)
     accumulator = func(accumulator, self.get(i));
@@ -451,12 +463,12 @@ function ParallelArrayReduce(func, mode) {
     var chunkEnd = info[SLICE_END(sliceId)];
 
     // (*) This function is carefully designed so that the warmup
-    // (which executes with chunkStart === chunkPos) will execute
-    // all potential loads and stores. In particular, the warmup run
-    // processes two chunks rather than one.  Moreover, it stores accumulator
-    // into subreductions and then loads it again ensure that the load
-    // is executed during the warmup, as it will certainly be run
-    // during subsequent runs.
+    // (which executes with chunkStart === chunkPos) will execute all
+    // potential loads and stores. In particular, the warmup run
+    // processes two chunks rather than one. Moreover, it stores
+    // accumulator into subreductions and then loads it again to
+    // ensure that the load is executed during the warmup, as it will
+    // certainly be executed during subsequent runs.
 
     if (warmup && chunkEnd > chunkPos + 2)
       chunkEnd = chunkPos + 2;
@@ -490,10 +502,13 @@ function ParallelArrayReduce(func, mode) {
 /**
  * |scan()| returns an array [s_0, ..., s_N] where
  * |s_i| is equal to the reduction (as per |reduce()|)
- * of elements |0..i|.  This is the generalization
+ * of elements |0..i|. This is the generalization
  * of partial sum.
  */
 function ParallelArrayScan(func, mode) {
+  // FIXME(bug 844887): Check |this instanceof ParallelArray|
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
   var self = this;
   var length = self.shape[0];
 
@@ -524,7 +539,7 @@ function ParallelArrayScan(func, mode) {
       accumulator = intermediates[i] = func(accumulator, buffer[finalElement(i)]);
 
     // Reset the current position information for each slice, but
-    // convert from chunks to indicies (see comment on phase2()).
+    // convert from chunks to indices (see comment on phase2()).
     for (var i = 0; i < numSlices; i++) {
       info[SLICE_POS(i)] = info[SLICE_START(i)] << CHUNK_SHIFT;
       info[SLICE_END(i)] = info[SLICE_END(i)] << CHUNK_SHIFT;
@@ -537,7 +552,7 @@ function ParallelArrayScan(func, mode) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
+  ASSERT_SEQUENTIAL_IS_OK(mode);
   scan(self.get(0), 0, length);
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
@@ -551,13 +566,14 @@ function ParallelArrayScan(func, mode) {
   }
 
   /**
-   * In phase 1, we divide the source array into numSlices slices and
-   * compute scan on each slice sequentially as it were the entire
-   * array.  This function is responsible for computing one of those
+   * In phase 1, we divide the source array into |numSlices| slices and
+   * compute scan on each slice sequentially as if it were the entire
+   * array. This function is responsible for computing one of those
    * slices.
    *
-   * So, if we have an array [A,B,C,D,E,F,G,H,I], numSlices == 3, and our function
-   * |f| is sum, then would wind up computing a result array like:
+   * So, if we have an array [A,B,C,D,E,F,G,H,I], |numSlices == 3|,
+   * and our function |func| is sum, then we would wind up computing a
+   * result array like:
    *
    *     [A, A+B, A+B+C, D, D+E, D+E+F, G, G+H, G+H+I]
    *      ^~~~~~~~~~~~^  ^~~~~~~~~~~~^  ^~~~~~~~~~~~~^
@@ -585,7 +601,7 @@ function ParallelArrayScan(func, mode) {
     while (chunkPos < chunkEnd) {
       // For each subsequent chunk, the accumulator begins as the
       // combination of the final value of prev chunk and the value in
-      // the input at the start of this chunk.  Note that this loop is
+      // the input at the start of this chunk. Note that this loop is
       // written as simple as possible, at the cost of an extra read
       // from the buffer per iteration.
       var indexStart = chunkPos << CHUNK_SHIFT;
@@ -607,9 +623,9 @@ function ParallelArrayScan(func, mode) {
 
   /**
    * After computing the phase1 results, we compute an
-   * |intermediates| array.  |intermediates[i]| contains the result
+   * |intermediates| array. |intermediates[i]| contains the result
    * of reducing the final value from each preceding slice j<i with
-   * the final value of slice i.  So, to continue our previous
+   * the final value of slice i. So, to continue our previous
    * example, the intermediates array would contain:
    *
    *   [A+B+C, (A+B+C)+(D+E+F), ((A+B+C)+(D+E+F))+(G+H+I)]
@@ -618,14 +634,14 @@ function ParallelArrayScan(func, mode) {
    * evaluation in each case.
    *
    *   An aside: currently the intermediates array is computed
-   *   sequentially.  In principle, we could compute it in parallel,
-   *   at the cost of doing duplicate work.  This did not seem
+   *   sequentially. In principle, we could compute it in parallel,
+   *   at the cost of doing duplicate work. This did not seem
    *   particularly advantageous to me, particularly as the number
    *   of slices is typically quite small (one per core), so I opted
    *   to just compute it sequentially.
    *
    * Phase 2 combines the results of phase1 with the intermediates
-   * array to produce the final scan results.  The idea is to
+   * array to produce the final scan results. The idea is to
    * reiterate over each element S[i] in the slice |sliceId|, which
    * currently contains the result of reducing with S[0]...S[i]
    * (where S0 is the first thing in the slice), and combine that
@@ -633,9 +649,9 @@ function ParallelArrayScan(func, mode) {
    * reducing everything in the input array prior to the slice.
    *
    * To continue with our example, in phase 1 we computed slice 1 to
-   * be [D, D+E, D+E+F].  We will combine those results with
+   * be [D, D+E, D+E+F]. We will combine those results with
    * |intermediates[1-1]|, which is |A+B+C|, so that the final
-   * result is [(A+B+C)+D, (A+B+C)+(D+E), (A+B+C)+(D+E+F)].  Again I
+   * result is [(A+B+C)+D, (A+B+C)+(D+E), (A+B+C)+(D+E+F)]. Again I
    * am using parentheses to clarify how these results were reduced.
    *
    * SUBTLE: Because we are mutating |buffer| in place, we have to
@@ -657,9 +673,10 @@ function ParallelArrayScan(func, mode) {
       indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
     var intermediate = intermediates[sliceId - 1];
-    for (; indexPos < indexEnd; indexPos++)
+    for (; indexPos < indexEnd; indexPos++) {
       UnsafeSetElement(buffer, indexPos, func(intermediate, buffer[indexPos]),
                        info, SLICE_POS(sliceId), indexPos + 1);
+    }
   }
 }
 
@@ -668,24 +685,27 @@ function ParallelArrayScan(func, mode) {
  * into a new parallel array.
  *
  * - targets: The index targets[i] indicates where the ith element
- *            should appear in the result.
+ *   should appear in the result.
  *
- * - zero: what zero value to use for indices in the output array that
- *         are never targeted
+ * - defaultValue: what value to use for indices in the output array that
+ *   are never targeted.
  *
- * - func: The conflict function.  Used to resolve what happens if two
- *         indices i and j in the source array are targeted as the
- *         same destination (i.e., targets[i] == targets[j]), then the
- *         final result is determined by applying func(targets[i],
- *         targets[j]).  If no conflict function is provided, it is an
- *         error if targets[i] == targets[j].
+ * - conflictFunc: The conflict function. Used to resolve what
+ *   happens if two indices i and j in the source array are targeted
+ *   as the same destination (i.e., targets[i] == targets[j]), then
+ *   the final result is determined by applying func(targets[i],
+ *   targets[j]). If no conflict function is provided, it is an error
+ *   if targets[i] == targets[j].
  *
- * - length: length of the output array (if not specified, uses
- *           the length of the intput.
+ * - length: length of the output array (if not specified, uses the
+ *   length of the input).
  *
- * - mode: internal debugging specification
+ * - mode: internal debugging specification.
  */
-function ParallelArrayScatter(targets, zero, func, length, mode) {
+function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode) {
+  // FIXME(bug 844887): Check |this instanceof ParallelArray|
+  // FIXME(bug 844887): Check targets is array-like
+  // FIXME(bug 844887): Check |IsCallable(conflictFunc)|
 
   var self = this;
 
@@ -725,7 +745,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
   // processing |targets| in parallel.
   //
   // If |targets.length| << |length|, then Divide-Output-Range seems
-  // like it *could* win over Divide-Scatter-Vector.  (But when is
+  // like it *could* win over Divide-Scatter-Vector. (But when is
   // |targets.length| << |length| or even |targets.length| < |length|?
   // Seems like an odd situation and an uncommon case at best.)
   //
@@ -734,12 +754,12 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
   // special cases like collision-free scatters and permutations.
 
   if (targets.length >>> 0 !== targets.length)
-    ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
+    ThrowError(JSMSG_BAD_ARRAY_LENGTH, ".prototype.scatter");
 
   var targetsLength = std_Math_min(targets.length, self.length);
 
-  if (length && length >>> 0 !== length)
-    ThrowError(JSMSG_BAD_ARRAY_LENGTH, "");
+  if (length >>> 0 !== length)
+    ThrowError(JSMSG_BAD_ARRAY_LENGTH, ".prototype.scatter");
 
   parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ShouldForceSequential())
@@ -751,13 +771,13 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
       return parDivideScatterVector();
     else if (forceDivideOutputRange())
       return parDivideOutputRange();
-    else if (func === undefined && targetsLength < length)
+    else if (conflictFunc === undefined && targetsLength < length)
       return parDivideOutputRange();
     return parDivideScatterVector();
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
+  ASSERT_SEQUENTIAL_IS_OK(mode);
   return seq();
 
   function forceDivideScatterVector() {
@@ -766,14 +786,13 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
 
   function forceDivideOutputRange() {
     return mode && mode.strategy && mode.strategy == "divide-output-range";
-    return func(elem1, elem2);
   }
 
   function collide(elem1, elem2) {
-    if (func === undefined)
+    if (conflictFunc === undefined)
       ThrowError(JSMSG_PAR_ARRAY_SCATTER_CONFLICT);
 
-    return func(elem1, elem2);
+    return conflictFunc(elem1, elem2);
   }
 
 
@@ -788,7 +807,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     var conflicts = NewDenseArray(length);
 
     for (var i = 0; i < length; i++)
-      buffer[i] = zero;
+      buffer[i] = defaultValue;
 
     ForkJoin(fill, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
@@ -805,7 +824,7 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
       for (; indexPos < indexEnd; indexPos++) {
         var x = self.get(indexPos);
         var t = targets[indexPos];
-        checkTarget(t);
+        checkTarget(indexPos, t);
         if (t < outputStart || t >= outputEnd)
           continue;
         if (conflicts[t])
@@ -818,28 +837,29 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
   }
 
   function parDivideScatterVector() {
-    // Subtle: because we will be mutating the localbuffers and
+    // Subtle: because we will be mutating the localBuffers and
     // conflict arrays in place, we can never replay an entry in the
     // target array for fear of inducing a conflict where none existed
-    // before.  Therefore, we must proceed not by chunks but rather by
-    // individual indices,
+    // before. Therefore, we must proceed not by chunks but rather by
+    // individual indices.
     var numSlices = ForkJoinSlices();
     var info = ComputeAllSliceBounds(targetsLength, numSlices);
 
-    var localbuffers = NewDenseArray(numSlices);
+    // FIXME(bug 844890): Use typed arrays here.
+    var localBuffers = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-        localbuffers[i] = NewDenseArray(length);
-    var localconflicts = NewDenseArray(numSlices);
+        localBuffers[i] = NewDenseArray(length);
+    var localConflicts = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-        localconflicts[i] = NewDenseArray(length);
+        localConflicts[i] = NewDenseArray(length);
 
-    // Initialize the 0th buffer, which will become the output.  For
+    // Initialize the 0th buffer, which will become the output. For
     // the other buffers, we track which parts have been written to
     // using the conflict buffer so they do not need to be
     // initialized.
-    var outputbuffer = localbuffers[0];
+    var outputBuffer = localBuffers[0];
     for (var i = 0; i < length; i++)
-      outputbuffer[i] = zero;
+      UnsafeSetElement(outputBuffer, i, defaultValue);
 
     ForkJoin(fill, CheckParallel(mode));
     mergeBuffers();
@@ -851,12 +871,12 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
       if (warmup)
         indexEnd = std_Math_min(indexEnd, indexPos + CHUNK_SIZE);
 
-      var localbuffer = localbuffers[sliceId];
-      var conflicts = localconflicts[sliceId];
+      var localbuffer = localBuffers[sliceId];
+      var conflicts = localConflicts[sliceId];
       while (indexPos < indexEnd) {
         var x = self.get(indexPos);
         var t = targets[indexPos];
-        checkTarget(t);
+        checkTarget(indexPos, t);
         if (conflicts[t])
           x = collide(x, localbuffer[t]);
         UnsafeSetElement(localbuffer, t, x,
@@ -866,16 +886,16 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     }
 
     /**
-     * Merge buffers 1..NUMSLICES into buffer 0.  In principle, we could
-     * parallelize the merge work as well.  But for this first cut,
+     * Merge buffers 1..NUMSLICES into buffer 0. In principle, we could
+     * parallelize the merge work as well. But for this first cut,
      * just do the merge sequentially.
      */
     function mergeBuffers() {
-      var buffer = localbuffers[0];
-      var conflicts = localconflicts[0];
+      var buffer = localBuffers[0];
+      var conflicts = localConflicts[0];
       for (var i = 1; i < numSlices; i++) {
-        var otherbuffer = localbuffers[i];
-        var otherconflicts = localconflicts[i];
+        var otherbuffer = localBuffers[i];
+        var otherconflicts = localConflicts[i];
         for (var j = 0; j < length; j++) {
           if (otherconflicts[j]) {
             if (conflicts[j]) {
@@ -895,12 +915,12 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     var conflicts = NewDenseArray(length);
 
     for (var i = 0; i < length; i++)
-      buffer[i] = zero;
+      buffer[i] = defaultValue;
 
     for (var i = 0; i < targetsLength; i++) {
       var x = self.get(i);
       var t = targets[i];
-      checkTarget(t);
+      checkTarget(i, t);
       if (conflicts[t])
         x = collide(x, buffer[t]);
 
@@ -911,9 +931,9 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
   }
 
-  function checkTarget(t) {
+  function checkTarget(i, t) {
       if ((t | 0) !== t)
-        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ".prototype.scatter");
+        ThrowError(JSMSG_PAR_ARRAY_SCATTER_BAD_TARGET, i);
 
       if (t >= length)
         ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
@@ -925,6 +945,9 @@ function ParallelArrayScatter(targets, zero, func, length, mode) {
  * dimension.
  */
 function ParallelArrayFilter(func, mode) {
+  // FIXME(bug 844887): Check |this instanceof ParallelArray|
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
   var self = this;
   var length = self.shape[0];
 
@@ -941,12 +964,14 @@ function ParallelArrayFilter(func, mode) {
 
     var info = ComputeAllSliceBounds(chunks, numSlices);
 
-    // Step 1.  Compute which items from each slice of the result
-    // buffer should be preserved.  When we're done, we have an array
+    // Step 1. Compute which items from each slice of the result
+    // buffer should be preserved. When we're done, we have an array
     // |survivors| containing a bitset for each chunk, indicating
-    // which members of the chunk survived.  We also keep an array
+    // which members of the chunk survived. We also keep an array
     // |counts| containing the total number of items that are being
     // preserved from within one slice.
+    //
+    // FIXME(bug 844890): Use typed arrays here.
     var counts = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
       counts[i] = 0;
@@ -965,7 +990,7 @@ function ParallelArrayFilter(func, mode) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
+  ASSERT_SEQUENTIAL_IS_OK(mode);
   var buffer = [], count = 0;
   for (var i = 0; i < length; i++) {
     var elem = self.get(i);
@@ -976,7 +1001,7 @@ function ParallelArrayFilter(func, mode) {
 
   /**
    * As described above, our goal is to determine which items we
-   * will preserve from a given slice.  We do this one chunk at a
+   * will preserve from a given slice. We do this one chunk at a
    * time. When we finish a chunk, we record our current count and
    * the next chunk sliceId, lest we should bail.
    */
@@ -1009,11 +1034,11 @@ function ParallelArrayFilter(func, mode) {
   function copySurvivorsInSlice(sliceId, numSlices, warmup) {
     // Copies the survivors from this slice into the correct position.
     // Note that this is an idempotent operation that does not invoke
-    // user code.  Therefore, we don't expect bailouts and make an
+    // user code. Therefore, we don't expect bailouts and make an
     // effort to proceed chunk by chunk or avoid duplicating work.
 
-    // During warmup, we only execute with sliceId 0.  This would fail to
-    // execute the loop below.  Therefore, during warmup, we
+    // During warmup, we only execute with sliceId 0. This would fail to
+    // execute the loop below. Therefore, during warmup, we
     // substitute 1 for the sliceId.
     if (warmup && sliceId == 0 && numSlices != 1)
       sliceId = 1;
@@ -1031,14 +1056,17 @@ function ParallelArrayFilter(func, mode) {
       return;
 
     // Iterate over the chunks assigned to us. Read the bitset for
-    // each chunk.  Copy values where a 1 appears until we have
-    // written all the values that we expect to.  We can just iterate
+    // each chunk. Copy values where a 1 appears until we have
+    // written all the values that we expect to. We can just iterate
     // from 0...CHUNK_SIZE without fear of a truncated final chunk
     // because we are already checking for when count==total.
     var chunkStart = info[SLICE_START(sliceId)];
     var chunkEnd = info[SLICE_END(sliceId)];
     for (var chunk = chunkStart; chunk < chunkEnd; chunk++) {
       var chunkBits = survivors[chunk];
+      if (!chunkBits)
+        continue;
+
       var indexStart = chunk << CHUNK_SHIFT;
       for (var i = 0; i < CHUNK_SIZE; i++) {
         if (chunkBits & (1 << i)) {
@@ -1052,39 +1080,39 @@ function ParallelArrayFilter(func, mode) {
 }
 
 /**
- * Divides the outermost dimension into two dimensions.  Does not copy
+ * Divides the outermost dimension into two dimensions. Does not copy
  * or affect the underlying data, just how it is divided amongst
- * dimensions.  So if we had a vector with shape [N, ...] and you
- * partition with amount=4, you get a [N/4, 4, ...] vector.  Note that
+ * dimensions. So if we had a vector with shape [N, ...] and you
+ * partition with amount=4, you get a [N/4, 4, ...] vector. Note that
  * N must be evenly divisible by 4 in that case.
  */
 function ParallelArrayPartition(amount) {
   if (amount >>> 0 !== amount)
-    ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
 
   var length = this.shape[0];
   var partitions = (length / amount) | 0;
 
   if (partitions * amount !== length)
-    ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
+    ThrowError(JSMSG_PAR_ARRAY_BAD_PARTITION);
 
   var shape = [partitions, amount];
   for (var i = 1; i < this.shape.length; i++)
-    shape.push(this.shape[i]);
+    ARRAY_PUSH(shape, this.shape[i]);
   return NewParallelArray(ParallelArrayView, shape, this.buffer, this.offset);
 }
 
 /**
- * Collapses two outermost dimensions into one.  So if you had
+ * Collapses two outermost dimensions into one. So if you had
  * a [X, Y, ...] vector, you get a [X*Y, ...] vector.
  */
 function ParallelArrayFlatten() {
   if (this.shape.length < 2)
-    ThrowError(JSMSG_BAD_ARRAY_LENGTH, ""); // XXX
+    ThrowError(JSMSG_PAR_ARRAY_ALREADY_FLAT);
 
   var shape = [this.shape[0] * this.shape[1]];
   for (var i = 2; i < this.shape.length; i++)
-    shape.push(this.shape[i]);
+    ARRAY_PUSH(shape, this.shape[i]);
   return NewParallelArray(ParallelArrayView, shape, this.buffer, this.offset);
 }
 
@@ -1092,14 +1120,18 @@ function ParallelArrayFlatten() {
 // Accessors and utilities.
 //
 
-/** Specialized variant of get() for one-dimensional case */
+/**
+ * Specialized variant of get() for one-dimensional case
+ */
 function ParallelArrayGet1(i) {
   if (i === undefined)
     return undefined;
   return this.buffer[this.offset + i];
 }
 
-/** Specialized variant of get() for two-dimensional case */
+/**
+ * Specialized variant of get() for two-dimensional case
+ */
 function ParallelArrayGet2(x, y) {
   var xDimension = this.shape[0];
   var yDimension = this.shape[1];
@@ -1108,14 +1140,16 @@ function ParallelArrayGet2(x, y) {
   if (x >= xDimension)
     return undefined;
   if (y === undefined)
-    return NewParallelArray(ParallelArrayView, [yDimension], this.buffer, this.offset + x*yDimension);
+    return NewParallelArray(ParallelArrayView, [yDimension], this.buffer, this.offset + x * yDimension);
   if (y >= yDimension)
     return undefined;
-  var offset = y + x*yDimension;
+  var offset = y + x * yDimension;
   return this.buffer[this.offset + offset];
 }
 
-/** Specialized variant of get() for three-dimensional case */
+/**
+ * Specialized variant of get() for three-dimensional case
+ */
 function ParallelArrayGet3(x, y, z) {
   var xDimension = this.shape[0];
   var yDimension = this.shape[1];
@@ -1126,40 +1160,42 @@ function ParallelArrayGet3(x, y, z) {
     return undefined;
   if (y === undefined)
     return NewParallelArray(ParallelArrayView, [yDimension, zDimension],
-                            this.buffer, this.offset + x*yDimension*zDimension);
+                            this.buffer, this.offset + x * yDimension * zDimension);
   if (y >= yDimension)
     return undefined;
   if (z === undefined)
     return NewParallelArray(ParallelArrayView, [zDimension],
-                            this.buffer, this.offset + y*zDimension + x*yDimension*zDimension);
+                            this.buffer, this.offset + y * zDimension + x * yDimension * zDimension);
   if (z >= zDimension)
     return undefined;
-  var offset = z + y*zDimension + x*yDimension*zDimension;
+  var offset = z + y*zDimension + x * yDimension * zDimension;
   return this.buffer[this.offset + offset];
 }
 
-/** Generalized version of get() for N-dimensional case */
+/**
+ * Generalized version of get() for N-dimensional case
+ */
 function ParallelArrayGetN(...coords) {
   if (coords.length == 0)
     return undefined;
 
   var products = ComputeProducts(this.shape);
 
-  // Compute the offset of the given coordinates.  Each index is
+  // Compute the offset of the given coordinates. Each index is
   // multipled by its corresponding entry in the |products|
-  // array, counting in reverse.  So if |coords| is [a,b,c,d],
+  // array, counting in reverse. So if |coords| is [a,b,c,d],
   // then you get |a*BCD + b*CD + c*D + d|.
   var offset = this.offset;
-  var sdimensionality = this.shape.length;
-  var cdimensionality = coords.length;
-  for (var i = 0; i < cdimensionality; i++) {
+  var sDimensionality = this.shape.length;
+  var cDimensionality = coords.length;
+  for (var i = 0; i < cDimensionality; i++) {
     if (coords[i] >= this.shape[i])
       return undefined;
-    offset += coords[i] * products[sdimensionality - i - 1];
+    offset += coords[i] * products[sDimensionality - i - 1];
   }
 
-  if (cdimensionality < sdimensionality) {
-    var shape = this.shape.slice(cdimensionality);
+  if (cDimensionality < sDimensionality) {
+    var shape = callFunction(std_Array_slice, this.shape, cDimensionality);
     return NewParallelArray(ParallelArrayView, shape, this.buffer, offset);
   }
   return this.buffer[offset];
@@ -1171,13 +1207,14 @@ function ParallelArrayLength() {
 }
 
 function ParallelArrayToString() {
-  var l = this.shape[0];
+  var l = this.length;
   if (l == 0)
     return "";
 
   var open, close;
   if (this.shape.length > 1) {
-    open = "<"; close = ">";
+    open = "<";
+    close = ">";
   } else {
     open = close = "";
   }
@@ -1187,7 +1224,7 @@ function ParallelArrayToString() {
     result += open + String(this.get(i)) + close;
     result += ",";
   }
-  result += open + String(this.get(l-1)) + close;
+  result += open + String(this.get(l - 1)) + close;
   return result;
 }
 
@@ -1195,18 +1232,17 @@ function ParallelArrayToString() {
  * Internal debugging tool: checks that the given `mode` permits
  * sequential execution
  */
-function CheckSequential(mode) {
-  if (!mode || mode.mode === "seq")
-    return;
-
-  ThrowError(JSMSG_WRONG_VALUE, "par", "seq");
+function AssertSequentialIsOK(mode) {
+  if (mode && mode.mode !== "seq" && ParallelTestsShouldPass())
+    ThrowError(JSMSG_WRONG_VALUE, "par", "seq");
 }
 
 /**
- * Internal debugging tool: returns a function to be supplied
+ * Internal debugging tool: returns a function to be supplied to
  * ForkJoin() that will check that the parallel results
- * bailout/succeed as expected.  Returns null if not in no mode is
- * supplied.
+ * bailout/succeed as expected. Returns null if no mode is supplied
+ * or we are building with some strange IF_DEF configuration such that
+ * we don't expect parallel execution to work.
  */
 function CheckParallel(mode) {
   if (!mode || !ParallelTestsShouldPass())
@@ -1237,6 +1273,7 @@ SetScriptHints(ParallelArrayConstructEmpty, { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayConstructFromArray, { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayConstructFromFunction, { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayConstructFromFunctionMode, { cloneAtCallsite: true });
+SetScriptHints(ParallelArrayConstructFromComprehension, { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayView,       { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayBuild,      { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayMap,        { cloneAtCallsite: true });
@@ -1246,32 +1283,11 @@ SetScriptHints(ParallelArrayScatter,    { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
 
 /*
- * Mark the common getters as clone-at-callsite and inline.  This is
+ * Mark the common getters as clone-at-callsite and inline. This is
  * overkill as we should only clone per receiver, but we have no
- * mechanism for that right now.  Bug 804767 might permit another
+ * mechanism for that right now. Bug 804767 might permit another
  * alternative by specializing the inlined gets.
  */
 SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true, inline: true });
-
-// Unit Test Functions
-//
-// function CheckIndices(shape, index1d) {
-//   let idx = ComputeIndices(shape, index1d);
-//
-//   let c = 0;
-//   for (var i = 0; i < shape.length; i++) {
-//     var stride = 1;
-//     for (var j = i + 1; j < shape.length; j++) {
-//       stride *= shape[j];
-//     }
-//     c += idx[i] * stride;
-//   }
-//
-//   assertEq(index1d, c);
-// }
-//
-// for (var q = 0; q < 2*4*6*8; q++) {
-//   CheckIndices([2,4,6,8], q);
-// }

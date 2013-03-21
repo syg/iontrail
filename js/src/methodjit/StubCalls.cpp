@@ -782,7 +782,7 @@ stubs::TriggerIonCompile(VMFrame &f)
              * latter jump can be bypassed if DisableScriptCodeForIon wants this
              * code to be destroyed so that the Ion code can start running.
              */
-            ExpandInlineFrames(f.cx->compartment);
+            ExpandInlineFrames(f.cx->zone());
             Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), script);
             f.jit()->destroyChunk(f.cx->runtime->defaultFreeOp(), f.chunkIndex(),
                                   /* resetUses = */ false);
@@ -816,7 +816,7 @@ stubs::TriggerIonCompile(VMFrame &f)
         return;
     }
 
-    ExpandInlineFrames(f.cx->compartment);
+    ExpandInlineFrames(f.cx->zone());
     Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), script);
 
     if (ion::IsEnabled(f.cx) && f.jit()->nchunks == 1 &&
@@ -838,7 +838,7 @@ stubs::TriggerIonCompile(VMFrame &f)
 void JS_FASTCALL
 stubs::RecompileForInline(VMFrame &f)
 {
-    ExpandInlineFrames(f.cx->compartment);
+    ExpandInlineFrames(f.cx->zone());
     Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), f.script());
     f.jit()->destroyChunk(f.cx->runtime->defaultFreeOp(), f.chunkIndex(), /* resetUses = */ false);
 }
@@ -1016,11 +1016,11 @@ JSObject * JS_FASTCALL
 stubs::Lambda(VMFrame &f, JSFunction *fun_)
 {
     RootedFunction fun(f.cx, fun_);
-    fun = CloneFunctionObjectIfNotSingleton(f.cx, fun, f.fp()->scopeChain());
-    if (!fun)
+    JSObject *clone = Lambda(f.cx, fun, f.fp()->scopeChain());
+    if (!clone)
         THROWV(NULL);
 
-    return fun;
+    return clone;
 }
 
 void JS_FASTCALL
@@ -1602,7 +1602,7 @@ stubs::InvariantFailure(VMFrame &f, void *rval)
     JS_ASSERT(!script->failedBoundsCheck);
     script->failedBoundsCheck = true;
 
-    ExpandInlineFrames(f.cx->compartment);
+    ExpandInlineFrames(f.cx->zone());
 
     mjit::Recompiler::clearStackReferences(f.cx->runtime->defaultFreeOp(), script);
     mjit::ReleaseScriptCode(f.cx->runtime->defaultFreeOp(), script);

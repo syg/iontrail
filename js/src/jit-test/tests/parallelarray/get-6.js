@@ -9,5 +9,5 @@ function testGet() {
   assertEq(p.get(1,1), 3);
 }
 
-// FIXME logical shape not implemented
+// FIXME(bug 844991) logical shape not implemented
 // testGet();

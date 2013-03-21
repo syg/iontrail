@@ -9,18 +9,12 @@
 #include "jsobj.h"
 #include "jsarray.h"
 
-#include "vm/String.h"
-#include "vm/GlobalObject.h"
-#include "vm/ThreadPool.h"
-#include "vm/ForkJoin.h"
-
 #include "builtin/ParallelArray.h"
 
-#include "ion/Ion.h"
-#include "ion/MIR.h"
-#include "ion/MIRGraph.h"
-#include "ion/IonCompartment.h"
-#include "ion/ParallelArrayAnalysis.h"
+#include "vm/ForkJoin.h"
+#include "vm/GlobalObject.h"
+#include "vm/String.h"
+#include "vm/ThreadPool.h"
 
 #include "jsinterpinlines.h"
 #include "jsobjinlines.h"
@@ -115,7 +109,7 @@ ParallelArrayObject::getConstructor(JSContext *cx, unsigned argc)
     RootedValue ctorValue(cx);
     if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
         return NULL;
-    JS_ASSERT(ctorValue.toObject().isFunction());
+    JS_ASSERT(ctorValue.isObject() && ctorValue.toObject().isFunction());
     return ctorValue.toObject().toFunction();
 }
 
@@ -166,7 +160,7 @@ ParallelArrayObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, 
                     return false;
 
                 // addDefiniteProperties() above should have added one
-                // property for of the fixed slots:
+                // property for each of the fixed slots:
                 JS_ASSERT(paTypeObject->getPropertyCount() == NumFixedSlots);
             }
             result->setType(paTypeObject);

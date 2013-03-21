@@ -9,7 +9,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE       = qcms
 LIBRARY_NAME = mozqcms
 LIBXUL_LIBRARY = 1
 GRE_MODULE      = 1
@@ -53,7 +52,7 @@ endif
 endif
 endif
 else
-ifeq (ppc,$(CPU_ARCH))
+ifeq (ppc,$(findstring ppc,$(CPU_ARCH)))
 ifdef GNU_CC
 	CSRCS += transform-altivec.c
 	ALTIVEC_FLAGS=-maltivec

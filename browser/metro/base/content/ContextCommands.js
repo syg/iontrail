@@ -34,24 +34,46 @@ var ContextCommands = {
 
   // Text specific
 
+  cut: function cc_cut() {
+    let target = ContextMenuUI.popupState.target;
+
+    if (!target)
+      return;
+
+    if (target.localName === "browser") {
+      // content
+      if (ContextMenuUI.popupState.string) {
+        this.sendCommand("cut");
+
+        SelectionHelperUI.closeEditSessionAndClear();
+      }
+    } else {
+      // chrome
+      target.editor.cut();
+    }
+
+    target.focus();
+  },
+
   copy: function cc_copy() {
     let target = ContextMenuUI.popupState.target;
+
+    if (!target)
+      return;
+
     if (target.localName == "browser") {
       // content
-      if (ContextMenuUI.popupState.string != "undefined") {
-        this.clipboard.copyString(ContextMenuUI.popupState.string,
-                                  this.docRef);
-        this.showToast(Strings.browser.GetStringFromName("selectionHelper.textCopied"));
+      if (ContextMenuUI.popupState.string) {
+        this.sendCommand("copy");
+
         SelectionHelperUI.closeEditSessionAndClear();
       }
     } else {
       // chrome
       target.editor.copy();
-      this.showToast(Strings.browser.GetStringFromName("selectionHelper.textCopied"));
     }
 
-    if (target)
-      target.focus();
+    target.focus();
   },
 
   paste: function cc_paste() {
@@ -78,24 +100,20 @@ var ContextCommands = {
   },
 
   select: function cc_select() {
-    let contextInfo = { name: "",
-                        json: ContextMenuUI.popupState,
-                        target: ContextMenuUI.popupState.target };
-    SelectionHelperUI.openEditSession(contextInfo);
+    SelectionHelperUI.openEditSession(ContextMenuUI.popupState.target,
+                                      ContextMenuUI.popupState.xPos,
+                                      ContextMenuUI.popupState.yPos);
   },
 
   selectAll: function cc_selectAll() {
     let target = ContextMenuUI.popupState.target;
     if (target.localName == "browser") {
       // content
-      let x = ContextMenuUI.popupState.x;
-      let y = ContextMenuUI.popupState.y;
+      let x = ContextMenuUI.popupState.xPos;
+      let y = ContextMenuUI.popupState.yPos;
       let json = {x: x, y: y, command: "select-all" };
       target.messageManager.sendAsyncMessage("Browser:ContextCommand", json);
-      let contextInfo = { name: "",
-                          json: ContextMenuUI.popupState,
-                          target: ContextMenuUI.popupState.target };
-      SelectionHelperUI.attachEditSession(contextInfo);
+      SelectionHelperUI.attachEditSession(target, x, y);
     } else {
       // chrome
       target.editor.selectAll();
@@ -149,7 +167,6 @@ var ContextCommands = {
   copyLink: function cc_copyLink() {
     this.clipboard.copyString(ContextMenuUI.popupState.linkURL,
                               this.docRef);
-    this.showToast(Strings.browser.GetStringFromName("selectionHelper.linkCopied"));
   },
 
   bookmarkLink: function cc_bookmarkLink() {
@@ -162,8 +179,6 @@ var ContextCommands = {
     } catch (e) {
       return;
     }
-
-    this.showToast(Strings.browser.GetStringFromName("alertLinkBookmarked"));
   },
 
   // Image specific
@@ -180,7 +195,6 @@ var ContextCommands = {
   copyImageSrc: function cc_copyImageSrc() {
     this.clipboard.copyString(ContextMenuUI.popupState.mediaURL,
                               this.docRef);
-    this.showToast(Strings.browser.GetStringFromName("selectionHelper.linkCopied"));
   },
 
   openImageInNewTab: function cc_openImageInNewTab() {
@@ -196,7 +210,6 @@ var ContextCommands = {
   copyVideoSrc: function cc_copyVideoSrc() {
     this.clipboard.copyString(ContextMenuUI.popupState.mediaURL,
                               this.docRef);
-    this.showToast(Strings.browser.GetStringFromName("selectionHelper.linkCopied"));
   },
 
   openVideoInNewTab: function cc_openVideoInNewTab() {
@@ -269,12 +282,7 @@ var ContextCommands = {
     });
   },
 
-  showToast: function showToast(aString) {
-    let toaster = Cc["@mozilla.org/toaster-alerts-service;1"].getService(Ci.nsIAlertsService);
-    toaster.showAlertNotification(null, aString, "", false, "", null);
-  },
-
-  sendCommand: function cc_playVideo(aCommand) {
+  sendCommand: function sendCommand(aCommand) {
     // Send via message manager over to ContextMenuHandler
     let browser = ContextMenuUI.popupState.target;
     browser.messageManager.sendAsyncMessage("Browser:ContextCommand", { command: aCommand });

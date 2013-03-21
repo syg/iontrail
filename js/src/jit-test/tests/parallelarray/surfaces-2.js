@@ -20,9 +20,10 @@ function test(obj) {
     testcase(obj, ParallelArray.prototype.get, [1]);
 }
 
-// FIXME check type of this
+// FIXME(bug 844887) check type of this
 // test(ParallelArray.prototype);
 // test(Object.create(new ParallelArray));
 // test({});
 // test(null);
 // test(undefined);
+

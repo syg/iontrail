@@ -883,6 +883,9 @@ IonBuilder::inlineRegExpTest(CallInfo &callInfo)
 
     if (getInlineThisType(callInfo) != MIRType_Object)
         return InliningStatus_NotInlined;
+    Class *clasp = getInlineThisTypeSet(callInfo)->getKnownClass();
+    if (clasp != &RegExpClass)
+        return InliningStatus_NotInlined;
     if (getInlineArgType(callInfo, 0) != MIRType_String)
         return InliningStatus_NotInlined;
 
@@ -1157,7 +1160,7 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
 
     // Explicitly pad any missing arguments with |undefined|.
     // This permits skipping the argumentsRectifier.
-    for (int32_t i = targetArgs; i > (int)argc; i--) {
+    for (uint32_t i = targetArgs; i > argc; i--) {
         JS_ASSERT_IF(target, !target->isNative());
         MConstant *undef = MConstant::New(UndefinedValue());
         current->add(undef);
@@ -1171,7 +1174,7 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
 
     // Add explicit arguments.
     // Skip addArg(0) because it is reserved for this
-    for (int32_t i = 0; i < argc; i++) {
+    for (uint32_t i = 0; i < argc; i++) {
         MDefinition *arg = callInfo.getArg(i + discards);
         MPassArg *passArg = MPassArg::New(arg);
         current->add(passArg);

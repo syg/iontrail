@@ -15,6 +15,8 @@ BROWSER_TESTS = \
   browser_test.js \
   browser_canonizeURL.js \
   browser_context_ui.js \
+  browser_tiles.js \
+  browser_tilegrid.xul \
   browser_onscreen_keyboard.js \
   browser_onscreen_keyboard.html \
   browser_remotetabs.js \
@@ -42,10 +44,10 @@ XPCSHELL_RESOURCES = \
   $(NULL)
 
 libs:: $(BROWSER_TESTS)
-	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/metro/
+	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/metro/$(relativesrcdir)
 
 libs:: $(BROWSER_TEST_RESOURCES)
-	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/metro/res
+	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/metro/$(relativesrcdir)/res
 
 libs:: $(XPCSHELL_RESOURCES)
 	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/xpcshell/$(relativesrcdir)/unit/

@@ -11,8 +11,8 @@
 #include "jsapi.h"
 
 #include "gc/Heap.h"
-#include "gc/Root.h"
 #include "js/HashTable.h"
+#include "js/RootingAPI.h"
 
 /*
  * A write barrier is a mechanism used by incremental or generation GCs to
@@ -331,6 +331,7 @@ typedef RelocatablePtr<JSScript> RelocatablePtrScript;
 typedef HeapPtr<JSObject> HeapPtrObject;
 typedef HeapPtr<JSFunction> HeapPtrFunction;
 typedef HeapPtr<JSString> HeapPtrString;
+typedef HeapPtr<PropertyName> HeapPtrPropertyName;
 typedef HeapPtr<JSScript> HeapPtrScript;
 typedef HeapPtr<Shape> HeapPtrShape;
 typedef HeapPtr<BaseShape> HeapPtrBaseShape;

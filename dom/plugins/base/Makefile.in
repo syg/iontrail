@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= plugin
 LIBRARY_NAME	= gkplugin
 EXPORT_LIBRARY = 1
 IS_COMPONENT    = 1
@@ -19,17 +18,6 @@ GRE_MODULE	= 1
 LIBXUL_LIBRARY = 1
 
 EXPORTS_NAMESPACES = mozilla
-
-XPIDLSRCS = \
-  nsIHTTPHeaderListener.idl \
-  nsIPluginDocument.idl \
-  nsIPluginHost.idl \
-  nsIPluginInputStream.idl \
-  nsIPluginInstanceOwner.idl \
-  nsIPluginTag.idl \
-  nsIPluginTagInfo.idl \
-  nspluginroot.idl \
-  $(NULL)
 
 EXPORTS = \
   npapi.h \

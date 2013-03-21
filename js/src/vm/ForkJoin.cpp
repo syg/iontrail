@@ -37,10 +37,6 @@
 #include "jsinferinlines.h"
 #include "jsinterpinlines.h"
 
-#if defined(JS_THREADSAFE) && defined(JS_ION)
-#  define JS_THREADSAFE_ION
-#endif
-
 using namespace js;
 using namespace js::parallel;
 using namespace js::ion;
@@ -1162,7 +1158,7 @@ ForkJoinShared::setAbortFlag(bool fatal)
 }
 
 void
-ForkJoinShared::requestGC(gcreason::Reason reason)
+ForkJoinShared::requestGC(JS::gcreason::Reason reason)
 {
     // Remember the details of the GC that was required for later,
     // then trigger an interrupt.
@@ -1326,7 +1322,7 @@ void ForkJoinSlice::recordStackBase(uintptr_t *baseAddr)
 }
 
 void
-ForkJoinSlice::requestGC(gcreason::Reason reason)
+ForkJoinSlice::requestGC(JS::gcreason::Reason reason)
 {
     shared->requestGC(reason);
 }

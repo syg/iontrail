@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= content
 LIBRARY_NAME	= gkconhtmlcon_s
 LIBXUL_LIBRARY	= 1
 ifndef _MSC_VER
@@ -56,6 +55,7 @@ EXPORTS_mozilla/dom = \
 		HTMLModElement.h \
 		HTMLObjectElement.h \
 		HTMLOptionElement.h \
+		HTMLOptionsCollection.h \
 		HTMLOptGroupElement.h \
 		HTMLOutputElement.h \
 		HTMLParagraphElement.h \
@@ -64,6 +64,7 @@ EXPORTS_mozilla/dom = \
 		HTMLScriptElement.h \
 		HTMLSharedElement.h \
 		HTMLSharedListElement.h \
+		HTMLSharedObjectElement.h \
 		HTMLSpanElement.h \
 		HTMLStyleElement.h \
 		HTMLTableCaptionElement.h \
@@ -120,8 +121,9 @@ CPPSRCS		= \
 		HTMLMeterElement.cpp \
 		HTMLModElement.cpp \
 		HTMLObjectElement.cpp \
-		nsHTMLSharedObjectElement.cpp \
+		HTMLSharedObjectElement.cpp \
 		HTMLOptionElement.cpp \
+		HTMLOptionsCollection.cpp \
 		HTMLOptGroupElement.cpp \
 		HTMLOutputElement.cpp \
 		HTMLParagraphElement.cpp \
@@ -157,12 +159,12 @@ EXPORTS_mozilla/dom += \
 		$(NULL)
 
 CPPSRCS		+= \
-		nsHTMLAudioElement.cpp \
-		nsHTMLMediaElement.cpp \
+		HTMLAudioElement.cpp \
+		HTMLMediaElement.cpp \
 		MediaError.cpp \
 		HTMLSourceElement.cpp \
 		TimeRanges.cpp \
-		nsHTMLVideoElement.cpp \
+		HTMLVideoElement.cpp \
 		$(NULL)
 endif
 

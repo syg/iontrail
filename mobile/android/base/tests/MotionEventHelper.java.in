@@ -1,8 +1,6 @@
 #filter substitution
 package @ANDROID_PACKAGE_NAME@.tests;
 
-import @ANDROID_PACKAGE_NAME@.*;
-
 import android.app.Instrumentation;
 import android.os.SystemClock;
 import android.util.FloatMath;
@@ -70,6 +68,13 @@ class MotionEventHelper {
                     } catch (InterruptedException ie) {
                         ie.printStackTrace();
                     }
+                }
+                // sleep a bit before sending the last move so that the calculated
+                // fling velocity is low and we don't end up doing a fling afterwards.
+                try {
+                    Thread.sleep(1000L);
+                } catch (InterruptedException ie) {
+                    ie.printStackTrace();
                 }
                 // do the last one using endX/endY directly to avoid rounding errors
                 downTime = move(downTime, endX, endY);

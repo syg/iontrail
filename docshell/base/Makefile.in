@@ -10,7 +10,6 @@ VPATH = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE         = docshell
 LIBRARY_NAME   = basedocshell_s
 GRE_MODULE     = 1
 LIBXUL_LIBRARY = 1
@@ -18,38 +17,6 @@ LIBXUL_LIBRARY = 1
 ifdef MOZ_TOOLKIT_SEARCH
 DEFINES += -DMOZ_TOOLKIT_SEARCH
 endif
-
-SDK_XPIDLSRCS = \
-  nsIClipboardCommands.idl \
-  $(NULL)
-
-XPIDLSRCS = \
-  nsCDefaultURIFixup.idl \
-  nsIDocShell.idl \
-  nsIDocShellLoadInfo.idl \
-  nsIDocShellTreeItem.idl \
-  nsIDocShellTreeNode.idl \
-  nsIDocShellTreeOwner.idl \
-  nsIDocShellHistory.idl \
-  nsIGlobalHistory2.idl \
-  nsIMarkupDocumentViewer.idl \
-  nsIScrollable.idl \
-  nsITextScroll.idl \
-  nsIDocCharset.idl \
-  nsIWebNavigation.idl \
-  nsIWebNavigationInfo.idl \
-  nsIContentViewer.idl \
-  nsIContentViewerEdit.idl \
-  nsIContentViewerFile.idl \
-  nsIURIFixup.idl \
-  nsIWebPageDescriptor.idl \
-  nsIDownloadHistory.idl \
-  nsILoadContext.idl \
-  nsIRefreshURI.idl \
-  nsIContentViewerContainer.idl \
-  nsIDocumentLoaderFactory.idl \
-  nsIPrivacyTransitionObserver.idl \
-  $(NULL)
 
 EXPORTS = \
   nsDocShellLoadTypes.h \

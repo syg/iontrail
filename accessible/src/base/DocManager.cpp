@@ -352,6 +352,9 @@ void
 DocManager::RemoveListeners(nsIDocument* aDocument)
 {
   nsPIDOMWindow* window = aDocument->GetWindow();
+  if (!window)
+    return;
+
   nsIDOMEventTarget* target = window->GetChromeEventHandler();
   nsEventListenerManager* elm = target->GetListenerManager(true);
   elm->RemoveEventListenerByType(this, NS_LITERAL_STRING("pagehide"),
@@ -366,7 +369,8 @@ DocManager::CreateDocOrRootAccessible(nsIDocument* aDocument)
 {
   // Ignore temporary, hiding, resource documents and documents without
   // docshell.
-  if (aDocument->IsInitialDocument() || !aDocument->IsVisible() ||
+  if (aDocument->IsInitialDocument() ||
+      !aDocument->IsVisibleConsideringAncestors() ||
       aDocument->IsResourceDoc() || !aDocument->IsActive())
     return nullptr;
 

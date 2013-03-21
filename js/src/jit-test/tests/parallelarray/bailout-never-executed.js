@@ -1,3 +1,7 @@
+// |jit-test| slow;
+// ^^ This test is slow when --no-ion is used, specifically,
+//    as part of TBPL.
+
 load(libdir + "parallelarray-helpers.js");
 
 function makeObject(e, i, c) {

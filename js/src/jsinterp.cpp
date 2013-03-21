@@ -41,6 +41,7 @@
 
 #include "builtin/Eval.h"
 #include "gc/Marking.h"
+#include "ion/AsmJS.h"
 #include "vm/Debugger.h"
 #include "vm/Shape.h"
 
@@ -1312,9 +1313,7 @@ js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode)
 /* No-ops for ease of decompilation. */
 ADD_EMPTY_CASE(JSOP_NOP)
 ADD_EMPTY_CASE(JSOP_UNUSED71)
-ADD_EMPTY_CASE(JSOP_UNUSED107)
 ADD_EMPTY_CASE(JSOP_UNUSED132)
-ADD_EMPTY_CASE(JSOP_UNUSED147)
 ADD_EMPTY_CASE(JSOP_UNUSED148)
 ADD_EMPTY_CASE(JSOP_UNUSED161)
 ADD_EMPTY_CASE(JSOP_UNUSED162)
@@ -1440,6 +1439,43 @@ BEGIN_CASE(JSOP_LOOPENTRY)
 
 END_CASE(JSOP_LOOPENTRY)
 
+BEGIN_CASE(JSOP_LINKASMJS)
+#ifdef JS_ASMJS
+{
+    RootedValue &rval = rootValue0;
+
+    /*
+     * The callee specified "use asm" and the entire body type-checked
+     * according to the asm.js type system. However, there are still a set of
+     * dynamic checks required to validate the input parameters which are
+     * performed by LinkAsmJS.
+     */
+    rval = NullValue();
+    if (!LinkAsmJS(cx, regs.fp(), &rval))
+        goto error;
+
+    /*
+     * If the linking step succeeded, then 'rval' contains the result of
+     * executing the "use asm" function (i.e., the exported functions) so we
+     * can just return.
+     */
+    if (rval.isObject()) {
+        regs.fp()->setReturnValue(rval);
+        regs.setToEndOfScript();
+        interpReturnOK = true;
+        if (entryFrame != regs.fp())
+            goto inline_return;
+        goto exit;
+    }
+
+    /*
+     * Otherwise, linking failed. This will emit a warning, but is not
+     * otherwise a JS semantic error so we keep executing as normal.
+     */
+}
+#endif
+END_CASE(JSOP_LINKASMJS)
+
 BEGIN_CASE(JSOP_NOTEARG)
 END_CASE(JSOP_NOTEARG)
 
@@ -1527,8 +1563,7 @@ BEGIN_CASE(JSOP_STOP)
         cx->stack.popInlineFrame(regs);
         SET_SCRIPT(regs.fp()->script());
 
-        JS_ASSERT(*regs.pc == JSOP_NEW || *regs.pc == JSOP_CALL ||
-                  *regs.pc == JSOP_FUNCALL || *regs.pc == JSOP_FUNAPPLY);
+        JS_ASSERT(js_CodeSpec[*regs.pc].format & JOF_INVOKE);
 
         /* Resume execution in the calling frame. */
         if (JS_LIKELY(interpReturnOK)) {
@@ -2740,10 +2775,9 @@ BEGIN_CASE(JSOP_LAMBDA)
     RootedFunction &fun = rootFunction0;
     fun = script->getFunction(GET_UINT32_INDEX(regs.pc));
 
-    JSFunction *obj = CloneFunctionObjectIfNotSingleton(cx, fun, regs.fp()->scopeChain());
+    JSObject *obj = Lambda(cx, fun, regs.fp()->scopeChain());
     if (!obj)
         goto error;
-
     JS_ASSERT(obj->getProto());
     PUSH_OBJECT(*obj);
 }
@@ -3425,6 +3459,20 @@ js::Lambda(JSContext *cx, HandleFunction fun, HandleObject parent)
     RootedObject clone(cx, CloneFunctionObjectIfNotSingleton(cx, fun, parent));
     if (!clone)
         return NULL;
+
+    if (fun->isArrow()) {
+        StackFrame *fp = cx->fp();
+
+        // Note that this will assert if called from Ion code. Ion can't yet
+        // emit code for a bound arrow function (bug 851913).
+        if (!ComputeThis(cx, fp))
+            return NULL;
+
+        RootedValue thisval(cx, fp->thisValue());
+        clone = js_fun_bind(cx, clone, thisval, NULL, 0);
+        if (!clone)
+            return NULL;
+    }
 
     JS_ASSERT(clone->global() == clone->global());
     return clone;

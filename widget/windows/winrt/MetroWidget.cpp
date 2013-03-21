@@ -15,12 +15,14 @@
 #include "nsIAppStartup.h"
 #include "../resource.h"
 #include "nsIWidgetListener.h"
+#include "nsIPresShell.h"
 #include "nsPrintfCString.h"
 #include "nsWindowDefs.h"
 #include "FrameworkView.h"
 #include "nsTextStore.h"
 #include "Layers.h"
 #include "BasicLayers.h"
+#include "Windows.Graphics.Display.h"
 
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
@@ -38,6 +40,7 @@ using namespace ABI::Windows::Devices::Input;
 using namespace ABI::Windows::UI::Core;
 using namespace ABI::Windows::System;
 using namespace ABI::Windows::Foundation;
+using namespace ABI::Windows::Graphics::Display;
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gWindowsLog;
@@ -116,7 +119,10 @@ namespace {
     // processed.
     Log(L"  Inputs sent. Waiting for input messages to clear");
     MSG msg;
-    while (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+    while (WinUtils::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+      if (nsTextStore::ProcessRawKeyMessage(msg)) {
+        continue;  // the message is consumed by TSF
+      }
       ::TranslateMessage(&msg);
       ::DispatchMessage(&msg);
       Log(L"    Dispatched 0x%x 0x%x 0x%x", msg.message, msg.wParam, msg.lParam);
@@ -941,9 +947,11 @@ MetroWidget::InitEvent(nsGUIEvent& event, nsIntPoint* aPoint)
 {
   if (!aPoint) {
     event.refPoint.x = event.refPoint.y = 0;
-  } else {  
-    event.refPoint.x = aPoint->x;
-    event.refPoint.y = aPoint->y;
+  } else {
+    // convert CSS pixels to device pixels for event.refPoint
+    double scale = GetDefaultScale(); 
+    event.refPoint.x = int32_t(NS_round(aPoint->x * scale));
+    event.refPoint.y = int32_t(NS_round(aPoint->y * scale));
   }
   event.time = ::GetMessageTime();
 }
@@ -1015,6 +1023,21 @@ MetroWidget::GetRootAccessible()
 }
 #endif
 
+double MetroWidget::GetDefaultScaleInternal()
+{
+  // Return the resolution scale factor reported by the metro environment.
+  // XXX TODO: also consider the desktop resolution setting, as IE appears to do?
+  ComPtr<IDisplayPropertiesStatics> dispProps;
+  if (SUCCEEDED(GetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayProperties).Get(),
+                                     dispProps.GetAddressOf()))) {
+    ResolutionScale scale;
+    if (SUCCEEDED(dispProps->get_ResolutionScale(&scale))) {
+      return (double)scale / 100.0;
+    }
+  }
+  return 1.0;
+}
+
 float MetroWidget::GetDPI()
 {
   LogFunction();
@@ -1022,6 +1045,16 @@ float MetroWidget::GetDPI()
     return 96.0;
   }
   return mView->GetDPI();
+}
+
+void MetroWidget::ChangedDPI()
+{
+  if (mWidgetListener) {
+    nsIPresShell* presShell = mWidgetListener->GetPresShell();
+    if (presShell) {
+      presShell->BackingScaleFactorChanged();
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -1188,6 +1221,12 @@ MetroWidget::NotifyIMEOfTextChange(uint32_t aStart,
                                    uint32_t aNewEnd)
 {
   return nsTextStore::OnTextChange(aStart, aOldEnd, aNewEnd);
+}
+
+nsIMEUpdatePreference
+MetroWidget::GetIMEUpdatePreference()
+{
+  return nsTextStore::GetIMEUpdatePreference();
 }
 
 NS_IMETHODIMP

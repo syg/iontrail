@@ -25,6 +25,7 @@
 #include "nsIURL.h"
 #include "nsIXPConnect.h"
 #include "nsIXPCScriptNotify.h"
+#include "nsPrintfCString.h"
 
 #include "jsfriendapi.h"
 #include "jsdbgapi.h"
@@ -39,6 +40,7 @@
 #include "nsJSEnvironment.h"
 #include "nsJSUtils.h"
 #include "nsNetUtil.h"
+#include "nsProxyRelease.h"
 #include "nsSandboxFlags.h"
 #include "nsThreadUtils.h"
 #include "xpcpublic.h"
@@ -1411,10 +1413,29 @@ public:
 
   ~WorkerJSRuntimeStats()
   {
+    for (size_t i = 0; i != zoneStatsVector.length(); i++) {
+      free(zoneStatsVector[i].extra1);
+    }
+
     for (size_t i = 0; i != compartmentStatsVector.length(); i++) {
       free(compartmentStatsVector[i].extra1);
       // No need to free |extra2| because it's a static string.
     }
+  }
+
+  virtual void
+  initExtraZoneStats(JS::Zone* aZone,
+                     JS::ZoneStats* aZoneStats)
+                     MOZ_OVERRIDE
+  {
+    MOZ_ASSERT(!aZoneStats->extra1);
+
+    // ReportJSRuntimeExplicitTreeStats expects that
+    // aZoneStats->extra1 is a char pointer.
+
+    nsAutoCString pathPrefix(mRtPath);
+    pathPrefix += nsPrintfCString("zone(%p)/", (void *)aZone);
+    aZoneStats->extra1 = strdup(pathPrefix.get());
   }
 
   virtual void
@@ -1431,6 +1452,8 @@ public:
     // This is the |cJSPathPrefix|.  Each worker has exactly two compartments:
     // one for atoms, and one for everything else.
     nsAutoCString cJSPathPrefix(mRtPath);
+    cJSPathPrefix += nsPrintfCString("zone(%p)/",
+                                     (void *)js::GetCompartmentZone(aCompartment));
     cJSPathPrefix += js::IsAtomsCompartment(aCompartment)
                    ? NS_LITERAL_CSTRING("compartment(web-worker-atoms)/")
                    : NS_LITERAL_CSTRING("compartment(web-worker)/");
@@ -2444,6 +2467,18 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
   if (aParent) {
     aParent->AssertIsOnWorkerThread();
 
+    // If the parent is going away give up now.
+    Status currentStatus;
+    {
+      MutexAutoLock lock(aParent->mMutex);
+      currentStatus = aParent->mStatus;
+    }
+
+    if (currentStatus > Running) {
+      JS_ReportError(aCx, "Cannot create child workers from the close handler!");
+      return nullptr;
+    }
+
     parentContext = aCx;
 
     // Domain is the only thing we can touch here. The rest will be handled by
@@ -2608,6 +2643,30 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
     rv =
       scriptloader::ChannelFromScriptURLWorkerThread(aCx, aParent, scriptURL,
                                                      getter_AddRefs(channel));
+
+    // Now that we've spun the loop there's no guarantee that our parent is
+    // still alive.  We may have received control messages initiating shutdown.
+
+    Status currentStatus;
+    {
+      MutexAutoLock lock(aParent->mMutex);
+      currentStatus = aParent->mStatus;
+    }
+
+    if (currentStatus > Running) {
+      nsCOMPtr<nsIThread> mainThread;
+      NS_GetMainThread(getter_AddRefs(mainThread));
+      if (!mainThread) {
+        MOZ_CRASH();
+      }
+
+      nsIChannel* rawChannel;
+      channel.forget(&rawChannel);
+      // If this fails we accept the leak.
+      NS_ProxyRelease(mainThread, rawChannel);
+
+      return nullptr;
+    }
   }
   else {
     rv =
@@ -3272,16 +3331,17 @@ WorkerPrivate::AddChildWorker(JSContext* aCx, ParentType* aChildWorker)
 {
   AssertIsOnWorkerThread();
 
-  Status currentStatus;
+#ifdef DEBUG
   {
+    Status currentStatus;
+    {
     MutexAutoLock lock(mMutex);
     currentStatus = mStatus;
-  }
+    }
 
-  if (currentStatus > Running) {
-    JS_ReportError(aCx, "Cannot create child workers from the close handler!");
-    return false;
+    MOZ_ASSERT(currentStatus == Running);
   }
+#endif
 
   NS_ASSERTION(!mChildWorkers.Contains(aChildWorker),
                "Already know about this one!");
@@ -4082,12 +4142,12 @@ WorkerPrivate::GarbageCollectInternal(JSContext* aCx, bool aShrinking,
   AssertIsOnWorkerThread();
 
   JSRuntime *rt = JS_GetRuntime(aCx);
-  js::PrepareForFullGC(rt);
+  JS::PrepareForFullGC(rt);
   if (aShrinking) {
-    js::ShrinkingGC(rt, js::gcreason::DOM_WORKER);
+    JS::ShrinkingGC(rt, JS::gcreason::DOM_WORKER);
   }
   else {
-    js::GCForReason(rt, js::gcreason::DOM_WORKER);
+    JS::GCForReason(rt, JS::gcreason::DOM_WORKER);
   }
 
   if (aCollectChildren) {

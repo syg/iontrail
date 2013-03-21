@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= layout_debug
 LIBRARY_NAME	= gkdebug
 EXPORT_LIBRARY	= 1
 IS_COMPONENT	= 1
@@ -19,11 +18,6 @@ LIBXUL_LIBRARY	= 1
 GRE_MODULE	= 1
 FAIL_ON_WARNINGS = 1
 
-
-XPIDLSRCS	= \
-		nsILayoutRegressionTester.idl \
-		nsILayoutDebuggingTools.idl \
-		$(NULL)
 
 EXPORTS		= \
 		nsLayoutDebugCIID.h \

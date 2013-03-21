@@ -20,5 +20,5 @@ function testFlatten() {
   assertEqParallelArray(p.flatten(), p2);
 }
 
-// FIXME logical shape not implemented
+// FIXME(bug 844991) logical shape not implemented
 // testFlatten();

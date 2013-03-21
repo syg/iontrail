@@ -60,7 +60,7 @@ class AndroidRefable {
 // This isn't in AndroidBridge.h because including StrongPointer.h there is gross
 static android::sp<AndroidRefable> (*android_SurfaceTexture_getNativeWindow)(JNIEnv* env, jobject surfaceTexture) = nullptr;
 
-/* static */ StaticAutoPtr<nsTArray<nsCOMPtr<nsISmsRequest> > > AndroidBridge::sSmsRequests;
+/* static */ StaticAutoPtr<nsTArray<nsCOMPtr<nsIMobileMessageCallback> > > AndroidBridge::sSmsRequests;
 
 void
 AndroidBridge::ConstructBridge(JNIEnv *jEnv,
@@ -131,7 +131,7 @@ AndroidBridge::Init(JNIEnv *jEnv,
     jUnlockProfile = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "unlockProfile", "()Z");
     jKillAnyZombies = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "killAnyZombies", "()V");
     jAlertsProgressListener_OnProgress = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "alertsProgressListener_OnProgress", "(Ljava/lang/String;JJLjava/lang/String;)V");
-    jAlertsProgressListener_OnCancel = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "alertsProgressListener_OnCancel", "(Ljava/lang/String;)V");
+    jCloseNotification = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "closeNotification", "(Ljava/lang/String;)V");
     jGetDpi = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "getDpi", "()I");
     jSetFullScreen = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "setFullScreen", "(Z)V");
     jShowInputMethodPicker = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "showInputMethodPicker", "()V");
@@ -741,9 +741,9 @@ AndroidBridge::AlertsProgressListener_OnProgress(const nsAString& aAlertName,
 }
 
 void
-AndroidBridge::AlertsProgressListener_OnCancel(const nsAString& aAlertName)
+AndroidBridge::CloseNotification(const nsAString& aAlertName)
 {
-    ALOG_BRIDGE("AlertsProgressListener_OnCancel");
+    ALOG_BRIDGE("CloseNotification");
 
     JNIEnv *env = GetJNIEnv();
     if (!env)
@@ -752,7 +752,7 @@ AndroidBridge::AlertsProgressListener_OnCancel(const nsAString& aAlertName)
     AutoLocalJNIFrame jniFrame(env);
 
     jstring jstrName = NewJavaString(&jniFrame, aAlertName);
-    env->CallStaticVoidMethod(mGeckoAppShellClass, jAlertsProgressListener_OnCancel, jstrName);
+    env->CallStaticVoidMethod(mGeckoAppShellClass, jCloseNotification, jstrName);
 }
 
 
@@ -1670,7 +1670,9 @@ AndroidBridge::GetSegmentInfoForText(const nsAString& aText,
 }
 
 void
-AndroidBridge::SendMessage(const nsAString& aNumber, const nsAString& aMessage, nsISmsRequest* aRequest)
+AndroidBridge::SendMessage(const nsAString& aNumber,
+                           const nsAString& aMessage,
+                           nsIMobileMessageCallback* aRequest)
 {
     ALOG_BRIDGE("AndroidBridge::SendMessage");
 
@@ -1690,7 +1692,7 @@ AndroidBridge::SendMessage(const nsAString& aNumber, const nsAString& aMessage, 
 }
 
 void
-AndroidBridge::GetMessage(int32_t aMessageId, nsISmsRequest* aRequest)
+AndroidBridge::GetMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequest)
 {
     ALOG_BRIDGE("AndroidBridge::GetMessage");
 
@@ -1707,7 +1709,7 @@ AndroidBridge::GetMessage(int32_t aMessageId, nsISmsRequest* aRequest)
 }
 
 void
-AndroidBridge::DeleteMessage(int32_t aMessageId, nsISmsRequest* aRequest)
+AndroidBridge::DeleteMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequest)
 {
     ALOG_BRIDGE("AndroidBridge::DeleteMessage");
 
@@ -1725,7 +1727,7 @@ AndroidBridge::DeleteMessage(int32_t aMessageId, nsISmsRequest* aRequest)
 
 void
 AndroidBridge::CreateMessageList(const dom::mobilemessage::SmsFilterData& aFilter, bool aReverse,
-                                 nsISmsRequest* aRequest)
+                                 nsIMobileMessageCallback* aRequest)
 {
     ALOG_BRIDGE("AndroidBridge::CreateMessageList");
 
@@ -1756,7 +1758,7 @@ AndroidBridge::CreateMessageList(const dom::mobilemessage::SmsFilterData& aFilte
 }
 
 void
-AndroidBridge::GetNextMessageInList(int32_t aListId, nsISmsRequest* aRequest)
+AndroidBridge::GetNextMessageInList(int32_t aListId, nsIMobileMessageCallback* aRequest)
 {
     ALOG_BRIDGE("AndroidBridge::GetNextMessageInList");
 
@@ -1786,7 +1788,7 @@ AndroidBridge::ClearMessageList(int32_t aListId)
 }
 
 bool
-AndroidBridge::QueueSmsRequest(nsISmsRequest* aRequest, uint32_t* aRequestIdOut)
+AndroidBridge::QueueSmsRequest(nsIMobileMessageCallback* aRequest, uint32_t* aRequestIdOut)
 {
     MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
     MOZ_ASSERT(aRequest && aRequestIdOut);
@@ -1812,7 +1814,7 @@ AndroidBridge::QueueSmsRequest(nsISmsRequest* aRequest, uint32_t* aRequestIdOut)
     return true;
 }
 
-already_AddRefed<nsISmsRequest>
+already_AddRefed<nsIMobileMessageCallback>
 AndroidBridge::DequeueSmsRequest(uint32_t aRequestId)
 {
     MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");

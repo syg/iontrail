@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= txtsvc
 GRE_MODULE	= 1
 
 EXPORTS		= \
@@ -18,11 +17,6 @@ EXPORTS		= \
 		nsITextService.h \
 		nsITextServicesDocument.h \
 		nsTextServicesCID.h \
-		$(NULL)
-
-XPIDLSRCS	= \
-		nsITextServicesFilter.idl \
-		nsIInlineSpellChecker.idl \
 		$(NULL)
 
 include $(topsrcdir)/config/rules.mk

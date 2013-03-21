@@ -12,7 +12,6 @@ relativesrcdir = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE          = test_necko
 NO_INTERFACES_MANIFEST = 1
 
 EXTRA_COMPONENTS = \
@@ -27,10 +26,6 @@ EXTRA_COMPONENTS += \
                    httpd.manifest \
                    $(NULL)
 endif
-
-XPIDLSRCS       = \
-                  nsIHttpServer.idl \
-                  $(NULL)
 
 XPCSHELL_TESTS = test
 

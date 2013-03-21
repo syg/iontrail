@@ -30,6 +30,7 @@ js::StartOffThreadIonCompile(JSContext *cx, ion::IonBuilder *builder)
         if (!rt->workerThreadState->init(rt)) {
             js_delete(rt->workerThreadState);
             rt->workerThreadState = NULL;
+            return false;
         }
     }
     WorkerThreadState &state = *cx->runtime->workerThreadState;
@@ -315,7 +316,7 @@ WorkerThread::threadLoop()
         state.unlock();
 
         {
-            ion::IonContext ictx(NULL, ionBuilder->script()->compartment(), &ionBuilder->temp());
+            ion::IonContext ictx(ionBuilder->script()->compartment(), &ionBuilder->temp());
             ionBuilder->setBackgroundCodegen(ion::CompileBackEnd(ionBuilder));
         }
 

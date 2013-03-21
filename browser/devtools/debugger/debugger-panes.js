@@ -104,8 +104,8 @@ create({ constructor: SourcesView, proto: MenuContainer.prototype }, {
    */
   addSource: function DVS_addSource(aSource, aOptions = {}) {
     let url = aSource.url;
-    let label = SourceUtils.getSourceLabel(url);
-    let group = SourceUtils.getSourceGroup(url);
+    let label = SourceUtils.getSourceLabel(url.split(" -> ").pop());
+    let group = SourceUtils.getSourceGroup(url.split(" -> ").pop());
 
     // Append a source item to this container.
     let sourceItem = this.push([label, url, group], {
@@ -1706,7 +1706,11 @@ create({ constructor: GlobalSearchView, proto: MenuContainer.prototype }, {
    * @param string aContents
    *        The text contents of the source.
    */
-  _onFetchSourceFinished: function DVGS__onFetchSourceFinished(aLocation, aContents) {
+  _onFetchSourceFinished: function DVGS__onFetchSourceFinished(aLocation, aContents, aError) {
+    if (aError) {
+      return;
+    }
+
     // Remember the source in a cache so we don't have to fetch it again.
     this._cache.set(aLocation, aContents);
 

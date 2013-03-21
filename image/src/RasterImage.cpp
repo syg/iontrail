@@ -25,6 +25,7 @@
 #include "nsBMPDecoder.h"
 #include "nsICODecoder.h"
 #include "nsIconDecoder.h"
+#include "nsWBMPDecoder.h"
 
 #include "gfxContext.h"
 
@@ -931,8 +932,9 @@ RasterImage::FrameRect(uint32_t aWhichFrame)
   }
 
   // Get the requested frame.
-  imgFrame* frame = aWhichFrame == FRAME_FIRST ? GetImgFrame(0)
-                                               : GetCurrentImgFrame();
+  imgFrame* frame = aWhichFrame == FRAME_FIRST ? GetImgFrameNoDecode(0)
+                                               : GetImgFrameNoDecode(GetCurrentImgFrameIndex());
+
 
   // If we have the frame, use that rectangle.
   if (frame) {
@@ -2607,6 +2609,9 @@ RasterImage::InitDecoder(bool aDoSizeDecode)
       break;
     case eDecoderType_icon:
       mDecoder = new nsIconDecoder(*this, observer);
+      break;
+    case eDecoderType_wbmp:
+      mDecoder = new nsWBMPDecoder(*this, observer);
       break;
     default:
       NS_ABORT_IF_FALSE(0, "Shouldn't get here!");

@@ -12,8 +12,8 @@
 #include "mozilla/StandardInteger.h"
 #include "mozilla/TypeTraits.h"
 
+#include <cmath>
 #include <limits.h>
-#include <math.h>
 
 namespace mozilla {
 
@@ -49,36 +49,25 @@ EuclidLCM(IntegerType a, IntegerType b)
 
 namespace detail {
 
-// For now mozilla::Abs only takes intN_T, the signed natural types, and
-// float/double/long double.  Feel free to add overloads for other standard,
-// signed types if you need them.
+template<typename T>
+struct AllowDeprecatedAbsFixed : FalseType {};
+
+template<> struct AllowDeprecatedAbsFixed<int32_t> : TrueType {};
+template<> struct AllowDeprecatedAbsFixed<int64_t> : TrueType {};
 
 template<typename T>
-struct SupportedForAbsFixed : FalseType {};
+struct AllowDeprecatedAbs : AllowDeprecatedAbsFixed<T> {};
 
-template<> struct SupportedForAbsFixed<int8_t> : TrueType {};
-template<> struct SupportedForAbsFixed<int16_t> : TrueType {};
-template<> struct SupportedForAbsFixed<int32_t> : TrueType {};
-template<> struct SupportedForAbsFixed<int64_t> : TrueType {};
-
-template<typename T>
-struct SupportedForAbs : SupportedForAbsFixed<T> {};
-
-template<> struct SupportedForAbs<char> : IntegralConstant<bool, char(-1) < char(0)> {};
-template<> struct SupportedForAbs<signed char> : TrueType {};
-template<> struct SupportedForAbs<short> : TrueType {};
-template<> struct SupportedForAbs<int> : TrueType {};
-template<> struct SupportedForAbs<long> : TrueType {};
-template<> struct SupportedForAbs<long long> : TrueType {};
-template<> struct SupportedForAbs<float> : TrueType {};
-template<> struct SupportedForAbs<double> : TrueType {};
-template<> struct SupportedForAbs<long double> : TrueType {};
+template<> struct AllowDeprecatedAbs<int> : TrueType {};
+template<> struct AllowDeprecatedAbs<long> : TrueType {};
 
 } // namespace detail
 
+// DO NOT USE DeprecatedAbs.  It exists only until its callers can be converted
+// to Abs below, and it will be removed when all callers have been changed.
 template<typename T>
-inline typename mozilla::EnableIf<detail::SupportedForAbs<T>::value, T>::Type
-Abs(const T t)
+inline typename mozilla::EnableIf<detail::AllowDeprecatedAbs<T>::value, T>::Type
+DeprecatedAbs(const T t)
 {
   // The absolute value of the smallest possible value of a signed-integer type
   // won't fit in that type (on twos-complement systems -- and we're blithely
@@ -95,25 +84,62 @@ Abs(const T t)
   return t >= 0 ? t : -t;
 }
 
+namespace detail {
+
+// For now mozilla::Abs only takes intN_T, the signed natural types, and
+// float/double/long double.  Feel free to add overloads for other standard,
+// signed types if you need them.
+
+template<typename T>
+struct AbsReturnTypeFixed;
+
+template<> struct AbsReturnTypeFixed<int8_t> { typedef uint8_t Type; };
+template<> struct AbsReturnTypeFixed<int16_t> { typedef uint16_t Type; };
+template<> struct AbsReturnTypeFixed<int32_t> { typedef uint32_t Type; };
+template<> struct AbsReturnTypeFixed<int64_t> { typedef uint64_t Type; };
+
+template<typename T>
+struct AbsReturnType : AbsReturnTypeFixed<T> {};
+
+template<> struct AbsReturnType<char> : EnableIf<char(-1) < char(0), unsigned char> {};
+template<> struct AbsReturnType<signed char> { typedef unsigned char Type; };
+template<> struct AbsReturnType<short> { typedef unsigned short Type; };
+template<> struct AbsReturnType<int> { typedef unsigned int Type; };
+template<> struct AbsReturnType<long> { typedef unsigned long Type; };
+template<> struct AbsReturnType<long long> { typedef unsigned long long Type; };
+template<> struct AbsReturnType<float> { typedef float Type; };
+template<> struct AbsReturnType<double> { typedef double Type; };
+template<> struct AbsReturnType<long double> { typedef long double Type; };
+
+} // namespace detail
+
+template<typename T>
+inline typename detail::AbsReturnType<T>::Type
+Abs(const T t)
+{
+  typedef typename detail::AbsReturnType<T>::Type ReturnType;
+  return t >= 0 ? ReturnType(t) : ~ReturnType(t) + 1;
+}
+
 template<>
 inline float
 Abs<float>(const float f)
 {
-  return fabsf(f);
+  return std::fabs(f);
 }
 
 template<>
 inline double
 Abs<double>(const double d)
 {
-  return fabs(d);
+  return std::fabs(d);
 }
 
 template<>
 inline long double
 Abs<long double>(const long double d)
 {
-  return fabsl(d);
+  return std::fabs(d);
 }
 
 } /* namespace mozilla */

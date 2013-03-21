@@ -130,15 +130,13 @@ nsTableRowFrame::~nsTableRowFrame()
 {
 }
 
-NS_IMETHODIMP
+void
 nsTableRowFrame::Init(nsIContent*      aContent,
                       nsIFrame*        aParent,
                       nsIFrame*        aPrevInFlow)
 {
-  nsresult  rv;
-
   // Let the base class do its initialization
-  rv = nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
   NS_ASSERTION(NS_STYLE_DISPLAY_TABLE_ROW == StyleDisplay()->mDisplay,
                "wrong display on table row frame");
@@ -149,8 +147,6 @@ nsTableRowFrame::Init(nsIContent*      aContent,
     
     SetRowIndex(rowFrame->GetRowIndex());
   }
-
-  return rv;
 }
 
 /* virtual */ void
@@ -881,7 +877,7 @@ nsTableRowFrame::ReflowChildren(nsPresContext*          aPresContext,
 
         nsReflowStatus status;
         rv = ReflowChild(kidFrame, aPresContext, desiredSize, kidReflowState,
-                         x, 0, NS_FRAME_INVALIDATE_ON_MOVE, status);
+                         x, 0, 0, status);
 
         // allow the table to determine if/how the table needs to be rebalanced
         // If any of the cells are not complete, then we're not complete

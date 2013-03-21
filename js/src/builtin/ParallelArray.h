@@ -13,8 +13,8 @@
 #include "jsobj.h"
 
 #include "ion/Ion.h"
-#include "vm/ThreadPool.h"
 #include "vm/ForkJoin.h"
+#include "vm/ThreadPool.h"
 
 namespace js {
 
@@ -38,7 +38,7 @@ class ParallelArrayObject : public JSObject
     // and so forth.
     //
     // NOTE: This object will NOT have the correct type object! It is
-    // up to you the caller to adjust the type object appropriately
+    // up to the caller to adjust the type object appropriately
     // before releasing the object into the wild.  You probably want
     // to be calling construct() above, which will adjust the type
     // object for you, since ParallelArray type objects must be setup

@@ -67,7 +67,7 @@ IonBuilder::abort(const char *message, ...)
     va_start(ap, message);
     abortFmt(message, ap);
     va_end(ap);
-    IonSpew(IonSpew_Abort, "aborted @ %s:%d", script()->filename, PCToLineNumber(script(), pc));
+    IonSpew(IonSpew_Abort, "aborted @ %s:%d", script()->filename(), PCToLineNumber(script(), pc));
 #endif
     return false;
 }
@@ -77,7 +77,7 @@ IonBuilder::spew(const char *message)
 {
     // Don't call PCToLineNumber in release builds.
 #ifdef DEBUG
-    IonSpew(IonSpew_MIR, "%s @ %s:%d", message, script()->filename, PCToLineNumber(script(), pc));
+    IonSpew(IonSpew_MIR, "%s @ %s:%d", message, script()->filename(), PCToLineNumber(script(), pc));
 #endif
 }
 
@@ -269,7 +269,7 @@ IonBuilder::build()
         return false;
 
     IonSpew(IonSpew_Scripts, "Analyzing script %s:%d (%p) (usecount=%d) (maxloopcount=%d)",
-            script()->filename, script()->lineno, (void *)script(), (int)script()->getUseCount(),
+            script()->filename(), script()->lineno, (void *)script(), (int)script()->getUseCount(),
             (int)script()->getMaxLoopCount());
 
     if (!graph().addScript(script()))
@@ -338,9 +338,6 @@ IonBuilder::build()
             ins->setResumePoint(current->entryResumePoint());
     }
 
-    // Recompile to inline calls if this function is hot.
-    insertRecompileCheck();
-
     if (script()->argumentsHasVarBinding()) {
         lazyArguments_ = MConstant::New(MagicValue(JS_OPTIMIZED_ARGUMENTS));
         current->add(lazyArguments_);
@@ -396,7 +393,7 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
                         CallInfo &callInfo)
 {
     IonSpew(IonSpew_Scripts, "Inlining script %s:%d (%p)",
-            script()->filename, script()->lineno, (void *)script());
+            script()->filename(), script()->lineno, (void *)script());
 
     if (!graph().addScript(script()))
         return false;
@@ -763,12 +760,9 @@ IonBuilder::inspectOpcode(JSOp op)
         return true;
 
     switch (op) {
-      case JSOP_LOOPENTRY:
-        insertRecompileCheck();
-        return true;
-
       case JSOP_NOP:
       case JSOP_LINENO:
+      case JSOP_LOOPENTRY:
         return true;
 
       case JSOP_LABEL:
@@ -3066,6 +3060,16 @@ IonBuilder::addTypeBarrier(uint32_t i, CallInfo &callinfo, types::StackTypeSet *
     if (needsBarrier) {
         MTypeBarrier *barrier = MTypeBarrier::New(ins, cloneTypeSet(calleeObs), Bailout_Normal);
         current->add(barrier);
+
+        // Non-matching types are boxed such as the MIRType does not conflict
+        // with the inferred type.
+        if (callerObs->getKnownTypeTag() != calleeObs->getKnownTypeTag() &&
+            ins->type() != MIRType_Value)
+        {
+            MBox *box = MBox::New(ins);
+            current->add(box);
+            ins = box;
+        }
     }
 
     if (i == 0)
@@ -4486,7 +4490,10 @@ IonBuilder::jsop_eval(uint32_t argc)
         MInstruction *ins = MCallDirectEval::New(scopeChain, string, thisValue);
         current->add(ins);
         current->push(ins);
-        return resumeAfter(ins);
+
+        types::StackTypeSet *barrier;
+        types::StackTypeSet *types = oracle->returnTypeSet(script(), pc, &barrier);
+        return resumeAfter(ins) && pushTypeBarrier(ins, types, barrier);
     }
 
     return jsop_call(argc, /* constructing = */ false);
@@ -4984,29 +4991,6 @@ IonBuilder::maybeInsertResume()
     current->add(ins);
 
     return resumeAfter(ins);
-}
-
-void
-IonBuilder::insertRecompileCheck()
-{
-    if (!inliningEnabled())
-        return;
-
-    if (inliningDepth_ > 0)
-        return;
-
-    // Don't recompile if we are already inlining.
-    if (script()->getUseCount() >= js_IonOptions.usesBeforeInlining())
-        return;
-
-    // Don't recompile if the oracle cannot provide inlining information
-    // or if the script has no calls.
-    if (!oracle->canInlineCalls())
-        return;
-
-    uint32_t minUses = UsesBeforeIonRecompile(script(), pc);
-    MRecompileCheck *check = MRecompileCheck::New(minUses);
-    current->add(check);
 }
 
 static inline bool
@@ -5683,6 +5667,11 @@ IonBuilder::getTypedArrayElements(MDefinition *obj)
     if (obj->isConstant() && obj->toConstant()->value().isObject()) {
         JSObject *array = &obj->toConstant()->value().toObject();
         void *data = TypedArray::viewData(array);
+
+        // The 'data' pointer can change in rare circumstances
+        // (ArrayBufferObject::changeContents).
+        types::HeapTypeSet::WatchObjectStateChange(cx, array->getType(cx));
+
         obj->setFoldedUnchecked();
         return MConstantElements::New(data);
     }
@@ -6900,9 +6889,23 @@ IonBuilder::jsop_regexp(RegExpObject *reobj)
     if (!prototype)
         return false;
 
-    MRegExp *ins = MRegExp::New(reobj, prototype, MRegExp::MustClone);
-    current->add(ins);
-    current->push(ins);
+    MRegExp *regexp = MRegExp::New(reobj, prototype);
+    current->add(regexp);
+    current->push(regexp);
+
+    regexp->setMovable();
+
+    // The MRegExp is set to be movable.
+    // That would be incorrect for global/sticky, because lastIndex could be wrong.
+    // Therefore setting the lastIndex to 0. That is faster than removing the movable flag.
+    if (reobj->sticky() || reobj->global()) {
+        MConstant *zero = MConstant::New(Int32Value(0));
+        current->add(zero);
+
+        MStoreFixedSlot *lastIndex =
+            MStoreFixedSlot::New(regexp, RegExpObject::lastIndexSlot(), zero);
+        current->add(lastIndex);
+    }
 
     return true;
 }
@@ -6921,6 +6924,9 @@ bool
 IonBuilder::jsop_lambda(JSFunction *fun)
 {
     JS_ASSERT(script()->analysis()->usesScopeChain());
+    if (fun->isArrow())
+        return abort("bound arrow function");
+
     MLambda *ins = MLambda::New(current->scopeChain(), fun);
     current->add(ins);
     current->push(ins);

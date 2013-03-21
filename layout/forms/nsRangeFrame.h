@@ -85,6 +85,10 @@ public:
    */
   bool IsHorizontal(const nsSize *aFrameSizeOverride = nullptr) const;
 
+  double GetMin() const;
+  double GetMax() const;
+  double GetValue() const;
+
   /**
    * Returns whether the frame and its child should use the native style.
    */
@@ -92,12 +96,22 @@ public:
 
   double GetValueAtEventPoint(nsGUIEvent* aEvent);
 
+  /**
+   * Helper to reposition the thumb and schedule a repaint when the value of
+   * the range changes. (This does not reflow, since the position and size of
+   * the thumb do not affect the position or size of any other frames.)
+   */
+  void UpdateThumbPositionForValueChange();
+
 private:
 
   // Helper function which reflows the anonymous div frames.
   nsresult ReflowAnonymousContent(nsPresContext*           aPresContext,
                                   nsHTMLReflowMetrics&     aDesiredSize,
                                   const nsHTMLReflowState& aReflowState);
+
+  void DoUpdateThumbPosition(nsIFrame* aThumbFrame,
+                             const nsSize& aRangeSize);
 
   /**
    * Returns the input element's value as a fraction of the difference between

@@ -10,14 +10,9 @@ VPATH = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = mozfind
 LIBRARY_NAME = mozfind_s
 FORCE_STATIC_LIB = 1
 LIBXUL_LIBRARY = 1
-
-XPIDLSRCS = \
-  nsIFindService.idl \
-  $(NULL)
 
 CPPSRCS = \
   nsFindService.cpp \

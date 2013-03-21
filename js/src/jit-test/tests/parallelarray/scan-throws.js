@@ -14,5 +14,5 @@ function testScanThrows() {
   }, TypeError);
 }
 
-// FIXME throw correct exception
+// FIXME(bug 844886) sanity check argument types
 // testScanThrows();

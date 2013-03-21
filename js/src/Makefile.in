@@ -11,7 +11,6 @@ srcdir		= @srcdir@
 run_for_side_effects := $(shell echo "MAKE: $(MAKE)")
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		    = js
 LIBRARY_NAME	    = mozjs
 STATIC_LIBRARY_NAME = js_static
 GRE_MODULE	    = 1
@@ -137,11 +136,13 @@ CPPSRCS		= \
 		Statistics.cpp \
 		StoreBuffer.cpp \
 		Iteration.cpp \
+		Zone.cpp \
 		Verifier.cpp \
 		StringBuffer.cpp \
 		Unicode.cpp \
 		Xdr.cpp \
 		Module.cpp \
+		Instruments.cpp \
 		$(NULL)
 
 # Changes to internal header files, used externally, massively slow down
@@ -172,20 +173,6 @@ INSTALLED_HEADERS = \
 		$(NULL)
 
 ######################################################
-# BEGIN exported headers that are only exported
-#       because of inclusion by an INSTALLED_HEADER
-#
-EXPORTS_NAMESPACES += ds gc
-
-EXPORTS_ds = \
-		BitArray.h \
-		$(NULL)
-
-EXPORTS_gc = \
-		Root.h \
-		$(NULL)
-
-######################################################
 # BEGIN include exported headers from the JS engine
 #
 #       Ultimately, after cleansing INSTALLED_HEADERS,
@@ -203,6 +190,7 @@ EXPORTS_NAMESPACES += js
 # LegacyIntTypes.h below is deliberately exempted from this requirement.
 EXPORTS_js = \
 		Anchor.h \
+		CallArgs.h \
 		CharacterEncoding.h \
 		GCAPI.h \
 		HashTable.h \
@@ -211,6 +199,7 @@ EXPORTS_js = \
 		MemoryMetrics.h \
 		PropertyKey.h \
 		RequiredDefines.h \
+		RootingAPI.h \
 		TemplateLib.h \
 		Utility.h \
 		Value.h \
@@ -300,6 +289,10 @@ CPPSRCS +=	MIR.cpp \
 		AliasAnalysis.cpp \
 		ParallelArrayAnalysis.cpp \
 		UnreachableCodeElimination.cpp \
+		EffectiveAddressAnalysis.cpp \
+		AsmJS.cpp \
+		AsmJSLink.cpp \
+		AsmJSSignalHandlers.cpp \
 		$(NULL)
 endif #ENABLE_ION
 ifeq (86, $(findstring 86,$(TARGET_CPU)))
@@ -583,6 +576,14 @@ distclean clean::
 		$(call SUBMAKE,$@,ctypes/libffi)
 endif
 endif
+
+# ICU headers need to be available whether we build with the complete
+# Internationalization API or not - ICU stubs rely on them.
+
+LOCAL_INCLUDES += \
+    -I$(topsrcdir)/../../intl/icu/source/common \
+    -I$(topsrcdir)/../../intl/icu/source/i18n \
+    $(NULL)
 
 # The "find any vanilla new/new[] calls" script is tailored to Linux, so
 # only run it there.  That should be enough to catch any such calls that
@@ -958,6 +959,7 @@ selfhosting_srcs := \
   $(srcdir)/builtin/ParallelArray.js \
   $(srcdir)/builtin/Intl.js \
   $(srcdir)/builtin/IntlData.js \
+  $(srcdir)/builtin/ParallelArray.js \
   $(NULL)
 
 selfhosted_out_h_deps := \

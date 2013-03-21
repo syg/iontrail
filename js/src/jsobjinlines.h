@@ -28,8 +28,8 @@
 #include "builtin/Iterator-inl.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
-#include "gc/Root.h"
 #include "js/MemoryMetrics.h"
+#include "js/RootingAPI.h"
 #include "js/TemplateLib.h"
 #include "vm/BooleanObject.h"
 #include "vm/GlobalObject.h"
@@ -740,9 +740,8 @@ JSObject::setDateUTCTime(const js::Value &time)
 /* static */ inline bool
 JSObject::setSingletonType(JSContext *cx, js::HandleObject obj)
 {
-#if defined(JSGC_GENERATIONAL)
-    JS_ASSERT(!obj->runtime()->gcNursery.isInside(obj.get()));
-#endif
+    JS_ASSERT(!IsInsideNursery(cx->runtime, obj.get()));
+
     if (!cx->typeInferenceEnabled())
         return true;
 
@@ -760,6 +759,8 @@ JSObject::getType(JSContext *cx)
     JS_ASSERT(cx->compartment == compartment());
     if (hasLazyType()) {
         JS::RootedObject self(cx, this);
+        if (cx->compartment != compartment())
+            MOZ_CRASH();
         return makeLazyType(cx, self);
     }
     return static_cast<js::types::TypeObject*>(type_);
@@ -786,7 +787,6 @@ JSObject::setType(js::types::TypeObject *newType)
     JS_ASSERT_IF(getClass()->emulatesUndefined(),
                  newType->hasAnyFlags(js::types::OBJECT_FLAG_EMULATES_UNDEFINED));
     JS_ASSERT(!hasSingletonType());
-    JS_ASSERT(compartment() == newType->compartment());
     type_ = newType;
 }
 
@@ -936,7 +936,6 @@ JSObject::create(JSContext *cx, js::gc::AllocKind kind, js::gc::InitialHeap heap
     JS_ASSERT(type->clasp == shape->getObjectClass());
     JS_ASSERT(type->clasp != &js::ArrayClass);
     JS_ASSERT(js::gc::GetGCKindSlots(kind, type->clasp) == shape->numFixedSlots());
-    JS_ASSERT(cx->compartment == type->compartment());
     JS_ASSERT_IF(type->clasp->flags & JSCLASS_BACKGROUND_FINALIZE, IsBackgroundFinalized(kind));
     JS_ASSERT_IF(type->clasp->finalize, heap == js::gc::TenuredHeap);
     JS_ASSERT_IF(extantSlots, dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan()));
@@ -982,7 +981,6 @@ JSObject::createArray(JSContext *cx, js::gc::AllocKind kind, js::gc::InitialHeap
     JS_ASSERT(shape && type);
     JS_ASSERT(type->clasp == shape->getObjectClass());
     JS_ASSERT(type->clasp == &js::ArrayClass);
-    JS_ASSERT(cx->compartment == type->compartment());
     JS_ASSERT_IF(type->clasp->finalize, heap == js::gc::TenuredHeap);
 
     /*
@@ -1020,8 +1018,13 @@ JSObject::finish(js::FreeOp *fop)
 {
     if (hasDynamicSlots())
         fop->free_(slots);
-    if (hasDynamicElements())
-        fop->free_(getElementsHeader());
+    if (hasDynamicElements()) {
+        js::ObjectElements *elements = getElementsHeader();
+        if (JS_UNLIKELY(elements->isAsmJSArrayBuffer()))
+            js::ArrayBufferObject::releaseAsmJSArrayBuffer(fop, this);
+        else
+            fop->free_(elements);
+    }
 }
 
 /* static */ inline bool
@@ -1105,8 +1108,19 @@ JSObject::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf, JS::ObjectsExtraSi
     if (hasDynamicSlots())
         sizes->slots = mallocSizeOf(slots);
 
-    if (hasDynamicElements())
-        sizes->elements = mallocSizeOf(getElementsHeader());
+    if (hasDynamicElements()) {
+        js::ObjectElements *elements = getElementsHeader();
+#if defined (JS_CPU_X64)
+        // On x64, ArrayBufferObject::prepareForAsmJS switches the
+        // ArrayBufferObject to use mmap'd storage. This is not included in the
+        // total 'explicit' figure and thus we must not include it here.
+        // TODO: include it somewhere else.
+        if (JS_LIKELY(!elements->isAsmJSArrayBuffer()))
+            sizes->elements = mallocSizeOf(elements);
+#else
+        sizes->elements = mallocSizeOf(elements);
+#endif
+    }
 
     // Other things may be measured in the future if DMD indicates it is worthwhile.
     // Note that sizes->private_ is measured elsewhere.
@@ -1329,9 +1343,14 @@ JSObject::global() const
     JSObject *obj = const_cast<JSObject *>(this);
     while (JSObject *parent = obj->getParent())
         obj = parent;
-    JS_ASSERT(&obj->asGlobal() == compartment()->maybeGlobal());
 #endif
     return *compartment()->maybeGlobal();
+}
+
+inline JSCompartment *
+JSObject::compartment() const
+{
+    return lastProperty()->base()->compartment();
 }
 
 static inline bool

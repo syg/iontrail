@@ -5,3 +5,11 @@
 
 DIRS += ['src']
 TEST_DIRS += ['test']
+
+XPIDL_SOURCES += [
+    'nsISessionStartup.idl',
+    'nsISessionStore.idl',
+]
+
+MODULE = 'sessionstore'
+

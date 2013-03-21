@@ -334,7 +334,7 @@ js_DisassembleAtPC(JSContext *cx, JSScript *scriptArg, JSBool lines,
     unsigned len;
 
     if (showAll)
-        Sprint(sp, "%s:%u\n", script->filename, script->lineno);
+        Sprint(sp, "%s:%u\n", script->filename(), script->lineno);
 
     if (pc != NULL)
         sp->put("    ");
@@ -1650,7 +1650,7 @@ DecompileArgumentFromStack(JSContext *cx, int formalIndex, char **res)
         return true;
 
     /* Don't handle getters, setters or calls from fun.call/fun.apply. */
-    if (JSOp(*current) != JSOP_CALL || formalIndex >= GET_ARGC(current))
+    if (JSOp(*current) != JSOP_CALL || static_cast<unsigned>(formalIndex) >= GET_ARGC(current))
         return true;
 
     PCStack pcStack;
@@ -2143,7 +2143,7 @@ js::GetPCCountScriptSummary(JSContext *cx, size_t index)
     buf.append('{');
 
     AppendJSONProperty(buf, "file", NO_COMMA);
-    JSString *str = JS_NewStringCopyZ(cx, script->filename);
+    JSString *str = JS_NewStringCopyZ(cx, script->filename());
     if (!str || !(str = ValueToSource(cx, StringValue(str))))
         return NULL;
     buf.append(str);

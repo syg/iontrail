@@ -608,10 +608,6 @@ pref("pfs.datasource.url", "https://pfs.mozilla.org/plugins/PluginFinderService.
 pref("plugins.hide_infobar_for_missing_plugin", false);
 pref("plugins.hide_infobar_for_outdated_plugin", false);
 
-#ifdef XP_MACOSX
-pref("plugins.hide_infobar_for_carbon_failure_plugin", false);
-#endif
-
 pref("plugins.update.url", "https://www.mozilla.org/%LOCALE%/plugincheck/");
 pref("plugins.update.notifyUser", false);
 
@@ -1042,8 +1038,8 @@ pref("devtools.toolbox.footer.height", 250);
 pref("devtools.toolbox.sidebar.width", 500);
 pref("devtools.toolbox.host", "bottom");
 pref("devtools.toolbox.selectedTool", "webconsole");
-pref("devtools.toolbox.toolbarSpec", '["tilt toggle","scratchpad","resize toggle"]');
-pref("devtools.toolbox.sideEnabled", false);
+pref("devtools.toolbox.toolbarSpec", '["paintflashing toggle","tilt toggle","scratchpad","resize toggle"]');
+pref("devtools.toolbox.sideEnabled", true);
 
 // Enable the Inspector
 pref("devtools.inspector.enabled", true);
@@ -1225,3 +1221,9 @@ pref("dom.identity.enabled", false);
 
 // Override the Gecko-default value of false for Firefox.
 pref("plain_text.wrap_long_lines", true);
+
+#ifndef RELEASE_BUILD
+// Enable Web Audio for Firefox Desktop in Nightly and Aurora
+pref("media.webaudio.enabled", true);
+#endif
+

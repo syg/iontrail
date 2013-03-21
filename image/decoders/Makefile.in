@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = imgdecoders
 LIBRARY_NAME = imgdecoders_s
 FORCE_STATIC_LIB = 1
 MODULE_NAME = nsDecodersModule
@@ -22,6 +21,7 @@ endif # !_MSC_VER
 
 CPPSRCS = nsPNGDecoder.cpp nsJPEGDecoder.cpp nsGIFDecoder2.cpp \
           nsBMPDecoder.cpp nsICODecoder.cpp nsIconDecoder.cpp \
+          nsWBMPDecoder.cpp \
           $(NULL)
 
 CSRCS   = iccjpeg.c \

@@ -7,7 +7,6 @@ topsrcdir        = @top_srcdir@
 srcdir           = @srcdir@
 VPATH            = @srcdir@
 
-MODULE           = dom
 LIBRARY_NAME     = dombindings_s
 LIBXUL_LIBRARY   = 1
 FORCE_STATIC_LIB = 1
@@ -84,6 +83,7 @@ LOCAL_INCLUDES += -I$(topsrcdir)/js/xpconnect/src \
   -I$(topsrcdir)/media/webrtc/signaling/src/peerconnection \
   -I$(topsrcdir)/dom/base \
   -I$(topsrcdir)/dom/battery \
+  -I$(topsrcdir)/dom/indexedDB \
   -I$(topsrcdir)/content/xslt/src/base \
   -I$(topsrcdir)/content/xslt/src/xpath \
   -I$(topsrcdir)/content/xml/content/src \
@@ -98,8 +98,8 @@ endif
 
 # XXXkhuey this is a terrible hack to avoid blowing out the command line
 ifneq (,$(filter-out all chrome default export realchrome tools clean clobber clobber_all distclean realclean,$(MAKECMDGOALS)))
-$(shell echo "$(addsuffix .pp,$(binding_header_files))" > pp.list)
-$(shell echo "$(addsuffix .pp,$(binding_cpp_files))" >> pp.list)
+$(shell echo "$(addsuffix .pp,$(binding_header_files))" > hpp.list)
+$(shell echo "$(addsuffix .pp,$(binding_cpp_files))" > cpp.list)
 
 # The script mddepend.pl checks the dependencies and writes to stdout
 # one rule to force out-of-date objects. For example,
@@ -107,8 +107,10 @@ $(shell echo "$(addsuffix .pp,$(binding_cpp_files))" >> pp.list)
 # The script has an advantage over including the *.pp files directly
 # because it handles the case when header files are removed from the build.
 # 'make' would complain that there is no way to build missing headers.
-ALL_PP_RESULTS = $(shell cat pp.list | $(PERL) $(BUILD_TOOLS)/mddepend.pl)
-$(eval $(ALL_PP_RESULTS))
+HPP_PP_RESULTS = $(shell cat hpp.list | $(PERL) $(BUILD_TOOLS)/mddepend.pl)
+$(eval $(HPP_PP_RESULTS))
+CPP_PP_RESULTS = $(shell cat cpp.list | $(PERL) $(BUILD_TOOLS)/mddepend.pl)
+$(eval $(CPP_PP_RESULTS))
 
 endif
 
@@ -122,6 +124,9 @@ CXXFLAGS += -Wno-uninitialized
 endif
 
 include $(topsrcdir)/config/rules.mk
+
+# edmorley is sick of clobbering everytime someone adds an interface
+$(CPPOBJS): PrototypeList.h
 
 # We need to create a separate target so we can ensure that the pickle is
 # done before generating headers.
@@ -182,7 +187,7 @@ $(binding_cpp_files): %Binding.cpp: $(bindinggen_dependencies) \
 $(globalgen_targets): ParserResults.pkl
 
 %-example: $(bindinggen_dependencies) \
-           $(all_webidl_files) \
+           ParserResults.pkl \
            $(NULL)
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(topsrcdir)/config/pythonpath.py \
 	  $(PLY_INCLUDE) -I$(srcdir)/parser \
