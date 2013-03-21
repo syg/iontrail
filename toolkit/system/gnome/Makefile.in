@@ -9,7 +9,6 @@ VPATH	  = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= mozgnome
 LIBRARY_NAME	= mozgnome
 FORCE_SHARED_LIB = 1
 IS_COMPONENT	= 1
@@ -18,8 +17,6 @@ FAIL_ON_WARNINGS = 1
 
 CPPSRCS = \
   nsGnomeModule.cpp \
-  nsSystemAlertsService.cpp \
-  nsAlertsIconListener.cpp \
   $(NULL)
 
 ifdef MOZ_ENABLE_GCONF

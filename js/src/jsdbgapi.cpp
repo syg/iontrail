@@ -95,7 +95,7 @@ js::ScriptDebugPrologue(JSContext *cx, AbstractFramePtr frame)
     }
 
     RootedValue rval(cx);
-    JSTrapStatus status = Debugger::onEnterFrame(cx, &rval);
+    JSTrapStatus status = Debugger::onEnterFrame(cx, frame, &rval);
     switch (status) {
       case JSTRAP_CONTINUE:
         break;
@@ -130,7 +130,7 @@ js::ScriptDebugEpilogue(JSContext *cx, AbstractFramePtr frame, bool okArg)
         }
     }
 
-    return Debugger::onLeaveFrame(cx, ok);
+    return Debugger::onLeaveFrame(cx, frame, ok);
 }
 
 JSTrapStatus
@@ -568,7 +568,7 @@ JS_GetDebugClassName(JSObject *obj)
 JS_PUBLIC_API(const char *)
 JS_GetScriptFilename(JSContext *cx, JSScript *script)
 {
-    return script->filename;
+    return script->filename();
 }
 
 JS_PUBLIC_API(const jschar *)
@@ -869,8 +869,8 @@ JS_GetScriptTotalSize(JSContext *cx, JSScript *script)
     for (size_t i = 0; i < script->natoms; i++)
         nbytes += GetAtomTotalSize(cx, script->atoms[i]);
 
-    if (script->filename)
-        nbytes += strlen(script->filename) + 1;
+    if (script->filename())
+        nbytes += strlen(script->filename()) + 1;
 
     notes = script->notes();
     for (sn = notes; !SN_IS_TERMINATOR(sn); sn = SN_NEXT(sn))
@@ -936,10 +936,10 @@ JS_DumpBytecode(JSContext *cx, JSScript *scriptArg)
     if (!sprinter.init())
         return;
 
-    fprintf(stdout, "--- SCRIPT %s:%d ---\n", script->filename, script->lineno);
+    fprintf(stdout, "--- SCRIPT %s:%d ---\n", script->filename(), script->lineno);
     js_Disassemble(cx, script, true, &sprinter);
     fputs(sprinter.string(), stdout);
-    fprintf(stdout, "--- END SCRIPT %s:%d ---\n", script->filename, script->lineno);
+    fprintf(stdout, "--- END SCRIPT %s:%d ---\n", script->filename(), script->lineno);
 #endif
 }
 
@@ -954,10 +954,10 @@ JS_DumpPCCounts(JSContext *cx, JSScript *scriptArg)
     if (!sprinter.init())
         return;
 
-    fprintf(stdout, "--- SCRIPT %s:%d ---\n", script->filename, script->lineno);
+    fprintf(stdout, "--- SCRIPT %s:%d ---\n", script->filename(), script->lineno);
     js_DumpPCCounts(cx, script, &sprinter);
     fputs(sprinter.string(), stdout);
-    fprintf(stdout, "--- END SCRIPT %s:%d ---\n", script->filename, script->lineno);
+    fprintf(stdout, "--- END SCRIPT %s:%d ---\n", script->filename(), script->lineno);
 #endif
 }
 
@@ -966,11 +966,8 @@ namespace {
 typedef Vector<JSScript *, 0, SystemAllocPolicy> ScriptsToDump;
 
 static void
-DumpBytecodeScriptCallback(JSRuntime *rt, void *data, void *thing,
-                           JSGCTraceKind traceKind, size_t thingSize)
+DumpBytecodeScriptCallback(JSRuntime *rt, void *data, JSScript *script)
 {
-    JS_ASSERT(traceKind == JSTRACE_SCRIPT);
-    JSScript *script = static_cast<JSScript *>(thing);
     static_cast<ScriptsToDump *>(data)->append(script);
 }
 
@@ -980,7 +977,7 @@ JS_PUBLIC_API(void)
 JS_DumpCompartmentBytecode(JSContext *cx)
 {
     ScriptsToDump scripts;
-    IterateCells(cx->runtime, cx->compartment, gc::FINALIZE_SCRIPT, &scripts, DumpBytecodeScriptCallback);
+    IterateScripts(cx->runtime, cx->compartment, &scripts, DumpBytecodeScriptCallback);
 
     for (size_t i = 0; i < scripts.length(); i++) {
         if (scripts[i]->enclosingScriptsCompiledSuccessfully())
@@ -991,8 +988,11 @@ JS_DumpCompartmentBytecode(JSContext *cx)
 JS_PUBLIC_API(void)
 JS_DumpCompartmentPCCounts(JSContext *cx)
 {
-    for (CellIter i(cx->compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
+    for (CellIter i(cx->zone(), gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
+        if (script->compartment() != cx->compartment)
+            continue;
+
         if (script->hasScriptCounts && script->enclosingScriptsCompiledSuccessfully())
             JS_DumpPCCounts(cx, script);
     }
@@ -1032,12 +1032,14 @@ js_CallContextDebugHandler(JSContext *cx)
     }
 }
 
-JS_PUBLIC_API(StackDescription *)
+JS_PUBLIC_API(JS::StackDescription *)
 JS::DescribeStack(JSContext *cx, unsigned maxFrames)
 {
     Vector<FrameDescription> frames(cx);
 
     for (ScriptFrameIter i(cx); !i.done(); ++i) {
+        if (i.script()->selfHosted)
+            continue;
         FrameDescription desc;
         desc.script = i.script();
         desc.lineno = PCToLineNumber(i.script(), i.pc());
@@ -1048,7 +1050,7 @@ JS::DescribeStack(JSContext *cx, unsigned maxFrames)
             break;
     }
 
-    StackDescription *desc = js_new<StackDescription>();
+    JS::StackDescription *desc = js_new<JS::StackDescription>();
     if (!desc)
         return NULL;
 
@@ -1058,7 +1060,7 @@ JS::DescribeStack(JSContext *cx, unsigned maxFrames)
 }
 
 JS_PUBLIC_API(void)
-JS::FreeStackDescription(JSContext *cx, StackDescription *desc)
+JS::FreeStackDescription(JSContext *cx, JS::StackDescription *desc)
 {
     js_delete(desc->frames);
     js_delete(desc);
@@ -1117,7 +1119,7 @@ FormatFrame(JSContext *cx, const ScriptFrameIter &iter, char *buf, int num,
     RootedObject scopeChain(cx, iter.scopeChain());
     JSAutoCompartment ac(cx, scopeChain);
 
-    const char *filename = script->filename;
+    const char *filename = script->filename();
     unsigned lineno = PCToLineNumber(script, pc);
     RootedFunction fun(cx, iter.maybeCallee());
     RootedString funname(cx);

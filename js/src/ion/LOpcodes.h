@@ -36,7 +36,6 @@
     _(InitProp)                     \
     _(CheckOverRecursed)            \
     _(ParCheckOverRecursed)         \
-    _(RecompileCheck)               \
     _(DefVar)                       \
     _(DefFun)                       \
     _(CallKnown)                    \
@@ -84,6 +83,7 @@
     _(EmulatesUndefinedAndBranch)   \
     _(MinMaxI)                      \
     _(MinMaxD)                      \
+    _(NegI)                         \
     _(NegD)                         \
     _(AbsI)                         \
     _(AbsD)                         \
@@ -154,6 +154,7 @@
     _(LoadTypedArrayElement)        \
     _(LoadTypedArrayElementHole)    \
     _(StoreTypedArrayElement)       \
+    _(EffectiveAddress)             \
     _(ClampIToUint8)                \
     _(ClampDToUint8)                \
     _(ClampVToUint8)                \
@@ -199,11 +200,22 @@
     _(InstanceOfV)                  \
     _(CallInstanceOf)               \
     _(InterruptCheck)               \
-    _(ParCheckInterrupt)            \
     _(FunctionBoundary)             \
     _(GetDOMProperty)               \
     _(SetDOMProperty)               \
-    _(CallDOMNative)
+    _(CallDOMNative)                \
+    _(AsmJSLoadHeap)                \
+    _(AsmJSStoreHeap)               \
+    _(AsmJSLoadGlobalVar)           \
+    _(AsmJSStoreGlobalVar)          \
+    _(AsmJSLoadFFIFunc)             \
+    _(AsmJSParameter)               \
+    _(AsmJSReturn)                  \
+    _(AsmJSVoidReturn)              \
+    _(AsmJSPassStackArg)            \
+    _(AsmJSCall)                    \
+    _(AsmJSCheckOverRecursed)       \
+    _(ParCheckInterrupt)
 
 #if defined(JS_CPU_X86)
 # include "x86/LOpcodes-x86.h"

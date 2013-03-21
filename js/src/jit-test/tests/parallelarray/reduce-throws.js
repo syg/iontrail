@@ -13,5 +13,5 @@ function testReduceThrows() {
   }, TypeError);
 }
 
-// FIXME throw correct exception
+// FIXME(bug 844886) sanity check argument types
 // testReduceThrows();

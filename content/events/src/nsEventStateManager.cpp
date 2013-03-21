@@ -646,21 +646,16 @@ nsMouseWheelTransaction::OverrideSystemScrollSpeed(widget::WheelEvent* aEvent)
   MOZ_ASSERT(sTargetFrame, "We don't have mouse scrolling transaction");
   MOZ_ASSERT(aEvent->deltaMode == nsIDOMWheelEvent::DOM_DELTA_LINE);
 
-  DeltaValues result(aEvent);
-
   // If the event doesn't scroll to both X and Y, we don't need to do anything
-  // here.  And also, if the event indicates the device supports high
-  // resolution scroll, we shouldn't need to override it.
-  if ((!aEvent->lineOrPageDeltaX && !aEvent->lineOrPageDeltaY) ||
-      (static_cast<double>(aEvent->lineOrPageDeltaX) != aEvent->deltaX) ||
-      (static_cast<double>(aEvent->lineOrPageDeltaY) != aEvent->deltaY)) {
-    return result;
+  // here.
+  if (!aEvent->deltaX && !aEvent->deltaY) {
+    return DeltaValues(aEvent);
   }
 
   // We shouldn't override the scrolling speed on non root scroll frame.
   if (sTargetFrame !=
         sTargetFrame->PresContext()->PresShell()->GetRootScrollFrame()) {
-    return result;
+    return DeltaValues(aEvent);
   }
 
   // Compute the overridden speed to nsIWidget.  The widget can check the
@@ -668,25 +663,13 @@ nsMouseWheelTransaction::OverrideSystemScrollSpeed(widget::WheelEvent* aEvent)
   // the system settings of the mouse wheel scrolling or not), and can limit
   // the speed for preventing the unexpected high speed scrolling.
   nsCOMPtr<nsIWidget> widget(sTargetFrame->GetNearestWidget());
-  NS_ENSURE_TRUE(widget, result);
-  int32_t overriddenDeltaX = 0, overriddenDeltaY = 0;
-  if (aEvent->lineOrPageDeltaX) {
-    nsresult rv =
-      widget->OverrideSystemMouseScrollSpeed(aEvent->lineOrPageDeltaX,
-                                             true, overriddenDeltaX);
-    if (NS_FAILED(rv)) {
-      return result;
-    }
-  }
-  if (aEvent->lineOrPageDeltaY) {
-    nsresult rv =
-      widget->OverrideSystemMouseScrollSpeed(aEvent->lineOrPageDeltaY,
-                                             false, overriddenDeltaY);
-    if (NS_FAILED(rv)) {
-      return result;
-    }
-  }
-  return DeltaValues(overriddenDeltaX, overriddenDeltaY);
+  NS_ENSURE_TRUE(widget, DeltaValues(aEvent));
+  DeltaValues overriddenDeltaValues(0.0, 0.0);
+  nsresult rv =
+    widget->OverrideSystemMouseScrollSpeed(aEvent->deltaX, aEvent->deltaY,
+                                           overriddenDeltaValues.deltaX,
+                                           overriddenDeltaValues.deltaY);
+  return NS_FAILED(rv) ? DeltaValues(aEvent) : overriddenDeltaValues;
 }
 
 /******************************************************************/
@@ -2052,8 +2035,8 @@ nsEventStateManager::GenerateDragGesture(nsPresContext* aPresContext,
 
     // fire drag gesture if mouse has moved enough
     nsIntPoint pt = aEvent->refPoint + aEvent->widget->WidgetToScreenOffset();
-    if (Abs(pt.x - mGestureDownPoint.x) > pixelThresholdX ||
-        Abs(pt.y - mGestureDownPoint.y) > pixelThresholdY) {
+    if (DeprecatedAbs(pt.x - mGestureDownPoint.x) > pixelThresholdX ||
+        DeprecatedAbs(pt.y - mGestureDownPoint.y) > pixelThresholdY) {
       if (mClickHoldContextMenu) {
         // stop the click-hold before we fire off the drag gesture, in case
         // it takes a long time
@@ -2880,14 +2863,14 @@ nsEventStateManager::DoScrollText(nsIScrollableFrame* aScrollableFrame,
   nsIntSize devPixelPageSize(pc->AppUnitsToDevPixels(pageSize.width),
                              pc->AppUnitsToDevPixels(pageSize.height));
   if (!WheelPrefs::GetInstance()->IsOverOnePageScrollAllowedX(aEvent) &&
-      Abs(actualDevPixelScrollAmount.x) > devPixelPageSize.width) {
+      DeprecatedAbs(actualDevPixelScrollAmount.x) > devPixelPageSize.width) {
     actualDevPixelScrollAmount.x =
       (actualDevPixelScrollAmount.x >= 0) ? devPixelPageSize.width :
                                             -devPixelPageSize.width;
   }
 
   if (!WheelPrefs::GetInstance()->IsOverOnePageScrollAllowedY(aEvent) &&
-      Abs(actualDevPixelScrollAmount.y) > devPixelPageSize.height) {
+      DeprecatedAbs(actualDevPixelScrollAmount.y) > devPixelPageSize.height) {
     actualDevPixelScrollAmount.y =
       (actualDevPixelScrollAmount.y >= 0) ? devPixelPageSize.height :
                                             -devPixelPageSize.height;

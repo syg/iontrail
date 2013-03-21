@@ -7,6 +7,7 @@
 
 #include "MediaStreamGraphImpl.h"
 #include "AudioNodeEngine.h"
+#include "ThreeDPoint.h"
 
 using namespace mozilla::dom;
 
@@ -119,6 +120,26 @@ AudioNodeStream::SetTimelineParameter(uint32_t aIndex,
 }
 
 void
+AudioNodeStream::SetThreeDPointParameter(uint32_t aIndex, const ThreeDPoint& aValue)
+{
+  class Message : public ControlMessage {
+  public:
+    Message(AudioNodeStream* aStream, uint32_t aIndex, const ThreeDPoint& aValue)
+      : ControlMessage(aStream), mValue(aValue), mIndex(aIndex) {}
+    virtual void Run()
+    {
+      static_cast<AudioNodeStream*>(mStream)->Engine()->
+          SetThreeDPointParameter(mIndex, mValue);
+    }
+    ThreeDPoint mValue;
+    uint32_t mIndex;
+  };
+
+  MOZ_ASSERT(this);
+  GraphImpl()->AppendMessage(new Message(this, aIndex, aValue));
+}
+
+void
 AudioNodeStream::SetBuffer(already_AddRefed<ThreadSharedFloatArrayBufferList> aBuffer)
 {
   class Message : public ControlMessage {
@@ -163,12 +184,12 @@ AudioNodeStream::ObtainInputBlock(AudioChunk* aTmpChunk)
   nsAutoTArray<AudioChunk*,250> inputChunks;
   for (uint32_t i = 0; i < inputCount; ++i) {
     MediaStream* s = mInputs[i]->GetSource();
-    AudioNodeStream* a = s->AsAudioNodeStream();
-    MOZ_ASSERT(a);
+    AudioNodeStream* a = static_cast<AudioNodeStream*>(s);
+    MOZ_ASSERT(a == s->AsAudioNodeStream());
     if (a->IsFinishedOnGraphThread()) {
       continue;
     }
-    AudioChunk* chunk = a->mLastChunk;
+    AudioChunk* chunk = &a->mLastChunk;
     // XXX when we implement DelayNode, this will no longer be true and we'll
     // need to treat a null chunk (when the DelayNode hasn't had a chance
     // to produce data yet) as silence here.
@@ -247,11 +268,16 @@ AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo)
     }
   }
 
-  mLastChunk = segment->AppendAndConsumeChunk(&outputChunk);
+  mLastChunk = outputChunk;
+  if (mKind == MediaStreamGraph::EXTERNAL_STREAM) {
+    segment->AppendAndConsumeChunk(&outputChunk);
+  } else {
+    segment->AppendNullData(outputChunk.GetDuration());
+  }
 
   for (uint32_t j = 0; j < mListeners.Length(); ++j) {
     MediaStreamListener* l = mListeners[j];
-    AudioChunk copyChunk = *mLastChunk;
+    AudioChunk copyChunk = outputChunk;
     AudioSegment tmpSegment;
     tmpSegment.AppendAndConsumeChunk(&copyChunk);
     l->NotifyQueuedTrackChanges(Graph(), AUDIO_NODE_STREAM_TRACK_ID,

@@ -9,7 +9,6 @@ VPATH = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = autocomplete
 MODULE_NAME = tkAutoCompleteModule
 LIBRARY_NAME = tkautocomplete
 SHORT_LIBNAME = tkautoc
@@ -17,15 +16,6 @@ IS_COMPONENT = 1
 EXPORT_LIBRARY = 1
 LIBXUL_LIBRARY = 1
 FAIL_ON_WARNINGS = 1
-
-XPIDLSRCS = \
-  nsIAutoCompleteController.idl \
-  nsIAutoCompleteInput.idl \
-  nsIAutoCompletePopup.idl \
-  nsIAutoCompleteResult.idl \
-  nsIAutoCompleteSearch.idl \
-  nsIAutoCompleteSimpleResult.idl \
-  $(NULL)
 
 CPPSRCS = \
   nsAutoCompleteController.cpp \

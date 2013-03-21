@@ -64,6 +64,12 @@ ArrayBufferObject::hasData() const
     return getClass() == &ArrayBufferClass;
 }
 
+inline bool
+ArrayBufferObject::isAsmJSArrayBuffer() const
+{
+    return getElementsHeader()->isAsmJSArrayBuffer();
+}
+
 static inline int32_t
 ClampIntForUint8Array(int32_t x)
 {
@@ -203,7 +209,7 @@ InitTypedArrayDataPointer(JSObject *obj, ArrayBufferObject *buffer, size_t byteO
      */
     obj->initPrivate(buffer->dataPointer() + byteOffset);
 #ifdef JSGC_GENERATIONAL
-    if (obj->runtime()->gcNursery.isInside(buffer))
+    if (IsInsideNursery(obj->runtime(), buffer))
         obj->runtime()->gcStoreBuffer.putGeneric(TypedArrayPrivateRef(obj, buffer, byteOffset));
 #endif
 }

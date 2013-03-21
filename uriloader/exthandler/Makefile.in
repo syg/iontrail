@@ -33,7 +33,6 @@ endif
 
 VPATH		:= $(srcdir) $(srcdir)/$(OSDIR)
 
-MODULE = exthandler
 LIBRARY_NAME    = exthandler_s
 LIBXUL_LIBRARY  = 1
 FAIL_ON_WARNINGS = 1
@@ -96,17 +95,6 @@ EXPORTS += \
 		$(OSDIR)/nsOSHelperAppService.h \
 		nsExternalHelperAppService.h \
 		$(NULL)
-
-XPIDLSRCS = \
-	nsCExternalHandlerService.idl	\
-	nsIExternalProtocolService.idl \
-	nsIExternalHelperAppService.idl	\
-	nsIHelperAppLauncherDialog.idl \
-	nsIContentDispatchChooser.idl \
-	nsIHandlerService.idl	\
-	nsIExternalSharingAppService.idl \
-	nsIExternalURLHandlerService.idl \
-	$(NULL)
 
 CPPSRCS	= \
 	nsExternalHelperAppService.cpp	\

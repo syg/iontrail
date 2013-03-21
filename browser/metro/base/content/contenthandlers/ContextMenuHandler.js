@@ -8,6 +8,7 @@ dump("### ContextMenuHandler.js loaded\n");
 
 var ContextMenuHandler = {
   _types: [],
+  _previousState: null,
 
   init: function ch_init() {
     // Events we catch from content during the bubbling phase
@@ -56,6 +57,18 @@ var ContextMenuHandler = {
     let command = aMessage.json.command;
 
     switch (command) {
+      case "cut":
+        this._onCut();
+        break;
+
+      case "copy":
+        this._onCopy();
+        break;
+
+      case "paste":
+        this._onPaste();
+        break;
+
       case "play":
       case "pause":
         if (node instanceof Ci.nsIDOMHTMLMediaElement)
@@ -75,10 +88,6 @@ var ContextMenuHandler = {
         this._onSelectAll();
         break;
 
-      case "paste":
-        this._onPaste();
-        break;
-
       case "copy-image-contents":
         this._onCopyImage();
         break;
@@ -88,7 +97,7 @@ var ContextMenuHandler = {
   /*
    * Handler for selection overlay context menu events.
    */
-  _onContextAtPoint: function _onContextCommand(aMessage) {
+  _onContextAtPoint: function _onContextAtPoint(aMessage) {
     // we need to find popupNode as if the context menu were
     // invoked on underlying content.
     let { element, frameX, frameY } =
@@ -124,7 +133,7 @@ var ContextMenuHandler = {
    */
 
   _onSelectAll: function _onSelectAll() {
-    if (this._isTextInput(this._target)) {
+    if (Util.isTextInput(this._target)) {
       // select all text in the input control
       this._target.select();
     } else {
@@ -136,7 +145,7 @@ var ContextMenuHandler = {
 
   _onPaste: function _onPaste() {
     // paste text if this is an input control
-    if (this._isTextInput(this._target)) {
+    if (Util.isTextInput(this._target)) {
       let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
       if (edit) {
         edit.editor.paste(Ci.nsIClipboard.kGlobalClipboard);
@@ -149,6 +158,35 @@ var ContextMenuHandler = {
 
   _onCopyImage: function _onCopyImage() {
     Util.copyImageToClipboard(this._target);
+  },
+
+  _onCut: function _onCut() {
+    if (Util.isTextInput(this._target)) {
+      let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
+      if (edit) {
+        edit.editor.cut();
+      } else {
+        Util.dumpLn("error: target element does not support nsIDOMNSEditableElement");
+      }
+    }
+    this.reset();
+  },
+
+  _onCopy: function _onCopy() {
+    if (Util.isTextInput(this._target)) {
+      let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
+      if (edit) {
+        edit.editor.copy();
+      } else {
+        Util.dumpLn("error: target element does not support nsIDOMNSEditableElement");
+      }
+    } else {
+      let selectionText = this._previousState.string;
+
+      Cc["@mozilla.org/widget/clipboardhelper;1"]
+        .getService(Ci.nsIClipboardHelper).copyString(selectionText);
+    }
+    this.reset();
   },
 
   /******************************************************
@@ -205,6 +243,9 @@ var ContextMenuHandler = {
       linkTitle: "",
       linkProtocol: null,
       mediaURL: "",
+      contentType: "",
+      contentDisposition: "",
+      string: "",
     };
 
     // Do checks for nodes that never have children.
@@ -240,7 +281,7 @@ var ContextMenuHandler = {
     while (elem) {
       if (elem.nodeType == Ci.nsIDOMNode.ELEMENT_NODE) {
         // is the target a link or a descendant of a link?
-        if (this._isLink(elem)) {
+        if (Util.isLink(elem)) {
           // If this is an image that links to itself, don't include both link and
           // image otpions.
           if (imageUrl == this._getLinkURL(elem)) {
@@ -256,7 +297,7 @@ var ContextMenuHandler = {
           // mark as text so we can pickup on selection below
           isText = true;
           break;
-        } else if (this._isTextInput(elem)) {
+        } else if (Util.isTextInput(elem)) {
           let selectionStart = elem.selectionStart;
           let selectionEnd = elem.selectionEnd;
 
@@ -266,6 +307,7 @@ var ContextMenuHandler = {
           // Don't include "copy" for password fields.
           if (!(elem instanceof Ci.nsIDOMHTMLInputElement) || elem.mozIsTextField(true)) {
             if (selectionStart != selectionEnd) {
+              state.types.push("cut");
               state.types.push("copy");
               state.string = elem.value.slice(selectionStart, selectionEnd);
             }
@@ -288,7 +330,7 @@ var ContextMenuHandler = {
             state.types.push("paste");
           }
           break;
-        } else if (this._isText(elem)) {
+        } else if (Util.isText(elem)) {
           isText = true;
         } else if (elem instanceof Ci.nsIDOMHTMLMediaElement ||
                    elem instanceof Ci.nsIDOMHTMLVideoElement) {
@@ -334,30 +376,9 @@ var ContextMenuHandler = {
       if (this._types[i].handler(state, popupNode))
         state.types.push(this._types[i].name);
 
+    this._previousState = state;
+
     sendAsyncMessage("Content:ContextMenu", state);
-  },
-
-  _isTextInput: function _isTextInput(element) {
-    return ((element instanceof Ci.nsIDOMHTMLInputElement &&
-             element.mozIsTextField(false)) ||
-            element instanceof Ci.nsIDOMHTMLTextAreaElement);
-  },
-
-  _isLink: function _isLink(element) {
-    return ((element instanceof Ci.nsIDOMHTMLAnchorElement && element.href) ||
-            (element instanceof Ci.nsIDOMHTMLAreaElement && element.href) ||
-            element instanceof Ci.nsIDOMHTMLLinkElement ||
-            element.getAttributeNS(kXLinkNamespace, "type") == "simple");
-  },
-
-  _isText: function _isText(element) {
-    return (element instanceof Ci.nsIDOMHTMLParagraphElement ||
-            element instanceof Ci.nsIDOMHTMLDivElement ||
-            element instanceof Ci.nsIDOMHTMLLIElement ||
-            element instanceof Ci.nsIDOMHTMLPreElement ||
-            element instanceof Ci.nsIDOMHTMLHeadingElement ||
-            element instanceof Ci.nsIDOMHTMLTableCellElement ||
-            element instanceof Ci.nsIDOMHTMLBodyElement);
   },
 
   _getLinkURL: function ch_getLinkURL(aLink) {

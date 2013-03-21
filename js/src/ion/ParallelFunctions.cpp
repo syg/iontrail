@@ -220,7 +220,7 @@ ion::ParallelAbort(ParallelBailoutCause cause,
     ForkJoinSlice *slice = ForkJoinSlice::Current();
 
     Spew(SpewBailouts, "Parallel abort with cause %d in %p:%s:%d at line %d",
-         cause, script, script->filename, script->lineno);
+         cause, script, script->filename(), script->lineno);
 
     JS_ASSERT(slice->bailoutRecord->depth == 0);
     slice->bailoutRecord->setCause(cause, script, bytecode);
@@ -242,6 +242,6 @@ ion::ParCallToUncompiledScript(JSFunction *func)
 
 #ifdef DEBUG
     RawScript script = func->nonLazyScript();
-    Spew(SpewBailouts, "Call to uncompiled script: %p:%s:%d", script, script->filename, script->lineno);
+    Spew(SpewBailouts, "Call to uncompiled script: %p:%s:%d", script, script->filename(), script->lineno);
 #endif
 }

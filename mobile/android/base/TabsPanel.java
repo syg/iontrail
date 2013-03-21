@@ -7,18 +7,11 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.widget.IconTabWidget;
 
-import org.mozilla.gecko.widget.TwoWayView;
-
 import android.content.Context;
 import android.content.res.Resources;
-import android.content.res.TypedArray;
-import android.graphics.Color;
 import android.graphics.Rect;
-import android.graphics.drawable.ColorDrawable;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -144,18 +137,15 @@ public class TabsPanel extends LinearLayout
     }
 
     private static int getTabContainerHeight(TabsListContainer listContainer) {
-        Context context = listContainer.getContext();
+        Resources resources = listContainer.getContext().getResources();
 
         PanelView panelView = listContainer.getCurrentPanelView();
         if (panelView != null && !panelView.shouldExpand()) {
-            final View v = (View) panelView;
-            final int sizeSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
-            v.measure(sizeSpec, sizeSpec);
-            return v.getMeasuredHeight();
+            return resources.getDimensionPixelSize(R.dimen.tabs_tray_horizontal_height);
         }
 
-        int actionBarHeight = context.getResources().getDimensionPixelSize(R.dimen.browser_toolbar_height);
-        int screenHeight = context.getResources().getDisplayMetrics().heightPixels;
+        int actionBarHeight = resources.getDimensionPixelSize(R.dimen.browser_toolbar_height);
+        int screenHeight = resources.getDisplayMetrics().heightPixels;
 
         Rect windowRect = new Rect();
         listContainer.getWindowVisibleDisplayFrame(windowRect);

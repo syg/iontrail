@@ -34,6 +34,7 @@
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/Parser.h"
 #include "frontend/TokenStream.h"
+#include "ion/AsmJS.h"
 #include "vm/Debugger.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
@@ -89,12 +90,12 @@ struct frontend::StmtInfoBCE : public StmtInfoBase
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter *parent,
                                  Parser<FullParseHandler> *parser, SharedContext *sc,
                                  HandleScript script, HandleScript evalCaller, bool hasGlobalScope,
-                                 unsigned lineno, bool selfHostingMode)
+                                 uint32_t lineNum, bool selfHostingMode)
   : sc(sc),
     parent(parent),
     script(sc->context, script),
-    prolog(sc->context, lineno),
-    main(sc->context, lineno),
+    prolog(sc->context, lineNum),
+    main(sc->context, lineNum),
     current(&main),
     parser(parser),
     evalCaller(evalCaller),
@@ -102,7 +103,7 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter *parent,
     topScopeStmt(NULL),
     blockChain(sc->context),
     atomIndices(sc->context),
-    firstLine(lineno),
+    firstLine(lineNum),
     stackDepth(0), maxStackDepth(0),
     tryNoteList(sc->context),
     arrayCompDepth(0),
@@ -123,14 +124,14 @@ BytecodeEmitter::init()
     return atomIndices.ensureMap(sc->context);
 }
 
-BytecodeEmitter::~BytecodeEmitter()
-{
-}
-
 static ptrdiff_t
 EmitCheck(JSContext *cx, BytecodeEmitter *bce, ptrdiff_t delta)
 {
     ptrdiff_t offset = bce->code().length();
+
+    // Start it off moderately large to avoid repeated resizings early on.
+    if (bce->code().capacity() == 0 && !bce->code().reserve(1024))
+        return -1;
 
     jsbytecode dummy = 0;
     if (!bce->code().appendN(dummy, delta)) {
@@ -340,10 +341,13 @@ EmitBackPatchOp(JSContext *cx, BytecodeEmitter *bce, ptrdiff_t *lastp)
 
 /* Updates line number notes, not column notes. */
 static inline bool
-UpdateLineNumberNotes(JSContext *cx, BytecodeEmitter *bce, unsigned line)
+UpdateLineNumberNotes(JSContext *cx, BytecodeEmitter *bce, uint32_t offset)
 {
-    unsigned delta = line - bce->currentLine();
-    if (delta != 0) {
+    TokenStream *ts = &bce->parser->tokenStream;
+    if (!ts->srcCoords.isOnThisLine(offset, bce->currentLine())) {
+        unsigned line = ts->srcCoords.lineNum(offset);
+        unsigned delta = line - bce->currentLine();
+
         /*
          * Encode any change in the current source line number by using
          * either several SRC_NEWLINE notes or just one SRC_SETLINE note,
@@ -372,13 +376,13 @@ UpdateLineNumberNotes(JSContext *cx, BytecodeEmitter *bce, unsigned line)
 
 /* A function, so that we avoid macro-bloating all the other callsites. */
 static bool
-UpdateSourceCoordNotes(JSContext *cx, BytecodeEmitter *bce, TokenPtr pos)
+UpdateSourceCoordNotes(JSContext *cx, BytecodeEmitter *bce, uint32_t offset)
 {
-    if (!UpdateLineNumberNotes(cx, bce, pos.lineno))
+    if (!UpdateLineNumberNotes(cx, bce, offset))
         return false;
 
-    ptrdiff_t colspan = ptrdiff_t(pos.index) -
-                        ptrdiff_t(bce->current->lastColumn);
+    uint32_t columnIndex = bce->parser->tokenStream.srcCoords.columnIndex(offset);
+    ptrdiff_t colspan = ptrdiff_t(columnIndex) - ptrdiff_t(bce->current->lastColumn);
     if (colspan != 0) {
         if (colspan < 0) {
             colspan += SN_COLSPAN_DOMAIN;
@@ -392,7 +396,7 @@ UpdateSourceCoordNotes(JSContext *cx, BytecodeEmitter *bce, TokenPtr pos)
         }
         if (NewSrcNote2(cx, bce, SRC_COLSPAN, colspan) < 0)
             return false;
-        bce->current->lastColumn = pos.index;
+        bce->current->lastColumn = columnIndex;
     }
     return true;
 }
@@ -1664,9 +1668,12 @@ BytecodeEmitter::tellDebuggerAboutCompiledScript(JSContext *cx)
 bool
 BytecodeEmitter::reportError(ParseNode *pn, unsigned errorNumber, ...)
 {
+    TokenPos pos = pn ? pn->pn_pos : tokenStream()->currentToken().pos;
+
     va_list args;
     va_start(args, errorNumber);
-    bool result = tokenStream()->reportCompileErrorNumberVA(pn->pn_pos, JSREPORT_ERROR, errorNumber, args);
+    bool result = tokenStream()->reportCompileErrorNumberVA(pos.begin, JSREPORT_ERROR,
+                                                            errorNumber, args);
     va_end(args);
     return result;
 }
@@ -1674,9 +1681,11 @@ BytecodeEmitter::reportError(ParseNode *pn, unsigned errorNumber, ...)
 bool
 BytecodeEmitter::reportStrictWarning(ParseNode *pn, unsigned errorNumber, ...)
 {
+    TokenPos pos = pn ? pn->pn_pos : tokenStream()->currentToken().pos;
+
     va_list args;
     va_start(args, errorNumber);
-    bool result = tokenStream()->reportStrictWarningErrorNumberVA(pn->pn_pos, errorNumber, args);
+    bool result = tokenStream()->reportStrictWarningErrorNumberVA(pos.begin, errorNumber, args);
     va_end(args);
     return result;
 }
@@ -1684,9 +1693,12 @@ BytecodeEmitter::reportStrictWarning(ParseNode *pn, unsigned errorNumber, ...)
 bool
 BytecodeEmitter::reportStrictModeError(ParseNode *pn, unsigned errorNumber, ...)
 {
+    TokenPos pos = pn ? pn->pn_pos : tokenStream()->currentToken().pos;
+
     va_list args;
     va_start(args, errorNumber);
-    bool result = tokenStream()->reportStrictModeErrorNumberVA(pn->pn_pos, sc->strict, errorNumber, args);
+    bool result = tokenStream()->reportStrictModeErrorNumberVA(pos.begin, sc->strict,
+                                                               errorNumber, args);
     va_end(args);
     return result;
 }
@@ -2495,6 +2507,17 @@ frontend::EmitFunctionScript(JSContext *cx, BytecodeEmitter *bce, ParseNode *bod
     if (funbox->isGenerator()) {
         bce->switchToProlog();
         if (Emit1(cx, bce, JSOP_GENERATOR) < 0)
+            return false;
+        bce->switchToMain();
+    }
+
+    if (bce->script->asmJS) {
+        /* asm.js means no funny stuff. */
+        JS_ASSERT(!funbox->argumentsHasLocalBinding());
+        JS_ASSERT(!funbox->isGenerator());
+
+        bce->switchToProlog();
+        if (Emit1(cx, bce, JSOP_LINKASMJS) < 0)
             return false;
         bce->switchToMain();
     }
@@ -3958,7 +3981,7 @@ EmitLet(JSContext *cx, BytecodeEmitter *bce, ParseNode *pnLet)
     StmtInfoBCE stmtInfo(cx);
     PushBlockScopeBCE(bce, &stmtInfo, *blockObj, bce->offset());
 
-    ptrdiff_t bodyBegin = bce->offset();
+    DebugOnly<ptrdiff_t> bodyBegin = bce->offset();
     if (!EmitEnterBlock(cx, bce, letBody, JSOP_ENTERLET0))
         return false;
 
@@ -3969,7 +3992,7 @@ EmitLet(JSContext *cx, BytecodeEmitter *bce, ParseNode *pnLet)
     JS_ASSERT(leaveOp == JSOP_LEAVEBLOCK || leaveOp == JSOP_LEAVEBLOCKEXPR);
     EMIT_UINT16_IMM_OP(leaveOp, blockObj->slotCount());
 
-    ptrdiff_t bodyEnd = bce->offset();
+    DebugOnly<ptrdiff_t> bodyEnd = bce->offset();
     JS_ASSERT(bodyEnd > bodyBegin);
 
     return PopStatementBCE(cx, bce);
@@ -4292,11 +4315,11 @@ EmitNormalFor(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn, ptrdiff_t top)
             return false;
 
         /* Restore the absolute line number for source note readers. */
-        ptrdiff_t lineno = pn->pn_pos.end.lineno;
-        if (bce->currentLine() != (unsigned) lineno) {
-            if (NewSrcNote2(cx, bce, SRC_SETLINE, lineno) < 0)
+        uint32_t lineNum = bce->parser->tokenStream.srcCoords.lineNum(pn->pn_pos.end);
+        if (bce->currentLine() != lineNum) {
+            if (NewSrcNote2(cx, bce, SRC_SETLINE, ptrdiff_t(lineNum)) < 0)
                 return false;
-            bce->current->currentLine = (unsigned) lineno;
+            bce->current->currentLine = lineNum;
             bce->current->lastColumn = 0;
         }
     }
@@ -4367,6 +4390,7 @@ EmitFunc(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
         options.setPrincipals(parent->principals())
                .setOriginPrincipals(parent->originPrincipals)
                .setCompileAndGo(parent->compileAndGo)
+               .setSelfHostingMode(parent->selfHosted)
                .setNoScriptRval(false)
                .setVersion(parent->getVersion())
                .setUserBit(parent->userBit);
@@ -4379,8 +4403,18 @@ EmitFunc(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 
         script->bindings = funbox->bindings;
 
+#ifdef JS_ION
+        // Do asm.js compilation at the beginning of emitting to avoid
+        // compiling twice when JS_BufferIsCompilableUnit and to know whether
+        // to emit JSOP_LINKASMJS. Don't fold constants as this will
+        // misrepresent the source JS as written to the type checker.
+        if (funbox->useAsm && !CompileAsmJS(cx, *bce->tokenStream(), pn, script))
+            return false;
+#endif
+
+        uint32_t lineNum = bce->parser->tokenStream.srcCoords.lineNum(pn->pn_pos.begin);
         BytecodeEmitter bce2(bce, bce->parser, funbox, script, bce->evalCaller,
-                             bce->hasGlobalScope, pn->pn_pos.begin.lineno, bce->selfHostingMode);
+                             bce->hasGlobalScope, lineNum, bce->selfHostingMode);
         if (!bce2.init())
             return false;
 
@@ -4712,7 +4746,7 @@ EmitStatement(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
         }
     } else if (!pn->isDirectivePrologueMember()) {
         /* Don't complain about directive prologue members; just don't emit their code. */
-        bce->current->currentLine = pn2->pn_pos.begin.lineno;
+        bce->current->currentLine = bce->parser->tokenStream.srcCoords.lineNum(pn2->pn_pos.begin);
         bce->current->lastColumn = 0;
         if (!bce->reportStrictWarning(pn2, JSMSG_USELESS_EXPR))
             return false;
@@ -4927,8 +4961,10 @@ EmitCallOrNew(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
     if (Emit3(cx, bce, pn->getOp(), ARGC_HI(argc), ARGC_LO(argc)) < 0)
         return false;
     CheckTypeSet(cx, bce, pn->getOp());
-    if (pn->isOp(JSOP_EVAL))
-        EMIT_UINT16_IMM_OP(JSOP_LINENO, pn->pn_pos.begin.lineno);
+    if (pn->isOp(JSOP_EVAL)) {
+        uint32_t lineNum = bce->parser->tokenStream.srcCoords.lineNum(pn->pn_pos.begin);
+        EMIT_UINT16_IMM_OP(JSOP_LINENO, lineNum);
+    }
     if (pn->pn_xflags & PNX_SETCALL) {
         if (Emit1(cx, bce, JSOP_SETCALL) < 0)
             return false;
@@ -5446,7 +5482,7 @@ frontend::EmitTree(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
     pn->pn_offset = top;
 
     /* Emit notes to tell the current bytecode's source line number. */
-    if (!UpdateLineNumberNotes(cx, bce, pn->pn_pos.begin.lineno))
+    if (!UpdateLineNumberNotes(cx, bce, pn->pn_pos.begin))
         return false;
 
     switch (pn->getKind()) {
@@ -5877,6 +5913,10 @@ frontend::EmitTree(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 static int
 AllocSrcNote(JSContext *cx, SrcNotesVector &notes)
 {
+    // Start it off moderately large to avoid repeated resizings early on.
+    if (notes.capacity() == 0 && !notes.reserve(1024))
+        return -1;
+
     jssrcnote dummy = 0;
     if (!notes.append(dummy)) {
         js_ReportOutOfMemory(cx);

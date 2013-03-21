@@ -46,6 +46,8 @@ public:
   explicit GainNodeEngine(AudioDestinationNode* aDestination)
     : mSource(nullptr)
     , mDestination(static_cast<AudioNodeStream*> (aDestination->Stream()))
+    // Keep the default value in sync with the default value in GainNode::GainNode.
+    , mGain(1.f)
   {
   }
 
@@ -116,7 +118,7 @@ GainNode::GainNode(AudioContext* aContext)
   , mGain(new AudioParam(this, SendGainToStream, 1.0f, 0.0f, 1.0f))
 {
   GainNodeEngine* engine = new GainNodeEngine(aContext->Destination());
-  mStream = aContext->Graph()->CreateAudioNodeStream(engine);
+  mStream = aContext->Graph()->CreateAudioNodeStream(engine, MediaStreamGraph::INTERNAL_STREAM);
   engine->SetSourceStream(static_cast<AudioNodeStream*> (mStream.get()));
 }
 

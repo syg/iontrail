@@ -42,7 +42,7 @@ MOCHITEST_FILES = \
 		test_getElementById.xhtml \
 		test_getSubStringLength.xhtml \
 		getSubStringLength-helper.svg \
-		test_isSupported.xhtml \
+		test_hasFeature.xhtml \
 		$(filter disabled-for-intermittent-failures--bug-701060, test_lang.xhtml) \
 		test_nonAnimStrings.xhtml \
 		test_pathAnimInterpolation.xhtml \
@@ -68,6 +68,7 @@ MOCHITEST_FILES = \
 		test_SVGStringList.xhtml \
 		test_SVGTransformList.xhtml \
 		test_SVGTransformListAddition.xhtml \
+		test_SVGUnitTypes.html \
 		test_SVGxxxList.xhtml \
 		test_SVGxxxListIndexing.xhtml \
 		test_switch.xhtml \

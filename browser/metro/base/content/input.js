@@ -147,10 +147,8 @@ var TouchModule = {
             // content and triggers selection of text, so fire up the SelectionHelperUI
             // once selection is present.
             setTimeout(function () {
-              let contextInfo = { name: "",
-                                  json: { xPos: aEvent.clientX, yPos: aEvent.clientY },
-                                  target: Browser.selectedTab.browser };
-              SelectionHelperUI.attachEditSession(contextInfo);
+              SelectionHelperUI.attachEditSession(Browser.selectedTab.browser,
+                                                  aEvent.clientX, aEvent.clientY);
             }, 50);
             break;
         }
@@ -1154,20 +1152,8 @@ var GestureModule = {
  * versus an imprecise one (touch).
  */
 var InputSourceHelper = {
-  _isPrecise: false,
-  _treatMouseAsTouch: false,
-  
-  get isPrecise() {
-    return this._isPrecise;
-  },
-  
-  get treatMouseAsTouch() {
-    return this._treatMouseAsTouch;
-  },
-
-  set treatMouseAsTouch(aVal) {
-    this._treatMouseAsTouch = aVal;
-  },
+  isPrecise: false,
+  treatMouseAsTouch: false,
 
   init: function ish_init() {
     // debug feature, make all input imprecise
@@ -1186,15 +1172,15 @@ var InputSourceHelper = {
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_PEN:
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_ERASER:
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_CURSOR:
-        if (!this._isPrecise && !this.treatMouseAsTouch) {
-          this._isPrecise = true;
+        if (!this.isPrecise && !this.treatMouseAsTouch) {
+          this.isPrecise = true;
           this._fire("MozPrecisePointer");
         }
         break;
 
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH:
-        if (this._isPrecise) {
-          this._isPrecise = false;
+        if (this.isPrecise) {
+          this.isPrecise = false;
           this._fire("MozImprecisePointer");
         }
         break;
@@ -1205,7 +1191,7 @@ var InputSourceHelper = {
     if (this.treatMouseAsTouch) {
       this._fire("MozImprecisePointer");
     } else {
-      if (this._isPrecise) {
+      if (this.isPrecise) {
         this._fire("MozPrecisePointer");
       } else {
         this._fire("MozImprecisePointer");

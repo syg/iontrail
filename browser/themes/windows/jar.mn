@@ -42,6 +42,8 @@ browser.jar:
         skin/classic/browser/mixed-content-blocked-64.png
         skin/classic/browser/monitor.png
         skin/classic/browser/monitor_16-10.png
+        skin/classic/browser/notification-16.png
+        skin/classic/browser/notification-64.png
         skin/classic/browser/pageInfo.css
         skin/classic/browser/pageInfo.png
         skin/classic/browser/page-livemarks.png                      (feeds/feedIcon16.png)
@@ -144,6 +146,7 @@ browser.jar:
         skin/classic/browser/devtools/goto-mdn.png                  (devtools/goto-mdn.png)
         skin/classic/browser/devtools/csshtmltree.css               (devtools/csshtmltree.css)
         skin/classic/browser/devtools/commandline.css               (devtools/commandline.css)
+        skin/classic/browser/devtools/command-paintflashing.png     (devtools/command-paintflashing.png)
         skin/classic/browser/devtools/command-responsivemode.png    (devtools/command-responsivemode.png)
         skin/classic/browser/devtools/command-scratchpad.png        (devtools/command-scratchpad.png)
         skin/classic/browser/devtools/command-tilt.png              (devtools/command-tilt.png)
@@ -272,6 +275,8 @@ browser.jar:
         skin/classic/aero/browser/mixed-content-blocked-64.png
         skin/classic/aero/browser/monitor.png
         skin/classic/aero/browser/monitor_16-10.png
+        skin/classic/aero/browser/notification-16.png
+        skin/classic/aero/browser/notification-64.png
         skin/classic/aero/browser/pageInfo.css
         skin/classic/aero/browser/pageInfo.png                       (pageInfo-aero.png)
         skin/classic/aero/browser/page-livemarks.png                 (feeds/feedIcon16-aero.png)
@@ -370,6 +375,7 @@ browser.jar:
         skin/classic/aero/browser/devtools/widgets.css               (devtools/widgets.css)
         skin/classic/aero/browser/devtools/arrows.png                (devtools/arrows.png)
         skin/classic/aero/browser/devtools/commandline.png           (devtools/commandline.png)
+        skin/classic/aero/browser/devtools/command-paintflashing.png  (devtools/command-paintflashing.png)
         skin/classic/aero/browser/devtools/command-responsivemode.png (devtools/command-responsivemode.png)
         skin/classic/aero/browser/devtools/command-scratchpad.png    (devtools/command-scratchpad.png)
         skin/classic/aero/browser/devtools/command-tilt.png          (devtools/command-tilt.png)

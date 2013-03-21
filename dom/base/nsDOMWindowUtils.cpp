@@ -1147,7 +1147,7 @@ nsDOMWindowUtils::GarbageCollect(nsICycleCollectorListener *aListener,
   }
 #endif
 
-  nsJSContext::GarbageCollectNow(js::gcreason::DOM_UTILS);
+  nsJSContext::GarbageCollectNow(JS::gcreason::DOM_UTILS);
   nsJSContext::CycleCollectNow(aListener, aExtraForgetSkippableCalls);
 
   return NS_OK;
@@ -1501,14 +1501,10 @@ nsDOMWindowUtils::GetRootBounds(nsIDOMClientRect** aResult)
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  // Weak ref, since we addref it below
-  nsClientRect* rect = new nsClientRect();
-  NS_ADDREF(*aResult = rect);
-
   nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
   NS_ENSURE_STATE(window);
 
-  nsCOMPtr<nsIDocument> doc(do_QueryInterface(window->GetExtantDocument()));
+  nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
   NS_ENSURE_STATE(doc);
 
   nsRect bounds(0, 0, 0, 0);
@@ -1524,10 +1520,12 @@ nsDOMWindowUtils::GetRootBounds(nsIDOMClientRect** aResult)
     }
   }
 
+  nsRefPtr<nsClientRect> rect = new nsClientRect(window);
   rect->SetRect(nsPresContext::AppUnitsToFloatCSSPixels(bounds.x),
                 nsPresContext::AppUnitsToFloatCSSPixels(bounds.y),
                 nsPresContext::AppUnitsToFloatCSSPixels(bounds.width),
                 nsPresContext::AppUnitsToFloatCSSPixels(bounds.height));
+  rect.forget(aResult);
   return NS_OK;
 }
 
@@ -2192,7 +2190,7 @@ nsDOMWindowUtils::GetLayerManagerType(nsAString& aType)
   if (!widget)
     return NS_ERROR_FAILURE;
 
-  LayerManager *mgr = widget->GetLayerManager();
+  LayerManager *mgr = widget->GetLayerManager(nsIWidget::LAYER_MANAGER_PERSISTENT);
   if (!mgr)
     return NS_ERROR_FAILURE;
 
@@ -2330,6 +2328,19 @@ nsDOMWindowUtils::RestoreNormalRefresh()
   }
 
   GetPresContext()->RefreshDriver()->RestoreNormalRefresh();
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetIsTestControllingRefreshes(bool *aResult)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  *aResult =
+    GetPresContext()->RefreshDriver()->IsTestControllingRefreshesEnabled();
 
   return NS_OK;
 }
@@ -2785,7 +2796,7 @@ nsDOMWindowUtils::IsIncrementalGCEnabled(JSContext* cx, bool* aResult)
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  *aResult = js::IsIncrementalGCEnabled(JS_GetRuntime(cx));
+  *aResult = JS::IsIncrementalGCEnabled(JS_GetRuntime(cx));
   return NS_OK;
 }
 
@@ -3207,6 +3218,35 @@ nsDOMWindowUtils::IsNodeDisabledForEvents(nsIDOMNode* aNode, bool* aRetVal)
     node = node->GetParentNode();
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::SetPaintFlashing(bool aPaintFlashing)
+{
+  nsPresContext* presContext = GetPresContext();
+  if (presContext) {
+    presContext->RefreshDriver()->SetPaintFlashing(aPaintFlashing);
+    // Clear paint flashing colors
+    nsIPresShell* presShell = GetPresShell();
+    if (!aPaintFlashing && presShell) {
+      nsIFrame* rootFrame = presShell->GetRootFrame();
+      if (rootFrame) {
+        rootFrame->InvalidateFrameSubtree();
+      }
+    }
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetPaintFlashing(bool* aRetVal)
+{
+  *aRetVal = false;
+  nsPresContext* presContext = GetPresContext();
+  if (presContext) {
+    *aRetVal = presContext->RefreshDriver()->GetPaintFlashing();
+  }
   return NS_OK;
 }
 

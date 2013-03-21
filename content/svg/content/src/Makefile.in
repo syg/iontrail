@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= content
 LIBRARY_NAME	= gkcontentsvg_s
 LIBXUL_LIBRARY	= 1
 ifndef _MSC_VER
@@ -79,10 +78,16 @@ CPPSRCS		= \
 		SVGElementFactory.cpp \
 		SVGEllipseElement.cpp \
 		SVGFEBlendElement.cpp \
+		SVGFEColorMatrixElement.cpp \
+		SVGFEComponentTransferElement.cpp \
+		SVGFECompositeElement.cpp \
+		SVGFEDistantLightElement.cpp \
 		SVGFEFloodElement.cpp \
+		SVGFEGaussianBlurElement.cpp \
 		SVGFEImageElement.cpp \
 		SVGFEMergeElement.cpp \
 		SVGFEMergeNodeElement.cpp \
+		SVGFEPointLightElement.cpp \
 		SVGFETileElement.cpp \
 		SVGFilterElement.cpp \
 		SVGForeignObjectElement.cpp \
@@ -151,9 +156,12 @@ include $(topsrcdir)/config/config.mk
 FORCE_STATIC_LIB = 1
 
 EXPORTS =  			\
+	nsSVGClass.h               \
+	nsSVGElement.h             \
 	nsSVGFeatures.h            \
 	nsSVGRect.h                \
 	SVGAttrValueWrapper.h      \
+	SVGStringList.h            \
 	$(NULL)
 
 EXPORTS_NAMESPACES = mozilla/dom
@@ -176,10 +184,16 @@ EXPORTS_mozilla/dom = \
 	SVGDescElement.h \
 	SVGEllipseElement.h \
 	SVGFEBlendElement.h \
+	SVGFEColorMatrixElement.h \
+	SVGFEComponentTransferElement.h \
+	SVGFECompositeElement.h \
+	SVGFEDistantLightElement.h \
 	SVGFEFloodElement.h \
+	SVGFEGaussianBlurElement.h \
 	SVGFEImageElement.h \
 	SVGFEMergeElement.h \
 	SVGFEMergeNodeElement.h \
+	SVGFEPointLightElement.h \
 	SVGFETileElement.h \
 	SVGFilterElement.h \
 	SVGForeignObjectElement.h \

@@ -332,6 +332,7 @@ DeclMarkerImpl(Object, GlobalObject)
 DeclMarkerImpl(Object, JSObject)
 DeclMarkerImpl(Object, JSFunction)
 DeclMarkerImpl(Object, ScopeObject)
+DeclMarkerImpl(Object, ArrayBufferObject)
 DeclMarkerImpl(Script, JSScript)
 DeclMarkerImpl(Shape, Shape)
 DeclMarkerImpl(String, JSAtom)
@@ -816,6 +817,8 @@ static inline void
 ScanBaseShape(GCMarker *gcmarker, RawBaseShape base)
 {
     base->assertConsistency();
+
+    base->compartment()->mark();
 
     if (base->hasGetterObject())
         PushMarkStack(gcmarker, base->getterObject());
@@ -1571,7 +1574,7 @@ UnmarkGrayChildren(JSTracer *trc, void **thingp, JSGCTraceKind kind)
         return;
     }
 
-    if (!GCThingIsMarkedGray(thing))
+    if (!JS::GCThingIsMarkedGray(thing))
         return;
 
     UnmarkGrayGCThing(thing);
@@ -1599,7 +1602,7 @@ UnmarkGrayChildren(JSTracer *trc, void **thingp, JSGCTraceKind kind)
     }
 
     do {
-        JS_ASSERT(!GCThingIsMarkedGray(thing));
+        JS_ASSERT(!JS::GCThingIsMarkedGray(thing));
         JS_TraceChildren(&childTracer, thing, JSTRACE_SHAPE);
         thing = childTracer.previousShape;
         childTracer.previousShape = NULL;
@@ -1611,7 +1614,7 @@ JS::UnmarkGrayGCThingRecursively(void *thing, JSGCTraceKind kind)
 {
     JS_ASSERT(kind != JSTRACE_SHAPE);
 
-    if (!GCThingIsMarkedGray(thing))
+    if (!JS::GCThingIsMarkedGray(thing))
         return;
 
     UnmarkGrayGCThing(thing);

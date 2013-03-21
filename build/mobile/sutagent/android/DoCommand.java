@@ -132,6 +132,7 @@ public class DoCommand {
         POWER ("power"),
         PROCESS ("process"),
         SUTUSERINFO ("sutuserinfo"),
+        TEMPERATURE ("temperature"),
         GETAPPROOT ("getapproot"),
         TESTROOT ("testroot"),
         ALRT ("alrt"),
@@ -435,6 +436,8 @@ public class DoCommand {
                     strReturn += "\n";
                     strReturn += GetPowerInfo();
                     strReturn += "\n";
+                    strReturn += GetTemperatureInfo();
+                    strReturn += "\n";
                     strReturn += GetProcessInfo();
                     strReturn += "\n";
                     strReturn += GetSutUserInfo();
@@ -486,6 +489,10 @@ public class DoCommand {
 
                         case SUTUSERINFO:
                             strReturn += GetSutUserInfo();
+                            break;
+
+                        case TEMPERATURE:
+                            strReturn += GetTemperatureInfo();
                             break;
 
                         default:
@@ -2636,6 +2643,33 @@ private void CancelNotification()
         return sRet;
         }
 
+    public String GetTemperatureInfo()
+        {
+        String sTempVal = "unknown";
+        String sDeviceFile = "/sys/bus/platform/devices/temp_sensor_hwmon.0/temp1_input";
+        try {
+            pProc = Runtime.getRuntime().exec(this.getSuArgs("cat " + sDeviceFile));
+            RedirOutputThread outThrd = new RedirOutputThread(pProc, null);
+            outThrd.start();
+            outThrd.joinAndStopRedirect(5000);
+            String output = outThrd.strOutput;
+            // this only works on pandas (with the temperature sensors turned
+            // on), other platforms we just get a file not found error... we'll
+            // just return "unknown" for that case
+            try {
+                sTempVal = String.valueOf(Integer.parseInt(output.trim()) / 1000.0);
+            } catch (NumberFormatException e) {
+                // not parsed! probably not a panda
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        return "Temperature: " + sTempVal;
+        }
+
     // todo
     public String GetDiskInfo(String sPath)
         {
@@ -3283,7 +3317,16 @@ private void CancelNotification()
 
         try
             {
-            pProc = Runtime.getRuntime().exec(this.getSuArgs("pm install -r " + sApp + " Cleanup;exit"));
+            // on android 4.2 and above, we want to pass the "-d" argument to pm so that version
+            // downgrades are allowed... (option unsupported in earlier versions)
+            String sPmCmd;
+
+            if (android.os.Build.VERSION.SDK_INT >= 17) { // JELLY_BEAN_MR1
+                sPmCmd = "pm install -r -d " + sApp + " Cleanup;exit";
+            } else {
+                sPmCmd = "pm install -r " + sApp + " Cleanup;exit";
+            }
+            pProc = Runtime.getRuntime().exec(this.getSuArgs(sPmCmd));
             RedirOutputThread outThrd3 = new RedirOutputThread(pProc, out);
             outThrd3.start();
             try {

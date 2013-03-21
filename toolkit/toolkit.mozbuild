@@ -7,7 +7,6 @@ if CONFIG['LIBXUL_SDK']:
     error('toolkit.mozbuild is not compatible with --enable-libxul-sdk=')
 
 if not CONFIG['MOZ_NATIVE_NSPR']:
-    add_tier_dir('nspr', 'nsprpub', static=True)
     add_tier_dir('nspr', 'config/nspr')
 
 if not CONFIG['MOZ_NATIVE_SQLITE']:
@@ -85,9 +84,6 @@ if CONFIG['MOZ_VP8'] and not CONFIG['MOZ_NATIVE_LIBVPX']:
 
 if CONFIG['MOZ_OGG']:
     add_tier_dir('platform', ['media/libogg', 'media/libtheora'])
-
-if CONFIG['MOZ_SYDNEYAUDIO']:
-    add_tier_dir('platform', 'media/libsydneyaudio')
 
 if CONFIG['MOZ_WEBRTC']:
     add_tier_dir('platform', [
@@ -243,8 +239,8 @@ if CONFIG['ENABLE_TESTS']:
         'testing/modules',
     ])
 
-    if CONFIG['MOZ_WEBRTC']:
-        add_tier_dir('platform', [
-            'media/webrtc/signaling/test',
-            'media/mtransport/test',
-        ])
+    if CONFIG['MOZ_WEBRTC'] and CONFIG['MOZ_WIDGET_TOOLKIT'] != 'gonk':
+            add_tier_dir('platform', [
+                'media/webrtc/signaling/test',
+                'media/mtransport/test',
+            ])

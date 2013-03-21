@@ -20,13 +20,34 @@ function isSubObjectOf(expectedObj, actualObj, name) {
 
 function waitForPopupShown(aPopupId, aCallback) {
   let popup = document.getElementById(aPopupId);
+  info("waitForPopupShown: got popup: " + popup.id);
   function onPopupShown() {
-    popup.removeEventListener("popupshown", onPopupShown);
+    info("onPopupShown");
+    removePopupShownListener();
     SimpleTest.executeSoon(aCallback);
   }
+  function removePopupShownListener() {
+    popup.removeEventListener("popupshown", onPopupShown);
+  }
   popup.addEventListener("popupshown", onPopupShown);
+  registerCleanupFunction(removePopupShownListener);
 }
 
 function waitForBrowserContextMenu(aCallback) {
   waitForPopupShown(gBrowser.selectedBrowser.contextMenu, aCallback);
+}
+
+function doOnloadOnce(aCallback) {
+  function doOnloadOnceListener(aEvent) {
+    info("doOnloadOnce: " + aEvent.originalTarget.location);
+    removeDoOnloadOnceListener();
+    SimpleTest.executeSoon(function doOnloadOnceCallback() {
+      aCallback(aEvent);
+    });
+  }
+  function removeDoOnloadOnceListener() {
+    gBrowser.removeEventListener("load", doOnloadOnceListener, true);
+  }
+  gBrowser.addEventListener("load", doOnloadOnceListener, true);
+  registerCleanupFunction(removeDoOnloadOnceListener);
 }

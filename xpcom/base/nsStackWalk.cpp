@@ -66,8 +66,8 @@ stack_callback(void *pc, void *sp, void *closure)
   gCriticalAddress.mAddr = pc;
 }
 
+#ifdef DEBUG
 #define MAC_OS_X_VERSION_10_7_HEX 0x00001070
-#define MAC_OS_X_VERSION_10_6_HEX 0x00001060
 
 static int32_t OSXVersion()
 {
@@ -83,11 +83,7 @@ static bool OnLionOrLater()
 {
   return (OSXVersion() >= MAC_OS_X_VERSION_10_7_HEX);
 }
-
-static bool OnSnowLeopardOrLater()
-{
-  return (OSXVersion() >= MAC_OS_X_VERSION_10_6_HEX);
-}
+#endif
 
 static void
 my_malloc_logger(uint32_t type, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
@@ -100,8 +96,7 @@ my_malloc_logger(uint32_t type, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
 
   // On Leopard dladdr returns the wrong value for "new_sem_from_pool". The
   // stack shows up as having two pthread_cond_wait$UNIX2003 frames.
-  const char *name = OnSnowLeopardOrLater() ? "new_sem_from_pool" :
-    "pthread_cond_wait$UNIX2003";
+  const char *name = "new_sem_from_pool";
   NS_StackWalk(stack_callback, /* skipFrames */ 0, /* maxFrames */ 0,
                const_cast<char*>(name), 0, nullptr);
 }
@@ -606,7 +601,7 @@ static BOOL CALLBACK callbackEspecial64(
        ? (addr >= aModuleBase && addr <= (aModuleBase + aModuleSize))
        : (addr <= aModuleBase && addr >= (aModuleBase - aModuleSize))
         ) {
-        retval = SymLoadModule64(GetCurrentProcess(), NULL, (PSTR)aModuleName, NULL, aModuleBase, aModuleSize);
+        retval = !!SymLoadModule64(GetCurrentProcess(), NULL, (PSTR)aModuleName, NULL, aModuleBase, aModuleSize);
         if (!retval)
             PrintError("SymLoadModule64");
     }
@@ -775,7 +770,7 @@ NS_DescribeCodeAddress(void *aPC, nsCodeAddressDetails *aDetails)
     if (ok) {
         PL_strncpyz(aDetails->function, pSymbol->Name,
                     sizeof(aDetails->function));
-        aDetails->foffset = displacement;
+        aDetails->foffset = static_cast<ptrdiff_t>(displacement);
     }
 
     LeaveCriticalSection(&gDbgHelpCS); // release our lock
@@ -786,11 +781,16 @@ EXPORT_XPCOM_API(nsresult)
 NS_FormatCodeAddressDetails(void *aPC, const nsCodeAddressDetails *aDetails,
                             char *aBuffer, uint32_t aBufferSize)
 {
-    if (aDetails->function[0])
-        _snprintf(aBuffer, aBufferSize, "%s!%s+0x%016lX",
-                  aDetails->library, aDetails->function, aDetails->foffset);
-    else
-        _snprintf(aBuffer, aBufferSize, "0x%016lX", aPC);
+    if (aDetails->function[0]) {
+        _snprintf(aBuffer, aBufferSize, "%s+0x%08lX [%s +0x%016lX]",
+                  aDetails->function, aDetails->foffset,
+                  aDetails->library, aDetails->loffset);
+    } else if (aDetails->library[0]) {
+        _snprintf(aBuffer, aBufferSize, "UNKNOWN [%s +0x%016lX]",
+                  aDetails->library, aDetails->loffset);
+    } else {
+        _snprintf(aBuffer, aBufferSize, "UNKNOWN 0x%016lX", aPC);
+    }
 
     aBuffer[aBufferSize - 1] = '\0';
 

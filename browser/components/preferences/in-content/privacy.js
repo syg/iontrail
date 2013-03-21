@@ -263,7 +263,7 @@ var gPrivacyPane = {
       const Cc = Components.classes, Ci = Components.interfaces;
       let brandName = document.getElementById("bundleBrand").getString("brandShortName");
       let bundle = document.getElementById("bundlePreferences");
-      let msg = bundle.getFormattedString(pref.value ?
+      let msg = bundle.getFormattedString(autoStart.checked ?
                                           "featureEnableRequiresRestart" : "featureDisableRequiresRestart",
                                           [brandName]);
       let title = bundle.getFormattedString("shouldRestartTitle", [brandName]);
@@ -277,6 +277,7 @@ var gPrivacyPane = {
         shouldProceed = !cancelQuit.data;
 
         if (shouldProceed) {
+          pref.value = autoStart.hasAttribute('checked');
           document.documentElement.acceptDialog();
           let appStartup = Cc["@mozilla.org/toolkit/app-startup;1"]
                              .getService(Ci.nsIAppStartup);

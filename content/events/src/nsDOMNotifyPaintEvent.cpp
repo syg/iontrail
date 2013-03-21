@@ -54,33 +54,26 @@ nsDOMNotifyPaintEvent::GetRegion()
 NS_IMETHODIMP
 nsDOMNotifyPaintEvent::GetBoundingClientRect(nsIDOMClientRect** aResult)
 {
-  // Weak ref, since we addref it below
-  nsClientRect* rect = new nsClientRect();
-  if (!rect)
-    return NS_ERROR_OUT_OF_MEMORY;
+  nsRefPtr<nsClientRect> rect = new nsClientRect(ToSupports(this));
 
-  NS_ADDREF(*aResult = rect);
-  if (!mPresContext)
-    return NS_OK;
+  if (mPresContext) {
+    rect->SetLayoutRect(GetRegion().GetBounds());
+  }
 
-  rect->SetLayoutRect(GetRegion().GetBounds());
+  rect.forget(aResult);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDOMNotifyPaintEvent::GetClientRects(nsIDOMClientRectList** aResult)
 {
-  nsRefPtr<nsClientRectList> rectList =
-    new nsClientRectList(static_cast<nsIDOMEvent*>(static_cast<nsDOMEvent*>(this)));
-  if (!rectList)
-    return NS_ERROR_OUT_OF_MEMORY;
+  nsISupports* parent = ToSupports(this);
+  nsRefPtr<nsClientRectList> rectList = new nsClientRectList(parent);
 
   nsRegion r = GetRegion();
   nsRegionRectIterator iter(r);
   for (const nsRect* rgnRect = iter.Next(); rgnRect; rgnRect = iter.Next()) {
-    nsRefPtr<nsClientRect> rect = new nsClientRect();
-    if (!rect)
-      return NS_ERROR_OUT_OF_MEMORY;
+    nsRefPtr<nsClientRect> rect = new nsClientRect(parent);
     
     rect->SetLayoutRect(*rgnRect);
     rectList->Append(rect);
@@ -128,10 +121,7 @@ nsDOMNotifyPaintEvent::Serialize(IPC::Message* aMsg,
   uint32_t length = mInvalidateRequests.Length();
   IPC::WriteParam(aMsg, length);
   for (uint32_t i = 0; i < length; ++i) {
-    IPC::WriteParam(aMsg, mInvalidateRequests[i].mRect.x);
-    IPC::WriteParam(aMsg, mInvalidateRequests[i].mRect.y);
-    IPC::WriteParam(aMsg, mInvalidateRequests[i].mRect.width);
-    IPC::WriteParam(aMsg, mInvalidateRequests[i].mRect.height);
+    IPC::WriteParam(aMsg, mInvalidateRequests[i].mRect);
     IPC::WriteParam(aMsg, mInvalidateRequests[i].mFlags);
   }
 }
@@ -146,10 +136,7 @@ nsDOMNotifyPaintEvent::Deserialize(const IPC::Message* aMsg, void** aIter)
   mInvalidateRequests.SetCapacity(length);
   for (uint32_t i = 0; i < length; ++i) {
     nsInvalidateRequestList::Request req;
-    NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &req.mRect.x), false);
-    NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &req.mRect.y), false);
-    NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &req.mRect.width), false);
-    NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &req.mRect.height), false);
+    NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &req.mRect), false);
     NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &req.mFlags), false);
     mInvalidateRequests.AppendElement(req);
   }

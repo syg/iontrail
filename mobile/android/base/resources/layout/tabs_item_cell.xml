@@ -9,9 +9,11 @@
               android:id="@+id/info"
               android:layout_width="fill_parent"
               android:layout_height="wrap_content"
-              android:padding="6dip"
-              android:gravity="center"
-              android:background="@drawable/tab_row">
+              android:paddingTop="6dip"
+              android:paddingBottom="6dip"
+              android:paddingLeft="1dip"
+              android:paddingRight="1dip"
+              android:gravity="center">
 
     <RelativeLayout android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -48,7 +50,7 @@
                          android:nextFocusLeft="@+id/info"
                          android:layout_width="32dip"
                          android:layout_height="fill_parent"
-                         android:background="@drawable/action_bar_button"
+                         android:background="@drawable/action_bar_button_inverse"
                          android:scaleType="center"
                          android:contentDescription="@string/close_tab"
                          android:src="@drawable/tab_close"/>

@@ -905,6 +905,16 @@ js::testingFunc_parallelJSActive(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
+#ifndef JS_ION
+JSBool
+js::IsAsmJSCompilationAvailable(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().set(BooleanValue(false));
+    return true;
+}
+#endif
+
 static JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("gc", ::GC, 0, 0,
 "gc([obj] | 'compartment')",
@@ -1039,6 +1049,11 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "  Gets the display name for a function, which can possibly be a guessed or\n"
 "  inferred name based on where the function was defined. This can be\n"
 "  different from the 'name' property on the function."),
+
+    JS_FN_HELP("isAsmJSCompilationAvailable", IsAsmJSCompilationAvailable, 0, 0,
+"isAsmJSCompilationAvailable",
+"  Returns whether asm.js compilation is currently available or whether it is disabled\n"
+"  (e.g., by the debugger)."),
 
     JS_FN_HELP("parallelJSActive", testingFunc_parallelJSActive, 0, 0,
 "parallelJSActive()",

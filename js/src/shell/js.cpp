@@ -71,7 +71,12 @@
 #endif
 
 #ifdef XP_WIN
-#include "jswin.h"
+# include <io.h>
+# include <direct.h>
+# include "jswin.h"
+# define PATH_MAX (MAX_PATH > _MAX_DIR ? MAX_PATH : _MAX_DIR)
+#else
+# include <libgen.h>
 #endif
 
 #if JS_TRACE_LOGGING
@@ -122,6 +127,7 @@ static bool enableMethodJit = true;
 static bool enableTypeInference = true;
 static bool enableDisassemblyDumps = false;
 static bool enableIon = true;
+static bool enableAsmJS = true;
 
 static bool printTiming = false;
 
@@ -674,6 +680,81 @@ RevertVersion(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
+static JSScript *
+GetTopScript(JSContext *cx)
+{
+    RootedScript script(cx);
+    JS_DescribeScriptedCaller(cx, script.address(), NULL);
+    return script;
+}
+
+/*
+ * Resolve a (possibly) relative filename to an absolute path. If
+ * |scriptRelative| is true, then the result will be relative to the directory
+ * containing the currently-running script, or the current working directory if
+ * the currently-running script is "-e" (namely, you're using it from the
+ * command line.) Otherwise, it will be relative to the current working
+ * directory.
+ */
+static JSString *
+ResolvePath(JSContext *cx, HandleString filenameStr, bool scriptRelative)
+{
+    JSAutoByteString filename(cx, filenameStr);
+    if (!filename)
+        return NULL;
+
+    const char *pathname = filename.ptr();
+    if (pathname[0] == '/')
+        return filenameStr;
+#ifdef XP_WIN
+    // Various forms of absolute paths per http://msdn.microsoft.com/en-us/library/windows/desktop/aa365247%28v=vs.85%29.aspx
+    // "\..."
+    if (pathname[0] == '\\')
+        return filenameStr;
+    // "C:\..."
+    if (strlen(pathname) > 3 && isalpha(pathname[0]) && pathname[1] == ':' && pathname[2] == '\\')
+        return filenameStr;
+    // "\\..."
+    if (strlen(pathname) > 2 && pathname[1] == '\\' && pathname[2] == '\\')
+        return filenameStr;
+#endif
+
+    /* Get the currently executing script's name. */
+    RootedScript script(cx, GetTopScript(cx));
+    JS_ASSERT(script && script->filename());
+    if (strcmp(script->filename(), "-e") == 0 || strcmp(script->filename(), "typein") == 0)
+        scriptRelative = false;
+
+    static char buffer[PATH_MAX+1];
+    if (scriptRelative) {
+#ifdef XP_WIN
+        // The docs say it can return EINVAL, but the compiler says it's void
+        _splitpath(script->filename(), NULL, buffer, NULL, NULL);
+#else
+        strncpy(buffer, script->filename(), PATH_MAX+1);
+        if (buffer[PATH_MAX] != '\0')
+            return NULL;
+
+        // dirname(buffer) might return buffer, or it might return a
+        // statically-allocated string
+        memmove(buffer, dirname(buffer), strlen(buffer) + 1);
+#endif
+    } else {
+        const char *cwd = getcwd(buffer, PATH_MAX);
+        if (!cwd)
+            return NULL;
+        strcpy(buffer, cwd);
+    }
+
+    size_t len = strlen(buffer);
+    buffer[len] = '/';
+    strncpy(buffer + len + 1, pathname, sizeof(buffer) - (len+1));
+    if (buffer[PATH_MAX] != '\0')
+        return NULL;
+
+    return JS_NewStringCopyZ(cx, buffer);
+}
+
 static JSBool
 Options(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -725,18 +806,21 @@ Options(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static JSBool
-Load(JSContext *cx, unsigned argc, jsval *vp)
+LoadScript(JSContext *cx, unsigned argc, jsval *vp, bool scriptRelative)
 {
     RootedObject thisobj(cx, JS_THIS_OBJECT(cx, vp));
     if (!thisobj)
         return false;
 
     jsval *argv = JS_ARGV(cx, vp);
+    RootedString str(cx);
     for (unsigned i = 0; i < argc; i++) {
-        JSString *str = JS_ValueToString(cx, argv[i]);
+        str = JS_ValueToString(cx, argv[i]);
         if (!str)
             return false;
-        argv[i] = STRING_TO_JSVAL(str);
+        str = ResolvePath(cx, str, scriptRelative);
+        if (!str)
+            return false;
         JSAutoByteString filename(cx, str);
         if (!filename)
             return false;
@@ -752,6 +836,18 @@ Load(JSContext *cx, unsigned argc, jsval *vp)
 
     JS_SET_RVAL(cx, vp, UndefinedValue());
     return true;
+}
+
+static JSBool
+Load(JSContext *cx, unsigned argc, jsval *vp)
+{
+    return LoadScript(cx, argc, vp, true);
+}
+
+static JSBool
+LoadScriptRelativeToCwd(JSContext *cx, unsigned argc, jsval *vp)
+{
+    return LoadScript(cx, argc, vp, false);
 }
 
 class AutoNewContext
@@ -946,7 +1042,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
             if (!smurl)
                 return false;
             jschar *smurl_copy = js_strdup(cx, smurl);
-            if (!smurl_copy || !script->scriptSource()->setSourceMap(cx, smurl_copy, script->filename))
+            if (!smurl_copy || !script->scriptSource()->setSourceMap(cx, smurl_copy, script->filename()))
                 return false;
         }
         if (!JS_ExecuteScript(cx, global, script, vp)) {
@@ -1355,14 +1451,6 @@ SetDebug(JSContext *cx, unsigned argc, jsval *vp)
     return ok;
 }
 
-static RawScript
-GetTopScript(JSContext *cx)
-{
-    RootedScript script(cx);
-    JS_DescribeScriptedCaller(cx, script.address(), NULL);
-    return script;
-}
-
 static JSBool
 GetScriptAndPCArgs(JSContext *cx, unsigned argc, jsval *argv, MutableHandleScript scriptp,
                    int32_t *ip)
@@ -1414,7 +1502,7 @@ TrapHandler(JSContext *cx, RawScript, jsbytecode *pc, jsval *rvalArg,
         return JSTRAP_ERROR;
 
     if (!frame.evaluateUCInStackFrame(cx, chars, length,
-                                      script->filename,
+                                      script->filename(),
                                       script->lineno,
                                       &rval))
     {
@@ -1748,13 +1836,15 @@ DisassembleScript(JSContext *cx, HandleScript script, HandleFunction fun, bool l
         if (fun->isHeavyweight())
             Sprint(sp, " HEAVYWEIGHT");
         if (fun->isExprClosure())
-            Sprint(sp, " EXPRESSION CLOSURE");
+            Sprint(sp, " EXPRESSION_CLOSURE");
         if (fun->isFunctionPrototype())
             Sprint(sp, " Function.prototype");
         if (fun->isSelfHostedBuiltin())
             Sprint(sp, " SELF_HOSTED");
         if (fun->isSelfHostedConstructor())
             Sprint(sp, " SELF_HOSTED_CTOR");
+        if (fun->isArrow())
+            Sprint(sp, " ARROW");
         Sprint(sp, "\n");
     }
 
@@ -1937,16 +2027,16 @@ DisassWithSrc(JSContext *cx, unsigned argc, jsval *vp)
         if (!script)
            return false;
 
-        if (!script->filename) {
+        if (!script->filename()) {
             JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL,
                                  JSSMSG_FILE_SCRIPTS_ONLY);
             return false;
         }
 
-        file = fopen(script->filename, "r");
+        file = fopen(script->filename(), "r");
         if (!file) {
             JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL,
-                                 JSSMSG_CANT_OPEN, script->filename,
+                                 JSSMSG_CANT_OPEN, script->filename(),
                                  strerror(errno));
             return false;
         }
@@ -1965,7 +2055,7 @@ DisassWithSrc(JSContext *cx, unsigned argc, jsval *vp)
         for (line1 = 0; line1 < line2 - 1; line1++) {
             char *tmp = fgets(linebuf, LINE_BUF_LEN, file);
             if (!tmp) {
-                JS_ReportError(cx, "failed to read %s fully", script->filename);
+                JS_ReportError(cx, "failed to read %s fully", script->filename());
                 ok = false;
                 goto bail;
             }
@@ -1988,7 +2078,7 @@ DisassWithSrc(JSContext *cx, unsigned argc, jsval *vp)
                     if (!fgets(linebuf, LINE_BUF_LEN, file)) {
                         JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL,
                                              JSSMSG_UNEXPECTED_EOF,
-                                             script->filename);
+                                             script->filename());
                         ok = false;
                         goto bail;
                     }
@@ -2432,7 +2522,7 @@ EvalInContext(JSContext *cx, unsigned argc, jsval *vp)
             return false;
         }
         if (!JS_EvaluateUCScript(cx, sobj, src, srclen,
-                                 script->filename,
+                                 script->filename(),
                                  lineno,
                                  rval.address())) {
             return false;
@@ -2492,7 +2582,7 @@ EvalInFrame(JSContext *cx, unsigned argc, jsval *vp)
     JSAbstractFramePtr frame(Jsvalify(fi.abstractFramePtr()));
     RootedScript fpscript(cx, frame.script());
     bool ok = !!frame.evaluateUCInStackFrame(cx, chars, length,
-                                             fpscript->filename,
+                                             fpscript->filename(),
                                              JS_PCToLineNumber(cx, fpscript,
                                                                fi.pc()),
                                              MutableHandleValue::fromMarkedLocation(vp));
@@ -2978,57 +3068,6 @@ Parent(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-#ifdef XP_UNIX
-
-#include <fcntl.h>
-#include <sys/stat.h>
-
-/*
- * Returns a JS_malloc'd string (that the caller needs to JS_free)
- * containing the directory (non-leaf) part of |from| prepended to |leaf|.
- * If |from| is empty or a leaf, MakeAbsolutePathname returns a copy of leaf.
- * Returns NULL to indicate an error.
- */
-static char *
-MakeAbsolutePathname(JSContext *cx, const char *from, const char *leaf)
-{
-    size_t dirlen;
-    char *dir;
-    const char *slash = NULL, *cp;
-
-    if (*leaf == '/') {
-        /* We were given an absolute pathname. */
-        return JS_strdup(cx, leaf);
-    }
-
-    cp = from;
-    while (*cp) {
-        if (*cp == '/') {
-            slash = cp;
-        }
-
-        ++cp;
-    }
-
-    if (!slash) {
-        /* We were given a leaf or |from| was empty. */
-        return JS_strdup(cx, leaf);
-    }
-
-    /* Else, we were given a real pathname, return that + the leaf. */
-    dirlen = slash - from + 1;
-    dir = (char*) JS_malloc(cx, dirlen + strlen(leaf) + 1);
-    if (!dir)
-        return NULL;
-
-    strncpy(dir, from, dirlen);
-    strcpy(dir + dirlen, leaf); /* Note: we can't use strcat here. */
-
-    return dir;
-}
-
-#endif // XP_UNIX
-
 static JSBool
 Compile(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -3165,36 +3204,30 @@ struct FreeOnReturn
 };
 
 static JSBool
-Snarf(JSContext *cx, unsigned argc, jsval *vp)
+ReadFile(JSContext *cx, unsigned argc, jsval *vp, bool scriptRelative)
 {
-    JSString *str;
+    CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (!argc)
+    if (args.length() < 1 || args.length() > 2) {
+        JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL,
+                             args.length() < 1 ? JSSMSG_NOT_ENOUGH_ARGS : JSSMSG_TOO_MANY_ARGS,
+                             "snarf");
         return false;
+    }
 
-    str = JS_ValueToString(cx, JS_ARGV(cx, vp)[0]);
-    if (!str)
+    if (!args[0].isString() || (args.length() == 2 && !args[1].isString())) {
+        JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_INVALID_ARGS, "snarf");
         return false;
+    }
+
+    RootedString givenPath(cx, args[0].toString());
+    RootedString str(cx, ResolvePath(cx, givenPath, scriptRelative));
     JSAutoByteString filename(cx, str);
     if (!filename)
         return false;
 
-    /* Get the currently executing script's name. */
-    RootedScript script(cx, GetTopScript(cx));
-    JS_ASSERT(script->filename);
-    const char *pathname = filename.ptr();
-#ifdef XP_UNIX
-    FreeOnReturn pnGuard(cx);
-    if (pathname[0] != '/') {
-        pathname = MakeAbsolutePathname(cx, script->filename, pathname);
-        if (!pathname)
-            return false;
-        pnGuard.init(pathname);
-    }
-#endif
-
-    if (argc > 1) {
-        JSString *opt = JS_ValueToString(cx, JS_ARGV(cx, vp)[1]);
+    if (args.length() > 1) {
+        JSString *opt = JS_ValueToString(cx, args[1]);
         if (!opt)
             return false;
         JSBool match;
@@ -3202,17 +3235,29 @@ Snarf(JSContext *cx, unsigned argc, jsval *vp)
             return false;
         if (match) {
             JSObject *obj;
-            if (!(obj = FileAsTypedArray(cx, pathname)))
+            if (!(obj = FileAsTypedArray(cx, filename.ptr())))
                 return false;
             JS_SET_RVAL(cx, vp, OBJECT_TO_JSVAL(obj));
             return true;
         }
     }
 
-    if (!(str = FileAsString(cx, pathname)))
+    if (!(str = FileAsString(cx, filename.ptr())))
         return false;
     JS_SET_RVAL(cx, vp, STRING_TO_JSVAL(str));
     return true;
+}
+
+static JSBool
+Snarf(JSContext *cx, unsigned argc, jsval *vp)
+{
+    return ReadFile(cx, argc, vp, false);
+}
+
+static JSBool
+ReadRelativeToScript(JSContext *cx, unsigned argc, jsval *vp)
+{
+    return ReadFile(cx, argc, vp, true);
 }
 
 static JSBool
@@ -3288,11 +3333,11 @@ ThisFilename(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     RootedScript script (cx);
-    if (!JS_DescribeScriptedCaller(cx, script.address(), NULL) || !script->filename) {
+    if (!JS_DescribeScriptedCaller(cx, script.address(), NULL) || !script->filename()) {
         args.rval().setString(cx->runtime->emptyString);
         return true;
     }
-    JSString *filename = JS_NewStringCopyZ(cx, script->filename);
+    JSString *filename = JS_NewStringCopyZ(cx, script->filename());
     if (!filename)
         return false;
     args.rval().setString(filename);
@@ -3450,22 +3495,6 @@ EnableStackWalkingAssertion(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static JSBool
-RelaxRootChecks(JSContext *cx, unsigned argc, jsval *vp)
-{
-    if (argc > 0) {
-        JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_INVALID_ARGS,
-                             "relaxRootChecks");
-        return false;
-    }
-
-#ifdef DEBUG
-    cx->mainThread().gcRelaxRootChecks = true;
-#endif
-
-    return true;
-}
-
-static JSBool
 GetMaxArgs(JSContext *cx, unsigned arg, jsval *vp)
 {
     JS_SET_RVAL(cx, vp, INT_TO_JSVAL(StackSpace::ARGS_LENGTH_MAX));
@@ -3526,7 +3555,13 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 
     JS_FN_HELP("load", Load, 1, 0,
 "load(['foo.js' ...])",
-"  Load files named by string arguments."),
+"  Load files named by string arguments. Filename is relative to the\n"
+"      script calling the load()."),
+
+    JS_FN_HELP("loadRelativeToCwd", LoadScriptRelativeToCwd, 1, 0,
+"loadRelativeToCwd(['foo.js' ...])",
+"  Load files named by string arguments. Filename is relative to the\n"
+"      current working directory."),
 
     JS_FN_HELP("evaluate", Evaluate, 2, 0,
 "evaluate(code[, options])",
@@ -3727,12 +3762,18 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 
 #endif
     JS_FN_HELP("snarf", Snarf, 1, 0,
-"snarf(filename)",
-"  Read filename into returned string."),
+"snarf(filename, [\"binary\"])",
+"  Read filename into returned string. Filename is relative to the current\n"
+               "  working directory."),
 
     JS_FN_HELP("read", Snarf, 1, 0,
-"read(filename)",
+"read(filename, [\"binary\"])",
 "  Synonym for snarf."),
+
+    JS_FN_HELP("readRelativeToScript", ReadRelativeToScript, 1, 0,
+"readRelativeToScript(filename, [\"binary\"])",
+"  Read filename into returned string. Filename is relative to the directory\n"
+               "  containing the current script."),
 
     JS_FN_HELP("system", System, 1, 0,
 "system(command)",
@@ -3817,12 +3858,6 @@ static JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("getMaxArgs", GetMaxArgs, 0, 0,
 "getMaxArgs()",
 "  Return the maximum number of supported args for a call."),
-
-    JS_FN_HELP("relaxRootChecks", RelaxRootChecks, 0, 0,
-"relaxRootChecks()",
-"  Tone down the frequency with which the dynamic rooting analysis checks for\n"
-"  rooting hazards. This is helpful to reduce the time taken when interpreting\n"
-"  heavily numeric code."),
 
     JS_FN_HELP("objectEmulatingUndefined", ObjectEmulatingUndefined, 0, 0,
 "objectEmulatingUndefined()",
@@ -4720,6 +4755,8 @@ NewContext(JSRuntime *rt)
         JS_ToggleOptions(cx, JSOPTION_TYPE_INFERENCE);
     if (enableIon)
         JS_ToggleOptions(cx, JSOPTION_ION);
+    if (enableAsmJS)
+        JS_ToggleOptions(cx, JSOPTION_ASMJS);
     return cx;
 }
 
@@ -4775,6 +4812,12 @@ NewGlobalObject(JSContext *cx)
             return NULL;
         if (!JS_DefineProperty(cx, glob, "customRdOnly", UndefinedValue(), its_getter,
                                its_setter, JSPROP_READONLY))
+            return NULL;
+
+        if (!JS_DefineProperty(cx, glob, "customNative", UndefinedValue(),
+                               (JSPropertyOp)its_get_customNative,
+                               (JSStrictPropertyOp)its_set_customNative,
+                               JSPROP_READONLY | JSPROP_NATIVE_ACCESSORS))
             return NULL;
 
         /* Initialize FakeDOMObject. */
@@ -4885,6 +4928,10 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     if (op->getBoolOption("no-ion")) {
         enableIon = false;
         JS_ToggleOptions(cx, JSOPTION_ION);
+    }
+    if (op->getBoolOption("no-asmjs")) {
+        enableAsmJS = false;
+        JS_ToggleOptions(cx, JSOPTION_ASMJS);
     }
 
     if (const char *str = op->getStringOption("ion-gvn")) {
@@ -5179,6 +5226,7 @@ main(int argc, char **argv, char **envp)
 #endif
         || !op.addBoolOption('\0', "ion", "Enable IonMonkey (default)")
         || !op.addBoolOption('\0', "no-ion", "Disable IonMonkey")
+        || !op.addBoolOption('\0', "no-asmjs", "Disable asm.js compilation")
         || !op.addStringOption('\0', "ion-gvn", "[mode]",
                                "Specify Ion global value numbering:\n"
                                "  off: disable GVN\n"

@@ -110,7 +110,9 @@ public:
                                                     uint32_t aModifierFlags,
                                                     uint32_t aAdditionalFlags);
   virtual bool  HasPendingInputEvent();
+  virtual double GetDefaultScaleInternal();
   float         GetDPI();
+  void          ChangedDPI();
   virtual bool  IsVisible() const;
   virtual bool  IsEnabled() const;
   // ShouldUseOffMainThreadCompositing is defined in base widget
@@ -131,6 +133,7 @@ public:
   NS_IMETHOD    NotifyIMEOfTextChange(uint32_t aStart,
                                       uint32_t aOldEnd,
                                       uint32_t aNewEnd) MOZ_OVERRIDE;
+  virtual nsIMEUpdatePreference GetIMEUpdatePreference() MOZ_OVERRIDE;
 
   // FrameworkView helpers
   void SizeModeChanged();

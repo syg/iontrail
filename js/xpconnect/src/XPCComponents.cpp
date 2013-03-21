@@ -3279,7 +3279,10 @@ xpc_CreateSandboxObject(JSContext *cx, jsval *vp, nsISupports *prinOrSop, Sandbo
 
     JSObject *sandbox;
 
-    sandbox = xpc::CreateGlobalObject(cx, &SandboxClass, principal);
+    JS::ZoneSpecifier zoneSpec = options.sameZoneAs
+                                 ? JS::SameZoneAs(js::UnwrapObject(options.sameZoneAs))
+                                 : JS::SystemZone;
+    sandbox = xpc::CreateGlobalObject(cx, &SandboxClass, principal, zoneSpec);
     if (!sandbox)
         return NS_ERROR_FAILURE;
 
@@ -3630,6 +3633,10 @@ ParseOptionsObject(JSContext *cx, jsval from, SandboxOptions &options)
 
     rv = GetStringPropFromOptions(cx, optionsObject,
                                   "sandboxName", options.sandboxName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = GetObjPropFromOptions(cx, optionsObject,
+                               "sameZoneAs", &options.sameZoneAs);
     NS_ENSURE_SUCCESS(rv, rv);
 
     return NS_OK;
@@ -4010,8 +4017,8 @@ NS_IMETHODIMP
 nsXPCComponents_Utils::ForceGC()
 {
     JSRuntime* rt = nsXPConnect::GetRuntimeInstance()->GetJSRuntime();
-    js::PrepareForFullGC(rt);
-    js::GCForReason(rt, js::gcreason::COMPONENT_UTILS);
+    JS::PrepareForFullGC(rt);
+    JS::GCForReason(rt, JS::gcreason::COMPONENT_UTILS);
     return NS_OK;
 }
 
@@ -4028,8 +4035,8 @@ NS_IMETHODIMP
 nsXPCComponents_Utils::ForceShrinkingGC()
 {
     JSRuntime* rt = nsXPConnect::GetRuntimeInstance()->GetJSRuntime();
-    js::PrepareForFullGC(rt);
-    js::ShrinkingGC(rt, js::gcreason::COMPONENT_UTILS);
+    JS::PrepareForFullGC(rt);
+    JS::ShrinkingGC(rt, JS::gcreason::COMPONENT_UTILS);
     return NS_OK;
 }
 
@@ -4051,11 +4058,11 @@ class PreciseGCRunnable : public nsRunnable
             }
         }
 
-        js::PrepareForFullGC(rt);
+        JS::PrepareForFullGC(rt);
         if (mShrinking)
-            js::ShrinkingGC(rt, js::gcreason::COMPONENT_UTILS);
+            JS::ShrinkingGC(rt, JS::gcreason::COMPONENT_UTILS);
         else
-            js::GCForReason(rt, js::gcreason::COMPONENT_UTILS);
+            JS::GCForReason(rt, JS::gcreason::COMPONENT_UTILS);
 
         mCallback->Callback();
         return NS_OK;

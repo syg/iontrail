@@ -1949,12 +1949,23 @@ CreateNativeGlobalForInner(JSContext* aCx,
   MOZ_ASSERT(aNativeGlobal);
   MOZ_ASSERT(aHolder);
 
+  nsGlobalWindow *top = NULL;
+  if (aNewInner->GetOuterWindow()) {
+    top = aNewInner->GetTop();
+  }
+  JS::ZoneSpecifier zoneSpec = JS::FreshZone;
+  if (top) {
+    if (top->GetGlobalJSObject()) {
+      zoneSpec = JS::SameZoneAs(top->GetGlobalJSObject());
+    }
+  }
+
   nsIXPConnect* xpc = nsContentUtils::XPConnect();
 
   nsRefPtr<nsIXPConnectJSObjectHolder> jsholder;
   nsresult rv = xpc->InitClassesWithNewWrappedGlobal(
     aCx, ToSupports(aNewInner),
-    aPrincipal, 0, getter_AddRefs(jsholder));
+    aPrincipal, 0, zoneSpec, getter_AddRefs(jsholder));
   NS_ENSURE_SUCCESS(rv, rv);
 
   MOZ_ASSERT(jsholder);
@@ -2323,9 +2334,7 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
   // alive etc.
 
   if ((!reUseInnerWindow || aDocument != oldDoc) && !aState) {
-    nsCOMPtr<nsIHTMLDocument> html_doc(do_QueryInterface(mDocument));
-    nsWindowSH::InstallGlobalScopePolluter(cx, newInnerWindow->mJSObject,
-                                           html_doc);
+    nsWindowSH::InstallGlobalScopePolluter(cx, newInnerWindow->mJSObject);
   }
 
   aDocument->SetScriptGlobalObject(newInnerWindow);
@@ -2365,7 +2374,7 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     newInnerWindow->mChromeEventHandler = mChromeEventHandler;
   }
 
-  mContext->GC(js::gcreason::SET_NEW_DOCUMENT);
+  mContext->GC(JS::gcreason::SET_NEW_DOCUMENT);
   mContext->DidInitializeContext();
 
   if (newInnerWindow && !newInnerWindow->mHasNotifiedGlobalCreated && mDoc) {
@@ -2560,7 +2569,7 @@ nsGlobalWindow::DetachFromDocShell()
   }
 
   if (mContext) {
-    mContext->GC(js::gcreason::SET_DOC_SHELL);
+    mContext->GC(JS::gcreason::SET_DOC_SHELL);
     mContext = nullptr;
   }
 
@@ -2668,17 +2677,16 @@ nsGlobalWindow::GetIsTabModalPromptAllowed()
   return allowTabModal;
 }
 
-nsIDOMEventTarget*
+EventTarget*
 nsGlobalWindow::GetTargetForDOMEvent()
 {
-  return static_cast<nsIDOMEventTarget*>(GetOuterWindowInternal());
+  return GetOuterWindowInternal();
 }
 
-nsIDOMEventTarget*
+EventTarget*
 nsGlobalWindow::GetTargetForEventTargetChain()
 {
-  return IsInnerWindow() ?
-    this : static_cast<nsIDOMEventTarget*>(GetCurrentInnerWindowInternal());
+  return IsInnerWindow() ? this : GetCurrentInnerWindowInternal();
 }
 
 nsresult
@@ -3766,11 +3774,9 @@ nsGlobalWindow::GetName(nsAString& aName)
 {
   FORWARD_TO_OUTER(GetName, (aName), NS_ERROR_NOT_INITIALIZED);
 
-  nsXPIDLString name;
   if (mDocShell)
-    mDocShell->GetName(getter_Copies(name));
+    mDocShell->GetName(aName);
 
-  aName.Assign(name);
   return NS_OK;
 }
 
@@ -3781,7 +3787,7 @@ nsGlobalWindow::SetName(const nsAString& aName)
 
   nsresult result = NS_OK;
   if (mDocShell)
-    result = mDocShell->SetName(PromiseFlatString(aName).get());
+    result = mDocShell->SetName(aName);
   return result;
 }
 
@@ -4625,6 +4631,23 @@ nsGlobalWindow::GetLength(uint32_t* aLength)
 {
   *aLength = GetLength();
   return NS_OK;
+}
+
+already_AddRefed<nsIDOMWindow>
+nsGlobalWindow::GetChildWindow(jsid aName)
+{
+  const jschar *chars = JS_GetInternedStringChars(JSID_TO_STRING(aName));
+
+  nsCOMPtr<nsIDocShellTreeNode> dsn(do_QueryInterface(GetDocShell()));
+  NS_ENSURE_TRUE(dsn, nullptr);
+
+  nsCOMPtr<nsIDocShellTreeItem> child;
+  dsn->FindChildWithName(reinterpret_cast<const PRUnichar*>(chars),
+                         false, true, nullptr, nullptr,
+                         getter_AddRefs(child));
+
+  nsCOMPtr<nsIDOMWindow> child_win(do_GetInterface(child));
+  return child_win.forget();
 }
 
 bool
@@ -10094,11 +10117,11 @@ nsGlobalWindow::RunTimeout(nsTimeout *aTimeout)
   TimeStamp deadline;
 
   if (aTimeout && aTimeout->mWhen > now) {
-    // The OS timer fired early (yikes!), and possibly out of order
-    // too. Set |deadline| to be the time when the OS timer *should*
-    // have fired so that any timers that *should* have fired before
-    // aTimeout *will* be fired now. This happens most of the time on
-    // Win2k.
+    // The OS timer fired early (which can happen due to the timers
+    // having lower precision than TimeStamp does).  Set |deadline| to
+    // be the time when the OS timer *should* have fired so that any
+    // timers that *should* have fired before aTimeout *will* be fired
+    // now.
 
     deadline = aTimeout->mWhen;
   } else {

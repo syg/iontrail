@@ -78,18 +78,13 @@ struct BytecodeEmitter
         BytecodeVector code;        /* bytecode */
         SrcNotesVector notes;       /* source notes, see below */
         ptrdiff_t   lastNoteOffset; /* code offset for last source note */
-        unsigned    currentLine;    /* line number for tree-based srcnote gen */
-        unsigned    lastColumn;     /* zero-based column index on currentLine of
+        uint32_t    currentLine;    /* line number for tree-based srcnote gen */
+        uint32_t    lastColumn;     /* zero-based column index on currentLine of
                                        last SRC_COLSPAN-annotated opcode */
 
-        EmitSection(JSContext *cx, unsigned lineno)
-          : code(cx), notes(cx), lastNoteOffset(0), currentLine(lineno), lastColumn(0)
-        {
-            // Start them off moderately large, to avoid repeated resizings
-            // early on.
-            code.reserve(1024);
-            notes.reserve(1024);
-        }
+        EmitSection(JSContext *cx, uint32_t lineNum)
+          : code(cx), notes(cx), lastNoteOffset(0), currentLine(lineNum), lastColumn(0)
+        {}
     };
     EmitSection prolog, main, *current;
 
@@ -146,10 +141,8 @@ struct BytecodeEmitter
      */
     BytecodeEmitter(BytecodeEmitter *parent, Parser<FullParseHandler> *parser, SharedContext *sc,
                     HandleScript script, HandleScript evalCaller, bool hasGlobalScope,
-                    unsigned lineno, bool selfHostingMode = false);
+                    uint32_t lineNum, bool selfHostingMode = false);
     bool init();
-
-    ~BytecodeEmitter();
 
     bool isAliasedName(ParseNode *pn);
 

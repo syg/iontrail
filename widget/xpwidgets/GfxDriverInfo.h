@@ -3,16 +3,27 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsString.h"
-
 #ifndef __mozilla_widget_GfxDriverInfo_h__
 #define __mozilla_widget_GfxDriverInfo_h__
+
+#include "mozilla/Util.h" // ArrayLength
+#include "nsString.h"
 
 // Macros for adding a blocklist item to the static list.
 #define APPEND_TO_DRIVER_BLOCKLIST(os, vendor, devices, feature, featureStatus, driverComparator, driverVersion, suggestedVersion) \
     mDriverInfo->AppendElement(GfxDriverInfo(os, vendor, devices, feature, featureStatus, driverComparator, driverVersion, suggestedVersion))
 #define APPEND_TO_DRIVER_BLOCKLIST2(os, vendor, devices, feature, featureStatus, driverComparator, driverVersion) \
     mDriverInfo->AppendElement(GfxDriverInfo(os, vendor, devices, feature, featureStatus, driverComparator, driverVersion))
+
+#define APPEND_TO_DRIVER_BLOCKLIST_RANGE(os, vendor, devices, feature, featureStatus, driverComparator, driverVersion, driverVersionMax, suggestedVersion) \
+    do { \
+      MOZ_ASSERT(driverComparator == DRIVER_BETWEEN_EXCLUSIVE || \
+                 driverComparator == DRIVER_BETWEEN_INCLUSIVE || \
+                 driverComparator == DRIVER_BETWEEN_INCLUSIVE_START); \
+      GfxDriverInfo info(os, vendor, devices, feature, featureStatus, driverComparator, driverVersion, suggestedVersion); \
+      info.mDriverVersionMax = driverVersionMax; \
+      mDriverInfo->AppendElement(info); \
+    } while (false)
 
 namespace mozilla {
 namespace widget {
@@ -53,6 +64,7 @@ enum DeviceFamily {
   IntelGMA3150,
   IntelGMAX3000,
   IntelGMAX4500HD,
+  IntelMobileHDGraphics,
   NvidiaBlockD3D9Layers,
   RadeonX1000,
   Geforce7300GT,

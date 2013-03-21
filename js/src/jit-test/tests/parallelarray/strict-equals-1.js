@@ -9,5 +9,5 @@ function testEquals() {
   assertEq(p3[0] !== p3[0], true);
 }
 
-// FIXME logical shape not implemented
+// FIXME(bug 844991) logical shape not implemented
 // testEquals();

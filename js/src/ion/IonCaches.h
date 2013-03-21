@@ -412,8 +412,13 @@ class GetElementIC : public IonCache
     Register object_;
     ConstantOrRegister index_;
     TypedOrValueRegister output_;
+
     bool monitoredResult_ : 1;
     bool hasDenseStub_ : 1;
+
+    size_t failedUpdates_;
+
+    static const size_t MAX_FAILED_UPDATES;
 
   public:
     GetElementIC(Register object, ConstantOrRegister index,
@@ -422,7 +427,8 @@ class GetElementIC : public IonCache
         index_(index),
         output_(output),
         monitoredResult_(monitoredResult),
-        hasDenseStub_(false)
+        hasDenseStub_(false),
+        failedUpdates_(0)
     {
     }
 
@@ -455,6 +461,17 @@ class GetElementIC : public IonCache
     static bool
     update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
                 MutableHandleValue vp);
+
+    void incFailedUpdates() {
+        failedUpdates_++;
+    }
+    void resetFailedUpdates() {
+        failedUpdates_ = 0;
+    }
+    bool shouldDisable() const {
+        return !canAttachStub() ||
+               (stubCount_ == 0 && failedUpdates_ > MAX_FAILED_UPDATES);
+    }
 };
 
 class BindNameIC : public IonCache
@@ -494,16 +511,21 @@ class BindNameIC : public IonCache
 class NameIC : public IonCache
 {
   protected:
+    // Registers live after the cache, excluding output registers. The initial
+    // value of these registers must be preserved by the cache.
+    RegisterSet liveRegs_;
+
     bool typeOf_;
     Register scopeChain_;
     PropertyName *name_;
     TypedOrValueRegister output_;
 
   public:
-    NameIC(bool typeOf,
+    NameIC(RegisterSet liveRegs, bool typeOf,
            Register scopeChain, PropertyName *name,
            TypedOrValueRegister output)
-      : typeOf_(typeOf),
+      : liveRegs_(liveRegs),
+        typeOf_(typeOf),
         scopeChain_(scopeChain),
         name_(name),
         output_(output)
@@ -525,8 +547,11 @@ class NameIC : public IonCache
         return typeOf_;
     }
 
-    bool attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject obj,
-                HandleShape shape);
+    bool attachReadSlot(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject obj,
+                        HandleShape shape);
+    bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
+                          HandleShape shape, const SafepointIndex *safepointIndex,
+                          void *returnAddr);
 
     static bool
     update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp);

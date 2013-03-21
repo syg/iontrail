@@ -66,13 +66,13 @@ nsTableCellFrame::GetNextCell() const
   return nullptr;
 }
 
-NS_IMETHODIMP
+void
 nsTableCellFrame::Init(nsIContent*      aContent,
                        nsIFrame*        aParent,
                        nsIFrame*        aPrevInFlow)
 {
   // Let the base class do its initialization
-  nsresult rv = nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
   if (GetStateBits() & NS_FRAME_FONT_INFLATION_CONTAINER) {
     AddStateBits(NS_FRAME_FONT_INFLATION_FLOW_ROOT);
@@ -85,8 +85,6 @@ nsTableCellFrame::Init(nsIContent*      aContent,
     cellFrame->GetColIndex(colIndex);
     SetColIndex(colIndex);
   }
-
-  return rv;
 }
 
 // nsIPercentHeightObserver methods
@@ -887,7 +885,7 @@ NS_METHOD nsTableCellFrame::Reflow(nsPresContext*           aPresContext,
   bool firstReflow = (firstKid->GetStateBits() & NS_FRAME_FIRST_REFLOW) != 0;
 
   ReflowChild(firstKid, aPresContext, kidSize, kidReflowState,
-              kidOrigin.x, kidOrigin.y, NS_FRAME_INVALIDATE_ON_MOVE, aStatus);
+              kidOrigin.x, kidOrigin.y, 0, aStatus);
   if (NS_FRAME_OVERFLOW_IS_INCOMPLETE(aStatus)) {
     // Don't pass OVERFLOW_INCOMPLETE through tables until they can actually handle it
     //XXX should paginate overflow as overflow, but not in this patch (bug 379349)

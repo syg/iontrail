@@ -510,7 +510,7 @@ interface TestInterface {
   [SetterThrows] attribute boolean throwingSetterAttr;
   legacycaller short(unsigned long arg1, TestInterface arg2);
 
-  // If you add things here, add them to TestExampleGen as well
+  // If you add things here, add them to TestExampleGen and TestJSImplGen as well
 };
 
 interface TestParentInterface {
@@ -522,6 +522,7 @@ interface TestChildInterface : TestParentInterface {
 interface TestNonWrapperCacheInterface {
 };
 
+[NoInterfaceObject]
 interface ImplementedInterfaceParent {
   void implementedParentMethod();
   attribute boolean implementedParentProperty;
@@ -539,6 +540,7 @@ interface IndirectlyImplementedInterface {
   const long indirectlyImplementedConstant = 9;
 };
 
+[NoInterfaceObject]
 interface ImplementedInterface : ImplementedInterfaceParent {
   void implementedMethod();
   attribute boolean implementedProperty;
@@ -546,15 +548,20 @@ interface ImplementedInterface : ImplementedInterfaceParent {
   const long implementedConstant = 5;
 };
 
+[NoInterfaceObject]
 interface DiamondImplements {
   readonly attribute long diamondImplementedProperty;
 };
+[NoInterfaceObject]
 interface DiamondBranch1A {
 };
+[NoInterfaceObject]
 interface DiamondBranch1B {
 };
+[NoInterfaceObject]
 interface DiamondBranch2A : DiamondImplements {
 };
+[NoInterfaceObject]
 interface DiamondBranch2B : DiamondImplements {
 };
 TestInterface implements DiamondBranch1A;

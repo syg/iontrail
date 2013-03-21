@@ -12,6 +12,7 @@
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/FoldConstants.h"
 #include "frontend/NameFunctions.h"
+#include "ion/AsmJS.h"
 #include "vm/GlobalObject.h"
 
 #include "jsinferinlines.h"
@@ -41,7 +42,7 @@ static bool
 SetSourceMap(JSContext *cx, TokenStream &tokenStream, ScriptSource *ss, RawScript script)
 {
     if (tokenStream.hasSourceMap()) {
-        if (!ss->setSourceMap(cx, tokenStream.releaseSourceMap(), script->filename))
+        if (!ss->setSourceMap(cx, tokenStream.releaseSourceMap(), script->filename()))
             return false;
     }
     return true;
@@ -63,6 +64,12 @@ CheckArgumentsWithinEval(JSContext *cx, Parser<FullParseHandler> &parser, Handle
     if (script->argumentsHasVarBinding()) {
         if (!JSScript::argumentsOptimizationFailed(cx, script))
             return false;
+    }
+
+    // It's an error to use |arguments| in a generator expression.
+    if (script->isGeneratorExp) {
+        parser.report(ParseError, false, NULL, JSMSG_BAD_GENEXP_BODY, js_arguments_str);
+        return false;
     }
 
     return true;
@@ -104,6 +111,8 @@ frontend::CompileScript(JSContext *cx, HandleObject scopeChain,
     JS_ASSERT_IF(staticLevel != 0, options.sourcePolicy != CompileOptions::LAZY_SOURCE);
     ScriptSource *ss = cx->new_<ScriptSource>();
     if (!ss)
+        return NULL;
+    if (options.filename && !ss->setFilename(cx, options.filename))
         return NULL;
     ScriptSourceHolder ssh(ss);
     SourceCompressionToken mysct(cx);
@@ -324,6 +333,8 @@ frontend::CompileFunctionBody(JSContext *cx, HandleFunction fun, CompileOptions 
     ScriptSource *ss = cx->new_<ScriptSource>();
     if (!ss)
         return false;
+    if (options.filename && !ss->setFilename(cx, options.filename))
+        return false;
     ScriptSourceHolder ssh(ss);
     SourceCompressionToken sct(cx);
     JS_ASSERT(options.sourcePolicy != CompileOptions::LAZY_SOURCE);
@@ -401,6 +412,15 @@ frontend::CompileFunctionBody(JSContext *cx, HandleFunction fun, CompileOptions 
         fn->pn_body->pn_pos = pn->pn_pos;
         pn = fn->pn_body;
     }
+
+#ifdef JS_ION
+    /*
+     * Do asm.js compilation once the parse tree has been fully assembled but
+     * before emitting since we need to know whether to emit JSOP_LINKASMJS.
+     */
+    if (fn->pn_funbox->useAsm && !CompileAsmJS(cx, parser.tokenStream, fn, script))
+        return false;
+#endif
 
     if (!SetSourceMap(cx, parser.tokenStream, ss, script))
         return false;

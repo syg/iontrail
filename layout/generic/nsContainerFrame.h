@@ -20,9 +20,9 @@
 #define NS_FRAME_NO_MOVE_FRAME        (0x0002 | NS_FRAME_NO_MOVE_VIEW)
 #define NS_FRAME_NO_SIZE_VIEW         0x0004
 #define NS_FRAME_NO_VISIBILITY        0x0008
-// Only applies to ReflowChild: if true, invalidate the child if it's
-// being moved
-#define NS_FRAME_INVALIDATE_ON_MOVE   0x0010 
+// Only applies to ReflowChild; if true, don't delete the next-in-flow, even
+// if the reflow is fully complete.
+#define NS_FRAME_NO_DELETE_NEXT_IN_FLOW_CHILD 0x0010
 
 class nsOverflowContinuationTracker;
 namespace mozilla {
@@ -53,9 +53,9 @@ public:
   NS_DECL_QUERYFRAME
 
   // nsIFrame overrides
-  NS_IMETHOD Init(nsIContent* aContent,
-                  nsIFrame*   aParent,
-                  nsIFrame*   aPrevInFlow);
+  virtual void Init(nsIContent* aContent,
+                    nsIFrame*   aParent,
+                    nsIFrame*   aPrevInFlow) MOZ_OVERRIDE;
   NS_IMETHOD SetInitialChildList(ChildListID  aListID,
                                  nsFrameList& aChildList) MOZ_OVERRIDE;
   NS_IMETHOD AppendFrames(ChildListID  aListID,
@@ -113,8 +113,8 @@ public:
    * Helper method to wrap views around frames. Used by containers
    * under special circumstances (can be used by leaf frames as well)
    */
-  static nsresult CreateViewForFrame(nsIFrame* aFrame,
-                                     bool aForce);
+  static void CreateViewForFrame(nsIFrame* aFrame,
+                                 bool aForce);
 
   // Positions the frame's view based on the frame's origin
   static void PositionFrameView(nsIFrame* aKidFrame);

@@ -9,12 +9,6 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE         = captivedetect
-
-XPIDLSRCS = \
-  nsICaptivePortalDetector.idl \
-  $(NULL)
-
 EXTRA_COMPONENTS = \
   CaptivePortalDetectComponents.manifest \
   captivedetect.js \

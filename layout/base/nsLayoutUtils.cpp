@@ -54,7 +54,7 @@
 #include "nsClientRect.h"
 #include <algorithm>
 #ifdef MOZ_MEDIA
-#include "nsHTMLVideoElement.h"
+#include "mozilla/dom/HTMLVideoElement.h"
 #endif
 #include "mozilla/dom/HTMLImageElement.h"
 #include "imgIRequest.h"
@@ -621,8 +621,7 @@ nsLayoutUtils::GetChildListNameFor(nsIFrame* aChildFrame)
       return nsIFrame::kPopupList;
 #endif // MOZ_XUL
     } else {
-      NS_ASSERTION(aChildFrame->IsFloating(),
-                   "not a floated frame");
+      NS_ASSERTION(aChildFrame->IsFloating(), "not a floated frame");
       id = nsIFrame::kFloatList;
     }
 
@@ -660,6 +659,10 @@ nsLayoutUtils::GetChildListNameFor(nsIFrame* aChildFrame)
     else if (aChildFrame->IsFloating()) {
       found = parent->GetChildList(nsIFrame::kOverflowOutOfFlowList)
                 .ContainsFrame(aChildFrame);
+      if (!found) {
+        found = parent->GetChildList(nsIFrame::kPushedFloatsList)
+                  .ContainsFrame(aChildFrame);
+      }
     }
     // else it's positioned and should have been on the 'id' child list.
     NS_POSTCONDITION(found, "not in child list");
@@ -2258,10 +2261,12 @@ void nsLayoutUtils::RectAccumulator::AddRect(const nsRect& aRect) {
 }
 
 nsLayoutUtils::RectListBuilder::RectListBuilder(nsClientRectList* aList)
-  : mRectList(aList), mRV(NS_OK) {}
+  : mRectList(aList)
+{
+}
 
 void nsLayoutUtils::RectListBuilder::AddRect(const nsRect& aRect) {
-  nsRefPtr<nsClientRect> rect = new nsClientRect();
+  nsRefPtr<nsClientRect> rect = new nsClientRect(mRectList);
 
   rect->SetLayoutRect(aRect);
   mRectList->Append(rect);
@@ -4642,7 +4647,7 @@ nsLayoutUtils::SurfaceFromElement(HTMLCanvasElement* aElement,
 }
 
 nsLayoutUtils::SurfaceFromElementResult
-nsLayoutUtils::SurfaceFromElement(nsHTMLVideoElement* aElement,
+nsLayoutUtils::SurfaceFromElement(HTMLVideoElement* aElement,
                                   uint32_t aSurfaceFlags)
 {
   SurfaceFromElementResult result;
@@ -4707,8 +4712,8 @@ nsLayoutUtils::SurfaceFromElement(dom::Element* aElement,
 
 #ifdef MOZ_MEDIA
   // Maybe it's <video>?
-  if (nsHTMLVideoElement* video =
-        nsHTMLVideoElement::FromContentOrNull(aElement)) {
+  if (HTMLVideoElement* video =
+        HTMLVideoElement::FromContentOrNull(aElement)) {
     return SurfaceFromElement(video, aSurfaceFlags);
   }
 #endif

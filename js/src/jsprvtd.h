@@ -158,7 +158,6 @@ class FunctionBox;
 class ObjectBox;
 struct Token;
 struct TokenPos;
-struct TokenPtr;
 class TokenStream;
 class ParseMapPool;
 struct ParseNode;
@@ -210,6 +209,17 @@ template <XDRMode mode>
 class XDRState;
 
 class FreeOp;
+
+struct IdValuePair
+{
+    jsid id;
+    Value value;
+
+    IdValuePair() {}
+    IdValuePair(jsid idArg)
+      : id(idArg), value(UndefinedValue())
+    {}
+};
 
 } /* namespace js */
 

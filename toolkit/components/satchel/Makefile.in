@@ -9,19 +9,11 @@ VPATH = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = satchel
 LIBRARY_NAME = satchel
 MODULE_NAME = satchel
 IS_COMPONENT = 1
 LIBXUL_LIBRARY = 1
 EXPORT_LIBRARY = 1
-
-XPIDLSRCS = \
-  nsIFormAutoComplete.idl \
-  nsIFormFillController.idl \
-  nsIFormHistory.idl \
-  nsIInputListAutoComplete.idl \
-  $(NULL)
 
 LOCAL_INCLUDES = \
   -I$(srcdir)/../build \

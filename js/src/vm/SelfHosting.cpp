@@ -257,14 +257,14 @@ intrinsic_ForkJoinSlices(JSContext *cx, unsigned argc, Value *vp)
 }
 
 /*
- * NewParallelArray(init, ...args): Creates a new parallel array using an
- * initialization function init. All subsequent arguments are passed to
- * init. The new instance will be passed as the 'this' value.
+ * NewParallelArray(init, ...args): Creates a new parallel array using
+ * an initialization function |init|. All subsequent arguments are
+ * passed to |init|. The new instance will be passed as the |this|
+ * argument.
  */
 JSBool
 js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
 {
-
     CallArgs args = CallArgsFromVp(argc, vp);
 
     JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());

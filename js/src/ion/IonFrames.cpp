@@ -1250,7 +1250,7 @@ InlineFrameIterator::dump() const
     }
 
     fprintf(stderr, "  file %s line %u\n",
-            script()->filename, (unsigned) script()->lineno);
+            script()->filename(), (unsigned) script()->lineno);
 
     fprintf(stderr, "  script = %p, pc = %p\n", (void*) script(), pc());
     fprintf(stderr, "  current op: %s\n", js_CodeName[*pc()]);

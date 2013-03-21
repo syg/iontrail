@@ -125,7 +125,6 @@ class ParallelArrayVisitor : public MInstructionVisitor
     UNSAFE_OP(OsrScopeChain)
     UNSAFE_OP(ReturnFromCtor)
     CUSTOM_OP(CheckOverRecursed)
-    DROP_OP(RecompileCheck)
     UNSAFE_OP(DefVar)
     UNSAFE_OP(DefFun)
     UNSAFE_OP(CreateThis)
@@ -258,6 +257,23 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParCheckInterrupt)
     SAFE_OP(ParCheckOverRecursed)
     SAFE_OP(PolyInlineDispatch)
+    UNSAFE_OP(EffectiveAddress)
+    UNSAFE_OP(AsmJSUnsignedToDouble)
+    UNSAFE_OP(AsmJSNeg)
+    UNSAFE_OP(AsmJSUDiv)
+    UNSAFE_OP(AsmJSUMod)
+    UNSAFE_OP(AsmJSLoadHeap)
+    UNSAFE_OP(AsmJSStoreHeap)
+    UNSAFE_OP(AsmJSLoadGlobalVar)
+    UNSAFE_OP(AsmJSStoreGlobalVar)
+    UNSAFE_OP(AsmJSLoadFuncPtr)
+    UNSAFE_OP(AsmJSLoadFFIFunc)
+    UNSAFE_OP(AsmJSReturn)
+    UNSAFE_OP(AsmJSVoidReturn)
+    UNSAFE_OP(AsmJSPassStackArg)
+    UNSAFE_OP(AsmJSParameter)
+    UNSAFE_OP(AsmJSCall)
+    UNSAFE_OP(AsmJSCheckOverRecursed)
 
     // It looks like this could easily be made safe:
     UNSAFE_OP(ConvertElementsToDoubles)
@@ -271,21 +287,21 @@ ParallelCompileContext::appendToWorklist(HandleScript script)
     // Skip if we're disabled.
     if (!script->canParallelIonCompile()) {
         Spew(SpewCompile, "Skipping %p:%s:%u, canParallelIonCompile() is false",
-             script.get(), script->filename, script->lineno);
+             script.get(), script->filename(), script->lineno);
         return true;
     }
 
     // Skip if we're compiling off thread.
     if (script->parallelIon == ION_COMPILING_SCRIPT) {
         Spew(SpewCompile, "Skipping %p:%s:%u, off-main-thread compilation in progress",
-             script.get(), script->filename, script->lineno);
+             script.get(), script->filename(), script->lineno);
         return true;
     }
 
     // Skip if the code is expected to result in a bailout.
     if (script->parallelIon && script->parallelIon->bailoutExpected()) {
         Spew(SpewCompile, "Skipping %p:%s:%u, bailout expected",
-             script.get(), script->filename, script->lineno);
+             script.get(), script->filename(), script->lineno);
         return true;
     }
 
@@ -294,7 +310,7 @@ ParallelCompileContext::appendToWorklist(HandleScript script)
     // this threshold is usually very low (1).
     if (script->getUseCount() < js_IonOptions.usesBeforeCompileParallel) {
         Spew(SpewCompile, "Skipping %p:%s:%u, use count %u < %u",
-             script.get(), script->filename, script->lineno,
+             script.get(), script->filename(), script->lineno,
              script->getUseCount(), js_IonOptions.usesBeforeCompileParallel);
         return true;
     }

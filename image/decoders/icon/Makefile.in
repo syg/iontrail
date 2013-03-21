@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= imgicon
 LIBRARY_NAME	= imgicon
 IS_COMPONENT	= 1
 MODULE_NAME	= nsIconDecoderModule
@@ -47,8 +46,6 @@ CPPSRCS		= \
 		nsIconModule.cpp \
 		nsIconProtocolHandler.cpp \
 		$(NULL)
-
-XPIDLSRCS	= nsIIconURI.idl
 
 SHARED_LIBRARY_LIBS = $(PLATFORM)/$(LIB_PREFIX)imgicon$(PLATFORM)_s.$(LIB_SUFFIX)
 

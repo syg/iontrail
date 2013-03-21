@@ -112,7 +112,7 @@ js::TraceCycleDetectionSet(JSTracer *trc, js::ObjectSet &set)
 }
 
 void
-JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtSizes)
+JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, JS::RuntimeSizes *rtSizes)
 {
     rtSizes->object = mallocSizeOf(this);
 
@@ -127,11 +127,12 @@ JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtS
     rtSizes->temporary = tempLifoAlloc.sizeOfExcludingThis(mallocSizeOf);
 
     if (execAlloc_) {
-        execAlloc_->sizeOfCode(&rtSizes->jaegerCode, &rtSizes->ionCode, &rtSizes->regexpCode,
-                               &rtSizes->unusedCode);
+        execAlloc_->sizeOfCode(&rtSizes->jaegerCode, &rtSizes->ionCode, &rtSizes->asmJSCode,
+                               &rtSizes->regexpCode, &rtSizes->unusedCode);
     } else {
         rtSizes->jaegerCode = 0;
         rtSizes->ionCode    = 0;
+        rtSizes->asmJSCode  = 0;
         rtSizes->regexpCode = 0;
         rtSizes->unusedCode = 0;
     }
@@ -144,10 +145,6 @@ JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtS
 
     rtSizes->mathCache = mathCache_ ? mathCache_->sizeOfIncludingThis(mallocSizeOf) : 0;
 
-    rtSizes->scriptFilenames = scriptFilenameTable.sizeOfExcludingThis(mallocSizeOf);
-    for (ScriptFilenameTable::Range r = scriptFilenameTable.all(); !r.empty(); r.popFront())
-        rtSizes->scriptFilenames += mallocSizeOf(r.front());
-
     rtSizes->scriptData = scriptDataTable.sizeOfExcludingThis(mallocSizeOf);
     for (ScriptDataTable::Range r = scriptDataTable.all(); !r.empty(); r.popFront())
         rtSizes->scriptData += mallocSizeOf(r.front());
@@ -159,9 +156,9 @@ JSRuntime::sizeOfExplicitNonHeap()
     size_t n = stackSpace.sizeOf();
 
     if (execAlloc_) {
-        size_t jaegerCode, ionCode, regexpCode, unusedCode;
-        execAlloc_->sizeOfCode(&jaegerCode, &ionCode, &regexpCode, &unusedCode);
-        n += jaegerCode + ionCode + regexpCode + unusedCode;
+        size_t jaegerCode, ionCode, asmJSCode, regexpCode, unusedCode;
+        execAlloc_->sizeOfCode(&jaegerCode, &ionCode, &asmJSCode, &regexpCode, &unusedCode);
+        n += jaegerCode + ionCode + asmJSCode + regexpCode + unusedCode;
     }
 
     if (bumpAlloc_)
@@ -186,6 +183,11 @@ JSRuntime::triggerOperationCallback()
      * immediately visible to other processors polling the flag.
      */
     JS_ATOMIC_SET(&interrupt, 1);
+
+#ifdef JS_ION
+    /* asm.js code uses a separate mechanism to halt running code. */
+    TriggerOperationCallbackForAsmJSCode(this);
+#endif
 }
 
 void
@@ -328,8 +330,8 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 #ifdef DEBUG
         if (IsCloneSpewActive(CloneSpewOld)) {
             fprintf(stderr, "[CallsiteClone] %p:%s:%d at callsite %p:%s:%d already cloned to %p\n",
-                    (void *) fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-                    (void *) script->function(), script->filename, PCToLineNumber(script, pc),
+                    (void *) fun.get(), fun->nonLazyScript()->filename(), fun->nonLazyScript()->lineno,
+                    (void *) script->function(), script->filename(), PCToLineNumber(script, pc),
                     (void *) p->value.get());
         }
 #endif
@@ -359,8 +361,8 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 #ifdef DEBUG
     if (IsCloneSpewActive(CloneSpewNew)) {
         fprintf(stderr, "[CallsiteClone] %p:%s:%d at callsite %p:%s:%d cloned to %p\n",
-                (void *) fun.get(), fun->nonLazyScript()->filename, fun->nonLazyScript()->lineno,
-                (void *) script->function(), script->filename, PCToLineNumber(script, pc),
+                (void *) fun.get(), fun->nonLazyScript()->filename(), fun->nonLazyScript()->lineno,
+                (void *) script->function(), script->filename(), PCToLineNumber(script, pc),
                 (void *) clone.get());
     }
 #endif
@@ -473,12 +475,12 @@ js::DestroyContext(JSContext *cx, DestroyContextMode mode)
         /* Clear the statics table to remove GC roots. */
         rt->staticStrings.finish();
 
-        PrepareForFullGC(rt);
-        GC(rt, GC_NORMAL, gcreason::LAST_CONTEXT);
+        JS::PrepareForFullGC(rt);
+        GC(rt, GC_NORMAL, JS::gcreason::LAST_CONTEXT);
     } else if (mode == DCM_FORCE_GC) {
         JS_ASSERT(!rt->isHeapBusy());
-        PrepareForFullGC(rt);
-        GC(rt, GC_NORMAL, gcreason::DESTROY_CONTEXT);
+        JS::PrepareForFullGC(rt);
+        GC(rt, GC_NORMAL, JS::gcreason::DESTROY_CONTEXT);
     }
     js_delete(cx);
 }
@@ -552,7 +554,7 @@ PopulateReportBlame(JSContext *cx, JSErrorReport *report)
     if (iter.done())
         return;
 
-    report->filename = iter.script()->filename;
+    report->filename = iter.script()->filename();
     report->lineno = PCToLineNumber(iter.script(), iter.pc(), &report->column);
     report->originPrincipals = iter.script()->originPrincipals;
 }
@@ -1362,9 +1364,9 @@ JSContext::saveFrameChain()
     }
 
     if (defaultCompartmentObject_)
-        compartment = defaultCompartmentObject_->compartment();
+        setCompartment(defaultCompartmentObject_->compartment());
     else
-        compartment = NULL;
+        setCompartment(NULL);
     enterCompartmentDepth_ = 0;
 
     if (isExceptionPending())
@@ -1376,7 +1378,7 @@ void
 JSContext::restoreFrameChain()
 {
     SavedFrameChain sfc = savedFrameChains_.popCopy();
-    compartment = sfc.compartment;
+    setCompartment(sfc.compartment);
     enterCompartmentDepth_ = sfc.enterCompartmentCount;
 
     stack.restoreFrameChain();
@@ -1419,7 +1421,7 @@ JSRuntime::updateMallocCounter(JS::Zone *zone, size_t nbytes)
 JS_FRIEND_API(void)
 JSRuntime::onTooMuchMalloc()
 {
-    TriggerGC(this, gcreason::TOO_MUCH_MALLOC);
+    TriggerGC(this, JS::gcreason::TOO_MUCH_MALLOC);
 }
 
 JS_FRIEND_API(void *)
@@ -1438,7 +1440,7 @@ JSRuntime::onOutOfMemory(void *p, size_t nbytes, JSContext *cx)
      * Retry when we are done with the background sweeping and have stopped
      * all the allocations and released the empty GC chunks.
      */
-    ShrinkGCBuffers(this);
+    JS::ShrinkGCBuffers(this);
     gcHelperThread.waitBackgroundSweepOrAllocEnd();
     if (!p)
         p = js_malloc(nbytes);
@@ -1572,7 +1574,7 @@ JSContext::mark(JSTracer *trc)
 
 #if defined JS_THREADSAFE && defined DEBUG
 
-AutoCheckRequestDepth::AutoCheckRequestDepth(JSContext *cx)
+JS::AutoCheckRequestDepth::AutoCheckRequestDepth(JSContext *cx)
     : cx(cx)
 {
     JS_ASSERT(cx->runtime->requestDepth || cx->runtime->isHeapBusy());
@@ -1580,7 +1582,7 @@ AutoCheckRequestDepth::AutoCheckRequestDepth(JSContext *cx)
     cx->runtime->checkRequestDepth++;
 }
 
-AutoCheckRequestDepth::~AutoCheckRequestDepth()
+JS::AutoCheckRequestDepth::~AutoCheckRequestDepth()
 {
     JS_ASSERT(cx->runtime->checkRequestDepth != 0);
     cx->runtime->checkRequestDepth--;

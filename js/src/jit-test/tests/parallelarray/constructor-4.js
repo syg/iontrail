@@ -11,5 +11,5 @@ function buildPA() {
   assertEq(p1d.toString(), p2d.toString());
 }
 
-// FIXME self-hosted object not array-like, exposes internal properties
+// FIXME(bug 844882) self-hosted object not array-like, exposes internal properties
 // buildPA();

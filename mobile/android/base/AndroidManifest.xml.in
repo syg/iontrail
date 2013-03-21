@@ -78,7 +78,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <category android:name="android.intent.category.MULTIWINDOW_LAUNCHER" />
             </intent-filter>
             <intent-filter>
                 <action android:name="org.mozilla.gecko.ACTION_ALERT_CALLBACK" />
@@ -166,13 +165,6 @@
             android:targetActivity=".App"
             android:exported="true" />
 
-        <receiver android:name="NotificationHandler">
-            <intent-filter>
-                <action android:name="org.mozilla.gecko.ACTION_ALERT_CLICK" />
-                <action android:name="org.mozilla.gecko.ACTION_ALERT_CLEAR" />
-            </intent-filter>
-        </receiver>
-
         <receiver android:name="org.mozilla.gecko.GeckoUpdateReceiver">
             <intent-filter>
                 <action android:name="@ANDROID_PACKAGE_NAME@.CHECK_UPDATE_RESULT" />
@@ -226,6 +218,14 @@
             </intent-filter>
         </activity>
         -->
+
+        <activity android:name="org.mozilla.gecko.VideoPlayer"
+                  android:configChanges="keyboard|keyboardHidden|mcc|mnc|orientation"
+                  android:theme="@android:style/Theme.NoTitleBar">
+            <intent-filter>
+                <action android:name="org.mozilla.gecko.PLAY_VIDEO" />
+            </intent-filter>
+        </activity>
 
         <activity android:name="org.mozilla.gecko.AwesomeBar"
                   android:theme="@style/Gecko.Light.AwesomeBar"
@@ -281,13 +281,6 @@
 
 #include ../services/manifests/AnnouncementsAndroidManifest_services.xml.in
 #include ../services/manifests/SyncAndroidManifest_services.xml.in
-
-        <uses-library required="false" name="com.sec.android.app.multiwindow"> </uses-library>
-        <meta-data android:name="com.sec.android.support.multiwindow" android:value="true" />
-        <meta-data android:name="com.sec.android.multiwindow.DEFAULT_SIZE_W" android:resource="@dimen/app_defaultsize_w" />
-        <meta-data android:name="com.sec.android.multiwindow.DEFAULT_SIZE_H" android:resource="@dimen/app_defaultsize_h" />
-        <meta-data android:name="com.sec.android.multiwindow.MINIMUM_SIZE_W" android:resource="@dimen/app_minimumsize_w" />
-        <meta-data android:name="com.sec.android.multiwindow.MINIMUM_SIZE_H" android:resource="@dimen/app_minimumsize_h" />
     </application>
 
     <permission android:name="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"

@@ -719,7 +719,7 @@ pref("dom.xbl_scopes", true);
 pref("dom.experimental_forms", false);
 
 // Don't enable <input type=range> yet:
-pref("dom.experimental_forms_range", false);
+pref("dom.experimental_forms_range", true);
 
 // Allocation Threshold for Workers
 pref("dom.workers.mem.gc_allocation_threshold_mb", 30);
@@ -752,6 +752,11 @@ pref("javascript.options.strict.debug",     true);
 pref("javascript.options.methodjit.content", true);
 pref("javascript.options.methodjit.chrome",  true);
 pref("javascript.options.ion.content",      true);
+#ifdef RELEASE_BUILD
+pref("javascript.options.experimental_asmjs", false);
+#else
+pref("javascript.options.experimental_asmjs", true);
+#endif
 pref("javascript.options.ion.parallel_compilation", true);
 pref("javascript.options.pccounts.content", false);
 pref("javascript.options.pccounts.chrome",  false);
@@ -2468,10 +2473,6 @@ pref("ui.window_class_override", "");
 // page back/forward actions, or if pinch-to-zoom does not work.
 pref("ui.elantech_gesture_hacks.enabled", -1);
 
-// Disable auto-configuration of devPixelsPerPx until we're ready to turn
-// it on.
-pref("layout.css.devPixelsPerPx", "1.0");
-
 # WINNT
 #endif
 
@@ -3982,6 +3983,9 @@ pref("network.buffer.cache.size",  32768);
 
 // Desktop Notification
 pref("notification.feature.enabled", false);
+
+// Web Notification
+pref("dom.webnotifications.enabled", true);
 
 // Alert animation effect, name is disableSlidingEffect for backwards-compat.
 pref("alerts.disableSlidingEffect", false);

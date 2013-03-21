@@ -255,6 +255,7 @@ pref("layers.async-pan-zoom.enabled", true);
 
 // Web Notifications
 pref("notification.feature.enabled", true);
+pref("dom.webnotifications.enabled", false);
 
 // IndexedDB
 pref("indexedDB.feature.enabled", true);
@@ -652,10 +653,9 @@ pref("webgl.can-lose-context-in-foreground", false);
 pref("memory_info_dumper.watch_fifo.enabled", true);
 pref("memory_info_dumper.watch_fifo.directory", "/data/local");
 
-// <input type='file'> implementation is not complete. We have to disable the
-// type to web content to help them do feature detection.
-pref("dom.disable_input_file", true);
-
 pref("general.useragent.enable_overrides", true);
 
 pref("b2g.version", @MOZ_B2G_VERSION@);
+
+// Disable console buffering to save memory.
+pref("consoleservice.buffered", false);
