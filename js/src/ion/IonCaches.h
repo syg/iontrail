@@ -302,10 +302,6 @@ class GetPropertyIC : public IonCache
     bool attachReadSlotWithPatcher(JSContext *cx, StubPatcher &patcher, IonScript *ion,
                                    JSObject *obj, JSObject *holder, HandleShape shape);
 
-    bool generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
-                            JSObject *obj, JSObject *holder, HandleShape shape,
-                            void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures = NULL);
-
   public:
     GetPropertyIC(RegisterSet liveRegs,
                   Register object, PropertyName *name,

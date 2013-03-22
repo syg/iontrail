@@ -822,9 +822,3 @@ JSCompartment::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *compa
     *regexpCompartment = regExps.sizeOfExcludingThis(mallocSizeOf);
     *debuggeesSet = debuggees.sizeOfExcludingThis(mallocSizeOf);
 }
-
-void
-JSCompartment::adoptWorkerAllocator(Allocator *workerAllocator)
-{
-    zone()->allocator.arenas.adoptArenas(rt, &workerAllocator->arenas);
-}

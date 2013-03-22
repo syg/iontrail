@@ -188,6 +188,15 @@ struct Zone : private JS::shadow::Zone, public js::gc::GraphNodeBase<JS::Zone>
         return gcState == Finished;
     }
 
+    /*
+     * Moves all data from the allocator |workerAllocator|, which was
+     * in use by a parallel worker, into the zone's main
+     * allocator.  This is used at the end of a parallel section.
+     */
+    void adoptWorkerAllocator(js::Allocator *workerAllocator) {
+        allocator.arenas.adoptArenas(rt, &workerAllocator->arenas);
+    }
+
     volatile size_t              gcBytes;
     size_t                       gcTriggerBytes;
     size_t                       gcMaxMallocBytes;

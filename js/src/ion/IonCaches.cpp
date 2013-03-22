@@ -573,34 +573,12 @@ GenerateReadSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubPatcher &pat
     }
 }
 
-bool
-GetPropertyIC::attachReadSlotWithPatcher(JSContext *cx, StubPatcher &patcher, IonScript *ion,
-                                         JSObject *obj, JSObject *holder, HandleShape shape)
+static bool
+GenerateCallGetter(JSContext *cx, MacroAssembler &masm, IonCache::StubPatcher &patcher,
+                   JSObject *obj, PropertyName *name, JSObject *holder, HandleShape shape,
+                   RegisterSet &liveRegs, Register object, TypedOrValueRegister output,
+                   void *returnAddr, jsbytecode *pc)
 {
-    MacroAssembler masm(cx);
-    GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output());
-    const char *attachKind = "non idempotent reading";
-    if (idempotent())
-        attachKind = "idempotent reading";
-    return linkAndAttachStub(cx, masm, patcher, ion, attachKind);
-}
-
-bool
-GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                              HandleShape shape)
-{
-    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
-    return attachReadSlotWithPatcher(cx, patcher, ion, obj, holder, shape);
-}
-
-bool
-GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatcher &patcher,
-                                  JSObject *obj, JSObject *holder, HandleShape shape,
-                                  void *returnAddr, jsbytecode *pc, Label *nonRepatchFailures)
-{
-    Register object = this->object();
-    TypedOrValueRegister output = this->output();
-
     // Initial shape check.
     Label stubFailure;
     masm.branchPtr(Assembler::NotEqual, Address(object, JSObject::offsetOfShape()),
@@ -632,7 +610,7 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
         JS_ASSERT_IF(expando, expando->isNative() && expando->getProto() == NULL);
 
         masm.loadValue(expandoAddr, tempVal);
-        if (expando && expando->nativeLookup(cx, name())) {
+        if (expando && expando->nativeLookup(cx, name)) {
             // Reference object has an expando that doesn't define the name.
             // Check incoming object's expando and make sure it's an object.
 
@@ -677,25 +655,10 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
                    ImmGCPtr(holder->lastProperty()),
                    &stubFailure);
 
-    // Note: this may clobber the object register if it's used as scratch.
-    if (obj != holder)
-        GeneratePrototypeGuards(cx, masm, obj, holder, object, scratchReg, &prototypeFailures);
-
-    // Guard on the holder's shape.
-    Register holderReg = scratchReg;
-    masm.movePtr(ImmGCPtr(holder), holderReg);
-    masm.branchPtr(Assembler::NotEqual,
-                   Address(holderReg, JSObject::offsetOfShape()),
-                   ImmGCPtr(holder->lastProperty()),
-                   &prototypeFailures);
-
-    if (restoreScratch)
-        masm.pop(scratchReg);
-
     // Now we're good to go to invoke the native call.
 
     // saveLive()
-    masm.PushRegsInMask(liveRegs_);
+    masm.PushRegsInMask(liveRegs);
 
     // Remaining registers should basically be free, but we need to use |object| still
     // so leave it alone.
@@ -825,7 +788,6 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
     // is no need for leaveFakeExitFrame.
 
     // Move the StackPointer back to its original location, unwinding the native exit frame.
-    // XXX shu
     if (callNative)
         masm.adjustStack(IonOOLNativeGetterExitFrameLayout::Size());
     else
@@ -833,19 +795,36 @@ GetPropertyIC::generateCallGetter(JSContext *cx, MacroAssembler &masm, StubPatch
     JS_ASSERT(masm.framePushed() == initialStack);
 
     // restoreLive()
-    masm.PopRegsInMask(liveRegs_);
+    masm.PopRegsInMask(liveRegs);
 
     // Rejoin jump.
     patcher.jumpRejoin(masm);
 
     // Exit jump.
-    // XXX shu
     masm.bind(&stubFailure);
-    if (nonRepatchFailures)
-        masm.bind(nonRepatchFailures);
     patcher.jumpExit(masm);
 
     return true;
+}
+
+bool
+GetPropertyIC::attachReadSlotWithPatcher(JSContext *cx, StubPatcher &patcher, IonScript *ion,
+                                         JSObject *obj, JSObject *holder, HandleShape shape)
+{
+    MacroAssembler masm(cx);
+    GenerateReadSlot(cx, masm, patcher, obj, holder, shape, object(), output());
+    const char *attachKind = "non idempotent reading";
+    if (idempotent())
+        attachKind = "idempotent reading";
+    return linkAndAttachStub(cx, masm, patcher, ion, attachKind);
+}
+
+bool
+GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
+                              HandleShape shape)
+{
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
+    return attachReadSlotWithPatcher(cx, patcher, ion, obj, holder, shape);
 }
 
 bool
@@ -863,8 +842,11 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
     masm.setFramePushed(ion->frameSize());
 
     RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
-    if (!generateCallGetter(cx, masm, patcher, obj, holder, shape, returnAddr, pc))
+    if (!GenerateCallGetter(cx, masm, patcher, obj, name(), holder, shape, liveRegs_,
+                            object(), output(), returnAddr, pc))
+    {
          return false;
+    }
 
     const char *attachKind = "non idempotent calling";
     if (idempotent())
@@ -2030,7 +2012,6 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
         return false;
 
     // Disable cache when we reach max stubs or update failed too much.
-    // XXX shu
     if (!attachedStub) {
         cache.incFailedUpdates();
         if (cache.shouldDisable()) {
@@ -2284,22 +2265,20 @@ NameIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject 
                          HandleShape shape, const SafepointIndex *safepointIndex, void *returnAddr)
 {
     MacroAssembler masm(cx);
-    RepatchLabel failures;
 
     // Need to set correct framePushed on the masm so that exit frame descriptors are
     // properly constructed.
     masm.setFramePushed(ion->frameSize());
 
-    GetNativePropertyStub getprop;
-    if (!getprop.generateCallGetter(cx, masm, obj, name(), holder, shape, liveRegs_,
-                                    scopeChainReg(), outputReg(), returnAddr, pc, &failures))
+    RepatchStubPatcher patcher(rejoinLabel_, fallbackLabel_, &lastJump_);
+    if (!GenerateCallGetter(cx, masm, patcher, obj, name(), holder, shape, liveRegs_,
+                            scopeChainReg(), outputReg(), returnAddr, pc))
     {
          return false;
     }
 
     const char *attachKind = "name getter";
-    return linkAndAttachStub(cx, masm, ion, attachKind, getprop.rejoinOffset, &getprop.exitOffset,
-                             &getprop.stubCodePatchOffset);
+    return linkAndAttachStub(cx, masm, patcher, ion, attachKind);
 }
 
 static bool

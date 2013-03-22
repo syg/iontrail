@@ -4810,7 +4810,7 @@ CodeGenerator::visitGetNameCache(LGetNameCache *ins)
     bool isTypeOf = ins->mir()->accessKind() != MGetNameCache::NAME;
 
     NameIC cache(liveRegs, isTypeOf, scopeChain, ins->mir()->name(), output);
-    return addCache(ins, allocateCache(cache));
+    return addRepatchCache(ins, allocateCache(cache));
 }
 
 typedef bool (*NameICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);

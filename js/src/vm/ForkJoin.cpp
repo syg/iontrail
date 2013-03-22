@@ -51,7 +51,7 @@ using namespace js::ion;
 static bool
 ExecuteSequentially(JSContext *cx_, HandleValue funVal);
 
-#ifndef JS_THREADSAFE_ION
+#if !defined(JS_THREADSAFE) || !defined(JS_ION)
 bool
 js::ForkJoin(JSContext *cx, CallArgs &args)
 {
@@ -108,7 +108,7 @@ ForkJoinSlice::check()
     JS_NOT_REACHED("Not THREADSAFE build");
     return true;
 }
-#endif // JS_THREADSAFE_ION
+#endif // !JS_THREADSAFE || !JS_ION
 
 ///////////////////////////////////////////////////////////////////////////
 // All configurations
@@ -141,7 +141,7 @@ ExecuteSequentially(JSContext *cx, HandleValue funVal)
 // The remainder of this file is specific to cases where both
 // JS_THREADSAFE and JS_ION are enabled.
 
-#ifdef JS_THREADSAFE_ION
+#if defined(JS_THREADSAFE) && defined(JS_ION)
 
 ///////////////////////////////////////////////////////////////////////////
 // Class Declarations and Function Prototypes
@@ -216,7 +216,7 @@ class ForkJoinShared : public TaskExecutor, public Monitor
     uint32_t rendezvousIndex_;     // Number of rendezvous attempts
 
     // Fields related to asynchronously-read gcRequested_ flag
-    gcreason::Reason gcReason_;    // Reason given to request GC
+    JS::gcreason::Reason gcReason_;    // Reason given to request GC
     Zone *gcZone_; // Zone for GC, or NULL for full
 
     /////////////////////////////////////////////////////////////////////////
@@ -294,8 +294,8 @@ class ForkJoinShared : public TaskExecutor, public Monitor
     bool check(ForkJoinSlice &threadCx);
 
     // Requests a GC, either full or specific to a zone.
-    void requestGC(gcreason::Reason reason);
-    void requestZoneGC(Zone *zone, gcreason::Reason reason);
+    void requestGC(JS::gcreason::Reason reason);
+    void requestZoneGC(Zone *zone, JS::gcreason::Reason reason);
 
     // Requests that computation abort.
     void setAbortFlag(bool fatal);
@@ -641,9 +641,9 @@ class AutoEnterParallelSection
         // write barriers thread-safe.  Therefore, we guarantee
         // that there is no incremental GC in progress:
 
-        if (IsIncrementalGCInProgress(cx->runtime)) {
-            PrepareForIncrementalGC(cx->runtime);
-            FinishIncrementalGC(cx->runtime, gcreason::API);
+        if (JS::IsIncrementalGCInProgress(cx->runtime)) {
+            JS::PrepareForIncrementalGC(cx->runtime);
+            JS::FinishIncrementalGC(cx->runtime, JS::gcreason::API);
         }
 
         cx->runtime->gcHelperThread.waitBackgroundSweepEnd();
@@ -745,7 +745,7 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
     uncompleted_(uncompleted),
     blocked_(0),
     rendezvousIndex_(0),
-    gcReason_(gcreason::NUM_REASONS),
+    gcReason_(JS::gcreason::NUM_REASONS),
     gcZone_(NULL),
     abort_(false),
     fatal_(false),
@@ -935,7 +935,7 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
 
     // Make a new IonContext for the slice, which is needed if we need to
     // re-enter the VM.
-    IonContext icx(cx_, cx_->compartment, NULL);
+    IonContext icx(cx_, NULL);
     uintptr_t *myStackTop = (uintptr_t*)&icx;
 
     JS_ASSERT(slice.bailoutRecord->topScript == NULL);
@@ -1174,7 +1174,7 @@ ForkJoinShared::requestGC(JS::gcreason::Reason reason)
 
 void
 ForkJoinShared::requestZoneGC(Zone *zone,
-                              gcreason::Reason reason)
+                              JS::gcreason::Reason reason)
 {
     // Remember the details of the GC that was required for later,
     // then trigger an interrupt.  If more than one zone is requested,
@@ -1329,7 +1329,7 @@ ForkJoinSlice::requestGC(JS::gcreason::Reason reason)
 
 void
 ForkJoinSlice::requestZoneGC(Zone *zone,
-                             gcreason::Reason reason)
+                             JS::gcreason::Reason reason)
 {
     shared->requestZoneGC(zone, reason);
 }
@@ -1538,11 +1538,11 @@ class ParallelSpewer
                 NonBuiltinScriptFrameIter iter(cx);
                 if (iter.done()) {
                     spew(SpewOps, "%sBEGIN %s%s (%s:%u)", bold(), name, reset(),
-                         script->filename, PCToLineNumber(script, pc));
+                         script->filename(), PCToLineNumber(script, pc));
                 } else {
                     spew(SpewOps, "%sBEGIN %s%s (%s:%u -> %s:%u)", bold(), name, reset(),
-                         iter.script()->filename, PCToLineNumber(iter.script(), iter.pc()),
-                         script->filename, PCToLineNumber(script, pc));
+                         iter.script()->filename(), PCToLineNumber(iter.script(), iter.pc()),
+                         script->filename(), PCToLineNumber(script, pc));
                 }
             } else {
                 spew(SpewOps, "%sBEGIN %s%s", bold(), name, reset());
@@ -1592,7 +1592,7 @@ class ParallelSpewer
         if (!active[SpewCompile])
             return;
 
-        spew(SpewCompile, "COMPILE %p:%s:%u", script.get(), script->filename, script->lineno);
+        spew(SpewCompile, "COMPILE %p:%s:%u", script.get(), script->filename(), script->lineno);
         depth++;
     }
 
@@ -1632,7 +1632,7 @@ class ParallelSpewer
 
         JSScript *script = mir->block()->info().script();
         spew(SpewCompile, "%s%s%s: %s (%s:%u)", cyan(), mir->opName(), reset(), buf,
-             script->filename, PCToLineNumber(script, mir->trackedPc()));
+             script->filename(), PCToLineNumber(script, mir->trackedPc()));
     }
 
     void spewBailoutIR(uint32_t bblockId, uint32_t lirId,
@@ -1647,7 +1647,7 @@ class ParallelSpewer
             spew(SpewBailouts, "%sBailout%s: %s / %s%s%s (block %d lir %d) (%s:%u)", yellow(), reset(),
                  lir, cyan(), mir, reset(),
                  bblockId, lirId,
-                 script->filename, PCToLineNumber(script, pc));
+                 script->filename(), PCToLineNumber(script, pc));
         }
     }
 };
@@ -1721,7 +1721,4 @@ parallel::SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
 
 #endif // DEBUG
 
-#endif // JS_THREADSAFE_ION
-
-
-
+#endif // JS_THREADSAFE && JS_ION
