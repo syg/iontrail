@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 MODE=compare
 if [[ "$1" == "--seq" ]]; then
     MODE=seq
