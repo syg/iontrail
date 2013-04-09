@@ -618,16 +618,19 @@ js::ParallelDo::determineBailoutCause()
             continue;
 
         bailoutCause = bailoutRecords[i].cause;
+        const char *causeStr = BailoutExplanation(bailoutCause);
         if (bailoutRecords[i].depth) {
             bailoutScript = bailoutRecords[i].trace[0].script;
             bailoutBytecode = bailoutRecords[i].trace[0].bytecode;
-        }
 
-        const char *filename = bailoutScript->filename();
-        int line = JS_PCToLineNumber(cx_, bailoutScript, bailoutBytecode);
-        const char *causeStr = BailoutExplanation(bailoutCause);
-        JS_ReportWarning(cx_, "Bailed out of parallel operation: %s at %s:%d",
-                         causeStr, filename, line);
+            const char *filename = bailoutScript->filename();
+            int line = JS_PCToLineNumber(cx_, bailoutScript, bailoutBytecode);
+            JS_ReportWarning(cx_, "Bailed out of parallel operation: %s at %s:%d",
+                             causeStr, filename, line);
+        } else {
+            JS_ReportWarning(cx_, "Bailed out of parallel operation: %s",
+                             causeStr);
+        }
     }
 }
 
