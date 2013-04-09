@@ -157,7 +157,11 @@ class ParallelDo
     // For tests, make sure to keep this in sync with minItemsTestingThreshold.
     const static uint32_t MAX_BAILOUTS = 3;
     uint32_t bailouts;
-    ParallelBailoutCause cause;
+
+    // Information about the bailout:
+    ParallelBailoutCause bailoutCause;
+    RootedScript bailoutScript;
+    jsbytecode *bailoutBytecode;
 
     ParallelDo(JSContext *cx, HandleObject fun);
     ExecutionStatus apply();
@@ -418,7 +422,7 @@ js::ForkJoin(JSContext *cx, CallArgs &args)
             feedbackArgs.setThis(UndefinedValue());
             feedbackArgs[0].setString(JS_NewStringCopyZ(cx, resultString));
             feedbackArgs[1].setInt32(op.bailouts);
-            feedbackArgs[2].setInt32(op.cause);
+            feedbackArgs[2].setInt32(op.bailoutCause);
             if (!Invoke(cx, feedbackArgs))
                 return false;
         }
@@ -429,7 +433,9 @@ js::ForkJoin(JSContext *cx, CallArgs &args)
 
 js::ParallelDo::ParallelDo(JSContext *cx, HandleObject fun)
   : bailouts(0),
-    cause(ParallelBailoutNone),
+    bailoutCause(ParallelBailoutNone),
+    bailoutScript(cx),
+    bailoutBytecode(NULL),
     cx_(cx),
     fun_(fun),
     bailoutRecords(cx)
@@ -449,7 +455,7 @@ js::ParallelDo::apply()
         return SpewEndOp(ExecutionFatal);
 
     for (uint32_t i = 0; i < slices; i++)
-        bailoutRecords[i].init(cx_, 0, NULL);
+        bailoutRecords[i].init(cx_);
 
     // Try to execute in parallel.  If a bailout occurs, re-warmup
     // and then try again.  Repeat this a few times.
@@ -483,7 +489,7 @@ js::ParallelDo::apply()
         bailouts += 1;
         determineBailoutCause();
 
-        SpewBailout(bailouts, cause);
+        SpewBailout(bailouts, bailoutScript, bailoutBytecode, bailoutCause);
 
         if (!invalidateBailedOutScripts())
             return SpewEndOp(ExecutionFatal);
@@ -564,7 +570,7 @@ js::ParallelDo::disqualifyFromParallelExecution()
 void
 js::ParallelDo::determineBailoutCause()
 {
-    cause = ParallelBailoutNone;
+    bailoutCause = ParallelBailoutNone;
     for (uint32_t i = 0; i < bailoutRecords.length(); i++) {
         if (bailoutRecords[i].cause == ParallelBailoutNone)
             continue;
@@ -572,7 +578,11 @@ js::ParallelDo::determineBailoutCause()
         if (bailoutRecords[i].cause == ParallelBailoutInterrupt)
             continue;
 
-        cause = bailoutRecords[i].cause;
+        bailoutCause = bailoutRecords[i].cause;
+        if (bailoutRecords[i].depth) {
+            bailoutScript = bailoutRecords[i].trace[0].script;
+            bailoutBytecode = bailoutRecords[i].trace[0].bytecode;
+        }
     }
 }
 
@@ -1347,11 +1357,9 @@ js::ForkJoinSlices(JSContext *cx)
 // ParallelBailoutRecord
 
 void
-js::ParallelBailoutRecord::init(JSContext *cx, uint32_t maxDepth, ParallelBailoutTrace *trace)
+js::ParallelBailoutRecord::init(JSContext *cx)
 {
     reset(cx);
-    this->maxDepth = maxDepth;
-    this->trace = trace;
 }
 
 void
@@ -1390,7 +1398,7 @@ js::ParallelBailoutRecord::addTrace(JSScript *script,
     if (depth < maxDepth) {
         trace[depth].script = script;
         trace[depth].bytecode = pc;
-        depth++;
+        depth += 1;
     }
 }
 
@@ -1581,11 +1589,19 @@ class ParallelSpewer
              statusColor, ExecutionStatusToString(status), reset());
     }
 
-    void bailout(uint32_t count, ParallelBailoutCause cause) {
+    void bailout(uint32_t count, HandleScript script,
+                 jsbytecode *pc, ParallelBailoutCause cause) {
         if (!active[SpewOps])
             return;
 
-        spew(SpewOps, "%s%sBAILOUT %d%s: %d", bold(), yellow(), count, reset(), cause);
+        const char *filename = "";
+        unsigned line=0, column=0;
+        if (script) {
+            line = PCToLineNumber(script, pc, &column);
+            filename = script->filename();
+        }
+
+        spew(SpewOps, "%s%sBAILOUT %d%s: %d at %s:%d:%d", bold(), yellow(), count, reset(), cause, filename, line, column);
     }
 
     void beginCompile(HandleScript script) {
@@ -1684,9 +1700,10 @@ parallel::SpewEndOp(ExecutionStatus status)
 }
 
 void
-parallel::SpewBailout(uint32_t count, ParallelBailoutCause cause)
+parallel::SpewBailout(uint32_t count, HandleScript script,
+                      jsbytecode *pc, ParallelBailoutCause cause)
 {
-    spewer.bailout(count, cause);
+    spewer.bailout(count, script, pc, cause);
 }
 
 void

@@ -263,18 +263,22 @@ enum ParallelBailoutCause {
 };
 
 struct ParallelBailoutTrace {
-    JSScript *script;
+    JSScript* script;
     jsbytecode *bytecode;
 };
 
 // See "Bailouts" section in comment above.
 struct ParallelBailoutRecord {
-    JSScript *topScript;
+    JSScript* topScript;
     ParallelBailoutCause cause;
-    uint32_t depth, maxDepth;
-    ParallelBailoutTrace *trace;
 
-    void init(JSContext *cx, uint32_t maxDepth, ParallelBailoutTrace *trace);
+    // Eventually we will support deeper traces,
+    // but for now we gather at most a single frame.
+    static const uint32_t maxDepth = 1;
+    uint32_t depth;
+    ParallelBailoutTrace trace[maxDepth];
+
+    void init(JSContext *cx);
     void reset(JSContext *cx);
     void setCause(ParallelBailoutCause cause,
                   JSScript *script,
@@ -443,7 +447,8 @@ enum SpewChannel {
 bool SpewEnabled(SpewChannel channel);
 void Spew(SpewChannel channel, const char *fmt, ...);
 void SpewBeginOp(JSContext *cx, const char *name);
-void SpewBailout(uint32_t count, ParallelBailoutCause cause);
+void SpewBailout(uint32_t count, HandleScript script, jsbytecode *pc,
+                 ParallelBailoutCause cause);
 ExecutionStatus SpewEndOp(ExecutionStatus status);
 void SpewBeginCompile(HandleScript script);
 ion::MethodStatus SpewEndCompile(ion::MethodStatus status);
