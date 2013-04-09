@@ -461,7 +461,8 @@ void SpewBailoutIR(uint32_t bblockId, uint32_t lirId,
 static inline bool SpewEnabled(SpewChannel channel) { return false; }
 static inline void Spew(SpewChannel channel, const char *fmt, ...) { }
 static inline void SpewBeginOp(JSContext *cx, const char *name) { }
-static inline void SpewBailout(uint32_t count, ParallelBailoutCause cause) {}
+static inline void SpewBailout(uint32_t count, HandleScript script,
+                               jsbytecode *pc, ParallelBailoutCause cause) {}
 static inline ExecutionStatus SpewEndOp(ExecutionStatus status) { return status; }
 static inline void SpewBeginCompile(HandleScript script) { }
 #ifdef JS_ION
