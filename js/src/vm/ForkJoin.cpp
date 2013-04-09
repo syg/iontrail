@@ -567,6 +567,45 @@ js::ParallelDo::disqualifyFromParallelExecution()
     return ExecutionSequential;
 }
 
+static const char *
+BailoutExplanation(ParallelBailoutCause cause)
+{
+    switch (cause) {
+    case ParallelBailoutNone:
+        return "no particular reason";
+    case ParallelBailoutCompilationSkipped:
+        return "compilation failed (method skipped)";
+    case ParallelBailoutCompilationFailure:
+        return "compilation failed";
+    case ParallelBailoutInterrupt:
+        return "interrupted";
+    case ParallelBailoutFailedIC:
+        return "at runtime, the behavior changed, invalidating compiled code (IC update)";
+    case ParallelBailoutHeapBusy:
+        return "heap busy flag set during interrupt";
+    case ParallelBailoutMainScriptNotPresent:
+        return "main script not present";
+    case ParallelBailoutCalledToUncompiledScript:
+        return "called to uncompiled script";
+    case ParallelBailoutIllegalWrite:
+        return "illegal write";
+    case ParallelBailoutAccessToIntrinsic:
+        return "access to intrinsic";
+    case ParallelBailoutOverRecursed:
+        return "over recursed";
+    case ParallelBailoutOutOfMemory:
+        return "out of memory";
+    case ParallelBailoutUnsupported:
+        return "unsupported";
+    case ParallelBailoutUnsupportedStringComparison:
+        return "unsupported string comparison";
+    case ParallelBailoutUnsupportedSparseArray:
+        return "unsupported sparse array";
+    default:
+        return "no known reason";
+    }
+}
+
 void
 js::ParallelDo::determineBailoutCause()
 {
@@ -583,6 +622,12 @@ js::ParallelDo::determineBailoutCause()
             bailoutScript = bailoutRecords[i].trace[0].script;
             bailoutBytecode = bailoutRecords[i].trace[0].bytecode;
         }
+
+        const char *filename = bailoutScript->filename();
+        int line = JS_PCToLineNumber(cx_, bailoutScript, bailoutBytecode);
+        const char *causeStr = BailoutExplanation(bailoutCause);
+        JS_ReportWarning(cx_, "Bailed out of parallel operation: %s at %s:%d",
+                         causeStr, filename, line);
     }
 }
 
