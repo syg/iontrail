@@ -1855,7 +1855,7 @@ class MUnbox : public MUnaryInstruction
         JS_ASSERT(ins->type() == MIRType_Value);
         JS_ASSERT(type == MIRType_Boolean ||
                   type == MIRType_Int32   ||
-                  type == MIRType_Double  || 
+                  type == MIRType_Double  ||
                   type == MIRType_String  ||
                   type == MIRType_Object);
 
@@ -5525,6 +5525,9 @@ class MCallGetIntrinsicValue : public MNullaryInstruction
     PropertyName *name() const {
         return name_;
     }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
 };
 
 class MCallsiteCloneCache
@@ -7165,4 +7168,3 @@ typedef Vector<MDefinition *, 8, IonAllocPolicy> MDefinitionVector;
 } // namespace js
 
 #endif // jsion_mir_h__
-
