@@ -5,8 +5,9 @@
 
 package org.mozilla.gecko;
 
-import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserContract.Combined;
+import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.StringUtils;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
@@ -44,24 +45,17 @@ import android.widget.TabWidget;
 import android.widget.Toast;
 
 import java.net.URLEncoder;
-import java.util.Arrays;
-import java.util.Collection;
 
 public class AwesomeBar extends GeckoActivity {
     private static final String LOGTAG = "GeckoAwesomeBar";
 
-    private static final Collection<String> sSwypeInputMethods = Arrays.asList(new String[] {
-                                                                 InputMethods.METHOD_SWYPE,
-                                                                 InputMethods.METHOD_SWYPE_BETA,
-                                                                 });
-
-    static final String URL_KEY = "url";
-    static final String CURRENT_URL_KEY = "currenturl";
-    static final String TARGET_KEY = "target";
-    static final String SEARCH_KEY = "search";
-    static final String TITLE_KEY = "title";
-    static final String USER_ENTERED_KEY = "user_entered";
-    static final String READING_LIST_KEY = "reading_list";
+    public static final String URL_KEY = "url";
+    public static final String CURRENT_URL_KEY = "currenturl";
+    public static final String TARGET_KEY = "target";
+    public static final String SEARCH_KEY = "search";
+    public static final String TITLE_KEY = "title";
+    public static final String USER_ENTERED_KEY = "user_entered";
+    public static final String READING_LIST_KEY = "reading_list";
     public static enum Target { NEW_TAB, CURRENT_TAB, PICK_SITE };
 
     private String mTarget;
@@ -69,7 +63,7 @@ public class AwesomeBar extends GeckoActivity {
     private CustomEditText mText;
     private ImageButton mGoButton;
     private ContextMenuSubject mContextMenuSubject;
-    private boolean mIsUsingSwype;
+    private boolean mIsUsingGestureKeyboard;
     private boolean mDelayRestartInput;
 
     @Override
@@ -135,7 +129,7 @@ public class AwesomeBar extends GeckoActivity {
                 BrowserToolbarBackground mAddressBarBg = (BrowserToolbarBackground) findViewById(R.id.address_bar_bg);
                 mAddressBarBg.setPrivateMode(true);
 
-                TabsButton mTabs = (TabsButton) findViewById(R.id.dummy_tab);
+                ShapedButton mTabs = (ShapedButton) findViewById(R.id.dummy_tab);
                 if (mTabs != null)
                     mTabs.setPrivateMode(true);
 
@@ -166,15 +160,7 @@ public class AwesomeBar extends GeckoActivity {
                 InputMethodManager imm =
                         (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
                 if (keyCode == KeyEvent.KEYCODE_BACK && !imm.isFullscreenMode()) {
-                    // Let mAwesomeTabs try to handle the back press, since we may be in a
-                    // bookmarks sub-folder.
-                    if (mAwesomeTabs.onBackPressed())
-                        return true;
-
-                    // If mAwesomeTabs.onBackPressed() returned false, we didn't move up
-                    // a folder level, so just exit the activity.
-                    cancelAndFinish();
-                    return true;
+                    return handleBackKey();
                 }
 
                 return false;
@@ -214,12 +200,14 @@ public class AwesomeBar extends GeckoActivity {
         mText.setOnKeyListener(new View.OnKeyListener() {
             @Override
             public boolean onKey(View v, int keyCode, KeyEvent event) {
-                if (keyCode == KeyEvent.KEYCODE_ENTER) {
+                if (keyCode == KeyEvent.KEYCODE_ENTER || GamepadUtils.isActionKey(event)) {
                     if (event.getAction() != KeyEvent.ACTION_DOWN)
                         return true;
 
                     openUserEnteredAndFinish(mText.getText().toString());
                     return true;
+                } else if (GamepadUtils.isBackKey(event)) {
+                    return handleBackKey();
                 } else {
                     return false;
                 }
@@ -277,6 +265,18 @@ public class AwesomeBar extends GeckoActivity {
         }
     }
 
+    private boolean handleBackKey() {
+        // Let mAwesomeTabs try to handle the back press, since we may be in a
+        // bookmarks sub-folder.
+        if (mAwesomeTabs.onBackPressed())
+            return true;
+
+        // If mAwesomeTabs.onBackPressed() returned false, we didn't move up
+        // a folder level, so just exit the activity.
+        cancelAndFinish();
+        return true;
+    }
+
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
@@ -290,17 +290,15 @@ public class AwesomeBar extends GeckoActivity {
         if (!hasFocus)
             return;
 
-        boolean wasUsingSwype = mIsUsingSwype;
-        mIsUsingSwype = sSwypeInputMethods.contains(InputMethods.getCurrentInputMethod(this));
-
-        if (mIsUsingSwype == wasUsingSwype)
+        boolean wasUsingGestureKeyboard = mIsUsingGestureKeyboard;
+        mIsUsingGestureKeyboard = InputMethods.isGestureKeyboard(this);
+        if (mIsUsingGestureKeyboard == wasUsingGestureKeyboard)
             return;
 
         int currentInputType = mText.getInputType();
-        int newInputType = mIsUsingSwype
-                           ? (currentInputType & ~InputType.TYPE_TEXT_VARIATION_URI)    // URL=OFF
-                           : (currentInputType | InputType.TYPE_TEXT_VARIATION_URI);    // URL=ON
-
+        int newInputType = mIsUsingGestureKeyboard
+                           ? (currentInputType & ~InputType.TYPE_TEXT_VARIATION_URI) // Text mode
+                           : (currentInputType | InputType.TYPE_TEXT_VARIATION_URI); // URL mode
         mText.setRawInputType(newInputType);
     }
 
@@ -333,13 +331,12 @@ public class AwesomeBar extends GeckoActivity {
             contentDescription = getString(R.string.search);
             imeAction = EditorInfo.IME_ACTION_SEARCH;
         }
-        mGoButton.setImageResource(imageResource);
-        mGoButton.setContentDescription(contentDescription);
 
         InputMethodManager imm = InputMethods.getInputMethodManager(mText.getContext());
         if (imm == null) {
             return;
         }
+        boolean restartInput = false;
         if (actionBits != imeAction) {
             int optionBits = mText.getImeOptions() & ~EditorInfo.IME_MASK_ACTION;
             mText.setImeOptions(optionBits | imeAction);
@@ -347,14 +344,19 @@ public class AwesomeBar extends GeckoActivity {
             mDelayRestartInput = (imeAction == EditorInfo.IME_ACTION_GO) &&
                                  (InputMethods.shouldDelayAwesomebarUpdate(mText.getContext()));
             if (!mDelayRestartInput) {
-                imm.restartInput(mText);
+                restartInput = true;
             }
         } else if (mDelayRestartInput) {
             // Only call delayed restartInput when actionBits == imeAction
             // so if there are two restarts in a row, the first restarts will
             // be discarded and the second restart will be properly delayed
             mDelayRestartInput = false;
+            restartInput = true;
+        }
+        if (restartInput) {
             imm.restartInput(mText);
+            mGoButton.setImageResource(imageResource);
+            mGoButton.setContentDescription(contentDescription);
         }
     }
 
@@ -385,25 +387,33 @@ public class AwesomeBar extends GeckoActivity {
         finishWithResult(resultIntent);
     }
 
-    private void openUserEnteredAndFinish(String url) {
-        int index = url.indexOf(' ');
-        String keywordUrl = null;
-        String keywordSearch = null;
+    private void openUserEnteredAndFinish(final String url) {
+        final int index = url.indexOf(' ');
 
-        if (index == -1) {
-            keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url);
-            keywordSearch = "";
+        // Check for a keyword if the URL looks like a search query
+        if (StringUtils.isSearchQuery(url, true)) {
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
+                public void run() {
+                    String keywordUrl = null;
+                    String keywordSearch = "";
+                    if (index == -1) {
+                        keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url);
+                    } else {
+                        keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url.substring(0, index));
+                        keywordSearch = url.substring(index + 1);
+                    }
+                    if (keywordUrl == null) {
+                        openUrlAndFinish(url, "", true);
+                    } else {
+                        String search = URLEncoder.encode(keywordSearch);
+                        openUrlAndFinish(keywordUrl.replace("%s", search), "", true);
+                    }
+                }
+            });
         } else {
-            keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url.substring(0, index));
-            keywordSearch = url.substring(index + 1);
+            openUrlAndFinish(url, "", true);
         }
-
-        if (keywordUrl != null) {
-            String search = URLEncoder.encode(keywordSearch);
-            url = keywordUrl.replace("%s", search);
-        }
-
-        openUrlAndFinish(url, "", true);
     }
 
     private void openSearchAndFinish(String url, String engine) {
@@ -535,25 +545,6 @@ public class AwesomeBar extends GeckoActivity {
         final int display = mContextMenuSubject.display;
 
         switch (item.getItemId()) {
-            case R.id.open_new_tab:
-            case R.id.open_private_tab: {
-                if (url == null) {
-                    Log.e(LOGTAG, "Can't open in new tab because URL is null");
-                    break;
-                }
-
-                String newTabUrl = url;
-                if (display == Combined.DISPLAY_READER)
-                    newTabUrl = ReaderModeUtils.getAboutReaderForUrl(url, true);
-
-                int flags = Tabs.LOADURL_NEW_TAB;
-                if (item.getItemId() == R.id.open_private_tab)
-                    flags |= Tabs.LOADURL_PRIVATE;
-
-                Tabs.getInstance().loadUrl(newTabUrl, flags);
-                Toast.makeText(this, R.string.new_tab_opened, Toast.LENGTH_SHORT).show();
-                break;
-            }
             case R.id.open_in_reader: {
                 if (url == null) {
                     Log.e(LOGTAG, "Can't open in reader mode because URL is null");

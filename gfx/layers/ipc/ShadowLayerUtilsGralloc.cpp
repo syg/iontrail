@@ -21,7 +21,7 @@
 #include "gfxImageSurface.h"
 #include "gfxPlatform.h"
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 using namespace android;
 using namespace base;
@@ -67,7 +67,7 @@ ParamTraits<MagicGrallocBufferHandle>::Read(const Message* aMsg,
       !aMsg->ReadBytes(aIter, &data, nbytes)) {
     return false;
   }
-  
+
   int fds[nfds];
 
   for (size_t n = 0; n < nfds; ++n) {
@@ -197,7 +197,7 @@ GrallocBufferActor::Create(const gfxIntSize& aSize,
                            const gfxContentType& aContent,
                            MaybeMagicGrallocBufferHandle* aOutHandle)
 {
-  SAMPLE_LABEL("GrallocBufferActor", "Create");
+  PROFILER_LABEL("GrallocBufferActor", "Create");
   GrallocBufferActor* actor = new GrallocBufferActor();
   *aOutHandle = null_t();
   android::PixelFormat format = PixelFormatForContentType(aContent);
@@ -224,12 +224,18 @@ ShadowLayerManager::OpenDescriptorForDirectTexturing(GLContext* aGL,
                                                      const SurfaceDescriptor& aDescriptor,
                                                      GLenum aWrapMode)
 {
-  SAMPLE_LABEL("ShadowLayerManager", "OpenDescriptorForDirectTexturing");
+  PROFILER_LABEL("ShadowLayerManager", "OpenDescriptorForDirectTexturing");
   if (SurfaceDescriptor::TSurfaceDescriptorGralloc != aDescriptor.type()) {
     return nullptr;
   }
   sp<GraphicBuffer> buffer = GrallocBufferActor::GetFrom(aDescriptor);
   return aGL->CreateDirectTextureImage(buffer.get(), aWrapMode);
+}
+
+/*static*/ bool
+ShadowLayerManager::SupportsDirectTexturing()
+{
+  return true;
 }
 
 /*static*/ void
@@ -257,15 +263,24 @@ GrallocBufferActor::Create(const gfxIntSize& aSize,
 }
 
 bool
-ShadowLayerManager::PlatformDestroySharedSurface(SurfaceDescriptor* aSurface)
+ISurfaceAllocator::PlatformDestroySharedSurface(SurfaceDescriptor* aSurface)
 {
   if (SurfaceDescriptor::TSurfaceDescriptorGralloc != aSurface->type()) {
     return false;
   }
 
+  // we should have either a bufferParent or bufferChild
+  // depending on whether we're on the parent or child side.
   PGrallocBufferParent* gbp =
     aSurface->get_SurfaceDescriptorGralloc().bufferParent();
-  unused << PGrallocBufferParent::Send__delete__(gbp);
+  if (gbp) {
+    unused << PGrallocBufferParent::Send__delete__(gbp);
+  } else {
+    PGrallocBufferChild* gbc =
+      aSurface->get_SurfaceDescriptorGralloc().bufferChild();
+    unused << PGrallocBufferChild::Send__delete__(gbc);
+  }
+
   *aSurface = SurfaceDescriptor();
   return true;
 }
@@ -288,11 +303,19 @@ GrallocBufferActor::InitFromHandle(const MagicGrallocBufferHandle& aHandle)
   mGraphicBuffer = aHandle.mGraphicBuffer;
 }
 
+PGrallocBufferChild*
+ShadowLayerForwarder::AllocGrallocBuffer(const gfxIntSize& aSize,
+                                         gfxASurface::gfxContentType aContent,
+                                         MaybeMagicGrallocBufferHandle* aHandle)
+{
+  return mShadowManager->SendPGrallocBufferConstructor(aSize, aContent, aHandle);
+}
+
 bool
-ShadowLayerForwarder::PlatformAllocBuffer(const gfxIntSize& aSize,
-                                          gfxASurface::gfxContentType aContent,
-                                          uint32_t aCaps,
-                                          SurfaceDescriptor* aBuffer)
+ISurfaceAllocator::PlatformAllocSurfaceDescriptor(const gfxIntSize& aSize,
+                                                  gfxASurface::gfxContentType aContent,
+                                                  uint32_t aCaps,
+                                                  SurfaceDescriptor* aBuffer)
 {
   // Some GL implementations fail to render gralloc textures with
   // width < 64.  There's not much point in gralloc'ing buffers that
@@ -301,13 +324,16 @@ ShadowLayerForwarder::PlatformAllocBuffer(const gfxIntSize& aSize,
   if (aSize.width < 64) {
     return false;
   }
-  SAMPLE_LABEL("ShadowLayerForwarder", "PlatformAllocBuffer");
+  PROFILER_LABEL("ShadowLayerForwarder", "PlatformAllocSurfaceDescriptor");
   // Gralloc buffers are efficiently mappable as gfxImageSurface, so
   // no need to check |aCaps & MAP_AS_IMAGE_SURFACE|.
   MaybeMagicGrallocBufferHandle handle;
-  PGrallocBufferChild* gc =
-    mShadowManager->SendPGrallocBufferConstructor(aSize, aContent, &handle);
-  if (handle.Tnull_t == handle.type()) {
+  PGrallocBufferChild* gc = AllocGrallocBuffer(aSize, aContent, &handle);
+  if (!gc) {
+    NS_ERROR("GrallocBufferConstructor failed by returned null");
+    return false;
+  } else if (handle.Tnull_t == handle.type()) {
+    NS_ERROR("GrallocBufferConstructor failed by returning handle with type Tnull_t");
     PGrallocBufferChild::Send__delete__(gc);
     return false;
   }
@@ -315,7 +341,7 @@ ShadowLayerForwarder::PlatformAllocBuffer(const gfxIntSize& aSize,
   GrallocBufferActor* gba = static_cast<GrallocBufferActor*>(gc);
   gba->InitFromHandle(handle.get_MagicGrallocBufferHandle());
 
-  *aBuffer = SurfaceDescriptorGralloc(nullptr, gc, /* external */ false);
+  *aBuffer = SurfaceDescriptorGralloc(nullptr, gc, aSize, /* external */ false);
   return true;
 }
 
@@ -339,7 +365,7 @@ GrallocBufferActor::GetFrom(const SurfaceDescriptorGralloc& aDescriptor)
 ShadowLayerForwarder::PlatformOpenDescriptor(OpenMode aMode,
                                              const SurfaceDescriptor& aSurface)
 {
-  SAMPLE_LABEL("ShadowLayerForwarder", "PlatformOpenDescriptor");
+  PROFILER_LABEL("ShadowLayerForwarder", "PlatformOpenDescriptor");
   if (SurfaceDescriptor::TSurfaceDescriptorGralloc != aSurface.type()) {
     return nullptr;
   }
@@ -355,7 +381,7 @@ ShadowLayerForwarder::PlatformOpenDescriptor(OpenMode aMode,
   // If we fail to lock, we'll just end up aborting anyway.
   MOZ_ASSERT(status == OK);
 
-  gfxIntSize size = gfxIntSize(buffer->getWidth(), buffer->getHeight());
+  gfxIntSize size = aSurface.get_SurfaceDescriptorGralloc().size();
   gfxImageFormat format = ImageFormatForPixelFormat(buffer->getPixelFormat());
   long pixelStride = buffer->getStride();
   long byteStride = pixelStride * gfxASurface::BytePerPixelFromFormat(format);
@@ -393,7 +419,7 @@ ShadowLayerForwarder::PlatformGetDescriptorSurfaceSize(
 
   sp<GraphicBuffer> buffer =
     GrallocBufferActor::GetFrom(aDescriptor.get_SurfaceDescriptorGralloc());
-  *aSize = gfxIntSize(buffer->getWidth(), buffer->getHeight());
+  *aSize = aDescriptor.get_SurfaceDescriptorGralloc().size();
   return true;
 }
 
@@ -414,16 +440,15 @@ ShadowLayerForwarder::PlatformDestroySharedSurface(SurfaceDescriptor* aSurface)
 /*static*/ bool
 ShadowLayerForwarder::PlatformCloseDescriptor(const SurfaceDescriptor& aDescriptor)
 {
-  SAMPLE_LABEL("ShadowLayerForwarder", "PlatformCloseDescriptor");
+  PROFILER_LABEL("ShadowLayerForwarder", "PlatformCloseDescriptor");
   if (SurfaceDescriptor::TSurfaceDescriptorGralloc != aDescriptor.type()) {
     return false;
   }
 
   sp<GraphicBuffer> buffer = GrallocBufferActor::GetFrom(aDescriptor);
-  // If the buffer wasn't lock()d, this probably blows up.  But since
-  // PlatformCloseDescriptor() is private and only used by
-  // AutoOpenSurface, we want to know if the logic is wrong there.
-  buffer->unlock();
+  DebugOnly<status_t> status = buffer->unlock();
+  // If we fail to unlock, we'll subsequently fail to lock and end up aborting anyway.
+  MOZ_ASSERT(status == OK);
   return true;
 }
 

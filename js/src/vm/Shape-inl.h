@@ -7,6 +7,7 @@
 #define Shape_inl_h__
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/PodOperations.h"
 
 #include "jsarray.h"
 #include "jsbool.h"
@@ -50,7 +51,7 @@ inline
 BaseShape::BaseShape(JSCompartment *comp, Class *clasp, JSObject *parent, uint32_t objectFlags)
 {
     JS_ASSERT(!(objectFlags & ~OBJECT_FLAG_MASK));
-    PodZero(this);
+    mozilla::PodZero(this);
     this->clasp = clasp;
     this->parent = parent;
     this->flags = objectFlags;
@@ -62,7 +63,7 @@ BaseShape::BaseShape(JSCompartment *comp, Class *clasp, JSObject *parent, uint32
                      uint8_t attrs, js::PropertyOp rawGetter, js::StrictPropertyOp rawSetter)
 {
     JS_ASSERT(!(objectFlags & ~OBJECT_FLAG_MASK));
-    PodZero(this);
+    mozilla::PodZero(this);
     this->clasp = clasp;
     this->parent = parent;
     this->flags = objectFlags;
@@ -82,7 +83,7 @@ BaseShape::BaseShape(JSCompartment *comp, Class *clasp, JSObject *parent, uint32
 inline
 BaseShape::BaseShape(const StackBaseShape &base)
 {
-    PodZero(this);
+    mozilla::PodZero(this);
     this->clasp = base.clasp;
     this->parent = base.parent;
     this->flags = base.flags;
@@ -347,7 +348,7 @@ Shape::setParent(RawShape p)
 }
 
 inline void
-Shape::removeFromDictionary(JSObject *obj)
+Shape::removeFromDictionary(ObjectImpl *obj)
 {
     JS_ASSERT(inDictionary());
     JS_ASSERT(obj->inDictionaryMode());
@@ -406,7 +407,7 @@ inline void
 Shape::writeBarrierPre(RawShape shape)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!shape)
+    if (!shape || !shape->runtime()->needsBarrier())
         return;
 
     JS::Zone *zone = shape->zone();
@@ -449,7 +450,7 @@ inline void
 BaseShape::writeBarrierPre(RawBaseShape base)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!base)
+    if (!base || !base->runtime()->needsBarrier())
         return;
 
     JS::Zone *zone = base->zone();

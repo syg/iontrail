@@ -25,6 +25,15 @@ XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadUtils",
                                   "resource://gre/modules/DownloadUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "NewTabUtils",
+                                  "resource://gre/modules/NewTabUtils.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Promise",
+                                  "resource://gre/modules/commonjs/sdk/core/promise.js");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Task",
+                                  "resource://gre/modules/Task.jsm");
+
 /*
  * Services
  */
@@ -84,22 +93,20 @@ Cu.import("resource://gre/modules/Geometry.jsm");
  */
 let ScriptContexts = {};
 [
+  ["ContentAreaObserver", "chrome://browser/content/ContentAreaObserver.js"],
   ["WebProgress", "chrome://browser/content/WebProgress.js"],
   ["FindHelperUI", "chrome://browser/content/helperui/FindHelperUI.js"],
   ["FormHelperUI", "chrome://browser/content/helperui/FormHelperUI.js"],
   ["BrowserTouchHandler", "chrome://browser/content/BrowserTouchHandler.js"],
   ["AlertsHelper", "chrome://browser/content/helperui/AlertsHelper.js"],
-  ["CapturePickerUI", "chrome://browser/content/helperui/CapturePickerUI.js"],
   ["AutofillMenuUI", "chrome://browser/content/helperui/MenuUI.js"],
   ["ContextMenuUI", "chrome://browser/content/helperui/MenuUI.js"],
   ["MenuControlUI", "chrome://browser/content/helperui/MenuUI.js"],
   ["MenuPopup", "chrome://browser/content/helperui/MenuUI.js"],
   ["IndexedDB", "chrome://browser/content/helperui/IndexedDB.js"],
-  ["MasterPasswordUI", "chrome://browser/content/helperui/MasterPasswordUI.js"],
   ["OfflineApps", "chrome://browser/content/helperui/OfflineApps.js"],
   ["SelectHelperUI", "chrome://browser/content/helperui/SelectHelperUI.js"],
   ["SelectionHelperUI", "chrome://browser/content/helperui/SelectionHelperUI.js"],
-  ["FullScreenVideo", "chrome://browser/content/video.js"],
   ["AnimatedZoom", "chrome://browser/content/AnimatedZoom.js"],
   ["CommandUpdater", "chrome://browser/content/commandUtil.js"],
   ["ContextCommands", "chrome://browser/content/ContextCommands.js"],
@@ -115,10 +122,13 @@ let ScriptContexts = {};
   ["HistoryView", "chrome://browser/content/history.js"],
   ["HistoryStartView", "chrome://browser/content/history.js"],
   ["HistoryPanelView", "chrome://browser/content/history.js"],
+  ["Site", "chrome://browser/content/Site.js"],
+  ["TopSites", "chrome://browser/content/TopSites.js"],
   ["TopSitesView", "chrome://browser/content/TopSites.js"],
   ["TopSitesSnappedView", "chrome://browser/content/TopSites.js"],
   ["TopSitesStartView", "chrome://browser/content/TopSites.js"],
   ["Sanitizer", "chrome://browser/content/sanitize.js"],
+  ["SanitizeUI", "chrome://browser/content/sanitizeUI.js"],
   ["SSLExceptions", "chrome://browser/content/exceptions.js"],
 #ifdef MOZ_SERVICES_SYNC
   ["WeaveGlue", "chrome://browser/content/sync.js"],

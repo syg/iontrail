@@ -40,7 +40,9 @@ namespace JS {
 struct ObjectsExtraSizes
 {
     size_t slots;
-    size_t elements;
+    size_t elementsNonAsmJS;
+    size_t elementsAsmJSHeap;
+    size_t elementsAsmJSNonHeap;
     size_t argumentsData;
     size_t regExpStatics;
     size_t propertyIteratorData;
@@ -52,7 +54,9 @@ struct ObjectsExtraSizes
 
     void add(ObjectsExtraSizes &sizes) {
         this->slots                += sizes.slots;
-        this->elements             += sizes.elements;
+        this->elementsNonAsmJS     += sizes.elementsNonAsmJS;
+        this->elementsAsmJSHeap    += sizes.elementsAsmJSHeap;
+        this->elementsAsmJSNonHeap += sizes.elementsAsmJSNonHeap;
         this->argumentsData        += sizes.argumentsData;
         this->regExpStatics        += sizes.regExpStatics;
         this->propertyIteratorData += sizes.propertyIteratorData;
@@ -83,6 +87,20 @@ struct TypeInferenceSizes
         this->arrayTypeTables      += sizes.arrayTypeTables;
         this->objectTypeTables     += sizes.objectTypeTables;
     }
+};
+
+// Data for tracking JIT-code memory usage.
+struct CodeSizes
+{
+    size_t jaeger;
+    size_t ion;
+    size_t asmJS;
+    size_t baseline;
+    size_t regexp;
+    size_t other;
+    size_t unused;
+
+    CodeSizes() { memset(this, 0, sizeof(CodeSizes)); }
 };
 
 // Holds data about a huge string (one which uses more HugeStringInfo::MinSize
@@ -118,23 +136,20 @@ struct RuntimeSizes
     size_t contexts;
     size_t dtoa;
     size_t temporary;
-    size_t jaegerCode;
-    size_t ionCode;
-    size_t asmJSCode;
-    size_t regexpCode;
-    size_t unusedCode;
     size_t regexpData;
     size_t stack;
     size_t gcMarker;
     size_t mathCache;
     size_t scriptData;
     size_t scriptSources;
+
+    CodeSizes code;
 };
 
 struct ZoneStats
 {
     ZoneStats()
-      : extra1(0),
+      : extra(NULL),
         gcHeapArenaAdmin(0),
         gcHeapUnusedGcThings(0),
         gcHeapStringsNormal(0),
@@ -148,7 +163,7 @@ struct ZoneStats
     {}
 
     ZoneStats(const ZoneStats &other)
-      : extra1(other.extra1),
+      : extra(other.extra),
         gcHeapArenaAdmin(other.gcHeapArenaAdmin),
         gcHeapUnusedGcThings(other.gcHeapUnusedGcThings),
         gcHeapStringsNormal(other.gcHeapStringsNormal),
@@ -185,7 +200,7 @@ struct ZoneStats
     }
 
     // This field can be used by embedders.
-    void   *extra1;
+    void   *extra;
 
     size_t gcHeapArenaAdmin;
     size_t gcHeapUnusedGcThings;
@@ -210,8 +225,7 @@ struct ZoneStats
 struct CompartmentStats
 {
     CompartmentStats()
-      : extra1(0),
-        extra2(0),
+      : extra(NULL),
         gcHeapObjectsOrdinary(0),
         gcHeapObjectsFunction(0),
         gcHeapObjectsDenseArray(0),
@@ -229,6 +243,9 @@ struct CompartmentStats
         shapesCompartmentTables(0),
         scriptData(0),
         jaegerData(0),
+        baselineData(0),
+        baselineFallbackStubs(0),
+        baselineOptimizedStubs(0),
         ionData(0),
         compartmentObject(0),
         crossCompartmentWrappersTable(0),
@@ -238,8 +255,7 @@ struct CompartmentStats
     {}
 
     CompartmentStats(const CompartmentStats &other)
-      : extra1(other.extra1),
-        extra2(other.extra2),
+      : extra(other.extra),
         gcHeapObjectsOrdinary(other.gcHeapObjectsOrdinary),
         gcHeapObjectsFunction(other.gcHeapObjectsFunction),
         gcHeapObjectsDenseArray(other.gcHeapObjectsDenseArray),
@@ -257,6 +273,9 @@ struct CompartmentStats
         shapesCompartmentTables(other.shapesCompartmentTables),
         scriptData(other.scriptData),
         jaegerData(other.jaegerData),
+        baselineData(other.baselineData),
+        baselineFallbackStubs(other.baselineFallbackStubs),
+        baselineOptimizedStubs(other.baselineOptimizedStubs),
         ionData(other.ionData),
         compartmentObject(other.compartmentObject),
         crossCompartmentWrappersTable(other.crossCompartmentWrappersTable),
@@ -266,9 +285,8 @@ struct CompartmentStats
     {
     }
 
-    // These fields can be used by embedders.
-    void   *extra1;
-    void   *extra2;
+    // This field can be used by embedders.
+    void   *extra;
 
     // If you add a new number, remember to update the constructors, add(), and
     // maybe gcHeapThingsSize()!
@@ -290,6 +308,9 @@ struct CompartmentStats
     size_t shapesCompartmentTables;
     size_t scriptData;
     size_t jaegerData;
+    size_t baselineData;
+    size_t baselineFallbackStubs;
+    size_t baselineOptimizedStubs;
     size_t ionData;
     size_t compartmentObject;
     size_t crossCompartmentWrappersTable;
@@ -320,6 +341,9 @@ struct CompartmentStats
         ADD(shapesCompartmentTables);
         ADD(scriptData);
         ADD(jaegerData);
+        ADD(baselineData);
+        ADD(baselineFallbackStubs);
+        ADD(baselineOptimizedStubs);
         ADD(ionData);
         ADD(compartmentObject);
         ADD(crossCompartmentWrappersTable);

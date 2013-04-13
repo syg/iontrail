@@ -37,6 +37,7 @@ CPPSRCS += dlldeps-xul.cpp
 endif
 
 SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/media/kiss_fft/$(LIB_PREFIX)kiss_fft.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/components/osfile/$(LIB_PREFIX)osfile_s.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/xre/$(LIB_PREFIX)xulapp_s.$(LIB_SUFFIX) \
   $(NULL)
@@ -612,6 +613,20 @@ endif
 ifdef ACCESSIBILITY
 EXTRA_DSO_LDOPTS += -DELAYLOAD:oleacc.dll
 endif
+ifdef MOZ_WEBRTC_IN_LIBXUL
+EXTRA_DSO_LDOPTS += -DELAYLOAD:msdmo.dll
+endif
+endif
+ifdef MOZ_GAMEPAD
+ifndef GNU_CC
+DXSDK := $(subst \,/,$(MOZ_DIRECTX_SDK_PATH))/Lib/$(MOZ_DIRECTX_SDK_CPU_SUFFIX)
+OS_LIBS += \
+  "$(DXSDK)/dxguid.lib" \
+  "$(DXSDK)/dinput8.lib" \
+  $(NULL)
+else
+OS_LIBS += $(call EXPAND_LIBNAME,dxguid dinput8)
+endif
 endif
 endif # WINNT
 
@@ -679,3 +694,8 @@ ifeq (WINNT_1,$(OS_TARGET)_$(MOZ_PROFILE_USE))
 # Wrap linker to measure peak virtual memory usage.
 LD := $(PYTHON) $(topsrcdir)/build/link.py $(CURDIR)/linker-vsize $(LD)
 endif
+
+libs:: $(FINAL_TARGET)/dependentlibs.list
+
+$(FINAL_TARGET)/dependentlibs.list: dependentlibs.py $(SHARED_LIBRARY) $(wildcard $(if $(wildcard $(FINAL_TARGET)/dependentlibs.list),$(addprefix $(FINAL_TARGET)/,$(shell cat $(FINAL_TARGET)/dependentlibs.list))))
+	$(PYTHON) $< $(SHARED_LIBRARY) -L $(FINAL_TARGET) $(if $(TOOLCHAIN_PREFIX),$(addprefix -p ,$(TOOLCHAIN_PREFIX))) > $@

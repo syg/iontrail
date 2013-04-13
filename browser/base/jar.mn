@@ -20,7 +20,7 @@ browser.jar:
         content/browser/aboutDialog.css               (content/aboutDialog.css)
         content/browser/aboutRobots.xhtml             (content/aboutRobots.xhtml)
         content/browser/abouthome/aboutHome.xhtml     (content/abouthome/aboutHome.xhtml)
-*       content/browser/abouthome/aboutHome.js        (content/abouthome/aboutHome.js)
+        content/browser/abouthome/aboutHome.js        (content/abouthome/aboutHome.js)
 *       content/browser/abouthome/aboutHome.css       (content/abouthome/aboutHome.css)
         content/browser/abouthome/noise.png           (content/abouthome/noise.png)
         content/browser/abouthome/snippet1.png        (content/abouthome/snippet1.png)
@@ -35,7 +35,6 @@ browser.jar:
         content/browser/abouthome/restore.png         (content/abouthome/restore.png)
         content/browser/abouthome/restore-large.png   (content/abouthome/restore-large.png)
         content/browser/abouthome/mozilla.png         (content/abouthome/mozilla.png)
-#ifdef XP_MACOSX
         content/browser/abouthome/snippet1@2x.png      (content/abouthome/snippet1@2x.png)
         content/browser/abouthome/snippet2@2x.png      (content/abouthome/snippet2@2x.png)
         content/browser/abouthome/downloads@2x.png     (content/abouthome/downloads@2x.png)
@@ -48,7 +47,6 @@ browser.jar:
         content/browser/abouthome/restore@2x.png       (content/abouthome/restore@2x.png)
         content/browser/abouthome/restore-large@2x.png (content/abouthome/restore-large@2x.png)
         content/browser/abouthome/mozilla@2x.png       (content/abouthome/mozilla@2x.png)
-#endif
 #ifdef MOZ_SERVICES_HEALTHREPORT
         content/browser/abouthealthreport/abouthealth.xhtml   (content/abouthealthreport/abouthealth.xhtml)
         content/browser/abouthealthreport/abouthealth.js      (content/abouthealthreport/abouthealth.js)
@@ -67,7 +65,7 @@ browser.jar:
         content/browser/newtab/newTab.css             (content/newtab/newTab.css)
         content/browser/newtab/preload.xhtml          (content/newtab/preload.xhtml)
 *       content/browser/pageinfo/pageInfo.xul         (content/pageinfo/pageInfo.xul)
-*       content/browser/pageinfo/pageInfo.js          (content/pageinfo/pageInfo.js)
+        content/browser/pageinfo/pageInfo.js          (content/pageinfo/pageInfo.js)
         content/browser/pageinfo/pageInfo.css         (content/pageinfo/pageInfo.css)
         content/browser/pageinfo/pageInfo.xml         (content/pageinfo/pageInfo.xml)
         content/browser/pageinfo/feeds.js             (content/pageinfo/feeds.js)

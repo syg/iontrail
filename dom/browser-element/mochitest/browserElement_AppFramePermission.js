@@ -5,20 +5,17 @@
 "use strict";
 
 SimpleTest.waitForExplicitFinish();
+browserElementTestHelpers.setEnabledPref(true);
+browserElementTestHelpers.addPermission();
 
 function makeAllAppsLaunchable() {
-  var Webapps = {};
-  SpecialPowers.Cu.import("resource://gre/modules/Webapps.jsm", Webapps);
-  var appRegistry = SpecialPowers.wrap(Webapps.DOMApplicationRegistry);
-
-  var originalValue = appRegistry.allAppsLaunchable;
-  appRegistry.allAppsLaunchable = true;
+  var originalValue = SpecialPowers.setAllAppsLaunchable(true);
 
   // Clean up after ourselves once tests are done so the test page is unloaded.
   window.addEventListener("unload", function restoreAllAppsLaunchable(event) {
     if (event.target == window.document) {
       window.removeEventListener("unload", restoreAllAppsLaunchable, false);
-      appRegistry.allAppsLaunchable = originalValue;
+      SpecialPowers.setAllAppsLaunchable(originalValue);
     }
   }, false);
 }
@@ -37,9 +34,6 @@ function testAppElement(expectAnApp, callback) {
 }
 
 function runTest() {
-  browserElementTestHelpers.setEnabledPref(true);
-  browserElementTestHelpers.addPermission();
-
   SpecialPowers.addPermission("embed-apps", true, document);
   testAppElement(true, function() {
     SpecialPowers.removePermission("embed-apps", document);
@@ -49,4 +43,4 @@ function runTest() {
   });
 }
 
-runTest();
+addEventListener('testready', runTest);

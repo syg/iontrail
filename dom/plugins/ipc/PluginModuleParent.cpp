@@ -38,7 +38,7 @@
 #include "PluginHangUIParent.h"
 #include "mozilla/widget/AudioSession.h"
 #endif
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 using base::KillProcess;
 
@@ -194,7 +194,7 @@ PluginModuleParent::WriteExtraDataForMinidump(AnnotationTable& notes)
     nsCString pluginName;
     nsCString pluginVersion;
 
-    nsRefPtr<nsPluginHost> ph = already_AddRefed<nsPluginHost>(nsPluginHost::GetInst());
+    nsRefPtr<nsPluginHost> ph = nsPluginHost::GetInst();
     if (ph) {
         nsPluginTag* tag = ph->TagForPlugin(mPlugin);
         if (tag) {
@@ -536,8 +536,7 @@ PluginModuleParent::EvaluateHangUIState(const bool aReset)
 bool
 PluginModuleParent::GetPluginName(nsAString& aPluginName)
 {
-    nsRefPtr<nsPluginHost> host = 
-        dont_AddRef<nsPluginHost>(nsPluginHost::GetInst());
+    nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst();
     if (!host) {
         return false;
     }
@@ -567,7 +566,8 @@ PluginModuleParent::LaunchHangUI()
         mHangUIParent = nullptr;
     }
     mHangUIParent = new PluginHangUIParent(this, 
-            Preferences::GetInt(kHangUITimeoutPref, 0));
+            Preferences::GetInt(kHangUITimeoutPref, 0),
+            Preferences::GetInt(kChildTimeoutPref, 0));
     nsAutoString pluginName;
     if (!GetPluginName(pluginName)) {
         return false;
@@ -860,7 +860,7 @@ PluginModuleParent::NPP_NewStream(NPP instance, NPMIMEType type,
                                   NPStream* stream, NPBool seekable,
                                   uint16_t* stype)
 {
-    SAMPLE_LABEL("PluginModuleParent", "NPP_NewStream");
+    PROFILER_LABEL("PluginModuleParent", "NPP_NewStream");
     PluginInstanceParent* i = InstCast(instance);
     if (!i)
         return NPERR_GENERIC_ERROR;

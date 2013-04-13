@@ -294,19 +294,24 @@ struct PropDesc {
     bool wrapInto(JSContext *cx, HandleObject obj, const jsid &id, jsid *wrappedId,
                   PropDesc *wrappedDesc) const;
 
-    class AutoRooter : private AutoGCRooter
+    class AutoRooter : private JS::CustomAutoRooter
     {
       public:
         explicit AutoRooter(JSContext *cx, PropDesc *pd_
                             MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-          : AutoGCRooter(cx, PROPDESC), pd(pd_), skip(cx, pd_)
+          : CustomAutoRooter(cx), pd(pd_), skip(cx, pd_)
         {
             MOZ_GUARD_OBJECT_NOTIFIER_INIT;
         }
 
-        friend void AutoGCRooter::trace(JSTracer *trc);
-
       private:
+        virtual void trace(JSTracer *trc) {
+            traceValue(trc, &pd->pd_, "PropDesc::AutoRooter pd");
+            traceValue(trc, &pd->value_, "PropDesc::AutoRooter value");
+            traceValue(trc, &pd->get_, "PropDesc::AutoRooter get");
+            traceValue(trc, &pd->set_, "PropDesc::AutoRooter set");
+        }
+
         PropDesc *pd;
         SkipRoot skip;
         MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
@@ -1006,6 +1011,7 @@ struct ObjectOps;
 class Shape;
 
 class NewObjectCache;
+class TaggedProto;
 
 inline Value
 ObjectValue(ObjectImpl &obj);
@@ -1094,6 +1100,7 @@ class ObjectImpl : public gc::Cell
     }
 
     JSObject * asObjectPtr() { return reinterpret_cast<JSObject *>(this); }
+    const JSObject * asObjectPtr() const { return reinterpret_cast<const JSObject *>(this); }
 
     friend inline Value ObjectValue(ObjectImpl &obj);
 
@@ -1110,10 +1117,16 @@ class ObjectImpl : public gc::Cell
 
     inline bool isExtensible() const;
 
+    // Attempt to change the [[Extensible]] bit on |obj| to false.  Callers
+    // must ensure that |obj| is currently extensible before calling this!
+    static bool
+    preventExtensions(JSContext *cx, Handle<ObjectImpl*> obj);
+
     inline HeapSlotArray getDenseElements();
     inline const Value & getDenseElement(uint32_t idx);
     inline bool containsDenseElement(uint32_t idx);
     inline uint32_t getDenseInitializedLength();
+    inline uint32_t getDenseCapacity();
 
     bool makeElementsSparse(JSContext *cx) {
         NEW_OBJECT_REPRESENTATION_ONLY();
@@ -1122,12 +1135,28 @@ class ObjectImpl : public gc::Cell
         return false;
     }
 
+    inline bool isProxy() const;
+
   protected:
 #ifdef DEBUG
     void checkShapeConsistency();
 #else
     void checkShapeConsistency() { }
 #endif
+
+    Shape *
+    replaceWithNewEquivalentShape(JSContext *cx, Shape *existingShape, Shape *newShape = NULL);
+
+    enum GenerateShape {
+        GENERATE_NONE,
+        GENERATE_SHAPE
+    };
+
+    bool setFlag(JSContext *cx, /*BaseShape::Flag*/ uint32_t flag,
+                 GenerateShape generateShape = GENERATE_NONE);
+    bool clearFlag(JSContext *cx, /*BaseShape::Flag*/ uint32_t flag);
+
+    bool toDictionaryMode(JSContext *cx);
 
   private:
     /*
@@ -1206,10 +1235,18 @@ class ObjectImpl : public gc::Cell
      */
 
   public:
+    inline js::TaggedProto getTaggedProto() const;
+
     Shape * lastProperty() const {
         MOZ_ASSERT(shape_);
         return shape_;
     }
+
+    bool generateOwnShape(JSContext *cx, js::Shape *newShape = NULL) {
+        return replaceWithNewEquivalentShape(cx, lastProperty(), newShape);
+    }
+
+    inline JSCompartment *compartment() const;
 
     inline bool isNative() const;
 
@@ -1251,9 +1288,9 @@ class ObjectImpl : public gc::Cell
      * Contextless; can be called from parallel code. Returns false if the
      * operation would have been effectful.
      */
-    RawShape nativeLookupPure(jsid id);
-    inline RawShape nativeLookupPure(PropertyId pid);
-    inline RawShape nativeLookupPure(PropertyName *name);
+    Shape *nativeLookupPure(jsid id);
+    inline Shape *nativeLookupPure(PropertyId pid);
+    inline Shape *nativeLookupPure(PropertyName *name);
 
     inline bool nativeContainsPure(jsid id);
     inline bool nativeContainsPure(PropertyName* name);
@@ -1344,7 +1381,7 @@ class ObjectImpl : public gc::Cell
     static inline uint32_t dynamicSlotsCount(uint32_t nfixed, uint32_t span);
 
     /* Memory usage functions. */
-    inline size_t sizeOfThis() const;
+    inline size_t tenuredSizeOfThis() const;
 
     /* Elements accessors. */
 
@@ -1382,6 +1419,7 @@ class ObjectImpl : public gc::Cell
     }
 
     /* GC support. */
+    JS_ALWAYS_INLINE Zone *zone() const;
     static inline ThingRootKind rootKind() { return THING_ROOT_OBJECT; }
     static inline void readBarrier(ObjectImpl *obj);
     static inline void writeBarrierPre(ObjectImpl *obj);

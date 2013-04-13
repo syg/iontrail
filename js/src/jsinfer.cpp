@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/PodOperations.h"
 
 #include "jsapi.h"
 #include "jsautooplen.h"
@@ -25,6 +26,7 @@
 #include "jsworkers.h"
 
 #ifdef JS_ION
+#include "ion/BaselineJIT.h"
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
 #endif
@@ -56,6 +58,9 @@ using namespace js::types;
 using namespace js::analyze;
 
 using mozilla::DebugOnly;
+using mozilla::PodArrayZero;
+using mozilla::PodCopy;
+using mozilla::PodZero;
 
 static inline jsid
 id_prototype(JSContext *cx) {
@@ -359,6 +364,40 @@ TypeSet::isSubsetIgnorePrimitives(TypeSet *other)
             if (!other->hasType(Type::ObjectType(obj)))
                 return false;
         }
+    }
+
+    return true;
+}
+
+bool
+TypeSet::intersectionEmpty(TypeSet *other)
+{
+    // For unknown/unknownObject there is no reason they couldn't intersect.
+    // I.e. we eagerly return their intersection isn't empty.
+    // That's ok, since we can't make predictions that can be checked to not hold.
+    if (unknown() || other->unknown())
+        return false;
+
+    if (unknownObject() && unknownObject())
+        return false;
+
+    if (unknownObject() && other->getObjectCount() > 0)
+        return false;
+
+    if (other->unknownObject() && getObjectCount() > 0)
+        return false;
+
+    // Test if there is an intersection in the baseFlags
+    if ((baseFlags() & other->baseFlags()) != 0)
+        return false;
+
+    // Test if there are object that are in both TypeSets
+    for (unsigned i = 0; i < getObjectCount(); i++) {
+        TypeObjectKey *obj = getObject(i);
+        if (!obj)
+            continue;
+        if (other->hasType(Type::ObjectType(obj)))
+            return false;
     }
 
     return true;
@@ -1365,6 +1404,17 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
                 }
             }
 
+            if (native == intrinsic_UnsafeSetElement) {
+                // UnsafeSetElement(arr0, idx0, elem0, ..., arrN, idxN, elemN)
+                // is (basically) equivalent to arri[idxi] = elemi for i = 0...N
+                JS_ASSERT((callsite->argumentCount % 3) == 0);
+                for (size_t i = 0; i < callsite->argumentCount; i += 3) {
+                    StackTypeSet *arr = callsite->argumentTypes[i];
+                    StackTypeSet *elem = callsite->argumentTypes[i+2];
+                    arr->addSetProperty(cx, script, pc, elem, JSID_VOID);
+                }
+            }
+
             if (native == js::array_pop || native == js::array_shift)
                 callsite->thisTypes->addGetProperty(cx, script, pc, callsite->returnTypes, JSID_VOID);
 
@@ -2339,27 +2389,6 @@ class TypeConstraintFreezeStack : public TypeConstraint
 // TypeCompartment
 /////////////////////////////////////////////////////////////////////
 
-static inline bool
-TypeInferenceSupported()
-{
-#ifdef JS_METHODJIT
-    // JM+TI will generate FPU instructions with TI enabled. As a workaround,
-    // we disable TI to prevent this on platforms which do not have FPU
-    // support.
-    JSC::MacroAssembler masm;
-    if (!masm.supportsFloatingPoint())
-        return false;
-#endif
-
-#if WTF_ARM_ARCH_VERSION == 6
-    // If building for ARMv6 targets, we can't be guaranteed an FPU,
-    // so we hardcode TI off for consistency (see bug 793740).
-    return false;
-#endif
-
-    return true;
-}
-
 TypeCompartment::TypeCompartment()
 {
     PodZero(this);
@@ -2371,7 +2400,7 @@ TypeZone::init(JSContext *cx)
 {
     if (!cx ||
         !cx->hasOption(JSOPTION_TYPE_INFERENCE) ||
-        !TypeInferenceSupported())
+        !cx->runtime->jitSupportsFloatingPoint)
     {
         return;
     }
@@ -2421,6 +2450,9 @@ static inline jsbytecode *
 FindPreviousInnerInitializer(HandleScript script, jsbytecode *initpc)
 {
     if (!script->hasAnalysis())
+        return NULL;
+
+    if (!script->analysis()->maybeCode(initpc))
         return NULL;
 
     /*
@@ -2890,6 +2922,10 @@ TypeCompartment::addPendingRecompile(JSContext *cx, RawScript script, jsbytecode
 
 # ifdef JS_ION
     CancelOffThreadIonCompile(cx->compartment, script);
+
+    // Let the script warm up again before attempting another compile.
+    if (ion::IsBaselineEnabled(cx))
+        script->resetUseCount();
 
     if (script->hasIonScript())
         addPendingRecompile(cx, script->ionScript()->recompileInfo());
@@ -4095,7 +4131,6 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferen
       case JSOP_TABLESWITCH:
       case JSOP_TRY:
       case JSOP_LABEL:
-      case JSOP_LINKASMJS:
         break;
 
         /* Bytecodes pushing values of known type. */

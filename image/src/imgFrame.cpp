@@ -17,7 +17,7 @@
 static bool gDisableOptimize = false;
 
 #include "cairo.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 #include "mozilla/Likely.h"
 
 #if defined(XP_WIN)
@@ -146,7 +146,7 @@ imgFrame::~imgFrame()
   }
 }
 
-nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight, 
+nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
                         gfxASurface::gfxImageFormat aFormat, uint8_t aPaletteDepth /* = 0 */)
 {
   // assert for properties that should be verified by decoders, warn for properties related to bad content
@@ -438,7 +438,7 @@ void imgFrame::Draw(gfxContext *aContext, gfxPattern::GraphicsFilter aFilter,
                     const nsIntMargin &aPadding, const nsIntRect &aSubimage,
                     uint32_t aImageFlags)
 {
-  SAMPLE_LABEL("image", "imgFrame::Draw");
+  PROFILER_LABEL("image", "imgFrame::Draw");
   NS_ASSERTION(!aFill.IsEmpty(), "zero dest size --- fix caller");
   NS_ASSERTION(!aSubimage.IsEmpty(), "zero source size --- fix caller");
   NS_ASSERTION(!mPalettedImageData, "Directly drawing a paletted image!");
@@ -492,7 +492,7 @@ nsresult imgFrame::Extract(const nsIntRect& aRegion, imgFrame** aResult)
   // (albeit slower) Cairo fallback scaler will be used.
   subImage->mNeverUseDeviceSurface = true;
 
-  nsresult rv = subImage->Init(0, 0, aRegion.width, aRegion.height, 
+  nsresult rv = subImage->Init(0, 0, aRegion.width, aRegion.height,
                                mFormat, mPaletteDepth);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -707,7 +707,34 @@ nsresult imgFrame::UnlockImageData()
   if (mQuartzSurface)
     mQuartzSurface->Flush();
 #endif
+
   return NS_OK;
+}
+
+void imgFrame::MarkImageDataDirty()
+{
+  if (mImageSurface)
+    mImageSurface->Flush();
+
+#ifdef USE_WIN_SURFACE
+  if (mWinSurface)
+    mWinSurface->Flush();
+#endif
+
+  if (mImageSurface)
+    mImageSurface->MarkDirty();
+
+#ifdef USE_WIN_SURFACE
+  if (mWinSurface)
+    mWinSurface->MarkDirty();
+#endif
+
+#ifdef XP_MACOSX
+  // The quartz image surface (ab)uses the flush method to get the
+  // cairo_image_surface data into a CGImage, so we have to call Flush() here.
+  if (mQuartzSurface)
+    mQuartzSurface->Flush();
+#endif
 }
 
 int32_t imgFrame::GetTimeout() const

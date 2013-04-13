@@ -10,6 +10,7 @@
 #include "nsXPIDLString.h"
 #include "nsDocShellCID.h"
 #include "nsIWebNavigationInfo.h"
+#include "nsIDocument.h"
 #include "nsIDOMWindow.h"
 #include "nsNetUtil.h"
 #include "nsAutoPtr.h"
@@ -261,7 +262,7 @@ nsDSURIContentListener::SetParentContentListener(nsIURIContentListener*
 
 bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIRequest *request,
                                                         const nsAString& policy) {
-    static const char allowFrom[] = "allow-from ";
+    static const char allowFrom[] = "allow-from";
     const uint32_t allowFromLen = ArrayLength(allowFrom) - 1;
     bool isAllowFrom =
         StringHead(policy, allowFromLen).LowerCaseEqualsLiteral(allowFrom);
@@ -375,6 +376,12 @@ bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIRequest *request,
     // If the X-Frame-Options value is "allow-from [uri]", then the top
     // frame in the parent chain must be from that origin
     if (isAllowFrom) {
+        if (policy.Length() == allowFromLen ||
+            (policy[allowFromLen] != ' ' &&
+             policy[allowFromLen] != '\t')) {
+            ReportXFOViolation(curDocShellItem, uri, eALLOWFROM);
+            return false;
+        }
         rv = NS_NewURI(getter_AddRefs(uri),
                        Substring(policy, allowFromLen));
         if (NS_FAILED(rv))

@@ -506,6 +506,7 @@ class IDLInterface(IDLObjectWithScope):
         # self.interfacesImplementingSelf is the set of interfaces that directly
         # have self as a consequential interface
         self.interfacesImplementingSelf = set()
+        self._hasChildInterfaces = False
 
         IDLObjectWithScope.__init__(self, location, parentScope, name)
 
@@ -566,6 +567,8 @@ class IDLInterface(IDLObjectWithScope):
 
         if self.parent:
             self.parent.finish(scope)
+
+            self.parent._hasChildInterfaces = True
 
             # Callbacks must not inherit from non-callbacks or inherit from
             # anything that has consequential interfaces.
@@ -891,6 +894,15 @@ class IDLInterface(IDLObjectWithScope):
                     elif not newMethod in self.namedConstructors:
                         raise WebIDLError("NamedConstructor conflicts with a NamedConstructor of a different interface",
                                           [method.location, newMethod.location])
+            elif (identifier == "PrefControlled" or
+                  identifier == "Pref" or
+                  identifier == "NeedNewResolve" or
+                  identifier == "JSImplementation"):
+                # Known attributes that we don't need to do anything with here
+                pass
+            else:
+                raise WebIDLError("Unknown extended attribute %s" % identifier,
+                                  [attr.location])
 
             attrlist = attr.listValue()
             self._extendedAttrDict[identifier] = attrlist if len(attrlist) else True
@@ -976,6 +988,9 @@ class IDLInterface(IDLObjectWithScope):
 
     def isJSImplemented(self):
         return bool(self.getJSImplementation())
+
+    def hasChildInterfaces(self):
+        return self._hasChildInterfaces
 
     def _getDependentObjects(self):
         deps = set(self.members)
@@ -2480,6 +2495,20 @@ class IDLAttribute(IDLInterfaceMember):
                 raise WebIDLError("[LenientFloat] used on an attribute with a "
                                   "non-restricted-float type",
                                   [attr.location, self.location])
+        elif (identifier == "Pref" or
+              identifier == "SetterThrows" or
+              identifier == "Pure" or
+              identifier == "Throws" or
+              identifier == "GetterThrows" or
+              identifier == "ChromeOnly" or
+              identifier == "Constant" or
+              identifier == "Func" or
+              identifier == "Creator"):
+            # Known attributes that we don't need to do anything with here
+            pass
+        else:
+            raise WebIDLError("Unknown extended attribute %s" % identifier,
+                              [attr.location])
         IDLInterfaceMember.handleExtendedAttribute(self, attr)
 
     def resolve(self, parentScope):
@@ -3013,6 +3042,17 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
                 raise WebIDLError("[LenientFloat] used on an operation with no "
                                   "restricted float type arguments",
                                   [attr.location, self.location])
+        elif (identifier == "Throws" or
+              identifier == "Creator" or
+              identifier == "ChromeOnly" or
+              identifier == "Pref" or
+              identifier == "Func" or
+              identifier == "WebGLHandlesContextLoss"):
+            # Known attributes that we don't need to do anything with here
+            pass
+        else:
+            raise WebIDLError("Unknown extended attribute %s" % identifier,
+                              [attr.location])
         IDLInterfaceMember.handleExtendedAttribute(self, attr)
 
     def _getDependentObjects(self):

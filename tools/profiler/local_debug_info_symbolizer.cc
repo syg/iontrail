@@ -1,5 +1,10 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "PlatformMacros.h"
+#include "nsAutoPtr.h"
 
 #if !defined(SPS_OS_windows)
 # include "common/module.h"
@@ -8,8 +13,7 @@
 #include "google_breakpad/processor/code_module.h"
 #include "google_breakpad/processor/code_modules.h"
 #include "google_breakpad/processor/stack_frame.h"
-#include "processor/logging.h"
-#include "common/scoped_ptr.h"
+#include "common/logging.h"
 
 #if defined(SPS_PLAT_amd64_linux) || defined(SPS_PLAT_arm_android) \
     || defined(SPS_PLAT_x86_linux) || defined(SPS_PLAT_x86_android)
@@ -22,7 +26,6 @@
 # error "Unknown platform"
 #endif
 
-#include "platform.h"
 #include "local_debug_info_symbolizer.h"
 
 namespace google_breakpad {
@@ -58,21 +61,16 @@ LocalDebugInfoSymbolizer::FillSourceLineInfo(const CodeModules* modules,
         no_symbol_modules_.end()) {
       return kNoError;
     }
-    LOG("BPUnw:");
-    LOGF("BPUnw: ReadSymbolData: BEGIN   %s", module->code_file().c_str());
     if (!ReadSymbolData(module->code_file(),
                         debug_dirs_,
                         ONLY_CFI,
                         &debug_info_module)) {
-      BPLOG(ERROR) << "ReadSymbolData failed for " << module->code_file();
-      LOGF("BPUnw: ReadSymbolData: FAIL    %s", module->code_file().c_str());
       if (debug_info_module)
         delete debug_info_module;
       no_symbol_modules_.insert(module->code_file());
       return kNoError;
     }
 
-    LOGF("BPUnw: ReadSymbolData: SUCCESS %s", module->code_file().c_str());
     symbols_[module->code_file()] = debug_info_module;
   } else {
     debug_info_module = it->second;
@@ -145,15 +143,18 @@ CFIFrameInfo* LocalDebugInfoSymbolizer::FindCFIFrameInfo(
     return NULL;
 
   //TODO: can we cache this data per-address? does that make sense?
-  scoped_ptr<CFIFrameInfo> rules(new CFIFrameInfo());
-  ConvertCFI(entry->initial_rules, rules.get());
+  // TODO: Maybe this should use google_breakpad::scoped_ptr, since we're in
+  // "namespace google_breakpad". Not using scoped_ptr currently, because its
+  // header triggers build warnings -- see bug 855010.
+  nsAutoPtr<CFIFrameInfo> rules(new CFIFrameInfo());
+  ConvertCFI(entry->initial_rules, rules);
   for (Module::RuleChangeMap::const_iterator delta_it =
            entry->rule_changes.begin();
        delta_it != entry->rule_changes.end() && delta_it->first < address;
        ++delta_it) {
-    ConvertCFI(delta_it->second, rules.get());
+    ConvertCFI(delta_it->second, rules);
   }
-  return rules.release();
+  return rules.forget();
 #endif /* defined(SPS_OS_windows) */
 }
 

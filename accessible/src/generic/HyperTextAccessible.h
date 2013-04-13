@@ -60,12 +60,12 @@ public:
   // HyperTextAccessible (static helper method)
 
   // Convert content offset to rendered text offset  
-  static nsresult ContentToRenderedOffset(nsIFrame *aFrame, int32_t aContentOffset,
-                                          uint32_t *aRenderedOffset);
+  nsresult ContentToRenderedOffset(nsIFrame *aFrame, int32_t aContentOffset,
+                                   uint32_t *aRenderedOffset);
   
   // Convert rendered text offset to content offset
-  static nsresult RenderedToContentOffset(nsIFrame *aFrame, uint32_t aRenderedOffset,
-                                          int32_t *aContentOffset);
+  nsresult RenderedToContentOffset(nsIFrame *aFrame, uint32_t aRenderedOffset,
+                                   int32_t *aContentOffset);
 
   //////////////////////////////////////////////////////////////////////////////
   // HyperLinkAccessible
@@ -263,6 +263,12 @@ protected:
     return aOffset;
   }
 
+  /**
+   * Return an offset of the found word boundary.
+   */
+  int32_t FindWordBoundary(int32_t aOffset, nsDirection aDirection,
+                           EWordMovementType aWordMovementType);
+
   /*
    * This does the work for nsIAccessibleText::GetText[At|Before|After]Offset
    * @param aType, eGetBefore, eGetAt, eGetAfter
@@ -294,7 +300,8 @@ protected:
   int32_t GetRelativeOffset(nsIPresShell *aPresShell, nsIFrame *aFromFrame,
                             int32_t aFromOffset, Accessible* aFromAccessible,
                             nsSelectionAmount aAmount, nsDirection aDirection,
-                            bool aNeedsStart);
+                            bool aNeedsStart,
+                            EWordMovementType aWordMovementType);
 
   /**
     * Provides information for substring that is defined by the given start

@@ -41,9 +41,27 @@ Cu.import("resource://gre/modules/services-common/log4moz.js");
 let logger = Log4Moz.repository.getLogger("Marionette");
 logger.info('marionette-actors.js loaded');
 
-Services.prefs.setBoolPref("network.gonk.manage-offline-status", false);
-Services.io.manageOfflineStatus = false;
-Services.io.offline = false;
+let bypassOffline = false;
+
+try {
+  XPCOMUtils.defineLazyGetter(this, "libcutils", function () {
+    Cu.import("resource://gre/modules/systemlibs.js");
+    return libcutils;
+  });
+  if (libcutils) {
+    let platform = libcutils.property_get("ro.product.device");
+    logger.info("Platform detected is " + platform);
+    bypassOffline = (platform == "generic" || platform == "panda");
+  }
+}
+catch(e) {}
+
+if (bypassOffline) {
+  logger.info("Bypassing offline status.");
+  Services.prefs.setBoolPref("network.gonk.manage-offline-status", false);
+  Services.io.manageOfflineStatus = false;
+  Services.io.offline = false;
+}
 
 // This is used to prevent newSession from returning before the telephony
 // API's are ready; see bug 792647.  This assumes that marionette-actors.js
@@ -392,7 +410,7 @@ MarionetteDriverActor.prototype = {
     this.curBrowser = this.browsers[winId];
     if (this.curBrowser.elementManager.seenItems[winId] == undefined) {
       //add this to seenItems so we can guarantee the user will get winId as this window's id
-      this.curBrowser.elementManager.seenItems[winId] = win;
+      this.curBrowser.elementManager.seenItems[winId] = Cu.getWeakReference(win);
     }
   },
 
@@ -1340,10 +1358,35 @@ MarionetteDriverActor.prototype = {
     let element = aRequest.element;
     let x = aRequest.x;
     let y = aRequest.y;
-    this.sendAsync("press", {value: element,
-                             corx: x,
-                             cory: y,
-                             command_id: this.command_id});
+    if (this.context == "chrome") {
+      this.sendError("Not in Chrome", 500, null, this.command_id);
+    }
+    else {
+      this.sendAsync("press", {value: element,
+                               corx: x,
+                               cory: y,
+                               command_id: this.command_id});
+    }
+  },
+
+  /**
+   * Cancel touch
+   *
+   * @param object aRequest
+   *        'element' represents the ID of the element to touch
+   */
+  cancelTouch: function MDA_cancelTouch(aRequest) {
+    this.command_id = this.getCommandId();
+    let element = aRequest.element;
+    let touchId = aRequest.touchId;
+    if (this.context == "chrome") {
+      this.sendError("Not in Chrome", 500, null, this.command_id);
+    }
+    else {
+      this.sendAsync("cancelTouch", {value: element,
+                                     touchId: touchId,
+                                     command_id: this.command_id});
+    }
   },
 
   /**
@@ -1358,11 +1401,16 @@ MarionetteDriverActor.prototype = {
     let touchId = aRequest.touchId;
     let x = aRequest.x;
     let y = aRequest.y;
-    this.sendAsync("release", {value: element,
-                               touchId: touchId,
-                               corx: x,
-                               cory: y,
-                               command_id: this.command_id});
+    if (this.context == "chrome") {
+      this.sendError("Not in Chrome", 500, null, this.command_id);
+    }
+    else {
+      this.sendAsync("release", {value: element,
+                                 touchId: touchId,
+                                 corx: x,
+                                 cory: y,
+                                 command_id: this.command_id});
+    }
   },
 
   /**
@@ -1377,7 +1425,8 @@ MarionetteDriverActor.prototype = {
       this.sendError("Not in Chrome", 500, null, this.command_id);
     }
     else {
-      this.sendAsync("actionChain", {value: aRequest.value,
+      this.sendAsync("actionChain", {chain: aRequest.chain,
+                                     nextId: aRequest.nextId,
                                      command_id: this.command_id});
     }
   },
@@ -2117,7 +2166,7 @@ MarionetteDriverActor.prototype = {
           reg.id = this.curBrowser.register(this.generateFrameId(message.json.value),
                                          message.json.href); 
         }
-        this.curBrowser.elementManager.seenItems[reg.id] = listenerWindow; //add to seenItems
+        this.curBrowser.elementManager.seenItems[reg.id] = Cu.getWeakReference(listenerWindow); //add to seenItems
         reg.importedScripts = this.importedScripts.path;
         if (nullPrevious && (this.curBrowser.curFrameId != null)) {
           this.sendAsync("newSession", {B2G: (appName == "B2G")});
@@ -2147,6 +2196,7 @@ MarionetteDriverActor.prototype.requestTypes = {
   "doubleTap": MarionetteDriverActor.prototype.doubleTap,
   "press": MarionetteDriverActor.prototype.press,
   "release": MarionetteDriverActor.prototype.release,
+  "cancelTouch": MarionetteDriverActor.prototype.cancelTouch,
   "actionChain": MarionetteDriverActor.prototype.actionChain,
   "multiAction": MarionetteDriverActor.prototype.multiAction,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeWithCallback,

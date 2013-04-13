@@ -492,6 +492,7 @@ Toolbox.prototype = {
       iframe.id = "toolbox-panel-iframe-" + id;
       iframe.setAttribute("flex", 1);
       iframe.setAttribute("forceOwnRefreshDriver", "");
+      iframe.tooltip = "aHTMLTooltip";
 
       let vbox = this.doc.getElementById("toolbox-panel-" + id);
       vbox.appendChild(iframe);
@@ -499,7 +500,8 @@ Toolbox.prototype = {
       let boundLoad = function() {
         iframe.removeEventListener("DOMContentLoaded", boundLoad, true);
 
-        definition.build(iframe.contentWindow, this).then(function(panel) {
+        let built = definition.build(iframe.contentWindow, this);
+        Promise.resolve(built).then(function(panel) {
           this._toolPanels.set(id, panel);
 
           this.emit(id + "-ready", panel);
@@ -712,6 +714,11 @@ Toolbox.prototype = {
       outstanding.push(panel.destroy());
     }
 
+    let container = this.doc.getElementById("toolbox-buttons");
+    while(container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+
     outstanding.push(this._host.destroy());
 
     // Targets need to be notified that the toolbox is being torn down, so that
@@ -724,6 +731,9 @@ Toolbox.prototype = {
 
     Promise.all(outstanding).then(function() {
       this.emit("destroyed");
+      // Free _host after the call to destroyed in order to let a chance
+      // to destroyed listeners to still query toolbox attributes
+      this._host = null;
       deferred.resolve();
     }.bind(this));
 

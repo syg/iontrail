@@ -45,14 +45,14 @@ CalleeToToken(JSFunction *fun)
     return CalleeToken(uintptr_t(fun) | uintptr_t(CalleeToken_Function));
 }
 static inline CalleeToken
-CalleeToToken(RawScript script)
-{
-    return CalleeToken(uintptr_t(script) | uintptr_t(CalleeToken_Script));
-}
-static inline CalleeToken
 CalleeToParallelToken(JSFunction *fun)
 {
     return CalleeToken(uintptr_t(fun) | uintptr_t(CalleeToken_ParallelFunction));
+}
+static inline CalleeToken
+CalleeToToken(RawScript script)
+{
+    return CalleeToken(uintptr_t(script) | uintptr_t(CalleeToken_Script));
 }
 static inline bool
 CalleeTokenIsFunction(CalleeToken token)
@@ -69,7 +69,7 @@ static inline RawFunction
 CalleeTokenToParallelFunction(CalleeToken token)
 {
     JS_ASSERT(GetCalleeTokenTag(token) == CalleeToken_ParallelFunction);
-    return (RawFunction)(uintptr_t(token) & ~uintptr_t(0x3));
+    return (JSFunction *)(uintptr_t(token) & ~uintptr_t(0x3));
 }
 static inline RawScript
 CalleeTokenToScript(CalleeToken token)
@@ -190,8 +190,8 @@ class OsiIndex
 // The descriptor is organized into three sections:
 // [ frame size | constructing bit | frame type ]
 // < highest - - - - - - - - - - - - - - lowest >
-static const uintptr_t FRAMESIZE_SHIFT = 3;
-static const uintptr_t FRAMETYPE_BITS = 3;
+static const uintptr_t FRAMESIZE_SHIFT = 4;
+static const uintptr_t FRAMETYPE_BITS = 4;
 static const uintptr_t FRAMETYPE_MASK = (1 << FRAMETYPE_BITS) - 1;
 
 // Ion frames have a few important numbers associated with them:
@@ -256,7 +256,14 @@ class FrameSizeClass
 // Data needed to recover from an exception.
 struct ResumeFromException
 {
-    void *stackPointer;
+    static const uint32_t RESUME_ENTRY_FRAME = 0;
+    static const uint32_t RESUME_CATCH = 1;
+    static const uint32_t RESUME_FORCED_RETURN = 2;
+
+    uint8_t *framePointer;
+    uint8_t *stackPointer;
+    uint8_t *target;
+    uint32_t kind;
 };
 
 void HandleException(ResumeFromException *rfe);
@@ -317,6 +324,9 @@ ReadFrameDoubleSlot(IonJSFrameLayout *fp, int32_t slot)
 {
     return *(double *)((char *)fp + OffsetOfFrameSlot(slot));
 }
+
+void
+MarkCalleeToken(JSTracer *trc, CalleeToken token);
 
 } /* namespace ion */
 } /* namespace js */

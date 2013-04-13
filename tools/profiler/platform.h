@@ -29,9 +29,6 @@
 #ifndef TOOLS_PLATFORM_H_
 #define TOOLS_PLATFORM_H_
 
-// Uncomment this line to force desktop logging
-//#define SPS_FORCE_LOG
-
 #ifdef ANDROID
 #include <android/log.h>
 #else
@@ -42,22 +39,32 @@
 #include "mozilla/Util.h"
 #include "mozilla/unused.h"
 #include "mozilla/TimeStamp.h"
+#include "PlatformMacros.h"
 #include "v8-support.h"
 #include <vector>
+
 #define ASSERT(a) MOZ_ASSERT(a)
+
 #ifdef ANDROID
-#if defined(__arm__) || defined(__thumb__)
-#define ENABLE_SPS_LEAF_DATA
-#define ENABLE_ARM_LR_SAVING
-#endif
-#define LOG(text) __android_log_write(ANDROID_LOG_ERROR, "Profiler", text)
-#define LOGF(format, ...) __android_log_print(ANDROID_LOG_ERROR, "Profiler", format, __VA_ARGS__)
-#elif defined(SPS_FORCE_LOG)
-#define LOG(text) fprintf(stderr, "Profiler: %s\n", text)
-#define LOGF(format, ...) fprintf(stderr, "Profiler: " format "\n", __VA_ARGS__)
+# if defined(__arm__) || defined(__thumb__)
+#  define ENABLE_SPS_LEAF_DATA
+#  define ENABLE_ARM_LR_SAVING
+# endif
+# define LOG(text) \
+    __android_log_write(ANDROID_LOG_ERROR, "Profiler", text)
+# define LOGF(format, ...) \
+    __android_log_print(ANDROID_LOG_ERROR, "Profiler", format, __VA_ARGS__)
+
 #else
-#define LOG(TEXT) do {} while(0)
-#define LOGF(format, ...) do {} while(0)
+  extern bool moz_profiler_verbose();
+# define LOG(text) \
+    do { if (moz_profiler_verbose()) fprintf(stderr, "Profiler: %s\n", text); \
+    } while (0)
+# define LOGF(format, ...) \
+    do { if (moz_profiler_verbose()) fprintf(stderr, "Profiler: " format \
+                                             "\n", __VA_ARGS__);        \
+    } while (0)
+
 #endif
 
 #if defined(XP_MACOSX) || defined(XP_WIN)
@@ -190,6 +197,32 @@ class Thread {
   DISALLOW_COPY_AND_ASSIGN(Thread);
 };
 
+// ----------------------------------------------------------------------------
+// HAVE_NATIVE_UNWIND
+//
+// Pseudo backtraces are available on all platforms.  Native
+// backtraces are available only on selected platforms.  Breakpad is
+// the only supported native unwinder.  HAVE_NATIVE_UNWIND is set at
+// build time to indicate whether native unwinding is possible on this
+// platform.  The actual unwind mode currently in use is stored in
+// sUnwindMode.
+
+#undef HAVE_NATIVE_UNWIND
+#if defined(MOZ_PROFILING) \
+    && (defined(SPS_PLAT_amd64_linux) || defined(SPS_PLAT_arm_android) \
+        || defined(SPS_PLAT_x86_linux) \
+        || defined(SPS_OS_windows) \
+        || defined(SPS_OS_darwin))
+# define HAVE_NATIVE_UNWIND
+#endif
+
+/* Some values extracted at startup from environment variables, that
+   control the behaviour of the breakpad unwinder. */
+void read_profiler_env_vars();
+typedef  enum { UnwINVALID, UnwNATIVE, UnwPSEUDO, UnwCOMBINED }  UnwMode;
+extern UnwMode sUnwindMode;       /* what mode? */
+extern int     sUnwindInterval;   /* in milliseconds */
+extern int     sUnwindStackScan;  /* max # of dubious frames allowed */
 
 
 // ----------------------------------------------------------------------------

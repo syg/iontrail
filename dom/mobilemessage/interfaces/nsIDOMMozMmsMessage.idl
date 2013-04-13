@@ -13,7 +13,7 @@ dictionary MmsAttachment
   nsIDOMBlob content;
 };
 
-[scriptable, builtinclass, uuid(c9683d00-88a6-11e2-85cc-57a33dfbea3b)]
+[scriptable, builtinclass, uuid(210654af-4cc8-42e5-81b2-051f0f393c3a)]
 interface nsIDOMMozMmsMessage : nsISupports
 {
   /**
@@ -23,10 +23,12 @@ interface nsIDOMMozMmsMessage : nsISupports
 
   readonly attribute long      id;
 
+  readonly attribute unsigned long long threadId;
+
   /**
    * Should be "not-downloaded", "received", "sending", "sent" or "error".
    */
-  readonly attribute DOMString state;
+  readonly attribute DOMString delivery;
 
   [implicit_jscontext]
   readonly attribute jsval     deliveryStatus; // DOMString[]

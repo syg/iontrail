@@ -19,6 +19,7 @@ namespace ion {
 
 class CodeGenerator;
 class CallInfo;
+class BaselineInspector;
 
 class IonBuilder : public MIRGenerator
 {
@@ -173,7 +174,8 @@ class IonBuilder : public MIRGenerator
 
   public:
     IonBuilder(JSContext *cx, TempAllocator *temp, MIRGraph *graph,
-               TypeOracle *oracle, CompileInfo *info, size_t inliningDepth = 0, uint32_t loopDepth = 0);
+               TypeOracle *oracle, BaselineInspector *inspector, CompileInfo *info,
+               size_t inliningDepth = 0, uint32_t loopDepth = 0);
 
     bool build();
     bool buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoint,
@@ -196,7 +198,7 @@ class IonBuilder : public MIRGenerator
     JSFunction *getSingleCallTarget(types::StackTypeSet *calleeTypes);
     bool getPolyCallTargets(types::StackTypeSet *calleeTypes,
                             AutoObjectVector &targets, uint32_t maxTargets);
-    bool canInlineTarget(JSFunction *target);
+    bool canInlineTarget(JSFunction *target, CallInfo &callInfo);
 
     void popCfgStack();
     bool processDeferredContinues(CFGState &state);
@@ -401,7 +403,11 @@ class IonBuilder : public MIRGenerator
         InliningStatus_Inlined
     };
 
-    // Inlining helpers.
+    // Oracles.
+    bool makeInliningDecision(JSFunction *target, CallInfo &callInfo);
+    uint32_t selectInliningTargets(AutoObjectVector &targets, CallInfo &callInfo, Vector<bool> &choiceSet);
+
+    // Native inlining helpers.
     types::StackTypeSet *getInlineReturnTypeSet();
     MIRType getInlineReturnType();
     types::StackTypeSet *getInlineThisTypeSet(CallInfo &callInfo);
@@ -454,13 +460,23 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineThrowError(CallInfo &callInfo);
     InliningStatus inlineDump(CallInfo &callInfo);
 
+    // Main inlining functions
     InliningStatus inlineNativeCall(CallInfo &callInfo, JSNative native);
+    bool inlineScriptedCall(CallInfo &callInfo, JSFunction *target);
+    InliningStatus inlineSingleCall(CallInfo &callInfo, JSFunction *target);
 
     // Call functions
-    bool inlineScriptedCalls(AutoObjectVector &targets, AutoObjectVector &originals,
-                             CallInfo &callInfo);
-    bool inlineScriptedCall(HandleFunction target, CallInfo &callInfo);
-    bool makeInliningDecision(AutoObjectVector &targets);
+    InliningStatus inlineCallsite(AutoObjectVector &targets, AutoObjectVector &originals,
+                                  CallInfo &callInfo);
+    bool inlineCalls(CallInfo &callInfo, AutoObjectVector &targets, AutoObjectVector &originals,
+                     Vector<bool> &choiceSet, MGetPropertyCache *maybeCache);
+
+    // Inlining helpers.
+    bool inlineGenericFallback(JSFunction *target, CallInfo &callInfo, MBasicBlock *dispatchBlock,
+                               bool clonedAtCallsite);
+    bool inlineTypeObjectFallback(CallInfo &callInfo, MBasicBlock *dispatchBlock,
+                                  MTypeObjectDispatch *dispatch, MGetPropertyCache *cache,
+                                  MBasicBlock **fallbackTarget);
 
     bool anyFunctionIsCloneAtCallsite(types::StackTypeSet *funTypes);
     MDefinition *makeCallsiteClone(HandleFunction target, MDefinition *fun);
@@ -496,7 +512,8 @@ class IonBuilder : public MIRGenerator
 
     // If off thread compilation is successful, the final code generator is
     // attached here. Code has been generated, but not linked (there is not yet
-    // an IonScript). This is heap allocated, and must be explicitly destroyed.
+    // an IonScript). This is heap allocated, and must be explicitly destroyed,
+    // performed by FinishOffThreadBuilder().
     CodeGenerator *backgroundCodegen_;
 
   public:
@@ -533,9 +550,11 @@ class IonBuilder : public MIRGenerator
     Vector<ControlFlowInfo, 2, IonAllocPolicy> labels_;
     Vector<MInstruction *, 2, IonAllocPolicy> iterators_;
     TypeOracle *oracle;
+    BaselineInspector *inspector;
 
     size_t inliningDepth_;
     Vector<MDefinition *, 0, IonAllocPolicy> inlinedArguments_;
+    Vector<types::StackTypeSet *, 0, IonAllocPolicy> inlinedArgumentTypes_;
 
     // True if script->failedBoundsCheck is set for the current script or
     // an outer script.
@@ -601,11 +620,13 @@ class CallInfo
         fun_ = callInfo.fun();
         thisArg_ = callInfo.thisArg();
 
-        if (!args_.append(callInfo.argv()->begin(), callInfo.argv()->end()))
+        if (!args_.append(callInfo.argv().begin(), callInfo.argv().end()))
             return false;
 
         if (callInfo.hasTypeInfo())
             setTypeInfo(callInfo.types(), callInfo.barrier());
+
+        argsBarriers_ = callInfo.argsBarriers_;
 
         return true;
     }
@@ -629,7 +650,7 @@ class CallInfo
 
     bool initCallType(TypeOracle *oracle, HandleScript script, jsbytecode *pc) {
         argsBarriers_ = oracle->callArgsBarrier(script, pc);
-        thisType_ = oracle->getCallTarget(script, argc(), pc);
+        thisType_ = oracle->getCallArg(script, argc(), 0, pc);
         if (!argsType_.reserve(argc()))
             return false;
         for (uint32_t i = 1; i <= argc(); i++)
@@ -637,13 +658,12 @@ class CallInfo
         return true;
     }
 
-    bool initFunApplyArguments(TypeOracle *oracle, HandleScript script, jsbytecode *pc, uint32_t nargs) {
+    bool initFunApplyArguments(TypeOracle *oracle, HandleScript script, jsbytecode *pc,
+                               Vector<types::StackTypeSet *> *types) {
         argsBarriers_ = oracle->callArgsBarrier(script, pc);
-        thisType_ = oracle->getCallArg(script, 2, 0, pc);
-        if (!argsType_.reserve(nargs))
+        thisType_ = oracle->getCallArg(script, 2, 1, pc);
+        if (!argsType_.append(types->begin(), types->end()))
             return false;
-        for (uint32_t i = 0; i < nargs; i++)
-            argsType_.infallibleAppend(oracle->parameterTypeSet(script, i));
         return true;
     }
 
@@ -688,8 +708,8 @@ class CallInfo
         args_.append(args->begin(), args->end());
     }
 
-    Vector<MDefinition *> *argv() {
-        return &args_;
+    Vector<MDefinition *> &argv() {
+        return args_;
     }
 
     Vector<types::StackTypeSet *> &argvType() {

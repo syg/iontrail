@@ -14,6 +14,14 @@ var FindHelperUI = {
   _open: false,
   _status: null,
 
+  /*
+   * Properties
+   */
+
+  get isActive() {
+    return this._open;
+  },
+
   get status() {
     return this._status;
   },
@@ -35,6 +43,8 @@ var FindHelperUI = {
 
     this._cmdPrevious = document.getElementById(this.commands.previous);
     this._cmdNext = document.getElementById(this.commands.next);
+
+    this._textbox.addEventListener('keydown', this);
 
     // Listen for find assistant messages from content
     messageManager.addMessageListener("FindAssist:Show", this);
@@ -90,12 +100,24 @@ var FindHelperUI = {
         this._container.style.visibility = "visible";
         this._textbox.collapsed = false;
         break;
+
+      case "keydown":
+        if (aEvent.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_RETURN) {
+	  if (aEvent.shiftKey) {
+	    this.goToPrevious();
+	  } else {
+	    this.goToNext();
+	  }
+        }
     }
   },
 
   show: function findHelperShow() {
-
+    // Hide any menus
     ContextUI.dismiss();
+
+    // Shutdown selection related ui
+    SelectionHelperUI.closeEditSession();
 
     this._container.show(this);
     this.search(this._textbox.value);

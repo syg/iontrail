@@ -52,7 +52,9 @@
 #include "Layers.h"
 #include "LayerManagerOGL.h"
 #include "GLTextureImage.h"
+#include "LayerManagerComposite.h"
 #include "mozilla/layers/CompositorCocoaWidgetHelper.h"
+#include "mozilla/layers/CompositorOGL.h"
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
 #include "mozilla/a11y/Platform.h"
@@ -64,7 +66,7 @@
 
 #include <ApplicationServices/ApplicationServices.h>
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #include "nsIDOMWheelEvent.h"
 
@@ -72,7 +74,6 @@ using namespace mozilla;
 using namespace mozilla::layers;
 using namespace mozilla::gl;
 using namespace mozilla::widget;
-using namespace mozilla;
 
 #undef DEBUG_UPDATE
 #undef INVALIDATE_DEBUGGING  // flash areas as they are invalidated
@@ -89,6 +90,9 @@ extern "C" {
   CG_EXTERN void CGContextResetCTM(CGContextRef);
   CG_EXTERN void CGContextSetCTM(CGContextRef, CGAffineTransform);
   CG_EXTERN void CGContextResetClip(CGContextRef);
+
+  typedef CFTypeRef CGSRegionObj;
+  CGError CGSNewRegionWithRect(const CGRect *rect, CGSRegionObj *outRegion);
 }
 
 // defined in nsMenuBarX.mm
@@ -138,6 +142,10 @@ uint32_t nsChildView::sLastInputEventCount = 0;
 - (void)drawUsingOpenGL;
 - (void)drawUsingOpenGLCallback;
 
+- (BOOL)hasRoundedBottomCorners;
+- (CGFloat)bottomCornerRadius;
+- (void)maybeClearBottomCorners;
+
 // Called using performSelector:withObject:afterDelay:0 to release
 // aWidgetArray (and its contents) the next time through the run loop.
 - (void)releaseWidgets:(NSArray*)aWidgetArray;
@@ -154,6 +162,28 @@ uint32_t nsChildView::sLastInputEventCount = 0;
 
 - (BOOL)inactiveWindowAcceptsMouseEvent:(NSEvent*)aEvent;
 
+@end
+
+@interface NSView(NSThemeFrameCornerRadius)
+- (float)roundedCornerRadius;
+@end
+
+// Starting with 10.7 the bottom corners of all windows are rounded.
+// Unfortunately, the standard rounding that OS X applies to OpenGL views
+// does not use anti-aliasing and looks very crude. Since we want a smooth,
+// anti-aliased curve, we'll draw it ourselves.
+// Additionally, we need to turn off the OS-supplied rounding because it
+// eats into our corner's curve. We do that by overriding an NSSurface method.
+@interface NSSurface @end
+
+@implementation NSSurface(DontCutOffCorners)
+- (CGSRegionObj)_createRoundedBottomRegionForRect:(CGRect)rect
+{
+  // Create a normal rect region without rounded bottom corners.
+  CGSRegionObj region;
+  CGSNewRegionWithRect(&rect, &region);
+  return region;
+}
 @end
 
 #pragma mark -
@@ -211,6 +241,8 @@ nsChildView::nsChildView() : nsBaseWidget()
 , mParentView(nullptr)
 , mParentWidget(nullptr)
 , mBackingScaleFactor(0.0)
+, mFailedResizerImage(false)
+, mFailedCornerMaskImage(false)
 , mVisible(false)
 , mDrawing(false)
 , mPluginDrawing(false)
@@ -235,10 +267,11 @@ nsChildView::~nsChildView()
     kid = kid->GetPrevSibling();
     childView->ResetParent();
   }
-
+  
   NS_WARN_IF_FALSE(mOnDestroyCalled, "nsChildView object destroyed without calling Destroy()");
 
   mResizerImage = nullptr;
+  mCornerMaskImage = nullptr;
 
   // An nsChildView object that was in use can be destroyed without Destroy()
   // ever being called on it.  So we also need to do a quick, safe cleanup
@@ -1797,10 +1830,18 @@ nsChildView::CreateCompositor()
 {
   nsBaseWidget::CreateCompositor();
   if (mCompositorChild) {
-    LayerManagerOGL *manager =
-      static_cast<LayerManagerOGL*>(compositor::GetLayerManager(mCompositorParent));
+    LayerManagerComposite *manager =
+      compositor::GetLayerManager(mCompositorParent);
+    Compositor *compositor = manager->GetCompositor();
 
-    NSOpenGLContext *glContext = (NSOpenGLContext *)manager->GetNSOpenGLContext();
+    LayersBackend backend = compositor->GetBackend();
+    if (backend != LAYERS_OPENGL) {
+      NS_RUNTIMEABORT("Unexpected OMTC backend");
+    }
+
+    CompositorOGL *compositorOGL = static_cast<CompositorOGL*>(compositor);
+
+    NSOpenGLContext *glContext = (NSOpenGLContext *)compositorOGL->gl()->GetNativeData(GLContext::NativeGLContext);
 
     [(ChildView *)mView setGLContext:glContext];
     [(ChildView *)mView setUsingOMTCompositor:true];
@@ -1815,6 +1856,18 @@ nsChildView::GetThebesSurface()
   }
 
   return mTempThebesSurface;
+}
+
+void
+nsChildView::DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect)
+{
+  if (!aManager) {
+    return;
+  }
+
+  LayerManagerOGL *manager = static_cast<LayerManagerOGL *>(aManager);
+  MaybeDrawResizeIndicator(manager, aRect);
+  MaybeDrawRoundedBottomCorners(manager, aRect);
 }
 
 static void
@@ -1851,39 +1904,42 @@ DrawResizer(CGContextRef aCtx)
 }
 
 void
-nsChildView::DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect)
+nsChildView::MaybeDrawResizeIndicator(LayerManagerOGL* aManager, nsIntRect aRect)
 {
-  if (!ShowsResizeIndicator(nullptr)) {
-    return;
-  }
-
-  nsRefPtr<LayerManagerOGL> manager(static_cast<LayerManagerOGL*>(aManager));
-  if (!manager) {
+  nsIntRect resizeRect;
+  if (!ShowsResizeIndicator(&resizeRect) || mFailedResizerImage) {
     return;
   }
 
   if (!mResizerImage) {
-    mResizerImage = TextureImage::Create(manager->gl(),
-                                         nsIntSize(15, 15),
-                                         gfxASurface::CONTENT_COLOR_ALPHA,
-                                         LOCAL_GL_CLAMP_TO_EDGE,
-                                         TextureImage::UseNearestFilter);
+    mResizerImage =
+      aManager->gl()->CreateTextureImage(nsIntSize(resizeRect.width, resizeRect.height),
+                                        gfxASurface::CONTENT_COLOR_ALPHA,
+                                        LOCAL_GL_CLAMP_TO_EDGE,
+                                        TextureImage::UseNearestFilter);
 
     // Creation of texture images can fail.
     if (!mResizerImage)
       return;
 
-    nsIntRegion update(nsIntRect(0, 0, 15, 15));
+    nsIntRegion update(nsIntRect(0, 0, resizeRect.width, resizeRect.height));
     gfxASurface *asurf = mResizerImage->BeginUpdate(update);
     if (!asurf) {
       mResizerImage = nullptr;
       return;
     }
 
-    NS_ABORT_IF_FALSE(asurf->GetType() == gfxASurface::SurfaceTypeQuartz,
-                  "BeginUpdate must return a Quartz surface!");
-
+    // is the CairoSurface of a non QuartzSurface usable in the gfxQuartzSurface constructor ?
+    // answer seems to be NO (see comments on bug 675410
+    // this should not work for instance: new gfxQuartzSurface(asurf->CairoSurface(), false))
+    if (asurf->GetType() != gfxASurface::SurfaceTypeQuartz) {
+      NS_WARN_IF_FALSE(FALSE, "mResizerImage's surface is not Quartz");
+      mResizerImage = nullptr;
+      mFailedResizerImage = true;
+      return;
+    }
     nsRefPtr<gfxQuartzSurface> image = static_cast<gfxQuartzSurface*>(asurf);
+
     DrawResizer(image->GetCGContext());
 
     mResizerImage->EndUpdate();
@@ -1897,18 +1953,100 @@ nsChildView::DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect)
   TextureImage::ScopedBindTexture texBind(mResizerImage, LOCAL_GL_TEXTURE0);
 
   ShaderProgramOGL *program =
-    manager->GetProgram(mResizerImage->GetShaderProgramType());
+    aManager->GetProgram(mResizerImage->GetShaderProgramType(), nullptr);
   program->Activate();
-  program->SetLayerQuadRect(nsIntRect(bottomX - 15,
-                                      bottomY - 15,
-                                      15,
-                                      15));
+  program->SetLayerQuadRect(nsIntRect(bottomX - resizeIndicatorWidth,
+                                      bottomY - resizeIndicatorHeight,
+                                      resizeIndicatorWidth,
+                                      resizeIndicatorHeight));
   program->SetLayerTransform(gfx3DMatrix());
   program->SetLayerOpacity(1.0);
   program->SetRenderOffset(nsIntPoint(0,0));
   program->SetTextureUnit(0);
 
-  manager->BindAndDrawQuad(program);
+  aManager->BindAndDrawQuad(program);
+}
+
+static void
+DrawTopLeftCornerMask(CGContextRef aCtx, int aRadius)
+{
+  CGContextSetRGBFillColor(aCtx, 1.0, 1.0, 1.0, 1.0);
+  CGContextFillEllipseInRect(aCtx, CGRectMake(0, 0, aRadius * 2, aRadius * 2));
+}
+
+void
+nsChildView::MaybeDrawRoundedBottomCorners(LayerManagerOGL* aManager, nsIntRect aRect)
+{
+  if (![mView isKindOfClass:[ChildView class]] ||
+      ![(ChildView*)mView hasRoundedBottomCorners] ||
+      mFailedCornerMaskImage)
+    return;
+  
+  CGFloat cornerRadius = [(ChildView*)mView bottomCornerRadius];
+  int devPixelCornerRadius = cornerRadius * BackingScaleFactor();
+  
+  if (!mCornerMaskImage) {
+    mCornerMaskImage =
+      aManager->gl()->CreateTextureImage(nsIntSize(devPixelCornerRadius, devPixelCornerRadius),
+                                         gfxASurface::CONTENT_COLOR_ALPHA,
+                                         LOCAL_GL_CLAMP_TO_EDGE,
+                                         TextureImage::UseNearestFilter);
+
+    // Creation of texture images can fail.
+    if (!mCornerMaskImage)
+      return;
+
+    nsIntRegion update(nsIntRect(0, 0, devPixelCornerRadius, devPixelCornerRadius));
+    gfxASurface *asurf = mCornerMaskImage->BeginUpdate(update);
+    if (!asurf) {
+      mCornerMaskImage = nullptr;
+      return;
+    }
+    
+    // is the CairoSurface of a non QuartzSurface usable in the gfxQuartzSurface constructor ?
+    // answer seems to be NO (see comments on bug 675410
+    // this should not work for instance: new gfxQuartzSurface(asurf->CairoSurface(), false))
+    if (asurf->GetType() != gfxASurface::SurfaceTypeQuartz) {
+      NS_WARN_IF_FALSE(FALSE, "mCornerMaskImage's surface is not Quartz");
+      mCornerMaskImage = nullptr;
+      mFailedCornerMaskImage = true;
+      return;
+    }
+    nsRefPtr<gfxQuartzSurface> image = static_cast<gfxQuartzSurface*>(asurf);
+    
+    DrawTopLeftCornerMask(image->GetCGContext(), devPixelCornerRadius);
+    
+    mCornerMaskImage->EndUpdate();
+  }
+  
+  NS_ABORT_IF_FALSE(mCornerMaskImage, "Must have a texture allocated by now!");
+  
+  TextureImage::ScopedBindTexture texBind(mCornerMaskImage, LOCAL_GL_TEXTURE0);
+  
+  ShaderProgramOGL *program = aManager->GetProgram(mCornerMaskImage->GetShaderProgramType(), nullptr);
+  program->Activate();
+  program->SetLayerQuadRect(nsIntRect(0, 0, // aRect.x, aRect.y,
+                                      devPixelCornerRadius,
+                                      devPixelCornerRadius));
+  program->SetLayerOpacity(1.0);
+  program->SetRenderOffset(nsIntPoint(0,0));
+  program->SetTextureUnit(0);
+  
+  // Use operator destination in: multiply all 4 channels with source alpha.
+  aManager->gl()->fBlendFuncSeparate(LOCAL_GL_ZERO, LOCAL_GL_SRC_ALPHA,
+                                     LOCAL_GL_ZERO, LOCAL_GL_SRC_ALPHA);
+  
+  // Draw; first bottom left, then bottom right.
+  program->SetLayerTransform(gfx3DMatrix::ScalingMatrix(1, -1, 1) *
+                             gfx3DMatrix::Translation(0, aRect.height, 0));
+  aManager->BindAndDrawQuad(program);
+  program->SetLayerTransform(gfx3DMatrix::ScalingMatrix(-1, -1, 1) *
+                             gfx3DMatrix::Translation(aRect.width, aRect.height, 0));
+  aManager->BindAndDrawQuad(program);
+  
+  // Reset blend mode.
+  aManager->gl()->fBlendFuncSeparate(LOCAL_GL_ONE, LOCAL_GL_ONE_MINUS_SRC_ALPHA,
+                                     LOCAL_GL_ONE, LOCAL_GL_ONE);
 }
 
 void
@@ -2063,6 +2201,8 @@ NSEvent* gLastDragMouseDownEvent = nil;
     mClickThroughMouseDownEvent = nil;
     mDragService = nullptr;
 
+    [self setAcceptsTouchEvents:YES];
+
     mGestureState = eGestureState_None;
     mCumulativeMagnification = 0.0;
     mCumulativeRotation = 0.0;
@@ -2076,10 +2216,10 @@ NSEvent* gLastDragMouseDownEvent = nil;
     [self setFocusRingType:NSFocusRingTypeNone];
 
 #ifdef __LP64__
-    mSwipeAnimationCancelled = nil;
+    mCancelSwipeAnimation = nil;
 #endif
   }
-  
+
   // register for things we'll take from other applications
   [ChildView registerViewForDraggedTypes:self];
 
@@ -2298,7 +2438,12 @@ NSEvent* gLastDragMouseDownEvent = nil;
     // have any potentially expensive invalid rect management for us.
     if (!mWaitingForPaint) {
       mWaitingForPaint = YES;
-      [self performSelector:@selector(drawUsingOpenGLCallback) withObject:nil afterDelay:0];
+      // Use NSRunLoopCommonModes instead of the default NSDefaultRunLoopMode
+      // so that the timer also fires while a native menu is open.
+      [self performSelector:@selector(drawUsingOpenGLCallback)
+                 withObject:nil
+                 afterDelay:0
+                    inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
     }
   } else {
     [super setNeedsDisplayInRect:aRect];
@@ -2577,12 +2722,19 @@ NSEvent* gLastDragMouseDownEvent = nil;
     // Paints that come through here are triggered by something that Cocoa
     // controls, for example by window resizing or window focus changes.
 
+    // Since our window is usually declared as opaque, the window's pixel
+    // buffer may now contain garbage which we need to prevent from reaching
+    // the screen. The only place where garbage can show is in the bottom
+    // corners - the rest of the window is covered by our OpenGL surface.
+    // So we need to clear the pixel buffer contents in the corners.
+    [self maybeClearBottomCorners];
+
     // Do GL composition and return.
     [self drawUsingOpenGL];
     return;
   }
 
-  SAMPLE_LABEL("widget", "ChildView::drawRect");
+  PROFILER_LABEL("widget", "ChildView::drawRect");
 
   nsIntRegion region;
   nsIntRect boundingRect = mGeckoChild->CocoaPointsToDevPixels(aRect);
@@ -2687,7 +2839,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (void)drawUsingOpenGL
 {
-  SAMPLE_LABEL("widget", "ChildView::drawUsingOpenGL");
+  PROFILER_LABEL("widget", "ChildView::drawUsingOpenGL");
 
   if (![self isUsingOpenGL] || !mGeckoChild->IsVisible())
     return;
@@ -2726,6 +2878,47 @@ NSEvent* gLastDragMouseDownEvent = nil;
   if (mWaitingForPaint) {
     [self drawUsingOpenGL];
   }
+}
+
+- (BOOL)hasRoundedBottomCorners
+{
+  return [[self window] respondsToSelector:@selector(bottomCornerRounded)] &&
+  [[self window] bottomCornerRounded];
+}
+
+- (CGFloat)bottomCornerRadius
+{
+  if (![self hasRoundedBottomCorners])
+    return 0.0f;
+  NSView* borderView = [[[self window] contentView] superview];
+  if (!borderView || ![borderView respondsToSelector:@selector(roundedCornerRadius)])
+    return 4.0f;
+  return [borderView roundedCornerRadius];
+}
+
+// Accelerated windows have two NSSurfaces:
+//  (1) The window's pixel buffer in the back and
+//  (2) the OpenGL view in the front.
+// These two surfaces are composited by the window manager. Drawing with the
+// usual CGContext functions ends up in (1).
+// When our window has rounded bottom corners, the OpenGL view has transparent
+// pixels in the corners. In these places the contents of the window's pixel
+// buffer can show through. So we need to make sure that the pixel buffer is
+// transparent in the corners so that no garbage reaches the screen.
+// The contents of the pixel buffer in the rest of the window don't matter
+// because they're covered by the OpenGL view.
+// Making the bottom corners transparent works even though our window is
+// declared "opaque" (in the NSWindow's isOpaque method).
+- (void)maybeClearBottomCorners
+{
+  if (![self hasRoundedBottomCorners])
+    return;
+  
+  int radius = [self bottomCornerRadius];
+  int w = [self bounds].size.width, h = [self bounds].size.height;
+  [[NSColor clearColor] set];
+  NSRectFill(NSMakeRect(0, h - radius, radius, radius));
+  NSRectFill(NSMakeRect(w - radius, h - radius, radius, radius));
 }
 
 - (void)releaseWidgets:(NSArray*)aWidgetArray
@@ -2914,9 +3107,88 @@ NSEvent* gLastDragMouseDownEvent = nil;
  * was necessary to obtain the methods' prototypes. Thus, Apple may
  * change the interface in the future without notice.
  *
+ * XXX - The tapWithEvent is a custom gesture that is set up below.
+ *       Cocoa doesn't recognize double-taps by default, so the
+ *       recognition is done mainly by touchesBeganWithEvent.
+ *
  * The prototypes were obtained from the following link:
  * http://cocoadex.com/2008/02/nsevent-modifications-swipe-ro.html
  */
+
+- (void)touchesBeganWithEvent:(NSEvent *)anEvent
+{
+  if (!anEvent) {
+    return;
+  }
+
+  // Set up for recognition of a double tap gesture
+  NSSet* touches =
+    [anEvent touchesMatchingPhase:NSTouchPhaseTouching inView:self];
+  NSUInteger touchCount = [touches count];
+  if (touchCount != 2) {
+    // Cancel double tap if 3+ fingers touch
+    if (mGestureState == eGestureState_TapGesture && touchCount > 2) {
+      mGestureState = eGestureState_None;
+    }
+    return;
+  }
+
+  if (mGestureState == eGestureState_TapGesture) {
+    NSTimeInterval deltaTapTime =
+      [NSDate timeIntervalSinceReferenceDate] - mFirstTapTime;
+    if (deltaTapTime <= [NSEvent doubleClickInterval] &&
+        deltaTapTime > 0.00) {
+      [self tapWithEvent: anEvent];
+      return;
+    }
+  }
+  mGestureState = eGestureState_TapGesture;
+  mFirstTapTime = [NSDate timeIntervalSinceReferenceDate];
+}
+
+- (void)touchesMovedWithEvent:(NSEvent *)anEvent
+{
+  // Cancel double tap if there's movement
+  if (mGestureState == eGestureState_TapGesture) {
+    mGestureState = eGestureState_None;
+  }
+}
+
+- (void)touchesEndedWithEvent:(NSEvent *)anEvent
+{
+  return;
+}
+
+- (void)touchesCancelledWithEvent:(NSEvent *)anEvent
+{
+  // Clear the gestures state.
+  mGestureState = eGestureState_None;
+}
+
+- (void)tapWithEvent:(NSEvent *)anEvent
+{
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
+  if (!anEvent) {
+    return;
+  }
+
+  nsAutoRetainCocoaObject kungFuDeathGrip(self);
+
+  // Setup the "double tap" event.
+  nsSimpleGestureEvent geckoEvent(true, NS_SIMPLE_GESTURE_TAP,
+                                  mGeckoChild, 0, 0.0);
+  [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
+  geckoEvent.clickCount = 1;
+
+  // Send the event.
+  mGeckoChild->DispatchWindowEvent(geckoEvent);
+
+  // Clear the gesture state
+  mGestureState = eGestureState_None;
+
+  NS_OBJC_END_TRY_ABORT_BLOCK;
+}
 
 - (void)swipeWithEvent:(NSEvent *)anEvent
 {
@@ -2988,6 +3260,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   case eGestureState_None:
   case eGestureState_RotateGesture:
+  case eGestureState_TapGesture:
   default:
     return;
   }
@@ -3029,6 +3302,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   case eGestureState_None:
   case eGestureState_MagnifyGesture:
+  case eGestureState_TapGesture:
   default:
     return;
   }
@@ -3098,6 +3372,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   case eGestureState_None:
   case eGestureState_StartGesture:
+  case eGestureState_TapGesture:
   default:
     break;
   }
@@ -3110,6 +3385,48 @@ NSEvent* gLastDragMouseDownEvent = nil;
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
+#ifdef __LP64__
+- (bool)sendSwipeEvent:(NSEvent*)aEvent
+                withKind:(PRUint32)aMsg
+       allowedDirections:(PRUint32*)aAllowedDirections
+               direction:(PRUint32)aDirection
+                   delta:(PRFloat64)aDelta
+{
+  if (!mGeckoChild)
+    return false;
+
+  nsSimpleGestureEvent geckoEvent(true, aMsg, mGeckoChild, aDirection, aDelta);
+  geckoEvent.allowedDirections = *aAllowedDirections;
+  [self convertCocoaMouseEvent:aEvent toGeckoEvent:&geckoEvent];
+  bool eventCancelled = mGeckoChild->DispatchWindowEvent(geckoEvent);
+  *aAllowedDirections = geckoEvent.allowedDirections;
+  return eventCancelled; // event cancelled == swipe should start
+}
+
+- (void)cancelSwipeIfRunning
+{
+  // Clear gesture state.
+  mGestureState = eGestureState_None;
+
+  if (mCancelSwipeAnimation) {
+    mCancelSwipeAnimation();
+    [mCancelSwipeAnimation release];
+    mCancelSwipeAnimation = nil;
+  }
+}
+
+- (void)sendSwipeEndEvent:(NSEvent *)anEvent
+        allowedDirections:(PRUint32)aAllowedDirections
+{
+    // Tear down animation overlay by sending a swipe end event.
+    PRUint32 allowedDirectionsCopy = aAllowedDirections;
+    [self sendSwipeEvent:anEvent
+                withKind:NS_SIMPLE_GESTURE_SWIPE_END
+       allowedDirections:&allowedDirectionsCopy
+               direction:0
+                   delta:0.0];
+}
+
 // Support fluid swipe tracking on OS X 10.7 and higher.  We must be careful
 // to only invoke this support on a horizontal two-finger gesture that really
 // is a swipe (and not a scroll) -- in other words, the app is responsible
@@ -3120,7 +3437,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
 // partly based on Apple sample code available at
 // http://developer.apple.com/library/mac/#releasenotes/Cocoa/AppKit.html
 // (under Fluid Swipe Tracking API).
-#ifdef __LP64__
 - (void)maybeTrackScrollEventAsSwipe:(NSEvent *)anEvent
                       scrollOverflow:(double)overflow
 {
@@ -3137,13 +3453,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
   if ([anEvent type] != NSScrollWheel) {
     return;
-  }
-
-  // If a swipe is currently being tracked kill it -- it's been interrupted by
-  // another gesture or legacy scroll wheel event.
-  if (mSwipeAnimationCancelled && (*mSwipeAnimationCancelled == NO)) {
-    *mSwipeAnimationCancelled = YES;
-    mSwipeAnimationCancelled = nil;
   }
 
   // Only initiate tracking if the user has tried to scroll past the edge of
@@ -3178,6 +3487,27 @@ NSEvent* gLastDragMouseDownEvent = nil;
     return;
   }
 
+  // If a swipe is currently being tracked kill it -- it's been interrupted by
+  // another gesture or legacy scroll wheel event.
+  [self cancelSwipeIfRunning];
+
+  // We're ready to start the animation. Tell Gecko about it, and at the same
+  // time ask it if it really wants to start an animation for this event.
+  // This event also reports back the directions that we can swipe in.
+  PRUint32 allowedDirections = 0;
+  bool shouldStartSwipe = [self sendSwipeEvent:anEvent
+                                        withKind:NS_SIMPLE_GESTURE_SWIPE_START
+                               allowedDirections:&allowedDirections
+                                       direction:0
+                                           delta:0.0];
+
+  if (!shouldStartSwipe) {
+    return;
+  }
+
+  double min = (allowedDirections & nsIDOMSimpleGestureEvent::DIRECTION_RIGHT) ? -1 : 0;
+  double max = (allowedDirections & nsIDOMSimpleGestureEvent::DIRECTION_LEFT) ? 1 : 0;
+
   __block BOOL animationCancelled = NO;
   __block BOOL geckoSwipeEventSent = NO;
   // At this point, anEvent is the first scroll wheel event in a two-finger
@@ -3195,9 +3525,9 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // the anEvent object because it's retained by the block, see bug 682445.
   // The block will release it when the block goes away at the end of the
   // animation, or when the animation is canceled.
-  [anEvent trackSwipeEventWithOptions:0
-             dampenAmountThresholdMin:-1
-                                  max:1
+  [anEvent trackSwipeEventWithOptions:NSEventSwipeTrackingLockDirection
+             dampenAmountThresholdMin:min
+                                  max:max
                          usingHandler:^(CGFloat gestureAmount, NSEventPhase phase, BOOL isComplete, BOOL *stop) {
       // Since this tracking handler can be called asynchronously, mGeckoChild
       // might have become NULL here (our child widget might have been
@@ -3206,48 +3536,56 @@ NSEvent* gLastDragMouseDownEvent = nil;
         *stop = YES;
         return;
       }
-      // gestureAmount is documented to be '-1', '0' or '1' when isComplete
-      // is TRUE, but the docs don't say anything about its value at other
-      // times.  However, tests show that, when phase == NSEventPhaseEnded,
-      // gestureAmount is negative when it will be '-1' at isComplete, and
-      // positive when it will be '1'.  And phase is never equal to
-      // NSEventPhaseEnded when gestureAmount will be '0' at isComplete.
-      // Not waiting until isComplete is TRUE substantially reduces the
-      // time it takes to change pages after a swipe, and helps resolve
-      // bug 678891.
+
+      PRUint32 allowedDirectionsCopy = allowedDirections;
+
+      // Update animation overlay to match gestureAmount.
+      [self sendSwipeEvent:anEvent
+                  withKind:NS_SIMPLE_GESTURE_SWIPE_UPDATE
+         allowedDirections:&allowedDirectionsCopy
+                 direction:0
+                     delta:gestureAmount];
+
       if (phase == NSEventPhaseEnded && !geckoSwipeEventSent) {
-        if (gestureAmount) {
-          nsSimpleGestureEvent geckoEvent(true, NS_SIMPLE_GESTURE_SWIPE, mGeckoChild, 0, 0.0);
-          [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
-          if (gestureAmount > 0) {
-            geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_LEFT;
-          } else {
-            geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_RIGHT;
-          }
-          // If DispatchWindowEvent() does something to trigger a modal dialog
-          // (which spins the event loop), the OS gets confused and makes
-          // several re-entrant calls to this handler, all of which have
-          // 'phase' set to NSEventPhaseEnded.  Unless we do something about
-          // it, this results in an equal number of re-entrant calls to
-          // DispatchWindowEvent(), and to our modal-event handling code.
-          // Probably because of bug 478703, this really messes things up,
-          // and requires a force quit to get out of.  We avoid this by
-          // avoiding re-entrant calls to DispatchWindowEvent().  See bug
-          // 770626.
-          geckoSwipeEventSent = YES;
-          mGeckoChild->DispatchWindowEvent(geckoEvent);
-        }
-        mSwipeAnimationCancelled = nil;
-      } else if (phase == NSEventPhaseCancelled) {
-        mSwipeAnimationCancelled = nil;
+        // The result of the swipe is now known, so the main event can be sent.
+        // The animation might continue even after this event was sent, so
+        // don't tear down the animation overlay yet.
+        // gestureAmount is documented to be '-1', '0' or '1' when isComplete
+        // is TRUE, but the docs don't say anything about its value at other
+        // times.  However, tests show that, when phase == NSEventPhaseEnded,
+        // gestureAmount is negative when it will be '-1' at isComplete, and
+        // positive when it will be '1'.  And phase is never equal to
+        // NSEventPhaseEnded when gestureAmount will be '0' at isComplete.
+        PRUint32 direction = gestureAmount > 0 ?
+          (PRUint32)nsIDOMSimpleGestureEvent::DIRECTION_LEFT :
+          (PRUint32)nsIDOMSimpleGestureEvent::DIRECTION_RIGHT;
+        // If DispatchWindowEvent() does something to trigger a modal dialog
+        // (which spins the event loop), the OS gets confused and makes
+        // several re-entrant calls to this handler, all of which have
+        // 'phase' set to NSEventPhaseEnded.  Unless we do something about
+        // it, this results in an equal number of re-entrant calls to
+        // DispatchWindowEvent(), and to our modal-event handling code.
+        // Probably because of bug 478703, this really messes things up,
+        // and requires a force quit to get out of.  We avoid this by
+        // avoiding re-entrant calls to DispatchWindowEvent().  See bug
+        // 770626.
+        geckoSwipeEventSent = YES;
+        [self sendSwipeEvent:anEvent
+                    withKind:NS_SIMPLE_GESTURE_SWIPE
+           allowedDirections:&allowedDirectionsCopy
+                  direction:direction
+                       delta:0.0];
+      }
+
+      if (isComplete) {
+        [self cancelSwipeIfRunning];
+        [self sendSwipeEndEvent:anEvent allowedDirections:allowedDirections];
       }
     }];
 
-  // We keep a pointer to the __block variable (animationCanceled) so we
-  // can cancel our block handler at any time.  Note: We must assign
-  // &animationCanceled after our block creation and copy -- its address
-  // isn't resolved until then!
-  mSwipeAnimationCancelled = &animationCancelled;
+  mCancelSwipeAnimation = [^{
+    animationCancelled = YES;
+  } copy];
 }
 #endif // #ifdef __LP64__
 

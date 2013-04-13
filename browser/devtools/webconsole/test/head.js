@@ -14,6 +14,23 @@ Cu.import("resource:///modules/devtools/Target.jsm", tempScope);
 let TargetFactory = tempScope.TargetFactory;
 Components.utils.import("resource://gre/modules/devtools/Console.jsm", tempScope);
 let console = tempScope.console;
+let Promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {}).Promise;
+
+let gPendingOutputTest = 0;
+
+// The various categories of messages.
+const CATEGORY_NETWORK = 0;
+const CATEGORY_CSS = 1;
+const CATEGORY_JS = 2;
+const CATEGORY_WEBDEV = 3;
+const CATEGORY_INPUT = 4;
+const CATEGORY_OUTPUT = 5;
+
+// The possible message severities.
+const SEVERITY_ERROR = 0;
+const SEVERITY_WARNING = 1;
+const SEVERITY_INFO = 2;
+const SEVERITY_LOG = 3;
 
 const WEBCONSOLE_STRINGS_URI = "chrome://browser/locale/devtools/webconsole.properties";
 let WCU_l10n = new WebConsoleUtils.l10n(WEBCONSOLE_STRINGS_URI);
@@ -143,7 +160,9 @@ function openConsole(aTab, aCallback = function() { })
 {
   let target = TargetFactory.forTab(aTab || tab);
   gDevTools.showToolbox(target, "webconsole").then(function(toolbox) {
-    aCallback(toolbox.getCurrentPanel().hud);
+    let hud = toolbox.getCurrentPanel().hud;
+    hud.jsterm._lazyVariablesView = false;
+    aCallback(hud);
   });
 }
 
@@ -165,9 +184,7 @@ function closeConsole(aTab, aCallback = function() { })
     let panel = toolbox.getPanel("webconsole");
     if (panel) {
       let hudId = panel.hud.hudId;
-      toolbox.destroy().then(function() {
-        executeSoon(aCallback.bind(null, hudId));
-      }).then(null, console.error);
+      toolbox.destroy().then(aCallback.bind(null, hudId)).then(null, console.debug);
     }
     else {
       toolbox.destroy().then(aCallback.bind(null));
@@ -229,15 +246,63 @@ function waitForOpenContextMenu(aContextMenu, aOptions) {
                              eventDetails, targetElement.ownerDocument.defaultView);
 }
 
+/**
+ * Dump the output of all open Web Consoles - used only for debugging purposes.
+ */
+function dumpConsoles()
+{
+  if (gPendingOutputTest) {
+    console.log("dumpConsoles");
+    for each (let hud in HUDService.hudReferences) {
+      if (!hud.outputNode) {
+        console.debug("no output content for", hud.hudId);
+        continue;
+      }
+
+      console.debug("output content for", hud.hudId);
+      for (let elem of hud.outputNode.childNodes) {
+        let text = getMessageElementText(elem);
+        let repeats = elem.querySelector(".webconsole-msg-repeat");
+        if (repeats) {
+          repeats = repeats.getAttribute("value");
+        }
+        console.debug("date", elem.timestamp,
+                      "class", elem.className,
+                      "category", elem.category,
+                      "severity", elem.severity,
+                      "repeats", repeats,
+                      "clipboardText", elem.clipboardText,
+                      "text", text);
+      }
+    }
+
+    gPendingOutputTest = 0;
+  }
+}
+
 function finishTest()
 {
   browser = hudId = hud = filterBox = outputNode = cs = null;
+
+  dumpConsoles();
+
+  if (HUDConsoleUI.browserConsole) {
+    let hud = HUDConsoleUI.browserConsole;
+
+    if (hud.jsterm) {
+      hud.jsterm.clearOutput(true);
+    }
+
+    HUDConsoleUI.toggleBrowserConsole().then(finishTest);
+    return;
+  }
 
   let hud = HUDService.getHudByWindow(content);
   if (!hud) {
     finish();
     return;
   }
+
   if (hud.jsterm) {
     hud.jsterm.clearOutput(true);
   }
@@ -249,6 +314,12 @@ function finishTest()
 
 function tearDown()
 {
+  dumpConsoles();
+
+  if (HUDConsoleUI.browserConsole) {
+    HUDConsoleUI.toggleBrowserConsole();
+  }
+
   let target = TargetFactory.forTab(gBrowser.selectedTab);
   gDevTools.closeToolbox(target);
   while (gBrowser.tabs.length > 1) {
@@ -314,4 +385,604 @@ function openInspector(aCallback, aTab = gBrowser.selectedTab)
   gDevTools.showToolbox(target, "inspector").then(function(toolbox) {
     aCallback(toolbox.getCurrentPanel());
   });
+}
+
+/**
+ * Find variables or properties in a VariablesView instance.
+ *
+ * @param object aView
+ *        The VariablesView instance.
+ * @param array aRules
+ *        The array of rules you want to match. Each rule is an object with:
+ *        - name (string|regexp): property name to match.
+ *        - value (string|regexp): property value to match.
+ *        - isIterator (boolean): check if the property is an iterator.
+ *        - isGetter (boolean): check if the property is a getter.
+ *        - isGenerator (boolean): check if the property is a generator.
+ *        - dontMatch (boolean): make sure the rule doesn't match any property.
+ * @param object aOptions
+ *        Options for matching:
+ *        - webconsole: the WebConsole instance we work with.
+ * @return object
+ *         A Promise object that is resolved when all the rules complete
+ *         matching. The resolved callback is given an array of all the rules
+ *         you wanted to check. Each rule has a new property: |matchedProp|
+ *         which holds a reference to the Property object instance from the
+ *         VariablesView. If the rule did not match, then |matchedProp| is
+ *         undefined.
+ */
+function findVariableViewProperties(aView, aRules, aOptions)
+{
+  // Initialize the search.
+  function init()
+  {
+    // Separate out the rules that require expanding properties throughout the
+    // view.
+    let expandRules = [];
+    let rules = aRules.filter((aRule) => {
+      if (typeof aRule.name == "string" && aRule.name.indexOf(".") > -1) {
+        expandRules.push(aRule);
+        return false;
+      }
+      return true;
+    });
+
+    // Search through the view those rules that do not require any properties to
+    // be expanded. Build the array of matchers, outstanding promises to be
+    // resolved.
+    let outstanding = [];
+    finder(rules, aView, outstanding);
+
+    // Process the rules that need to expand properties.
+    let lastStep = processExpandRules.bind(null, expandRules);
+
+    // Return the results - a Promise resolved to hold the updated aRules array.
+    let returnResults = onAllRulesMatched.bind(null, aRules);
+
+    return Promise.all(outstanding).then(lastStep).then(returnResults);
+  }
+
+  function onMatch(aProp, aRule, aMatched)
+  {
+    if (aMatched && !aRule.matchedProp) {
+      aRule.matchedProp = aProp;
+    }
+  }
+
+  function finder(aRules, aVar, aPromises)
+  {
+    for (let [id, prop] in aVar) {
+      for (let rule of aRules) {
+        let matcher = matchVariablesViewProperty(prop, rule, aOptions);
+        aPromises.push(matcher.then(onMatch.bind(null, prop, rule)));
+      }
+    }
+  }
+
+  function processExpandRules(aRules)
+  {
+    let rule = aRules.shift();
+    if (!rule) {
+      return Promise.resolve(null);
+    }
+
+    let deferred = Promise.defer();
+    let expandOptions = {
+      rootVariable: aView,
+      expandTo: rule.name,
+      webconsole: aOptions.webconsole,
+    };
+
+    variablesViewExpandTo(expandOptions).then(function onSuccess(aProp) {
+      let name = rule.name;
+      let lastName = name.split(".").pop();
+      rule.name = lastName;
+
+      let matched = matchVariablesViewProperty(aProp, rule, aOptions);
+      return matched.then(onMatch.bind(null, aProp, rule)).then(function() {
+        rule.name = name;
+      });
+    }, function onFailure() {
+      return Promise.resolve(null);
+    }).then(processExpandRules.bind(null, aRules)).then(function() {
+      deferred.resolve(null);
+    });
+
+    return deferred.promise;
+  }
+
+  function onAllRulesMatched(aRules)
+  {
+    for (let rule of aRules) {
+      let matched = rule.matchedProp;
+      if (matched && !rule.dontMatch) {
+        ok(true, "rule " + rule.name + " matched for property " + matched.name);
+      }
+      else if (matched && rule.dontMatch) {
+        ok(false, "rule " + rule.name + " should not match property " +
+           matched.name);
+      }
+      else {
+        ok(rule.dontMatch, "rule " + rule.name + " did not match any property");
+      }
+    }
+    return aRules;
+  }
+
+  return init();
+}
+
+/**
+ * Check if a given Property object from the variables view matches the given
+ * rule.
+ *
+ * @param object aProp
+ *        The variable's view Property instance.
+ * @param object aRule
+ *        Rules for matching the property. See findVariableViewProperties() for
+ *        details.
+ * @param object aOptions
+ *        Options for matching. See findVariableViewProperties().
+ * @return object
+ *         A Promise that is resolved when all the checks complete. Resolution
+ *         result is a boolean that tells your promise callback the match
+ *         result: true or false.
+ */
+function matchVariablesViewProperty(aProp, aRule, aOptions)
+{
+  function resolve(aResult) {
+    return Promise.resolve(aResult);
+  }
+
+  if (aRule.name) {
+    let match = aRule.name instanceof RegExp ?
+                aRule.name.test(aProp.name) :
+                aProp.name == aRule.name;
+    if (!match) {
+      return resolve(false);
+    }
+  }
+
+  if (aRule.value) {
+    let displayValue = aProp.displayValue;
+    if (aProp.displayValueClassName == "token-string") {
+      displayValue = displayValue.substring(1, displayValue.length - 1);
+    }
+
+    let match = aRule.value instanceof RegExp ?
+                aRule.value.test(displayValue) :
+                displayValue == aRule.value;
+    if (!match) {
+      info("rule " + aRule.name + " did not match value, expected '" +
+           aRule.value + "', found '" + displayValue  + "'");
+      return resolve(false);
+    }
+  }
+
+  if ("isGetter" in aRule) {
+    let isGetter = !!(aProp.getter && aProp.get("get"));
+    if (aRule.isGetter != isGetter) {
+      info("rule " + aRule.name + " getter test failed");
+      return resolve(false);
+    }
+  }
+
+  if ("isGenerator" in aRule) {
+    let isGenerator = aProp.displayValue == "[object Generator]";
+    if (aRule.isGenerator != isGenerator) {
+      info("rule " + aRule.name + " generator test failed");
+      return resolve(false);
+    }
+  }
+
+  let outstanding = [];
+
+  if ("isIterator" in aRule) {
+    let isIterator = isVariableViewPropertyIterator(aProp, aOptions.webconsole);
+    outstanding.push(isIterator.then((aResult) => {
+      if (aResult != aRule.isIterator) {
+        info("rule " + aRule.name + " iterator test failed");
+      }
+      return aResult == aRule.isIterator;
+    }));
+  }
+
+  outstanding.push(Promise.resolve(true));
+
+  return Promise.all(outstanding).then(function _onMatchDone(aResults) {
+    let ruleMatched = aResults.indexOf(false) == -1;
+    return resolve(ruleMatched);
+  });
+}
+
+/**
+ * Check if the given variables view property is an iterator.
+ *
+ * @param object aProp
+ *        The Property instance you want to check.
+ * @param object aWebConsole
+ *        The WebConsole instance to work with.
+ * @return object
+ *         A Promise that is resolved when the check completes. The resolved
+ *         callback is given a boolean: true if the property is an iterator, or
+ *         false otherwise.
+ */
+function isVariableViewPropertyIterator(aProp, aWebConsole)
+{
+  if (aProp.displayValue == "[object Iterator]") {
+    return Promise.resolve(true);
+  }
+
+  let deferred = Promise.defer();
+
+  variablesViewExpandTo({
+    rootVariable: aProp,
+    expandTo: "__proto__.__iterator__",
+    webconsole: aWebConsole,
+  }).then(function onSuccess(aProp) {
+    deferred.resolve(true);
+  }, function onFailure() {
+    deferred.resolve(false);
+  });
+
+  return deferred.promise;
+}
+
+
+/**
+ * Recursively expand the variables view up to a given property.
+ *
+ * @param aOptions
+ *        Options for view expansion:
+ *        - rootVariable: start from the given scope/variable/property.
+ *        - expandTo: string made up of property names you want to expand.
+ *        For example: "body.firstChild.nextSibling" given |rootVariable:
+ *        document|.
+ *        - webconsole: a WebConsole instance. If this is not provided all
+ *        property expand() calls will be considered sync. Things may fail!
+ * @return object
+ *         A Promise that is resolved only when the last property in |expandTo|
+ *         is found, and rejected otherwise. Resolution reason is always the
+ *         last property - |nextSibling| in the example above. Rejection is
+ *         always the last property that was found.
+ */
+function variablesViewExpandTo(aOptions)
+{
+  let root = aOptions.rootVariable;
+  let expandTo = aOptions.expandTo.split(".");
+  let jsterm = (aOptions.webconsole || {}).jsterm;
+  let lastDeferred = Promise.defer();
+
+  function fetch(aProp)
+  {
+    if (!aProp.onexpand) {
+      ok(false, "property " + aProp.name + " cannot be expanded: !onexpand");
+      return Promise.reject(aProp);
+    }
+
+    let deferred = Promise.defer();
+
+    if (aProp._fetched || !jsterm) {
+      executeSoon(function() {
+        deferred.resolve(aProp);
+      });
+    }
+    else {
+      jsterm.once("variablesview-fetched", function _onFetchProp() {
+        executeSoon(() => deferred.resolve(aProp));
+      });
+    }
+
+    aProp.expand();
+
+    return deferred.promise;
+  }
+
+  function getNext(aProp)
+  {
+    let name = expandTo.shift();
+    let newProp = aProp.get(name);
+
+    if (expandTo.length > 0) {
+      ok(newProp, "found property " + name);
+      if (newProp) {
+        fetch(newProp).then(getNext, fetchError);
+      }
+      else {
+        lastDeferred.reject(aProp);
+      }
+    }
+    else {
+      if (newProp) {
+        lastDeferred.resolve(newProp);
+      }
+      else {
+        lastDeferred.reject(aProp);
+      }
+    }
+  }
+
+  function fetchError(aProp)
+  {
+    lastDeferred.reject(aProp);
+  }
+
+  if (!root._fetched) {
+    fetch(root).then(getNext, fetchError);
+  }
+  else {
+    getNext(root);
+  }
+
+  return lastDeferred.promise;
+}
+
+
+/**
+ * Update the content of a property in the variables view.
+ *
+ * @param object aOptions
+ *        Options for the property update:
+ *        - property: the property you want to change.
+ *        - field: string that tells what you want to change:
+ *          - use "name" to change the property name,
+ *          - or "value" to change the property value.
+ *        - string: the new string to write into the field.
+ *        - webconsole: reference to the Web Console instance we work with.
+ *        - callback: function to invoke after the property is updated.
+ */
+function updateVariablesViewProperty(aOptions)
+{
+  let view = aOptions.property._variablesView;
+  view.window.focus();
+  aOptions.property.focus();
+
+  switch (aOptions.field) {
+    case "name":
+      EventUtils.synthesizeKey("VK_ENTER", { shiftKey: true }, view.window);
+      break;
+    case "value":
+      EventUtils.synthesizeKey("VK_ENTER", {}, view.window);
+      break;
+    default:
+      throw new Error("options.field is incorrect");
+      return;
+  }
+
+  executeSoon(() => {
+    EventUtils.synthesizeKey("A", { accelKey: true }, view.window);
+
+    for (let c of aOptions.string) {
+      EventUtils.synthesizeKey(c, {}, gVariablesView.window);
+    }
+
+    if (aOptions.webconsole) {
+      aOptions.webconsole.jsterm.once("variablesview-fetched", aOptions.callback);
+    }
+
+    EventUtils.synthesizeKey("VK_ENTER", {}, view.window);
+
+    if (!aOptions.webconsole) {
+      executeSoon(aOptions.callback);
+    }
+  });
+}
+
+/**
+ * Open the JavaScript debugger.
+ *
+ * @param object aOptions
+ *        Options for opening the debugger:
+ *        - tab: the tab you want to open the debugger for.
+ * @return object
+ *         A Promise that is resolved once the debugger opens, or rejected if
+ *         the open fails. The resolution callback is given one argument, an
+ *         object that holds the following properties:
+ *         - target: the Target object for the Tab.
+ *         - toolbox: the Toolbox instance.
+ *         - panel: the jsdebugger panel instance.
+ *         - panelWin: the window object of the panel iframe.
+ */
+function openDebugger(aOptions = {})
+{
+  if (!aOptions.tab) {
+    aOptions.tab = gBrowser.selectedTab;
+  }
+
+  let deferred = Promise.defer();
+
+  let target = TargetFactory.forTab(aOptions.tab);
+  let toolbox = gDevTools.getToolbox(target);
+  let dbgPanelAlreadyOpen = toolbox.getPanel("jsdebugger");
+
+  gDevTools.showToolbox(target, "jsdebugger").then(function onSuccess(aToolbox) {
+    let panel = aToolbox.getCurrentPanel();
+    let panelWin = panel.panelWin;
+
+    panel._view.Variables.lazyEmpty = false;
+    panel._view.Variables.lazyAppend = false;
+
+    let resolveObject = {
+      target: target,
+      toolbox: aToolbox,
+      panel: panel,
+      panelWin: panelWin,
+    };
+
+    if (dbgPanelAlreadyOpen) {
+      deferred.resolve(resolveObject);
+    }
+    else {
+      panelWin.addEventListener("Debugger:AfterSourcesAdded",
+        function onAfterSourcesAdded() {
+          panelWin.removeEventListener("Debugger:AfterSourcesAdded",
+                                       onAfterSourcesAdded);
+          deferred.resolve(resolveObject);
+        });
+    }
+  }, function onFailure(aReason) {
+    console.debug("failed to open the toolbox for 'jsdebugger'", aReason);
+    deferred.reject(aReason);
+  });
+
+  return deferred.promise;
+}
+
+/**
+ * Get the full text displayed by a Web Console message.
+ *
+ * @param nsIDOMElement aElement
+ *        The message element from the Web Console output.
+ * @return string
+ *         The full text displayed by the given message element.
+ */
+function getMessageElementText(aElement)
+{
+  let text = aElement.textContent;
+  let labels = aElement.querySelectorAll("label");
+  for (let label of labels) {
+    text += " " + label.getAttribute("value");
+  }
+  return text;
+}
+
+/**
+ * Wait for messages in the Web Console output.
+ *
+ * @param object aOptions
+ *        Options for what you want to wait for:
+ *        - webconsole: the webconsole instance you work with.
+ *        - messages: an array of objects that tells which messages to wait for.
+ *        Properties:
+ *            - text: string or RegExp to match the textContent of each new
+ *            message.
+ *            - repeats: the number of message repeats, as displayed by the Web
+ *            Console.
+ *            - category: match message category. See CATEGORY_* constants at
+ *            the top of this file.
+ *            - severity: match message severity. See SEVERITY_* constants at
+ *            the top of this file.
+ *            - count: how many unique web console messages should be matched by
+ *            this rule.
+ * @return object
+ *         A Promise object is returned once the messages you want are found.
+ */
+function waitForMessages(aOptions)
+{
+  gPendingOutputTest++;
+  let webconsole = aOptions.webconsole;
+  let rules = WebConsoleUtils.cloneObject(aOptions.messages, true);
+  let rulesMatched = 0;
+  let listenerAdded = false;
+  let deferred = Promise.defer();
+
+  function checkMessage(aRule, aElement)
+  {
+    if (aRule.text) {
+      let elemText = getMessageElementText(aElement);
+      let matched = false;
+      if (typeof aRule.text == "string") {
+        matched = elemText.indexOf(aRule.text) > -1;
+      }
+      else if (aRule.text instanceof RegExp) {
+        matched = aRule.text.test(elemText);
+      }
+      if (!matched) {
+        return false;
+      }
+    }
+
+    if (aRule.category) {
+      if (aElement.category != aRule.category) {
+        return false;
+      }
+    }
+
+    if (aRule.severity) {
+      if (aElement.severity != aRule.severity) {
+        return false;
+      }
+    }
+
+    if (aRule.repeats) {
+      let repeats = aElement.querySelector(".webconsole-msg-repeat");
+      if (!repeats || repeats.getAttribute("value") != aRule.repeats) {
+        return false;
+      }
+    }
+
+    let count = aRule.count || 1;
+    if (!aRule.matched) {
+      aRule.matched = new Set();
+    }
+    aRule.matched.add(aElement);
+
+    return aRule.matched.size == count;
+  }
+
+  function onMessagesAdded(aEvent, aNewElements)
+  {
+    for (let elem of aNewElements) {
+      for (let rule of rules) {
+        if (rule._ruleMatched) {
+          continue;
+        }
+
+        let matched = checkMessage(rule, elem);
+        if (matched) {
+          rule._ruleMatched = true;
+          rulesMatched++;
+          ok(1, "matched rule: " + displayRule(rule));
+          if (maybeDone()) {
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  function maybeDone()
+  {
+    if (rulesMatched == rules.length) {
+      if (listenerAdded) {
+        webconsole.ui.off("messages-added", onMessagesAdded);
+      }
+      gPendingOutputTest--;
+      deferred.resolve(rules);
+      return true;
+    }
+    return false;
+  }
+
+  function testCleanup() {
+    if (rulesMatched == rules.length) {
+      return;
+    }
+
+    if (webconsole.ui) {
+      webconsole.ui.off("messages-added", onMessagesAdded);
+    }
+
+    for (let rule of rules) {
+      if (!rule._ruleMatched) {
+        console.log("failed to match rule: " + displayRule(rule));
+      }
+    }
+  }
+
+  function displayRule(aRule)
+  {
+    return aRule.name || aRule.text;
+  }
+
+  executeSoon(() => {
+    onMessagesAdded("messages-added", webconsole.outputNode.childNodes);
+    if (rulesMatched != rules.length) {
+      listenerAdded = true;
+      registerCleanupFunction(testCleanup);
+      webconsole.ui.on("messages-added", onMessagesAdded);
+    }
+  });
+
+  return deferred.promise;
 }

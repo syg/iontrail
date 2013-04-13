@@ -6,6 +6,7 @@
 #include "mozilla/Util.h"
 
 #include "mozilla/dom/HTMLIFrameElement.h"
+#include "mozilla/dom/HTMLIFrameElementBinding.h"
 #include "nsIDOMSVGDocument.h"
 #include "nsMappedAttributes.h"
 #include "nsAttrValueInlines.h"
@@ -25,6 +26,7 @@ HTMLIFrameElement::HTMLIFrameElement(already_AddRefed<nsINodeInfo> aNodeInfo,
                                      FromParser aFromParser)
   : nsGenericHTMLFrameElement(aNodeInfo, aFromParser)
 {
+  SetIsDOMBinding();
 }
 
 HTMLIFrameElement::~HTMLIFrameElement()
@@ -220,7 +222,7 @@ HTMLIFrameElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 
       if (docshell) {
         uint32_t newFlags = 0;
-        // If a NULL aValue is passed in, we want to clear the sandbox flags
+        // If a nullptr aValue is passed in, we want to clear the sandbox flags
         // which we will do by setting them to 0.
         if (aValue) {
           nsAutoString strValue;
@@ -247,6 +249,12 @@ HTMLIFrameElement::GetSandboxFlags()
 
   // No sandbox attribute, no sandbox flags.
   return 0;
+}
+
+JSObject*
+HTMLIFrameElement::WrapNode(JSContext* aCx, JSObject* aScope)
+{
+  return HTMLIFrameElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

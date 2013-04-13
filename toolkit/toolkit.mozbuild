@@ -118,10 +118,13 @@ if CONFIG['MOZ_OMX_PLUGIN']:
         'media/omx-plugin/lib/hc/libstagefright',
         'media/omx-plugin/hc',
         'media/omx-plugin/sony',
+        'media/omx-plugin/jb-htc',
     ])
 
 if not CONFIG['MOZ_NATIVE_PNG']:
     add_tier_dir('platform', 'media/libpng')
+
+add_tier_dir('platform', 'media/kiss_fft')
 
 if CONFIG['ENABLE_TESTS']:
     add_tier_dir('platform', 'testing/specialpowers')
@@ -206,7 +209,6 @@ add_tier_dir('platform', app_libxul_dirs)
 add_tier_dir('platform', app_libxul_static_dirs, static=True)
 
 add_tier_dir('platform', 'toolkit/library')
-add_tier_dir('platform', 'xpcom/stub')
 
 if CONFIG['MOZ_REPLACE_MALLOC']:
     add_tier_dir('platform', 'memory/replace')
@@ -235,6 +237,7 @@ if CONFIG['ENABLE_TESTS']:
         'testing/xpcshell',
         'testing/tools/screenshot',
         'testing/peptest',
+        'testing/profiles',
         'testing/mozbase',
         'testing/modules',
     ])

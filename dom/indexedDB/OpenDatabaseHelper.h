@@ -6,11 +6,14 @@
 #define mozilla_dom_indexeddb_opendatabasehelper_h__
 
 #include "AsyncConnectionHelper.h"
+
+#include "nsIRunnable.h"
+
+#include "mozilla/dom/quota/StoragePrivilege.h"
+
 #include "DatabaseInfo.h"
 #include "IDBDatabase.h"
 #include "IDBRequest.h"
-
-#include "nsIRunnable.h"
 
 class mozIStorageConnection;
 
@@ -22,8 +25,14 @@ class ContentParent;
 
 BEGIN_INDEXEDDB_NAMESPACE
 
+class CheckPermissionsHelper;
+
 class OpenDatabaseHelper : public HelperBase
 {
+  friend class CheckPermissionsHelper;
+
+  typedef mozilla::dom::quota::StoragePrivilege StoragePrivilege;
+
 public:
   OpenDatabaseHelper(IDBOpenDBRequest* aRequest,
                      const nsAString& aName,
@@ -31,13 +40,14 @@ public:
                      uint64_t aRequestedVersion,
                      bool aForDeletion,
                      mozilla::dom::ContentParent* aContentParent,
-                     FactoryPrivilege aPrivilege)
+                     StoragePrivilege aPrivilege)
     : HelperBase(aRequest), mOpenDBRequest(aRequest), mName(aName),
       mASCIIOrigin(aASCIIOrigin), mRequestedVersion(aRequestedVersion),
       mForDeletion(aForDeletion), mPrivilege(aPrivilege), mDatabaseId(nullptr),
       mContentParent(aContentParent), mCurrentVersion(0), mLastObjectStoreId(0),
       mLastIndexId(0), mState(eCreated), mResultCode(NS_OK),
-      mLoadDBMetadata(false)
+      mLoadDBMetadata(false),
+      mTrackingQuota(aPrivilege != mozilla::dom::quota::Chrome)
   {
     NS_ASSERTION(!aForDeletion || !aRequestedVersion,
                  "Can't be for deletion and request a version!");
@@ -77,7 +87,7 @@ public:
     return mDatabase;
   }
 
-  const FactoryPrivilege& Privilege() const
+  const StoragePrivilege& Privilege() const
   {
     return mPrivilege;
   }
@@ -100,6 +110,12 @@ protected:
   void DispatchErrorEvent();
   virtual void ReleaseMainThreadObjects() MOZ_OVERRIDE;
 
+  // Called by CheckPermissionsHelper on the main thread before dispatch.
+  void SetUnlimitedQuotaAllowed()
+  {
+    mTrackingQuota = false;
+  }
+
   // Methods only called on the DB thread
   nsresult DoDatabaseWork();
 
@@ -109,7 +125,7 @@ protected:
   nsCString mASCIIOrigin;
   uint64_t mRequestedVersion;
   bool mForDeletion;
-  FactoryPrivilege mPrivilege;
+  StoragePrivilege mPrivilege;
   nsCOMPtr<nsIAtom> mDatabaseId;
   mozilla::dom::ContentParent* mContentParent;
 
@@ -138,6 +154,7 @@ protected:
 
   nsRefPtr<DatabaseInfo> mDBInfo;
   bool mLoadDBMetadata;
+  bool mTrackingQuota;
 };
 
 END_INDEXEDDB_NAMESPACE

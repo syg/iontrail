@@ -121,8 +121,12 @@
       <field name="searchButton">document.getAnonymousElementByAttribute(this,
           "anonid", "searchbar-engine-button");</field>
 
-      <property name="currentEngine"
-                onset="this.searchService.currentEngine = val; return val;">
+      <property name="currentEngine">
+        <setter><![CDATA[
+          let ss = this.searchService;
+          ss.defaultEngine = ss.currentEngine = val;
+          return val;
+        ]]></setter>
         <getter><![CDATA[
           var currentEngine = this.searchService.currentEngine;
           // Return a dummy engine if there is no currentEngine
@@ -267,10 +271,23 @@
         ]]></body>
       </method>
 
+      <method name="setIcon">
+        <parameter name="element"/>
+        <parameter name="uri"/>
+        <body><![CDATA[
+          if (uri) {
+            let size = Math.round(16 * window.devicePixelRatio);
+            if (!uri.contains("#"))
+              uri += "#-moz-resolution=" + size + "," + size;
+          }
+          element.setAttribute("src", uri);
+        ]]></body>
+      </method>
+
       <method name="updateDisplay">
         <body><![CDATA[
           var uri = this.currentEngine.iconURI;
-          this.setAttribute("src", uri ? uri.spec : "");
+          this.setIcon(this, uri ? uri.spec : "");
 
           var name = this.currentEngine.name;
           var text = this._stringBundle.getFormattedString("searchtip", [name]);
@@ -334,7 +351,7 @@
               menuitem.setAttribute("tooltiptext", engineInfo.uri);
               menuitem.setAttribute("uri", engineInfo.uri);
               if (engineInfo.icon)
-                menuitem.setAttribute("src", engineInfo.icon);
+                this.setIcon(menuitem, engineInfo.icon);
               menuitem.setAttribute("title", engineInfo.title);
               popup.insertBefore(menuitem, insertLocation);
             }
@@ -373,7 +390,7 @@
             var tooltip = this._stringBundle.getFormattedString("searchtip", [name]);
             menuitem.setAttribute("tooltiptext", tooltip);
             if (engines[i].iconURI)
-              menuitem.setAttribute("src", engines[i].iconURI.spec);
+              this.setIcon(menuitem, engines[i].iconURI.spec);
             popup.insertBefore(menuitem, popup.firstChild);
             menuitem.engine = engines[i];
           }
@@ -409,8 +426,9 @@
           var newIndex = this.engines.indexOf(this.currentEngine);
           newIndex += isNextEngine ? 1 : -1;
 
-          if (newIndex >= 0 && newIndex < this.engines.length)
+          if (newIndex >= 0 && newIndex < this.engines.length) {
             this.currentEngine = this.engines[newIndex];
+          }
 
           aEvent.preventDefault();
           aEvent.stopPropagation();
@@ -496,7 +514,7 @@
 
         const SUGGEST_TYPE = "application/x-suggestions+json";
         var engine = this.currentEngine;
-	var connector =
+        var connector =
             Services.io.QueryInterface(Components.interfaces.nsISpeculativeConnect);
         var searchURI = engine.getSubmission("dummy").uri;
         let callbacks = window.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
@@ -505,7 +523,7 @@
         connector.speculativeConnect(searchURI, callbacks);
 
         if (engine.supportsResponseType(SUGGEST_TYPE)) {
-	  var suggestURI = engine.getSubmission("dummy", SUGGEST_TYPE).uri;
+          var suggestURI = engine.getSubmission("dummy", SUGGEST_TYPE).uri;
           if (suggestURI.prePath != searchURI.prePath)
             connector.speculativeConnect(suggestURI, callbacks);
         }

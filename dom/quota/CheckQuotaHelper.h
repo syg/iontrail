@@ -16,6 +16,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/CondVar.h"
 
+class nsIPrincipal;
 class nsPIDOMWindow;
 
 BEGIN_QUOTA_NAMESPACE
@@ -37,6 +38,8 @@ public:
 
   void Cancel();
 
+  static uint32_t GetQuotaPermission(nsIPrincipal* aPrincipal);
+
 private:
   nsPIDOMWindow* mWindow;
 
@@ -49,4 +52,4 @@ private:
 
 END_QUOTA_NAMESPACE
 
-#endif // mozilla_dom_indexeddb_checkquotahelper_h__
+#endif // mozilla_dom_quota_checkquotahelper_h__

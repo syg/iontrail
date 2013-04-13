@@ -6,6 +6,7 @@
 #include "AndroidJavaWrappers.h"
 #include "AndroidBridge.h"
 #include "nsIAndroidBridge.h"
+#include "nsIDOMKeyEvent.h"
 
 using namespace mozilla;
 
@@ -33,6 +34,7 @@ jfieldID AndroidGeckoEvent::jMetaStateField = 0;
 jfieldID AndroidGeckoEvent::jDomKeyLocationField = 0;
 jfieldID AndroidGeckoEvent::jFlagsField = 0;
 jfieldID AndroidGeckoEvent::jUnicodeCharField = 0;
+jfieldID AndroidGeckoEvent::jBaseUnicodeCharField = 0;
 jfieldID AndroidGeckoEvent::jRepeatCountField = 0;
 jfieldID AndroidGeckoEvent::jCountField = 0;
 jfieldID AndroidGeckoEvent::jStartField = 0;
@@ -50,6 +52,11 @@ jfieldID AndroidGeckoEvent::jBandwidthField = 0;
 jfieldID AndroidGeckoEvent::jCanBeMeteredField = 0;
 jfieldID AndroidGeckoEvent::jScreenOrientationField = 0;
 jfieldID AndroidGeckoEvent::jByteBufferField = 0;
+jfieldID AndroidGeckoEvent::jWidthField = 0;
+jfieldID AndroidGeckoEvent::jHeightField = 0;
+
+jclass AndroidGeckoEvent::jDomKeyLocationClass = 0;
+jfieldID AndroidGeckoEvent::jDomKeyLocationValueField = 0;
 
 jclass AndroidPoint::jPointClass = 0;
 jfieldID AndroidPoint::jXField = 0;
@@ -222,9 +229,10 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jCharactersExtraField = getField("mCharactersExtra", "Ljava/lang/String;");
     jKeyCodeField = getField("mKeyCode", "I");
     jMetaStateField = getField("mMetaState", "I");
-    jDomKeyLocationField = getField("mDomKeyLocation", "I");
+    jDomKeyLocationField = getField("mDomKeyLocation", "Lorg/mozilla/gecko/GeckoEvent$DomKeyLocation;");
     jFlagsField = getField("mFlags", "I");
     jUnicodeCharField = getField("mUnicodeChar", "I");
+    jBaseUnicodeCharField = getField("mBaseUnicodeChar", "I");
     jRepeatCountField = getField("mRepeatCount", "I");
     jCountField = getField("mCount", "I");
     jStartField = getField("mStart", "I");
@@ -242,6 +250,12 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jCanBeMeteredField = getField("mCanBeMetered", "Z");
     jScreenOrientationField = getField("mScreenOrientation", "S");
     jByteBufferField = getField("mBuffer", "Ljava/nio/ByteBuffer;");
+    jWidthField = getField("mWidth", "I");
+    jHeightField = getField("mHeight", "I");
+
+    // Init GeckoEvent.DomKeyLocation enum
+    jDomKeyLocationClass = getClassGlobalRef("org/mozilla/gecko/GeckoEvent$DomKeyLocation");
+    jDomKeyLocationValueField = getField("value", "I");
 }
 
 void
@@ -491,6 +505,18 @@ AndroidGeckoEvent::Init(int aType, nsIntRect const& aRect)
     mRect = aRect;
 }
 
+uint32_t
+AndroidGeckoEvent::ReadDomKeyLocation(JNIEnv* jenv, jobject jGeckoEventObj)
+{
+    jobject enumObject = jenv->GetObjectField(jGeckoEventObj,
+                                             jDomKeyLocationField);
+    MOZ_ASSERT(enumObject);
+    int enumValue = jenv->GetIntField(enumObject, jDomKeyLocationValueField);
+    MOZ_ASSERT(enumValue >= nsIDOMKeyEvent::DOM_KEY_LOCATION_STANDARD &&
+               enumValue <= nsIDOMKeyEvent::DOM_KEY_LOCATION_JOYSTICK);
+    return static_cast<uint32_t>(enumValue);
+}
+
 void
 AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
 {
@@ -511,12 +537,14 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             break;
 
         case KEY_EVENT:
+        case IME_KEY_EVENT:
             mTime = jenv->GetLongField(jobj, jTimeField);
             mMetaState = jenv->GetIntField(jobj, jMetaStateField);
-            mDomKeyLocation = jenv->GetIntField(jobj, jDomKeyLocationField);
+            mDomKeyLocation = ReadDomKeyLocation(jenv, jobj);
             mFlags = jenv->GetIntField(jobj, jFlagsField);
             mKeyCode = jenv->GetIntField(jobj, jKeyCodeField);
             mUnicodeChar = jenv->GetIntField(jobj, jUnicodeCharField);
+            mBaseUnicodeChar = jenv->GetIntField(jobj, jBaseUnicodeCharField);
             mRepeatCount = jenv->GetIntField(jobj, jRepeatCountField);
             ReadCharactersField(jenv);
             break;
@@ -609,14 +637,6 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             break;
         }
 
-        case ACTIVITY_STOPPING:
-        case ACTIVITY_START:
-        case ACTIVITY_PAUSING:
-        case ACTIVITY_RESUMING: {
-            mFlags = jenv->GetIntField(jobj, jFlagsField);
-            break;
-        }
-
         case THUMBNAIL: {
             mMetaState = jenv->GetIntField(jobj, jMetaStateField);
             ReadPointArray(mPoints, jenv, jPoints, 1);
@@ -626,6 +646,12 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
 
         case SCREENORIENTATION_CHANGED: {
             mScreenOrientation = jenv->GetShortField(jobj, jScreenOrientationField);
+            break;
+        }
+
+        case COMPOSITOR_CREATE: {
+            mWidth = jenv->GetIntField(jobj, jWidthField);
+            mHeight = jenv->GetIntField(jobj, jHeightField);
             break;
         }
 

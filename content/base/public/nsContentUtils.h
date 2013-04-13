@@ -97,6 +97,7 @@ class nsScriptObjectTracer;
 class nsStringHashKey;
 class nsTextFragment;
 class nsViewportInfo;
+class nsIFrame;
 
 struct JSContext;
 struct JSPropertyDescriptor;
@@ -120,6 +121,7 @@ class Selection;
 namespace dom {
 class DocumentFragment;
 class Element;
+class EventTarget;
 } // namespace dom
 
 namespace layers {
@@ -208,6 +210,15 @@ public:
    */
   static bool ContentIsDescendantOf(const nsINode* aPossibleDescendant,
                                       const nsINode* aPossibleAncestor);
+
+  /**
+   * Similar to ContentIsDescendantOf, except will treat an HTMLTemplateElement
+   * or ShadowRoot as an ancestor of things in the corresponding DocumentFragment.
+   * See the concept of "host-including inclusive ancestor" in the DOM
+   * specification.
+   */
+  static bool ContentIsHostIncludingDescendantOf(
+    const nsINode* aPossibleDescendant, const nsINode* aPossibleAncestor);
 
   /**
    * Similar to ContentIsDescendantOf except it crosses document boundaries.
@@ -333,6 +344,12 @@ public:
    * HTML 4.01 also lists U+200B (zero-width space).
    */
   static bool IsHTMLWhitespace(PRUnichar aChar);
+
+  /*
+   * Returns whether the character is an HTML whitespace (see IsHTMLWhitespace)
+   * or a nbsp character (U+00A0).
+   */
+  static bool IsHTMLWhitespaceOrNBSP(PRUnichar aChar);
 
   /**
    * Is the HTML local name a block element?
@@ -1341,6 +1358,11 @@ public:
   static bool IsSystemPrincipal(nsIPrincipal* aPrincipal);
 
   /**
+   * Gets the system principal from the security manager.
+   */
+  static nsIPrincipal* GetSystemPrincipal();
+
+  /**
    * *aResourcePrincipal is a principal describing who may access the contents
    * of a resource. The resource can only be consumed by a principal that
    * subsumes *aResourcePrincipal. MAKE SURE THAT NOTHING EVER ACTS WITH THE
@@ -1877,6 +1899,12 @@ public:
   static nsIDocument* GetFullscreenAncestor(nsIDocument* aDoc);
 
   /**
+   * Returns true if aWin and the current pointer lock document
+   * have common scriptable top window.
+   */
+  static bool IsInPointerLockContext(nsIDOMWindow* aWin);
+
+  /**
    * Returns the time limit on handling user input before
    * nsEventStateManager::IsHandlingUserInput() stops returning true.
    * This enables us to detect long running user-generated event handlers.
@@ -1984,13 +2012,6 @@ public:
   static nsresult Atob(const nsAString& aAsciiString,
                        nsAString& aBinaryData);
 
-  /** If aJSArray is a Javascript array, this method iterates over its
-   *  elements and appends values to aRetVal as nsIAtoms.
-   *  @throw NS_ERROR_ILLEGAL_VALUE if aJSArray isn't a JS array.
-   */ 
-  static nsresult JSArrayToAtomArray(JSContext* aCx, const JS::Value& aJSArray,
-                                     nsCOMArray<nsIAtom>& aRetVal);
-
   /**
    * Returns whether the input element passed in parameter has the autocomplete
    * functionality enabled. It is taking into account the form owner.
@@ -2094,6 +2115,21 @@ public:
                                         Element* aRoot,
                                         int32_t& aOutStartOffset,
                                         int32_t& aOutEndOffset);
+
+  /**
+   * Takes a frame for anonymous content within a text control (<input> or
+   * <textarea>), and returns an offset in the text content, adjusted for a
+   * trailing <br> frame.
+   *
+   * @param aOffsetFrame      Frame for the text content in which the offset
+   *                          lies
+   * @param aOffset           Offset as calculated by GetContentOffsetsFromPoint
+   * @param aOutOffset        Output adjusted offset
+   *
+   * @see GetSelectionInTextControl for the original basis of this function.
+   */
+  static int32_t GetAdjustedOffsetInTextControl(nsIFrame* aOffsetFrame,
+                                                int32_t aOffset);
 
   static nsIEditor* GetHTMLEditor(nsPresContext* aPresContext);
 
@@ -2232,17 +2268,17 @@ typedef nsCharSeparatedTokenizerTemplate<nsContentUtils::IsHTMLWhitespace>
   nsContentUtils::DropJSObjects(NS_CYCLE_COLLECTION_UPCAST(obj, clazz))
 
 
-class NS_STACK_CLASS nsCxPusher
+class MOZ_STACK_CLASS nsCxPusher
 {
 public:
   nsCxPusher();
   ~nsCxPusher(); // Calls Pop();
 
   // Returns false if something erroneous happened.
-  bool Push(nsIDOMEventTarget *aCurrentTarget);
+  bool Push(mozilla::dom::EventTarget *aCurrentTarget);
   // If nothing has been pushed to stack, this works like Push.
   // Otherwise if context will change, Pop and Push will be called.
-  bool RePush(nsIDOMEventTarget *aCurrentTarget);
+  bool RePush(mozilla::dom::EventTarget *aCurrentTarget);
   // If a null JSContext is passed to Push(), that will cause no
   // push to happen and false to be returned.
   void Push(JSContext *cx);
@@ -2266,7 +2302,7 @@ private:
 #endif
 };
 
-class NS_STACK_CLASS nsAutoScriptBlocker {
+class MOZ_STACK_CLASS nsAutoScriptBlocker {
 public:
   nsAutoScriptBlocker(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM) {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
@@ -2279,7 +2315,7 @@ private:
   MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
-class NS_STACK_CLASS nsAutoScriptBlockerSuppressNodeRemoved :
+class MOZ_STACK_CLASS nsAutoScriptBlockerSuppressNodeRemoved :
                           public nsAutoScriptBlocker {
 public:
   nsAutoScriptBlockerSuppressNodeRemoved() {
@@ -2294,7 +2330,7 @@ public:
   }
 };
 
-class NS_STACK_CLASS nsAutoMicroTask
+class MOZ_STACK_CLASS nsAutoMicroTask
 {
 public:
   nsAutoMicroTask()
@@ -2314,7 +2350,7 @@ namespace mozilla {
  * passed as a parameter. AutoJSContext will take care of finding the most
  * appropriate JS context and release it when leaving the stack.
  */
-class NS_STACK_CLASS AutoJSContext {
+class MOZ_STACK_CLASS AutoJSContext {
 public:
   AutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
   operator JSContext*();
@@ -2337,7 +2373,7 @@ private:
  * SafeAutoJSContext is similar to AutoJSContext but will only return the safe
  * JS context. That means it will never call ::GetCurrentJSContext().
  */
-class NS_STACK_CLASS SafeAutoJSContext : public AutoJSContext {
+class MOZ_STACK_CLASS SafeAutoJSContext : public AutoJSContext {
 public:
   SafeAutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
 };
@@ -2356,7 +2392,7 @@ public:
  * NB: This will not push a null cx even if aCx is null. Make sure you know what
  * you're doing.
  */
-class NS_STACK_CLASS AutoPushJSContext {
+class MOZ_STACK_CLASS AutoPushJSContext {
   nsCxPusher mPusher;
   JSContext* mCx;
 

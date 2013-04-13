@@ -9,8 +9,6 @@ let tempScope = {};
 Cu.import("resource:///modules/devtools/CssRuleView.jsm", tempScope);
 let CssRuleView = tempScope.CssRuleView;
 let _ElementStyle = tempScope._ElementStyle;
-let _editableField = tempScope._editableField;
-let inplaceEditor = tempScope._getInplaceEditorForSpan;
 
 let doc;
 let ruleDialog;
@@ -25,7 +23,7 @@ function setUpTests()
                            'background-color: #000000; >"'+
                        '</div>';
   let testElement = doc.getElementById("test");
-  ruleDialog = openDialog("chrome://browser/content/devtools/cssruleview.xul",
+  ruleDialog = openDialog("chrome://browser/content/devtools/cssruleview.xhtml",
                           "cssruleviewtest",
                           "width=350,height=350");
   ruleDialog.addEventListener("load", function onLoad(evt) {

@@ -25,7 +25,6 @@
 #include "nsEventListenerManager.h"
 #include "nsIRDFCompositeDataSource.h"
 #include "nsIRDFResource.h"
-#include "nsBindingManager.h"
 #include "nsIURI.h"
 #include "nsIXULTemplateBuilder.h"
 #include "nsIBoxObject.h"
@@ -34,7 +33,6 @@
 #include "nsGkAtoms.h"
 #include "nsAutoPtr.h"
 #include "nsStyledElement.h"
-#include "nsDOMScriptObjectHolder.h"
 #include "nsIFrameLoader.h"
 #include "jspubtd.h"
 #include "nsFrameLoader.h"
@@ -201,7 +199,11 @@ public:
     nsXULPrototypeAttribute* mAttributes;         // [OWNER]
 };
 
-class nsXULDocument;
+namespace mozilla {
+namespace dom {
+class XULDocument;
+} // namespace dom
+} // namespace mozilla
 
 class nsXULPrototypeScript : public nsXULPrototypeNode
 {
@@ -233,10 +235,6 @@ public:
 
     void UnlinkJSObjects();
 
-    void Set(nsScriptObjectHolder<JSScript>& aHolder)
-    {
-        Set(aHolder.get());
-    }
     void Set(JSScript* aObject);
 
     JSScript *GetScriptObject()
@@ -248,7 +246,7 @@ public:
     uint32_t                 mLineNo;
     bool                     mSrcLoading;
     bool                     mOutOfLine;
-    nsXULDocument*           mSrcLoadWaiters;   // [OWNER] but not COMPtr
+    mozilla::dom::XULDocument* mSrcLoadWaiters;   // [OWNER] but not COMPtr
     uint32_t                 mLangVersion;
 private:
     JSScript*                mScriptObject;

@@ -30,6 +30,7 @@
 #include "nsProxyRelease.h"
 
 #include "mozilla/Attributes.h"
+#include "mozilla/VisualEventTracer.h"
 
 using namespace mozilla;
 using namespace mozilla::net;
@@ -82,7 +83,9 @@ nsDNSRecord::GetCanonicalName(nsACString &result)
     {
         MutexAutoLock lock(mHostRecord->addr_info_lock);
         if (mHostRecord->addr_info)
-            cname = mHostRecord->addr_info->mHostName;
+            cname = mHostRecord->addr_info->mCanonicalName ?
+                mHostRecord->addr_info->mCanonicalName :
+                mHostRecord->addr_info->mHostName;
         else
             cname = mHostRecord->host;
         result.Assign(cname);
@@ -284,6 +287,8 @@ nsDNSAsyncRequest::OnLookupComplete(nsHostResolver *resolver,
         if (!rec)
             status = NS_ERROR_OUT_OF_MEMORY;
     }
+
+    MOZ_EVENT_TRACER_DONE(this, "net::dns::lookup");
 
     mListener->OnLookupComplete(this, rec, status);
     mListener = nullptr;
@@ -628,6 +633,9 @@ nsDNSService::AsyncResolve(const nsACString  &hostname,
     if (!req)
         return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(*result = req);
+
+    MOZ_EVENT_TRACER_NAME_OBJECT(req, hostname.BeginReading());
+    MOZ_EVENT_TRACER_WAIT(req, "net::dns::lookup");
 
     // addref for resolver; will be released when OnLookupComplete is called.
     NS_ADDREF(req);

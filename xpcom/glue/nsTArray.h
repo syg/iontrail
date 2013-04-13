@@ -75,14 +75,100 @@
 
 
 //
+// nsTArrayFallibleResult and nsTArrayInfallibleResult types are proxy types
+// which are used because you cannot use a templated type which is bound to
+// void as an argument to a void function.  In order to work around that, we
+// encode either a void or a boolean inside these proxy objects, and pass them
+// to the aforementioned function instead, and then use the type information to
+// decide what to do in the function.
+//
+// Note that public nsTArray methods should never return a proxy type.  Such
+// types are only meant to be used in the internal nsTArray helper methods.
+// Public methods returning non-proxy types cannot be called from other
+// nsTArray members.
+//
+struct nsTArrayFallibleResult
+{
+  // Note: allows implicit conversions from and to bool
+  nsTArrayFallibleResult(bool result)
+    : mResult(result)
+  {}
+
+  operator bool() {
+    return mResult;
+  }
+
+private:
+  bool mResult;
+};
+
+struct nsTArrayInfallibleResult
+{
+};
+
+//
 // nsTArray*Allocators must all use the same |free()|, to allow swap()'ing
 // between fallible and infallible variants.
 //
 
+struct nsTArrayFallibleAllocatorBase
+{
+  typedef bool ResultType;
+  typedef nsTArrayFallibleResult ResultTypeProxy;
+
+  static ResultType Result(ResultTypeProxy result) {
+    return result;
+  }
+
+  static bool Successful(ResultTypeProxy result) {
+    return result;
+  }
+
+  static ResultTypeProxy SuccessResult() {
+    return true;
+  }
+
+  static ResultTypeProxy FailureResult() {
+    return false;
+  }
+
+  static ResultType ConvertBoolToResultType(bool aValue) {
+    return aValue;
+  }
+};
+
+struct nsTArrayInfallibleAllocatorBase
+{
+  typedef void ResultType;
+  typedef nsTArrayInfallibleResult ResultTypeProxy;
+
+  static ResultType Result(ResultTypeProxy result) {
+  }
+
+  static bool Successful(ResultTypeProxy) {
+    return true;
+  }
+
+  static ResultTypeProxy SuccessResult() {
+    return ResultTypeProxy();
+  }
+
+  static ResultTypeProxy FailureResult() {
+    NS_RUNTIMEABORT("Infallible nsTArray should never fail");
+    return ResultTypeProxy();
+  }
+
+  static ResultType ConvertBoolToResultType(bool aValue) {
+    if (!aValue) {
+      NS_RUNTIMEABORT("infallible nsTArray should never convert false to ResultType");
+    }
+  }
+};
+
 #if defined(MOZALLOC_HAVE_XMALLOC)
 #include "mozilla/mozalloc_abort.h"
 
-struct nsTArrayFallibleAllocator
+struct nsTArrayFallibleAllocator : nsTArrayFallibleAllocatorBase
 {
   static void* Malloc(size_t size) {
     return moz_malloc(size);
@@ -100,7 +186,7 @@ struct nsTArrayFallibleAllocator
   }
 };
 
-struct nsTArrayInfallibleAllocator
+struct nsTArrayInfallibleAllocator : nsTArrayInfallibleAllocatorBase
 {
   static void* Malloc(size_t size) {
     return moz_xmalloc(size);
@@ -122,7 +208,7 @@ struct nsTArrayInfallibleAllocator
 #else
 #include <stdlib.h>
 
-struct nsTArrayFallibleAllocator
+struct nsTArrayFallibleAllocator : nsTArrayFallibleAllocatorBase
 {
   static void* Malloc(size_t size) {
     return malloc(size);
@@ -140,7 +226,7 @@ struct nsTArrayFallibleAllocator
   }
 };
 
-struct nsTArrayInfallibleAllocator
+struct nsTArrayInfallibleAllocator : nsTArrayInfallibleAllocatorBase
 {
   static void* Malloc(size_t size) {
     void* ptr = malloc(size);
@@ -304,7 +390,7 @@ protected:
   // @param capacity     The requested number of array elements.
   // @param elemSize     The size of an array element.
   // @return False if insufficient memory is available; true otherwise.
-  bool EnsureCapacity(size_type capacity, size_type elemSize);
+  typename Alloc::ResultTypeProxy EnsureCapacity(size_type capacity, size_type elemSize);
 
   // Resize the storage to the minimum required amount.
   // @param elemSize     The size of an array element.
@@ -348,9 +434,10 @@ protected:
 
 protected:
   template<class Allocator>
-  bool SwapArrayElements(nsTArray_base<Allocator>& other,
-                           size_type elemSize,
-                           size_t elemAlign);
+  typename Alloc::ResultTypeProxy
+  SwapArrayElements(nsTArray_base<Allocator>& other,
+                    size_type elemSize,
+                    size_t elemAlign);
 
   // This is an RAII class used in SwapArrayElements.
   class IsAutoArrayRestorer {
@@ -828,7 +915,7 @@ public:
   elem_type *ReplaceElementsAt(index_type start, size_type count,
                                const Item* array, size_type arrayLen) {
     // Adjust memory allocation up-front to catch errors.
-    if (!this->EnsureCapacity(Length() + arrayLen - count, sizeof(elem_type)))
+    if (!Alloc::Successful(this->EnsureCapacity(Length() + arrayLen - count, sizeof(elem_type))))
       return nullptr;
     DestructRange(start, count);
     this->ShiftData(start, count, arrayLen, sizeof(elem_type), MOZ_ALIGNOF(elem_type));
@@ -879,7 +966,7 @@ public:
   // temporaries.
   // @return A pointer to the newly inserted element, or null on OOM.
   elem_type* InsertElementAt(index_type index) {
-    if (!this->EnsureCapacity(Length() + 1, sizeof(elem_type)))
+    if (!Alloc::Successful(this->EnsureCapacity(Length() + 1, sizeof(elem_type))))
       return nullptr;
     this->ShiftData(index, 0, 1, sizeof(elem_type), MOZ_ALIGNOF(elem_type));
     elem_type *elem = Elements() + index;
@@ -954,7 +1041,7 @@ public:
   //                  the operation failed due to insufficient memory.
   template<class Item>
   elem_type *AppendElements(const Item* array, size_type arrayLen) {
-    if (!this->EnsureCapacity(Length() + arrayLen, sizeof(elem_type)))
+    if (!Alloc::Successful(this->EnsureCapacity(Length() + arrayLen, sizeof(elem_type))))
       return nullptr;
     index_type len = Length();
     AssignRange(len, arrayLen, array);
@@ -978,7 +1065,7 @@ public:
   // temporaries.
   // @return A pointer to the newly appended elements, or null on OOM.
   elem_type *AppendElements(size_type count) {
-    if (!this->EnsureCapacity(Length() + count, sizeof(elem_type)))
+    if (!Alloc::Successful(this->EnsureCapacity(Length() + count, sizeof(elem_type))))
       return nullptr;
     elem_type *elems = Elements() + Length();
     size_type i;
@@ -1004,7 +1091,7 @@ public:
     MOZ_ASSERT(&array != this, "argument must be different array");
     index_type len = Length();
     index_type otherLen = array.Length();
-    if (!this->EnsureCapacity(len + otherLen, sizeof(elem_type)))
+    if (!Alloc::Successful(this->EnsureCapacity(len + otherLen, sizeof(elem_type))))
       return nullptr;
     memcpy(Elements() + len, array.Elements(), otherLen * sizeof(elem_type));
     this->IncrementLength(otherLen);      
@@ -1081,8 +1168,10 @@ public:
   // This method causes the elements contained in this array and the given
   // array to be swapped.
   template<class Allocator>
-  bool SwapElements(nsTArray_Impl<E, Allocator>& other) {
-    return this->SwapArrayElements(other, sizeof(elem_type), MOZ_ALIGNOF(elem_type));
+  typename Alloc::ResultType
+  SwapElements(nsTArray_Impl<E, Allocator>& other) {
+    return Alloc::Result(this->SwapArrayElements(other, sizeof(elem_type),
+                                                 MOZ_ALIGNOF(elem_type)));
   }
 
   //
@@ -1095,8 +1184,8 @@ public:
   // will not reduce the number of elements in this array.
   // @param capacity  The desired capacity of this array.
   // @return True if the operation succeeded; false if we ran out of memory
-  bool SetCapacity(size_type capacity) {
-    return this->EnsureCapacity(capacity, sizeof(elem_type));
+  typename Alloc::ResultType SetCapacity(size_type capacity) {
+    return Alloc::Result(this->EnsureCapacity(capacity, sizeof(elem_type)));
   }
 
   // This method modifies the length of the array.  If the new length is
@@ -1136,12 +1225,12 @@ public:
   // constructor.
   // @param minLen  The desired minimum length of this array.
   // @return        True if the operation succeeded; false otherwise.
-  bool EnsureLengthAtLeast(size_type minLen) {
+typename Alloc::ResultType EnsureLengthAtLeast(size_type minLen) {
     size_type oldLen = Length();
     if (minLen > oldLen) {
-      return InsertElementsAt(oldLen, minLen - oldLen) != nullptr;
+      return Alloc::ConvertBoolToResultType(!!InsertElementsAt(oldLen, minLen - oldLen));
     }
-    return true;
+    return Alloc::ConvertBoolToResultType(true);
   }
 
   // This method inserts elements into the array, constructing

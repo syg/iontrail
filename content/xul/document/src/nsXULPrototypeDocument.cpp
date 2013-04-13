@@ -5,7 +5,7 @@
 
 
 #include "nsXULPrototypeDocument.h"
-#include "nsXULDocument.h"
+#include "XULDocument.h"
 
 #include "nsAString.h"
 #include "nsIObjectInputStream.h"
@@ -34,13 +34,13 @@
 
 using mozilla::dom::DestroyProtoAndIfaceCache;
 using mozilla::AutoPushJSContext;
+using mozilla::dom::XULDocument;
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
                      NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
 
 
-class nsXULPDGlobalObject : public nsIScriptGlobalObject,
-                            public nsIScriptObjectPrincipal
+class nsXULPDGlobalObject : public nsIScriptGlobalObject
 {
 public:
     nsXULPDGlobalObject(nsXULPrototypeDocument* owner);
@@ -48,11 +48,13 @@ public:
     // nsISupports interface
     NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
+    // nsIGlobalJSObjectHolder methods
+    virtual JSObject* GetGlobalJSObject();
+
     // nsIScriptGlobalObject methods
     virtual void OnFinalize(JSObject* aObject);
     virtual void SetScriptsEnabled(bool aEnabled, bool aFireTimeouts);
 
-    virtual JSObject* GetGlobalJSObject();
     virtual nsresult EnsureScriptEnvironment();
 
     virtual nsIScriptContext *GetScriptContext();
@@ -114,8 +116,8 @@ JSClass nsXULPDGlobalObject::gSharedGlobalClass = {
     JSCLASS_IMPLEMENTS_BARRIERS | JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(0),
     JS_PropertyStub,  JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, nsXULPDGlobalObject_resolve,  JS_ConvertStub,
-    nsXULPDGlobalObject_finalize, NULL, NULL, NULL, NULL,
-    NULL
+    nsXULPDGlobalObject_finalize, nullptr, nullptr, nullptr, nullptr,
+    nullptr
 };
 
 
@@ -396,7 +398,6 @@ GetNodeInfos(nsXULPrototypeElement* aPrototype,
             ni = aPrototype->mNodeInfo->NodeInfoManager()->
                 GetNodeInfo(name->Atom(), nullptr, kNameSpaceID_None,
                             nsIDOMNode::ATTRIBUTE_NODE);
-            NS_ENSURE_TRUE(ni, NS_ERROR_OUT_OF_MEMORY);
         }
         else {
             ni = name->NodeInfo();
@@ -637,7 +638,7 @@ nsXULPrototypeDocument::GetNodeInfoManager()
 
 
 nsresult
-nsXULPrototypeDocument::AwaitLoadDone(nsXULDocument* aDocument, bool* aResult)
+nsXULPrototypeDocument::AwaitLoadDone(XULDocument* aDocument, bool* aResult)
 {
     nsresult rv = NS_OK;
 
@@ -711,7 +712,7 @@ nsXULPrototypeDocument::GetScriptGlobalObject()
 
 nsXULPDGlobalObject::nsXULPDGlobalObject(nsXULPrototypeDocument* owner)
   : mGlobalObjectOwner(owner)
-  , mJSObject(NULL)
+  , mJSObject(nullptr)
 {
 }
 
@@ -728,6 +729,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsXULPDGlobalObject)
   NS_INTERFACE_MAP_ENTRY(nsIScriptGlobalObject)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
+  NS_INTERFACE_MAP_ENTRY(nsIGlobalObject)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIScriptGlobalObject)
 NS_INTERFACE_MAP_END
 
@@ -783,7 +785,7 @@ nsXULPDGlobalObject::EnsureScriptEnvironment()
   ctxNew->DidInitializeContext();
 
   JSObject* global = ctxNew->GetNativeGlobal();
-  NS_ASSERTION(global, "GetNativeGlobal returned NULL!");
+  NS_ASSERTION(global, "GetNativeGlobal returned nullptr!");
 
   mContext = ctxNew;
   mJSObject = global;
@@ -803,7 +805,7 @@ nsXULPDGlobalObject::GetScriptContext()
   nsresult rv = EnsureScriptEnvironment();
   if (NS_FAILED(rv)) {
     NS_ERROR("Failed to setup script language");
-    return NULL;
+    return nullptr;
   }
 
   return mContext;
@@ -825,15 +827,15 @@ nsXULPDGlobalObject::ClearGlobalObjectOwner()
   if (this != nsXULPrototypeDocument::gSystemGlobal)
     mCachedPrincipal = mGlobalObjectOwner->DocumentPrincipal();
 
-  mContext = NULL;
-  mGlobalObjectOwner = NULL;
+  mContext = nullptr;
+  mGlobalObjectOwner = nullptr;
 }
 
 
 void
 nsXULPDGlobalObject::OnFinalize(JSObject* aObject)
 {
-  mJSObject = NULL;
+  mJSObject = nullptr;
 }
 
 void

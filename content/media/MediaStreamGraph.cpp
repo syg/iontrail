@@ -175,6 +175,9 @@ MediaStreamGraphImpl::ExtractPendingInput(SourceMediaStream* aStream,
     }
     aStream->mBuffer.AdvanceKnownTracksTime(aStream->mUpdateKnownTracksTime);
   }
+  if (aStream->mBuffer.GetEnd() > 0) {
+    aStream->mHasCurrentData = true;
+  }
   if (finished) {
     FinishStream(aStream);
   }
@@ -659,10 +662,12 @@ MediaStreamGraphImpl::RecomputeBlockingAt(const nsTArray<MediaStream*>& aStreams
 void
 MediaStreamGraphImpl::NotifyHasCurrentData(MediaStream* aStream)
 {
-  for (uint32_t j = 0; j < aStream->mListeners.Length(); ++j) {
-    MediaStreamListener* l = aStream->mListeners[j];
-    l->NotifyHasCurrentData(this,
-      GraphTimeToStreamTime(aStream, mCurrentTime) < aStream->mBuffer.GetEnd());
+  if (!aStream->mNotifiedHasCurrentData && aStream->mHasCurrentData) {
+    for (uint32_t j = 0; j < aStream->mListeners.Length(); ++j) {
+      MediaStreamListener* l = aStream->mListeners[j];
+      l->NotifyHasCurrentData(this);
+    }
+    aStream->mNotifiedHasCurrentData = true;
   }
 }
 
@@ -1577,6 +1582,9 @@ MediaStream::AddListenerImpl(already_AddRefed<MediaStreamListener> aListener)
   if (mNotifiedFinished) {
     listener->NotifyFinished(GraphImpl());
   }
+  if (mNotifiedHasCurrentData) {
+    listener->NotifyHasCurrentData(GraphImpl());
+  }
 }
 
 void
@@ -1740,6 +1748,7 @@ SourceMediaStream::AdvanceKnownTracksTime(StreamTime aKnownTime)
 void
 SourceMediaStream::FinishWithLockHeld()
 {
+  mMutex.AssertCurrentThreadOwns();
   mUpdateFinished = true;
   if (!mDestroyed) {
     GraphImpl()->EnsureNextIteration();
@@ -1749,12 +1758,10 @@ SourceMediaStream::FinishWithLockHeld()
 void
 SourceMediaStream::EndAllTrackAndFinish()
 {
-  {
-    MutexAutoLock lock(mMutex);
-    for (uint32_t i = 0; i < mUpdateTracks.Length(); ++i) {
-      SourceMediaStream::TrackData* data = &mUpdateTracks[i];
-      data->mCommands |= TRACK_END;
-    }
+  MutexAutoLock lock(mMutex);
+  for (uint32_t i = 0; i < mUpdateTracks.Length(); ++i) {
+    SourceMediaStream::TrackData* data = &mUpdateTracks[i];
+    data->mCommands |= TRACK_END;
   }
   FinishWithLockHeld();
   // we will call NotifyFinished() to let GetUserMedia know

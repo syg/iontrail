@@ -336,12 +336,7 @@ ContactDB.prototype = {
               for (let num in search) {
                 contact.search[field].push(num);
               }
-            } else if (field == "email") {
-              let address = aContact.properties[field][i].value;
-              if (address && typeof address == "string") {
-                contact.search[field].push(address.toLowerCase());
-              }
-            } else if (field == "impp") {
+            } else if (field == "impp" || field == "email") {
               let value = aContact.properties[field][i].value;
               if (value && typeof value == "string") {
                 contact.search[field].push(value.toLowerCase());
@@ -582,14 +577,14 @@ ContactDB.prototype = {
 
         do {
           while (xIndex < sortBy.length && !x) {
-            x = a.properties[sortBy[xIndex]] ? a.properties[sortBy[xIndex]][0].toLowerCase() : null;
+            x = a.properties[sortBy[xIndex]] && a.properties[sortBy[xIndex]][0] ? a.properties[sortBy[xIndex]][0].toLowerCase() : null;
             xIndex++;
           }
           if (!x) {
-            return sortOrder == 'ascending' ? 1 : -1;
+            return sortOrder == 'descending' ? 1 : -1;
           }
           while (yIndex < sortBy.length && !y) {
-            y = b.properties[sortBy[yIndex]] ? b.properties[sortBy[yIndex]][0].toLowerCase() : null;
+            y = b.properties[sortBy[yIndex]] && b.properties[sortBy[yIndex]][0] ? b.properties[sortBy[yIndex]][0].toLowerCase() : null;
             yIndex++;
           }
           if (!y) {

@@ -201,8 +201,25 @@ GetGutterSize(HANDLE theme, HDC hdc)
     SIZE itemSize;
     GetThemePartSize(theme, hdc, MENU_POPUPITEM, MPI_NORMAL, NULL, TS_TRUE, &itemSize);
 
-    int width = std::max(itemSize.cx, checkboxBGSize.cx + gutterSize.cx);
-    int height = std::max(itemSize.cy, checkboxBGSize.cy);
+    // Figure out how big the menuitem's icon will be (if present) at current DPI
+    double scaleFactor = nsIWidget::DefaultScaleOverride();
+    if (scaleFactor <= 0.0) {
+      scaleFactor = gfxWindowsPlatform::GetPlatform()->GetDPIScale();
+    }
+    int iconDevicePixels = NSToIntRound(16 * scaleFactor);
+    SIZE iconSize = {
+      iconDevicePixels, iconDevicePixels
+    };
+    // Not really sure what margins should be used here, but this seems to work in practice...
+    MARGINS margins = {0};
+    GetThemeMargins(theme, hdc, MENU_POPUPCHECKBACKGROUND, MCB_NORMAL,
+                    TMT_CONTENTMARGINS, NULL, &margins);
+    iconSize.cx += margins.cxLeftWidth + margins.cxRightWidth;
+    iconSize.cy += margins.cyTopHeight + margins.cyBottomHeight;
+
+    int width = std::max(itemSize.cx, std::max(iconSize.cx, checkboxBGSize.cx) + gutterSize.cx);
+    int height = std::max(itemSize.cy, std::max(iconSize.cy, checkboxBGSize.cy));
+
     SIZE ret;
     ret.cx = width;
     ret.cy = height;
@@ -768,6 +785,8 @@ nsNativeThemeWin::GetTheme(uint8_t aWidgetType)
     case NS_THEME_SCROLLBAR_THUMB_VERTICAL:
     case NS_THEME_SCROLLBAR_THUMB_HORIZONTAL:
       return nsUXThemeData::GetTheme(eUXScrollbar);
+    case NS_THEME_RANGE:
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_SCALE_HORIZONTAL:
     case NS_THEME_SCALE_VERTICAL:
     case NS_THEME_SCALE_THUMB_HORIZONTAL:
@@ -1110,18 +1129,33 @@ nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame, uint8_t aWidgetType,
       }
       return NS_OK;
     }
+    case NS_THEME_RANGE:
     case NS_THEME_SCALE_HORIZONTAL:
     case NS_THEME_SCALE_VERTICAL: {
-      aPart = (aWidgetType == NS_THEME_SCALE_HORIZONTAL) ?
-              TKP_TRACK : TKP_TRACKVERT;
-
-      aState = TS_NORMAL;
+      if (aWidgetType == NS_THEME_SCALE_HORIZONTAL ||
+          (aWidgetType == NS_THEME_RANGE &&
+           IsRangeHorizontal(aFrame))) {
+        aPart = TKP_TRACK;
+        aState = TRS_NORMAL;
+      } else {
+        aPart = TKP_TRACKVERT;
+        aState = TRVS_NORMAL;
+      }
       return NS_OK;
     }
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_SCALE_THUMB_HORIZONTAL:
     case NS_THEME_SCALE_THUMB_VERTICAL: {
-      aPart = (aWidgetType == NS_THEME_SCALE_THUMB_HORIZONTAL) ?
-              TKP_THUMB : TKP_THUMBVERT;
+      if (aWidgetType == NS_THEME_RANGE_THUMB) {
+        if (IsRangeHorizontal(aFrame)) {
+          aPart = TKP_THUMBBOTTOM;
+        } else {
+          aPart = IsFrameRTL(aFrame) ? TKP_THUMBLEFT : TKP_THUMBRIGHT;
+        }
+      } else {
+        aPart = (aWidgetType == NS_THEME_SCALE_THUMB_HORIZONTAL) ?
+                TKP_THUMB : TKP_THUMBVERT;
+      }
       nsEventStates eventState = GetContentState(aFrame, aWidgetType);
       if (!aFrame)
         aState = TS_NORMAL;
@@ -1658,7 +1692,8 @@ RENDER_AGAIN:
   // widgetRect is the bounding box for a widget, yet the scale track is only
   // a small portion of this size, so the edges of the scale need to be
   // adjusted to the real size of the track.
-  if (aWidgetType == NS_THEME_SCALE_HORIZONTAL ||
+  if (aWidgetType == NS_THEME_RANGE ||
+      aWidgetType == NS_THEME_SCALE_HORIZONTAL ||
       aWidgetType == NS_THEME_SCALE_VERTICAL) {
     RECT contentRect;
     GetThemeBackgroundContentRect(theme, hdc, part, state, &widgetRect, &contentRect);
@@ -1666,17 +1701,21 @@ RENDER_AGAIN:
     SIZE siz;
     GetThemePartSize(theme, hdc, part, state, &widgetRect, TS_TRUE, &siz);
 
-    if (aWidgetType == NS_THEME_SCALE_HORIZONTAL) {
-      int32_t adjustment = (contentRect.bottom - contentRect.top - siz.cy) / 2 + 1;
-      contentRect.top += adjustment;
-      contentRect.bottom -= adjustment;
+    // When rounding is necessary, we round the position of the track
+    // away from the chevron of the thumb to make it look better.
+    if (aWidgetType == NS_THEME_SCALE_HORIZONTAL ||
+        (aWidgetType == NS_THEME_RANGE && IsRangeHorizontal(aFrame))) {
+      contentRect.top += (contentRect.bottom - contentRect.top - siz.cy) / 2;
+      contentRect.bottom = contentRect.top + siz.cy;
     }
     else {
-      int32_t adjustment = (contentRect.right - contentRect.left - siz.cx) / 2 + 1;
-      // need to subtract one from the left position, otherwise the scale's
-      // border isn't visible
-      contentRect.left += adjustment - 1;
-      contentRect.right -= adjustment;
+      if (!IsFrameRTL(aFrame)) {
+        contentRect.left += (contentRect.right - contentRect.left - siz.cx) / 2;
+        contentRect.right = contentRect.left + siz.cx;
+      } else {
+        contentRect.right -= (contentRect.right - contentRect.left - siz.cx) / 2;
+        contentRect.left = contentRect.right - siz.cx;
+      }
     }
 
     DrawThemeBackground(theme, hdc, part, state, &contentRect, &clipRect);
@@ -1797,6 +1836,7 @@ RENDER_AGAIN:
   // XXX it'd be nice to draw these outside of the frame
   if (((aWidgetType == NS_THEME_CHECKBOX || aWidgetType == NS_THEME_RADIO) &&
         aFrame->GetContent()->IsHTML()) ||
+      aWidgetType == NS_THEME_RANGE ||
       aWidgetType == NS_THEME_SCALE_HORIZONTAL ||
       aWidgetType == NS_THEME_SCALE_VERTICAL) {
       nsEventStates contentState = GetContentState(aFrame, aWidgetType);
@@ -2271,6 +2311,7 @@ nsNativeThemeWin::GetMinimumWidgetSize(nsRenderingContext* aContext, nsIFrame* a
       *aIsOverridable = false;
       break;
 
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_SCALE_THUMB_HORIZONTAL:
     case NS_THEME_SCALE_THUMB_VERTICAL:
     {
@@ -2278,7 +2319,8 @@ nsNativeThemeWin::GetMinimumWidgetSize(nsRenderingContext* aContext, nsIFrame* a
       // on Vista, GetThemePartAndState returns odd values for
       // scale thumbs, so use a hardcoded size instead.
       if (WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION) {
-        if (aWidgetType == NS_THEME_SCALE_THUMB_HORIZONTAL) {
+        if (aWidgetType == NS_THEME_SCALE_THUMB_HORIZONTAL ||
+            (aWidgetType == NS_THEME_RANGE_THUMB && IsRangeHorizontal(aFrame))) {
           aResult->width = 12;
           aResult->height = 20;
         }
@@ -2571,6 +2613,7 @@ nsNativeThemeWin::GetWidgetTransparency(nsIFrame* aFrame, uint8_t aWidgetType)
   case NS_THEME_PROGRESSBAR_VERTICAL:
   case NS_THEME_PROGRESSBAR_CHUNK:
   case NS_THEME_PROGRESSBAR_CHUNK_VERTICAL:
+  case NS_THEME_RANGE:
     return eTransparent;
   }
 
@@ -2626,6 +2669,8 @@ nsNativeThemeWin::ClassicThemeSupportsWidget(nsPresContext* aPresContext,
     case NS_THEME_TEXTFIELD_MULTILINE:
     case NS_THEME_CHECKBOX:
     case NS_THEME_RADIO:
+    case NS_THEME_RANGE:
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_GROUPBOX:
     case NS_THEME_SCROLLBAR_BUTTON_UP:
     case NS_THEME_SCROLLBAR_BUTTON_DOWN:
@@ -2811,6 +2856,17 @@ nsNativeThemeWin::ClassicGetMinimumWidgetSize(nsRenderingContext* aContext, nsIF
 
         //      (*aResult).height = ::GetSystemMetrics(SM_CYVTHUMB) << 1;
       break;
+    case NS_THEME_RANGE_THUMB: {
+      if (IsRangeHorizontal(aFrame)) {
+        (*aResult).width = 12;
+        (*aResult).height = 20;
+      } else {
+        (*aResult).width = 20;
+        (*aResult).height = 12;
+      }
+      *aIsOverridable = false;
+      break;
+    }
     case NS_THEME_SCALE_THUMB_HORIZONTAL:
       (*aResult).width = 12;
       (*aResult).height = 20;
@@ -3073,6 +3129,8 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(nsIFrame* aFrame, uint8_t
     case NS_THEME_TEXTFIELD_MULTILINE:
     case NS_THEME_DROPDOWN:
     case NS_THEME_DROPDOWN_TEXTFIELD:
+    case NS_THEME_RANGE:
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_SCROLLBAR_THUMB_VERTICAL:
     case NS_THEME_SCROLLBAR_THUMB_HORIZONTAL:     
     case NS_THEME_SCROLLBAR_TRACK_VERTICAL:
@@ -3568,6 +3626,7 @@ RENDER_AGAIN:
       ::DrawEdge(hdc, &widgetRect, EDGE_RAISED, BF_RECT | BF_MIDDLE);
 
       break;
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_SCALE_THUMB_VERTICAL:
     case NS_THEME_SCALE_THUMB_HORIZONTAL: {
       nsEventStates eventState = GetContentState(aFrame, aWidgetType);
@@ -3606,17 +3665,25 @@ RENDER_AGAIN:
       break;
     }
     // Draw scale track background
+    case NS_THEME_RANGE:
     case NS_THEME_SCALE_VERTICAL:
-    case NS_THEME_SCALE_HORIZONTAL: {
-      if (aWidgetType == NS_THEME_SCALE_HORIZONTAL) {
-        int32_t adjustment = (widgetRect.bottom - widgetRect.top) / 2 - 2;
-        widgetRect.top += adjustment;
-        widgetRect.bottom -= adjustment;
+    case NS_THEME_SCALE_HORIZONTAL: { 
+      const int32_t trackWidth = 4;
+      // When rounding is necessary, we round the position of the track
+      // away from the chevron of the thumb to make it look better.
+      if (aWidgetType == NS_THEME_SCALE_HORIZONTAL ||
+          (aWidgetType == NS_THEME_RANGE && IsRangeHorizontal(aFrame))) {
+        widgetRect.top += (widgetRect.bottom - widgetRect.top - trackWidth) / 2;
+        widgetRect.bottom = widgetRect.top + trackWidth;
       }
       else {
-        int32_t adjustment = (widgetRect.right - widgetRect.left) / 2 - 2;
-        widgetRect.left += adjustment;
-        widgetRect.right -= adjustment;
+        if (!IsFrameRTL(aFrame)) {
+          widgetRect.left += (widgetRect.right - widgetRect.left - trackWidth) / 2;
+          widgetRect.right = widgetRect.left + trackWidth;
+        } else {
+          widgetRect.right -= (widgetRect.right - widgetRect.left - trackWidth) / 2;
+          widgetRect.left = widgetRect.right - trackWidth;
+        }
       }
 
       ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
@@ -3868,6 +3935,8 @@ nsNativeThemeWin::GetWidgetNativeDrawingFlags(uint8_t aWidgetType)
         gfxWindowsNativeDrawing::CANNOT_COMPLEX_TRANSFORM;
 
     // need to check these others
+    case NS_THEME_RANGE:
+    case NS_THEME_RANGE_THUMB:
     case NS_THEME_SCROLLBAR_BUTTON_UP:
     case NS_THEME_SCROLLBAR_BUTTON_DOWN:
     case NS_THEME_SCROLLBAR_BUTTON_LEFT:

@@ -10,6 +10,9 @@
  */
 
 #include <string.h>
+
+#include "mozilla/PodOperations.h"
+
 #include "jstypes.h"
 #include "jsutil.h"
 #include "jscrashreport.h"
@@ -33,6 +36,7 @@
 #include "js/MemoryMetrics.h"
 #include "methodjit/MethodJIT.h"
 #include "ion/IonCode.h"
+#include "ion/BaselineJIT.h"
 #include "methodjit/Retcon.h"
 #include "vm/Debugger.h"
 #include "vm/Shape.h"
@@ -49,6 +53,9 @@
 using namespace js;
 using namespace js::gc;
 using namespace js::frontend;
+
+using mozilla::PodCopy;
+using mozilla::PodZero;
 
 typedef Rooted<GlobalObject *> RootedGlobalObject;
 
@@ -405,7 +412,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         IsGenerator,
         IsGeneratorExp,
         OwnSource,
-        ExplicitUseStrict
+        ExplicitUseStrict,
+        SelfHosted
     };
 
     uint32_t length, lineno, nslots;
@@ -473,6 +481,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             scriptBits |= (1 << Strict);
         if (script->explicitUseStrict)
             scriptBits |= (1 << ExplicitUseStrict);
+        if (script->selfHosted)
+            scriptBits |= (1 << SelfHosted);
         if (script->bindingsAccessedDynamically)
             scriptBits |= (1 << ContainsDynamicNameAccess);
         if (script->funHasExtensibleScope)
@@ -531,7 +541,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         // staticLevel is set below.
         CompileOptions options(cx);
         options.setVersion(version_)
-               .setNoScriptRval(!!(scriptBits & (1 << NoScriptRval)));
+               .setNoScriptRval(!!(scriptBits & (1 << NoScriptRval)))
+               .setSelfHostingMode(!!(scriptBits & (1 << SelfHosted)));
         ScriptSource *ss;
         if (scriptBits & (1 << OwnSource)) {
             ss = cx->new_<ScriptSource>();
@@ -1180,7 +1191,7 @@ SourceDataCache::purge()
     map_ = NULL;
 }
 
-JSFlatString *
+JSStableString *
 ScriptSource::substring(JSContext *cx, uint32_t start, uint32_t stop)
 {
     const jschar *chars;
@@ -1222,7 +1233,10 @@ ScriptSource::substring(JSContext *cx, uint32_t start, uint32_t stop)
 #else
     chars = data.source;
 #endif
-    return js_NewStringCopyN<CanGC>(cx, chars + start, stop - start);
+    JSFlatString *flatStr = js_NewStringCopyN<CanGC>(cx, chars + start, stop - start);
+    if (!flatStr)
+        return NULL;
+    return flatStr->ensureStable(cx);
 }
 
 bool
@@ -2399,7 +2413,6 @@ js::CloneFunctionScript(JSContext *cx, HandleFunction original, HandleFunction c
 
     RootedScript script(cx, clone->nonLazyScript());
     JS_ASSERT(script);
-    JS_ASSERT(!script->asmJS);
     JS_ASSERT(script->compartment() == original->compartment());
     JS_ASSERT_IF(script->compartment() != cx->compartment,
                  !script->enclosingStaticScope());
@@ -2515,6 +2528,11 @@ JSScript::recompileForStepMode(FreeOp *fop)
         mjit::Recompiler::clearStackReferences(fop, this);
         mjit::ReleaseScriptCode(fop, this);
     }
+#endif
+
+#ifdef JS_ION
+    if (hasBaselineScript())
+        baseline->toggleDebugTraps(this, NULL);
 #endif
 }
 
@@ -2713,8 +2731,6 @@ JSScript::markChildren(JSTracer *trc)
 
 #ifdef JS_ION
     ion::TraceIonScripts(trc, this);
-    if (asmJS)
-        MarkObject(trc, &asmJS, "asmJS");
 #endif
 }
 
@@ -2786,6 +2802,16 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
 
     script->needsArgsObj_ = true;
 
+#ifdef JS_ION
+    /*
+     * Since we can't invalidate baseline scripts, set a flag that's checked from
+     * JIT code to indicate the arguments optimization failed and JSOP_ARGUMENTS
+     * should create an arguments object next time.
+     */
+    if (script->hasBaselineScript())
+        script->baselineScript()->setNeedsArgsObj();
+#endif
+
     /*
      * By design, the arguments optimization is only made when there are no
      * outstanding cases of MagicValue(JS_OPTIMIZED_ARGUMENTS) at any points
@@ -2809,7 +2835,7 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
          * safe since the engine avoids any observation of a StackFrame when it
          * beginsIonActivation (see StackIter::interpFrame comment).
          */
-        if (i.isIon())
+        if (i.isIonOptimizedJS())
             continue;
         AbstractFramePtr frame = i.abstractFramePtr();
         if (frame.isFunctionFrame() && frame.script() == script) {

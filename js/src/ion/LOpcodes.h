@@ -64,6 +64,8 @@
     _(TestDAndBranch)               \
     _(TestVAndBranch)               \
     _(TestOAndBranch)               \
+    _(FunctionDispatch)             \
+    _(TypeObjectDispatch)           \
     _(PolyInlineDispatch)           \
     _(Compare)                      \
     _(CompareAndBranch)             \
@@ -154,6 +156,7 @@
     _(LoadTypedArrayElement)        \
     _(LoadTypedArrayElementHole)    \
     _(StoreTypedArrayElement)       \
+    _(StoreTypedArrayElementHole)   \
     _(EffectiveAddress)             \
     _(ClampIToUint8)                \
     _(ClampDToUint8)                \

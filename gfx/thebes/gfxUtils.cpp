@@ -10,7 +10,7 @@
 #include "nsRegion.h"
 #include "yuv_convert.h"
 #include "ycbcr_to_rgb565.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #ifdef XP_WIN
 #include "gfxWindowsPlatform.h"
@@ -221,7 +221,7 @@ CreateSamplingRestrictedDrawable(gfxDrawable* aDrawable,
                                  const gfxRect& aSubimage,
                                  const gfxImageSurface::gfxImageFormat aFormat)
 {
-    SAMPLE_LABEL("gfxUtils", "CreateSamplingRestricedDrawable");
+    PROFILER_LABEL("gfxUtils", "CreateSamplingRestricedDrawable");
     gfxRect userSpaceClipExtents = aContext->GetClipExtents();
     // This isn't optimal --- if aContext has a rotation then GetClipExtents
     // will have to do a bounding-box computation, and TransformBounds might
@@ -264,7 +264,7 @@ CreateSamplingRestrictedDrawable(gfxDrawable* aDrawable,
 
 // working around cairo/pixman bug (bug 364968)
 // Our device-space-to-image-space transform may not be acceptable to pixman.
-struct NS_STACK_CLASS AutoCairoPixmanBugWorkaround
+struct MOZ_STACK_CLASS AutoCairoPixmanBugWorkaround
 {
     AutoCairoPixmanBugWorkaround(gfxContext*      aContext,
                                  const gfxMatrix& aDeviceSpaceToImageSpace,
@@ -418,7 +418,7 @@ gfxUtils::DrawPixelSnapped(gfxContext*      aContext,
                            gfxPattern::GraphicsFilter aFilter,
                            uint32_t         aImageFlags)
 {
-    SAMPLE_LABEL("gfxUtils", "DrawPixelSnapped");
+    PROFILER_LABEL("gfxUtils", "DrawPixelSnapped");
     bool doTile = !aImageRect.Contains(aSourceRect) &&
                   !(aImageFlags & imgIContainer::FLAG_CLAMP);
 
@@ -521,6 +521,56 @@ ClipToRegionInternal(gfxContext* aContext, const nsIntRegion& aRegion,
   aContext->Clip();
 }
 
+static TemporaryRef<Path>
+PathFromRegionInternal(gfx::DrawTarget* aTarget, const nsIntRegion& aRegion,
+                       bool aSnap)
+{
+  Matrix mat = aTarget->GetTransform();
+  const gfxFloat epsilon = 0.000001;
+#define WITHIN_E(a,b) (fabs((a)-(b)) < epsilon)
+  // We're essentially duplicating the logic in UserToDevicePixelSnapped here.
+  bool shouldNotSnap = !aSnap || (WITHIN_E(mat._11,1.0) &&
+                                  WITHIN_E(mat._22,1.0) &&
+                                  WITHIN_E(mat._12,0.0) &&
+                                  WITHIN_E(mat._21,0.0));
+#undef WITHIN_E
+
+  RefPtr<PathBuilder> pb = aTarget->CreatePathBuilder();
+  nsIntRegionRectIterator iter(aRegion);
+
+  const nsIntRect* r;
+  if (shouldNotSnap) {
+    while ((r = iter.Next()) != nullptr) {
+      pb->MoveTo(Point(r->x, r->y));
+      pb->LineTo(Point(r->XMost(), r->y));
+      pb->LineTo(Point(r->XMost(), r->YMost()));
+      pb->LineTo(Point(r->x, r->YMost()));
+      pb->Close();
+    }
+  } else {
+    while ((r = iter.Next()) != nullptr) {
+      Rect rect(r->x, r->y, r->width, r->height);
+
+      rect.Round();
+      pb->MoveTo(rect.TopLeft());
+      pb->LineTo(rect.TopRight());
+      pb->LineTo(rect.BottomRight());
+      pb->LineTo(rect.BottomLeft());
+      pb->Close();
+    }
+  }
+  RefPtr<Path> path = pb->Finish();
+  return path;
+}
+
+static void
+ClipToRegionInternal(gfx::DrawTarget* aTarget, const nsIntRegion& aRegion,
+                     bool aSnap)
+{
+  RefPtr<Path> path = PathFromRegionInternal(aTarget, aRegion, aSnap);
+  aTarget->PushClip(path);
+}
+
 /*static*/ void
 gfxUtils::ClipToRegion(gfxContext* aContext, const nsIntRegion& aRegion)
 {
@@ -531,6 +581,12 @@ gfxUtils::ClipToRegion(gfxContext* aContext, const nsIntRegion& aRegion)
 gfxUtils::ClipToRegionSnapped(gfxContext* aContext, const nsIntRegion& aRegion)
 {
   ClipToRegionInternal(aContext, aRegion, true);
+}
+
+/*static*/ void
+gfxUtils::ClipToRegionSnapped(DrawTarget* aTarget, const nsIntRegion& aRegion)
+{
+  ClipToRegionInternal(aTarget, aRegion, true);
 }
 
 /*static*/ gfxFloat

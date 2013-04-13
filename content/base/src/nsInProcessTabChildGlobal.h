@@ -19,12 +19,15 @@
 #include "nsIDOMElement.h"
 #include "nsCOMArray.h"
 #include "nsThreadUtils.h"
+#include "nsIGlobalObject.h"
+#include "nsWeakReference.h"
 
 class nsInProcessTabChildGlobal : public nsDOMEventTargetHelper,
                                   public nsFrameScriptExecutor,
                                   public nsIInProcessContentFrameMessageManager,
-                                  public nsIScriptObjectPrincipal,
                                   public nsIScriptContextPrincipal,
+                                  public nsIGlobalObject,
+                                  public nsSupportsWeakReference,
                                   public mozilla::dom::ipc::MessageManagerCallback
 {
 public:
@@ -37,10 +40,10 @@ public:
   NS_FORWARD_SAFE_NSIMESSAGELISTENERMANAGER(mMessageManager)
   NS_FORWARD_SAFE_NSIMESSAGESENDER(mMessageManager)
   NS_IMETHOD SendSyncMessage(const nsAString& aMessageName,
-                             const jsval& aObject,
+                             const JS::Value& aObject,
                              JSContext* aCx,
                              uint8_t aArgc,
-                             jsval* aRetval)
+                             JS::Value* aRetval)
   {
     return mMessageManager
       ? mMessageManager->SendSyncMessage(aMessageName, aObject, aCx, aArgc, aRetval)
@@ -113,6 +116,17 @@ public:
   }
 
   void DelayedDisconnect();
+
+  virtual JSObject* GetGlobalJSObject() {
+    if (!mGlobal) {
+      return nullptr;
+    }
+
+    JSObject* global;
+    mGlobal->GetJSObject(&global);
+
+    return global;
+  }
 protected:
   nsresult Init();
   nsresult InitTabChildGlobal();

@@ -495,8 +495,8 @@ array_length_setter(JSContext *cx, HandleObject obj, HandleId id, JSBool strict,
 
         uint32_t gap = oldlen - newlen;
         for (;;) {
-            jsid nid;
-            if (!JS_CHECK_OPERATION_LIMIT(cx) || !JS_NextProperty(cx, iter, &nid))
+            RootedId nid(cx);
+            if (!JS_CHECK_OPERATION_LIMIT(cx) || !JS_NextProperty(cx, iter, nid.address()))
                 return false;
             if (JSID_IS_VOID(nid))
                 break;
@@ -2725,7 +2725,7 @@ JSObject * JS_FASTCALL
 js::NewDenseEmptyArray(JSContext *cx, RawObject proto /* = NULL */,
                        NewObjectKind newKind /* = GenericObject */)
 {
-    return NewArray<false>(cx, 0, proto);
+    return NewArray<false>(cx, 0, proto, newKind);
 }
 
 JSObject * JS_FASTCALL
@@ -2739,7 +2739,7 @@ JSObject * JS_FASTCALL
 js::NewDenseUnallocatedArray(JSContext *cx, uint32_t length, RawObject proto /* = NULL */,
                              NewObjectKind newKind /* = GenericObject */)
 {
-    return NewArray<false>(cx, length, proto);
+    return NewArray<false>(cx, length, proto, newKind);
 }
 
 #ifdef JS_METHODJIT

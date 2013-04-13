@@ -74,7 +74,6 @@ public:
   // nsIFormContromFrame
   virtual void SetFocus(bool aOn, bool aRepaint);
   virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue);
-  virtual nsresult GetFormProperty(nsIAtom* aName, nsAString& aValue) const; 
 };
 
 
@@ -183,7 +182,7 @@ nsImageControlFrame::HandleEvent(nsPresContext* aPresContext,
   if (aEvent->eventStructType == NS_MOUSE_EVENT &&
       aEvent->message == NS_MOUSE_BUTTON_UP &&
       static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton) {
-    // Store click point for nsHTMLInputElement::SubmitNamesValues
+    // Store click point for HTMLInputElement::SubmitNamesValues
     // Do this on MouseUp because the specs don't say and that's what IE does
     nsIntPoint* lastClickPoint =
       static_cast<nsIntPoint*>
@@ -222,13 +221,5 @@ nsresult
 nsImageControlFrame::SetFormProperty(nsIAtom* aName,
                                      const nsAString& aValue)
 {
-  return NS_OK;
-}
-
-nsresult
-nsImageControlFrame::GetFormProperty(nsIAtom* aName,
-                                     nsAString& aValue) const
-{
-  aValue.Truncate();
   return NS_OK;
 }

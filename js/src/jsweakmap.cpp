@@ -339,7 +339,7 @@ JS_FRIEND_API(JSBool)
 JS_NondeterministicGetWeakMapKeys(JSContext *cx, JSObject *objArg, JSObject **ret)
 {
     RootedObject obj(cx, objArg);
-    obj = UnwrapObject(obj);
+    obj = UncheckedUnwrap(obj);
     if (!obj || !obj->isWeakMap()) {
         *ret = NULL;
         return true;
@@ -373,11 +373,6 @@ WeakMap_finalize(FreeOp *fop, RawObject obj)
 {
     if (ObjectValueMap *map = GetObjectMap(obj)) {
         map->check();
-        /*
-         * The map may contain finalized entries, so drop them before destructing to avoid calling
-         * ~EncapsulatedPtr.
-         */
-        map->clearWithoutCallingDestructors();
 #ifdef DEBUG
         map->~ObjectValueMap();
         memset(static_cast<void *>(map), 0xdc, sizeof(*map));

@@ -10,7 +10,6 @@
 #include "nsViewManager.h"
 #include "nsGfxCIID.h"
 #include "nsView.h"
-#include "nsISupportsArray.h"
 #include "nsCOMPtr.h"
 #include "nsGUIEvent.h"
 #include "nsRegion.h"
@@ -21,7 +20,7 @@
 #include "nsPresContext.h"
 #include "nsEventStateManager.h"
 #include "mozilla/StartupTimeline.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 #include "nsRefreshDriver.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
@@ -126,11 +125,11 @@ nsViewManager::Init(nsDeviceContext* aContext)
 
 nsView*
 nsViewManager::CreateView(const nsRect& aBounds,
-                          const nsView* aParent,
+                          nsView* aParent,
                           nsViewVisibility aVisibilityFlag)
 {
   nsView *v = new nsView(this, aVisibilityFlag);
-  v->SetParent(const_cast<nsView*>(aParent));
+  v->SetParent(aParent);
   v->SetPosition(aBounds.x, aBounds.y);
   nsRect dim(0, 0, aBounds.width, aBounds.height);
   v->SetDimensions(dim, false);
@@ -661,7 +660,7 @@ void nsViewManager::DidPaintWindow()
 void
 nsViewManager::DispatchEvent(nsGUIEvent *aEvent, nsView* aView, nsEventStatus* aStatus)
 {
-  SAMPLE_LABEL("event", "nsViewManager::DispatchEvent");
+  PROFILER_LABEL("event", "nsViewManager::DispatchEvent");
 
   if ((NS_IS_MOUSE_EVENT(aEvent) &&
        // Ignore mouse events that we synthesize.

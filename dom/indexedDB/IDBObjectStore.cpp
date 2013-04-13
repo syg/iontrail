@@ -472,8 +472,7 @@ private:
   uint64_t mCount;
 };
 
-NS_STACK_CLASS
-class AutoRemoveIndex
+class MOZ_STACK_CLASS AutoRemoveIndex
 {
 public:
   AutoRemoveIndex(ObjectStoreInfo* aObjectStoreInfo,
@@ -510,7 +509,7 @@ class ThreadLocalJSRuntime
   JSObject* mGlobal;
 
   static JSClass sGlobalClass;
-  static const unsigned sRuntimeHeapSize = 512 * 1024;
+  static const unsigned sRuntimeHeapSize = 768 * 1024;
 
   ThreadLocalJSRuntime()
   : mRuntime(NULL), mContext(NULL), mGlobal(NULL)
@@ -979,7 +978,6 @@ IDBObjectStore::UpdateIndexes(IDBTransaction* aTransaction,
                               int64_t aObjectDataId,
                               const nsTArray<IndexUpdateInfo>& aUpdateInfoArray)
 {
-  nsCOMPtr<mozIStorageStatement> stmt;
   nsresult rv;
 
   NS_ASSERTION(aObjectDataId != INT64_MIN, "Bad objectData id!");
@@ -987,41 +985,49 @@ IDBObjectStore::UpdateIndexes(IDBTransaction* aTransaction,
   NS_NAMED_LITERAL_CSTRING(objectDataId, "object_data_id");
 
   if (aOverwrite) {
-    stmt = aTransaction->GetCachedStatement(
-      "DELETE FROM unique_index_data "
-      "WHERE object_data_id = :object_data_id; "
-      "DELETE FROM index_data "
-      "WHERE object_data_id = :object_data_id");
-    NS_ENSURE_TRUE(stmt, NS_ERROR_FAILURE);
+    nsCOMPtr<mozIStorageStatement> deleteStmt =
+      aTransaction->GetCachedStatement(
+        "DELETE FROM unique_index_data "
+        "WHERE object_data_id = :object_data_id; "
+        "DELETE FROM index_data "
+        "WHERE object_data_id = :object_data_id");
+    NS_ENSURE_TRUE(deleteStmt, NS_ERROR_FAILURE);
 
-    mozStorageStatementScoper scoper(stmt);
+    mozStorageStatementScoper scoper(deleteStmt);
 
-    rv = stmt->BindInt64ByName(objectDataId, aObjectDataId);
+    rv = deleteStmt->BindInt64ByName(objectDataId, aObjectDataId);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = stmt->Execute();
+    rv = deleteStmt->Execute();
     NS_ENSURE_SUCCESS(rv, rv);
   }
+
+  // Avoid lots of hash lookups for objectStores with lots of indexes by lazily
+  // holding the necessary statements on the stack outside the loop.
+  nsCOMPtr<mozIStorageStatement> insertUniqueStmt;
+  nsCOMPtr<mozIStorageStatement> insertStmt;
 
   uint32_t infoCount = aUpdateInfoArray.Length();
   for (uint32_t i = 0; i < infoCount; i++) {
     const IndexUpdateInfo& updateInfo = aUpdateInfoArray[i];
 
-    // Insert new values.
+    nsCOMPtr<mozIStorageStatement>& stmt =
+      updateInfo.indexUnique ? insertUniqueStmt : insertStmt;
 
-    stmt = updateInfo.indexUnique ?
-      aTransaction->GetCachedStatement(
-        "INSERT INTO unique_index_data "
-          "(index_id, object_data_id, object_data_key, value) "
-        "VALUES (:index_id, :object_data_id, :object_data_key, :value)") :
-      aTransaction->GetCachedStatement(
-        "INSERT OR IGNORE INTO index_data ("
-          "index_id, object_data_id, object_data_key, value) "
-        "VALUES (:index_id, :object_data_id, :object_data_key, :value)");
-
+    if (!stmt) {
+      stmt = updateInfo.indexUnique ?
+        aTransaction->GetCachedStatement(
+          "INSERT INTO unique_index_data "
+            "(index_id, object_data_id, object_data_key, value) "
+          "VALUES (:index_id, :object_data_id, :object_data_key, :value)") :
+        aTransaction->GetCachedStatement(
+          "INSERT OR IGNORE INTO index_data ("
+            "index_id, object_data_id, object_data_key, value) "
+          "VALUES (:index_id, :object_data_id, :object_data_key, :value)");
+    }
     NS_ENSURE_TRUE(stmt, NS_ERROR_FAILURE);
 
-    mozStorageStatementScoper scoper4(stmt);
+    mozStorageStatementScoper scoper(stmt);
 
     rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("index_id"),
                                updateInfo.indexId);
@@ -2691,22 +2697,25 @@ CopyData(nsIInputStream* aInputStream, nsIOutputStream* aOutputStream)
     char copyBuffer[FILE_COPY_BUFFER_SIZE];
 
     uint32_t numRead;
-    rv = aInputStream->Read(copyBuffer, FILE_COPY_BUFFER_SIZE, &numRead);
-    NS_ENSURE_SUCCESS(rv, rv);
+    rv = aInputStream->Read(copyBuffer, sizeof(copyBuffer), &numRead);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
-    if (numRead <= 0) {
+    if (!numRead) {
       break;
     }
 
     uint32_t numWrite;
     rv = aOutputStream->Write(copyBuffer, numRead, &numWrite);
-    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
-    NS_ENSURE_TRUE(numWrite == numRead, NS_ERROR_FAILURE);
+    if (numWrite < numRead) {
+      // Must have hit the quota limit.
+      return NS_ERROR_DOM_INDEXEDDB_QUOTA_ERR;
+    }
   } while (true);
 
   rv = aOutputStream->Flush();
-  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
   return NS_OK;
 }
@@ -2914,7 +2923,7 @@ AddHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
         NS_ENSURE_TRUE(outputStream, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
         rv = CopyData(inputStream, outputStream);
-        NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+        NS_ENSURE_SUCCESS(rv, rv);
 
         cloneFile.mFile->AddFileInfo(fileInfo);
       }
@@ -3936,14 +3945,11 @@ GetAllHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
   bool hasResult;
   while (NS_SUCCEEDED((rv = stmt->ExecuteStep(&hasResult))) && hasResult) {
     if (mCloneReadInfos.Capacity() == mCloneReadInfos.Length()) {
-      if (!mCloneReadInfos.SetCapacity(mCloneReadInfos.Capacity() * 2)) {
-        NS_ERROR("Out of memory!");
-        return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
-      }
+      mCloneReadInfos.SetCapacity(mCloneReadInfos.Capacity() * 2);
     }
 
     StructuredCloneReadInfo* readInfo = mCloneReadInfos.AppendElement();
-    NS_ASSERTION(readInfo, "Shouldn't fail if SetCapacity succeeded!");
+    NS_ASSERTION(readInfo, "Shouldn't fail since SetCapacity succeeded!");
 
     rv = IDBObjectStore::GetStructuredCloneReadInfoFromStatement(stmt, 0, 1,
       mDatabase, *readInfo);

@@ -199,8 +199,6 @@ JSCompartment::putWrapper(const CrossCompartmentKey &wrapped, const js::Value &w
     JS_ASSERT(!IsPoisonedPtr(wrapper.toGCThing()));
     JS_ASSERT_IF(wrapped.kind == CrossCompartmentKey::StringWrapper, wrapper.isString());
     JS_ASSERT_IF(wrapped.kind != CrossCompartmentKey::StringWrapper, wrapper.isObject());
-    // todo: uncomment when bug 815999 is fixed:
-    // JS_ASSERT(!wrapped.wrapped->isMarked(gc::GRAY));
     return crossCompartmentWrappers.put(wrapped, wrapper);
 }
 
@@ -265,7 +263,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
             return js_FindClassObject(cx, JSProto_StopIteration, vp);
 
         /* Unwrap the object, but don't unwrap outer windows. */
-        obj = UnwrapObject(obj, /* stopAtOuter = */ true, &flags);
+        obj = UncheckedUnwrap(obj, /* stopAtOuter = */ true, &flags);
 
         if (obj->compartment() == this)
             return WrapForSameCompartment(cx, obj, vp);
@@ -487,12 +485,6 @@ JSCompartment::markCrossCompartmentWrappers(JSTracer *trc)
             Value referent = GetProxyPrivate(wrapper);
             MarkValueRoot(trc, &referent, "cross-compartment wrapper");
             JS_ASSERT(referent == GetProxyPrivate(wrapper));
-
-            if (IsFunctionProxy(wrapper)) {
-                Value call = GetProxyCall(wrapper);
-                MarkValueRoot(trc, &call, "cross-compartment wrapper");
-                JS_ASSERT(call == GetProxyCall(wrapper));
-            }
         }
     }
 }
@@ -810,7 +802,7 @@ void
 JSCompartment::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *compartmentObject,
                                    JS::TypeInferenceSizes *tiSizes, size_t *shapesCompartmentTables,
                                    size_t *crossCompartmentWrappersArg, size_t *regexpCompartment,
-                                   size_t *debuggeesSet)
+                                   size_t *debuggeesSet, size_t *baselineOptimizedStubs)
 {
     *compartmentObject = mallocSizeOf(this);
     sizeOfTypeInferenceData(tiSizes, mallocSizeOf);
@@ -821,4 +813,11 @@ JSCompartment::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *compa
     *crossCompartmentWrappersArg = crossCompartmentWrappers.sizeOfExcludingThis(mallocSizeOf);
     *regexpCompartment = regExps.sizeOfExcludingThis(mallocSizeOf);
     *debuggeesSet = debuggees.sizeOfExcludingThis(mallocSizeOf);
+#ifdef JS_ION
+    *baselineOptimizedStubs = ionCompartment()
+        ? ionCompartment()->optimizedStubSpace()->sizeOfExcludingThis(mallocSizeOf)
+        : 0;
+#else
+    *baselineOptimizedStubs = 0;
+#endif
 }

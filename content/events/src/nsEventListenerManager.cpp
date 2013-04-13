@@ -45,7 +45,6 @@
 #include "nsContentCID.h"
 #include "nsEventDispatcher.h"
 #include "nsDOMJSUtils.h"
-#include "nsDOMScriptObjectHolder.h"
 #include "nsDataHashtable.h"
 #include "nsCOMArray.h"
 #include "nsEventListenerService.h"
@@ -263,14 +262,12 @@ nsEventListenerManager::AddEventListenerInternal(
     if (window) {
       window->SetHasPaintEventListeners();
     }
-#ifdef MOZ_MEDIA
   } else if (aType == NS_MOZAUDIOAVAILABLE) {
     mMayHaveAudioAvailableEventListener = true;
     nsPIDOMWindow* window = GetInnerWindowForTarget();
     if (window) {
       window->SetHasAudioAvailableEventListeners();
     }
-#endif // MOZ_MEDIA
   } else if (aType >= NS_MUTATION_START && aType <= NS_MUTATION_END) {
     // For mutation listeners, we need to update the global bit on the DOM window.
     // Otherwise we won't actually fire the mutation event.
@@ -339,6 +336,14 @@ nsEventListenerManager::AddEventListenerInternal(
 #endif
       window->SetHasMouseEnterLeaveEventListeners();
     }
+#ifdef MOZ_GAMEPAD
+  } else if (aType >= NS_GAMEPAD_START &&
+             aType <= NS_GAMEPAD_END) {
+    nsPIDOMWindow* window = GetInnerWindowForTarget();
+    if (window) {
+      window->SetHasGamepadEventListener();
+    }
+#endif
   }
 }
 
@@ -621,7 +626,7 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
 
     // We want to allow compiling an event handler even in an unloaded
     // document, so use GetScopeObject here, not GetScriptHandlingObject.
-    global = doc->GetScopeObject();
+    global = do_QueryInterface(doc->GetScopeObject());
   } else {
     nsCOMPtr<nsPIDOMWindow> win = GetTargetAsInnerWindow();
     if (win) {
@@ -662,11 +667,12 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (csp) {
-      bool inlineOK;
-      rv = csp->GetAllowsInlineScript(&inlineOK);
+      bool inlineOK = true;
+      bool reportViolations = false;
+      rv = csp->GetAllowsInlineScript(&reportViolations, &inlineOK);
       NS_ENSURE_SUCCESS(rv, rv);
 
-      if ( !inlineOK ) {
+      if (reportViolations) {
         // gather information to log with violation report
         nsIURI* uri = doc->GetDocumentURI();
         nsAutoCString asciiSpec;
@@ -686,6 +692,10 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
                                  NS_ConvertUTF8toUTF16(asciiSpec),
                                  scriptSample,
                                  0);
+      }
+
+      // return early if CSP wants us to block inline scripts
+      if (!inlineOK) {
         return NS_OK;
       }
     }
@@ -750,7 +760,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
 
   nsIScriptContext *context = listener->GetEventContext();
   JSContext *cx = context->GetNativeContext();
-  nsScriptObjectHolder<JSObject> handler(context);
+  JS::Rooted<JSObject*> handler(cx);
 
   nsCOMPtr<nsPIDOMWindow> win; // Will end up non-null if mTarget is a window
 
@@ -846,21 +856,21 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
                                         nsAtomCString(aListenerStruct->mTypeAtom),
                                         argCount, argNames, *body, &handlerFun);
     NS_ENSURE_SUCCESS(result, result);
-    handler.set(handlerFun);
+    handler = handlerFun;
     NS_ENSURE_TRUE(handler, NS_ERROR_FAILURE);
   }
 
   if (handler) {
     // Bind it
-    nsScriptObjectHolder<JSObject> boundHandler(context);
+    JS::Rooted<JSObject*> boundHandler(cx);
     context->BindCompiledEventHandler(mTarget, listener->GetEventScope(),
-                                      handler.get(), boundHandler);
+                                      handler, &boundHandler);
     if (listener->EventName() == nsGkAtoms::onerror && win) {
       bool ok;
       JSAutoRequest ar(cx);
       nsRefPtr<OnErrorEventHandlerNonNull> handlerCallback =
         new OnErrorEventHandlerNonNull(cx, listener->GetEventScope(),
-                                       boundHandler.get(), &ok);
+                                       boundHandler, &ok);
       if (!ok) {
         // JS_WrapObject failed, which means OOM allocating the JSObject.
         return NS_ERROR_OUT_OF_MEMORY;
@@ -871,7 +881,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
       JSAutoRequest ar(cx);
       nsRefPtr<BeforeUnloadEventHandlerNonNull> handlerCallback =
         new BeforeUnloadEventHandlerNonNull(cx, listener->GetEventScope(),
-                                            boundHandler.get(), &ok);
+                                            boundHandler, &ok);
       if (!ok) {
         // JS_WrapObject failed, which means OOM allocating the JSObject.
         return NS_ERROR_OUT_OF_MEMORY;
@@ -882,7 +892,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
       JSAutoRequest ar(cx);
       nsRefPtr<EventHandlerNonNull> handlerCallback =
         new EventHandlerNonNull(cx, listener->GetEventScope(),
-                                boundHandler.get(), &ok);
+                                boundHandler, &ok);
       if (!ok) {
         // JS_WrapObject failed, which means OOM allocating the JSObject.
         return NS_ERROR_OUT_OF_MEMORY;
@@ -898,7 +908,7 @@ nsresult
 nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
                                            nsIDOMEventListener* aListener,
                                            nsIDOMEvent* aDOMEvent,
-                                           nsIDOMEventTarget* aCurrentTarget,
+                                           EventTarget* aCurrentTarget,
                                            nsCxPusher* aPusher)
 {
   nsresult result = NS_OK;
@@ -932,7 +942,7 @@ void
 nsEventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
                                             nsEvent* aEvent,
                                             nsIDOMEvent** aDOMEvent,
-                                            nsIDOMEventTarget* aCurrentTarget,
+                                            EventTarget* aCurrentTarget,
                                             nsEventStatus* aEventStatus,
                                             nsCxPusher* aPusher)
 {
@@ -1135,7 +1145,7 @@ nsEventListenerManager::HasListeners()
 nsresult
 nsEventListenerManager::GetListenerInfo(nsCOMArray<nsIEventListenerInfo>* aList)
 {
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mTarget);
+  nsCOMPtr<EventTarget> target = do_QueryInterface(mTarget);
   NS_ENSURE_STATE(target);
   aList->Clear();
   uint32_t count = mListeners.Length();

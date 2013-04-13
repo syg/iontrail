@@ -4,11 +4,12 @@
 
 #include "SmsChild.h"
 #include "SmsMessage.h"
+#include "MmsMessage.h"
 #include "Constants.h"
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "mozilla/dom/ContentChild.h"
-#include "SmsRequest.h"
+#include "MobileMessageThread.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -16,17 +17,37 @@ using namespace mozilla::dom::mobilemessage;
 
 namespace {
 
+already_AddRefed<nsISupports>
+CreateMessageFromMessageData(const MobileMessageData& aData)
+{
+  nsCOMPtr<nsISupports> message;
+
+  switch(aData. type()) {
+    case MobileMessageData::TMmsMessageData:
+      message = new MmsMessage(aData.get_MmsMessageData());
+      break;
+    case MobileMessageData::TSmsMessageData:
+      message = new SmsMessage(aData.get_SmsMessageData());
+      break;
+    default:
+      MOZ_NOT_REACHED("Unexpected type of MobileMessageData");
+      return nullptr;
+  }
+
+  return message.forget();
+}
+
 void
-NotifyObserversWithSmsMessage(const char* aEventName,
-                              const SmsMessageData& aMessageData)
+NotifyObserversWithMobileMessage(const char* aEventName,
+                                 const MobileMessageData& aData)
 {
   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
   if (!obs) {
     return;
   }
 
-  nsCOMPtr<SmsMessage> message = new SmsMessage(aMessageData);
-  obs->NotifyObservers(message, aEventName, nullptr);
+  nsCOMPtr<nsISupports> msg = CreateMessageFromMessageData(aData);
+  obs->NotifyObservers(msg, aEventName, nullptr);
 }
 
 } // anonymous namespace
@@ -35,60 +56,50 @@ namespace mozilla {
 namespace dom {
 namespace mobilemessage {
 
-SmsChild::SmsChild()
-{
-  MOZ_COUNT_CTOR(SmsChild);
-}
-
-SmsChild::~SmsChild()
-{
-  MOZ_COUNT_DTOR(SmsChild);
-}
-
 void
 SmsChild::ActorDestroy(ActorDestroyReason aWhy)
 {
 }
 
 bool
-SmsChild::RecvNotifyReceivedMessage(const SmsMessageData& aMessageData)
+SmsChild::RecvNotifyReceivedMessage(const MobileMessageData& aData)
 {
-  NotifyObserversWithSmsMessage(kSmsReceivedObserverTopic, aMessageData);
+  NotifyObserversWithMobileMessage(kSmsReceivedObserverTopic, aData);
   return true;
 }
 
 bool
-SmsChild::RecvNotifySendingMessage(const SmsMessageData& aMessageData)
+SmsChild::RecvNotifySendingMessage(const MobileMessageData& aData)
 {
-  NotifyObserversWithSmsMessage(kSmsSendingObserverTopic, aMessageData);
+  NotifyObserversWithMobileMessage(kSmsSendingObserverTopic, aData);
   return true;
 }
 
 bool
-SmsChild::RecvNotifySentMessage(const SmsMessageData& aMessageData)
+SmsChild::RecvNotifySentMessage(const MobileMessageData& aData)
 {
-  NotifyObserversWithSmsMessage(kSmsSentObserverTopic, aMessageData);
+  NotifyObserversWithMobileMessage(kSmsSentObserverTopic, aData);
   return true;
 }
 
 bool
-SmsChild::RecvNotifyFailedMessage(const SmsMessageData& aMessageData)
+SmsChild::RecvNotifyFailedMessage(const MobileMessageData& aData)
 {
-  NotifyObserversWithSmsMessage(kSmsFailedObserverTopic, aMessageData);
+  NotifyObserversWithMobileMessage(kSmsFailedObserverTopic, aData);
   return true;
 }
 
 bool
-SmsChild::RecvNotifyDeliverySuccessMessage(const SmsMessageData& aMessageData)
+SmsChild::RecvNotifyDeliverySuccessMessage(const MobileMessageData& aData)
 {
-  NotifyObserversWithSmsMessage(kSmsDeliverySuccessObserverTopic, aMessageData);
+  NotifyObserversWithMobileMessage(kSmsDeliverySuccessObserverTopic, aData);
   return true;
 }
 
 bool
-SmsChild::RecvNotifyDeliveryErrorMessage(const SmsMessageData& aMessageData)
+SmsChild::RecvNotifyDeliveryErrorMessage(const MobileMessageData& aData)
 {
-  NotifyObserversWithSmsMessage(kSmsDeliveryErrorObserverTopic, aMessageData);
+  NotifyObserversWithMobileMessage(kSmsDeliveryErrorObserverTopic, aData);
   return true;
 }
 
@@ -106,20 +117,31 @@ SmsChild::DeallocPSmsRequest(PSmsRequestChild* aActor)
   return true;
 }
 
+PMobileMessageCursorChild*
+SmsChild::AllocPMobileMessageCursor(const IPCMobileMessageCursor& aCursor)
+{
+  MOZ_NOT_REACHED("Caller is supposed to manually construct a cursor!");
+  return nullptr;
+}
+
+bool
+SmsChild::DeallocPMobileMessageCursor(PMobileMessageCursorChild* aActor)
+{
+  // MobileMessageCursorChild is refcounted, must not be freed manually.
+  // Originally AddRefed in SendCursorRequest() in SmsIPCService.cpp.
+  static_cast<MobileMessageCursorChild*>(aActor)->Release();
+  return true;
+}
+
 /*******************************************************************************
  * SmsRequestChild
  ******************************************************************************/
 
 SmsRequestChild::SmsRequestChild(nsIMobileMessageCallback* aReplyRequest)
-: mReplyRequest(aReplyRequest)
+  : mReplyRequest(aReplyRequest)
 {
   MOZ_COUNT_CTOR(SmsRequestChild);
   MOZ_ASSERT(aReplyRequest);
-}
-
-SmsRequestChild::~SmsRequestChild()
-{
-  MOZ_COUNT_DTOR(SmsRequestChild);
 }
 
 void
@@ -135,16 +157,22 @@ SmsRequestChild::Recv__delete__(const MessageReply& aReply)
   MOZ_ASSERT(mReplyRequest);
   nsCOMPtr<SmsMessage> message;
   switch(aReply.type()) {
-    case MessageReply::TReplyMessageSend:
-      message = new SmsMessage(aReply.get_ReplyMessageSend().messageData());
-      mReplyRequest->NotifyMessageSent(message);
+    case MessageReply::TReplyMessageSend: {
+        const MobileMessageData& data =
+          aReply.get_ReplyMessageSend().messageData();
+        nsCOMPtr<nsISupports> msg = CreateMessageFromMessageData(data);
+        mReplyRequest->NotifyMessageSent(msg);
+      }
       break;
     case MessageReply::TReplyMessageSendFail:
       mReplyRequest->NotifySendMessageFailed(aReply.get_ReplyMessageSendFail().error());
       break;
-    case MessageReply::TReplyGetMessage:
-      message = new SmsMessage(aReply.get_ReplyGetMessage().messageData());
-      mReplyRequest->NotifyMessageGot(message);
+    case MessageReply::TReplyGetMessage: {
+        const MobileMessageData& data =
+          aReply.get_ReplyGetMessage().messageData();
+        nsCOMPtr<nsISupports> msg = CreateMessageFromMessageData(data);
+        mReplyRequest->NotifyMessageGot(msg);
+      }
       break;
     case MessageReply::TReplyGetMessageFail:
       mReplyRequest->NotifyGetMessageFailed(aReply.get_ReplyGetMessageFail().error());
@@ -155,34 +183,11 @@ SmsRequestChild::Recv__delete__(const MessageReply& aReply)
     case MessageReply::TReplyMessageDeleteFail:
       mReplyRequest->NotifyMessageDeleted(aReply.get_ReplyMessageDeleteFail().error());
       break;
-    case MessageReply::TReplyNoMessageInList:
-      mReplyRequest->NotifyNoMessageInList();
-      break;
-    case MessageReply::TReplyCreateMessageList:
-      message = new SmsMessage(aReply.get_ReplyCreateMessageList().messageData());
-      mReplyRequest->NotifyMessageListCreated(aReply.get_ReplyCreateMessageList().listId(), 
-                                              message);
-      break;
-    case MessageReply::TReplyCreateMessageListFail:
-      mReplyRequest->NotifyReadMessageListFailed(aReply.get_ReplyCreateMessageListFail().error());
-      break;
-    case MessageReply::TReplyGetNextMessage:
-      message = new SmsMessage(aReply.get_ReplyGetNextMessage().messageData());
-      mReplyRequest->NotifyNextMessageInListGot(message);
-      break;
     case MessageReply::TReplyMarkeMessageRead:
       mReplyRequest->NotifyMessageMarkedRead(aReply.get_ReplyMarkeMessageRead().read());
       break;
     case MessageReply::TReplyMarkeMessageReadFail:
       mReplyRequest->NotifyMarkMessageReadFailed(aReply.get_ReplyMarkeMessageReadFail().error());
-      break;
-    case MessageReply::TReplyThreadList: {
-      SmsRequestForwarder* forwarder = static_cast<SmsRequestForwarder*>(mReplyRequest.get());
-      SmsRequest* request = static_cast<SmsRequest*>(forwarder->GetRealRequest());
-      request->NotifyThreadList(aReply.get_ReplyThreadList().items());
-    } break;
-    case MessageReply::TReplyThreadListFail:
-      mReplyRequest->NotifyThreadListFailed(aReply.get_ReplyThreadListFail().error());
       break;
     default:
       MOZ_NOT_REACHED("Received invalid response parameters!");
@@ -190,6 +195,76 @@ SmsRequestChild::Recv__delete__(const MessageReply& aReply)
   }
 
   return true;
+}
+
+/*******************************************************************************
+ * MobileMessageCursorChild
+ ******************************************************************************/
+
+NS_IMPL_ISUPPORTS1(MobileMessageCursorChild, nsICursorContinueCallback)
+
+MobileMessageCursorChild::MobileMessageCursorChild(nsIMobileMessageCursorCallback* aCallback)
+  : mCursorCallback(aCallback)
+{
+  MOZ_COUNT_CTOR(MobileMessageCursorChild);
+  MOZ_ASSERT(aCallback);
+}
+
+void
+MobileMessageCursorChild::ActorDestroy(ActorDestroyReason aWhy)
+{
+  // Nothing needed here.
+}
+
+bool
+MobileMessageCursorChild::RecvNotifyResult(const MobileMessageCursorData& aData)
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  nsCOMPtr<nsISupports> result;
+  switch(aData.type()) {
+    case MobileMessageCursorData::TMmsMessageData:
+      result = new MmsMessage(aData.get_MmsMessageData());
+      break;
+    case MobileMessageCursorData::TSmsMessageData:
+      result = new SmsMessage(aData.get_SmsMessageData());
+      break;
+    case MobileMessageCursorData::TThreadData:
+      result = new MobileMessageThread(aData.get_ThreadData());
+      break;
+    default:
+      MOZ_NOT_REACHED("Received invalid response parameters!");
+      return false;
+  }
+
+  mCursorCallback->NotifyCursorResult(result);
+  return true;
+}
+
+bool
+MobileMessageCursorChild::Recv__delete__(const int32_t& aError)
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  if (aError != nsIMobileMessageCallback::SUCCESS_NO_ERROR) {
+    mCursorCallback->NotifyCursorError(aError);
+  } else {
+    mCursorCallback->NotifyCursorDone();
+  }
+  mCursorCallback = nullptr;
+
+  return true;
+}
+
+// nsICursorContinueCallback
+
+NS_IMETHODIMP
+MobileMessageCursorChild::HandleContinue()
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  SendContinue();
+  return NS_OK;
 }
 
 } // namespace mobilemessage

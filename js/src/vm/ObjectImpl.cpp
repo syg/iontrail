@@ -307,7 +307,7 @@ js::ObjectImpl::nativeLookup(JSContext *cx, jsid id)
 # pragma optimize("", on)
 #endif
 
-RawShape
+Shape *
 js::ObjectImpl::nativeLookupPure(jsid id)
 {
     MOZ_ASSERT(isNative());

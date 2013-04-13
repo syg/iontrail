@@ -395,9 +395,8 @@ HTMLCanvasElement::MozFetchAsStream(nsIInputStreamCallback *aCallback,
   rv = NS_GetMainThread(getter_AddRefs(mainThread));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIInputStreamCallback> asyncCallback;
-  rv = NS_NewInputStreamReadyEvent(getter_AddRefs(asyncCallback), aCallback, mainThread);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIInputStreamCallback> asyncCallback =
+    NS_NewInputStreamReadyEvent(aCallback, mainThread);
 
   return asyncCallback->OnInputStreamReady(asyncData);
 }
@@ -766,7 +765,7 @@ HTMLCanvasElement::GetContext(const nsAString& aContextId,
       JS::AutoIdArray props(cx, JS_Enumerate(cx, &opts));
       for (size_t i = 0; !!props && i < props.length(); ++i) {
         jsid propid = props[i];
-        jsval propname, propval;
+        JS::Value propname, propval;
         if (!JS_IdToValue(cx, propid, &propname) ||
             !JS_GetPropertyById(cx, &opts, propid, &propval)) {
           return NS_ERROR_FAILURE;
@@ -974,7 +973,7 @@ HTMLCanvasElement::GetContextAtIndex(int32_t index)
   if (mCurrentContext && index == 0)
     return mCurrentContext;
 
-  return NULL;
+  return nullptr;
 }
 
 bool

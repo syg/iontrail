@@ -13,9 +13,6 @@ Cc["@mozilla.org/moz/jssubscript-loader;1"]
   .loadSubScript("resource://gre/modules/PageThumbs.jsm", tmp);
 let {PageThumbsStorageMigrator} = tmp;
 
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-  "resource://gre/modules/FileUtils.jsm");
-
 XPCOMUtils.defineLazyServiceGetter(this, "gDirSvc",
   "@mozilla.org/file/directory_service;1", "nsIProperties");
 
@@ -55,7 +52,7 @@ function runTests() {
   writeDummyFile(file, "no-overwrite-plz");
 
   // Kick off thumbnail storage migration.
-  PageThumbsStorageMigrator.migrateToVersion3();
+  PageThumbsStorageMigrator.migrateToVersion3(localProfile.path);
   ok(true, "migration finished");
 
   // Wait until the first thumbnail was moved to its new location.
@@ -72,6 +69,15 @@ function runTests() {
   // Check that our existing thumbnail wasn't overwritten.
   is(getFileContents(file), "no-overwrite-plz",
     "existing thumbnail was not overwritten");
+
+  // Sanity check: ensure that, until it is removed, deprecated
+  // function |getFileForURL| points to the same path as
+  // |getFilePathForURL|.
+  if ("getFileForURL" in PageThumbsStorage) {
+    let file = PageThumbsStorage.getFileForURL(URL);
+    is(file.path, PageThumbsStorage.getFilePathForURL(URL),
+       "Deprecated getFileForURL and getFilePathForURL return the same path");
+  }
 }
 
 function changeLocation(aLocation, aNewDir) {

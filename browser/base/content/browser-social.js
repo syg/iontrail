@@ -2,6 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+// the "exported" symbols
+let SocialUI,
+    SocialChatBar,
+    SocialFlyout,
+    SocialShareButton,
+    SocialMenu,
+    SocialToolbar,
+    SocialSidebar;
+
+(function() {
+
 // The minimum sizes for the auto-resize panel code.
 const PANEL_MIN_HEIGHT = 100;
 const PANEL_MIN_WIDTH = 330;
@@ -9,7 +20,7 @@ const PANEL_MIN_WIDTH = 330;
 XPCOMUtils.defineLazyModuleGetter(this, "SharedFrame",
   "resource:///modules/SharedFrame.jsm");
 
-let SocialUI = {
+SocialUI = {
   // Called on delayed startup to initialize the UI
   init: function SocialUI_init() {
     Services.obs.addObserver(this, "social:ambient-notification-changed", false);
@@ -170,12 +181,12 @@ let SocialUI = {
   },
 
   _updateMenuItems: function () {
-    if (!Social.provider)
+    let provider = Social.provider || Social.defaultProvider;
+    if (!provider)
       return;
-
     // The View->Sidebar and Menubar->Tools menu.
     for (let id of ["menu_socialSidebar", "menu_socialAmbientMenu"])
-      document.getElementById(id).setAttribute("label", Social.provider.name);
+      document.getElementById(id).setAttribute("label", provider.name);
   },
 
   // This handles "ActivateSocialFeature" events fired against content documents
@@ -226,7 +237,7 @@ let SocialUI = {
         return;
       }
     }
-    Social.installProvider(targetDoc.location.href, data, function(manifest) {
+    Social.installProvider(targetDoc, data, function(manifest) {
       this.doActivation(manifest.origin);
     }.bind(this));
   },
@@ -243,10 +254,10 @@ let SocialUI = {
 
       // Show a warning, allow undoing the activation
       let description = document.getElementById("social-activation-message");
-      let brandShortName = document.getElementById("bundle_brand").getString("brandShortName");
-      let message = gNavigatorBundle.getFormattedString("social.activated.description",
-                                                        [provider.name, brandShortName]);
-      description.value = message;
+      let labels = description.getElementsByTagName("label");
+      let uri = Services.io.newURI(provider.origin, null, null)
+      labels[0].setAttribute("value", uri.host);
+      labels[1].setAttribute("onclick", "BrowserOpenAddonsMgr('addons://list/service'); SocialUI.activationPanel.hidePopup();")
 
       let icon = document.getElementById("social-activation-icon");
       if (provider.icon64URL || provider.icon32URL) {
@@ -257,7 +268,7 @@ let SocialUI = {
         icon.hidden = true;
       }
 
-      let notificationPanel = SocialUI.notificationPanel;
+      let notificationPanel = SocialUI.activationPanel;
       // Set the origin being activated and the previously active one, to allow undo
       notificationPanel.setAttribute("origin", provider.origin);
       notificationPanel.setAttribute("oldorigin", oldOrigin);
@@ -271,14 +282,20 @@ let SocialUI = {
   },
 
   undoActivation: function SocialUI_undoActivation() {
-    let origin = this.notificationPanel.getAttribute("origin");
-    let oldOrigin = this.notificationPanel.getAttribute("oldorigin");
+    let origin = this.activationPanel.getAttribute("origin");
+    let oldOrigin = this.activationPanel.getAttribute("oldorigin");
     Social.deactivateFromOrigin(origin, oldOrigin);
-    this.notificationPanel.hidePopup();
+    this.activationPanel.hidePopup();
     Social.uninstallProvider(origin);
   },
 
-  get notificationPanel() {
+  showLearnMore: function() {
+    this.activationPanel.hidePopup();
+    let url = Services.urlFormatter.formatURLPref("app.support.baseURL") + "social-api";
+    openUILinkIn(url, "tab");
+  },
+
+  get activationPanel() {
     return document.getElementById("socialActivatedNotification");
   },
 
@@ -297,26 +314,6 @@ let SocialUI = {
     if (containerParent.classList.contains("social-panel") &&
         containerParent instanceof Ci.nsIDOMXULPopupElement) {
       containerParent.hidePopup();
-    }
-  },
-
-  disableWithConfirmation: function SocialUI_disableWithConfirmation() {
-    let brandShortName = document.getElementById("bundle_brand").getString("brandShortName");
-    let dialogTitle = gNavigatorBundle.getFormattedString("social.remove.confirmationOK",
-                                                          [Social.provider.name]);
-    let text = gNavigatorBundle.getFormattedString("social.remove.confirmationLabel",
-                                                   [Social.provider.name, brandShortName]);
-    let okButtonText = dialogTitle;
-
-    let ps = Services.prompt;
-    let flags = ps.BUTTON_TITLE_IS_STRING * ps.BUTTON_POS_0 +
-                ps.BUTTON_TITLE_CANCEL * ps.BUTTON_POS_1 +
-                ps.BUTTON_POS_0_DEFAULT;
-
-    let confirmationIndex = ps.confirmEx(null, dialogTitle, text, flags,
-                                         okButtonText, null, null, null, {});
-    if (confirmationIndex == 0) {
-      Social.deactivateFromOrigin(Social.provider.origin);
     }
   },
 
@@ -340,7 +337,7 @@ let SocialUI = {
 
 }
 
-let SocialChatBar = {
+SocialChatBar = {
   init: function() {
   },
   get chatbar() {
@@ -437,7 +434,7 @@ DynamicResizeWatcher.prototype = {
   }
 }
 
-let SocialFlyout = {
+SocialFlyout = {
   get panel() {
     return document.getElementById("social-flyout-panel");
   },
@@ -569,7 +566,7 @@ let SocialFlyout = {
   }
 }
 
-let SocialShareButton = {
+SocialShareButton = {
   // Called once, after window load, when the Social.provider object is initialized
   init: function SSB_init() {
   },
@@ -712,7 +709,7 @@ let SocialShareButton = {
   }
 };
 
-var SocialMenu = {
+SocialMenu = {
   init: function SocialMenu_init() {
   },
 
@@ -746,7 +743,7 @@ var SocialMenu = {
 };
 
 // XXX Need to audit that this is being initialized correctly
-var SocialToolbar = {
+SocialToolbar = {
   // Called once, after window load, when the Social.provider object is
   // initialized.
   init: function SocialToolbar_init() {
@@ -916,19 +913,11 @@ var SocialToolbar = {
         SharedFrame.updateURL(notificationFrameId, icon.contentPanel);
       }
 
-      let toolbarButtonContainerId = "social-notification-container-" + icon.name;
       let toolbarButtonId = "social-notification-icon-" + icon.name;
-      let toolbarButtonContainer = document.getElementById(toolbarButtonContainerId);
       let toolbarButton = document.getElementById(toolbarButtonId);
-      if (!toolbarButtonContainer) {
-        // The container is used to fix an issue with position:absolute on
-        // generated content not being constrained to the bounding box of a
-        // parent toolbarbutton that has position:relative.
-        toolbarButtonContainer = document.createElement("toolbaritem");
-        toolbarButtonContainer.classList.add("social-notification-container");
-        toolbarButtonContainer.setAttribute("id", toolbarButtonContainerId);
-
+      if (!toolbarButton) {
         toolbarButton = document.createElement("toolbarbutton");
+        toolbarButton.setAttribute("type", "badged");
         toolbarButton.classList.add("toolbarbutton-1");
         toolbarButton.setAttribute("id", toolbarButtonId);
         toolbarButton.setAttribute("notificationFrameId", notificationFrameId);
@@ -937,8 +926,7 @@ var SocialToolbar = {
             SocialToolbar.showAmbientPopup(toolbarButton);
         });
 
-        toolbarButtonContainer.appendChild(toolbarButton);
-        toolbarButtons.appendChild(toolbarButtonContainer);
+        toolbarButtons.appendChild(toolbarButton);
       }
 
       toolbarButton.style.listStyleImage = "url(" + icon.iconURL + ")";
@@ -1032,7 +1020,7 @@ var SocialToolbar = {
     let navBar = document.getElementById("nav-bar");
     let anchor = navBar.getAttribute("mode") == "text" ?
                    document.getAnonymousElementByAttribute(aToolbarButton, "class", "toolbarbutton-text") :
-                   document.getAnonymousElementByAttribute(aToolbarButton, "class", "toolbarbutton-icon");
+                   document.getAnonymousElementByAttribute(aToolbarButton, "class", "toolbarbutton-badge-container");
     // Bug 849216 - open the popup in a setTimeout so we avoid the auto-rollup
     // handling from preventing it being opened in some cases.
     setTimeout(function() {
@@ -1087,7 +1075,7 @@ var SocialToolbar = {
   }
 }
 
-var SocialSidebar = {
+SocialSidebar = {
   // Called once, after window load, when the Social.provider object is initialized
   init: function SocialSidebar_init() {
     let sbrowser = document.getElementById("social-sidebar-browser");
@@ -1194,3 +1182,5 @@ var SocialSidebar = {
     }
   }
 }
+
+})();

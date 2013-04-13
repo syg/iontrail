@@ -5,9 +5,6 @@
 // Test that focus doesn't leave the style editor when adding a property
 // (bug 719916)
 
-let tempScope = {};
-Cu.import("resource:///modules/devtools/CssRuleView.jsm", tempScope);
-let inplaceEditor = tempScope._getInplaceEditorForSpan;
 let doc;
 let inspector;
 let stylePanel;
@@ -22,9 +19,9 @@ function openRuleView()
     // Highlight a node.
     let node = content.document.getElementsByTagName("h1")[0];
     inspector.selection.once("new-node", testFocus);
-    executeSoon(function() {
-      inspector.selection.setNode(doc.body);
-    });
+
+    inspector.sidebar.once("ruleview-ready",
+                           () => inspector.selection.setNode(doc.body));
   });
 }
 

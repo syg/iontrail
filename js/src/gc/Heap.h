@@ -85,13 +85,13 @@ static const size_t MAX_BACKGROUND_FINALIZE_KINDS = FINALIZE_LIMIT - FINALIZE_OB
 struct Cell
 {
     inline ArenaHeader *arenaHeader() const;
-    inline AllocKind getAllocKind() const;
+    inline AllocKind tenuredGetAllocKind() const;
     MOZ_ALWAYS_INLINE bool isMarked(uint32_t color = BLACK) const;
     MOZ_ALWAYS_INLINE bool markIfUnmarked(uint32_t color = BLACK) const;
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
 
     inline JSRuntime *runtime() const;
-    inline Zone *zone() const;
+    inline Zone *tenuredZone() const;
 
 #ifdef DEBUG
     inline bool isAligned() const;
@@ -825,6 +825,7 @@ struct Chunk
 
 JS_STATIC_ASSERT(sizeof(Chunk) == ChunkSize);
 JS_STATIC_ASSERT(js::gc::ChunkMarkBitmapOffset == offsetof(Chunk, bitmap));
+JS_STATIC_ASSERT(js::gc::ChunkRuntimeOffset == offsetof(Chunk, info) + offsetof(ChunkInfo, runtime));
 
 inline uintptr_t
 ArenaHeader::address() const
@@ -950,7 +951,7 @@ Cell::runtime() const
 }
 
 AllocKind
-Cell::getAllocKind() const
+Cell::tenuredGetAllocKind() const
 {
     return arenaHeader()->getAllocKind();
 }
@@ -981,7 +982,7 @@ Cell::unmark(uint32_t color) const
 }
 
 Zone *
-Cell::zone() const
+Cell::tenuredZone() const
 {
     JS_ASSERT(isTenured());
     return arenaHeader()->zone;

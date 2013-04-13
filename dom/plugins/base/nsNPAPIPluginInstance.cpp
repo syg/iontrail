@@ -1171,7 +1171,7 @@ nsNPAPIPluginInstance::IsWindowless(bool* isWindowless)
   return NS_OK;
 }
 
-class NS_STACK_CLASS AutoPluginLibraryCall
+class MOZ_STACK_CLASS AutoPluginLibraryCall
 {
 public:
   AutoPluginLibraryCall(nsNPAPIPluginInstance* aThis)
@@ -1786,8 +1786,7 @@ nsNPAPIPluginInstance::CheckJavaC2PJSObjectQuirk(uint16_t paramCount,
     return;
   }
 
-  nsRefPtr<nsPluginHost> pluginHost =
-    already_AddRefed<nsPluginHost>(nsPluginHost::GetInst());
+  nsRefPtr<nsPluginHost> pluginHost = nsPluginHost::GetInst();
   if (!pluginHost) {
     return;
   }

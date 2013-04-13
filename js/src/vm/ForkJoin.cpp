@@ -773,9 +773,9 @@ class ParallelIonInvoke
         calleeToken_ = CalleeToParallelToken(callee);
     }
 
-    bool invoke() {
-        Value result;
-        enter_(jitcode_, argc_ + 1, argv_ + 1, NULL, calleeToken_, &result);
+    bool invoke(JSContext *cx) {
+        RootedValue result(cx);
+        enter_(jitcode_, argc_ + 1, argv_ + 1, NULL, calleeToken_, NULL, 0, result.address());
         return !result.isMagic();
     }
 };
@@ -872,8 +872,7 @@ ForkJoinShared::~ForkJoinShared()
     if (rendezvousEnd_)
         PR_DestroyCondVar(rendezvousEnd_);
 
-    if (cxLock_)
-        PR_DestroyLock(cxLock_);
+    PR_DestroyLock(cxLock_);
 
     while (allocators_.length() > 0)
         js_delete(allocators_.popCopy());
@@ -960,6 +959,8 @@ ForkJoinShared::executeFromWorker(uint32_t workerId, uintptr_t stackLimit)
 
     PerThreadData thisThread(cx_->runtime);
     TlsPerThreadData.set(&thisThread);
+    // Don't use setIonStackLimit() because that acquires the ionStackLimitLock, and the
+    // lock has not been initialized in these cases.
     thisThread.ionStackLimit = stackLimit;
     executePortion(&thisThread, workerId);
     TlsPerThreadData.set(NULL);
@@ -1021,7 +1022,7 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
         fii.args[1] = Int32Value(slice.numSlices);
         fii.args[2] = BooleanValue(false);
 
-        bool ok = fii.invoke();
+        bool ok = fii.invoke(cx_);
         JS_ASSERT(ok == !slice.bailoutRecord->topScript);
         if (!ok)
             setAbortFlag(false);
@@ -1526,7 +1527,7 @@ class ParallelSpewer
     {
         const char *env;
 
-        PodArrayZero(active);
+        mozilla::PodArrayZero(active);
         env = getenv("PAFLAGS");
         if (env) {
             if (strstr(env, "ops"))

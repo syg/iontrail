@@ -29,7 +29,6 @@ const INVISIBLE_ELEMENTS = {
 // weird things may happen; thus, when necessary, we'll split into groups
 const MAX_GROUP_NODES = Math.pow(2, Uint16Array.BYTES_PER_ELEMENT * 8) / 12 - 1;
 
-const STACK_THICKNESS = 15;
 const WIREFRAME_COLOR = [0, 0, 0, 0.25];
 const INTRO_TRANSITION_DURATION = 1000;
 const OUTRO_TRANSITION_DURATION = 800;
@@ -109,6 +108,14 @@ this.TiltVisualizer = function TiltVisualizer(aProperties)
 }
 
 TiltVisualizer.prototype = {
+
+  /**
+   * Initializes the visualizer
+   */
+  init: function TV_init()
+  {
+    this.presenter.init();
+  },
 
   /**
    * Checks if this object was initialized properly.
@@ -311,6 +318,11 @@ TiltVisualizer.Presenter = function TV_Presenter(
   this.NOTIFICATIONS = aNotifications;
 
   /**
+   * Use the default node callback function
+   */
+  this.nodeCallback = null;
+
+  /**
    * Create the renderer, containing useful functions for easy drawing.
    */
   this._renderer = new TiltGL.Renderer(aCanvas, onError, onLoad);
@@ -376,13 +388,18 @@ TiltVisualizer.Presenter = function TV_Presenter(
   this._delta = 0;
   this._prevFrameTime = 0;
   this._currFrameTime = 0;
-
-
-  this._setup();
-  this._loop();
 };
 
 TiltVisualizer.Presenter.prototype = {
+
+  /**
+   * Initializes the presenter and starts the animation loop
+   */
+  init: function TVP_init()
+  {
+    this._setup();
+    this._loop();
+  },
 
   /**
    * The initialization logic.
@@ -719,6 +736,7 @@ TiltVisualizer.Presenter.prototype = {
 
     // traverse the document and get the depths, coordinates and local names
     this._traverseData = TiltUtils.DOM.traverse(this.contentWindow, {
+      nodeCallback: this.nodeCallback,
       invisibleElements: INVISIBLE_ELEMENTS,
       minSize: ELEMENT_MIN_SIZE,
       maxX: this._texture.width,
@@ -735,7 +753,6 @@ TiltVisualizer.Presenter.prototype = {
     // etc. in a separate thread, as this process may take a while
     worker.postMessage({
       maxGroupNodes: MAX_GROUP_NODES,
-      thickness: STACK_THICKNESS,
       style: TiltVisualizerStyle.nodes,
       texWidth: this._texture.width,
       texHeight: this._texture.height,
@@ -853,7 +870,7 @@ TiltVisualizer.Presenter.prototype = {
       this._currentSelection = -1;
       this._highlight.disabled = true;
 
-      Services.obs.notifyObservers(null, this.NOTIFICATIONS.UNHIGHLIGHTING, null);
+      Services.obs.notifyObservers(this.contentWindow, this.NOTIFICATIONS.UNHIGHLIGHTING, null);
       return;
     }
 
@@ -870,12 +887,12 @@ TiltVisualizer.Presenter.prototype = {
     let y = info.coord.top;
     let w = info.coord.width;
     let h = info.coord.height;
-    let z = info.depth;
+    let z = info.coord.depth + info.coord.thickness;
 
-    vec3.set([x,     y,     z * STACK_THICKNESS], highlight.v0);
-    vec3.set([x + w, y,     z * STACK_THICKNESS], highlight.v1);
-    vec3.set([x + w, y + h, z * STACK_THICKNESS], highlight.v2);
-    vec3.set([x,     y + h, z * STACK_THICKNESS], highlight.v3);
+    vec3.set([x,     y,     z], highlight.v0);
+    vec3.set([x + w, y,     z], highlight.v1);
+    vec3.set([x + w, y + h, z], highlight.v2);
+    vec3.set([x,     y + h, z], highlight.v3);
 
     this._currentSelection = aNodeIndex;
 
@@ -890,7 +907,7 @@ TiltVisualizer.Presenter.prototype = {
         vec3.scale(this._highlight.v1, this.transforms.zoom, []), 0.5));
     }
 
-    Services.obs.notifyObservers(null, this.NOTIFICATIONS.HIGHLIGHTING, null);
+    Services.obs.notifyObservers(this.contentWindow, this.NOTIFICATIONS.HIGHLIGHTING, null);
   },
 
   /**
@@ -922,7 +939,7 @@ TiltVisualizer.Presenter.prototype = {
     this._highlight.disabled = true;
     this._redraw = true;
 
-    Services.obs.notifyObservers(null, this.NOTIFICATIONS.NODE_REMOVED, null);
+    Services.obs.notifyObservers(this.contentWindow, this.NOTIFICATIONS.NODE_REMOVED, null);
   },
 
   /**
@@ -972,7 +989,6 @@ TiltVisualizer.Presenter.prototype = {
     // to the far clipping plane, to check for intersections with the mesh,
     // and do all the heavy lifting in a separate thread
     worker.postMessage({
-      thickness: STACK_THICKNESS,
       vertices: this._meshData.allVertices,
 
       // create the ray destined for 3D picking
@@ -1047,7 +1063,7 @@ TiltVisualizer.Presenter.prototype = {
        !this._isExecutingDestruction) {
 
       this._isInitializationFinished = true;
-      Services.obs.notifyObservers(null, this.NOTIFICATIONS.INITIALIZED, null);
+      Services.obs.notifyObservers(this.contentWindow, this.NOTIFICATIONS.INITIALIZED, null);
 
       if ("function" === typeof this._onInitializationFinished) {
         this._onInitializationFinished();
@@ -1059,7 +1075,7 @@ TiltVisualizer.Presenter.prototype = {
         this._isExecutingDestruction) {
 
       this._isDestructionFinished = true;
-      Services.obs.notifyObservers(null, this.NOTIFICATIONS.BEFORE_DESTROYED, null);
+      Services.obs.notifyObservers(this.contentWindow, this.NOTIFICATIONS.BEFORE_DESTROYED, null);
 
       if ("function" === typeof this._onDestructionFinished) {
         this._onDestructionFinished();

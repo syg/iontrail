@@ -4,8 +4,13 @@
 
 package org.mozilla.gecko;
 
-import android.app.Application;
+import org.mozilla.gecko.db.BrowserContract;
+import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.mozglue.GeckoLoader;
+import org.mozilla.gecko.util.HardwareUtils;
+import org.mozilla.gecko.util.ThreadUtils;
+
+import android.app.Application;
 
 public class GeckoApplication extends Application {
 
@@ -31,7 +36,6 @@ public class GeckoApplication extends Application {
         GeckoBatteryManager.getInstance().start();
         GeckoNetworkManager.getInstance().init(getApplicationContext());
         MemoryMonitor.getInstance().init(getApplicationContext());
-        GeckoAppShell.setNotificationClient(new NotificationServiceClient(getApplicationContext()));
 
         mInited = true;
     }
@@ -46,8 +50,16 @@ public class GeckoApplication extends Application {
             // low memory killer subsequently kills us, the disk cache will
             // be left in a consistent state, avoiding costly cleanup and
             // re-creation. 
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createPauseEvent(true));
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createAppBackgroundingEvent());
             mPausedGecko = true;
+
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
+                public void run() {
+                    BrowserDB.expireHistory(getContentResolver(),
+                                            BrowserContract.ExpirePriority.NORMAL);
+                }
+            });
         }
         GeckoConnectivityReceiver.getInstance().stop();
         GeckoNetworkManager.getInstance().stop();
@@ -55,7 +67,7 @@ public class GeckoApplication extends Application {
 
     protected void onActivityResume(GeckoActivityStatus activity) {
         if (mPausedGecko) {
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createResumeEvent(true));
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createAppForegroundingEvent());
             mPausedGecko = false;
         }
         GeckoConnectivityReceiver.getInstance().start();
@@ -66,6 +78,7 @@ public class GeckoApplication extends Application {
 
     @Override
     public void onCreate() {
+        HardwareUtils.init(getApplicationContext());
         GeckoLoader.loadMozGlue(getApplicationContext());
         super.onCreate();
     }

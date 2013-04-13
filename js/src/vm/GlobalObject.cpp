@@ -376,7 +376,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
                                                   JSFunction::NATIVE_FUN, self, NullPtr()));
     if (!throwTypeError)
         return NULL;
-    if (!throwTypeError->preventExtensions(cx))
+    if (!JSObject::preventExtensions(cx, throwTypeError))
         return NULL;
     self->setThrowTypeError(throwTypeError);
 
@@ -384,7 +384,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
     if (cx->runtime->isSelfHostingGlobal(self)) {
         intrinsicsHolder = self;
     } else {
-        intrinsicsHolder = NewObjectWithClassProto(cx, &ObjectClass, NULL, self);
+        intrinsicsHolder = NewObjectWithClassProto(cx, &ObjectClass, NULL, self, TenuredObject);
         if (!intrinsicsHolder)
             return NULL;
     }

@@ -333,6 +333,7 @@ class BaseShape : public js::gc::Cell
     void setSlotSpan(uint32_t slotSpan) { JS_ASSERT(isOwned()); slotSpan_ = slotSpan; }
 
     JSCompartment *compartment() const { return compartment_; }
+    JS::Zone *zone() const { return tenuredZone(); }
 
     /* Lookup base shapes from the compartment's baseShapes table. */
     static UnownedBaseShape* getUnowned(JSContext *cx, const StackBaseShape &base);
@@ -426,19 +427,26 @@ struct StackBaseShape
     static inline HashNumber hash(const StackBaseShape *lookup);
     static inline bool match(RawUnownedBaseShape key, const StackBaseShape *lookup);
 
-    class AutoRooter : private AutoGCRooter
+    class AutoRooter : private JS::CustomAutoRooter
     {
       public:
         explicit AutoRooter(JSContext *cx, const StackBaseShape *base_
                             MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-          : AutoGCRooter(cx, STACKBASESHAPE), base(base_), skip(cx, base_)
+          : CustomAutoRooter(cx), base(base_), skip(cx, base_)
         {
             MOZ_GUARD_OBJECT_NOTIFIER_INIT;
         }
 
-        friend void AutoGCRooter::trace(JSTracer *trc);
-
       private:
+        virtual void trace(JSTracer *trc) {
+            if (base->parent)
+                traceObject(trc, (JSObject**)&base->parent, "StackBaseShape::AutoRooter parent");
+            if ((base->flags & BaseShape::HAS_GETTER_OBJECT) && base->rawGetter)
+                traceObject(trc, (JSObject**)&base->rawGetter, "StackBaseShape::AutoRooter getter");
+            if ((base->flags & BaseShape::HAS_SETTER_OBJECT) && base->rawSetter)
+                traceObject(trc, (JSObject**)&base->rawSetter, "StackBaseShape::AutoRooter setter");
+        }
+
         const StackBaseShape *base;
         SkipRoot skip;
         MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
@@ -508,9 +516,9 @@ class Shape : public js::gc::Cell
 
     static inline RawShape search(JSContext *cx, Shape *start, jsid id,
                                   Shape ***pspp, bool adding = false);
-    static inline RawShape searchNoHashify(Shape *start, jsid id);
+    static inline Shape *searchNoHashify(Shape *start, jsid id);
 
-    inline void removeFromDictionary(JSObject *obj);
+    inline void removeFromDictionary(ObjectImpl *obj);
     inline void insertIntoDictionary(HeapPtrShape *dictp);
 
     inline void initDictionaryShape(const StackShape &child, uint32_t nfixed,
@@ -817,6 +825,8 @@ class Shape : public js::gc::Cell
     void finalize(FreeOp *fop);
     void removeChild(RawShape child);
 
+    JS::Zone *zone() const { return tenuredZone(); }
+
     static inline void writeBarrierPre(RawShape shape);
     static inline void writeBarrierPost(RawShape shape, void *addr);
 
@@ -849,22 +859,27 @@ class Shape : public js::gc::Cell
 
 class AutoRooterGetterSetter
 {
-    class Inner : private AutoGCRooter
+    class Inner : private JS::CustomAutoRooter
     {
       public:
         Inner(JSContext *cx, uint8_t attrs,
               PropertyOp *pgetter_, StrictPropertyOp *psetter_)
-            : AutoGCRooter(cx, GETTERSETTER), attrs(attrs),
-              pgetter(pgetter_), psetter(psetter_),
-              getterRoot(cx, pgetter_), setterRoot(cx, psetter_)
+          : CustomAutoRooter(cx), attrs(attrs),
+            pgetter(pgetter_), psetter(psetter_),
+            getterRoot(cx, pgetter_), setterRoot(cx, psetter_)
         {
             JS_ASSERT_IF(attrs & JSPROP_GETTER, !IsPoisonedPtr(*pgetter));
             JS_ASSERT_IF(attrs & JSPROP_SETTER, !IsPoisonedPtr(*psetter));
         }
 
-        friend void AutoGCRooter::trace(JSTracer *trc);
-
       private:
+        virtual void trace(JSTracer *trc) {
+            if ((attrs & JSPROP_GETTER) && *pgetter)
+                traceObject(trc, (JSObject**) pgetter, "AutoRooterGetterSetter getter");
+            if ((attrs & JSPROP_SETTER) && *psetter)
+                traceObject(trc, (JSObject**) psetter, "AutoRooterGetterSetter setter");
+        }
+
         uint8_t attrs;
         PropertyOp *pgetter;
         StrictPropertyOp *psetter;
@@ -881,8 +896,6 @@ class AutoRooterGetterSetter
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
-    friend void AutoGCRooter::trace(JSTracer *trc);
-
   private:
     mozilla::Maybe<Inner> inner;
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
@@ -896,6 +909,8 @@ struct EmptyShape : public js::Shape
      * Lookup an initial shape matching the given parameters, creating an empty
      * shape if none was found.
      */
+    static Shape *getInitialShape(JSContext *cx, Class *clasp, TaggedProto proto,
+                                  JSObject *parent, size_t nfixed, uint32_t objectFlags = 0);
     static Shape *getInitialShape(JSContext *cx, Class *clasp, TaggedProto proto,
                                   JSObject *parent, gc::AllocKind kind, uint32_t objectFlags = 0);
 
@@ -1002,19 +1017,19 @@ struct StackShape
 
     inline HashNumber hash() const;
 
-    class AutoRooter : private AutoGCRooter
+    class AutoRooter : private JS::CustomAutoRooter
     {
       public:
         explicit AutoRooter(JSContext *cx, const StackShape *shape_
                             MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-          : AutoGCRooter(cx, STACKSHAPE), shape(shape_), skip(cx, shape_)
+          : CustomAutoRooter(cx), shape(shape_), skip(cx, shape_)
         {
             MOZ_GUARD_OBJECT_NOTIFIER_INIT;
         }
 
-        friend void AutoGCRooter::trace(JSTracer *trc);
-
       private:
+        virtual void trace(JSTracer *trc);
+
         const StackShape *shape;
         SkipRoot skip;
         MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
@@ -1087,7 +1102,7 @@ Shape::search(JSContext *cx, Shape *start, jsid id, Shape ***pspp, bool adding)
  * Keep this function in sync with search. It neither hashifies the start
  * shape nor increments linear search count.
  */
-inline RawShape
+inline Shape *
 Shape::searchNoHashify(Shape *start, jsid id)
 {
     /*
@@ -1099,7 +1114,7 @@ Shape::searchNoHashify(Shape *start, jsid id)
         return SHAPE_FETCH(spp);
     }
 
-    for (RawShape shape = start; shape; shape = shape->parent) {
+    for (Shape *shape = start; shape; shape = shape->parent) {
         if (shape->propidRef() == id)
             return shape;
     }

@@ -43,10 +43,7 @@ bool
 LIRGeneratorARM::lowerConstantDouble(double d, MInstruction *mir)
 {
     uint32_t index;
-    if (!lirGraph_.addConstantToPool(DoubleValue(d), &index))
-        return false;
-
-    LDouble *lir = new LDouble(LConstantIndex::FromIndex(index));
+    LDouble *lir = new LDouble(d);
     return define(lir, mir);
 }
 
@@ -54,10 +51,7 @@ bool
 LIRGeneratorARM::visitConstant(MConstant *ins)
 {
     if (ins->type() == MIRType_Double) {
-        uint32_t index;
-        if (!lirGraph_.addConstantToPool(ins->value(), &index))
-            return false;
-        LDouble *lir = new LDouble(LConstantIndex::FromIndex(index));
+        LDouble *lir = new LDouble(ins->value().toDouble());
         return define(lir, ins);
     }
 
@@ -302,6 +296,12 @@ LIRGeneratorARM::newLTableSwitchV(MTableSwitch *tableswitch)
     return new LTableSwitchV(temp(), tempFloat(), tableswitch);
 }
 
+LGetPropertyCacheT *
+LIRGeneratorARM::newLGetPropertyCacheT(MGetPropertyCache *ins)
+{
+    return new LGetPropertyCacheT(useRegister(ins->object()), LDefinition::BogusTemp());
+}
+
 bool
 LIRGeneratorARM::visitGuardShape(MGuardShape *ins)
 {
@@ -334,6 +334,25 @@ LIRGeneratorARM::visitStoreTypedArrayElement(MStoreTypedArrayElement *ins)
 }
 
 bool
+LIRGeneratorARM::visitStoreTypedArrayElementHole(MStoreTypedArrayElementHole *ins)
+{
+    JS_ASSERT(ins->elements()->type() == MIRType_Elements);
+    JS_ASSERT(ins->index()->type() == MIRType_Int32);
+    JS_ASSERT(ins->length()->type() == MIRType_Int32);
+
+    if (ins->isFloatArray())
+        JS_ASSERT(ins->value()->type() == MIRType_Double);
+    else
+        JS_ASSERT(ins->value()->type() == MIRType_Int32);
+
+    LUse elements = useRegister(ins->elements());
+    LAllocation length = useRegisterOrConstant(ins->length());
+    LAllocation index = useRegisterOrConstant(ins->index());
+    LAllocation value = useRegisterOrNonDoubleConstant(ins->value());
+    return add(new LStoreTypedArrayElementHole(elements, length, index, value), ins);
+}
+
+bool
 LIRGeneratorARM::visitInterruptCheck(MInterruptCheck *ins)
 {
     LInterruptCheck *lir = new LInterruptCheck();
@@ -356,3 +375,68 @@ LIRGeneratorARM::lowerUrshD(MUrsh *mir)
     LUrshD *lir = new LUrshD(useRegister(lhs), useRegisterOrConstant(rhs), temp());
     return define(lir, mir);
 }
+
+bool
+LIRGeneratorARM::visitAsmJSNeg(MAsmJSNeg *ins)
+{
+    if (ins->type() == MIRType_Int32)
+        return define(new LNegI(useRegisterAtStart(ins->input())), ins);
+
+    JS_ASSERT(ins->type() == MIRType_Double);
+    return define(new LNegD(useRegisterAtStart(ins->input())), ins);
+}
+bool
+LIRGeneratorARM::visitAsmJSUDiv(MAsmJSUDiv *div)
+{
+    LAsmJSDivOrMod *lir = new LAsmJSDivOrMod(useFixed(div->lhs(), r0),
+                                         useFixed(div->rhs(), r1),
+                                         tempFixed(r2), tempFixed(r3));
+    return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
+}
+
+bool
+LIRGeneratorARM::visitAsmJSUMod(MAsmJSUMod *mod)
+{
+    LAsmJSDivOrMod *lir = new LAsmJSDivOrMod(useFixed(mod->lhs(), r0),
+                                         useFixed(mod->rhs(), r1),
+                                         tempFixed(r2), tempFixed(r3));
+    return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
+}
+
+bool
+LIRGeneratorARM::visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble *ins)
+{
+    JS_ASSERT(ins->input()->type() == MIRType_Int32);
+    LUInt32ToDouble *lir = new LUInt32ToDouble(useRegisterAtStart(ins->input()));
+    return define(lir, ins);
+}
+
+bool
+LIRGeneratorARM::visitAsmJSStoreHeap(MAsmJSStoreHeap *ins)
+{
+    LAsmJSStoreHeap *lir;
+    switch (ins->viewType()) {
+      case ArrayBufferView::TYPE_INT8: case ArrayBufferView::TYPE_UINT8:
+      case ArrayBufferView::TYPE_INT16: case ArrayBufferView::TYPE_UINT16:
+      case ArrayBufferView::TYPE_INT32: case ArrayBufferView::TYPE_UINT32:
+        lir = new LAsmJSStoreHeap(useRegisterAtStart(ins->ptr()),
+                                  useRegisterAtStart(ins->value()));
+        break;
+      case ArrayBufferView::TYPE_FLOAT32:
+      case ArrayBufferView::TYPE_FLOAT64:
+        lir = new LAsmJSStoreHeap(useRegisterAtStart(ins->ptr()),
+                                  useRegisterAtStart(ins->value()));
+        break;
+      default: JS_NOT_REACHED("unexpected array type");
+    }
+
+    return add(lir, ins);
+}
+
+bool
+LIRGeneratorARM::visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr *ins)
+{
+    return define(new LAsmJSLoadFuncPtr(useRegister(ins->index()), temp()), ins);
+}
+
+//__aeabi_uidiv

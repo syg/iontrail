@@ -1107,19 +1107,7 @@ struct nsStylePosition {
   nsStyleCoord  mZIndex;                // [reset] integer, auto
 
   bool WidthDependsOnContainer() const
-    {
-      return mWidth.GetUnit() == eStyleUnit_Auto ||
-        WidthCoordDependsOnContainer(mWidth);
-    }
-
-  // NOTE: For a flex item, "min-width:auto" is supposed to behave like
-  // "min-content", which does depend on the container, so you might think we'd
-  // need a special case for "flex item && min-width:auto" here.  However,
-  // we don't actually need that special-case code, because flex items are
-  // explicitly supposed to *ignore* their min-width (i.e. behave like it's 0)
-  // until the flex container explicitly considers it.  So -- since the flex
-  // container doesn't rely on this method, we don't need to worry about
-  // special behavior for flex items' "min-width:auto" values here.
+    { return WidthCoordDependsOnContainer(mWidth); }
   bool MinWidthDependsOnContainer() const
     { return WidthCoordDependsOnContainer(mMinWidth); }
   bool MaxWidthDependsOnContainer() const
@@ -1132,13 +1120,7 @@ struct nsStylePosition {
   // FIXME: We should probably change the assumption to be the other way
   // around.
   bool HeightDependsOnContainer() const
-    {
-      return mHeight.GetUnit() == eStyleUnit_Auto || // CSS 2.1, 10.6.4, item (5)
-        HeightCoordDependsOnContainer(mHeight);
-    }
-
-  // NOTE: The comment above MinWidthDependsOnContainer about flex items
-  // applies here, too.
+    { return HeightCoordDependsOnContainer(mHeight); }
   bool MinHeightDependsOnContainer() const
     { return HeightCoordDependsOnContainer(mMinHeight); }
   bool MaxHeightDependsOnContainer() const
@@ -1152,7 +1134,10 @@ struct nsStylePosition {
 private:
   static bool WidthCoordDependsOnContainer(const nsStyleCoord &aCoord);
   static bool HeightCoordDependsOnContainer(const nsStyleCoord &aCoord)
-    { return aCoord.HasPercent(); }
+  {
+    return aCoord.GetUnit() == eStyleUnit_Auto || // CSS 2.1, 10.6.4, item (5)
+           aCoord.HasPercent();
+  }
 };
 
 struct nsStyleTextOverflowSide {
@@ -1336,19 +1321,27 @@ struct nsStyleText {
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_DISCARD_NEWLINES;
   }
 
-  bool WhiteSpaceCanWrap() const {
+  bool WhiteSpaceCanWrapStyle() const {
     return mWhiteSpace == NS_STYLE_WHITESPACE_NORMAL ||
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_WRAP ||
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_LINE;
   }
 
-  bool WordCanWrap() const {
-    return WhiteSpaceCanWrap() && mWordWrap == NS_STYLE_WORDWRAP_BREAK_WORD;
+  bool WordCanWrapStyle() const {
+    return WhiteSpaceCanWrapStyle() &&
+           mWordWrap == NS_STYLE_WORDWRAP_BREAK_WORD;
   }
 
   // These are defined in nsStyleStructInlines.h.
-  inline bool HasTextShadow(const nsIFrame* aFrame) const;
-  inline nsCSSShadowArray* GetTextShadow(const nsIFrame* aFrame) const;
+
+  // The aContextFrame argument on each of these is the frame this
+  // style struct is for.  If the frame is for SVG text, the return
+  // value will be massaged to be something that makes sense for
+  // SVG text.
+  inline bool HasTextShadow(const nsIFrame* aContextFrame) const;
+  inline nsCSSShadowArray* GetTextShadow(const nsIFrame* aContextFrame) const;
+  inline bool WhiteSpaceCanWrap(const nsIFrame* aContextFrame) const;
+  inline bool WordCanWrap(const nsIFrame* aContextFrame) const;
 };
 
 struct nsStyleVisibility {
@@ -1698,18 +1691,24 @@ struct nsStyleDisplay {
   }
 
   // These are defined in nsStyleStructInlines.h.
-  inline bool IsBlockInside(const nsIFrame* aFrame) const;
-  inline bool IsBlockOutside(const nsIFrame* aFrame) const;
-  inline bool IsInlineOutside(const nsIFrame* aFrame) const;
-  inline bool IsOriginalDisplayInlineOutside(const nsIFrame* aFrame) const;
-  inline uint8_t GetDisplay(const nsIFrame* aFrame) const;
-  inline bool IsFloating(const nsIFrame* aFrame) const;
-  inline bool IsPositioned(const nsIFrame* aFrame) const;
-  inline bool IsRelativelyPositioned(const nsIFrame* aFrame) const;
-  inline bool IsAbsolutelyPositioned(const nsIFrame* aFrame) const;
+
+  // The aContextFrame argument on each of these is the frame this
+  // style struct is for.  If the frame is for SVG text, the return
+  // value will be massaged to be something that makes sense for
+  // SVG text.
+  inline bool IsBlockInside(const nsIFrame* aContextFrame) const;
+  inline bool IsBlockOutside(const nsIFrame* aContextFrame) const;
+  inline bool IsInlineOutside(const nsIFrame* aContextFrame) const;
+  inline bool IsOriginalDisplayInlineOutside(const nsIFrame* aContextFrame) const;
+  inline uint8_t GetDisplay(const nsIFrame* aContextFrame) const;
+  inline bool IsFloating(const nsIFrame* aContextFrame) const;
+  inline bool IsPositioned(const nsIFrame* aContextFrame) const;
+  inline bool IsRelativelyPositioned(const nsIFrame* aContextFrame) const;
+  inline bool IsAbsolutelyPositioned(const nsIFrame* aContextFrame) const;
+
   /* Returns whether the element has the -moz-transform property
    * or a related property, and supports CSS transforms. */
-  inline bool HasTransform(const nsIFrame* aFrame) const;
+  inline bool HasTransform(const nsIFrame* aContextFrame) const;
 };
 
 struct nsStyleTable {

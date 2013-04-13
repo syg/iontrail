@@ -167,8 +167,7 @@ TransactionThreadPool::MaybeUnblockTransaction(nsPtrHashKey<TransactionInfo>* aK
   NS_ASSERTION(maybeUnblockedInfo->blockedOn.Contains(finishedInfo),
                "Huh?");
   maybeUnblockedInfo->blockedOn.RemoveEntry(finishedInfo);
-  if (!maybeUnblockedInfo->blockedOn.Count() &&
-      !maybeUnblockedInfo->transaction->IsAborted()) {
+  if (!maybeUnblockedInfo->blockedOn.Count()) {
     // Let this transaction run.
     maybeUnblockedInfo->queue->Unblock();
   }
@@ -279,8 +278,7 @@ TransactionThreadPool::GetQueueForTransaction(IDBTransaction* aTransaction)
     return *info->queue;
   }
 
-  TransactionInfo* transactionInfo = new TransactionInfo(aTransaction,
-                                                         objectStoreNames);
+  TransactionInfo* transactionInfo = new TransactionInfo(aTransaction);
 
   dbTransactionInfo->transactions.Put(aTransaction, transactionInfo);;
 
@@ -352,31 +350,23 @@ TransactionThreadPool::Dispatch(IDBTransaction* aTransaction,
   return NS_OK;
 }
 
-bool
-TransactionThreadPool::WaitForAllDatabasesToComplete(
-                                            nsTArray<IDBDatabase*>& aDatabases,
-                                            nsIRunnable* aCallback)
+void
+TransactionThreadPool::WaitForDatabasesToComplete(
+                                       nsTArray<IDBDatabase*>& aDatabases,
+                                       nsIRunnable* aCallback)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   NS_ASSERTION(!aDatabases.IsEmpty(), "No databases to wait on!");
   NS_ASSERTION(aCallback, "Null pointer!");
 
   DatabasesCompleteCallback* callback = mCompleteCallbacks.AppendElement();
-  if (!callback) {
-    NS_WARNING("Out of memory!");
-    return false;
-  }
 
   callback->mCallback = aCallback;
-  if (!callback->mDatabases.SwapElements(aDatabases)) {
-    NS_ERROR("This should never fail!");
-  }
+  callback->mDatabases.SwapElements(aDatabases);
 
   if (MaybeFireCallback(*callback)) {
     mCompleteCallbacks.RemoveElementAt(mCompleteCallbacks.Length() - 1);
   }
-
-  return true;
 }
 
 // static
@@ -428,14 +418,14 @@ TransactionThreadPool::AbortTransactionsForDatabase(IDBDatabase* aDatabase)
   }
 }
 
-struct NS_STACK_CLASS TransactionSearchInfo
+struct MOZ_STACK_CLASS TransactionSearchInfo
 {
-  TransactionSearchInfo(IDBDatabase* aDatabase)
+  TransactionSearchInfo(nsIOfflineStorage* aDatabase)
     : db(aDatabase), found(false)
   {
   }
 
-  IDBDatabase* db;
+  nsIOfflineStorage* db;
   bool found;
 };
 
@@ -478,7 +468,12 @@ TransactionThreadPool::MaybeFireCallback(DatabasesCompleteCallback& aCallback)
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
   for (uint32_t index = 0; index < aCallback.mDatabases.Length(); index++) {
-    if (mTransactionsInProgress.Get(aCallback.mDatabases[index]->Id(),
+    IDBDatabase* database = aCallback.mDatabases[index];
+    if (!database) {
+      MOZ_CRASH();
+    }
+
+    if (mTransactionsInProgress.Get(database->Id(),
                                     nullptr)) {
       return false;
     }

@@ -18,6 +18,8 @@ namespace ipc {
 }
 namespace layers {
 
+class Image;
+
 /**
  * This class is a view on a YCbCrImage stored in a Shmem at a certain offset.
  * It is only meant as a convenience to access the image data, and does not own
@@ -44,11 +46,12 @@ public:
 
   /**
    * This function is meant as a helper to know how much shared memory we need
-   * to allocate in a shmem in order to place a shared YCbCr image blob of 
+   * to allocate in a shmem in order to place a shared YCbCr image blob of
    * given dimensions.
    */
   static size_t ComputeMinBufferSize(const gfxIntSize& aYSize,
                                      const gfxIntSize& aCbCrSize);
+  static size_t ComputeMinBufferSize(uint32_t aSize);
   /**
    * Write the image informations in a buffer for given dimensions.
    * The provided pointer should point to the beginning of the (chunk of)
@@ -94,6 +97,11 @@ public:
    * Returns the dimensions of the Cb and Cr Channel.
    */
   gfxIntSize GetCbCrSize();
+
+  /**
+   * Return a pointer to the begining of the data buffer.
+   */
+  uint8_t* GetData();
 
   /**
    * Copies the data passed in parameter into the shmem.

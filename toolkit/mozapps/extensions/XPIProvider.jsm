@@ -760,7 +760,8 @@ function loadManifestFromRDF(aUri, aStream) {
     if (addon.optionsType &&
         addon.optionsType != AddonManager.OPTIONS_TYPE_DIALOG &&
         addon.optionsType != AddonManager.OPTIONS_TYPE_INLINE &&
-        addon.optionsType != AddonManager.OPTIONS_TYPE_TAB) {
+        addon.optionsType != AddonManager.OPTIONS_TYPE_TAB &&
+        addon.optionsType != AddonManager.OPTIONS_TYPE_INLINE_INFO) {
       throw new Error("Install manifest specifies unknown type: " + addon.optionsType);
     }
   }
@@ -1671,9 +1672,15 @@ var XPIProvider = {
     for (let id in this.bootstrappedAddons) {
       let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
       file.persistentDescriptor = this.bootstrappedAddons[id].descriptor;
+      let reason = BOOTSTRAP_REASONS.APP_STARTUP;
+      // Eventually set INSTALLED reason when a bootstrap addon
+      // is dropped in profile folder and automatically installed
+      if (AddonManager.getStartupChanges(AddonManager.STARTUP_CHANGE_INSTALLED)
+                      .indexOf(id) !== -1)
+        reason = BOOTSTRAP_REASONS.ADDON_INSTALL;
       this.callBootstrapMethod(id, this.bootstrappedAddons[id].version,
                                this.bootstrappedAddons[id].type, file,
-                               "startup", BOOTSTRAP_REASONS.APP_STARTUP);
+                               "startup", reason);
     }
     AddonManagerPrivate.recordTimestamp("XPI_bootstrap_addons_end");
 
@@ -1681,8 +1688,6 @@ var XPIProvider = {
     // of XPCOM
     Services.obs.addObserver({
       observe: function shutdownObserver(aSubject, aTopic, aData) {
-        Services.prefs.setCharPref(PREF_BOOTSTRAP_ADDONS,
-                                   JSON.stringify(XPIProvider.bootstrappedAddons));
         for (let id in XPIProvider.bootstrappedAddons) {
           let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
           file.persistentDescriptor = XPIProvider.bootstrappedAddons[id].descriptor;
@@ -1787,6 +1792,14 @@ var XPIProvider = {
     // Ensure any changes to the add-ons list are flushed to disk
     XPIDatabase.writeAddonsList();
     Services.prefs.setBoolPref(PREF_PENDING_OPERATIONS, false);
+  },
+
+  /**
+   * Persists changes to XPIProvider.bootstrappedAddons to it's store (a pref).
+   */
+  persistBootstrappedAddons: function XPI_persistBootstrappedAddons() {
+    Services.prefs.setCharPref(PREF_BOOTSTRAP_ADDONS,
+                               JSON.stringify(this.bootstrappedAddons));
   },
 
   /**
@@ -2112,7 +2125,8 @@ var XPIProvider = {
                                     BOOTSTRAP_REASONS.ADDON_DOWNGRADE;
 
               this.callBootstrapMethod(existingAddonID, oldBootstrap.version,
-                                       oldBootstrap.type, existingAddon, "uninstall", uninstallReason);
+                                       oldBootstrap.type, existingAddon, "uninstall", uninstallReason,
+                                       { newVersion: newVersion });
               this.unloadBootstrapScope(existingAddonID);
               flushStartupCache();
             }
@@ -2396,7 +2410,7 @@ var XPIProvider = {
           let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
           file.persistentDescriptor = aAddonState.descriptor;
           XPIProvider.callBootstrapMethod(newAddon.id, newAddon.version, newAddon.type, file,
-                                          "install", installReason);
+                                          "install", installReason, { oldVersion: aOldAddon.version });
           return false;
         }
 
@@ -2776,10 +2790,12 @@ var XPIProvider = {
         visibleAddons[newAddon.id] = newAddon;
 
         let installReason = BOOTSTRAP_REASONS.ADDON_INSTALL;
+        let extraParams = {};
 
         // If we're hiding a bootstrapped add-on then call its uninstall method
         if (newAddon.id in oldBootstrappedAddons) {
           let oldBootstrap = oldBootstrappedAddons[newAddon.id];
+          extraParams.oldVersion = oldBootstrap.version;
           XPIProvider.bootstrappedAddons[newAddon.id] = oldBootstrap;
 
           // If the old version is the same as the new version, or we're
@@ -2798,7 +2814,7 @@ var XPIProvider = {
 
           XPIProvider.callBootstrapMethod(newAddon.id, oldBootstrap.version,
                                           oldBootstrap.type, oldAddonFile, "uninstall",
-                                          installReason);
+                                          installReason, { newVersion: newAddon.version });
           XPIProvider.unloadBootstrapScope(newAddon.id);
 
           // If the new add-on is bootstrapped then we must flush the caches
@@ -2814,7 +2830,7 @@ var XPIProvider = {
         let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
         file.persistentDescriptor = aAddonState.descriptor;
         XPIProvider.callBootstrapMethod(newAddon.id, newAddon.version, newAddon.type, file,
-                                        "install", installReason);
+                                        "install", installReason, extraParams);
         if (!newAddon.active)
           XPIProvider.unloadBootstrapScope(newAddon.id);
       }
@@ -2936,6 +2952,7 @@ var XPIProvider = {
     // Cache the new install location states
     let cache = JSON.stringify(this.getInstallLocationStates());
     Services.prefs.setCharPref(PREF_INSTALL_CACHE, cache);
+    this.persistBootstrappedAddons();
 
     // Clear out any cached migration data.
     XPIDatabase.migrateData = null;
@@ -3677,6 +3694,7 @@ var XPIProvider = {
       type: aType,
       descriptor: aFile.persistentDescriptor
     };
+    this.persistBootstrappedAddons();
     this.addAddonsToCrashReporter();
 
     // Locales only contain chrome and can't have bootstrap scripts
@@ -3744,6 +3762,7 @@ var XPIProvider = {
   unloadBootstrapScope: function XPI_unloadBootstrapScope(aId) {
     delete this.bootstrapScopes[aId];
     delete this.bootstrappedAddons[aId];
+    this.persistBootstrappedAddons();
     this.addAddonsToCrashReporter();
   },
 
@@ -3762,9 +3781,12 @@ var XPIProvider = {
    *         The name of the bootstrap method to call
    * @param  aReason
    *         The reason flag to pass to the bootstrap's startup method
+   * @param  aExtraParams
+   *         An object of additional key/value pairs to pass to the method in
+   *         the params argument
    */
   callBootstrapMethod: function XPI_callBootstrapMethod(aId, aVersion, aType, aFile,
-                                                        aMethod, aReason) {
+                                                        aMethod, aReason, aExtraParams) {
     // Never call any bootstrap methods in safe mode
     if (Services.appinfo.inSafeMode)
       return;
@@ -3792,6 +3814,12 @@ var XPIProvider = {
         installPath: aFile.clone(),
         resourceURI: getURIForResourceInFile(aFile, "")
       };
+
+      if (aExtraParams) {
+        for (let key in aExtraParams) {
+          params[key] = aExtraParams[key];
+        }
+      }
 
       LOG("Calling bootstrap method " + aMethod + " on " + aId + " version " +
           aVersion);
@@ -5087,13 +5115,15 @@ AddonInstall.prototype = {
               XPIProvider.callBootstrapMethod(this.existingAddon.id,
                                               this.existingAddon.version,
                                               this.existingAddon.type, file,
-                                              "shutdown", reason);
+                                              "shutdown", reason,
+                                              { newVersion: this.addon.version });
             }
 
             XPIProvider.callBootstrapMethod(this.existingAddon.id,
                                             this.existingAddon.version,
                                             this.existingAddon.type, file,
-                                            "uninstall", reason);
+                                            "uninstall", reason,
+                                            { newVersion: this.addon.version });
             XPIProvider.unloadBootstrapScope(this.existingAddon.id);
             flushStartupCache();
           }
@@ -5130,10 +5160,15 @@ AddonInstall.prototype = {
         XPIDatabase.getAddonInLocation(this.addon.id, this.installLocation.name,
                                        function startInstall_getAddonInLocation(a) {
           self.addon = a;
+          let extraParams = {};
+          if (self.existingAddon) {
+            extraParams.oldVersion = self.existingAddon.version;
+          }
+
           if (self.addon.bootstrap) {
             XPIProvider.callBootstrapMethod(self.addon.id, self.addon.version,
                                             self.addon.type, file, "install",
-                                            reason);
+                                            reason, extraParams);
           }
 
           AddonManagerPrivate.callAddonListeners("onInstalled",
@@ -5149,7 +5184,7 @@ AddonInstall.prototype = {
             if (self.addon.active) {
               XPIProvider.callBootstrapMethod(self.addon.id, self.addon.version,
                                               self.addon.type, file, "startup",
-                                              reason);
+                                              reason, extraParams);
             }
             else {
               XPIProvider.unloadBootstrapScope(self.addon.id);
@@ -5933,6 +5968,7 @@ function AddonWrapper(aAddon) {
       case AddonManager.OPTIONS_TYPE_TAB:
         return hasOptionsURL ? aAddon.optionsType : null;
       case AddonManager.OPTIONS_TYPE_INLINE:
+      case AddonManager.OPTIONS_TYPE_INLINE_INFO:
         return (hasOptionsXUL || hasOptionsURL) ? aAddon.optionsType : null;
       }
       return null;

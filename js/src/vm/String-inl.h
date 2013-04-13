@@ -8,6 +8,8 @@
 #ifndef String_inl_h__
 #define String_inl_h__
 
+#include "mozilla/PodOperations.h"
+
 #include "jscntxt.h"
 #include "jsprobes.h"
 
@@ -37,7 +39,6 @@ NewShortString(JSContext *cx, JS::Latin1Chars chars)
     for (size_t i = 0; i < len; ++i)
         p[i] = static_cast<jschar>(chars[i]);
     p[len] = '\0';
-    Probes::createString(cx, str, len);
     return str;
 }
 
@@ -59,9 +60,8 @@ NewShortString(JSContext *cx, JS::StableTwoByteChars chars)
         return NULL;
 
     jschar *storage = str->init(len);
-    PodCopy(storage, chars.start().get(), len);
+    mozilla::PodCopy(storage, chars.start().get(), len);
     storage[len] = 0;
-    Probes::createString(cx, str, len);
     return str;
 }
 
@@ -83,14 +83,13 @@ NewShortString(JSContext *cx, JS::TwoByteChars chars)
         if (!allowGC)
             return NULL;
         jschar tmp[JSShortString::MAX_SHORT_LENGTH];
-        PodCopy(tmp, chars.start().get(), len);
+        mozilla::PodCopy(tmp, chars.start().get(), len);
         return NewShortString<CanGC>(cx, JS::StableTwoByteChars(tmp, len));
     }
 
     jschar *storage = str->init(len);
-    PodCopy(storage, chars.start().get(), len);
+    mozilla::PodCopy(storage, chars.start().get(), len);
     storage[len] = 0;
-    Probes::createString(cx, str, len);
     return str;
 }
 
@@ -110,7 +109,7 @@ inline void
 JSString::writeBarrierPre(JSString *str)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!str)
+    if (!str || !str->runtime()->needsBarrier())
         return;
 
     JS::Zone *zone = str->zone();

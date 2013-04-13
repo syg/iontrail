@@ -12,6 +12,7 @@
  */
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/PodOperations.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -34,23 +35,12 @@ enum TokenKind {
     TOK_SEMI,                      /* semicolon */
     TOK_COMMA,                     /* comma operator */
     TOK_HOOK, TOK_COLON,           /* conditional (?:) */
-    TOK_OR,                        /* logical or (||) */
-    TOK_AND,                       /* logical and (&&) */
-    TOK_BITOR,                     /* bitwise-or (|) */
-    TOK_BITXOR,                    /* bitwise-xor (^) */
-    TOK_BITAND,                    /* bitwise-and (&) */
-    TOK_PLUS,                      /* plus */
-    TOK_MINUS,                     /* minus */
-    TOK_STAR,                      /* multiply */
-    TOK_DIV,                       /* divide */
-    TOK_MOD,                       /* modulus */
     TOK_INC, TOK_DEC,              /* increment/decrement (++ --) */
     TOK_DOT,                       /* member operator (.) */
     TOK_TRIPLEDOT,                 /* for rest arguments (...) */
     TOK_LB, TOK_RB,                /* left and right brackets */
     TOK_LC, TOK_RC,                /* left and right curlies (braces) */
     TOK_LP, TOK_RP,                /* left and right parentheses */
-    TOK_ARROW,                     /* function arrow (=>) */
     TOK_NAME,                      /* identifier */
     TOK_NUMBER,                    /* numeric constant */
     TOK_STRING,                    /* string constant */
@@ -70,7 +60,6 @@ enum TokenKind {
     TOK_FOR,                       /* for keyword */
     TOK_BREAK,                     /* break keyword */
     TOK_CONTINUE,                  /* continue keyword */
-    TOK_IN,                        /* in keyword */
     TOK_VAR,                       /* var keyword */
     TOK_CONST,                     /* const keyword */
     TOK_WITH,                      /* with keyword */
@@ -81,7 +70,6 @@ enum TokenKind {
     TOK_CATCH,                     /* catch keyword */
     TOK_FINALLY,                   /* finally keyword */
     TOK_THROW,                     /* throw keyword */
-    TOK_INSTANCEOF,                /* instanceof keyword */
     TOK_DEBUGGER,                  /* debugger keyword */
     TOK_YIELD,                     /* yield from generator function */
     TOK_LEXICALSCOPE,              /* block scope AST node label */
@@ -96,6 +84,17 @@ enum TokenKind {
      * range-testing.
      */
 
+    /*
+     * Binary operators tokens, TOK_OR thru TOK_MOD. These must be in the same
+     * order as F(OR) and friends in FOR_EACH_PARSE_NODE_KIND in ParseNode.h.
+     */
+    TOK_OR,                        /* logical or (||) */
+    TOK_BINOP_FIRST = TOK_OR,
+    TOK_AND,                       /* logical and (&&) */
+    TOK_BITOR,                     /* bitwise-or (|) */
+    TOK_BITXOR,                    /* bitwise-xor (^) */
+    TOK_BITAND,                    /* bitwise-and (&) */
+
     /* Equality operation tokens, per TokenKindIsEquality */
     TOK_STRICTEQ,
     TOK_EQUALITY_START = TOK_STRICTEQ,
@@ -103,12 +102,6 @@ enum TokenKind {
     TOK_STRICTNE,
     TOK_NE,
     TOK_EQUALITY_LAST = TOK_NE,
-
-    /* Unary operation tokens */
-    TOK_TYPEOF,
-    TOK_VOID,
-    TOK_NOT,
-    TOK_BITNOT,
 
     /* Relational ops (< <= > >=), per TokenKindIsRelational */
     TOK_LT,
@@ -118,12 +111,30 @@ enum TokenKind {
     TOK_GE,
     TOK_RELOP_LAST = TOK_GE,
 
+    TOK_INSTANCEOF,                /* instanceof keyword */
+    TOK_IN,                        /* in keyword */
+
     /* Shift ops (<< >> >>>), per TokenKindIsShift */
     TOK_LSH,
     TOK_SHIFTOP_START = TOK_LSH,
     TOK_RSH,
     TOK_URSH,
     TOK_SHIFTOP_LAST = TOK_URSH,
+
+    TOK_PLUS,                      /* plus */
+    TOK_MINUS,                     /* minus */
+    TOK_STAR,                      /* multiply */
+    TOK_DIV,                       /* divide */
+    TOK_MOD,                       /* modulus */
+    TOK_BINOP_LAST = TOK_MOD,
+
+    /* Unary operation tokens */
+    TOK_TYPEOF,
+    TOK_VOID,
+    TOK_NOT,
+    TOK_BITNOT,
+
+    TOK_ARROW,                     /* function arrow (=>) */
 
     /* Assignment ops (= += -= etc.), per TokenKindIsAssignment */
     TOK_ASSIGN,                    /* assignment ops (= += -= etc.) */
@@ -143,6 +154,12 @@ enum TokenKind {
 
     TOK_LIMIT                      /* domain size */
 };
+
+inline bool
+TokenKindIsBinaryOp(TokenKind tt)
+{
+    return TOK_BINOP_FIRST <= tt && tt <= TOK_BINOP_LAST;
+}
 
 inline bool
 TokenKindIsEquality(TokenKind tt)
@@ -355,7 +372,7 @@ struct CompileError {
     CompileError(JSContext *cx)
       : cx(cx), message(NULL), argumentsType(ArgumentsAreUnicode)
     {
-        PodZero(&report);
+        mozilla::PodZero(&report);
     }
     ~CompileError();
     void throwError();
@@ -379,6 +396,46 @@ class StrictModeGetter {
     virtual bool strictMode() = 0;
 };
 
+// TokenStream is the lexical scanner for Javascript source text.
+//
+// It takes a buffer of jschars and linearly scans it into |Token|s.
+// Internally the class uses a four element circular buffer |tokens| of
+// |Token|s. As an index for |tokens|, the member |cursor| points to the
+// current token.
+// Calls to getToken() increase |cursor| by one and return the new current
+// token. If a TokenStream was just created, the current token is initialized
+// with random data (i.e. not initialized). It is therefore important that
+// either of the first four member functions listed below is called first.
+// The circular buffer lets us go back up to two tokens from the last
+// scanned token. Internally, the relative number of backward steps that were
+// taken (via ungetToken()) after the last token was scanned is stored in
+// |lookahead|.
+//
+// The following table lists in which situations it is safe to call each listed
+// function. No checks are made by the functions in non-debug builds.
+//
+// Function Name     | Precondition; changes to |lookahead|
+// ------------------+---------------------------------------------------------
+// getToken          | none; if |lookahead > 0| then |lookahead--|
+// peekToken         | none; none
+// peekTokenSameLine | none; none
+// matchToken        | none; if |lookahead > 0| and the match succeeds then
+//                   |       |lookahead--|
+// consumeKnownToken | none; if |lookahead > 0| then |lookahead--|
+// ungetToken        | 0 <= |lookahead| <= |maxLookahead - 1|; |lookahead++|
+//
+// The behavior of the token scanning process (see getTokenInternal()) can be
+// modified by calling one of the first four above listed member functions with
+// an optional argument of type TokenStreamFlags. The two flags that do
+// influence the scanning process are TSF_OPERAND and TSF_KEYWORD_IS_NAME.
+// However, they will be ignored unless |lookahead == 0| holds.
+// Due to constraints of the grammar, this turns out not to be a problem in
+// practice. See the mozilla.dev.tech.js-engine.internals thread entitled 'Bug
+// in the scanner?' for more details (https://groups.google.com/forum/?
+// fromgroups=#!topic/mozilla.dev.tech.js-engine.internals/2JLH5jRcr7E).
+//
+// The methods seek() and tell() allow to rescan from a previous visited
+// location of the buffer.
 class TokenStream
 {
     /* Unicode separators that are treated as line terminators, in addition to \n, \r */
@@ -519,7 +576,7 @@ class TokenStream
      * Push the last scanned token back into the stream.
      */
     void ungetToken() {
-        JS_ASSERT(lookahead < ntokensMask);
+        JS_ASSERT(lookahead < maxLookahead);
         lookahead++;
         cursor = (cursor - 1) & ntokensMask;
     }

@@ -5,20 +5,135 @@
 
 #include "SmsParent.h"
 #include "nsISmsService.h"
+#include "nsIMmsService.h"
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "Constants.h"
 #include "nsIDOMMozSmsMessage.h"
+#include "nsIDOMMozMmsMessage.h"
 #include "mozilla/unused.h"
 #include "SmsMessage.h"
+#include "MmsMessage.h"
 #include "nsIMobileMessageDatabaseService.h"
 #include "SmsFilter.h"
-#include "SmsRequest.h"
 #include "SmsSegmentInfo.h"
+#include "MobileMessageThread.h"
+#include "nsIDOMFile.h"
+#include "mozilla/dom/ipc/Blob.h"
+#include "mozilla/dom/ContentParent.h"
+#include "nsTArrayHelpers.h"
 
 namespace mozilla {
 namespace dom {
 namespace mobilemessage {
+
+static JSObject*
+MmsAttachmentDataToJSObject(JSContext* aContext,
+                            const MmsAttachmentData& aAttachment)
+{
+  JSAutoRequest ar(aContext);
+
+  JSObject* obj = JS_NewObject(aContext, nullptr, nullptr, nullptr);
+  NS_ENSURE_TRUE(obj, nullptr);
+
+  JSString* idStr = JS_NewUCStringCopyN(aContext,
+                                        aAttachment.id().get(),
+                                        aAttachment.id().Length());
+  NS_ENSURE_TRUE(idStr, nullptr);
+  if (!JS_DefineProperty(aContext, obj, "id", JS::StringValue(idStr),
+                         nullptr, nullptr, 0)) {
+    return nullptr;
+  }
+
+  JSString* locStr = JS_NewUCStringCopyN(aContext,
+                                         aAttachment.location().get(),
+                                         aAttachment.location().Length());
+  NS_ENSURE_TRUE(locStr, nullptr);
+  if (!JS_DefineProperty(aContext, obj, "location", JS::StringValue(locStr),
+                         nullptr, nullptr, 0)) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIDOMBlob> blob = static_cast<BlobParent*>(aAttachment.contentParent())->GetBlob();
+  JS::Value content;
+  nsresult rv = nsContentUtils::WrapNative(aContext,
+                                           JS_GetGlobalForScopeChain(aContext),
+                                           blob,
+                                           &NS_GET_IID(nsIDOMBlob),
+                                           &content);
+  NS_ENSURE_SUCCESS(rv, nullptr);
+  if (!JS_DefineProperty(aContext, obj, "content", content,
+                         nullptr, nullptr, 0)) {
+    return nullptr;
+  }
+
+  return obj;
+}
+
+static bool
+GetParamsFromSendMmsMessageRequest(JSContext* aCx,
+                                   const SendMmsMessageRequest& aRequest,
+                                   JS::Value* aParam)
+{
+  JSAutoRequest ar(aCx);
+
+  JSObject* paramsObj = JS_NewObject(aCx, nullptr, nullptr, nullptr);
+  NS_ENSURE_TRUE(paramsObj, false);
+
+  // smil
+  JSString* smilStr = JS_NewUCStringCopyN(aCx,
+                                          aRequest.smil().get(),
+                                          aRequest.smil().Length());
+  NS_ENSURE_TRUE(smilStr, false);
+  if(!JS_DefineProperty(aCx, paramsObj, "smil", JS::StringValue(smilStr),
+                        nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  // subject
+  JSString* subjectStr = JS_NewUCStringCopyN(aCx,
+                                             aRequest.subject().get(),
+                                             aRequest.subject().Length());
+  NS_ENSURE_TRUE(subjectStr, false);
+  if(!JS_DefineProperty(aCx, paramsObj, "subject",
+                        JS::StringValue(subjectStr), nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  // receivers
+  JSObject* receiverArray;
+  if (NS_FAILED(nsTArrayToJSArray(aCx,
+                                  aRequest.receivers(),
+                                  &receiverArray))) {
+    return false;
+  }
+  if (!JS_DefineProperty(aCx, paramsObj, "receivers",
+                         JS::ObjectValue(*receiverArray), nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  // attachments
+  JSObject* attachmentArray = JS_NewArrayObject(aCx,
+                                                aRequest.attachments().Length(),
+                                                nullptr);
+  for (uint32_t i = 0; i < aRequest.attachments().Length(); i++) {
+    JSObject *obj = MmsAttachmentDataToJSObject(aCx,
+                                                aRequest.attachments().ElementAt(i));
+    NS_ENSURE_TRUE(obj, false);
+    jsval val = JS::ObjectValue(*obj);
+    if (!JS_SetElement(aCx, attachmentArray, i, &val)) {
+      return false;
+    }
+  }
+
+  if (!JS_DefineProperty(aCx, paramsObj, "attachments",
+                         JS::ObjectValue(*attachmentArray), nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  aParam->setObject(*paramsObj);
+  return true;
+}
 
 NS_IMPL_ISUPPORTS1(SmsParent, nsIObserver)
 
@@ -36,11 +151,6 @@ SmsParent::SmsParent()
   obs->AddObserver(this, kSmsFailedObserverTopic, false);
   obs->AddObserver(this, kSmsDeliverySuccessObserverTopic, false);
   obs->AddObserver(this, kSmsDeliveryErrorObserverTopic, false);
-}
-
-SmsParent::~SmsParent()
-{
-  MOZ_COUNT_DTOR(SmsParent);
 }
 
 void
@@ -64,72 +174,97 @@ SmsParent::Observe(nsISupports* aSubject, const char* aTopic,
                    const PRUnichar* aData)
 {
   if (!strcmp(aTopic, kSmsReceivedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-received' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyReceivedMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyReceivedMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsSendingObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-sending' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifySendingMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifySendingMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsSentObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-sent' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifySentMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifySentMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsFailedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-failed' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyFailedMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyFailedMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsDeliverySuccessObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-delivery-success' topic without a valid message!");
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
+      NS_ERROR("Got a 'sms-sending' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyDeliverySuccessMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyDeliverySuccessMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsDeliveryErrorObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-delivery-error' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyDeliveryErrorMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyDeliveryErrorMessage(msgData);
     return NS_OK;
   }
 
   return NS_OK;
+}
+
+bool
+SmsParent::GetMobileMessageDataFromMessage(nsISupports *aMsg,
+                                           MobileMessageData &aData)
+{
+  nsCOMPtr<nsIDOMMozMmsMessage> mmsMsg = do_QueryInterface(aMsg);
+  if (mmsMsg) {
+    MmsMessageData data;
+    ContentParent *parent = static_cast<ContentParent*>(Manager());
+    if (!static_cast<MmsMessage*>(mmsMsg.get())->GetData(parent, data)) {
+      return false;
+    }
+    aData = data;
+    return true;
+  }
+
+  nsCOMPtr<nsIDOMMozSmsMessage> smsMsg = do_QueryInterface(aMsg);
+  if (smsMsg) {
+    aData = static_cast<SmsMessage*>(smsMsg.get())->GetData();
+    return true;
+  }
+
+  NS_WARNING("Cannot get MobileMessageData");
+  return false;
 }
 
 bool
@@ -174,101 +309,148 @@ SmsParent::RecvGetSegmentInfoForText(const nsString& aText,
 }
 
 bool
-SmsParent::RecvClearMessageList(const int32_t& aListId)
-{
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-
-  mobileMessageDBService->ClearMessageList(aListId);
-  return true;
-}
-
-bool
 SmsParent::RecvPSmsRequestConstructor(PSmsRequestParent* aActor,
                                       const IPCSmsRequest& aRequest)
 {
   SmsRequestParent* actor = static_cast<SmsRequestParent*>(aActor);
 
   switch (aRequest.type()) {
-    case IPCSmsRequest::TCreateMessageListRequest:
-      return actor->DoRequest(aRequest.get_CreateMessageListRequest());
     case IPCSmsRequest::TSendMessageRequest:
       return actor->DoRequest(aRequest.get_SendMessageRequest());
+    case IPCSmsRequest::TRetrieveMessageRequest:
+      return actor->DoRequest(aRequest.get_RetrieveMessageRequest());
     case IPCSmsRequest::TGetMessageRequest:
       return actor->DoRequest(aRequest.get_GetMessageRequest());
     case IPCSmsRequest::TDeleteMessageRequest:
       return actor->DoRequest(aRequest.get_DeleteMessageRequest());
-    case IPCSmsRequest::TGetNextMessageInListRequest:
-      return actor->DoRequest(aRequest.get_GetNextMessageInListRequest());
     case IPCSmsRequest::TMarkMessageReadRequest:
       return actor->DoRequest(aRequest.get_MarkMessageReadRequest());
-    case IPCSmsRequest::TGetThreadListRequest:
-      return actor->DoRequest(aRequest.get_GetThreadListRequest());
     default:
       MOZ_NOT_REACHED("Unknown type!");
-      return false;
+      break;
   }
 
-  MOZ_NOT_REACHED("Should never get here!");
   return false;
 }
 
 PSmsRequestParent*
 SmsParent::AllocPSmsRequest(const IPCSmsRequest& aRequest)
 {
-  return new SmsRequestParent();
+  SmsRequestParent* actor = new SmsRequestParent();
+  // Add an extra ref for IPDL. Will be released in
+  // SmsParent::DeallocPSmsRequest().
+  actor->AddRef();
+
+  return actor;
 }
 
 bool
 SmsParent::DeallocPSmsRequest(PSmsRequestParent* aActor)
 {
-  delete aActor;
+  // SmsRequestParent is refcounted, must not be freed manually.
+  static_cast<SmsRequestParent*>(aActor)->Release();
   return true;
 }
 
+bool
+SmsParent::RecvPMobileMessageCursorConstructor(PMobileMessageCursorParent* aActor,
+                                               const IPCMobileMessageCursor& aRequest)
+{
+  MobileMessageCursorParent* actor =
+    static_cast<MobileMessageCursorParent*>(aActor);
+
+  switch (aRequest.type()) {
+    case IPCMobileMessageCursor::TCreateMessageCursorRequest:
+      return actor->DoRequest(aRequest.get_CreateMessageCursorRequest());
+    case IPCMobileMessageCursor::TCreateThreadCursorRequest:
+      return actor->DoRequest(aRequest.get_CreateThreadCursorRequest());
+    default:
+      MOZ_NOT_REACHED("Unknown type!");
+      break;
+  }
+
+  return false;
+}
+
+PMobileMessageCursorParent*
+SmsParent::AllocPMobileMessageCursor(const IPCMobileMessageCursor& aRequest)
+{
+  MobileMessageCursorParent* actor = new MobileMessageCursorParent();
+  // Add an extra ref for IPDL. Will be released in
+  // SmsParent::DeallocPMobileMessageCursor().
+  actor->AddRef();
+
+  return actor;
+}
+
+bool
+SmsParent::DeallocPMobileMessageCursor(PMobileMessageCursorParent* aActor)
+{
+  // MobileMessageCursorParent is refcounted, must not be freed manually.
+  static_cast<MobileMessageCursorParent*>(aActor)->Release();
+  return true;
+}
 
 /*******************************************************************************
  * SmsRequestParent
  ******************************************************************************/
-SmsRequestParent::SmsRequestParent()
-{
-  MOZ_COUNT_CTOR(SmsRequestParent);
-}
 
-SmsRequestParent::~SmsRequestParent()
-{
-  MOZ_COUNT_DTOR(SmsRequestParent);
-}
+NS_IMPL_ISUPPORTS1(SmsRequestParent, nsIMobileMessageCallback)
 
 void
 SmsRequestParent::ActorDestroy(ActorDestroyReason aWhy)
 {
-  if (mSmsRequest) {
-    mSmsRequest->SetActorDied();
-    mSmsRequest = nullptr;
-  }
-}
-
-void
-SmsRequestParent::SendReply(const MessageReply& aReply) {
-  nsRefPtr<SmsRequest> request;
-  mSmsRequest.swap(request);
-  if (!Send__delete__(this, aReply)) {
-    NS_WARNING("Failed to send response to child process!");
-  }
+  mActorDestroyed = true;
 }
 
 bool
 SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
 {
-  nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsService, true);
+  switch(aRequest.type()) {
+  case SendMessageRequest::TSendSmsMessageRequest: {
+      nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
+      NS_ENSURE_TRUE(smsService, true);
 
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = smsService->Send(aRequest.number(), aRequest.message(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
+      const SendSmsMessageRequest &data = aRequest.get_SendSmsMessageRequest();
+      smsService->Send(data.number(), data.message(), this);
+    }
+    break;
+  case SendMessageRequest::TSendMmsMessageRequest: {
+      nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
+      NS_ENSURE_TRUE(mmsService, true);
+
+      JS::Value params;
+      AutoJSContext cx;
+      if (!GetParamsFromSendMmsMessageRequest(
+              cx,
+              aRequest.get_SendMmsMessageRequest(),
+              &params)) {
+        NS_WARNING("SmsRequestParent: Fail to build MMS params.");
+        return true;
+      }
+      mmsService->Send(params, this);
+    }
+    break;
+  default:
+    MOZ_NOT_REACHED("Unknown type of SendMessageRequest!");
+    return false;
+  }
+  return true;
+}
+
+bool
+SmsRequestParent::DoRequest(const RetrieveMessageRequest& aRequest)
+{
+  nsresult rv = NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
+  if (mmsService) {
+    rv = mmsService->Retrieve(aRequest.messageId(), this);
+  }
+
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyGetMessageFailed(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
 
   return true;
 }
@@ -276,14 +458,17 @@ SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
 bool
 SmsRequestParent::DoRequest(const GetMessageRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
+  nsresult rv = NS_ERROR_FAILURE;
 
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->GetMessageMoz(aRequest.messageId(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  if (dbService) {
+    rv = dbService->GetMessageMoz(aRequest.messageId(), this);
+  }
+
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyGetMessageFailed(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
 
   return true;
 }
@@ -291,45 +476,17 @@ SmsRequestParent::DoRequest(const GetMessageRequest& aRequest)
 bool
 SmsRequestParent::DoRequest(const DeleteMessageRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+  nsresult rv = NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
     do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
+  if (dbService) {
+    rv = dbService->DeleteMessage(aRequest.messageId(), this);
+  }
 
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->DeleteMessage(aRequest.messageId(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
-}
-
-bool
-SmsRequestParent::DoRequest(const CreateMessageListRequest& aRequest)
-{
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  SmsFilter *filter = new SmsFilter(aRequest.filter());
-  nsresult rv = mobileMessageDBService->CreateMessageList(filter, aRequest.reverse(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
-}
-
-bool
-SmsRequestParent::DoRequest(const GetNextMessageInListRequest& aRequest)
-{
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->GetNextMessageInList(aRequest.aListId(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyDeleteMessageFailed(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
 
   return true;
 }
@@ -337,31 +494,232 @@ SmsRequestParent::DoRequest(const GetNextMessageInListRequest& aRequest)
 bool
 SmsRequestParent::DoRequest(const MarkMessageReadRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  nsresult rv = NS_ERROR_FAILURE;
 
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->MarkMessageRead(aRequest.messageId(), aRequest.value(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  if (dbService) {
+    rv = dbService->MarkMessageRead(aRequest.messageId(), aRequest.value(),
+                                    this);
+  }
+
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyMarkMessageReadFailed(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
+
+  return true;
+}
+
+nsresult
+SmsRequestParent::SendReply(const MessageReply& aReply)
+{
+  // The child process could die before this asynchronous notification, in which
+  // case ActorDestroy() was called and mActorDestroyed is set to true. Return
+  // an error here to avoid sending a message to the dead process.
+  NS_ENSURE_TRUE(!mActorDestroyed, NS_ERROR_FAILURE);
+
+  return Send__delete__(this, aReply) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+// nsIMobileMessageCallback
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageSent(nsISupports *aMessage)
+{
+  nsCOMPtr<nsIDOMMozMmsMessage> mms = do_QueryInterface(aMessage);
+  if (mms) {
+    MmsMessage *msg = static_cast<MmsMessage*>(mms.get());
+    ContentParent *parent = static_cast<ContentParent*>(Manager()->Manager());
+    MmsMessageData data;
+    if (!msg->GetData(parent, data)) {
+      return NS_ERROR_FAILURE;
+    }
+    return SendReply(MessageReply(ReplyMessageSend(MobileMessageData(data))));
+  }
+
+  nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMessage);
+  if (sms) {
+    SmsMessage* msg = static_cast<SmsMessage*>(sms.get());
+    return SendReply(MessageReply(ReplyMessageSend(MobileMessageData(msg->GetData()))));
+  }
+
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifySendMessageFailed(int32_t aError)
+{
+  return SendReply(ReplyMessageSendFail(aError));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageGot(nsISupports *aMessage)
+{
+  nsCOMPtr<nsIDOMMozMmsMessage> mms = do_QueryInterface(aMessage);
+  if (mms) {
+    MmsMessage *msg = static_cast<MmsMessage*>(mms.get());
+    ContentParent *parent = static_cast<ContentParent*>(Manager()->Manager());
+    MmsMessageData data;
+    if (!msg->GetData(parent, data)) {
+      return NS_ERROR_FAILURE;
+    }
+    return SendReply(MessageReply(ReplyGetMessage(MobileMessageData(data))));
+  }
+
+  nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMessage);
+  if (sms) {
+    SmsMessage* msg = static_cast<SmsMessage*>(sms.get());
+    return SendReply(MessageReply(ReplyGetMessage(MobileMessageData(msg->GetData()))));
+  }
+
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyGetMessageFailed(int32_t aError)
+{
+  return SendReply(ReplyGetMessageFail(aError));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageDeleted(bool aDeleted)
+{
+  return SendReply(ReplyMessageDelete(aDeleted));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyDeleteMessageFailed(int32_t aError)
+{
+  return SendReply(ReplyMessageDeleteFail(aError));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageMarkedRead(bool aRead)
+{
+  return SendReply(ReplyMarkeMessageRead(aRead));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMarkMessageReadFailed(int32_t aError)
+{
+  return SendReply(ReplyMarkeMessageReadFail(aError));
+}
+
+/*******************************************************************************
+ * MobileMessageCursorParent
+ ******************************************************************************/
+
+NS_IMPL_ISUPPORTS1(MobileMessageCursorParent, nsIMobileMessageCursorCallback)
+
+void
+MobileMessageCursorParent::ActorDestroy(ActorDestroyReason aWhy)
+{
+  // Two possible scenarios here:
+  // 1) When parent fails to SendNotifyResult() in NotifyCursorResult(), it's
+  //    destroyed without nulling out mContinueCallback.
+  // 2) When parent dies normally, mContinueCallback should have been cleared in
+  //    NotifyCursorError(), but just ensure this again.
+  mContinueCallback = nullptr;
+}
+
+bool
+MobileMessageCursorParent::RecvContinue()
+{
+  MOZ_ASSERT(mContinueCallback);
+
+  if (NS_FAILED(mContinueCallback->HandleContinue())) {
+    return NS_SUCCEEDED(NotifyCursorError(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
 
   return true;
 }
 
 bool
-SmsRequestParent::DoRequest(const GetThreadListRequest& aRequest)
+MobileMessageCursorParent::DoRequest(const CreateMessageCursorRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  nsresult rv = NS_ERROR_FAILURE;
 
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->GetThreadList(forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  if (dbService) {
+    nsCOMPtr<nsIDOMMozSmsFilter> filter = new SmsFilter(aRequest.filter());
+    bool reverse = aRequest.reverse();
+
+    rv = dbService->CreateMessageCursor(filter, reverse, this,
+                                        getter_AddRefs(mContinueCallback));
+  }
+
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyCursorError(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
 
   return true;
+}
+
+bool
+MobileMessageCursorParent::DoRequest(const CreateThreadCursorRequest& aRequest)
+{
+  nsresult rv = NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  if (dbService) {
+    rv = dbService->CreateThreadCursor(this,
+                                       getter_AddRefs(mContinueCallback));
+  }
+
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyCursorError(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
+
+  return true;
+}
+
+// nsIMobileMessageCursorCallback
+
+NS_IMETHODIMP
+MobileMessageCursorParent::NotifyCursorError(int32_t aError)
+{
+  // The child process could die before this asynchronous notification, in which
+  // case ActorDestroy() was called and mContinueCallback is now null. Return an
+  // error here to avoid sending a message to the dead process.
+  NS_ENSURE_TRUE(mContinueCallback, NS_ERROR_FAILURE);
+
+  mContinueCallback = nullptr;
+
+  return Send__delete__(this, aError) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+MobileMessageCursorParent::NotifyCursorResult(nsISupports* aResult)
+{
+  // The child process could die before this asynchronous notification, in which
+  // case ActorDestroy() was called and mContinueCallback is now null. Return an
+  // error here to avoid sending a message to the dead process.
+  NS_ENSURE_TRUE(mContinueCallback, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDOMMozSmsMessage> iMessage = do_QueryInterface(aResult);
+  if (iMessage) {
+    SmsMessage* message = static_cast<SmsMessage*>(aResult);
+    return SendNotifyResult(MobileMessageCursorData(message->GetData()))
+      ? NS_OK : NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMMozMobileMessageThread> iThread = do_QueryInterface(aResult);
+  if (iThread) {
+    MobileMessageThread* thread = static_cast<MobileMessageThread*>(aResult);
+    return SendNotifyResult(MobileMessageCursorData(thread->GetData()))
+      ? NS_OK : NS_ERROR_FAILURE;
+  }
+
+  MOZ_NOT_REACHED("Received invalid response parameters!");
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+MobileMessageCursorParent::NotifyCursorDone()
+{
+  return NotifyCursorError(nsIMobileMessageCallback::SUCCESS_NO_ERROR);
 }
 
 } // namespace mobilemessage

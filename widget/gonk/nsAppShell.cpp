@@ -35,7 +35,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/Services.h"
 #include "nsAppShell.h"
-#include "nsDOMTouchEvent.h"
+#include "mozilla/dom/Touch.h"
 #include "nsGkAtoms.h"
 #include "nsGUIEvent.h"
 #include "nsIObserverService.h"
@@ -50,7 +50,7 @@
 #include "libui/InputReader.h"
 #include "libui/InputDispatcher.h"
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #define LOG(args...)                                            \
     __android_log_print(ANDROID_LOG_INFO, "Gonk" , ## args)
@@ -87,7 +87,7 @@ void NotifyEvent()
     gAppShell->NotifyNativeEvent();
 }
 
-}
+} // namespace mozilla
 
 static void
 pipeHandler(int fd, FdHandler *data)
@@ -120,7 +120,7 @@ struct UserInputData {
         } key;
         struct {
             int32_t touchCount;
-            Touch touches[MAX_POINTERS];
+            ::Touch touches[MAX_POINTERS];
         } motion;
     };
 };
@@ -147,9 +147,9 @@ sendMouseEvent(uint32_t msg, uint64_t timeMs, int x, int y, bool forwardToChildr
 static void
 addDOMTouch(UserInputData& data, nsTouchEvent& event, int i)
 {
-    const Touch& touch = data.motion.touches[i];
+    const ::Touch& touch = data.motion.touches[i];
     event.touches.AppendElement(
-        new nsDOMTouch(touch.id,
+        new dom::Touch(touch.id,
                        nsIntPoint(touch.coords.getX(), touch.coords.getY()),
                        nsIntPoint(touch.coords.getAxisValue(AMOTION_EVENT_AXIS_SIZE),
                                   touch.coords.getAxisValue(AMOTION_EVENT_AXIS_SIZE)),
@@ -524,7 +524,7 @@ GeckoInputDispatcher::notifyMotion(const NotifyMotionArgs* args)
     MOZ_ASSERT(args->pointerCount <= MAX_POINTERS);
     data.motion.touchCount = args->pointerCount;
     for (uint32_t i = 0; i < args->pointerCount; ++i) {
-        Touch& touch = data.motion.touches[i];
+        ::Touch& touch = data.motion.touches[i];
         touch.id = args->pointerProperties[i].id;
         memcpy(&touch.coords, &args->pointerCoords[i], sizeof(*args->pointerCoords));
     }
@@ -711,12 +711,12 @@ nsAppShell::ScheduleNativeEventCallback()
 bool
 nsAppShell::ProcessNextNativeEvent(bool mayWait)
 {
-    SAMPLE_LABEL("nsAppShell", "ProcessNextNativeEvent");
+    PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent");
     epoll_event events[16] = {{ 0 }};
 
     int event_count;
     {
-        SAMPLE_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait");
+        PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait");
         if ((event_count = epoll_wait(epollfd, events, 16,  mayWait ? -1 : 0)) <= 0)
             return true;
     }

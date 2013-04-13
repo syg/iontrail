@@ -24,16 +24,6 @@ pref("metro.debug.selection.dumpEvents", false);
 // Enable off main thread compositing
 pref("layers.offmainthreadcomposition.enabled", false);
 
-// Form helper options: 0 = disabled, 1 = enabled, 2 = dynamic depending on screen size
-pref("formhelper.mode", 0);
-// Auto zoom to form elements when they take focus 
-pref("formhelper.autozoom", true);
-// Auto zoom to the caret
-pref("formhelper.autozoom.caret", false);
-
-// form autocomplete service
-pref("browser.formfill.enable", true);
-
 // Enable Microsoft TSF support by default for imes.
 pref("intl.enable_tsf_support", true);
 
@@ -67,7 +57,6 @@ pref("browser.chromeURL", "chrome://browser/content/");
 // When true, always show the tab strip and use desktop-style tabs (no thumbnails)
 pref("browser.tabs.tabsOnly", false);
 
-pref("browser.tabs.warnOnClose", true);
 pref("browser.tabs.remote", false);
 
 // Telemetry
@@ -172,7 +161,6 @@ pref("browser.helperApps.deleteTempFileOnExit", false);
 
 /* password manager */
 pref("signon.rememberSignons", true);
-pref("signon.expireMasterPassword", false);
 pref("signon.SignonFileName", "signons.txt");
 
 /* find helper */
@@ -210,7 +198,6 @@ pref("privacy.popups.showBrowserMessage", true);
 pref("dom.disable_window_open_dialog_feature", true);
 
 pref("keyword.enabled", true);
-pref("keyword.URL", "http://www.bing.com/search?q=");
 
 pref("accessibility.typeaheadfind", false);
 pref("accessibility.typeaheadfind.timeout", 5000);
@@ -393,17 +380,12 @@ pref("dom.ipc.content.nice", 1);
 // product URLs
 // The breakpad report server to link to in about:crashes
 pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
-pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/releasenotes/");
+// TODO: This is not the correct article for metro!!!
 pref("app.sync.tutorialURL", "https://support.mozilla.org/kb/sync-firefox-between-desktop-and-mobile");
 pref("app.support.baseURL", "http://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/");
 pref("app.privacyURL", "http://www.mozilla.com/legal/privacy/");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
-#if MOZ_UPDATE_CHANNEL == beta
-pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/mobile/beta/faq/");
-#else
-pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/mobile/faq/");
-#endif
 
 // Name of alternate about: page for certificate errors (when undefined, defaults to about:neterror)
 pref("security.alternate_certificate_error_page", "certerror");
@@ -411,12 +393,6 @@ pref("security.alternate_certificate_error_page", "certerror");
 pref("security.warn_viewing_mixed", false); // Warning is disabled.  See Bug 616712.
 
 // Override some named colors to avoid inverse OS themes
-
-#ifdef MOZ_OFFICIAL_BRANDING
-pref("browser.search.param.yahoo-fr", "moz35");
-pref("browser.search.param.yahoo-fr-cjkt", "moz35");
-pref("browser.search.param.yahoo-fr-ja", "mozff");
-#endif
 
 /* app update prefs */
 pref("app.update.timer", 60000); // milliseconds (1 min)
@@ -430,23 +406,9 @@ pref("app.update.channel", "@MOZ_UPDATE_CHANNEL@");
 pref("app.update.mode", 1);
 pref("app.update.silent", false);
 pref("app.update.url", "https://aus2.mozilla.org/update/4/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%-xul/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/%PLATFORM_VERSION%/update.xml");
-pref("app.update.promptWaitTime", 43200);
 pref("app.update.idletime", 60);
 pref("app.update.showInstalledUI", false);
 pref("app.update.incompatible.mode", 0);
-pref("app.update.download.backgroundInterval", 0);
-
-// %APP% resolves to metrofirefox, which won't work until bug 845983 is fixed
-#ifdef MOZ_OFFICIAL_BRANDING
-pref("app.update.interval", 86400);
-pref("app.update.url.manual", "https://www.mozilla.org/%LOCALE%/firefox/update/");
-pref("app.update.url.details", "https://www.mozilla.org/%LOCALE%/firefox/releases/");
-#else
-pref("app.update.interval", 28800);
-pref("app.update.url.manual", "https://www.mozilla.org/%LOCALE%/firefox/");
-pref("app.update.url.details", "https://www.mozilla.org/%LOCALE%/firefox/");
-#endif
-#endif
 
 // replace newlines with spaces on paste into single-line text boxes
 pref("editor.singleLine.pasteNewlines", 2);
@@ -474,12 +436,6 @@ pref("ui.dragThresholdY", 50);
 
 // prevent tooltips from showing up
 pref("browser.chrome.toolbar_tips", false);
-
-//  0: don't show fullscreen keyboard
-//  1: always show fullscreen keyboard
-// -1: show fullscreen keyboard based on threshold pref
-pref("widget.ime.android.landscape_fullscreen", -1);
-pref("widget.ime.android.fullscreen_threshold", 250); // in hundreths of inches
 
 // Completely disable pdf.js as an option to preview pdfs within firefox.
 // Note: if this is not disabled it does not necessarily mean pdf.js is the pdf
@@ -572,7 +528,7 @@ pref("browser.dom.window.dump.enabled", true);
 pref("device.camera.enabled", true);
 pref("media.realtime_decoder.enabled", true);
 
-// Mobile manages state by autodetection
+// Metro manages state by autodetection
 pref("network.manage-offline-status", true);
 
 // Enable HTML fullscreen API in content.

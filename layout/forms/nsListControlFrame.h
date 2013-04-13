@@ -22,10 +22,10 @@
 #include "nsIListControlFrame.h"
 #include "nsISelectControlFrame.h"
 #include "nsIDOMEventListener.h"
-#include "nsIContent.h"
 #include "nsAutoPtr.h"
 #include "nsSelectsAreaFrame.h"
 
+class nsIContent;
 class nsIDOMHTMLSelectElement;
 class nsIDOMHTMLOptionsCollection;
 class nsIDOMHTMLOptionElement;
@@ -98,7 +98,6 @@ public:
 
     // nsIFormControlFrame
   virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue) MOZ_OVERRIDE;
-  virtual nsresult GetFormProperty(nsIAtom* aName, nsAString& aValue) const MOZ_OVERRIDE; 
   virtual void SetFocus(bool aOn = true, bool aRepaint = false);
 
   virtual nsGfxScrollFrameInner::ScrollbarStyles GetScrollbarStyles() const MOZ_OVERRIDE;

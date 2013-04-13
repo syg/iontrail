@@ -36,15 +36,15 @@
 #include "nsGUIEvent.h"
 #include "nsIServiceManager.h"
 #include "nsINodeInfo.h"
-#include "nsHTMLSelectElement.h"
 #include "nsCSSRendering.h"
 #include "nsITheme.h"
 #include "nsIDOMEventListener.h"
 #include "nsLayoutUtils.h"
 #include "nsDisplayList.h"
 #include "nsContentUtils.h"
-#include "mozilla/LookAndFeel.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/HTMLSelectElement.h"
+#include "mozilla/LookAndFeel.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -1234,8 +1234,8 @@ nsListControlFrame::GetCurrentOption()
     return GetOptionContent(focusedIndex);
   }
 
-  nsRefPtr<nsHTMLSelectElement> selectElement =
-    nsHTMLSelectElement::FromContent(mContent);
+  nsRefPtr<dom::HTMLSelectElement> selectElement =
+    dom::HTMLSelectElement::FromContent(mContent);
   NS_ASSERTION(selectElement, "Can't be null");
 
   // There is no a selected item return the first non-disabled item and skip all
@@ -1410,8 +1410,8 @@ nsListControlFrame::SetOptionsSelectedFromFrame(int32_t aStartIndex,
                                                 bool aValue,
                                                 bool aClearAll)
 {
-  nsRefPtr<nsHTMLSelectElement> selectElement =
-    nsHTMLSelectElement::FromContent(mContent);
+  nsRefPtr<dom::HTMLSelectElement> selectElement =
+    dom::HTMLSelectElement::FromContent(mContent);
   bool wasChanged = false;
 #ifdef DEBUG
   nsresult rv = 
@@ -1448,8 +1448,8 @@ nsListControlFrame::ToggleOptionSelectedFromFrame(int32_t aIndex)
     option->GetSelected(&value);
 
   NS_ASSERTION(NS_SUCCEEDED(rv), "GetSelected failed");
-  nsRefPtr<nsHTMLSelectElement> selectElement =
-    nsHTMLSelectElement::FromContent(mContent);
+  nsRefPtr<dom::HTMLSelectElement> selectElement =
+    dom::HTMLSelectElement::FromContent(mContent);
   bool wasChanged = false;
 #ifdef DEBUG
   rv =
@@ -1572,29 +1572,6 @@ nsListControlFrame::SetFormProperty(nsIAtom* aName,
   return NS_OK;
 }
 
-nsresult 
-nsListControlFrame::GetFormProperty(nsIAtom* aName, nsAString& aValue) const
-{
-  // Get the selected value of option from local cache (optimization vs. widget)
-  if (nsGkAtoms::selected == aName) {
-    nsAutoString val(aValue);
-    nsresult error = NS_OK;
-    bool selected = false;
-    int32_t indx = val.ToInteger(&error, 10); // Get index from aValue
-    if (NS_SUCCEEDED(error))
-       selected = IsContentSelectedByIndex(indx); 
-  
-    aValue.Assign(selected ? NS_LITERAL_STRING("1") : NS_LITERAL_STRING("0"));
-    
-  // For selectedIndex, get the value from the widget
-  } else if (nsGkAtoms::selectedindex == aName) {
-    // You shouldn't be calling me for this!!!
-    return NS_ERROR_INVALID_ARG;
-  }
-
-  return NS_OK;
-}
-
 void
 nsListControlFrame::AboutToDropDown()
 {
@@ -1702,8 +1679,8 @@ nsListControlFrame::GetHeightOfARow()
 nsresult
 nsListControlFrame::IsOptionDisabled(int32_t anIndex, bool &aIsDisabled)
 {
-  nsRefPtr<nsHTMLSelectElement> sel =
-    nsHTMLSelectElement::FromContent(mContent);
+  nsRefPtr<dom::HTMLSelectElement> sel =
+    dom::HTMLSelectElement::FromContent(mContent);
   if (sel) {
     sel->IsOptionDisabled(anIndex, &aIsDisabled);
     return NS_OK;
@@ -2465,28 +2442,32 @@ nsListControlFrame::KeyPress(nsIDOMEvent* aKeyEvent)
         startIndex++;
       }
 
-      uint32_t i;
-      for (i = 0; i < numOptions; i++) {
+      for (uint32_t i = 0; i < numOptions; ++i) {
         uint32_t index = (i + startIndex) % numOptions;
-        nsCOMPtr<nsIDOMHTMLOptionElement> optionElement =
-          GetOption(options, index);
-        if (optionElement) {
-          nsAutoString text;
-          if (NS_OK == optionElement->GetText(text)) {
-            if (StringBeginsWith(text, incrementalString,
-                                 nsCaseInsensitiveStringComparator())) {
-              bool wasChanged = PerformSelection(index, isShift, isControl);
-              if (wasChanged) {
-                // dispatch event, update combobox, etc.
-                if (!UpdateSelection()) {
-                  return NS_OK;
-                }
-              }
-              break;
-            }
-          }
+        nsCOMPtr<nsIDOMHTMLOptionElement> optionElement = GetOption(options, index);
+        if (!optionElement) {
+          continue;
         }
-      } // for
+
+        nsAutoString text;
+        if (NS_FAILED(optionElement->GetText(text)) ||
+            !StringBeginsWith(nsContentUtils::TrimWhitespace<nsContentUtils::IsHTMLWhitespaceOrNBSP>(text, false),
+                              incrementalString,
+                              nsCaseInsensitiveStringComparator())) {
+          continue;
+        }
+
+        if (!PerformSelection(index, isShift, isControl)) {
+          break;
+        }
+
+        // If UpdateSelection() returns false, that means the frame is no longer
+        // alive. We should stop doing anything.
+        if (!UpdateSelection()) {
+          return NS_OK;
+        }
+        break;
+      }
 
     } break;//case
   } // switch

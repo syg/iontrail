@@ -17,6 +17,7 @@
 #include "jsobj.h"
 #include "jsscript.h"
 
+#include "ion/BaselineJIT.h"
 #include "ion/Ion.h"
 #include "ion/IonCode.h"
 #include "vm/Shape.h"
@@ -84,6 +85,22 @@ CompartmentStats::GCHeapThingsSize()
 }
 
 static void
+DecommittedArenasChunkCallback(JSRuntime *rt, void *data, gc::Chunk *chunk)
+{
+    // This case is common and fast to check.  Do it first.
+    if (chunk->decommittedArenas.isAllClear())
+        return;
+
+    size_t n = 0;
+    for (size_t i = 0; i < gc::ArenasPerChunk; i++) {
+        if (chunk->decommittedArenas.get(i))
+            n += gc::ArenaSize;
+    }
+    JS_ASSERT(n > 0);
+    *static_cast<size_t *>(data) += n;
+}
+
+static void
 StatsCompartmentCallback(JSRuntime *rt, void *data, JSCompartment *compartment)
 {
     // Append a new CompartmentStats to the vector.
@@ -103,7 +120,8 @@ StatsCompartmentCallback(JSRuntime *rt, void *data, JSCompartment *compartment)
                                      &cStats.shapesCompartmentTables,
                                      &cStats.crossCompartmentWrappersTable,
                                      &cStats.regexpCompartment,
-                                     &cStats.debuggeesSet);
+                                     &cStats.debuggeesSet,
+                                     &cStats.baselineOptimizedStubs);
 }
 
 static void
@@ -120,15 +138,6 @@ StatsZoneCallback(JSRuntime *rt, void *data, Zone *zone)
 
     zone->sizeOfIncludingThis(rtStats->mallocSizeOf_,
                               &zStats.typePool);
-}
-
-static void
-StatsChunkCallback(JSRuntime *rt, void *data, gc::Chunk *chunk)
-{
-    RuntimeStats *rtStats = static_cast<RuntimeStats *>(data);
-    for (size_t i = 0; i < gc::ArenasPerChunk; i++)
-        if (chunk->decommittedArenas.get(i))
-            rtStats->gcHeapDecommittedArenas += gc::ArenaSize;
 }
 
 static void
@@ -249,7 +258,12 @@ StatsCellCallback(JSRuntime *rt, void *data, void *thing, JSGCTraceKind traceKin
 #ifdef JS_METHODJIT
         cStats->jaegerData += script->sizeOfJitScripts(rtStats->mallocSizeOf_);
 # ifdef JS_ION
-        cStats->ionData += ion::MemoryUsed(script, rtStats->mallocSizeOf_);
+        size_t baselineData = 0, baselineFallbackStubs = 0;
+        ion::SizeOfBaselineData(script, rtStats->mallocSizeOf_, &baselineData,
+                                &baselineFallbackStubs);
+        cStats->baselineData += baselineData;
+        cStats->baselineFallbackStubs += baselineFallbackStubs;
+        cStats->ionData += ion::SizeOfIonData(script, rtStats->mallocSizeOf_);
 # endif
 #endif
 
@@ -300,8 +314,8 @@ JS::CollectRuntimeStats(JSRuntime *rt, RuntimeStats *rtStats, ObjectPrivateVisit
     rtStats->gcHeapUnusedChunks =
         size_t(JS_GetGCParameter(rt, JSGC_UNUSED_CHUNKS)) * gc::ChunkSize;
 
-    // This just computes rtStats->gcHeapDecommittedArenas.
-    IterateChunks(rt, rtStats, StatsChunkCallback);
+    IterateChunks(rt, &rtStats->gcHeapDecommittedArenas,
+                  DecommittedArenasChunkCallback);
 
     // Take the per-compartment measurements.
     IteratorClosure closure(rtStats, opv);
@@ -364,8 +378,16 @@ JS::CollectRuntimeStats(JSRuntime *rt, RuntimeStats *rtStats, ObjectPrivateVisit
 JS_PUBLIC_API(int64_t)
 JS::GetExplicitNonHeapForRuntime(JSRuntime *rt, JSMallocSizeOfFun mallocSizeOf)
 {
-    // explicit/<compartment>/gc-heap/*
+    // explicit/*/gc-heap/*
     size_t n = size_t(JS_GetGCParameter(rt, JSGC_TOTAL_CHUNKS)) * gc::ChunkSize;
+
+    // Subtract decommitted arenas, which aren't included in "explicit".
+    size_t decommittedArenas = 0;
+    IterateChunks(rt, &decommittedArenas, DecommittedArenasChunkCallback);
+    n -= decommittedArenas;
+
+    // explicit/*/objects-extra/elements/asm.js (64-bit platforms only)
+    n += rt->sizeOfNonHeapAsmJSArrays_;
 
     // explicit/runtime/mjit-code
     // explicit/runtime/regexp-code

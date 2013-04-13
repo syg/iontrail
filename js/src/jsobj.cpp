@@ -327,16 +327,16 @@ js::GetOwnPropertyDescriptor(JSContext *cx, HandleObject obj, HandleId id, Mutab
 }
 
 bool
-js::GetFirstArgumentAsObject(JSContext *cx, unsigned argc, Value *vp, const char *method,
+js::GetFirstArgumentAsObject(JSContext *cx, const CallArgs &args, const char *method,
                              MutableHandleObject objp)
 {
-    if (argc == 0) {
+    if (args.length() == 0) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_MORE_ARGS_NEEDED,
                              method, "0", "s");
         return false;
     }
 
-    RootedValue v(cx, vp[2]);
+    HandleValue v = args.handleAt(0);
     if (!v.isObject()) {
         char *bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, NullPtr());
         if (!bytes)
@@ -966,8 +966,10 @@ js::DefineProperty(JSContext *cx, HandleObject obj, HandleId id, const PropDesc 
          * FIXME: Once ScriptedIndirectProxies are removed, this code should call
          * TrapDefineOwnProperty directly
          */
-        if (obj->isProxy())
-            return Proxy::defineProperty(cx, obj, id, desc.pd());
+        if (obj->isProxy()) {
+            RootedValue pd(cx, desc.pd());
+            return Proxy::defineProperty(cx, obj, id, pd);
+        }
         return Reject(cx, obj, JSMSG_OBJECT_NOT_EXTENSIBLE, throwError, rval);
     }
 
@@ -982,6 +984,24 @@ js_DefineOwnProperty(JSContext *cx, HandleObject obj, HandleId id, const Value &
     PropDesc *desc = descs.append();
     if (!desc || !desc->initialize(cx, descriptor))
         return false;
+
+    bool rval;
+    if (!DefineProperty(cx, obj, id, *desc, true, &rval))
+        return false;
+    *bp = !!rval;
+    return true;
+}
+
+JSBool
+js_DefineOwnProperty(JSContext *cx, HandleObject obj, HandleId id,
+                     const PropertyDescriptor &descriptor, JSBool *bp)
+{
+    AutoPropDescArrayRooter descs(cx);
+    PropDesc *desc = descs.append();
+    if (!desc)
+        return false;
+
+    desc->initFromPropertyDescriptor(descriptor);
 
     bool rval;
     if (!DefineProperty(cx, obj, id, *desc, true, &rval))
@@ -1052,7 +1072,7 @@ JSObject::sealOrFreeze(JSContext *cx, HandleObject obj, ImmutabilityType it)
     assertSameCompartment(cx, obj);
     JS_ASSERT(it == SEAL || it == FREEZE);
 
-    if (obj->isExtensible() && !obj->preventExtensions(cx))
+    if (obj->isExtensible() && !JSObject::preventExtensions(cx, obj))
         return false;
 
     AutoIdVector props(cx);
@@ -1073,7 +1093,7 @@ JSObject::sealOrFreeze(JSContext *cx, HandleObject obj, ImmutabilityType it)
         RootedShape last(cx, EmptyShape::getInitialShape(cx, obj->getClass(),
                                                          obj->getTaggedProto(),
                                                          obj->getParent(),
-                                                         obj->getAllocKind(),
+                                                         obj->numFixedSlots(),
                                                          obj->lastProperty()->getObjectFlags()));
         if (!last)
             return false;
@@ -1722,7 +1742,7 @@ js::CloneObjectLiteral(JSContext *cx, HandleObject parent, HandleObject srcObj)
     Rooted<TypeObject*> typeObj(cx);
     typeObj = cx->global()->getOrCreateObjectPrototype(cx)->getNewType(cx, &ObjectClass);
     RootedShape shape(cx, srcObj->lastProperty());
-    return NewReshapedObject(cx, typeObj, parent, srcObj->getAllocKind(), shape);
+    return NewReshapedObject(cx, typeObj, parent, srcObj->tenuredGetAllocKind(), shape);
 }
 
 struct JSObject::TradeGutsReserved {
@@ -1792,7 +1812,7 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *aArg, JSObject *bArg,
     if (!SetClassAndProto(cx, b, aClass, aProto, false))
         return false;
 
-    if (a->sizeOfThis() == b->sizeOfThis())
+    if (a->tenuredSizeOfThis() == b->tenuredSizeOfThis())
         return true;
 
     /*
@@ -1806,7 +1826,7 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *aArg, JSObject *bArg,
             return false;
     } else {
         reserved.newbshape = EmptyShape::getInitialShape(cx, aClass, aProto, a->getParent(),
-                                                         b->getAllocKind());
+                                                         b->tenuredGetAllocKind());
         if (!reserved.newbshape)
             return false;
     }
@@ -1815,7 +1835,7 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *aArg, JSObject *bArg,
             return false;
     } else {
         reserved.newashape = EmptyShape::getInitialShape(cx, bClass, bProto, b->getParent(),
-                                                         a->getAllocKind());
+                                                         a->tenuredGetAllocKind());
         if (!reserved.newashape)
             return false;
     }
@@ -1888,7 +1908,7 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
     b->type_ = tmp;
 
     /* Don't try to swap a JSFunction for a plain function JSObject. */
-    JS_ASSERT_IF(a->isFunction(), a->sizeOfThis() == b->sizeOfThis());
+    JS_ASSERT_IF(a->isFunction(), a->tenuredSizeOfThis() == b->tenuredSizeOfThis());
 
     /*
      * Regexp guts are more complicated -- we would need to migrate the
@@ -1907,8 +1927,8 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
     JS_ASSERT(!a->isArrayBuffer() && !b->isArrayBuffer());
 
     /* Trade the guts of the objects. */
-    const size_t size = a->sizeOfThis();
-    if (size == b->sizeOfThis()) {
+    const size_t size = a->tenuredSizeOfThis();
+    if (size == b->tenuredSizeOfThis()) {
         /*
          * If the objects are the same size, then we make no assumptions about
          * whether they have dynamically allocated slots and instead just copy
@@ -2007,8 +2027,8 @@ JSObject::swap(JSContext *cx, HandleObject a, HandleObject b)
     AutoMarkInDeadZone adc2(b->zone());
 
     // Ensure swap doesn't cause a finalizer to not be run.
-    JS_ASSERT(IsBackgroundFinalized(a->getAllocKind()) ==
-              IsBackgroundFinalized(b->getAllocKind()));
+    JS_ASSERT(IsBackgroundFinalized(a->tenuredGetAllocKind()) ==
+              IsBackgroundFinalized(b->tenuredGetAllocKind()));
     JS_ASSERT(a->compartment() == b->compartment());
 
     unsigned r = NotifyGCPreSwap(a, b);
@@ -2360,9 +2380,6 @@ JSObject::growSlots(JSContext *cx, HandleObject obj, uint32_t oldCount, uint32_t
      */
     JS_ASSERT(newCount < NELEMENTS_LIMIT);
 
-    size_t oldSize = Probes::objectResizeActive() ? obj->computedSizeOfThisSlotsElements() : 0;
-    size_t newSize = oldSize + (newCount - oldCount) * sizeof(Value);
-
     /*
      * If we are allocating slots for an object whose type is always created
      * by calling 'new' on a particular script, bump the GC kind for that
@@ -2392,8 +2409,6 @@ JSObject::growSlots(JSContext *cx, HandleObject obj, uint32_t oldCount, uint32_t
         if (!obj->slots)
             return false;
         Debug_SetSlotRangeToCrashOnTouch(obj->slots, newCount);
-        if (Probes::objectResizeActive())
-            Probes::resizeObject(cx, obj, oldSize, newSize);
         return true;
     }
 
@@ -2410,9 +2425,6 @@ JSObject::growSlots(JSContext *cx, HandleObject obj, uint32_t oldCount, uint32_t
     /* Changes in the slots of global objects can trigger recompilation. */
     if (changed && obj->isGlobal())
         types::MarkObjectStateChange(cx, obj);
-
-    if (Probes::objectResizeActive())
-        Probes::resizeObject(cx, obj, oldSize, newSize);
 
     return true;
 }
@@ -2431,14 +2443,9 @@ JSObject::shrinkSlots(JSContext *cx, HandleObject obj, uint32_t oldCount, uint32
     if (obj->isCall())
         return;
 
-    size_t oldSize = Probes::objectResizeActive() ? obj->computedSizeOfThisSlotsElements() : 0;
-    size_t newSize = oldSize - (oldCount - newCount) * sizeof(Value);
-
     if (newCount == 0) {
         js_free(obj->slots);
         obj->slots = NULL;
-        if (Probes::objectResizeActive())
-            Probes::resizeObject(cx, obj, oldSize, newSize);
         return;
     }
 
@@ -2454,9 +2461,6 @@ JSObject::shrinkSlots(JSContext *cx, HandleObject obj, uint32_t oldCount, uint32
     /* Watch for changes in global object slots, as for growSlots. */
     if (changed && obj->isGlobal())
         types::MarkObjectStateChange(cx, obj);
-
-    if (Probes::objectResizeActive())
-        Probes::resizeObject(cx, obj, oldSize, newSize);
 }
 
 /* static */ bool
@@ -2653,15 +2657,10 @@ JSObject::maybeDensifySparseElements(JSContext *cx, HandleObject obj)
 bool
 JSObject::growElements(JSContext *cx, unsigned newcap)
 {
-    size_t oldSize = Probes::objectResizeActive() ? computedSizeOfThisSlotsElements() : 0;
-
     if (!growElements(&cx->zone()->allocator, newcap)) {
         JS_ReportOutOfMemory(cx);
         return false;
     }
-
-    if (Probes::objectResizeActive())
-        Probes::resizeObject(cx, this, oldSize, computedSizeOfThisSlotsElements());
 
     return true;
 }
@@ -2739,8 +2738,6 @@ JSObject::shrinkElements(JSContext *cx, unsigned newcap)
     uint32_t oldcap = getDenseCapacity();
     JS_ASSERT(newcap <= oldcap);
 
-    size_t oldSize = Probes::objectResizeActive() ? computedSizeOfThisSlotsElements() : 0;
-
     /* Don't shrink elements below the minimum capacity. */
     if (oldcap <= SLOT_CAPACITY_MIN || !hasDynamicElements())
         return;
@@ -2756,9 +2753,6 @@ JSObject::shrinkElements(JSContext *cx, unsigned newcap)
 
     newheader->capacity = newcap;
     elements = newheader->elements();
-
-    if (Probes::objectResizeActive())
-        Probes::resizeObject(cx, this, oldSize, computedSizeOfThisSlotsElements());
 }
 
 static JSObject *
@@ -3761,8 +3755,11 @@ GetPropertyHelperInline(JSContext *cx,
          * Give a strict warning if foo.bar is evaluated by a script for an
          * object foo with no property named 'bar'.
          */
-        jsbytecode *pc;
-        if (vp.isUndefined() && ((pc = js_GetCurrentBytecodePC(cx)) != NULL)) {
+        if (vp.isUndefined()) {
+            jsbytecode *pc = NULL;
+            RootedScript script(cx, cx->stack.currentScript(&pc));
+            if (!pc)
+                return true;
             JSOp op = (JSOp) *pc;
 
             if (op == JSOP_GETXPROP) {
@@ -3778,7 +3775,6 @@ GetPropertyHelperInline(JSContext *cx,
                 return true;
 
             /* Don't warn repeatedly for the same script. */
-            RootedScript script(cx, cx->stack.currentScript());
             if (!script || script->warnedAboutUndefinedProp)
                 return true;
 
@@ -3797,7 +3793,7 @@ GetPropertyHelperInline(JSContext *cx,
             }
 
             unsigned flags = JSREPORT_WARNING | JSREPORT_STRICT;
-            cx->stack.currentScript()->warnedAboutUndefinedProp = true;
+            script->warnedAboutUndefinedProp = true;
 
             /* Ok, bad undefined property reference: whine about it. */
             RootedValue val(cx, IdToValue(id));
@@ -3859,12 +3855,12 @@ baseops::GetPropertyNoGC(JSContext *cx, JSObject *obj, JSObject *receiver, jsid 
 }
 
 static JS_ALWAYS_INLINE bool
-LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *propp)
+LookupPropertyPureInline(JSObject *obj, jsid id, JSObject **objp, Shape **propp)
 {
     if (!obj->isNative())
         return false;
 
-    RawObject current = obj;
+    JSObject *current = obj;
     while (true) {
         /* Search for a native dense element or property. */
         {
@@ -3874,7 +3870,7 @@ LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *prop
                 return true;
             }
 
-            if (RawShape shape = current->nativeLookupPure(id)) {
+            if (Shape *shape = current->nativeLookupPure(id)) {
                 *objp = current;
                 *propp = shape;
                 return true;
@@ -3885,7 +3881,7 @@ LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *prop
         if (current->getClass()->resolve != JS_ResolveStub)
             return false;
 
-        RawObject proto = current->getProto();
+        JSObject *proto = current->getProto();
 
         if (!proto)
             break;
@@ -3901,7 +3897,7 @@ LookupPropertyPureInline(RawObject obj, jsid id, RawObject *objp, RawShape *prop
 }
 
 static JS_ALWAYS_INLINE bool
-NativeGetPureInline(RawObject pobj, RawShape shape, Value *vp)
+NativeGetPureInline(JSObject *pobj, Shape *shape, Value *vp)
 {
     JS_ASSERT(pobj->isNative());
 
@@ -3917,7 +3913,7 @@ NativeGetPureInline(RawObject pobj, RawShape shape, Value *vp)
 }
 
 bool
-js::LookupPropertyPure(RawObject obj, jsid id, RawObject *objp, RawShape *propp)
+js::LookupPropertyPure(JSObject *obj, jsid id, JSObject **objp, Shape **propp)
 {
     return LookupPropertyPureInline(obj, id, objp, propp);
 }
@@ -3934,10 +3930,10 @@ js::LookupPropertyPure(RawObject obj, jsid id, RawObject *objp, RawShape *propp)
  *  - The property has a getter.
  */
 bool
-js::GetPropertyPure(RawObject obj, jsid id, Value *vp)
+js::GetPropertyPure(JSObject *obj, jsid id, Value *vp)
 {
-    RawObject obj2;
-    RawShape shape;
+    JSObject *obj2;
+    Shape *shape;
     if (!LookupPropertyPureInline(obj, id, &obj2, &shape))
         return false;
 
@@ -5166,3 +5162,40 @@ js_DumpBacktrace(JSContext *cx)
     }
     fprintf(stdout, "%s", sprinter.string());
 }
+void
+JSObject::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf, JS::ObjectsExtraSizes *sizes)
+{
+    if (hasDynamicSlots())
+        sizes->slots = mallocSizeOf(slots);
+
+    if (hasDynamicElements()) {
+        js::ObjectElements *elements = getElementsHeader();
+        if (JS_UNLIKELY(elements->isAsmJSArrayBuffer())) {
+#if defined (JS_CPU_X64)
+            // On x64, ArrayBufferObject::prepareForAsmJS switches the
+            // ArrayBufferObject to use mmap'd storage.
+            sizes->elementsAsmJSNonHeap = asArrayBuffer().byteLength();
+#else
+            sizes->elementsAsmJSHeap = mallocSizeOf(elements);
+#endif
+        } else {
+            sizes->elementsNonAsmJS = mallocSizeOf(elements);
+        }
+    }
+
+    // Other things may be measured in the future if DMD indicates it is worthwhile.
+    // Note that sizes->private_ is measured elsewhere.
+    if (isArguments()) {
+        sizes->argumentsData = asArguments().sizeOfMisc(mallocSizeOf);
+    } else if (isRegExpStatics()) {
+        sizes->regExpStatics = js::SizeOfRegExpStaticsData(this, mallocSizeOf);
+    } else if (isPropertyIterator()) {
+        sizes->propertyIteratorData = asPropertyIterator().sizeOfMisc(mallocSizeOf);
+#ifdef JS_HAS_CTYPES
+    } else {
+        // This must be the last case.
+        sizes->ctypesData = js::SizeOfDataIfCDataObject(mallocSizeOf, const_cast<JSObject *>(this));
+#endif
+    }
+}
+

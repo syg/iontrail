@@ -30,6 +30,7 @@
 #include "nsFocusManager.h"
 #include "nsFrameLoader.h"
 #include "nsIContent.h"
+#include "nsIDocShell.h"
 #include "nsIDOMApplicationRegistry.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMEvent.h"
@@ -498,6 +499,14 @@ TabParent::GetState(uint32_t *aState)
   NS_ENSURE_ARG(aState);
   NS_WARNING("SecurityState not valid here");
   *aState = 0;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TabParent::SetDocShell(nsIDocShell *aDocShell)
+{
+  NS_ENSURE_ARG(aDocShell);
+  NS_WARNING("No mDocShell member in TabParent so there is no docShell to set");
   return NS_OK;
 }
 
@@ -1244,22 +1253,21 @@ TabParent::HandleDelayedDialogs()
 
 PRenderFrameParent*
 TabParent::AllocPRenderFrame(ScrollingBehavior* aScrolling,
-                             LayersBackend* aBackend,
-                             int32_t* aMaxTextureSize,
+                             TextureFactoryIdentifier* aTextureFactoryIdentifier,
                              uint64_t* aLayersId)
 {
   MOZ_ASSERT(ManagedPRenderFrameParent().IsEmpty());
 
   nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
   if (!frameLoader) {
-    NS_ERROR("Can't allocate graphics resources, aborting subprocess");
+    NS_WARNING("Can't allocate graphics resources, aborting subprocess");
     return nullptr;
   }
 
   *aScrolling = UseAsyncPanZoom() ? ASYNC_PAN_ZOOM : DEFAULT_SCROLLING;
   return new RenderFrameParent(frameLoader,
                                *aScrolling,
-                               aBackend, aMaxTextureSize, aLayersId);
+                               aTextureFactoryIdentifier, aLayersId);
 }
 
 bool
@@ -1401,8 +1409,7 @@ TabParent::RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
 bool
 TabParent::RecvPRenderFrameConstructor(PRenderFrameParent* actor,
                                        ScrollingBehavior* scrolling,
-                                       LayersBackend* backend,
-                                       int32_t* maxTextureSize,
+                                       TextureFactoryIdentifier* factoryIdentifier,
                                        uint64_t* layersId)
 {
   RenderFrameParent* rfp = GetRenderFrame();

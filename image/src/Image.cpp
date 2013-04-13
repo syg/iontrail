@@ -33,7 +33,7 @@ ImageResource::SizeOfData()
 {
   if (mError)
     return 0;
-  
+
   // This is not used by memory reporters, but for sizing the cache, which is
   // why it uses |moz_malloc_size_of| rather than an
   // |NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN|.
@@ -86,9 +86,11 @@ Image::GetDecoderType(const char *aMimeType)
   else if (!strcmp(aMimeType, IMAGE_ICON_MS))
     rv = eDecoderType_icon;
 
+#ifdef MOZ_WBMP
   // WBMP
   else if (!strcmp(aMimeType, IMAGE_WBMP))
     rv = eDecoderType_wbmp;
+#endif
 
   return rv;
 }

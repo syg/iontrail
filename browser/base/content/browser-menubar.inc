@@ -542,9 +542,9 @@
                             key="focusChatBar"
                             command="Social:FocusChat"
                             class="show-only-for-keyboard"/>
+                  <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
                   <menuseparator class="social-statusarea-separator"/>
                   <menuseparator class="social-provider-menu" hidden="true"/>
-                  <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
                   <menuitem class="social-addons-menuitem" command="Social:Addons"
                             label="&social.addons.label;"/>
                 </menupopup>
@@ -576,6 +576,8 @@
                             accesskey="&devToolbarMenu.accesskey;"/>
                   <menuitem id="menu_chromeDebugger"
                             observes="devtoolsMenuBroadcaster_ChromeDebugger"/>
+                  <menuitem id="menu_browserConsole"
+                            observes="devtoolsMenuBroadcaster_BrowserConsole"/>
                   <menuitem id="menu_responsiveUI"
                             observes="devtoolsMenuBroadcaster_ResponsiveUI"
                             accesskey="&responsiveDesignTool.accesskey;"/>

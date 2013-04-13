@@ -52,7 +52,7 @@ function SI_inspectNode()
 
 function SI_toggleDefaultStyles()
 {
-  Services.obs.removeObserver(SI_toggleDefaultStyles, "StyleInspector-populated", false);
+  Services.obs.removeObserver(SI_toggleDefaultStyles, "StyleInspector-populated");
 
   info("checking \"Browser styles\" checkbox");
 
@@ -64,10 +64,10 @@ function SI_toggleDefaultStyles()
 
 function SI_AddFilterText()
 {
-  Services.obs.removeObserver(SI_AddFilterText, "StyleInspector-populated", false);
+  Services.obs.removeObserver(SI_AddFilterText, "StyleInspector-populated");
 
   let doc = computedView.styleDocument;
-  let searchbar = doc.querySelector(".searchfield");
+  let searchbar = doc.querySelector(".devtools-searchinput");
   Services.obs.addObserver(SI_checkFilter, "StyleInspector-populated", false);
   info("setting filter text to \"color\"");
   searchbar.focus();
@@ -82,7 +82,7 @@ function SI_AddFilterText()
 
 function SI_checkFilter()
 {
-  Services.obs.removeObserver(SI_checkFilter, "StyleInspector-populated", false);
+  Services.obs.removeObserver(SI_checkFilter, "StyleInspector-populated");
   let propertyViews = computedView.propertyViews;
 
   info("check that the correct properties are visible");

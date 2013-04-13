@@ -634,6 +634,7 @@ add_test(function test_delete_remote_data_in_progress_upload() {
 add_test(function test_polling() {
   let [policy, policyPrefs, hrPrefs, listener] = getPolicy("polling");
   let intended = 500;
+  let acceptable = 250;     // Because nsITimer doesn't guarantee times.
 
   // Ensure checkStateAndTrigger is called at a regular interval.
   let then = Date.now();
@@ -650,7 +651,7 @@ add_test(function test_polling() {
       count++;
 
       print("Polled at " + now + " after " + after + "ms, intended " + intended);
-      do_check_true(after >= intended);
+      do_check_true(after >= acceptable);
       DataReportingPolicy.prototype.checkStateAndTrigger.call(policy);
 
       if (count >= 2) {
@@ -691,10 +692,16 @@ add_test(function test_polling_implicit_acceptance() {
   });
 
   let count = 0;
+
+  // Track JS elapsed time, so we can decide if we've waited for enough ticks.
+  let start;
   Object.defineProperty(policy, "checkStateAndTrigger", {
     value: function CheckStateAndTriggerProxy() {
       count++;
-      print("checkStateAndTrigger count: " + count);
+      let now = Date.now();
+      let delta = now - start;
+      print("checkStateAndTrigger count: " + count + ", now " + now +
+            ", delta " + delta);
 
       // Account for some slack.
       DataReportingPolicy.prototype.checkStateAndTrigger.call(policy);
@@ -706,6 +713,9 @@ add_test(function test_polling_implicit_acceptance() {
       //   3) still ~50ms away from implicit acceptance
       //   4) Implicit acceptance recorded. Data submission requested.
       //   5) Request still pending. No new submission requested.
+      //
+      // Note that, due to the inaccuracy of timers, 4 might not happen until 5
+      // firings have occurred. Yay. So we watch times, not just counts.
 
       do_check_eq(listener.notifyUserCount, 1);
 
@@ -713,17 +723,17 @@ add_test(function test_polling_implicit_acceptance() {
         listener.lastNotifyRequest.onUserNotifyComplete();
       }
 
-      if (count < 4) {
+      if (delta <= (750 + 250)) {
         do_check_false(policy.dataSubmissionPolicyAccepted);
         do_check_eq(listener.requestDataUploadCount, 0);
-      } else {
+      } else if (count > 3) {
         do_check_true(policy.dataSubmissionPolicyAccepted);
         do_check_eq(policy.dataSubmissionPolicyResponseType,
                     "accepted-implicit-time-elapsed");
         do_check_eq(listener.requestDataUploadCount, 1);
       }
 
-      if (count > 4) {
+      if ((count > 4) && policy.dataSubmissionPolicyAccepted) {
         do_check_eq(listener.requestDataUploadCount, 1);
         policy.stopPolling();
         run_next_test();
@@ -733,6 +743,7 @@ add_test(function test_polling_implicit_acceptance() {
 
   policy.firstRunDate = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
   policy.nextDataSubmissionDate = new Date(Date.now());
+  start = Date.now();
   policy.startPolling();
 });
 

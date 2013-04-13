@@ -14,9 +14,6 @@
 interface AudioParam {
 
     attribute float value;
-    // readonly attribute float computedValue;
-    readonly attribute float minValue;
-    readonly attribute float maxValue;
     readonly attribute float defaultValue;
 
     // Parameter automation. 
@@ -39,5 +36,16 @@ interface AudioParam {
     // Cancels all scheduled parameter changes with times greater than or equal to startTime. 
     void cancelScheduledValues(double startTime);
 
+};
+
+/*
+ * The origin of this IDL file is
+ * https://dvcs.w3.org/hg/audio/raw-file/tip/webaudio/specification.html#AlternateNames
+ */
+[PrefControlled]
+partial interface AudioParam {
+    // Same as setTargetAtTime()
+    [Throws]
+    void setTargetValueAtTime(float target, double startTime, double timeConstant);
 };
 

@@ -92,6 +92,7 @@ nsXPConnect::nsXPConnect()
 
 nsXPConnect::~nsXPConnect()
 {
+    mRuntime->DeleteJunkScope();
     nsCycleCollector_forgetJSRuntime();
 
     JSContext *cx = nullptr;
@@ -930,26 +931,24 @@ nsXPConnect::InitClasses(JSContext * aJSContext, JSObject * aGlobalJSObj)
 {
     NS_ASSERTION(aJSContext, "bad param");
     NS_ASSERTION(aGlobalJSObj, "bad param");
+    JS::RootedObject globalJSObj(aJSContext, aGlobalJSObj);
 
     // Nest frame chain save/restore in request created by XPCCallContext.
     XPCCallContext ccx(NATIVE_CALLER, aJSContext);
     if (!ccx.IsValid())
         return UnexpectedFailure(NS_ERROR_FAILURE);
 
-    JSAutoCompartment ac(ccx, aGlobalJSObj);
+    JSAutoCompartment ac(ccx, globalJSObj);
 
     XPCWrappedNativeScope* scope =
-        XPCWrappedNativeScope::GetNewOrUsed(ccx, aGlobalJSObj);
+        XPCWrappedNativeScope::GetNewOrUsed(ccx, globalJSObj);
 
     if (!scope)
         return UnexpectedFailure(NS_ERROR_FAILURE);
 
     scope->RemoveWrappedNativeProtos();
 
-    if (!nsXPCComponents::AttachComponentsObject(ccx, scope))
-        return UnexpectedFailure(NS_ERROR_FAILURE);
-
-    if (!XPCNativeWrapper::AttachNewConstructorObject(ccx, aGlobalJSObj))
+    if (!XPCNativeWrapper::AttachNewConstructorObject(ccx, globalJSObj))
         return UnexpectedFailure(NS_ERROR_FAILURE);
 
     return NS_OK;
@@ -1039,7 +1038,8 @@ CreateGlobalObject(JSContext *cx, JSClass *clasp, nsIPrincipal *principal,
     NS_ABORT_IF_FALSE(NS_IsMainThread(), "using a principal off the main thread?");
     MOZ_ASSERT(principal);
 
-    JSObject *global = JS_NewGlobalObject(cx, clasp, nsJSPrincipals::get(principal), zoneSpec);
+    JS::RootedObject global(cx,
+                            JS_NewGlobalObject(cx, clasp, nsJSPrincipals::get(principal), zoneSpec));
     if (!global)
         return nullptr;
     JSAutoCompartment ac(cx, global);
@@ -1332,21 +1332,21 @@ nsXPConnect::GetNativeOfWrapper(JSContext * aJSContext,
         return nullptr;
     }
 
-    JSObject* obj2 = nullptr;
-    nsIXPConnectWrappedNative* wrapper =
-        XPCWrappedNative::GetWrappedNativeOfJSObject(aJSContext, aJSObj, nullptr,
-                                                     &obj2);
-    if (wrapper)
-        return wrapper->Native();
+    aJSObj = js::CheckedUnwrap(aJSObj, /* stopAtOuter = */ false);
+    if (!aJSObj) {
+        JS_ReportError(aJSContext, "Permission denied to get native of security wrapper");
+        return nullptr;
+    }
+    if (IS_WRAPPER_CLASS(js::GetObjectClass(aJSObj))) {
+        if (IS_SLIM_WRAPPER_OBJECT(aJSObj))
+            return (nsISupports*)xpc_GetJSPrivate(aJSObj);
+        else if (XPCWrappedNative *wn = XPCWrappedNative::Get(aJSObj))
+            return wn->Native();
+        return nullptr;
+    }
 
-    if (obj2)
-        return (nsISupports*)xpc_GetJSPrivate(obj2);
-
-    JSObject* unsafeObj =
-        XPCWrapper::Unwrap(aJSContext, aJSObj, /* stopAtOuter = */ false);
-    JSObject* cur = unsafeObj ? unsafeObj : aJSObj;
     nsISupports* supports = nullptr;
-    mozilla::dom::UnwrapDOMObjectToISupports(cur, supports);
+    mozilla::dom::UnwrapDOMObjectToISupports(aJSObj, supports);
     nsCOMPtr<nsISupports> canonical = do_QueryInterface(supports);
     return canonical;
 }
@@ -1643,7 +1643,7 @@ nsXPConnect::CreateSandbox(JSContext *cx, nsIPrincipal *principal,
     jsval rval = JSVAL_VOID;
     AUTO_MARK_JSVAL(ccx, &rval);
 
-    SandboxOptions options;
+    SandboxOptions options(cx);
     nsresult rv = xpc_CreateSandboxObject(cx, &rval, principal, options);
     NS_ASSERTION(NS_FAILED(rv) || !JSVAL_IS_PRIMITIVE(rval),
                  "Bad return value from xpc_CreateSandboxObject()!");
@@ -1659,20 +1659,21 @@ nsXPConnect::CreateSandbox(JSContext *cx, nsIPrincipal *principal,
 }
 
 NS_IMETHODIMP
-nsXPConnect::EvalInSandboxObject(const nsAString& source, JSContext *cx,
-                                 nsIXPConnectJSObjectHolder *sandbox,
-                                 bool returnStringOnly, jsval *rval)
+nsXPConnect::EvalInSandboxObject(const nsAString& source, const char *filename,
+                                 JSContext *cx, JSObject *sandboxArg,
+                                 bool returnStringOnly, JS::Value *rvalArg)
 {
-    if (!sandbox)
+    if (!sandboxArg)
         return NS_ERROR_INVALID_ARG;
 
-    JSObject *obj;
-    nsresult rv = sandbox->GetJSObject(&obj);
+    JS::RootedObject sandbox(cx, sandboxArg);
+    JS::RootedValue rval(cx);
+    nsresult rv = xpc_EvalInSandbox(cx, sandbox, source, filename ? filename :
+                                    "x-bogus://XPConnect/Sandbox", 1, JSVERSION_DEFAULT,
+                                    returnStringOnly, &rval);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    return xpc_EvalInSandbox(cx, obj, source,
-                             NS_ConvertUTF16toUTF8(source).get(), 1,
-                             JSVERSION_DEFAULT, returnStringOnly, rval);
+    *rvalArg = rval;
+    return NS_OK;
 }
 
 /* nsIXPConnectJSObjectHolder getWrappedNativePrototype (in JSContextPtr aJSContext, in JSObjectPtr aScope, in nsIClassInfo aClassInfo); */
@@ -1988,27 +1989,6 @@ nsXPConnect::GetRuntime(JSRuntime **runtime)
     JSRuntime *rt = GetRuntime()->GetJSRuntime();
     JS_AbortIfWrongThread(rt);
     *runtime = rt;
-    return NS_OK;
-}
-
-/* attribute nsIXPCScriptable backstagePass; */
-NS_IMETHODIMP
-nsXPConnect::GetBackstagePass(nsIXPCScriptable **bsp)
-{
-    if (!mBackstagePass) {
-        nsCOMPtr<nsIPrincipal> sysprin;
-        nsCOMPtr<nsIScriptSecurityManager> secman =
-            do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
-        if (!secman)
-            return NS_ERROR_NOT_AVAILABLE;
-        if (NS_FAILED(secman->GetSystemPrincipal(getter_AddRefs(sysprin))))
-            return NS_ERROR_NOT_AVAILABLE;
-
-        mBackstagePass = new BackstagePass(sysprin);
-        if (!mBackstagePass)
-            return NS_ERROR_OUT_OF_MEMORY;
-    }
-    NS_ADDREF(*bsp = mBackstagePass);
     return NS_OK;
 }
 

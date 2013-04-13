@@ -30,7 +30,7 @@ class LIRGeneratorX86 : public LIRGeneratorX86Shared
     void lowerUntypedPhiInput(MPhi *phi, uint32_t inputPosition, LBlock *block, size_t lirIndex);
     bool defineUntypedPhi(MPhi *phi, size_t lirIndex);
 
-    bool lowerForShift(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir, MDefinition *lhs, 
+    bool lowerForShift(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir, MDefinition *lhs,
                        MDefinition *rhs);
 
     bool lowerForALU(LInstructionHelper<1, 1, 0> *ins, MDefinition *mir, MDefinition *input);
@@ -39,11 +39,14 @@ class LIRGeneratorX86 : public LIRGeneratorX86Shared
     bool lowerForFPU(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir, MDefinition *lhs,
                      MDefinition *rhs);
 
+    LGetPropertyCacheT *newLGetPropertyCacheT(MGetPropertyCache *ins);
+
   public:
     bool visitBox(MBox *box);
     bool visitUnbox(MUnbox *unbox);
     bool visitReturn(MReturn *ret);
     bool visitStoreTypedArrayElement(MStoreTypedArrayElement *ins);
+    bool visitStoreTypedArrayElementHole(MStoreTypedArrayElementHole *ins);
     bool visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble *ins);
     bool visitAsmJSStoreHeap(MAsmJSStoreHeap *ins);
     bool visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr *ins);
@@ -60,4 +63,3 @@ typedef LIRGeneratorX86 LIRGeneratorSpecific;
 } // namespace ion
 
 #endif // jsion_ion_lowering_x86_h__
-

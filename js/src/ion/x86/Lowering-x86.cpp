@@ -221,6 +221,31 @@ LIRGeneratorX86::visitStoreTypedArrayElement(MStoreTypedArrayElement *ins)
 }
 
 bool
+LIRGeneratorX86::visitStoreTypedArrayElementHole(MStoreTypedArrayElementHole *ins)
+{
+    JS_ASSERT(ins->elements()->type() == MIRType_Elements);
+    JS_ASSERT(ins->index()->type() == MIRType_Int32);
+    JS_ASSERT(ins->length()->type() == MIRType_Int32);
+
+    if (ins->isFloatArray())
+        JS_ASSERT(ins->value()->type() == MIRType_Double);
+    else
+        JS_ASSERT(ins->value()->type() == MIRType_Int32);
+
+    LUse elements = useRegister(ins->elements());
+    LAllocation length = useAnyOrConstant(ins->length());
+    LAllocation index = useRegisterOrConstant(ins->index());
+    LAllocation value;
+
+    // For byte arrays, the value has to be in a byte register on x86.
+    if (ins->isByteArray())
+        value = useFixed(ins->value(), eax);
+    else
+        value = useRegisterOrNonDoubleConstant(ins->value());
+    return add(new LStoreTypedArrayElementHole(elements, length, index, value), ins);
+}
+
+bool
 LIRGeneratorX86::visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble *ins)
 {
     JS_ASSERT(ins->input()->type() == MIRType_Int32);
@@ -262,3 +287,16 @@ LIRGeneratorX86::visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr *ins)
     return define(new LAsmJSLoadFuncPtr(useRegisterAtStart(ins->index())), ins);
 }
 
+LGetPropertyCacheT *
+LIRGeneratorX86::newLGetPropertyCacheT(MGetPropertyCache *ins)
+{
+    // Since x86 doesn't have a scratch register and we need one for the
+    // indirect jump for dispatch-style ICs, we need a temporary in the case
+    // of a double output type as we can't get a scratch from the output.
+    LDefinition scratch;
+    if (ins->type() == MIRType_Double)
+        scratch = temp();
+    else
+        scratch = LDefinition::BogusTemp();
+    return new LGetPropertyCacheT(useRegister(ins->object()), scratch);
+}

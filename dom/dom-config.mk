@@ -8,13 +8,11 @@ DOM_SRCDIRS = \
   dom/encoding \
   dom/file \
   dom/power \
+  dom/push \
   dom/quota \
   dom/media \
   dom/network/src \
-  dom/settings \
   dom/phonenumberutils \
-  dom/contacts \
-  dom/permission \
   dom/alarm \
   dom/src/events \
   dom/src/storage \
@@ -55,6 +53,10 @@ endif
 
 ifdef MOZ_B2G_BT
 DOM_SRCDIRS += dom/bluetooth
+endif
+
+ifdef MOZ_WEBSPEECH
+DOM_SRCDIRS += content/media/webspeech
 endif
 
 LOCAL_INCLUDES += $(DOM_SRCDIRS:%=-I$(topsrcdir)/%)

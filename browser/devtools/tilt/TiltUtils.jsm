@@ -13,6 +13,8 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/devtools/LayoutHelpers.jsm");
 
+const STACK_THICKNESS = 15;
+
 this.EXPORTED_SYMBOLS = ["TiltUtils"];
 
 /**
@@ -378,12 +380,56 @@ TiltUtils.DOM = {
   },
 
   /**
+   * Calculates the position and depth to display a node, this can be overriden
+   * to change the visualization.
+   *
+   * @param {Window} aContentWindow
+   *                 the window content holding the document
+   * @param {Node}   aNode
+   *                 the node to get the position for
+   * @param {Object} aParentPosition
+   *                 the position of the parent node, as returned by this
+   *                 function
+   *
+   * @return {Object} an object describing the node's position in 3D space
+   *                  containing the following properties:
+   *         {Number} top
+   *                  distance along the x axis
+   *         {Number} left
+   *                  distance along the y axis
+   *         {Number} depth
+   *                  distance along the z axis
+   *         {Number} width
+   *                  width of the node
+   *         {Number} height
+   *                  height of the node
+   *         {Number} thickness
+   *                  thickness of the node
+   */
+  getNodePosition: function TUD_getNodePosition(aContentWindow, aNode,
+                                                aParentPosition) {
+    // get the x, y, width and height coordinates of the node
+    let coord = LayoutHelpers.getRect(aNode, aContentWindow);
+    if (!coord) {
+      return null;
+    }
+
+    coord.depth = aParentPosition ? (aParentPosition.depth + aParentPosition.thickness) : 0;
+    coord.thickness = STACK_THICKNESS;
+
+    return coord;
+  },
+
+  /**
    * Traverses a document object model & calculates useful info for each node.
    *
    * @param {Window} aContentWindow
    *                 the window content holding the document
    * @param {Object} aProperties
    *                 optional, an object containing the following properties:
+   *        {Function} nodeCallback
+   *                   a function to call instead of TiltUtils.DOM.getNodePosition
+   *                   to get the position and depth to display nodes
    *        {Object} invisibleElements
    *                 elements which should be ignored
    *        {Number} minSize
@@ -393,7 +439,7 @@ TiltUtils.DOM = {
    *        {Number} maxY
    *                 the maximum top position of an element
    *
-   * @return {Array} list containing nodes depths, coordinates and local names
+   * @return {Array} list containing nodes positions and local names
    */
   traverse: function TUD_traverse(aContentWindow, aProperties)
   {
@@ -405,24 +451,27 @@ TiltUtils.DOM = {
     let aMaxX = aProperties.maxX || Number.MAX_VALUE;
     let aMaxY = aProperties.maxY || Number.MAX_VALUE;
 
+    let nodeCallback = aProperties.nodeCallback || this.getNodePosition.bind(this);
+
     let nodes = aContentWindow.document.childNodes;
     let store = { info: [], nodes: [] };
     let depth = 0;
 
-    while (nodes.length) {
-      let queue = [];
+    let queue = [
+      { parentPosition: null, nodes: aContentWindow.document.childNodes }
+    ]
 
-      for (let i = 0, len = nodes.length; i < len; i++) {
-        let node = nodes[i];
+    while (queue.length) {
+      let { nodes, parentPosition } = queue.shift();
 
+      for (let node of nodes) {
         // skip some nodes to avoid visualization meshes that are too bloated
         let name = node.localName;
         if (!name || aInvisibleElements[name]) {
           continue;
         }
 
-        // get the x, y, width and height coordinates of the node
-        let coord = LayoutHelpers.getRect(node, aContentWindow);
+        let coord = nodeCallback(aContentWindow, node, parentPosition);
         if (!coord) {
           continue;
         }
@@ -436,17 +485,14 @@ TiltUtils.DOM = {
         if (coord.width > aMinSize && coord.height > aMinSize) {
 
           // save the necessary details into a list to be returned later
-          store.info.push({ depth: depth, coord: coord, name: name });
+          store.info.push({ coord: coord, name: name });
           store.nodes.push(node);
         }
 
-        // prepare the queue array
-        Array.prototype.push.apply(queue, name === "iframe" || name === "frame" ?
-                                          node.contentDocument.childNodes :
-                                          node.childNodes);
+        let childNodes = (name === "iframe" || name === "frame") ? node.contentDocument.childNodes : node.childNodes;
+        if (childNodes.length > 0)
+          queue.push({ parentPosition: coord, nodes: childNodes });
       }
-      nodes = queue;
-      depth++;
     }
 
     return store;

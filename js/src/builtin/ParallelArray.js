@@ -103,7 +103,7 @@ function ComputeIndices(shape, index1d) {
 
     // Compute how many steps of width stride we could take.
     var index = (index1d / stride) | 0;
-    result[i] = index;
+    ARRAY_PUSH(result, index);
 
     // Adjust remaining indices for smaller dimensions.
     index1d -= (index * stride);
@@ -121,10 +121,6 @@ function StepIndices(shape, indices) {
     }
     indices[i] = 0;
   }
-}
-
-function IsInteger(v) {
-  return (v | 0) === v;
 }
 
 // Constructor
@@ -153,7 +149,7 @@ function ParallelArrayConstructFromArray(buffer) {
 
   var buffer1 = [];
   for (var i = 0; i < length; i++)
-    buffer1[i] = buffer[i];
+    ARRAY_PUSH(buffer1, buffer[i]);
 
   this.buffer = buffer1;
   this.offset = 0;
@@ -208,7 +204,7 @@ function ParallelArrayConstructFromComprehension(self, shape, func, mode) {
       var s1 = s0 >>> 0;
       if (s1 !== s0)
         ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
-      shape1[i] = s1;
+      ARRAY_PUSH(shape1, s1);
     }
     ParallelArrayBuild(self, shape1, func, mode);
   }
@@ -399,7 +395,8 @@ function ParallelArrayMap(func, mode) {
   ASSERT_SEQUENTIAL_IS_OK(mode);
   for (var i = 0; i < length; i++) {
     // Note: Unlike JS arrays, parallel arrays cannot have holes.
-    buffer[i] = func(self.get(i), i, self);
+    var v = func(self.get(i), i, self);
+    UnsafeSetElement(buffer, i, v);
   }
   return NewParallelArray(ParallelArrayView, [length], buffer, 0);
 
@@ -540,9 +537,12 @@ function ParallelArrayScan(func, mode) {
 
     // Compute intermediates array (see comment on phase2()).
     var intermediates = [];
-    var accumulator = intermediates[0] = buffer[finalElement(0)];
-    for (var i = 1; i < numSlices - 1; i++)
-      accumulator = intermediates[i] = func(accumulator, buffer[finalElement(i)]);
+    var accumulator = buffer[finalElement(0)];
+    ARRAY_PUSH(intermediates, accumulator);
+    for (var i = 1; i < numSlices - 1; i++) {
+      accumulator = func(accumulator, buffer[finalElement(i)]);
+      ARRAY_PUSH(intermediates, accumulator);
+    }
 
     // Reset the current position information for each slice, but
     // convert from chunks to indices (see comment on phase2()).
@@ -807,13 +807,15 @@ function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode)
     var numSlices = ForkJoinSlices();
     var checkpoints = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-      checkpoints[i] = 0;
+      UnsafeSetElement(checkpoints, i, 0);
 
     var buffer = NewDenseArray(length);
     var conflicts = NewDenseArray(length);
 
-    for (var i = 0; i < length; i++)
-      buffer[i] = defaultValue;
+    for (var i = 0; i < length; i++) {
+      UnsafeSetElement(buffer, i, defaultValue);
+      UnsafeSetElement(conflicts, i, false);
+    }
 
     ForkJoin(fill, CheckParallel(mode));
     return NewParallelArray(ParallelArrayView, [length], buffer, 0);
@@ -829,8 +831,7 @@ function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode)
 
       for (; indexPos < indexEnd; indexPos++) {
         var x = self.get(indexPos);
-        var t = targets[indexPos];
-        checkTarget(indexPos, t);
+        var t = checkTarget(indexPos, targets[indexPos]);
         if (t < outputStart || t >= outputEnd)
           continue;
         if (conflicts[t])
@@ -854,10 +855,14 @@ function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode)
     // FIXME(bug 844890): Use typed arrays here.
     var localBuffers = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-        localBuffers[i] = NewDenseArray(length);
+      UnsafeSetElement(localBuffers, i, NewDenseArray(length));
     var localConflicts = NewDenseArray(numSlices);
-    for (var i = 0; i < numSlices; i++)
-        localConflicts[i] = NewDenseArray(length);
+    for (var i = 0; i < numSlices; i++) {
+      var conflicts_i = NewDenseArray(length);
+      for (var j = 0; j < length; j++)
+        UnsafeSetElement(conflicts_i, j, false);
+      UnsafeSetElement(localConflicts, i, conflicts_i);
+    }
 
     // Initialize the 0th buffer, which will become the output. For
     // the other buffers, we track which parts have been written to
@@ -881,8 +886,7 @@ function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode)
       var conflicts = localConflicts[sliceId];
       while (indexPos < indexEnd) {
         var x = self.get(indexPos);
-        var t = targets[indexPos];
-        checkTarget(indexPos, t);
+        var t = checkTarget(indexPos, targets[indexPos]);
         if (conflicts[t])
           x = collide(x, localbuffer[t]);
         UnsafeSetElement(localbuffer, t, x,
@@ -920,13 +924,14 @@ function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode)
     var buffer = NewDenseArray(length);
     var conflicts = NewDenseArray(length);
 
-    for (var i = 0; i < length; i++)
-      buffer[i] = defaultValue;
+    for (var i = 0; i < length; i++) {
+      UnsafeSetElement(buffer, i, defaultValue);
+      UnsafeSetElement(conflicts, i, false);
+    }
 
     for (var i = 0; i < targetsLength; i++) {
       var x = self.get(i);
-      var t = targets[i];
-      checkTarget(i, t);
+      var t = checkTarget(i, targets[i]);
       if (conflicts[t])
         x = collide(x, buffer[t]);
 
@@ -938,11 +943,14 @@ function ParallelArrayScatter(targets, defaultValue, conflictFunc, length, mode)
   }
 
   function checkTarget(i, t) {
-      if ((t | 0) !== t)
-        ThrowError(JSMSG_PAR_ARRAY_SCATTER_BAD_TARGET, i);
+    if (TO_INT32(t) !== t)
+      ThrowError(JSMSG_PAR_ARRAY_SCATTER_BAD_TARGET, i);
 
-      if (t >= length)
-        ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
+    if (t < 0 || t >= length)
+      ThrowError(JSMSG_PAR_ARRAY_SCATTER_BOUNDS);
+
+    // It's not enough to return t, as -0 | 0 === -0.
+    return TO_INT32(t);
   }
 }
 
@@ -980,7 +988,7 @@ function ParallelArrayFilter(func, mode) {
     // FIXME(bug 844890): Use typed arrays here.
     var counts = NewDenseArray(numSlices);
     for (var i = 0; i < numSlices; i++)
-      counts[i] = 0;
+      UnsafeSetElement(counts, i, 0);
     var survivors = NewDenseArray(chunks);
     ForkJoin(findSurvivorsInSlice, CheckParallel(mode));
 
@@ -997,13 +1005,13 @@ function ParallelArrayFilter(func, mode) {
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
-  var buffer = [], count = 0;
+  var buffer = [];
   for (var i = 0; i < length; i++) {
     var elem = self.get(i);
     if (func(elem, i, self))
-      buffer[count++] = elem;
+      ARRAY_PUSH(buffer, elem);
   }
-  return NewParallelArray(ParallelArrayView, [count], buffer, 0);
+  return NewParallelArray(ParallelArrayView, [buffer.length], buffer, 0);
 
   /**
    * As described above, our goal is to determine which items we

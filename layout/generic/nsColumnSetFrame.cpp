@@ -21,6 +21,7 @@
 #include <algorithm>
 
 using namespace mozilla;
+using namespace mozilla::layout;
 
 class nsColumnSetFrame : public nsContainerFrame {
 public:
@@ -545,7 +546,9 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
 
   DrainOverflowColumns();
 
-  if (mLastBalanceHeight != aConfig.mColMaxHeight) {
+  const bool colHeightChanged = mLastBalanceHeight != aConfig.mColMaxHeight;
+
+  if (colHeightChanged) {
     mLastBalanceHeight = aConfig.mColMaxHeight;
     // XXX Seems like this could fire if incremental reflow pushed the column set
     // down so we reflow incrementally with a different available height.
@@ -646,6 +649,10 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
       kidReflowState.mFlags.mIsTopOfPage = true;
       kidReflowState.mFlags.mTableIsSplittable = false;
       kidReflowState.mFlags.mIsColumnBalancing = aConfig.mBalanceColCount < INT32_MAX;
+
+      // We need to reflow any float placeholders, even if our column height
+      // hasn't changed.
+      kidReflowState.mFlags.mMustReflowPlaceholders = !colHeightChanged;
 
 #ifdef DEBUG_roc
       printf("*** Reflowing child #%d %p: availHeight=%d\n",
@@ -865,11 +872,12 @@ nsColumnSetFrame::DrainOverflowColumns()
 {
   // First grab the prev-in-flows overflows and reparent them to this
   // frame.
+  nsPresContext* presContext = PresContext();
   nsColumnSetFrame* prev = static_cast<nsColumnSetFrame*>(GetPrevInFlow());
   if (prev) {
-    nsAutoPtr<nsFrameList> overflows(prev->StealOverflowFrames());
+    AutoFrameListPtr overflows(presContext, prev->StealOverflowFrames());
     if (overflows) {
-      nsContainerFrame::ReparentFrameViewList(PresContext(), *overflows,
+      nsContainerFrame::ReparentFrameViewList(presContext, *overflows,
                                               prev, this);
 
       mFrames.InsertFrames(this, nullptr, *overflows);
@@ -878,7 +886,7 @@ nsColumnSetFrame::DrainOverflowColumns()
   
   // Now pull back our own overflows and append them to our children.
   // We don't need to reparent them since we're already their parent.
-  nsAutoPtr<nsFrameList> overflows(StealOverflowFrames());
+  AutoFrameListPtr overflows(presContext, StealOverflowFrames());
   if (overflows) {
     // We're already the parent for these frames, so no need to set
     // their parent again.

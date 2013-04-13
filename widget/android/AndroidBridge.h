@@ -39,13 +39,6 @@ class nsIDOMMozSmsMessage;
 
 /* See the comment in AndroidBridge about this function before using it */
 extern "C" JNIEnv * GetJNIForThread();
-extern "C" jclass jsjni_FindClass(const char *className);
-extern "C" jmethodID jsjni_GetStaticMethodID(jclass methodClass,
-                                       const char *methodName,
-                                       const char *signature);
-extern "C" bool jsjni_ExceptionCheck();
-extern "C" void jsjni_CallStaticVoidMethodA(jclass cls, jmethodID method, jvalue *values);
-extern "C" int jsjni_CallStaticIntMethodA(jclass cls, jmethodID method, jvalue *values);
 
 extern bool mozilla_AndroidBridge_SetMainThread(void *);
 extern jclass GetGeckoAppShellClass();
@@ -103,10 +96,9 @@ class AndroidBridge
 {
 public:
     enum {
-        NOTIFY_IME_RESETINPUTSTATE = 0,
-        NOTIFY_IME_REPLY_EVENT = 1,
-        NOTIFY_IME_CANCELCOMPOSITION = 2,
-        NOTIFY_IME_FOCUSCHANGE = 3
+        // Values for NotifyIME, in addition to values from the Gecko
+        // NotificationToIME enum; use negative values here to prevent conflict
+        NOTIFY_IME_REPLY_EVENT = -1,
     };
 
     enum {
@@ -152,9 +144,9 @@ public:
     bool SetMainThread(void *thr);
 
     /* These are all implemented in Java */
-    static void NotifyIME(int aType, int aState);
+    static void NotifyIME(int aType);
 
-    static void NotifyIMEEnabled(int aState, const nsAString& aTypeHint,
+    static void NotifyIMEContext(int aState, const nsAString& aTypeHint,
                                  const nsAString& aModeHint, const nsAString& aActionHint);
 
     static void NotifyIMEChange(const PRUnichar *aText, uint32_t aTextLen, int aStart, int aEnd, int aNewEnd);
@@ -276,6 +268,11 @@ public:
 
     void *LockBitmap(jobject bitmap);
 
+    // Returns a global reference to the Context for Fennec's Activity. The
+    // caller is responsible for ensuring this doesn't leak by calling
+    // DeleteGlobalRef() when the context is no longer needed.
+    jobject GetGlobalContextRef(void);
+
     void UnlockBitmap(jobject bitmap);
 
     bool UnlockProfile();
@@ -370,7 +367,7 @@ public:
                             nsACString & aResult);
 protected:
     static AndroidBridge *sBridge;
-    static StaticAutoPtr<nsTArray<nsCOMPtr<nsIMobileMessageCallback> > > sSmsRequests;
+    nsTArray<nsCOMPtr<nsIMobileMessageCallback> > mSmsRequests;
 
     // the global JavaVM
     JavaVM *mJavaVM;
@@ -405,7 +402,7 @@ protected:
 
     // other things
     jmethodID jNotifyIME;
-    jmethodID jNotifyIMEEnabled;
+    jmethodID jNotifyIMEContext;
     jmethodID jNotifyIMEChange;
     jmethodID jAcknowledgeEvent;
     jmethodID jEnableLocation;
@@ -493,6 +490,8 @@ protected:
 
     jclass jThumbnailHelperClass;
     jmethodID jNotifyThumbnail;
+
+    jmethodID jGetContext;
 
     // for GfxInfo (gfx feature detection and blacklisting)
     jmethodID jGetGfxInfoData;

@@ -10,41 +10,73 @@
 #include "mozilla/dom/mobilemessage/SmsChild.h"
 #include "SmsMessage.h"
 #include "SmsFilter.h"
-#include "SmsRequest.h"
 #include "SmsSegmentInfo.h"
+#include "DictionaryHelpers.h"
+#include "nsJSUtils.h"
+#include "nsContentUtils.h"
 
-namespace mozilla {
-namespace dom {
-namespace mobilemessage {
+using namespace mozilla::dom;
+using namespace mozilla::dom::mobilemessage;
 
+namespace {
+
+// TODO: Bug 767082 - WebSMS: sSmsChild leaks at shutdown
 PSmsChild* gSmsChild;
 
-NS_IMPL_ISUPPORTS2(SmsIPCService, nsISmsService, nsIMobileMessageDatabaseService)
-
-void
-SendRequest(const IPCSmsRequest& aRequest, nsIMobileMessageCallback* aRequestReply)
+PSmsChild*
+GetSmsChild()
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  NS_WARN_IF_FALSE(gSmsChild,
-                   "Calling methods on SmsIPCService during "
-                   "shutdown!");
-
-  if (gSmsChild) {
-    SmsRequestChild* actor = new SmsRequestChild(aRequestReply);
-    gSmsChild->SendPSmsRequestConstructor(actor, aRequest);
-  }
-}
-
-PSmsChild*
-SmsIPCService::GetSmsChild()
-{
   if (!gSmsChild) {
     gSmsChild = ContentChild::GetSingleton()->SendPSmsConstructor();
+
+    NS_WARN_IF_FALSE(gSmsChild,
+                     "Calling methods on SmsIPCService during shutdown!");
   }
 
   return gSmsChild;
 }
+
+nsresult
+SendRequest(const IPCSmsRequest& aRequest,
+            nsIMobileMessageCallback* aRequestReply)
+{
+  PSmsChild* smsChild = GetSmsChild();
+  NS_ENSURE_TRUE(smsChild, NS_ERROR_FAILURE);
+
+  SmsRequestChild* actor = new SmsRequestChild(aRequestReply);
+  smsChild->SendPSmsRequestConstructor(actor, aRequest);
+
+  return NS_OK;
+}
+
+nsresult
+SendCursorRequest(const IPCMobileMessageCursor& aRequest,
+                  nsIMobileMessageCursorCallback* aRequestReply,
+                  nsICursorContinueCallback** aResult)
+{
+  PSmsChild* smsChild = GetSmsChild();
+  NS_ENSURE_TRUE(smsChild, NS_ERROR_FAILURE);
+
+  nsRefPtr<MobileMessageCursorChild> actor =
+    new MobileMessageCursorChild(aRequestReply);
+
+  // Add an extra ref for IPDL. Will be released in
+  // SmsChild::DeallocPMobileMessageCursor().
+  actor->AddRef();
+
+  smsChild->SendPMobileMessageCursorConstructor(actor, aRequest);
+
+  actor.forget(aResult);
+  return NS_OK;
+}
+} // anonymous namespace
+
+NS_IMPL_ISUPPORTS3(SmsIPCService,
+                   nsISmsService,
+                   nsIMmsService,
+                   nsIMobileMessageDatabaseService)
 
 /*
  * Implementation of nsISmsService.
@@ -52,7 +84,10 @@ SmsIPCService::GetSmsChild()
 NS_IMETHODIMP
 SmsIPCService::HasSupport(bool* aHasSupport)
 {
-  GetSmsChild()->SendHasSupport(aHasSupport);
+  PSmsChild* smsChild = GetSmsChild();
+  NS_ENSURE_TRUE(smsChild, NS_ERROR_FAILURE);
+
+  smsChild->SendHasSupport(aHasSupport);
 
   return NS_OK;
 }
@@ -61,8 +96,11 @@ NS_IMETHODIMP
 SmsIPCService::GetSegmentInfoForText(const nsAString & aText,
                                      nsIDOMMozSmsSegmentInfo** aResult)
 {
+  PSmsChild* smsChild = GetSmsChild();
+  NS_ENSURE_TRUE(smsChild, NS_ERROR_FAILURE);
+
   SmsSegmentInfoData data;
-  bool ok = GetSmsChild()->SendGetSegmentInfoForText(nsString(aText), &data);
+  bool ok = smsChild->SendGetSegmentInfoForText(nsString(aText), &data);
   NS_ENSURE_TRUE(ok, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIDOMMozSmsSegmentInfo> info = new SmsSegmentInfo(data);
@@ -75,8 +113,9 @@ SmsIPCService::Send(const nsAString& aNumber,
                     const nsAString& aMessage,
                     nsIMobileMessageCallback* aRequest)
 {
-  SendRequest(SendMessageRequest(nsString(aNumber), nsString(aMessage)), aRequest);
-  return NS_OK;
+  return SendRequest(SendMessageRequest(SendSmsMessageRequest(nsString(aNumber),
+                                                              nsString(aMessage))),
+                     aRequest);
 }
 
 /*
@@ -86,41 +125,27 @@ NS_IMETHODIMP
 SmsIPCService::GetMessageMoz(int32_t aMessageId,
                              nsIMobileMessageCallback* aRequest)
 {
-  SendRequest(GetMessageRequest(aMessageId), aRequest);
-  return NS_OK;
+  return SendRequest(GetMessageRequest(aMessageId), aRequest);
 }
 
 NS_IMETHODIMP
 SmsIPCService::DeleteMessage(int32_t aMessageId,
                              nsIMobileMessageCallback* aRequest)
 {
-  SendRequest(DeleteMessageRequest(aMessageId), aRequest);
-  return NS_OK;
+  return SendRequest(DeleteMessageRequest(aMessageId), aRequest);
 }
 
 NS_IMETHODIMP
-SmsIPCService::CreateMessageList(nsIDOMMozSmsFilter* aFilter,
-                                 bool aReverse,
-                                 nsIMobileMessageCallback* aRequest)
+SmsIPCService::CreateMessageCursor(nsIDOMMozSmsFilter* aFilter,
+                                   bool aReverse,
+                                   nsIMobileMessageCursorCallback* aCursorCallback,
+                                   nsICursorContinueCallback** aResult)
 {
-  SmsFilterData data = SmsFilterData(static_cast<SmsFilter*>(aFilter)->GetData());
-  SendRequest(CreateMessageListRequest(data, aReverse), aRequest);
-  return NS_OK;
-}
+  const SmsFilterData& data =
+    SmsFilterData(static_cast<SmsFilter*>(aFilter)->GetData());
 
-NS_IMETHODIMP
-SmsIPCService::GetNextMessageInList(int32_t aListId,
-                                    nsIMobileMessageCallback* aRequest)
-{
-  SendRequest(GetNextMessageInListRequest(aListId), aRequest);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SmsIPCService::ClearMessageList(int32_t aListId)
-{
-  GetSmsChild()->SendClearMessageList(aListId);
-  return NS_OK;
+  return SendCursorRequest(CreateMessageCursorRequest(data, aReverse),
+                           aCursorCallback, aResult);
 }
 
 NS_IMETHODIMP
@@ -128,17 +153,111 @@ SmsIPCService::MarkMessageRead(int32_t aMessageId,
                                bool aValue,
                                nsIMobileMessageCallback* aRequest)
 {
-  SendRequest(MarkMessageReadRequest(aMessageId, aValue), aRequest);
-  return NS_OK;
+  return SendRequest(MarkMessageReadRequest(aMessageId, aValue), aRequest);
 }
 
 NS_IMETHODIMP
-SmsIPCService::GetThreadList(nsIMobileMessageCallback* aRequest)
+SmsIPCService::CreateThreadCursor(nsIMobileMessageCursorCallback* aCursorCallback,
+                                  nsICursorContinueCallback** aResult)
 {
-  SendRequest(GetThreadListRequest(), aRequest);
-  return NS_OK;
+  return SendCursorRequest(CreateThreadCursorRequest(), aCursorCallback,
+                           aResult);
 }
 
-} // namespace mobilemessage
-} // namespace dom
-} // namespace mozilla
+bool
+GetSendMmsMessageRequestFromParams(const JS::Value& aParam,
+                                   SendMmsMessageRequest& request) {
+  if (aParam.isUndefined() || aParam.isNull() || !aParam.isObject()) {
+    return false;
+  }
+
+  mozilla::AutoJSContext cx;
+  mozilla::idl::MmsParameters params;
+  nsresult rv = params.Init(cx, &aParam);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  uint32_t len;
+
+  // SendMobileMessageRequest.receivers
+  if (!params.receivers.isObject()) {
+    return false;
+  }
+  JSObject &receiversObj = params.receivers.toObject();
+  if (!JS_GetArrayLength(cx, &receiversObj, &len)) {
+    return false;
+  }
+
+  request.receivers().SetCapacity(len);
+
+  for (uint32_t i = 0; i < len; i++) {
+    JS::Value val;
+    if (!JS_GetElement(cx, &receiversObj, i, &val)) {
+      return false;
+    }
+
+    if (!val.isString()) {
+      return false;
+    }
+
+    nsDependentJSString str;
+    if (!str.init(cx, val.toString())) {
+      return false;
+    }
+
+    request.receivers().AppendElement(str);
+  }
+
+  // SendMobileMessageRequest.attachments
+  mozilla::dom::ContentChild* cc = mozilla::dom::ContentChild::GetSingleton();
+
+  if (!params.attachments.isObject()) {
+    return false;
+  }
+  JSObject &attachmentsObj = params.attachments.toObject();
+  if (!JS_GetArrayLength(cx, &attachmentsObj, &len)) {
+    return false;
+  }
+  request.attachments().SetCapacity(len);
+
+  for (uint32_t i = 0; i < len; i++) {
+    JS::Value val;
+    if (!JS_GetElement(cx, &attachmentsObj, i, &val)) {
+      return false;
+    }
+
+    mozilla::idl::MmsAttachment attachment;
+    rv = attachment.Init(cx, &val);
+    NS_ENSURE_SUCCESS(rv, false);
+
+    MmsAttachmentData mmsAttachment;
+    mmsAttachment.id().Assign(attachment.id);
+    mmsAttachment.location().Assign(attachment.location);
+    mmsAttachment.contentChild() = cc->GetOrCreateActorForBlob(attachment.content);
+    if (!mmsAttachment.contentChild()) {
+      return false;
+    }
+    request.attachments().AppendElement(mmsAttachment);
+  }
+
+  request.smil() = params.smil;
+  request.subject() = params.subject;
+
+  return true;
+}
+
+NS_IMETHODIMP
+SmsIPCService::Send(const JS::Value& aParameters,
+                    nsIMobileMessageCallback *aRequest)
+{
+  SendMmsMessageRequest req;
+  if (!GetSendMmsMessageRequestFromParams(aParameters, req)) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  return SendRequest(SendMessageRequest(req), aRequest);
+}
+
+NS_IMETHODIMP
+SmsIPCService::Retrieve(int32_t aId, nsIMobileMessageCallback *aRequest)
+{
+  return SendRequest(RetrieveMessageRequest(aId), aRequest);
+}

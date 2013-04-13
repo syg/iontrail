@@ -17,13 +17,12 @@ class WrapperFactory {
   public:
     enum { WAIVE_XRAY_WRAPPER_FLAG = js::Wrapper::LAST_USED_FLAG << 1,
            IS_XRAY_WRAPPER_FLAG    = WAIVE_XRAY_WRAPPER_FLAG << 1,
-           SCRIPT_ACCESS_ONLY_FLAG = IS_XRAY_WRAPPER_FLAG << 1,
-           SOW_FLAG                = SCRIPT_ACCESS_ONLY_FLAG << 1 };
+           SOW_FLAG                = IS_XRAY_WRAPPER_FLAG << 1 };
 
     // Return true if any of any of the nested wrappers have the flag set.
     static bool HasWrapperFlag(JSObject *wrapper, unsigned flag) {
         unsigned flags = 0;
-        js::UnwrapObject(wrapper, true, &flags);
+        js::UncheckedUnwrap(wrapper, true, &flags);
         return !!(flags & flag);
     }
 
@@ -34,6 +33,12 @@ class WrapperFactory {
     static bool HasWaiveXrayFlag(JSObject *wrapper) {
         return HasWrapperFlag(wrapper, WAIVE_XRAY_WRAPPER_FLAG);
     }
+
+    static bool IsSecurityWrapper(JSObject *obj) {
+        return !js::CheckedUnwrap(obj);
+    }
+
+    static bool IsCOW(JSObject *wrapper);
 
     static JSObject *GetXrayWaiver(JSObject *obj);
     static JSObject *CreateXrayWaiver(JSContext *cx, JSObject *obj);

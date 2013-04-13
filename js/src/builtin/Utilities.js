@@ -18,12 +18,13 @@
          ParallelTestsShouldPass: false,
          Dump: false,
          callFunction: false,
-         IS_UNDEFINED: false, TO_UINT32: false,
+         TO_UINT32: false,
          JSMSG_NOT_FUNCTION: false, JSMSG_MISSING_FUN_ARG: false,
-         JSMSG_EMPTY_ARRAY_REDUCE: false,
+         JSMSG_EMPTY_ARRAY_REDUCE: false, JSMSG_CANT_CONVERT_TO: false,
 */
 
 /* Utility macros */
+#define TO_INT32(x) (x | 0)
 #define TO_UINT32(x) (x >>> 0)
 
 /* cache built-in functions before applications can change them */
@@ -35,14 +36,17 @@ var std_Array_push = Array.prototype.push;
 var std_Array_shift = Array.prototype.shift;
 var std_Array_slice = Array.prototype.slice;
 var std_Array_sort = Array.prototype.sort;
+var std_Array_unshift = Array.prototype.unshift;
 var std_Boolean_toString = Boolean.prototype.toString;
 var Std_Date = Date;
 var std_Date_now = Date.now;
+var std_Date_valueOf = Date.prototype.valueOf;
 var std_Function_bind = Function.prototype.bind;
 var std_Function_apply = Function.prototype.apply;
 var std_Math_floor = Math.floor;
 var std_Math_max = Math.max;
 var std_Math_min = Math.min;
+var std_Number_valueOf = Number.prototype.valueOf;
 var std_Object_create = Object.create;
 var std_Object_defineProperty = Object.defineProperty;
 var std_Object_getOwnPropertyNames = Object.getOwnPropertyNames;
@@ -67,16 +71,15 @@ var std_WeakMap_set = WeakMap.prototype.set;
 
 
 /* Spec: ECMAScript Language Specification, 5.1 edition, 8.8 */
-function List() {
-    if (IS_UNDEFINED(List.prototype)) {
-        var proto = std_Object_create(null);
-        proto.indexOf = std_Array_indexOf;
-        proto.join = std_Array_join;
-        proto.push = std_Array_push;
-        proto.slice = std_Array_slice;
-        proto.sort = std_Array_sort;
-        List.prototype = proto;
-    }
+function List() {}
+{
+  let ListProto = std_Object_create(null);
+  ListProto.indexOf = std_Array_indexOf;
+  ListProto.join = std_Array_join;
+  ListProto.push = std_Array_push;
+  ListProto.slice = std_Array_slice;
+  ListProto.sort = std_Array_sort;
+  List.prototype = ListProto;
 }
 MakeConstructible(List);
 
@@ -116,6 +119,13 @@ function ToNumber(v) {
 function ToString(v) {
     assert(arguments.length > 0, "__toString");
     return Std_String(v);
+}
+
+
+/* Spec: ECMAScript Language Specification, 5.1 edition, 9.10 */
+function CheckObjectCoercible(v) {
+    if (v === undefined || v === null)
+        ThrowError(JSMSG_CANT_CONVERT_TO, ToString(v), "object");
 }
 
 

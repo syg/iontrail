@@ -160,8 +160,10 @@ static const Register PreBarrierReg = rdx;
 // jitted code.
 static const uint32_t StackAlignment = 16;
 static const bool StackKeptAligned = false;
+static const uint32_t CodeAlignment = 8;
 static const uint32_t NativeFrameSize = sizeof(void*);
 static const uint32_t AlignmentAtPrologue = sizeof(void*);
+static const uint32_t AlignmentMidPrologue = AlignmentAtPrologue;
 
 static const Scale ScalePointer = TimesEight;
 
@@ -348,11 +350,16 @@ class Assembler : public AssemblerX86Shared
         movsd(src, Operand(StackPointer, 0));
     }
     CodeOffsetLabel pushWithPatch(const ImmWord &word) {
-        CodeOffsetLabel label = moveWithPatch(word, ScratchReg);
+        CodeOffsetLabel label = movWithPatch(word, ScratchReg);
         push(ScratchReg);
         return label;
     }
     CodeOffsetLabel moveWithPatch(const ImmWord &word, const Register &dest) {
+        movq(word, dest);
+        return masm.currentOffset();
+    }
+
+    CodeOffsetLabel movWithPatch(const ImmWord &word, const Register &dest) {
         movq(word, dest);
         return masm.currentOffset();
     }
@@ -643,7 +650,13 @@ class Assembler : public AssemblerX86Shared
         CodeOffsetLabel offset(size());
         JmpSrc src = enabled ? masm.call() : masm.cmp_eax();
         addPendingJump(src, target->raw(), Relocation::IONCODE);
+        JS_ASSERT(size() - offset.offset() == ToggledCallSize());
         return offset;
+    }
+
+    static size_t ToggledCallSize() {
+        // Size of a call instruction.
+        return 5;
     }
 
     // Do not mask shared implementations.

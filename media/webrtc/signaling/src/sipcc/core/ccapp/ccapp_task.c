@@ -25,7 +25,7 @@ void addCcappListener(appListener* listener, int type) {
 
    listener_t *alistener = NULL;
 
-   CCAPP_DEBUG(DEB_F_PREFIX"Entered: listenr=0x%x, type=%d\n", DEB_F_PREFIX_ARGS(SIP_CC_PROV, "addCcappListener"),
+   CCAPP_DEBUG(DEB_F_PREFIX"Entered: listenr=%p, type=%d", DEB_F_PREFIX_ARGS(SIP_CC_PROV, "addCcappListener"),
            listener, type);
 
    if (listener == NULL)
@@ -44,7 +44,7 @@ void addCcappListener(appListener* listener, int type) {
    alistener->listener_p = listener;
 
    sll_lite_link_tail(&sll_list, (sll_lite_node_t *)alistener);
-   CCAPP_DEBUG(DEB_F_PREFIX"Added: listenr=0x%x, type=%d\n", DEB_F_PREFIX_ARGS(SIP_CC_PROV, "addCcappListener"),
+   CCAPP_DEBUG(DEB_F_PREFIX"Added: listenr=%p, type=%d", DEB_F_PREFIX_ARGS(SIP_CC_PROV, "addCcappListener"),
            alistener->listener_p, alistener->type);
 }
 
@@ -59,7 +59,7 @@ appListener *getCcappListener(int type) {
     iterator = sll_list.head_p;
     while (iterator) {
         temp_info = (listener_t *)iterator;
-        CCAPP_DEBUG(DEB_F_PREFIX"appid=%d, listener=0x%x\n",
+        CCAPP_DEBUG(DEB_F_PREFIX"appid=%d, listener=%p",
                 DEB_F_PREFIX_ARGS(SIP_CC_PROV, fname), temp_info->type, temp_info->listener_p);
         if (temp_info->type == type) {
             {
@@ -156,6 +156,11 @@ void CCApp_task(void * arg)
     appListener *listener = NULL;
     void * msg;
 
+    //initialize the listener list
+    sll_lite_init(&sll_list);
+
+    CCAppInit();
+
     // If the "ready to start" condition variable has been created
     // (is non-null), we're going to wait for it to be signaled
     // before we start processing messages.
@@ -167,10 +172,6 @@ void CCApp_task(void * arg)
       PR_Unlock(ccAppReadyToStartLock);
     }
 
-    //initialize the listener list
-    sll_lite_init(&sll_list);
-
-    CCAppInit();
 
     while (1) {
         msg = cprGetMessage(ccapp_msgq, TRUE, (void **) &syshdr);

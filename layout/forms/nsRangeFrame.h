@@ -29,6 +29,10 @@ public:
   NS_DECL_FRAMEARENA_HELPERS
 
   // nsIFrame overrides
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        aPrevInFlow) MOZ_OVERRIDE;
+
   virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
 
   void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
@@ -97,13 +101,19 @@ public:
   double GetValueAtEventPoint(nsGUIEvent* aEvent);
 
   /**
-   * Helper to reposition the thumb and schedule a repaint when the value of
-   * the range changes. (This does not reflow, since the position and size of
-   * the thumb do not affect the position or size of any other frames.)
+   * Helper that's used when the value of the range changes to reposition the
+   * thumb, resize the range-progress element, and schedule a repaint. (This
+   * does not reflow, since the position and size of the thumb and
+   * range-progress element do not affect the position or size of any other
+   * frames.)
    */
-  void UpdateThumbPositionForValueChange();
+  void UpdateForValueChange();
 
 private:
+
+  nsresult MakeAnonymousDiv(nsIContent** aResult,
+                            nsCSSPseudoElements::Type aPseudoType,
+                            nsTArray<ContentInfo>& aElements);
 
   // Helper function which reflows the anonymous div frames.
   nsresult ReflowAnonymousContent(nsPresContext*           aPresContext,
@@ -112,6 +122,9 @@ private:
 
   void DoUpdateThumbPosition(nsIFrame* aThumbFrame,
                              const nsSize& aRangeSize);
+
+  void DoUpdateRangeProgressFrame(nsIFrame* aProgressFrame,
+                                  const nsSize& aRangeSize);
 
   /**
    * Returns the input element's value as a fraction of the difference between
@@ -122,13 +135,21 @@ private:
   double GetValueAsFractionOfRange();
 
   /**
-   * The div used to show the track.
+   * The div used to show the ::-moz-range-track pseudo-element.
    * @see nsRangeFrame::CreateAnonymousContent
    */
   nsCOMPtr<nsIContent> mTrackDiv;
 
   /**
-   * The div used to show the thumb.
+   * The div used to show the ::-moz-range-progress pseudo-element, which is
+   * used to (optionally) style the specific chunk of track leading up to the
+   * thumb's current position.
+   * @see nsRangeFrame::CreateAnonymousContent
+   */
+  nsCOMPtr<nsIContent> mProgressDiv;
+
+  /**
+   * The div used to show the ::-moz-range-thumb pseudo-element.
    * @see nsRangeFrame::CreateAnonymousContent
    */
   nsCOMPtr<nsIContent> mThumbDiv;

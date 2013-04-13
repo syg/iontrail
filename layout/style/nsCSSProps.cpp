@@ -563,6 +563,7 @@ const int32_t nsCSSProps::kAppearanceKTable[] = {
   eCSSKeyword_menulist_text,          NS_THEME_DROPDOWN_TEXT,
   eCSSKeyword_menulist_textfield,     NS_THEME_DROPDOWN_TEXTFIELD,
   eCSSKeyword_range,                  NS_THEME_RANGE,
+  eCSSKeyword_range_thumb,            NS_THEME_RANGE_THUMB,
   eCSSKeyword_scale_horizontal,       NS_THEME_SCALE_HORIZONTAL,
   eCSSKeyword_scale_vertical,         NS_THEME_SCALE_VERTICAL,
   eCSSKeyword_scalethumb_horizontal,  NS_THEME_SCALE_THUMB_HORIZONTAL,
@@ -2259,7 +2260,7 @@ static const nsCSSProperty gMozTransformSubpropTable[] = {
 
 const nsCSSProperty *const
 nsCSSProps::kSubpropertyTable[eCSSProperty_COUNT - eCSSProperty_COUNT_no_shorthands] = {
-#define CSS_PROP_DOMPROP_PREFIXED(prop_) prop_
+#define CSS_PROP_PUBLIC_OR_PRIVATE(publicname_, privatename_) privatename_
 // Need an extra level of macro nesting to force expansion of method_
 // params before they get pasted.
 #define NSCSSPROPS_INNER_MACRO(method_) g##method_##SubpropTable,
@@ -2268,7 +2269,7 @@ nsCSSProps::kSubpropertyTable[eCSSProperty_COUNT - eCSSProperty_COUNT_no_shortha
 #include "nsCSSPropList.h"
 #undef CSS_PROP_SHORTHAND
 #undef NSCSSPROPS_INNER_MACRO
-#undef CSS_PROP_DOMPROP_PREFIXED
+#undef CSS_PROP_PUBLIC_OR_PRIVATE
 };
 
 
@@ -2444,7 +2445,7 @@ enum ColumnCheckCounter {
 
 /* static */ const size_t
 nsCSSProps::gPropertyCountInStruct[nsStyleStructID_Length] = {
-  #define STYLE_STRUCT(name, checkdata_cb, ctor_args) \
+  #define STYLE_STRUCT(name, checkdata_cb) \
     ePropertyCount_for_##name,
   #include "nsStyleStructList.h"
   #undef STYLE_STRUCT

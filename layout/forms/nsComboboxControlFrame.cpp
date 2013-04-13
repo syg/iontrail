@@ -56,6 +56,7 @@
 #include "nsContentList.h"
 #include "mozilla/Likely.h"
 #include <algorithm>
+#include "nsTextNode.h"
 
 using namespace mozilla;
 
@@ -1163,17 +1164,6 @@ nsComboboxControlFrame::SetFormProperty(nsIAtom* aName, const nsAString& aValue)
   return fcFrame->SetFormProperty(aName, aValue);
 }
 
-nsresult
-nsComboboxControlFrame::GetFormProperty(nsIAtom* aName, nsAString& aValue) const
-{
-  nsIFormControlFrame* fcFrame = do_QueryFrame(mDropdownFrame);
-  if (!fcFrame) {
-    return NS_ERROR_FAILURE;
-  }
-
-  return fcFrame->GetFormProperty(aName, aValue);
-}
-
 nsIFrame*
 nsComboboxControlFrame::GetContentInsertionFrame() {
   return mInRedisplayText ? mDisplayFrame : mDropdownFrame->GetContentInsertionFrame();
@@ -1202,9 +1192,7 @@ nsComboboxControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 
   nsNodeInfoManager *nimgr = mContent->NodeInfo()->NodeInfoManager();
 
-  NS_NewTextNode(getter_AddRefs(mDisplayContent), nimgr);
-  if (!mDisplayContent)
-    return NS_ERROR_OUT_OF_MEMORY;
+  mDisplayContent = new nsTextNode(nimgr);
 
   // set the value of the text node
   mDisplayedIndex = mListControlFrame->GetSelectedIndex();

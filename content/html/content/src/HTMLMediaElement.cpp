@@ -66,6 +66,7 @@
 #include "nsIScriptError.h"
 #include "nsHostObjectProtocolHandler.h"
 #include "MediaMetadataManager.h"
+#include "mozilla/dom/EnableWebAudioCheck.h"
 
 #include "AudioChannelService.h"
 
@@ -440,7 +441,7 @@ NS_IMPL_BOOL_ATTR(HTMLMediaElement, Controls, controls)
 NS_IMPL_BOOL_ATTR(HTMLMediaElement, Autoplay, autoplay)
 NS_IMPL_BOOL_ATTR(HTMLMediaElement, Loop, loop)
 NS_IMPL_BOOL_ATTR(HTMLMediaElement, DefaultMuted, muted)
-NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(HTMLMediaElement, Preload, preload, NULL)
+NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(HTMLMediaElement, Preload, preload, nullptr)
 NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(HTMLMediaElement, MozAudioChannelType, mozaudiochannel, "normal")
 
 already_AddRefed<DOMMediaStream>
@@ -887,9 +888,9 @@ void HTMLMediaElement::LoadFromSourceChildren()
     if (child->GetAttr(kNameSpaceID_None, nsGkAtoms::media, media) && !media.IsEmpty()) {
       nsCSSParser cssParser;
       nsRefPtr<nsMediaList> mediaList(new nsMediaList());
-      cssParser.ParseMediaList(media, NULL, 0, mediaList, false);
+      cssParser.ParseMediaList(media, nullptr, 0, mediaList, false);
       nsIPresShell* presShell = OwnerDoc()->GetShell();
-      if (presShell && !mediaList->Matches(presShell->GetPresContext(), NULL)) {
+      if (presShell && !mediaList->Matches(presShell->GetPresContext(), nullptr)) {
         DispatchAsyncSourceError(child);
         const PRUnichar* params[] = { media.get(), src.get() };
         ReportLoadError("MediaLoadSourceMediaNotMatched", params, ArrayLength(params));
@@ -1572,7 +1573,7 @@ HTMLMediaElement::BuildObjectFromTags(nsCStringHashKey::KeyType aKey,
   }
   JS::Value value = STRING_TO_JSVAL(string);
   if (!JS_DefineProperty(args->cx, args->tags, aKey.Data(), value,
-                         NULL, NULL, JSPROP_ENUMERATE)) {
+                         nullptr, nullptr, JSPROP_ENUMERATE)) {
     NS_WARNING("Failed to set metadata property");
     args->error = true;
     return PL_DHASH_STOP;
@@ -1589,7 +1590,7 @@ HTMLMediaElement::MozGetMetadata(JSContext* cx, ErrorResult& aRv)
     return nullptr;
   }
 
-  JSObject* tags = JS_NewObject(cx, NULL, NULL, NULL);
+  JSObject* tags = JS_NewObject(cx, nullptr, nullptr, nullptr);
   if (!tags) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -2088,7 +2089,7 @@ HTMLMediaElement::WakeLockBoolWrapper& HTMLMediaElement::WakeLockBoolWrapper::op
     pmService->NewWakeLock(NS_LITERAL_STRING("Playing_media"), mOuter->OwnerDoc()->GetWindow(), getter_AddRefs(mWakeLock));
   } else if (mWakeLock && val) {
     mWakeLock->Unlock();
-    mWakeLock = NULL;
+    mWakeLock = nullptr;
   }
   mValue = val;
   return *this;
@@ -2157,7 +2158,7 @@ bool HTMLMediaElement::ParseAttribute(int32_t aNamespaceID,
 
 bool HTMLMediaElement::CheckAudioChannelPermissions(const nsAString& aString)
 {
-#ifdef MOZ_B2G
+#ifdef ANDROID
   // Only normal channel doesn't need permission.
   if (!aString.EqualsASCII("normal")) {
     nsCOMPtr<nsIPermissionManager> permissionManager =
@@ -2215,9 +2216,7 @@ nsresult HTMLMediaElement::SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   if (aNotify && aNameSpaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::autoplay) {
       StopSuspendingAfterFirstFrame();
-      if (mReadyState == nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA) {
-        NotifyAutoplayDataReady();
-      }
+      CheckAutoplayDataReady();
       // This attribute can affect AddRemoveSelfReference
       AddRemoveSelfReference();
       UpdatePreloadAction();
@@ -2467,8 +2466,7 @@ public:
     mHaveCurrentData(false),
     mBlocked(false),
     mMutex("HTMLMediaElement::StreamListener"),
-    mPendingNotifyOutput(false),
-    mDidHaveCurrentData(false)
+    mPendingNotifyOutput(false)
   {}
   void Forget() { mElement = nullptr; }
 
@@ -2535,21 +2533,12 @@ public:
       NS_NewRunnableMethod(this, &StreamListener::DoNotifyFinished);
     aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
   }
-  virtual void NotifyHasCurrentData(MediaStreamGraph* aGraph,
-                                    bool aHasCurrentData)
+  virtual void NotifyHasCurrentData(MediaStreamGraph* aGraph)
   {
     MutexAutoLock lock(mMutex);
-    if (mDidHaveCurrentData == aHasCurrentData)
-      return;
-    mDidHaveCurrentData = aHasCurrentData;
-    // Ignore the case where aHasCurrentData is false. If aHasCurrentData
-    // changes from true to false, we don't worry about it. Video elements
-    // preserve the last played frame anyway.
-    if (aHasCurrentData) {
-      nsCOMPtr<nsIRunnable> event =
-        NS_NewRunnableMethod(this, &StreamListener::DoNotifyHaveCurrentData);
-      aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
-    }
+    nsCOMPtr<nsIRunnable> event =
+      NS_NewRunnableMethod(this, &StreamListener::DoNotifyHaveCurrentData);
+    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
   }
   virtual void NotifyOutput(MediaStreamGraph* aGraph)
   {
@@ -2571,7 +2560,6 @@ private:
   // mMutex protects the fields below; they can be accessed on any thread
   Mutex mMutex;
   bool mPendingNotifyOutput;
-  bool mDidHaveCurrentData;
 };
 
 void HTMLMediaElement::SetupSrcMediaStreamPlayback(DOMMediaStream* aStream)
@@ -2854,6 +2842,9 @@ void HTMLMediaElement::SeekCompleted()
 void HTMLMediaElement::NotifySuspendedByCache(bool aIsSuspended)
 {
   mDownloadSuspendedByCache = aIsSuspended;
+  // If this is an autoplay element, we may need to kick off its autoplaying
+  // now so we consume data and hopefully free up cache space.
+  CheckAutoplayDataReady();
 }
 
 void HTMLMediaElement::DownloadSuspended()
@@ -2992,9 +2983,7 @@ void HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
     DispatchAsyncEvent(NS_LITERAL_STRING("canplay"));
   }
 
-  if (mReadyState == nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA) {
-    NotifyAutoplayDataReady();
-  }
+  CheckAutoplayDataReady();
 
   if (oldState < nsIDOMHTMLMediaElement::HAVE_FUTURE_DATA &&
       mReadyState >= nsIDOMHTMLMediaElement::HAVE_FUTURE_DATA &&
@@ -3010,14 +2999,20 @@ void HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
 
 bool HTMLMediaElement::CanActivateAutoplay()
 {
+  // For stream inputs, we activate autoplay on HAVE_CURRENT_DATA because
+  // this element itself might be blocking the stream from making progress by
+  // being paused.
   return mAutoplaying &&
          mPaused &&
+         (mDownloadSuspendedByCache ||
+          (mDecoder && mReadyState >= nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA) ||
+          (mSrcStream && mReadyState >= nsIDOMHTMLMediaElement::HAVE_CURRENT_DATA)) &&
          HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay) &&
          mAutoplayEnabled &&
          !IsEditable();
 }
 
-void HTMLMediaElement::NotifyAutoplayDataReady()
+void HTMLMediaElement::CheckAutoplayDataReady()
 {
   if (CanActivateAutoplay()) {
     mPaused = false;
@@ -3078,8 +3073,8 @@ nsresult HTMLMediaElement::DispatchAudioAvailableEvent(float* aFrameBuffer,
   nsAutoArrayPtr<float> frameBuffer(aFrameBuffer);
 
   nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
-  nsCOMPtr<nsIDOMEventTarget> target(do_QueryObject(this));
-  NS_ENSURE_TRUE(domDoc && target, NS_ERROR_INVALID_ARG);
+  nsRefPtr<HTMLMediaElement> kungFuDeathGrip = this;
+  NS_ENSURE_TRUE(domDoc, NS_ERROR_INVALID_ARG);
 
   nsCOMPtr<nsIDOMEvent> event;
   nsresult rv = domDoc->CreateEvent(NS_LITERAL_STRING("MozAudioAvailableEvent"),
@@ -3093,7 +3088,7 @@ nsresult HTMLMediaElement::DispatchAudioAvailableEvent(float* aFrameBuffer,
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool dummy;
-  return target->DispatchEvent(event, &dummy);
+  return DispatchEvent(event, &dummy);
 }
 
 nsresult HTMLMediaElement::DispatchEvent(const nsAString& aName)
@@ -3218,7 +3213,7 @@ void HTMLMediaElement::SuspendOrResumeElement(bool aPauseElement, bool aSuspendE
 void HTMLMediaElement::NotifyOwnerDocumentActivityChanged()
 {
   nsIDocument* ownerDoc = OwnerDoc();
-#ifdef MOZ_B2G
+#ifdef ANDROID
   nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
   if (domDoc) {
     bool hidden = false;
@@ -3429,7 +3424,7 @@ HTMLMediaElement::CopyInnerTo(Element* aDest)
       if (frame && frame->GetType() == nsGkAtoms::HTMLVideoFrame &&
           static_cast<nsVideoFrame*>(frame)->ShouldDisplayPoster()) {
         nsIContent* content = static_cast<nsVideoFrame*>(frame)->GetPosterImage();
-        element = content ? content->AsElement() : NULL;
+        element = content ? content->AsElement() : nullptr;
       } else {
         element = const_cast<HTMLMediaElement*>(this);
       }
@@ -3523,28 +3518,6 @@ void HTMLMediaElement::GetCurrentSpec(nsCString& aString)
   }
 }
 
-/* attribute double initialTime; */
-double
-HTMLMediaElement::InitialTime()
-{
-  // If there is no start fragment then the initalTime is zero.
-  // Clamp to duration if it is greater than duration.
-  double duration = Duration();
-
-  double time = mFragmentStart < 0.0 ? 0.0 : mFragmentStart;
-  if (time > duration) {
-    time = duration;
-  }
-
-  return time;
-}
-
-NS_IMETHODIMP HTMLMediaElement::GetInitialTime(double* aTime)
-{
-  *aTime = InitialTime();
-  return NS_OK;
-}
-
 /* attribute double mozFragmentEnd; */
 double
 HTMLMediaElement::MozFragmentEnd()
@@ -3564,6 +3537,9 @@ NS_IMETHODIMP HTMLMediaElement::GetMozFragmentEnd(double* aTime)
 
 void HTMLMediaElement::NotifyAudioAvailableListener()
 {
+  if (dom::EnableWebAudioCheck::PrefEnabled()) {
+    OwnerDoc()->WarnOnceAbout(nsIDocument::eMozAudioData);
+  }
   if (mDecoder) {
     mDecoder->NotifyAudioAvailableListener();
   }
@@ -3677,7 +3653,7 @@ nsresult HTMLMediaElement::UpdateChannelMuteState(bool aCanPlay)
 {
   // Only on B2G we mute the HTMLMediaElement following the rules of
   // AudioChannelService.
-#ifdef MOZ_B2G
+#ifdef ANDROID
   // We have to mute this channel:
   if (!aCanPlay && !mChannelSuspended) {
     mChannelSuspended = true;
@@ -3696,7 +3672,7 @@ nsresult HTMLMediaElement::UpdateChannelMuteState(bool aCanPlay)
 void HTMLMediaElement::UpdateAudioChannelPlayingState()
 {
   // The HTMLMediaElement is registered to the AudioChannelService only on B2G.
-#ifdef MOZ_B2G
+#ifdef ANDROID
   bool playingThroughTheAudioChannel =
      (!mPaused &&
       (HasAttr(kNameSpaceID_None, nsGkAtoms::loop) ||
@@ -3711,7 +3687,8 @@ void HTMLMediaElement::UpdateAudioChannelPlayingState()
       if (!mAudioChannelAgent) {
         return;
       }
-      mAudioChannelAgent->Init(mAudioChannelType, this);
+      // Use a weak ref so the audio channel agent can't leak |this|.
+      mAudioChannelAgent->InitWithWeakCallback(mAudioChannelType, this);
 
       nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
       if (domDoc) {

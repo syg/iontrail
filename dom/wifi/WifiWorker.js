@@ -44,11 +44,12 @@ var WifiManager = (function() {
     Cu.import("resource://gre/modules/systemlibs.js");
     return {
       sdkVersion: parseInt(libcutils.property_get("ro.build.version.sdk"), 10),
+      unloadDriverEnabled: libcutils.property_get("ro.moz.wifi.unloaddriver") === "1",
       schedScanRecovery: libcutils.property_get("ro.moz.wifi.sched_scan_recover") === "false" ? false : true
     };
   }
 
-  let {sdkVersion, schedScanRecovery} = getStartupPrefs();
+  let {sdkVersion, unloadDriverEnabled, schedScanRecovery} = getStartupPrefs();
 
   var controlWorker = new ChromeWorker(WIFIWORKER_WORKER);
   var eventWorker = new ChromeWorker(WIFIWORKER_WORKER);
@@ -132,12 +133,14 @@ var WifiManager = (function() {
   }
 
   function unloadDriver(callback) {
-    // Unloading drivers is generally unnecessary and
-    // can trigger bugs in some drivers.
-    // On properly written drivers, bringing the interface
-    // down powers down the interface.
-    callback(0);
-    return;
+    if (!unloadDriverEnabled) {
+      // Unloading drivers is generally unnecessary and
+      // can trigger bugs in some drivers.
+      // On properly written drivers, bringing the interface
+      // down powers down the interface.
+      callback(0);
+      return;
+    }
 
     voidControlMessage("unload_driver", function(status) {
       driverLoaded = (status < 0);
@@ -1779,11 +1782,6 @@ function WifiWorker() {
   WifiManager.onsupplicantconnection = function() {
     debug("Connected to supplicant");
     WifiManager.enabled = true;
-    WifiManager.getMacAddress(function (mac) {
-      self.macAddress = mac;
-      debug("Got mac: " + mac);
-    });
-
     self._reloadConfiguredNetworks(function(ok) {
       // Prime this.networks.
       if (!ok)
@@ -1807,7 +1805,12 @@ function WifiWorker() {
     self._notifyAfterStateChange(true, true);
 
     // Notify everybody, even if they didn't ask us to come up.
-    self._fireEvent("wifiUp", {});
+    WifiManager.getMacAddress(function (mac) {
+      self.macAddress = mac;
+      debug("Got mac: " + mac);
+      self._fireEvent("wifiUp", { macAddress: mac });
+    });
+
     if (WifiManager.state === "SCANNING")
       startScanStuckTimer();
   };
@@ -2172,6 +2175,10 @@ WifiWorker.prototype = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIWorkerHolder,
                                          Ci.nsIWifi]),
+
+  disconnectedByWifi: false,
+
+  disconnectedByWifiTethering: false,
 
   // Internal methods.
   waitForScan: function(callback) {
@@ -2828,6 +2835,16 @@ WifiWorker.prototype = {
     }
   },
 
+  notifyTetheringOn: function notifyTetheringOn() {
+    // It's really sad that we don't have an API to notify the wifi
+    // hotspot status. Toggle settings to let gaia know that wifi hotspot
+    // is enabled.
+    gSettingsService.createLock().set(
+      "tethering.wifi.enabled", true, null, "fromInternalSetting");
+    // Check for the next request.
+    this.nextRequest();
+  },
+
   notifyTetheringOff: function notifyTetheringOff() {
     // It's really sad that we don't have an API to notify the wifi
     // hotspot status. Toggle settings to let gaia know that wifi hotspot
@@ -2846,10 +2863,18 @@ WifiWorker.prototype = {
     if (enabled && (gNetworkManager.wifiTetheringEnabled ||
          WifiManager.tetheringState != "UNINITIALIZED")) {
       this.queueRequest(false, function(data) {
+        this.disconnectedByWifi = true;
         this.setWifiApEnabled(false, this.notifyTetheringOff.bind(this));
       }.bind(this));
     }
     this.setWifiEnabled({enabled: enabled});
+    
+    if (!enabled && this.disconnectedByWifi) {
+      this.queueRequest(true, function(data) {
+        this.disconnectedByWifi = false;
+        this.setWifiApEnabled(true, this.notifyTetheringOn.bind(this));
+      }.bind(this));
+    }
   },
 
   handleWifiTetheringEnabled: function(enabled) {
@@ -2860,12 +2885,18 @@ WifiWorker.prototype = {
     // Make sure Wifi is idle before switching to Wifi hotspot mode.
     if (enabled && (WifiManager.enabled ||
          WifiManager.state != "UNINITIALIZED")) {
+      this.disconnectedByWifiTethering = true;
       this.setWifiEnabled({enabled: false});
     }
 
     this.queueRequest(enabled, function(data) {
       this.setWifiApEnabled(data, this.nextRequest.bind(this));
     }.bind(this));
+
+    if (!enabled && this.disconnectedByWifiTethering) {
+      this.disconnectedByWifiTethering = false;
+      this.setWifiEnabled({enabled: true});
+    }
   },
 
   // nsIObserver implementation

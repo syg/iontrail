@@ -12,6 +12,8 @@
 #include "nsContentUtils.h"
 #include "nsIDOMFile.h"
 #include "nsTArrayHelpers.h"
+#include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/mobilemessage/SmsTypes.h"
 
 using namespace mozilla::idl;
 using namespace mozilla::dom::mobilemessage;
@@ -31,7 +33,8 @@ NS_IMPL_ADDREF(MmsMessage)
 NS_IMPL_RELEASE(MmsMessage)
 
 MmsMessage::MmsMessage(int32_t                         aId,
-                       DeliveryState                   aState,
+                       const uint64_t                  aThreadId,
+                       DeliveryState                   aDelivery,
                        const nsTArray<DeliveryStatus>& aDeliveryStatus,
                        const nsAString&                aSender,
                        const nsTArray<nsString>&       aReceivers,
@@ -41,7 +44,8 @@ MmsMessage::MmsMessage(int32_t                         aId,
                        const nsAString&                aSmil,
                        const nsTArray<MmsAttachment>&  aAttachments)
   : mId(aId),
-    mState(aState),
+    mThreadId(aThreadId),
+    mDelivery(aDelivery),
     mDeliveryStatus(aDeliveryStatus),
     mSender(aSender),
     mReceivers(aReceivers),
@@ -53,9 +57,39 @@ MmsMessage::MmsMessage(int32_t                         aId,
 {
 }
 
+MmsMessage::MmsMessage(const mobilemessage::MmsMessageData& aData)
+  : mId(aData.id())
+  , mDelivery(aData.delivery())
+  , mDeliveryStatus(aData.deliveryStatus())
+  , mSender(aData.sender())
+  , mReceivers(aData.receivers())
+  , mTimestamp(aData.timestamp())
+  , mRead(aData.read())
+  , mSubject(aData.subject())
+  , mSmil(aData.smil())
+{
+  uint32_t len = aData.attachments().Length();
+  mAttachments.SetCapacity(len);
+  for (uint32_t i = 0; i < len; i++) {
+    MmsAttachment att;
+    const MmsAttachmentData &element = aData.attachments()[i];
+    att.id = element.id();
+    att.location = element.location();
+    if (element.contentParent()) {
+      att.content = static_cast<BlobParent*>(element.contentParent())->GetBlob();
+    } else if (element.contentChild()) {
+      att.content = static_cast<BlobChild*>(element.contentChild())->GetBlob();
+    } else {
+      NS_WARNING("MmsMessage: Unable to get attachment content.");
+    }
+    mAttachments.AppendElement(att);
+  }
+}
+
 /* static */ nsresult
 MmsMessage::Create(int32_t               aId,
-                   const nsAString&      aState,
+                   const uint64_t        aThreadId,
+                   const nsAString&      aDelivery,
                    const JS::Value&      aDeliveryStatus,
                    const nsAString&      aSender,
                    const JS::Value&      aReceivers,
@@ -69,18 +103,18 @@ MmsMessage::Create(int32_t               aId,
 {
   *aMessage = nullptr;
 
-  // Set |state|.
-  DeliveryState state;
-  if (aState.Equals(DELIVERY_SENT)) {
-    state = eDeliveryState_Sent;
-  } else if (aState.Equals(DELIVERY_RECEIVED)) {
-    state = eDeliveryState_Received;
-  } else if (aState.Equals(DELIVERY_SENDING)) {
-    state = eDeliveryState_Sending;
-  } else if (aState.Equals(DELIVERY_NOT_DOWNLOADED)) {
-    state = eDeliveryState_NotDownloaded;
-  } else if (aState.Equals(DELIVERY_ERROR)) {
-    state = eDeliveryState_Error;
+  // Set |delivery|.
+  DeliveryState delivery;
+  if (aDelivery.Equals(DELIVERY_SENT)) {
+    delivery = eDeliveryState_Sent;
+  } else if (aDelivery.Equals(DELIVERY_RECEIVED)) {
+    delivery = eDeliveryState_Received;
+  } else if (aDelivery.Equals(DELIVERY_SENDING)) {
+    delivery = eDeliveryState_Sending;
+  } else if (aDelivery.Equals(DELIVERY_NOT_DOWNLOADED)) {
+    delivery = eDeliveryState_NotDownloaded;
+  } else if (aDelivery.Equals(DELIVERY_ERROR)) {
+    delivery = eDeliveryState_Error;
   } else {
     return NS_ERROR_INVALID_ARG;
   }
@@ -193,7 +227,8 @@ MmsMessage::Create(int32_t               aId,
   }
 
   nsCOMPtr<nsIDOMMozMmsMessage> message = new MmsMessage(aId,
-                                                         state,
+                                                         aThreadId,
+                                                         delivery,
                                                          deliveryStatus,
                                                          aSender,
                                                          receivers,
@@ -204,6 +239,38 @@ MmsMessage::Create(int32_t               aId,
                                                          attachments);
   message.forget(aMessage);
   return NS_OK;
+}
+
+bool
+MmsMessage::GetData(ContentParent* aParent,
+                    mobilemessage::MmsMessageData& aData)
+{
+  NS_ASSERTION(aParent, "aParent is null");
+
+  aData.id() = mId;
+  aData.delivery() = mDelivery;
+  aData.deliveryStatus() = mDeliveryStatus;
+  aData.sender().Assign(mSender);
+  aData.receivers() = mReceivers;
+  aData.timestamp() = mTimestamp;
+  aData.read() = mRead;
+  aData.subject() = mSubject;
+  aData.smil() = mSmil;
+
+  aData.attachments().SetCapacity(mAttachments.Length());
+  for (uint32_t i = 0; i < mAttachments.Length(); i++) {
+    MmsAttachmentData mma;
+    const MmsAttachment &element = mAttachments[i];
+    mma.id().Assign(element.id);
+    mma.location().Assign(element.location);
+    mma.contentParent() = aParent->GetOrCreateActorForBlob(element.content);
+    if (!mma.contentParent()) {
+      return false;
+    }
+    aData.attachments().AppendElement(mma);
+  }
+
+  return true;
 }
 
 NS_IMETHODIMP
@@ -221,23 +288,30 @@ MmsMessage::GetId(int32_t* aId)
 }
 
 NS_IMETHODIMP
-MmsMessage::GetState(nsAString& aState)
+MmsMessage::GetThreadId(uint64_t* aThreadId)
 {
-  switch (mState) {
+  *aThreadId = mThreadId;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+MmsMessage::GetDelivery(nsAString& aDelivery)
+{
+  switch (mDelivery) {
     case eDeliveryState_Received:
-      aState = DELIVERY_RECEIVED;
+      aDelivery = DELIVERY_RECEIVED;
       break;
     case eDeliveryState_Sending:
-      aState = DELIVERY_SENDING;
+      aDelivery = DELIVERY_SENDING;
       break;
     case eDeliveryState_Sent:
-      aState = DELIVERY_SENT;
+      aDelivery = DELIVERY_SENT;
       break;
     case eDeliveryState_Error:
-      aState = DELIVERY_ERROR;
+      aDelivery = DELIVERY_ERROR;
       break;
     case eDeliveryState_NotDownloaded:
-      aState = DELIVERY_NOT_DOWNLOADED;
+      aDelivery = DELIVERY_NOT_DOWNLOADED;
       break;
     case eDeliveryState_Unknown:
     case eDeliveryState_EndGuard:
@@ -252,8 +326,8 @@ MmsMessage::GetState(nsAString& aState)
 NS_IMETHODIMP
 MmsMessage::GetDeliveryStatus(JSContext* aCx, JS::Value* aDeliveryStatus)
 {
-  // TODO Bug 850525 It would be better to depend on the state of MmsMessage
-  // to return a more correct value. Ex, when .state = 'received', we should
+  // TODO Bug 850525 It'd be better to depend on the delivery of MmsMessage
+  // to return a more correct value. Ex, if .delivery = 'received', we should
   // also make .deliveryStatus = null, since the .deliveryStatus is useless.
   uint32_t length = mDeliveryStatus.Length();
   if (length == 0) {
@@ -319,7 +393,10 @@ MmsMessage::GetReceivers(JSContext* aCx, JS::Value* aReceivers)
 NS_IMETHODIMP
 MmsMessage::GetTimestamp(JSContext* cx, JS::Value* aDate)
 {
-  *aDate = OBJECT_TO_JSVAL(JS_NewDateObjectMsec(cx, mTimestamp));
+  JSObject *obj = JS_NewDateObjectMsec(cx, mTimestamp);
+  NS_ENSURE_TRUE(obj, NS_ERROR_FAILURE);
+
+  *aDate = OBJECT_TO_JSVAL(obj);
   return NS_OK;
 }
 

@@ -5,6 +5,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 include "mozilla/dom/mobilemessage/Types.h";
+include protocol PBlob;
 
 using DeliveryState;
 using DeliveryStatus;
@@ -25,6 +26,7 @@ struct SmsSegmentInfoData
 struct SmsMessageData
 {
   int32_t        id;
+  uint64_t       threadId;
   DeliveryState  delivery;
   DeliveryStatus deliveryStatus;
   nsString       sender;
@@ -33,6 +35,59 @@ struct SmsMessageData
   MessageClass   messageClass;
   uint64_t       timestamp; // ms since epoch.
   bool           read;
+};
+
+struct MmsAttachmentData
+{
+  nsString id;
+  nsString location;
+  PBlob content;
+};
+
+struct MmsMessageData
+{
+  int32_t             id;
+  DeliveryState       delivery;
+  DeliveryStatus[]    deliveryStatus;
+  nsString            sender;
+  nsString[]          receivers;
+  uint64_t            timestamp;
+  bool                read;
+  nsString            subject;
+  nsString            smil;
+  MmsAttachmentData[] attachments;
+};
+
+union MobileMessageData
+{
+  MmsMessageData;
+  SmsMessageData;
+};
+
+struct SmsFilterData
+{
+  uint64_t      startDate;
+  uint64_t      endDate;
+  nsString[]    numbers;
+  DeliveryState delivery;
+  ReadState     read;
+  uint64_t      threadId;
+};
+
+struct ThreadData
+{
+  uint64_t id;
+  nsString[] participants;
+  uint64_t timestamp;
+  nsString body;
+  uint64_t unreadCount;
+};
+
+union MobileMessageCursorData
+{
+  MmsMessageData;
+  SmsMessageData;
+  ThreadData;
 };
 
 }

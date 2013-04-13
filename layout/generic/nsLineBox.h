@@ -146,12 +146,9 @@ protected:
 #define LINE_MAX_BREAK_TYPE  ((1 << 4) - 1)
 #define LINE_MAX_CHILD_COUNT INT32_MAX
 
-#if NS_STYLE_CLEAR_LAST_VALUE > 15
-need to rearrange the mBits bitfield;
-#endif
-
 /**
  * Function to create a line box and initialize it with a single frame.
+ * The allocation is infallible.
  * If the frame was moved from another line then you're responsible
  * for notifying that line using NoteFrameRemoved().  Alternatively,
  * it's better to use the next function that does that for you in an
@@ -161,7 +158,7 @@ nsLineBox* NS_NewLineBox(nsIPresShell* aPresShell, nsIFrame* aFrame,
                          bool aIsBlock);
 /**
  * Function to create a line box and initialize it with aCount frames
- * that are currently on aFromLine.
+ * that are currently on aFromLine.  The allocation is infallible.
  */
 nsLineBox* NS_NewLineBox(nsIPresShell* aPresShell, nsLineBox* aFromLine,
                          nsIFrame* aFrame, int32_t aCount);

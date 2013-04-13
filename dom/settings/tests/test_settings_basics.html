@@ -21,9 +21,11 @@ https://bugzilla.mozilla.org/show_bug.cgi?id={678695}
 
 "use strict";
 
-var comp = SpecialPowers.wrap(SpecialPowers.Components);
-comp.utils.import("resource://gre/modules/SettingsChangeNotifier.jsm");
-SpecialPowers.setBoolPref("dom.mozSettings.enabled", true);
+if (!SpecialPowers.getBoolPref("dom.mozSettings.enabled")) {
+  SpecialPowers.Cu.import("resource://gre/modules/SettingsChangeNotifier.jsm");
+  SpecialPowers.setBoolPref("dom.mozSettings.enabled", true);
+}
+
 SpecialPowers.addPermission("settings-read", true, document);
 SpecialPowers.addPermission("settings-write", true, document);
 
@@ -95,7 +97,7 @@ function check(o1, o2) {
 var req, req2, req3, req4, req5, req6;
 var index = 0;
 
-var mozSettings = window.navigator.mozSettings;
+var mozSettings;
 
 var steps = [
   function () {
@@ -782,6 +784,7 @@ function next() {
 
 function permissionTest() {
   if (gSettingsEnabled) {
+    mozSettings = window.navigator.mozSettings;
     next();
   } else {
     is(mozSettings, null, "mozSettings is null when not enabled.");

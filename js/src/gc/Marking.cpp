@@ -27,6 +27,8 @@ using mozilla::DebugOnly;
 
 void * const js::NullPtr::constNullValue = NULL;
 
+JS_PUBLIC_DATA(void * const) JS::NullPtr::constNullValue = NULL;
+
 /*
  * There are two mostly separate mark paths. The first is a fast path used
  * internally in the GC. The second is a slow path used for root marking and
@@ -251,7 +253,7 @@ IsMarked(T **thingp)
 {
     JS_ASSERT(thingp);
     JS_ASSERT(*thingp);
-    Zone *zone = (*thingp)->zone();
+    Zone *zone = (*thingp)->tenuredZone();
     if (!zone->isCollecting() || zone->isGCFinished())
         return true;
     return (*thingp)->isMarked();
@@ -263,7 +265,7 @@ IsAboutToBeFinalized(T **thingp)
 {
     JS_ASSERT(thingp);
     JS_ASSERT(*thingp);
-    if (!(*thingp)->zone()->isGCSweeping())
+    if (!(*thingp)->tenuredZone()->isGCSweeping())
         return false;
     return !(*thingp)->isMarked();
 }
@@ -629,7 +631,7 @@ ShouldMarkCrossCompartment(JSTracer *trc, RawObject src, Cell *cell)
     if (!IS_GC_MARKING_TRACER(trc))
         return true;
 
-    JS::Zone *zone = cell->zone();
+    JS::Zone *zone = cell->tenuredZone();
     uint32_t color = AsGCMarker(trc)->getMarkColor();
 
     JS_ASSERT(color == BLACK || color == GRAY);
@@ -1485,15 +1487,6 @@ js::TraceChildren(JSTracer *trc, void *thing, JSGCTraceKind kind)
     }
 }
 
-void
-js::CallTracer(JSTracer *trc, void *thing, JSGCTraceKind kind)
-{
-    JS_ASSERT(thing);
-    void *tmp = thing;
-    MarkKind(trc, &tmp, kind);
-    JS_ASSERT(tmp == thing);
-}
-
 static void
 UnmarkGrayGCThing(void *thing)
 {
@@ -1619,7 +1612,7 @@ JS::UnmarkGrayGCThingRecursively(void *thing, JSGCTraceKind kind)
 
     UnmarkGrayGCThing(thing);
 
-    JSRuntime *rt = static_cast<Cell *>(thing)->zone()->rt;
+    JSRuntime *rt = static_cast<Cell *>(thing)->runtime();
     UnmarkGrayTracer trc(rt);
     JS_TraceChildren(&trc, thing, kind);
 }

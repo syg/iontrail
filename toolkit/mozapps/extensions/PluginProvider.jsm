@@ -300,8 +300,12 @@ function PluginWrapper(aId, aName, aDescription, aTags) {
     if (aTags[0].disabled == aVal)
       return;
 
-    for (let tag of aTags)
-      tag.disabled = aVal;
+    for (let tag of aTags) {
+      if (aVal === true)
+        tag.enabledState = Ci.nsIPluginTag.STATE_DISABLED;
+      else
+        tag.enabledState = Ci.nsIPluginTag.STATE_ENABLED;
+    }
     AddonManagerPrivate.callAddonListeners(aVal ? "onDisabling" : "onEnabling", this, false);
     AddonManagerPrivate.callAddonListeners(aVal ? "onDisabled" : "onEnabled", this);
     return aVal;
@@ -420,7 +424,7 @@ function PluginWrapper(aId, aName, aDescription, aTags) {
 }
 
 PluginWrapper.prototype = {
-  optionsType: AddonManager.OPTIONS_TYPE_INLINE,
+  optionsType: AddonManager.OPTIONS_TYPE_INLINE_INFO,
   optionsURL: "chrome://mozapps/content/extensions/pluginPrefs.xul",
 
   get updateDate() {

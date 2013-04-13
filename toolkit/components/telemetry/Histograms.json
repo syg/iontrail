@@ -843,10 +843,21 @@
     "extended_statistics_ok": true,
     "description": "ms of SSL wait time including TCP and proxy tunneling"
   },
+  "SSL_BYTES_BEFORE_CERT_CALLBACK": {
+    "kind": "exponential",
+    "high": "32000",
+    "n_buckets": 64,
+    "extended_statistics_ok": true,
+    "description": "plaintext bytes read before a server certificate authenticated"
+  },
   "SSL_NPN_TYPE": {
     "kind": "enumerated",
     "n_values": 16,
     "description": "NPN Results (0=none, 1=negotiated, 2=no-overlap)"
+  },
+  "SSL_RESUMED_SESSION": {
+    "kind": "boolean",
+    "description": "complete TLS connect that used TLS Sesison Resumption"
   },
   "CERT_VALIDATION_HTTP_REQUEST_RESULT": {
     "kind": "enumerated",
@@ -1614,6 +1625,12 @@
     "n_buckets": 20,
     "description": "Value of dom.ipc.plugins.hangUITimeoutSecs plus time spent in Plugin Hang UI (ms)"
   },
+  "PLUGIN_LOAD_METADATA": {
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 20,
+    "description": "Time spent loading plugin DLL and obtaining metadata (ms)"
+  },
   "PLUGIN_SHUTDOWN_MS": {
     "kind": "exponential",
     "high": "5000",
@@ -1680,13 +1697,6 @@
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Time spent on SQLite read() (ms)"
-  },
-  "MOZ_SQLITE_COOKIES_OPEN_MS": {
-    "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
-    "extended_statistics_ok": true,
-    "description": "Time spent on cookie DB open (ms)"
   },
   "MOZ_SQLITE_COOKIES_OPEN_READAHEAD_MS": {
     "kind": "exponential",
@@ -1961,34 +1971,6 @@
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Time spent in nsDiskCacheStreamIO::Close() on the main thread (ms)"
-  },
-  "HTTP_TRANSACTION_TIME_CONNFAST_CACHEON": {
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 50,
-    "extended_statistics_ok": true,
-    "description": "ms from ayncopen to onStopRequest for fast connections with cache enabled"
-  },
-  "HTTP_TRANSACTION_TIME_CONNFAST_CACHEOFF": {
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 50,
-    "extended_statistics_ok": true,
-    "description": "ms from ayncopen to onStopRequest for fast connections with cache disabled"
-  },
-  "HTTP_TRANSACTION_TIME_CONNSLOW_CACHEON": {
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 50,
-    "extended_statistics_ok": true,
-    "description": "ms from ayncopen to onStopRequest for slow connections with cache enabled"
-  },
-  "HTTP_TRANSACTION_TIME_CONNSLOW_CACHEOFF": {
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 50,
-    "extended_statistics_ok": true,
-    "description": "ms from ayncopen to onStopRequest for slow connections with cache disabled"
   },
   "IDLE_NOTIFY_BACK_MS": {
     "kind": "exponential",
@@ -2374,10 +2356,6 @@
     "n_buckets": 20,
     "description": "Firefox: Time in ms spent on switching tabs in response to a tab click"
   },
-  "FX_KEYWORD_URL_USERSET": {
-    "kind": "boolean",
-    "description": "Firefox: keyword.URL has a user-set value"
-  },
   "FX_IDENTITY_POPUP_OPEN_MS": {
     "kind": "exponential",
     "high": "1000",
@@ -2488,6 +2466,13 @@
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Session restore: Time to write the session data to the file on disk (ms)"
+  },
+  "FX_SESSION_RESTORE_WRITE_FILE_LONGEST_OP_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Duration of the longest uninterruptible operation while writing session data (ms)"
   },
   "FX_SESSION_RESTORE_CORRUPT_FILE": {
     "kind": "boolean",
@@ -2888,6 +2873,10 @@
     "kind": "flag",
     "description": "Whether content ever accesed Components.interfaces in this session"
   },
+  "COMPONENTS_SHIM_ACCESSED_BY_CONTENT": {
+    "kind": "flag",
+    "description": "Whether content ever accesed the Components shim in this session"
+  },
   "CHECK_ADDONS_MODIFIED_MS": {
     "kind": "exponential",
     "high": "5000",
@@ -3019,11 +3008,245 @@
     "n_buckets": 15,
     "description": "Time (ms) it takes FHR to shut down."
   },
+  "HEALTHREPORT_POST_COLLECT_CHECKPOINT_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) for a WAL checkpoint after collecting all measurements."
+  },
   "POPUP_NOTIFICATION_MAINACTION_TRIGGERED_MS": {
     "kind": "linear",
     "low": 25,
     "high": "80 * 25",
     "n_buckets": "80 + 1",
     "description": "The time (in milliseconds) after showing a PopupNotification that the mainAction was first triggered"
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_DETACH_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_DETACH_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_RESUME_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'resume' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_RESUME_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'resume' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_INTERRUPT_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took an 'interrupt' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_INTERRUPT_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took an 'interrupt' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_CLIENTEVALUATE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'clientEvaluate' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_CLIENTEVALUATE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'clientEvaluate' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_RELEASEMANY_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'releaseMany' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_RELEASEMANY_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'releaseMany' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_THREADGRIPS_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'threadGrips' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_THREADGRIPS_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'threadGrips' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_SOURCES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'sources' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_SOURCES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'sources' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_FRAMES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'frames' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_FRAMES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'frames' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_PARAMETERNAMES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'parameterNames' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_PARAMETERNAMES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'parameterNames' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_OWNPROPERTYNAMES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'ownPropertyNames' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_OWNPROPERTYNAMES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'ownPropertyNames' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_PROTOTYPEANDPROPERTIES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'prototypeAndProperties' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_PROTOTYPEANDPROPERTIES_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'prototypeAndProperties' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_PROPERTY_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'property' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_PROPERTY_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'property' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_PROTOTYPE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'prototype' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_PROTOTYPE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'prototype' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_SUBSTRING_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'substring' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_SUBSTRING_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'substring' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_RELEASE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'release' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_RELEASE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'release' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_LISTTABS_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'listTabs' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_LISTTABS_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'listTabs' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_DELETE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'delete' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_DELETE_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'delete' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_THREADDETACH_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_THREADDETACH_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_TABDETACH_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_TABDETACH_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'detach' request to go round trip."
   }
 }

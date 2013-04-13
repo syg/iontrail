@@ -96,8 +96,6 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLObjectElement,
                                            nsGenericHTMLFormElement)
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // Web IDL binding methods
@@ -182,11 +180,11 @@ public:
   }
   uint32_t Hspace()
   {
-    return GetHTMLUnsignedIntAttr(nsGkAtoms::hspace, 0);
+    return GetUnsignedIntAttr(nsGkAtoms::hspace, 0);
   }
   void SetHspace(uint32_t aValue, ErrorResult& aRv)
   {
-    SetHTMLUnsignedIntAttr(nsGkAtoms::hspace, aValue, aRv);
+    SetUnsignedIntAttr(nsGkAtoms::hspace, aValue, aRv);
   }
   void GetStandby(DOMString& aValue)
   {
@@ -198,11 +196,11 @@ public:
   }
   uint32_t Vspace()
   {
-    return GetHTMLUnsignedIntAttr(nsGkAtoms::vspace, 0);
+    return GetUnsignedIntAttr(nsGkAtoms::vspace, 0);
   }
   void SetVspace(uint32_t aValue, ErrorResult& aRv)
   {
-    SetHTMLUnsignedIntAttr(nsGkAtoms::vspace, aValue, aRv);
+    SetUnsignedIntAttr(nsGkAtoms::vspace, aValue, aRv);
   }
   // XPCOM GetCodebase is ok; note that it's a URI attribute
   void SetCodeBase(const nsAString& aValue, ErrorResult& aRv)
@@ -246,8 +244,6 @@ private:
   virtual void SetItemValueText(const nsAString& text);
 
   virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
-  virtual JSObject* GetCanonicalPrototype(JSContext* aCx,
-                                          JSObject* aGlobal) MOZ_OVERRIDE;
 
   bool mIsDoneAddingChildren;
 };

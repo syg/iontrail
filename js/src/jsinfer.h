@@ -516,6 +516,7 @@ class TypeSet
      */
     bool isSubset(TypeSet *other);
     bool isSubsetIgnorePrimitives(TypeSet *other);
+    bool intersectionEmpty(TypeSet *other);
 
     inline StackTypeSet *toStackTypeSet();
     inline HeapTypeSet *toHeapTypeSet();
@@ -1083,6 +1084,8 @@ struct TypeObject : gc::Cell
      * from all the compartment's type objects.
      */
     void finalize(FreeOp *fop) {}
+
+    JS::Zone *zone() const { return tenuredZone(); }
 
     static inline void writeBarrierPre(TypeObject *type);
     static inline void writeBarrierPost(TypeObject *type, void *addr);

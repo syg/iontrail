@@ -114,10 +114,10 @@ public:
                                     nsWrapperCache **aCache,
                                     nsresult *aResult);
 
-  virtual nsresult ResolveName(const nsAString& aName,
-                               nsIContent *aForm,
-                               nsISupports **aResult,
-                               nsWrapperCache **aCache);
+  nsISupports* ResolveName(const nsAString& aName, nsWrapperCache **aCache);
+  virtual already_AddRefed<nsISupports> ResolveName(const nsAString& aName,
+                                                    nsIContent *aForm,
+                                                    nsWrapperCache **aCache);
 
   virtual void AddedForm();
   virtual void RemovedForm();
@@ -185,6 +185,9 @@ public:
   void SetDomain(const nsAString& aDomain, mozilla::ErrorResult& rv);
   void GetCookie(nsAString& aCookie, mozilla::ErrorResult& rv);
   void SetCookie(const nsAString& aCookie, mozilla::ErrorResult& rv);
+  JSObject* NamedGetter(JSContext* cx, const nsAString& aName, bool& aFound,
+                        mozilla::ErrorResult& rv);
+  void GetSupportedNames(nsTArray<nsString>& aNames);
   nsGenericHTMLElement *GetBody();
   void SetBody(nsGenericHTMLElement* aBody, mozilla::ErrorResult& rv);
   mozilla::dom::HTMLSharedElement *GetHead() {
@@ -360,6 +363,12 @@ protected:
 
   // When false, the .cookies property is completely disabled
   bool mDisableCookieAccess;
+
+  /**
+   * Temporary flag that is set in EndUpdate() to ignore
+   * MaybeEditingStateChanged() script runners from a nested scope.
+   */
+  bool mPendingMaybeEditingStateChanged;
 };
 
 #define NS_HTML_DOCUMENT_INTERFACE_TABLE_BEGIN(_class)                        \

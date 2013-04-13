@@ -20,6 +20,7 @@ namespace mozilla {
 namespace dom {
 
 class Element;
+class HTMLTemplateElement;
 
 class DocumentFragment : public FragmentOrElement,
                          public nsIDOMDocumentFragment
@@ -36,7 +37,35 @@ public:
   // interface nsIDOMDocumentFragment
   // NS_DECL_NSIDOCUMENTFRAGMENT  Empty
 
-  DocumentFragment(already_AddRefed<nsINodeInfo> aNodeInfo);
+private:
+  void Init()
+  {
+    NS_ABORT_IF_FALSE(mNodeInfo->NodeType() ==
+                      nsIDOMNode::DOCUMENT_FRAGMENT_NODE &&
+                      mNodeInfo->Equals(nsGkAtoms::documentFragmentNodeName,
+                                        kNameSpaceID_None),
+                      "Bad NodeType in aNodeInfo");
+
+    SetIsDOMBinding();
+  }
+
+public:
+  DocumentFragment(already_AddRefed<nsINodeInfo> aNodeInfo)
+    : FragmentOrElement(aNodeInfo), mHost(nullptr)
+  {
+    Init();
+  }
+
+  DocumentFragment(nsNodeInfoManager* aNodeInfoManager)
+    : FragmentOrElement(aNodeInfoManager->GetNodeInfo(
+                                            nsGkAtoms::documentFragmentNodeName,
+                                            nullptr, kNameSpaceID_None,
+                                            nsIDOMNode::DOCUMENT_FRAGMENT_NODE)),
+      mHost(nullptr)
+  {
+    Init();
+  }
+
   virtual ~DocumentFragment()
   {
   }
@@ -101,6 +130,16 @@ public:
     return nullptr;
   }
 
+  HTMLTemplateElement* GetHost() const
+  {
+    return mHost;
+  }
+
+  void SetHost(HTMLTemplateElement* aHost)
+  {
+    mHost = aHost;
+  }
+
 #ifdef DEBUG
   virtual void List(FILE* out, int32_t aIndent) const;
   virtual void DumpContent(FILE* out, int32_t aIndent, bool aDumpAll) const;
@@ -108,6 +147,7 @@ public:
 
 protected:
   nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+  mozilla::dom::HTMLTemplateElement* mHost; // Weak
 };
 
 } // namespace dom

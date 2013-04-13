@@ -780,7 +780,7 @@ nsXULAppInfo::EnsureContentProcess()
   if (XRE_GetProcessType() != GeckoProcessType_Default)
     return NS_ERROR_NOT_AVAILABLE;
 
-  unused << ContentParent::GetNewOrUsed();
+  nsRefPtr<ContentParent> unused = ContentParent::GetNewOrUsed();
   return NS_OK;
 }
 
@@ -1115,7 +1115,7 @@ ScopedXPCOMStartup::~ScopedXPCOMStartup()
       appStartup->DestroyHiddenWindow();
 
     gDirServiceProvider->DoShutdown();
-    SAMPLE_MARKER("Shutdown early");
+    PROFILER_MARKER("Shutdown early");
 
     WriteConsoleLog();
 
@@ -2758,7 +2758,7 @@ static DWORD InitDwriteBG(LPVOID lpdwThreadParam)
 bool fire_glxtest_process();
 #endif
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 // Encapsulates startup and shutdown state for XRE_main
 class XREMain
@@ -2788,7 +2788,7 @@ public:
   }
 
   int XRE_main(int argc, char* argv[], const nsXREAppData* aAppData);
-  int XRE_mainInit(const nsXREAppData* aAppData, bool* aExitFlag);
+  int XRE_mainInit(bool* aExitFlag);
   int XRE_mainStartup(bool* aExitFlag);
   nsresult XRE_mainRun();
   
@@ -2824,7 +2824,7 @@ public:
  * true.
  */
 int
-XREMain::XRE_mainInit(const nsXREAppData* aAppData, bool* aExitFlag)
+XREMain::XRE_mainInit(bool* aExitFlag)
 {
   if (!aExitFlag)
     return 1;
@@ -2929,8 +2929,7 @@ XREMain::XRE_mainInit(const nsXREAppData* aAppData, bool* aExitFlag)
       return 1;
     }
 
-    nsXREAppData* overrideAppData = const_cast<nsXREAppData*>(aAppData);
-    rv = XRE_ParseAppData(overrideLF, overrideAppData);
+    rv = XRE_ParseAppData(overrideLF, mAppData);
     if (NS_FAILED(rv)) {
       Output(true, "Couldn't read override.ini");
       return 1;
@@ -3400,7 +3399,8 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   // An environment variable is used instead of a pref on X11 platforms because we start having 
   // access to prefs long after the first call to XOpenDisplay which is hard to change due to 
   // interdependencies in the initialization.
-  if (PR_GetEnv("MOZ_USE_OMTC")) {
+  if (PR_GetEnv("MOZ_USE_OMTC") ||
+      PR_GetEnv("MOZ_OMTC_ENABLED")) {
     XInitThreads();
   }
 #endif
@@ -3871,8 +3871,9 @@ XREMain::XRE_mainRun()
   }
 
 #ifdef MOZ_INSTRUMENT_EVENT_LOOP
-  if (PR_GetEnv("MOZ_INSTRUMENT_EVENT_LOOP") || SAMPLER_IS_ACTIVE()) {
-    mozilla::InitEventTracing();
+  if (PR_GetEnv("MOZ_INSTRUMENT_EVENT_LOOP") || profiler_is_active()) {
+    bool logToConsole = !!PR_GetEnv("MOZ_INSTRUMENT_EVENT_LOOP");
+    mozilla::InitEventTracing(logToConsole);
   }
 #endif /* MOZ_INSTRUMENT_EVENT_LOOP */
 
@@ -3893,8 +3894,8 @@ XREMain::XRE_mainRun()
 int
 XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 {
-  SAMPLER_INIT();
-  SAMPLE_LABEL("Startup", "XRE_Main");
+  profiler_init();
+  PROFILER_LABEL("Startup", "XRE_Main");
 
   nsresult rv = NS_OK;
 
@@ -3924,7 +3925,7 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   // init
   bool exit = false;
-  int result = XRE_mainInit(aAppData, &exit);
+  int result = XRE_mainInit(&exit);
   if (result != 0 || exit)
     return result;
 
@@ -3994,7 +3995,7 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     MOZ_gdk_display_close(mGdkDisplay);
 #endif
 
-    SAMPLER_SHUTDOWN();
+    profiler_shutdown();
     rv = LaunchChild(mNativeApp, true);
 
 #ifdef MOZ_CRASHREPORTER
@@ -4017,7 +4018,7 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   XRE_DeinitCommandLine();
 
-  SAMPLER_SHUTDOWN();
+  profiler_shutdown();
 
   return NS_FAILED(rv) ? 1 : 0;
 }
@@ -4028,7 +4029,7 @@ static XREMain* xreMainPtr;
 
 // must be called by the thread we want as the main thread
 nsresult
-XRE_metroStartup()
+XRE_metroStartup(bool runXREMain)
 {
   nsresult rv;
 
@@ -4044,8 +4045,10 @@ XRE_metroStartup()
   rv = xreMainPtr->mScopedXPCom->Initialize();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = xreMainPtr->XRE_mainRun();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (runXREMain) {
+    rv = xreMainPtr->XRE_mainRun();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
   return NS_OK;
 }
 
@@ -4089,8 +4092,8 @@ public:
 int
 XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
 {
-  SAMPLER_INIT();
-  SAMPLE_LABEL("Startup", "XRE_Main");
+  profiler_init();
+  PROFILER_LABEL("Startup", "XRE_Main");
 
   nsresult rv = NS_OK;
 
@@ -4117,7 +4120,7 @@ XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
 
   // init
   bool exit = false;
-  if (xreMainPtr->XRE_mainInit(aAppData, &exit) != 0 || exit)
+  if (xreMainPtr->XRE_mainInit(&exit) != 0 || exit)
     return 1;
 
   // Located in widget, will call back into XRE_metroStartup and
@@ -4130,7 +4133,7 @@ XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
   // thread that called XRE_metroStartup.
   NS_ASSERTION(!xreMainPtr->mScopedXPCom,
                "XPCOM Shutdown hasn't occured, and we are exiting.");
-  SAMPLER_SHUTDOWN();
+  profiler_shutdown();
   return 0;
 }
 

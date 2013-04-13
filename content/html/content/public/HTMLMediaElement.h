@@ -229,10 +229,11 @@ public:
   // Return true if we can activate autoplay assuming enough data has arrived.
   bool CanActivateAutoplay();
 
-  // Notify that enough data has arrived to start autoplaying.
+  // Notify that state has changed that might cause an autoplay element to
+  // start playing.
   // If the element is 'autoplay' and is ready to play back (not paused,
   // autoplay pref enabled, etc), it should start playing back.
-  virtual void NotifyAutoplayDataReady() MOZ_FINAL MOZ_OVERRIDE;
+  void CheckAutoplayDataReady();
 
   // Check if the media element had crossorigin set when loading started
   bool ShouldCheckAllowOrigin();
@@ -466,8 +467,6 @@ public:
 
   void SetMozSrcObject(DOMMediaStream& aValue);
 
-  double InitialTime();
-
   bool MozPreservesPitch() const
   {
     return mPreservesPitch;
@@ -519,7 +518,7 @@ protected:
 
   class WakeLockBoolWrapper {
   public:
-    WakeLockBoolWrapper(bool val = false) : mValue(val), mOuter(NULL), mWakeLock(NULL) {}
+    WakeLockBoolWrapper(bool val = false) : mValue(val), mOuter(nullptr), mWakeLock(nullptr) {}
     void SetOuter(HTMLMediaElement* outer) { mOuter = outer; }
     operator bool() const { return mValue; }
     WakeLockBoolWrapper& operator=(bool val);

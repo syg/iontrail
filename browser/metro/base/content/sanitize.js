@@ -3,7 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
+                                  "resource://gre/modules/PlacesUtils.jsm");
+
 function Sanitizer() {}
+
 Sanitizer.prototype = {
   // warning to the caller: this one may raise an exception (e.g. bug #265028)
   clearItem: function (aItemName)
@@ -95,22 +100,12 @@ Sanitizer.prototype = {
       {
         var cookieMgr = Cc["@mozilla.org/cookiemanager;1"].getService(Ci.nsICookieManager);
         cookieMgr.removeAll();
-      },
-      
-      get canClear()
-      {
-        return true;
-      }
-    },
 
-    geolocation: {
-      clear: function ()
-      {
         // clear any network geolocation provider sessions
         try {
           var branch = Services.prefs.getBranch("geo.wifi.access_token.");
           branch.deleteBranch("");
-          
+
           branch = Services.prefs.getBranch("geo.request.remember.");
           branch.deleteBranch("");
         } catch (e) {dump(e);}
@@ -129,8 +124,8 @@ Sanitizer.prototype = {
         Services.perms.removeAll();
 
         // Clear site-specific settings like page-zoom level
-        var cps = Cc["@mozilla.org/content-pref/service;1"].getService(Ci.nsIContentPrefService);
-        cps.removeGroupedPrefs();
+        var cps = Cc["@mozilla.org/content-pref/service;1"].getService(Ci.nsIContentPrefService2);
+        cps.removeAllDomains(null);
 
         // Clear "Never remember passwords for this site", which is not handled by
         // the permission manager
@@ -165,21 +160,20 @@ Sanitizer.prototype = {
     history: {
       clear: function ()
       {
-        var globalHistory = Cc["@mozilla.org/browser/global-history;2"].getService(Ci.nsIBrowserHistory);
-        globalHistory.removeAllPages();
-        
+        PlacesUtils.history.removeAllPages();
+
         try {
           Services.obs.notifyObservers(null, "browser:purge-session-history", "");
         }
         catch (e) { }
-        
+
         // Clear last URL of the Open Web Location dialog
         try {
           Services.prefs.clearUserPref("general.open_location.last_url");
         }
         catch (e) { }
       },
-      
+
       get canClear()
       {
         // bug 347231: Always allow clearing history due to dependencies on
@@ -187,7 +181,7 @@ Sanitizer.prototype = {
         return true;
       }
     },
-    
+
     formdata: {
       clear: function ()
       {

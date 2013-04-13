@@ -10,6 +10,7 @@
 #include "nsUXThemeData.h"
 #include "nsUXThemeConstants.h"
 #include "gfxFont.h"
+#include "gfxWindowsPlatform.h"
 #include "WinUtils.h"
 #include "mozilla/Telemetry.h"
 
@@ -454,6 +455,9 @@ nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
     case eIntID_ScrollbarButtonAutoRepeatBehavior:
         aResult = 0;
         break;
+    case eIntID_SwipeAnimationEnabled:
+        aResult = 0;
+        break;
     default:
         aResult = 0;
         res = NS_ERROR_FAILURE;
@@ -555,8 +559,8 @@ GetSysFontInfo(HDC aHDC, LookAndFeel::FontID anID,
     break;
   }
 
-  // Get scaling factor from logical to physical pixels
-  float pixelScale = 96.0 / GetDeviceCaps(aHDC, LOGPIXELSY);
+  // Get scaling factor from physical to logical pixels
+  float pixelScale = 1.0f / gfxWindowsPlatform::GetPlatform()->GetDPIScale();
 
   // The lfHeight is in pixels, and it needs to be adjusted for the
   // device it will be displayed on.

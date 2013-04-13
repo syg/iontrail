@@ -21,6 +21,8 @@ EXTRA_COMPONENTS = \
   SiteSpecificUserAgent.manifest \
   ConsoleAPI.js \
   ConsoleAPI.manifest \
+  NavigatorPropertyHelper.js \
+  NavigatorPropertyHelper.manifest \
   $(NULL)
 
 EXTRA_JS_MODULES = ConsoleAPIStorage.jsm \
@@ -37,10 +39,10 @@ EXPORTS = \
   nsDOMClassInfoClasses.h \
   nsDOMClassInfoID.h \
   nsDOMJSUtils.h \
-  nsDOMScriptObjectHolder.h \
   nsDOMString.h \
   nsIDOMClassInfo.h \
   nsIDOMScriptObjectFactory.h \
+  nsIGlobalObject.h \
   nsIJSEventListener.h \
   nsIJSNativeInitializer.h \
   nsIScriptContext.h	\

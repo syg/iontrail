@@ -14,7 +14,7 @@
 
 #include "mozilla/dom/Element.h"
 
-#include "nsDOMAttribute.h"
+#include "mozilla/dom/Attr.h"
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
 #include "nsINodeInfo.h"
@@ -101,6 +101,7 @@
 #include "nsRuleProcessorData.h"
 #include "nsAsyncDOMEvent.h"
 #include "nsTextNode.h"
+#include "mozilla/dom/HTMLTemplateElement.h"
 
 #ifdef MOZ_XUL
 #include "nsIXULDocument.h"
@@ -128,6 +129,7 @@
 #include "nsXBLService.h"
 #include "nsContentCID.h"
 #include "nsITextControlElement.h"
+#include "mozilla/dom/DocumentFragment.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -768,46 +770,48 @@ Element::RemoveAttribute(const nsAString& aName, ErrorResult& aError)
   aError = UnsetAttr(name->NamespaceID(), name->LocalName(), true);
 }
 
-nsIDOMAttr*
+Attr*
 Element::GetAttributeNode(const nsAString& aName)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eGetAttributeNode);
   return Attributes()->GetNamedItem(aName);
 }
 
-already_AddRefed<nsIDOMAttr>
-Element::SetAttributeNode(nsIDOMAttr* aNewAttr, ErrorResult& aError)
+already_AddRefed<Attr>
+Element::SetAttributeNode(Attr& aNewAttr, ErrorResult& aError)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eSetAttributeNode);
 
-  nsCOMPtr<nsIDOMAttr> returnAttr;
-  aError = Attributes()->SetNamedItem(aNewAttr, getter_AddRefs(returnAttr));
+  nsCOMPtr<nsIDOMAttr> attr;
+  aError = Attributes()->SetNamedItem(&aNewAttr, getter_AddRefs(attr));
   if (aError.Failed()) {
     return nullptr;
   }
 
+  nsRefPtr<Attr> returnAttr = static_cast<Attr*>(attr.get());
   return returnAttr.forget();
 }
 
-already_AddRefed<nsIDOMAttr>
-Element::RemoveAttributeNode(nsIDOMAttr* aAttribute,
+already_AddRefed<Attr>
+Element::RemoveAttributeNode(Attr& aAttribute,
                              ErrorResult& aError)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eRemoveAttributeNode);
 
   nsAutoString name;
 
-  aError = aAttribute->GetName(name);
+  aError = aAttribute.GetName(name);
   if (aError.Failed()) {
     return nullptr;
   }
 
-  nsCOMPtr<nsIDOMAttr> returnAttr;
-  aError = Attributes()->RemoveNamedItem(name, getter_AddRefs(returnAttr));
+  nsCOMPtr<nsIDOMAttr> attr;
+  aError = Attributes()->RemoveNamedItem(name, getter_AddRefs(attr));
   if (aError.Failed()) {
     return nullptr;
   }
 
+  nsRefPtr<Attr> returnAttr = static_cast<Attr*>(attr.get());
   return returnAttr.forget();
 }
 
@@ -871,30 +875,28 @@ Element::RemoveAttributeNS(const nsAString& aNamespaceURI,
   aError = UnsetAttr(nsid, name, true);
 }
 
-nsIDOMAttr*
+Attr*
 Element::GetAttributeNodeNS(const nsAString& aNamespaceURI,
-                            const nsAString& aLocalName,
-                            ErrorResult& aError)
+                            const nsAString& aLocalName)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eGetAttributeNodeNS);
 
-  return GetAttributeNodeNSInternal(aNamespaceURI, aLocalName, aError);
+  return GetAttributeNodeNSInternal(aNamespaceURI, aLocalName);
 }
 
-nsIDOMAttr*
+Attr*
 Element::GetAttributeNodeNSInternal(const nsAString& aNamespaceURI,
-                                    const nsAString& aLocalName,
-                                    ErrorResult& aError)
+                                    const nsAString& aLocalName)
 {
-  return Attributes()->GetNamedItemNS(aNamespaceURI, aLocalName, aError);
+  return Attributes()->GetNamedItemNS(aNamespaceURI, aLocalName);
 }
 
-already_AddRefed<nsIDOMAttr>
-Element::SetAttributeNodeNS(nsIDOMAttr* aNewAttr,
+already_AddRefed<Attr>
+Element::SetAttributeNodeNS(Attr& aNewAttr,
                             ErrorResult& aError)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eSetAttributeNodeNS);
-  return Attributes()->SetNamedItemNS(aNewAttr, aError);
+  return Attributes()->SetNamedItemNS(&aNewAttr, aError);
 }
 
 already_AddRefed<nsIHTMLCollection>
@@ -1826,7 +1828,6 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     ni = mNodeInfo->NodeInfoManager()->GetNodeInfo(aName, aPrefix,
                                                    aNamespaceID,
                                                    nsIDOMNode::ATTRIBUTE_NODE);
-    NS_ENSURE_TRUE(ni, NS_ERROR_OUT_OF_MEMORY);
 
     rv = mAttrsAndChildren.SetAndTakeAttr(ni, aParsedValue);
   }
@@ -1861,9 +1862,8 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
 
     nsAutoString ns;
     nsContentUtils::NameSpaceManager()->GetNameSpaceURI(aNamespaceID, ns);
-    ErrorResult rv;
-    nsIDOMAttr* attrNode =
-      GetAttributeNodeNSInternal(ns, nsDependentAtomString(aName), rv);
+    Attr* attrNode =
+      GetAttributeNodeNSInternal(ns, nsDependentAtomString(aName));
     mutation.mRelatedNode = attrNode;
 
     mutation.mAttrName = aName;
@@ -1988,12 +1988,11 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                                          this);
 
   // Grab the attr node if needed before we remove it from the attr map
-  nsCOMPtr<nsIDOMAttr> attrNode;
+  nsRefPtr<Attr> attrNode;
   if (hasMutationListeners) {
     nsAutoString ns;
     nsContentUtils::NameSpaceManager()->GetNameSpaceURI(aNameSpaceID, ns);
-    ErrorResult rv;
-    attrNode = GetAttributeNodeNSInternal(ns, nsDependentAtomString(aName), rv);
+    attrNode = GetAttributeNodeNSInternal(ns, nsDependentAtomString(aName));
   }
 
   // Clear binding to nsIDOMMozNamedAttrMap
@@ -2041,7 +2040,6 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   }
 
   if (hasMutationListeners) {
-    nsCOMPtr<nsIDOMEventTarget> node = do_QueryObject(this);
     nsMutationEvent mutation(true, NS_MUTATION_ATTRMODIFIED);
 
     mutation.mRelatedNode = attrNode;
@@ -3106,7 +3104,9 @@ IsVoidTag(Element* aElement)
 static bool
 Serialize(Element* aRoot, bool aDescendentsOnly, nsAString& aOut)
 {
-  nsINode* current = aDescendentsOnly ? aRoot->GetFirstChild() : aRoot;
+  nsINode* current = aDescendentsOnly ?
+    nsNodeUtils::GetFirstChildOfTemplateOrNode(aRoot) : aRoot;
+
   if (!current) {
     return true;
   }
@@ -3120,7 +3120,8 @@ Serialize(Element* aRoot, bool aDescendentsOnly, nsAString& aOut)
         Element* elem = current->AsElement();
         StartElement(elem, builder);
         isVoid = IsVoidTag(elem);
-        if (!isVoid && (next = current->GetFirstChild())) {
+        if (!isVoid &&
+            (next = nsNodeUtils::GetFirstChildOfTemplateOrNode(current))) {
           current = next;
           continue;
         }
@@ -3186,6 +3187,17 @@ Serialize(Element* aRoot, bool aDescendentsOnly, nsAString& aOut)
       }
 
       current = current->GetParentNode();
+
+      // Template case, if we are in a template's content, then the parent
+      // should be the host template element.
+      if (current->NodeType() == nsIDOMNode::DOCUMENT_FRAGMENT_NODE) {
+        DocumentFragment* frag = static_cast<DocumentFragment*>(current);
+        HTMLTemplateElement* fragHost = frag->GetHost();
+        if (fragHost) {
+          current = fragHost;
+        }
+      }
+
       if (aDescendentsOnly && current == aRoot) {
         return builder.ToString(aOut);
       }
@@ -3292,30 +3304,39 @@ Element::GetInnerHTML(nsAString& aInnerHTML, ErrorResult& aError)
 void
 Element::SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError)
 {
-  nsIDocument* doc = OwnerDoc();
+  FragmentOrElement* target = this;
+  // Handle template case.
+  if (nsNodeUtils::IsTemplateElement(target)) {
+    DocumentFragment* frag =
+      static_cast<HTMLTemplateElement*>(target)->Content();
+    MOZ_ASSERT(frag);
+    target = frag;
+  }
+
+  nsIDocument* doc = target->OwnerDoc();
 
   // Batch possible DOMSubtreeModified events.
   mozAutoSubtreeModified subtree(doc, nullptr);
 
-  FireNodeRemovedForChildren();
+  target->FireNodeRemovedForChildren();
 
   // Needed when innerHTML is used in combination with contenteditable
   mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, true);
 
   // Remove childnodes.
-  uint32_t childCount = GetChildCount();
-  nsAutoMutationBatch mb(this, true, false);
+  uint32_t childCount = target->GetChildCount();
+  nsAutoMutationBatch mb(target, true, false);
   for (uint32_t i = 0; i < childCount; ++i) {
-    RemoveChildAt(0, true);
+    target->RemoveChildAt(0, true);
   }
   mb.RemovalDone();
 
   nsAutoScriptLoaderDisabler sld(doc);
 
   if (doc->IsHTML()) {
-    int32_t oldChildCount = GetChildCount();
+    int32_t oldChildCount = target->GetChildCount();
     aError = nsContentUtils::ParseFragmentHTML(aInnerHTML,
-                                               this,
+                                               target,
                                                Tag(),
                                                GetNameSpaceID(),
                                                doc->GetCompatibilityMode() ==
@@ -3323,10 +3344,10 @@ Element::SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError)
                                                true);
     mb.NodesAdded();
     // HTML5 parser has notified, but not fired mutation events.
-    FireMutationEventsForDirectParsing(doc, this, oldChildCount);
+    FireMutationEventsForDirectParsing(doc, target, oldChildCount);
   } else {
     nsCOMPtr<nsIDOMDocumentFragment> df;
-    aError = nsContentUtils::CreateContextualFragment(this, aInnerHTML,
+    aError = nsContentUtils::CreateContextualFragment(target, aInnerHTML,
                                                       true,
                                                       getter_AddRefs(df));
     nsCOMPtr<nsINode> fragment = do_QueryInterface(df);
@@ -3336,7 +3357,7 @@ Element::SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError)
       // listeners on the fragment that comes from the parser.
       nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
-      static_cast<nsINode*>(this)->AppendChild(*fragment, aError);
+      static_cast<nsINode*>(target)->AppendChild(*fragment, aError);
       mb.NodesAdded();
     }
   }
@@ -3373,13 +3394,8 @@ Element::SetOuterHTML(const nsAString& aOuterHTML, ErrorResult& aError)
       localName = nsGkAtoms::body;
       namespaceID = kNameSpaceID_XHTML;
     }
-    nsCOMPtr<nsIDOMDocumentFragment> df;
-    aError = NS_NewDocumentFragment(getter_AddRefs(df),
-                                    OwnerDoc()->NodeInfoManager());
-    if (aError.Failed()) {
-      return;
-    }
-    nsCOMPtr<nsIContent> fragment = do_QueryInterface(df);
+    nsRefPtr<DocumentFragment> fragment =
+      new DocumentFragment(OwnerDoc()->NodeInfoManager());
     nsContentUtils::ParseFragmentHTML(aOuterHTML,
                                       fragment,
                                       localName,
@@ -3387,7 +3403,6 @@ Element::SetOuterHTML(const nsAString& aOuterHTML, ErrorResult& aError)
                                       OwnerDoc()->GetCompatibilityMode() ==
                                         eCompatibility_NavQuirks,
                                       true);
-    nsAutoMutationBatch mb(parent, true, false);
     parent->ReplaceChild(*fragment, *this, aError);
     return;
   }
@@ -3415,7 +3430,6 @@ Element::SetOuterHTML(const nsAString& aOuterHTML, ErrorResult& aError)
     return;
   }
   nsCOMPtr<nsINode> fragment = do_QueryInterface(df);
-  nsAutoMutationBatch mb(parent, true, false);
   parent->ReplaceChild(*fragment, *this, aError);
 }
 

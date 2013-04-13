@@ -24,7 +24,6 @@
 #include "jstypedarray.h"
 #include "jswrapper.h"
 
-#include "builtin/MapObject.h"
 #include "builtin/Iterator-inl.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
@@ -235,7 +234,8 @@ JSObject::finalize(js::FreeOp *fop)
     js::Probes::finalizeObject(this);
 
 #ifdef DEBUG
-    if (!IsBackgroundFinalized(getAllocKind())) {
+    JS_ASSERT(isTenured());
+    if (!IsBackgroundFinalized(tenuredGetAllocKind())) {
         /* Assert we're on the main thread. */
         fop->runtime()->assertValidThread();
     }
@@ -790,12 +790,6 @@ JSObject::setType(js::types::TypeObject *newType)
     type_ = newType;
 }
 
-inline js::TaggedProto
-JSObject::getTaggedProto() const
-{
-    return js::TaggedProto(js::ObjectImpl::getProto());
-}
-
 inline JSObject *
 JSObject::getProto() const
 {
@@ -808,7 +802,7 @@ JSObject::getProto(JSContext *cx, js::HandleObject obj, js::MutableHandleObject 
 {
     if (obj->getTaggedProto().isLazy()) {
         JS_ASSERT(obj->isProxy());
-        return js::Proxy::getPrototypeOf(cx, obj, protop.address());
+        return js::Proxy::getPrototypeOf(cx, obj, protop);
     } else {
         protop.set(obj->js::ObjectImpl::getProto());
         return true;
@@ -1082,62 +1076,6 @@ JSObject::hasShapeTable() const
     return lastProperty()->hasTable();
 }
 
-inline size_t
-JSObject::computedSizeOfThisSlotsElements() const
-{
-    size_t n = sizeOfThis();
-
-    if (hasDynamicSlots())
-        n += numDynamicSlots() * sizeof(js::Value);
-
-    if (hasDynamicElements()) {
-        if (isArrayBuffer()) {
-            n += getElementsHeader()->initializedLength;
-        } else {
-            n += (js::ObjectElements::VALUES_PER_HEADER + getElementsHeader()->capacity) *
-                 sizeof(js::Value);
-        }
-    }
-
-    return n;
-}
-
-inline void
-JSObject::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf, JS::ObjectsExtraSizes *sizes)
-{
-    if (hasDynamicSlots())
-        sizes->slots = mallocSizeOf(slots);
-
-    if (hasDynamicElements()) {
-        js::ObjectElements *elements = getElementsHeader();
-#if defined (JS_CPU_X64)
-        // On x64, ArrayBufferObject::prepareForAsmJS switches the
-        // ArrayBufferObject to use mmap'd storage. This is not included in the
-        // total 'explicit' figure and thus we must not include it here.
-        // TODO: include it somewhere else.
-        if (JS_LIKELY(!elements->isAsmJSArrayBuffer()))
-            sizes->elements = mallocSizeOf(elements);
-#else
-        sizes->elements = mallocSizeOf(elements);
-#endif
-    }
-
-    // Other things may be measured in the future if DMD indicates it is worthwhile.
-    // Note that sizes->private_ is measured elsewhere.
-    if (isArguments()) {
-        sizes->argumentsData = asArguments().sizeOfMisc(mallocSizeOf);
-    } else if (isRegExpStatics()) {
-        sizes->regExpStatics = js::SizeOfRegExpStaticsData(this, mallocSizeOf);
-    } else if (isPropertyIterator()) {
-        sizes->propertyIteratorData = asPropertyIterator().sizeOfMisc(mallocSizeOf);
-#ifdef JS_HAS_CTYPES
-    } else {
-        // This must be the last case.
-        sizes->ctypesData = js::SizeOfDataIfCDataObject(mallocSizeOf, const_cast<JSObject *>(this));
-#endif
-    }
-}
-
 /* static */ inline JSBool
 JSObject::lookupGeneric(JSContext *cx, js::HandleObject obj, js::HandleId id,
                         js::MutableHandleObject objp, js::MutableHandleShape propp)
@@ -1319,9 +1257,9 @@ JSObject::getSpecialAttributes(JSContext *cx, js::HandleObject obj,
 }
 
 inline bool
-JSObject::isProxy() const
+js::ObjectImpl::isProxy() const
 {
-    return js::IsProxy(const_cast<JSObject*>(this));
+    return js::IsProxy(const_cast<JSObject*>(this->asObjectPtr()));
 }
 
 inline bool
@@ -1345,12 +1283,6 @@ JSObject::global() const
         obj = parent;
 #endif
     return *compartment()->maybeGlobal();
-}
-
-inline JSCompartment *
-JSObject::compartment() const
-{
-    return lastProperty()->base()->compartment();
 }
 
 static inline bool
@@ -1721,7 +1653,7 @@ CopyInitializerObject(JSContext *cx, HandleObject baseobj, NewObjectKind newKind
 
     gc::AllocKind allocKind = gc::GetGCObjectFixedSlotsKind(baseobj->numFixedSlots());
     allocKind = gc::GetBackgroundAllocKind(allocKind);
-    JS_ASSERT(allocKind == baseobj->getAllocKind());
+    JS_ASSERT_IF(baseobj->isTenured(), allocKind == baseobj->tenuredGetAllocKind());
     RootedObject obj(cx);
     obj = NewBuiltinClassInstance(cx, &ObjectClass, allocKind, newKind);
     if (!obj)
@@ -1799,6 +1731,7 @@ ObjectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx)
       case ESClass_Boolean: return obj->isBoolean();
       case ESClass_RegExp: return obj->isRegExp();
       case ESClass_ArrayBuffer: return obj->isArrayBuffer();
+      case ESClass_Date: return obj->isDate();
     }
     JS_NOT_REACHED("bad classValue");
     return false;

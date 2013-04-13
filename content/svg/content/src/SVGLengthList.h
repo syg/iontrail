@@ -160,7 +160,7 @@ protected:
    * It may be worth considering using nsAttrValue for length lists instead of
    * storing them directly on the element.
    */
-  nsTArray<SVGLength> mLengths;
+  FallibleTArray<SVGLength> mLengths;
 };
 
 
@@ -290,7 +290,7 @@ private:
  * could still overflow. In that case the value returned will be
  * numeric_limits<float>::quiet_NaN().
  */
-class NS_STACK_CLASS SVGUserUnitList
+class MOZ_STACK_CLASS SVGUserUnitList
 {
 public:
 

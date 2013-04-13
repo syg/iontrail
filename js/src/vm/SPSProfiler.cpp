@@ -16,6 +16,10 @@
 #include "vm/SPSProfiler.h"
 #include "vm/StringBuffer.h"
 
+#include "ion/BaselineJIT.h"
+
+#include "jsscriptinlines.h"
+
 using namespace js;
 
 using mozilla::DebugOnly;
@@ -66,6 +70,15 @@ SPSProfiler::enable(bool enabled)
      * currently instrumented code is discarded
      */
     ReleaseAllJITCode(rt->defaultFreeOp());
+
+#ifdef JS_ION
+    /* Toggle SPS-related jumps on baseline jitcode.
+     * The call to |ReleaseAllJITCode| above will release most baseline jitcode, but not
+     * jitcode for scripts with active frames on the stack.  These scripts need to have
+     * their profiler state toggled so they behave properly.
+     */
+    ion::ToggleBaselineSPS(rt, enabled);
+#endif
 }
 
 /* Lookup the string for the function/script, creating one if necessary */
@@ -149,6 +162,24 @@ SPSProfiler::exit(JSContext *cx, RawScript script, RawFunction maybeFun)
         stack_[*size_].setPC(NULL);
     }
 #endif
+}
+
+void
+SPSProfiler::enterNative(const char *string, void *sp)
+{
+    /* these operations cannot be re-ordered, so volatile-ize operations */
+    volatile ProfileEntry *stack = stack_;
+    volatile uint32_t *size = size_;
+    uint32_t current = *size;
+
+    JS_ASSERT(enabled());
+    if (current < max_) {
+        stack[current].setLabel(string);
+        stack[current].setStackAddress(sp);
+        stack[current].setScript(NULL);
+        stack[current].setLine(0);
+    }
+    *size = current + 1;
 }
 
 void

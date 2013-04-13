@@ -9,6 +9,7 @@
  */
 
 #include "mozilla/FloatingPoint.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/RangedPtr.h"
 
 #include "double-conversion.h"
@@ -58,6 +59,7 @@
 using namespace js;
 using namespace js::types;
 
+using mozilla::PodCopy;
 using mozilla::RangedPtr;
 
 /*
@@ -612,6 +614,7 @@ num_toString(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsNumber, num_toString_impl>(cx, args);
 }
 
+#if !ENABLE_INTL_API
 JS_ALWAYS_INLINE bool
 num_toLocaleString_impl(JSContext *cx, CallArgs args)
 {
@@ -722,7 +725,7 @@ num_toLocaleString_impl(JSContext *cx, CallArgs args)
 
     if (cx->runtime->localeCallbacks && cx->runtime->localeCallbacks->localeToUnicode) {
         Rooted<Value> v(cx, StringValue(str));
-        bool ok = !!cx->runtime->localeCallbacks->localeToUnicode(cx, buf, v.address());
+        bool ok = !!cx->runtime->localeCallbacks->localeToUnicode(cx, buf, &v);
         if (ok)
             args.rval().set(v);
         js_free(buf);
@@ -744,6 +747,7 @@ num_toLocaleString(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     return CallNonGenericMethod<IsNumber, num_toLocaleString_impl>(cx, args);
 }
+#endif
 
 JS_ALWAYS_INLINE bool
 num_valueOf_impl(JSContext *cx, CallArgs args)
@@ -892,7 +896,11 @@ static JSFunctionSpec number_methods[] = {
     JS_FN(js_toSource_str,       num_toSource,          0, 0),
 #endif
     JS_FN(js_toString_str,       num_toString,          1, 0),
-    JS_FN(js_toLocaleString_str, num_toLocaleString,    0, 0),
+#if ENABLE_INTL_API
+         {js_toLocaleString_str, {NULL, NULL},           0,0, "Number_toLocaleString"},
+#else
+    JS_FN(js_toLocaleString_str, num_toLocaleString,     0,0),
+#endif
     JS_FN(js_valueOf_str,        js_num_valueOf,        0, 0),
     JS_FN("toFixed",             num_toFixed,           1, 0),
     JS_FN("toExponential",       num_toExponential,     1, 0),
@@ -1044,6 +1052,10 @@ js::InitRuntimeNumberState(JSRuntime *rt)
 
     number_constants[NC_MIN_VALUE].dval = MOZ_DOUBLE_MIN_VALUE();
 
+    // XXX If ENABLE_INTL_API becomes true all the time at some point,
+    //     js::InitRuntimeNumberState is no longer fallible, and we should
+    //     change its return type.
+#if !ENABLE_INTL_API
     /* Copy locale-specific separators into the runtime strings. */
     const char *thousandsSeparator, *decimalPoint, *grouping;
 #ifdef HAVE_LOCALECONV
@@ -1087,9 +1099,11 @@ js::InitRuntimeNumberState(JSRuntime *rt)
 
     js_memcpy(storage, grouping, groupingSize);
     rt->numGrouping = grouping;
+#endif
     return true;
 }
 
+#if !ENABLE_INTL_API
 void
 js::FinishRuntimeNumberState(JSRuntime *rt)
 {
@@ -1100,6 +1114,7 @@ js::FinishRuntimeNumberState(JSRuntime *rt)
     char *storage = const_cast<char *>(rt->thousandsSeparator);
     js_free(storage);
 }
+#endif
 
 JSObject *
 js_InitNumberClass(JSContext *cx, HandleObject obj)

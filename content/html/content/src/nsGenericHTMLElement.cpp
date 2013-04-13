@@ -857,7 +857,7 @@ nsGenericHTMLElement::GetEventListenerManagerForAttr(nsIAtom* aAttrName,
     // HTMLFramesetElement
     *aDefer = false;
     if ((win = document->GetInnerWindow()) && win->IsInnerWindow()) {
-      nsCOMPtr<nsIDOMEventTarget> piTarget(do_QueryInterface(win));
+      nsCOMPtr<EventTarget> piTarget(do_QueryInterface(win));
 
       return piTarget->GetListenerManager(true);
     }
@@ -1565,7 +1565,7 @@ nsGenericHTMLElement::MapImageAlignAttributeInto(const nsMappedAttributes* aAttr
     if (value && value->Type() == nsAttrValue::eEnum) {
       int32_t align = value->GetEnumValue();
       if (aRuleData->mSIDs & NS_STYLE_INHERIT_BIT(Display)) {
-        nsCSSValue* cssFloat = aRuleData->ValueForCssFloat();
+        nsCSSValue* cssFloat = aRuleData->ValueForFloat();
         if (cssFloat->GetUnit() == eCSSUnit_Null) {
           if (align == NS_STYLE_TEXT_ALIGN_LEFT) {
             cssFloat->SetIntValue(NS_STYLE_FLOAT_LEFT, eCSSUnit_Enumerated);
@@ -1865,27 +1865,16 @@ nsGenericHTMLElement::SetIntAttr(nsIAtom* aAttr, int32_t aValue)
   return SetAttr(kNameSpaceID_None, aAttr, value, true);
 }
 
-nsresult
-nsGenericHTMLElement::GetUnsignedIntAttr(nsIAtom* aAttr, uint32_t aDefault,
-                                         uint32_t* aResult)
+uint32_t
+nsGenericHTMLElement::GetUnsignedIntAttr(nsIAtom* aAttr,
+                                         uint32_t aDefault) const
 {
   const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(aAttr);
-  if (attrVal && attrVal->Type() == nsAttrValue::eInteger) {
-    *aResult = attrVal->GetIntegerValue();
+  if (!attrVal || attrVal->Type() != nsAttrValue::eInteger) {
+    return aDefault;
   }
-  else {
-    *aResult = aDefault;
-  }
-  return NS_OK;
-}
 
-nsresult
-nsGenericHTMLElement::SetUnsignedIntAttr(nsIAtom* aAttr, uint32_t aValue)
-{
-  nsAutoString value;
-  value.AppendInt(aValue);
-
-  return SetAttr(kNameSpaceID_None, aAttr, value, true);
+  return attrVal->GetIntegerValue();
 }
 
 nsresult
@@ -3253,7 +3242,7 @@ nsDOMSettableTokenListPropertyDestructor(void *aObject, nsIAtom *aProperty,
 nsDOMSettableTokenList*
 nsGenericHTMLElement::GetTokenList(nsIAtom* aAtom)
 {
-  nsDOMSettableTokenList* list = NULL;
+  nsDOMSettableTokenList* list = nullptr;
   if (HasProperties()) {
     list = static_cast<nsDOMSettableTokenList*>(GetProperty(aAtom));
   }

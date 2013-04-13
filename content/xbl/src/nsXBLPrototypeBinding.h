@@ -12,7 +12,6 @@
 #include "nsXBLProtoImplMethod.h"
 #include "nsICSSLoaderObserver.h"
 #include "nsWeakReference.h"
-#include "nsIContent.h"
 #include "nsHashtable.h"
 #include "nsClassHashtable.h"
 #include "nsXBLDocumentInfo.h"
@@ -20,6 +19,7 @@
 #include "nsXBLProtoImpl.h"
 
 class nsIAtom;
+class nsIContent;
 class nsIDocument;
 class nsIScriptContext;
 class nsSupportsHashtable;
@@ -101,14 +101,14 @@ public:
 
   // Resolve all the fields for this binding on the object |obj|.
   // False return means a JS exception was set.
-  bool ResolveAllFields(JSContext* cx, JSObject* obj) const
+  bool ResolveAllFields(JSContext* cx, JS::Handle<JSObject*> obj) const
   {
     return !mImplementation || mImplementation->ResolveAllFields(cx, obj);
   }
 
   // Undefine all our fields from object |obj| (which should be a
   // JSObject for a bound element).
-  void UndefineFields(JSContext* cx, JSObject* obj) const {
+  void UndefineFields(JSContext* cx, JS::Handle<JSObject*> obj) const {
     if (mImplementation) {
       mImplementation->UndefineFields(cx, obj);
     }
@@ -119,8 +119,10 @@ public:
   }
 
   nsresult InitClass(const nsCString& aClassName, JSContext * aContext,
-                     JSObject * aGlobal, JSObject * aScriptObject,
-                     JSObject** aClassObject, bool* aNew);
+                     JS::Handle<JSObject*> aGlobal,
+                     JS::Handle<JSObject*> aScriptObject,
+                     JS::MutableHandle<JSObject*> aClassObject,
+                     bool* aNew);
 
   nsresult ConstructInterfaceTable(const nsAString& aImpls);
   

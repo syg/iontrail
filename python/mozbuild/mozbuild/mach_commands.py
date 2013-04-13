@@ -115,9 +115,31 @@ class Build(MachCommandBase):
         warnings_database.save_to_file(warnings_path)
 
         time_end = time.time()
-        self._handle_finder_cpu_usage(time_end - time_start, finder_start_cpu)
+        time_elapsed = time_end - time_start
+        self._handle_finder_cpu_usage(time_elapsed, finder_start_cpu)
 
-        print('Finished building. Built files are in %s' % self.topobjdir)
+        long_build = time_elapsed > 600
+
+        if status:
+            return status
+
+        if long_build:
+            print('We know it took a while, but your build finally finished successfully!')
+        else:
+            print('Your build was successful!')
+
+        # Only for full builds because incremental builders likely don't
+        # need to be burdened with this.
+        if not what:
+            # Fennec doesn't have useful output from just building. We should
+            # arguably make the build action useful for Fennec. Another day...
+            if self.substs['MOZ_BUILD_APP'] != 'mobile/android':
+                app_path = self.get_binary_path('app')
+                print('To take your build for a test drive, run: %s' % app_path)
+            app = self.substs['MOZ_BUILD_APP']
+            if app in ('browser', 'mobile/android'):
+                print('For more information on what to do now, see '
+                    'https://developer.mozilla.org/docs/Developer_Guide/So_You_Just_Built_Firefox')
 
         return status
 
@@ -251,6 +273,68 @@ class Warnings(MachCommandBase):
                     warning['flag'], warning['message']))
 
 @CommandProvider
+class GTestCommands(MachCommandBase):
+    @Command('gtest', help='Run GTest unit tests.')
+    @CommandArgument('gtest_filter', default='*', nargs='?', metavar='gtest_filter',
+        help="test_filter is a ':'-separated list of wildcard patterns (called the positive patterns),"
+             "optionally followed by a '-' and another ':'-separated pattern list (called the negative patterns).")
+    @CommandArgument('--jobs', '-j', default='1', nargs='?', metavar='jobs', type=int,
+        help='Run the tests in parallel using multiple processes.')
+    @CommandArgument('--tbpl-parser', '-t', action='store_true',
+        help='Output test results in a format that can be parsed by TBPL.')
+    @CommandArgument('--shuffle', '-s', action='store_true',
+        help='Randomize the execution order of tests.')
+    def gtest(self, shuffle, jobs, gtest_filter, tbpl_parser):
+        app_path = self.get_binary_path('app')
+
+        # Use GTest environment variable to control test execution
+        # For details see:
+        # https://code.google.com/p/googletest/wiki/AdvancedGuide#Running_Test_Programs:_Advanced_Options
+        gtest_env = {b'GTEST_FILTER': gtest_filter}
+
+        if shuffle:
+            gtest_env[b"GTEST_SHUFFLE"] = b"True"
+
+        if tbpl_parser:
+            gtest_env[b"MOZ_TBPL_PARSER"] = b"True"
+
+        if jobs == 1:
+            return self.run_process([app_path, "-unittest"],
+                                    append_env=gtest_env,
+                                    ensure_exit_code=False,
+                                    pass_thru=True)
+
+        from mozprocess import ProcessHandlerMixin
+        import functools
+        def handle_line(job_id, line):
+            # Prepend the jobId
+            line = '[%d] %s' % (job_id + 1, line.strip())
+            self.log(logging.INFO, "GTest", {'line': line}, '{line}')
+
+        gtest_env["GTEST_TOTAL_SHARDS"] = str(jobs)
+        processes = {}
+        for i in range(0, jobs):
+            gtest_env["GTEST_SHARD_INDEX"] = str(i)
+            processes[i] = ProcessHandlerMixin([app_path, "-unittest"],
+                             env=gtest_env,
+                             processOutputLine=[functools.partial(handle_line, i)],
+                             universal_newlines=True)
+            processes[i].run()
+
+        exit_code = 0
+        for process in processes.values():
+            status = process.wait()
+            if status:
+                exit_code = status
+
+        # Clamp error code to 255 to prevent overflowing multiple of
+        # 256 into 0
+        if exit_code > 255:
+            exit_code = 255
+
+        return exit_code
+
+@CommandProvider
 class ClangCommands(MachCommandBase):
     @Command('clang-complete', help='Generate a .clang_complete file.')
     def clang_complete(self):
@@ -317,6 +401,54 @@ class Install(MachCommandBase):
     @Command('install', help='Install the package on the machine, or on a device.')
     def install(self):
         return self._run_make(directory=".", target='install', ensure_exit_code=False)
+
+@CommandProvider
+class RunProgram(MachCommandBase):
+    """Launch the compiled binary"""
+
+    @Command('run', help='Run the compiled program.', prefix_chars='+')
+    @CommandArgument('params', default=None, nargs='*',
+        help='Command-line arguments to pass to the program.')
+    def run(self, params):
+        try:
+            args = [self.get_binary_path('app')]
+        except Exception as e:
+            print("It looks like your program isn't built.",
+                "You can run |mach build| to build it.")
+            print(e)
+            return 1
+        if params:
+            args.extend(params)
+        return self.run_process(args=args, ensure_exit_code=False,
+            pass_thru=True)
+
+@CommandProvider
+class DebugProgram(MachCommandBase):
+    """Debug the compiled binary"""
+
+    @Command('debug', help='Debug the compiled program.', prefix_chars='+')
+    @CommandArgument('params', default=None, nargs='*',
+        help='Command-line arguments to pass to the program.')
+    def debug(self, params):
+        import which
+        try:
+            debugger = which.which('gdb')
+        except Exception as e:
+            print("You don't have gdb in your PATH")
+            print(e)
+            return 1
+        try:
+            args = [debugger, self.get_binary_path('app')]
+        except Exception as e:
+            print("It looks like your program isn't built.",
+                "You can run |mach build| to build it.")
+            print(e)
+            return 1
+        if params:
+            args.insert(1, '--args')
+            args.extend(params)
+        return self.run_process(args=args, ensure_exit_code=False,
+            pass_thru=True)
 
 @CommandProvider
 class Buildsymbols(MachCommandBase):

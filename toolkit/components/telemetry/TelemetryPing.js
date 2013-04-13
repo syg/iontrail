@@ -180,12 +180,6 @@ TelemetryPing.prototype = {
   // The number of those requests that have actually completed.
   _pingLoadsCompleted: 0,
   _savedProfileDirectory: null,
-  // Saving pings for later consumption is done in two parts: one part
-  // saves a minimal amount of information in these variables.  Said
-  // information will not be available later on.  The second part
-  // handles retrieving histograms and writing the data to disk.
-  _savedSimpleMeasurements: null,
-  _savedInfo: null,
   // The previous build ID, if this is the first run with a new build.
   // Undefined if this is not the first run, or the previous build ID is unknown.
   _previousBuildID: undefined,
@@ -801,9 +795,12 @@ TelemetryPing.prototype = {
       Telemetry.canRecord = false;
       return;
     }
+    Services.obs.addObserver(this, "profile-before-change", false);
     Services.obs.addObserver(this, "sessionstore-windows-restored", false);
     Services.obs.addObserver(this, "quit-application-granted", false);
-    Services.obs.addObserver(this, "profile-before-change2", false);
+#ifdef MOZ_WIDGET_ANDROID
+    Services.obs.addObserver(this, "application-background", false);
+#endif
     Services.obs.addObserver(this, "xul-window-visible", false);
     this._hasWindowRestoredObserver = true;
     this._hasXulWindowVisibleObserver = true;
@@ -997,6 +994,8 @@ TelemetryPing.prototype = {
   },
 
   savePendingPings: function savePendingPings() {
+    let sessionPing = this.getSessionPayloadAndSlug("saved-session");
+    this.savePing(sessionPing, true);
     this._pendingPings.forEach(function sppcb(e, i, a) {
                                  this.savePing(e, false);
                                }, this);
@@ -1021,8 +1020,11 @@ TelemetryPing.prototype = {
       Services.obs.removeObserver(this, "xul-window-visible");
       this._hasXulWindowVisibleObserver = false;
     }
+    Services.obs.removeObserver(this, "profile-before-change");
     Services.obs.removeObserver(this, "quit-application-granted");
-    Services.obs.removeObserver(this, "profile-before-change2");
+#ifdef MOZ_WIDGET_ANDROID
+    Services.obs.removeObserver(this, "application-background", false);
+#endif
   },
 
   getPayload: function getPayload() {
@@ -1083,6 +1085,9 @@ TelemetryPing.prototype = {
       this.setup();
       this.cacheProfileDirectory();
       break;
+    case "profile-before-change":
+      this.uninstall();
+      break;
     case "cycle-collector-begin":
       let now = new Date();
       if (!gLastMemoryPoll
@@ -1124,21 +1129,33 @@ TelemetryPing.prototype = {
       break;
     case "quit-application-granted":
       if (Telemetry.canSend) {
-        this._savedSimpleMeasurements = this.getSimpleMeasurements(/*forSavedSession=*/true);
-        this._savedInfo = this.getMetadata("saved-session");
         this.savePendingPings();
       }
       break;
-    case "profile-before-change2":
-      this.uninstall();
+
+#ifdef MOZ_WIDGET_ANDROID
+    // On Android, we can get killed without warning once we are in the background,
+    // but we may also submit data and/or come back into the foreground without getting
+    // killed. To deal with this, we save the current session data to file when we are
+    // put into the background. This handles the following post-backgrounding scenarios:
+    // 1) We are killed immediately. In this case the current session data (which we
+    //    save to a file) will be loaded and submitted on a future run.
+    // 2) We submit the data while in the background, and then are killed. In this case
+    //    the file that we saved will be deleted by the usual process in
+    //    finishPingRequest after it is submitted.
+    // 3) We submit the data, and then come back into the foreground. Same as case (2).
+    // 4) We do not submit the data, but come back into the foreground. In this case
+    //    we have the option of either deleting the file that we saved (since we will either
+    //    send the live data while in the foreground, or create the file again on the next
+    //    backgrounding), or not (in which case we will delete it on submit, or overwrite
+    //    it on the next backgrounding). Not deleting it is faster, so that's what we do.
+    case "application-background":
       if (Telemetry.canSend) {
-        let payloadObj =
-          this.assemblePayloadWithMeasurements(this._savedSimpleMeasurements,
-                                               this._savedInfo);
-        let ping = this.assemblePing(payloadObj, "saved-session");
+        let ping = this.getSessionPayloadAndSlug("saved-session");
         this.savePing(ping, true);
       }
       break;
+#endif
     }
   },
 

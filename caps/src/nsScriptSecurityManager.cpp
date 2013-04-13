@@ -330,7 +330,7 @@ nsScriptSecurityManager::GetChannelPrincipal(nsIChannel* aChannel,
     }
 
     // OK, get the principal from the URI.  Make sure this does the same thing
-    // as nsDocument::Reset and nsXULDocument::StartDocumentLoad.
+    // as nsDocument::Reset and XULDocument::StartDocumentLoad.
     nsCOMPtr<nsIURI> uri;
     nsresult rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(uri));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -482,7 +482,8 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
         return JS_TRUE;
 
     bool evalOK = true;
-    rv = csp->GetAllowsEval(&evalOK);
+    bool reportViolation = false;
+    rv = csp->GetAllowsEval(&reportViolation, &evalOK);
 
     if (NS_FAILED(rv))
     {
@@ -490,9 +491,7 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
         return JS_TRUE; // fail open to not break sites.
     }
 
-    if (!evalOK) {
-        // get the script filename, script sample, and line number
-        // to log with the violation
+    if (reportViolation) {
         nsAutoString fileName;
         unsigned lineNum = 0;
         NS_NAMED_LITERAL_STRING(scriptSample, "call to eval() or related function blocked by CSP");
@@ -503,7 +502,6 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
                 CopyUTF8toUTF16(nsDependentCString(file), fileName);
             }
         }
-
         csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL,
                                  fileName,
                                  scriptSample,
@@ -2515,8 +2513,8 @@ void
 nsScriptSecurityManager::Shutdown()
 {
     if (sRuntime) {
-        JS_SetSecurityCallbacks(sRuntime, NULL);
-        JS_SetTrustedPrincipals(sRuntime, NULL);
+        JS_SetSecurityCallbacks(sRuntime, nullptr);
+        JS_SetTrustedPrincipals(sRuntime, nullptr);
         sRuntime = nullptr;
     }
     sEnabledID = JSID_VOID;

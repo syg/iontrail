@@ -14,6 +14,7 @@
 #include "jsopcode.h"
 #include "jsscript.h"
 
+#include "ion/AsmJS.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
@@ -101,7 +102,10 @@ inline JSFunction *
 JSScript::getFunction(size_t index)
 {
     JSObject *funobj = getObject(index);
-    JS_ASSERT(funobj->isFunction() && funobj->toFunction()->isInterpreted());
+#ifdef DEBUG
+    JSFunction *fun = funobj->toFunction();
+    JS_ASSERT_IF(fun->isNative(), IsAsmJSModuleNative(fun->native()));
+#endif
     return funobj->toFunction();
 }
 
@@ -176,7 +180,7 @@ inline void
 JSScript::writeBarrierPre(js::RawScript script)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!script)
+    if (!script || !script->runtime()->needsBarrier())
         return;
 
     JS::Zone *zone = script->zone();

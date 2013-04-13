@@ -29,14 +29,15 @@ class nsSVGImageFrame;
 
 namespace mozilla {
 class DOMSVGAnimatedPreserveAspectRatio;
-class DOMSVGTransform;
 class SVGFragmentIdentifier;
 class AutoSVGRenderingState;
 
 namespace dom {
 class SVGAngle;
 class SVGMatrix;
+class SVGTransform;
 class SVGViewElement;
+class SVGIRect;
 
 class SVGSVGElement;
 
@@ -80,8 +81,7 @@ public:
 
 typedef SVGGraphicsElement SVGSVGElementBase;
 
-class SVGSVGElement MOZ_FINAL : public SVGSVGElementBase,
-                                public nsIDOMSVGElement
+class SVGSVGElement MOZ_FINAL : public SVGSVGElementBase
 {
   friend class ::nsSVGOuterSVGFrame;
   friend class ::nsSVGInnerSVGFrame;
@@ -100,11 +100,6 @@ public:
   // interfaces:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGSVGElement, SVGSVGElementBase)
-
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGSVGElementBase::)
 
   /**
    * For use by zoom controls to allow currentScale, currentTranslate.x and
@@ -217,8 +212,6 @@ public:
     mViewportHeight = aSize.height;
   }
 
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-
   // WebIDL
   already_AddRefed<SVGAnimatedLength> X();
   already_AddRefed<SVGAnimatedLength> Y();
@@ -247,9 +240,9 @@ public:
   already_AddRefed<SVGAngle> CreateSVGAngle();
   already_AddRefed<nsISVGPoint> CreateSVGPoint();
   already_AddRefed<SVGMatrix> CreateSVGMatrix();
-  already_AddRefed<nsIDOMSVGRect> CreateSVGRect();
-  already_AddRefed<DOMSVGTransform> CreateSVGTransform();
-  already_AddRefed<DOMSVGTransform> CreateSVGTransformFromMatrix(SVGMatrix& matrix);
+  already_AddRefed<SVGIRect> CreateSVGRect();
+  already_AddRefed<SVGTransform> CreateSVGTransform();
+  already_AddRefed<SVGTransform> CreateSVGTransformFromMatrix(SVGMatrix& matrix);
   Element* GetElementById(const nsAString& elementId, ErrorResult& rv);
   already_AddRefed<nsIDOMSVGAnimatedRect> ViewBox();
   already_AddRefed<DOMSVGAnimatedPreserveAspectRatio> PreserveAspectRatio();
@@ -394,7 +387,7 @@ private:
 
 // Helper class to automatically manage temporary changes to an SVG document's
 // state for rendering purposes.
-class NS_STACK_CLASS AutoSVGRenderingState
+class MOZ_STACK_CLASS AutoSVGRenderingState
 {
 public:
   AutoSVGRenderingState(const SVGImageContext* aSVGContext,

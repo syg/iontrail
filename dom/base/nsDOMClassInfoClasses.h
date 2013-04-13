@@ -45,12 +45,9 @@ DOMCI_CLASS(DeviceRotationRate)
 DOMCI_CLASS(HTMLDocument)
 
 // HTML element classes
-DOMCI_CLASS(HTMLAppletElement)
-DOMCI_CLASS(HTMLEmbedElement)
 DOMCI_CLASS(HTMLFormElement)
 DOMCI_CLASS(HTMLIFrameElement)
 DOMCI_CLASS(HTMLInputElement)
-DOMCI_CLASS(HTMLObjectElement)
 DOMCI_CLASS(HTMLSelectElement)
 DOMCI_CLASS(ValidityState)
 
@@ -120,17 +117,7 @@ DOMCI_CLASS(BeforeUnloadEvent)
 // The SVG document
 DOMCI_CLASS(SVGDocument)
 
-// SVG element classes
 DOMCI_CLASS(TimeEvent)
-DOMCI_CLASS(SVGFEConvolveMatrixElement)
-DOMCI_CLASS(SVGFEDiffuseLightingElement)
-DOMCI_CLASS(SVGFEDisplacementMapElement)
-DOMCI_CLASS(SVGFEMorphologyElement)
-DOMCI_CLASS(SVGFEOffsetElement)
-DOMCI_CLASS(SVGFESpecularLightingElement)
-DOMCI_CLASS(SVGFESpotLightElement)
-DOMCI_CLASS(SVGFETurbulenceElement)
-DOMCI_CLASS(SVGUnknownElement)
 
 // other SVG classes
 DOMCI_CLASS(SVGAnimatedEnumeration)
@@ -200,10 +187,9 @@ DOMCI_CLASS(MozSmsManager)
 DOMCI_CLASS(MozMobileMessageManager)
 DOMCI_CLASS(MozSmsMessage)
 DOMCI_CLASS(MozMmsMessage)
-DOMCI_CLASS(MozSmsRequest)
 DOMCI_CLASS(MozSmsFilter)
-DOMCI_CLASS(MozSmsCursor)
 DOMCI_CLASS(MozSmsSegmentInfo)
+DOMCI_CLASS(MozMobileMessageThread)
 
 DOMCI_CLASS(MozConnection)
 #ifdef MOZ_B2G_RIL
@@ -213,13 +199,6 @@ DOMCI_CLASS(MozCellBroadcast)
 
 // @font-face in CSS
 DOMCI_CLASS(CSSFontFaceRule)
-
-#if defined(MOZ_MEDIA)
-// WhatWG Video Element
-DOMCI_CLASS(HTMLVideoElement)
-DOMCI_CLASS(HTMLAudioElement)
-DOMCI_CLASS(TimeRanges)
-#endif
 
 // DOM Traversal NodeIterator class
 DOMCI_CLASS(NodeIterator)
@@ -243,10 +222,6 @@ DOMCI_CLASS(ContentFrameMessageManager)
 DOMCI_CLASS(ChromeMessageBroadcaster)
 DOMCI_CLASS(ChromeMessageSender)
 
-DOMCI_CLASS(DesktopNotification)
-DOMCI_CLASS(DesktopNotificationCenter)
-
-DOMCI_CLASS(IDBFactory)
 DOMCI_CLASS(IDBFileHandle)
 DOMCI_CLASS(IDBRequest)
 DOMCI_CLASS(IDBDatabase)

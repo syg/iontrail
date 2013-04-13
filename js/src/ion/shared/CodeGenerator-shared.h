@@ -176,6 +176,7 @@ class CodeGeneratorShared : public LInstructionVisitor
         return index;
     }
 
+  public:
     // This is needed by addCache to update the cache with the jump
     // informations provided by the out-of-line path.
     IonCache *getCache(size_t index) {
@@ -315,9 +316,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
-    void setCacheInfo(IonCache *cache, LInstruction *lir);
-    bool addRepatchCache(LInstruction *lir, size_t cacheIndex);
-    bool addDispatchCache(LInstruction *lir, size_t cacheIndex, Register scratch);
+    bool addCache(LInstruction *lir, size_t cacheIndex);
 
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);
@@ -359,13 +358,6 @@ class CodeGeneratorShared : public LInstructionVisitor
     OutOfLinePropagateParallelAbort *oolPropagateParallelAbort(LInstruction *lir);
     virtual bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool) = 0;
     virtual bool visitOutOfLinePropagateParallelAbort(OutOfLinePropagateParallelAbort *ool) = 0;
-};
-
-// Wrapper around Label, on the heap, to avoid a bogus assert with OOM.
-struct HeapLabel
-  : public TempObject,
-    public Label
-{
 };
 
 // An out-of-line path is generated at the end of the function.

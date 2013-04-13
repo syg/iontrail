@@ -103,14 +103,6 @@ UnwrapDOMObject(JSObject* obj)
              "Don't pass non-DOM objects to this function");
 
   JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
-  // XXXbz/khuey worker code tries to unwrap interface objects (which have
-  // nothing here).  That needs to stop.
-  // XXX We don't null-check UnwrapObject's result; aren't we going to crash
-  // anyway?
-  if (val.isUndefined()) {
-    return NULL;
-  }
-  
   return static_cast<T*>(val.toPrivate());
 }
 
@@ -168,7 +160,7 @@ UnwrapObject(JSContext* cx, JSObject* obj, U& value)
       return NS_ERROR_XPC_BAD_CONVERT_JS;
     }
 
-    obj = xpc::Unwrap(cx, obj, false);
+    obj = js::CheckedUnwrap(obj, /* stopAtOuter = */ false);
     if (!obj) {
       return NS_ERROR_XPC_SECURITY_MANAGER_VETO;
     }
@@ -197,21 +189,6 @@ inline bool
 IsNotDateOrRegExp(JSContext* cx, JSObject* obj)
 {
   MOZ_ASSERT(obj);
-  // For simplicity, check for security wrappers up front.  In case we
-  // have a security wrapper, don't forget to enter the compartment of
-  // the underlying object after unwrapping.
-  Maybe<JSAutoCompartment> ac;
-  if (js::IsWrapper(obj)) {
-    obj = xpc::Unwrap(cx, obj, false);
-    if (!obj) {
-      // Let's say it's not
-      return false;
-    }
-
-    ac.construct(cx, obj);
-  }
-
-  // Everything except dates and regexps is arraylike
   return !JS_ObjectIsDate(cx, obj) && !JS_ObjectIsRegExp(cx, obj);
 }
 
@@ -281,7 +258,7 @@ TraceProtoAndIfaceCache(JSTracer* trc, JSObject* obj)
   for (size_t i = 0; i < kProtoAndIfaceCacheCount; ++i) {
     JSObject* proto = protoAndIfaceArray[i];
     if (proto) {
-      JS_CALL_OBJECT_TRACER(trc, proto, "protoAndIfaceArray[i]");
+      JS_CallObjectTracer(trc, proto, "protoAndIfaceArray[i]");
     }
   }
 }
@@ -300,7 +277,7 @@ DestroyProtoAndIfaceCache(JSObject* obj)
  * Add constants to an object.
  */
 bool
-DefineConstants(JSContext* cx, JSObject* obj, ConstantSpec* cs);
+DefineConstants(JSContext* cx, JSObject* obj, const ConstantSpec* cs);
 
 struct JSNativeHolder
 {
@@ -368,7 +345,7 @@ CreateInterfaceObjects(JSContext* cx, JSObject* global, JSObject* protoProto,
  */
 bool
 DefineUnforgeableAttributes(JSContext* cx, JSObject* obj,
-                            Prefable<JSPropertySpec>* props);
+                            const Prefable<const JSPropertySpec>* props);
 
 bool
 DefineWebIDLBindingPropertiesOnXPCProto(JSContext* cx, JSObject* proto, const NativeProperties* properties);
@@ -644,7 +621,7 @@ WrapNewBindingNonWrapperCachedObject(JSContext* cx, JSObject* scope, T* value,
     // before we call JS_WrapValue.
     Maybe<JSAutoCompartment> ac;
     if (js::IsWrapper(scope)) {
-      scope = xpc::Unwrap(cx, scope, false);
+      scope = js::CheckedUnwrap(scope, /* stopAtOuter = */ false);
       if (!scope)
         return false;
       ac.construct(cx, scope);
@@ -857,6 +834,11 @@ bool
 XPCOMObjectToJsval(JSContext* cx, JSObject* scope, xpcObjectHelper &helper,
                    const nsIID* iid, bool allowNativeWrapper, JS::Value* rval);
 
+// Special-cased wrapping for variants
+bool
+VariantToJsval(JSContext* aCx, JSObject* aScope, nsIVariant* aVariant,
+               JS::Value* aRetval);
+
 // Wrap an object "p" which is not using WebIDL bindings yet.  This _will_
 // actually work on WebIDL binding objects that are wrappercached, but will be
 // much slower than WrapNewBindingObject.  "cache" must either be null or be the
@@ -870,6 +852,18 @@ WrapObject(JSContext* cx, JSObject* scope, T* p, nsWrapperCache* cache,
     return true;
   qsObjectHelper helper(p, cache);
   return XPCOMObjectToJsval(cx, scope, helper, iid, true, vp);
+}
+
+// A specialization of the above for nsIVariant, because that needs to
+// do something different.
+template<>
+inline bool
+WrapObject<nsIVariant>(JSContext* cx, JSObject* scope, nsIVariant* p,
+                       nsWrapperCache* cache, const nsIID* iid, JS::Value* vp)
+{
+  MOZ_ASSERT(iid);
+  MOZ_ASSERT(iid->Equals(NS_GET_IID(nsIVariant)));
+  return VariantToJsval(cx, scope, p, vp);
 }
 
 // Wrap an object "p" which is not using WebIDL bindings yet.  Just like the
@@ -1208,7 +1202,7 @@ InternJSString(JSContext* cx, jsid& id, const char* chars)
 // Spec needs a name property
 template <typename Spec>
 static bool
-InitIds(JSContext* cx, Prefable<Spec>* prefableSpecs, jsid* ids)
+InitIds(JSContext* cx, const Prefable<Spec>* prefableSpecs, jsid* ids)
 {
   MOZ_ASSERT(prefableSpecs);
   MOZ_ASSERT(prefableSpecs->specs);
@@ -1700,6 +1694,10 @@ InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSObject* instance,
 JSBool
 InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue vp,
                      JSBool* bp);
+
+// Helper for lenient getters/setters to report to console
+void
+ReportLenientThisUnwrappingFailure(JSContext* cx, JS::Handle<JSObject*> obj);
 
 } // namespace dom
 } // namespace mozilla

@@ -13,12 +13,14 @@
 #include "nsIDOMLocation.h"
 #include "nsIDOMXULCommandDispatcher.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMDocument.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsTArray.h"
 #include "nsIURI.h"
+#include "mozilla/dom/EventTarget.h"
+
+#include "js/RootingAPI.h"
 
 #define DOM_WINDOW_DESTROYED_TOPIC "dom-window-destroyed"
 #define DOM_WINDOW_FROZEN_TOPIC "dom-window-frozen"
@@ -45,7 +47,6 @@ class nsIContent;
 class nsIDocument;
 class nsIScriptTimeoutHandler;
 struct nsTimeout;
-template <class> class nsScriptObjectHolder;
 class nsXBLPrototypeHandler;
 class nsIArray;
 class nsPIWindowRoot;
@@ -57,8 +58,8 @@ class AudioContext;
 }
 
 #define NS_PIDOMWINDOW_IID \
-{ 0xf5af1c3c, 0xebad, 0x4d00, \
-  { 0xa2, 0xa4, 0x12, 0x2e, 0x27, 0x16, 0x59, 0x01 } }
+{ 0x01decdb6, 0xd8ca, 0x401b, \
+  { 0x8b, 0xd1, 0x85, 0x83, 0x2c, 0xe9, 0x92, 0x0e } }
 
 class nsPIDOMWindow : public nsIDOMWindowInternal
 {
@@ -103,14 +104,14 @@ public:
     return mIsBackground;
   }
 
-  nsIDOMEventTarget* GetChromeEventHandler() const
+  mozilla::dom::EventTarget* GetChromeEventHandler() const
   {
     return mChromeEventHandler;
   }
 
-  virtual void SetChromeEventHandler(nsIDOMEventTarget* aChromeEventHandler) = 0;
+  virtual void SetChromeEventHandler(mozilla::dom::EventTarget* aChromeEventHandler) = 0;
 
-  nsIDOMEventTarget* GetParentTarget()
+  mozilla::dom::EventTarget* GetParentTarget()
   {
     if (!mParentTarget) {
       UpdateParentTarget();
@@ -493,7 +494,7 @@ public:
 
   virtual JSObject* GetCachedXBLPrototypeHandler(nsXBLPrototypeHandler* aKey) = 0;
   virtual void CacheXBLPrototypeHandler(nsXBLPrototypeHandler* aKey,
-                                        nsScriptObjectHolder<JSObject>& aHandler) = 0;
+                                        JS::Handle<JSObject*> aHandler) = 0;
 
   /*
    * Get and set the currently focused element within the document. If
@@ -600,6 +601,11 @@ public:
 #endif // MOZ_B2G
 
   /**
+   * Tell this window that there is an observer for gamepad input
+   */
+  virtual void SetHasGamepadEventListener(bool aHasGamepad = true) = 0;
+
+  /**
    * Set a arguments for this window. This will be set on the window
    * right away (if there's an existing document) and it will also be
    * installed on the window when the next document is loaded. Each
@@ -654,7 +660,7 @@ protected:
 
   ~nsPIDOMWindow();
 
-  void SetChromeEventHandlerInternal(nsIDOMEventTarget* aChromeEventHandler) {
+  void SetChromeEventHandlerInternal(mozilla::dom::EventTarget* aChromeEventHandler) {
     mChromeEventHandler = aChromeEventHandler;
     // mParentTarget will be set when the next event is dispatched.
     mParentTarget = nullptr;
@@ -668,14 +674,14 @@ protected:
   // These two variables are special in that they're set to the same
   // value on both the outer window and the current inner window. Make
   // sure you keep them in sync!
-  nsCOMPtr<nsIDOMEventTarget> mChromeEventHandler; // strong
+  nsCOMPtr<mozilla::dom::EventTarget> mChromeEventHandler; // strong
   nsCOMPtr<nsIDOMDocument> mDocument; // strong
   nsCOMPtr<nsIDocument> mDoc; // strong, for fast access
   // Cache the URI when mDoc is cleared.
   nsCOMPtr<nsIURI> mDocumentURI; // strong
   nsCOMPtr<nsIURI> mDocBaseURI; // strong
 
-  nsCOMPtr<nsIDOMEventTarget> mParentTarget; // strong
+  nsCOMPtr<mozilla::dom::EventTarget> mParentTarget; // strong
 
   // These members are only used on outer windows.
   nsCOMPtr<nsIDOMElement> mFrameElement;

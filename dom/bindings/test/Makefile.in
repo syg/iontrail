@@ -14,6 +14,11 @@ FORCE_STATIC_LIB = 1
 # Do NOT export this library.  We don't actually want our test code
 # being added to libxul or anything.
 
+# pymake can't handle descending into dom/bindings several times simultaneously
+ifdef .PYMAKE
+.NOTPARALLEL:
+endif
+
 include $(DEPTH)/config/autoconf.mk
 
 # Need this to find all our DOM source files.
@@ -66,6 +71,7 @@ MOCHITEST_FILES := \
   test_bug759621.html \
   test_queryInterface.html \
   test_exceptionThrowing.html \
+  test_bug852846.html \
   $(NULL)
 
 MOCHITEST_CHROME_FILES = \

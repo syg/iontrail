@@ -39,6 +39,7 @@
 #include "nsEventListenerManager.h"
 #include "nsContentUtils.h"
 #include "mozilla/Preferences.h"
+#include "nsTextNode.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1513,7 +1514,7 @@ nsTextEditorState::UnbindFromFrame(nsTextControlFrame* aFrame)
   {
     mTextListener->SetFrame(nullptr);
 
-    nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mTextCtrlElement);
+    nsCOMPtr<EventTarget> target = do_QueryInterface(mTextCtrlElement);
     nsEventListenerManager* manager =
       target->GetListenerManager(false);
     if (manager) {
@@ -1569,7 +1570,6 @@ nsTextEditorState::CreateRootNode()
   nodeInfo = doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::div, nullptr,
                                                  kNameSpaceID_XHTML,
                                                  nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   nsresult rv = NS_NewHTMLElement(getter_AddRefs(mRootNode), nodeInfo.forget(),
                                   NOT_FROM_PARSER);
@@ -1646,7 +1646,6 @@ be called if @placeholder is the empty string when trimmed from line breaks");
   NS_ENSURE_TRUE(pNodeInfoManager, NS_ERROR_OUT_OF_MEMORY);
 
   nsresult rv;
-  nsCOMPtr<nsIContent> placeholderText;
 
   // Create a DIV for the placeholder
   // and add it to the anonymous content child list
@@ -1654,15 +1653,13 @@ be called if @placeholder is the empty string when trimmed from line breaks");
   nodeInfo = pNodeInfoManager->GetNodeInfo(nsGkAtoms::div, nullptr,
                                            kNameSpaceID_XHTML,
                                            nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   rv = NS_NewHTMLElement(getter_AddRefs(mPlaceholderDiv), nodeInfo.forget(),
                          NOT_FROM_PARSER);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Create the text node for the placeholder text before doing anything else
-  rv = NS_NewTextNode(getter_AddRefs(placeholderText), pNodeInfoManager);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<nsTextNode> placeholderText = new nsTextNode(pNodeInfoManager);
 
   rv = mPlaceholderDiv->AppendChildTo(placeholderText, false);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1747,7 +1744,9 @@ nsTextEditorState::GetValue(nsAString& aValue, bool aIgnoreWrap) const
       mCachedValue.Truncate();
     }
   } else {
-    if (mValue) {
+    if (!mTextCtrlElement->ValueChanged() || !mValue) {
+      mTextCtrlElement->GetDefaultValueFromContent(aValue);
+    } else {
       aValue = NS_ConvertUTF8toUTF16(*mValue);
     }
   }
@@ -1924,7 +1923,7 @@ void
 nsTextEditorState::InitializeKeyboardEventListeners()
 {
   //register key listeners
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mTextCtrlElement);
+  nsCOMPtr<EventTarget> target = do_QueryInterface(mTextCtrlElement);
   nsEventListenerManager* manager = target->GetListenerManager(true);
   if (manager) {
     manager->AddEventListenerByType(mTextListener,

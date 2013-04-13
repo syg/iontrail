@@ -36,6 +36,8 @@ struct AsmJSGlobalAccess
     {}
 };
 
+typedef Vector<AsmJSGlobalAccess, 0, IonAllocPolicy> AsmJSGlobalAccessVector;
+
 class MIRGenerator
 {
   public:
@@ -109,16 +111,25 @@ class MIRGenerator
         JS_ASSERT(compilingAsmJS());
         return performsAsmJSCall_;
     }
+#ifndef JS_CPU_ARM
     bool noteHeapAccess(AsmJSHeapAccess heapAccess) {
         return asmJSHeapAccesses_.append(heapAccess);
     }
-    const Vector<AsmJSHeapAccess> &heapAccesses() const {
+    const Vector<AsmJSHeapAccess, 0, IonAllocPolicy> &heapAccesses() const {
         return asmJSHeapAccesses_;
     }
+#else
+    bool noteBoundsCheck(uint32_t offsetBefore) {
+        return asmJSBoundsChecks_.append(AsmJSBoundsCheck(offsetBefore));
+    }
+    const Vector<AsmJSBoundsCheck, 0, IonAllocPolicy> &asmBoundsChecks() const {
+        return asmJSBoundsChecks_;
+    }
+#endif
     bool noteGlobalAccess(unsigned offset, unsigned globalDataOffset) {
         return asmJSGlobalAccesses_.append(AsmJSGlobalAccess(offset, globalDataOffset));
     }
-    const Vector<AsmJSGlobalAccess> &globalAccesses() const {
+    const Vector<AsmJSGlobalAccess, 0, IonAllocPolicy> &globalAccesses() const {
         return asmJSGlobalAccesses_;
     }
 
@@ -136,8 +147,12 @@ class MIRGenerator
 
     uint32_t maxAsmJSStackArgBytes_;
     bool performsAsmJSCall_;
-    Vector<AsmJSHeapAccess> asmJSHeapAccesses_;
-    Vector<AsmJSGlobalAccess> asmJSGlobalAccesses_;
+#ifdef JS_CPU_ARM
+    AsmJSBoundsCheckVector asmJSBoundsChecks_;
+#else
+    AsmJSHeapAccessVector asmJSHeapAccesses_;
+#endif
+    AsmJSGlobalAccessVector asmJSGlobalAccesses_;
 };
 
 } // namespace ion

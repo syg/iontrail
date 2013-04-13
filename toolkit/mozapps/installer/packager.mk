@@ -70,7 +70,6 @@ JSSHELL_BINS  = \
   $(DIST)/bin/$(DLL_PREFIX)mozglue$(DLL_SUFFIX) \
   $(NULL)
 ifndef MOZ_NATIVE_NSPR
-ifeq ($(OS_ARCH),WINNT)
 ifeq ($(_MSC_VER),1400)
 JSSHELL_BINS += $(DIST)/bin/Microsoft.VC80.CRT.manifest
 JSSHELL_BINS += $(DIST)/bin/msvcr80.dll
@@ -85,7 +84,6 @@ endif
 ifeq ($(_MSC_VER),1700)
 JSSHELL_BINS += $(DIST)/bin/msvcr110.dll
 endif
-else
 ifdef MOZ_FOLD_LIBS
 JSSHELL_BINS += $(DIST)/bin/$(DLL_PREFIX)nss3$(DLL_SUFFIX)
 else
@@ -95,7 +93,6 @@ JSSHELL_BINS += \
   $(DIST)/bin/$(DLL_PREFIX)plc4$(DLL_SUFFIX) \
   $(NULL)
 endif # MOZ_FOLD_LIBS
-endif
 endif # MOZ_NATIVE_NSPR
 MAKE_JSSHELL  = $(ZIP) -9j $(PKG_JSSHELL) $(JSSHELL_BINS)
 endif # LIBXUL_SDK
@@ -259,22 +256,25 @@ endif
 DIST_FILES =
 
 # Place the files in the order they are going to be opened by the linker
-ifdef MOZ_CRASHREPORTER
-DIST_FILES += lib.id
-endif
-
+DIST_FILES += libmozalloc.so
+ifndef MOZ_FOLD_LIBS
 DIST_FILES += \
-  libmozalloc.so \
   libnspr4.so \
   libplc4.so \
   libplds4.so \
   libmozsqlite3.so \
   libnssutil3.so \
-  libnss3.so \
+  $(NULL)
+endif
+DIST_FILES += libnss3.so
+ifndef MOZ_FOLD_LIBS
+DIST_FILES += \
   libssl3.so \
   libsmime3.so \
+  $(NULL)
+endif
+DIST_FILES += \
   libxul.so \
-  libxpcom.so \
   libnssckbi.so \
   libfreebl3.so \
   libsoftokn3.so \
@@ -300,12 +300,6 @@ DIST_FILES += \
   recommended-addons.json \
   distribution \
   $(NULL)
-
-ifdef MOZ_ENABLE_SZIP
-SZIP_LIBRARIES = \
-  libxul.so \
-  $(NULL)
-endif
 
 NON_DIST_FILES = \
   classes.dex \
@@ -347,22 +341,21 @@ INNER_ROBOCOP_PACKAGE=echo 'Testing is disabled - No Robocop for you'
 endif
 
 ifdef MOZ_OMX_PLUGIN
-DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginsony.so libomxpluginfroyo.so
+DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginsony.so libomxpluginfroyo.so libomxpluginjb-htc.so
+endif
+
+ifdef MOZ_ENABLE_SZIP
+SZIP_LIBRARIES := $(filter-out $(MOZ_CHILD_PROCESS_NAME),$(filter %.so,$(DIST_FILES)))
 endif
 
 PKG_SUFFIX      = .apk
 INNER_MAKE_PACKAGE	= \
-  $(foreach lib,$(SZIP_LIBRARIES),host/bin/szip $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib) $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib:.so=.sz) && mv $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib:.so=.sz) $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib) && ) \
+  $(foreach lib,$(SZIP_LIBRARIES),host/bin/szip $(MOZ_SZIP_FLAGS) $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib) && ) \
   make -C $(GECKO_APP_AP_PATH) gecko.ap_ && \
   cp $(GECKO_APP_AP_PATH)/gecko.ap_ $(_ABS_DIST) && \
   ( cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) && \
     mkdir -p lib/$(ABI_DIR) && \
     mv libmozglue.so $(MOZ_CHILD_PROCESS_NAME) lib/$(ABI_DIR) && \
-    rm -f lib.id && \
-    for SOMELIB in *.so ; \
-    do \
-      printf "`basename $$SOMELIB`:`$(_ABS_DIST)/host/bin/file_id $$SOMELIB`\n" >> lib.id ; \
-    done && \
     unzip -o $(_ABS_DIST)/gecko.ap_ && \
     rm $(_ABS_DIST)/gecko.ap_ && \
     $(if $(SZIP_LIBRARIES),$(ZIP) -0 $(_ABS_DIST)/gecko.ap_ $(SZIP_LIBRARIES) && ) \

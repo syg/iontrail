@@ -44,6 +44,7 @@ class JSFunction : public JSObject
         HAS_DEFAULTS     = 0x0800,  /* function has at least one default parameter */
         INTERPRETED_LAZY = 0x1000,  /* function is interpreted but doesn't have a script yet */
         ARROW            = 0x2000,  /* ES6 '(args) => body' syntax */
+        SH_WRAPPABLE     = 0x4000,  /* self-hosted function is wrappable, doesn't need to be cloned */
 
         /* Derived Flags values for convenience: */
         NATIVE_FUN = 0,
@@ -100,6 +101,22 @@ class JSFunction : public JSObject
     bool isSelfHostedConstructor()  const { return flags & SELF_HOSTED_CTOR; }
     bool hasRest()                  const { return flags & HAS_REST; }
     bool hasDefaults()              const { return flags & HAS_DEFAULTS; }
+    bool isWrappable()              const {
+        JS_ASSERT_IF(flags & SH_WRAPPABLE, isSelfHostedBuiltin());
+        return flags & SH_WRAPPABLE;
+    }
+
+    // Arrow functions are a little weird.
+    //
+    // Like all functions, (1) when the compiler parses an arrow function, it
+    // creates a function object that gets stored with the enclosing script;
+    // and (2) at run time the script's function object is cloned.
+    //
+    // But then, unlike other functions, (3) a bound function is created with
+    // the clone as its target.
+    //
+    // isArrow() is true for all three of these Function objects.
+    // isBoundFunction() is true only for the last one.
     bool isArrow()                  const { return flags & ARROW; }
 
     /* Compound attributes: */
@@ -143,6 +160,12 @@ class JSFunction : public JSObject
         flags |= SELF_HOSTED_CTOR;
     }
 
+    void makeWrappable() {
+        JS_ASSERT(isSelfHostedBuiltin());
+        JS_ASSERT(!isWrappable());
+        flags |= SH_WRAPPABLE;
+    }
+
     void setIsFunctionPrototype() {
         JS_ASSERT(!isFunctionPrototype());
         flags |= IS_FUN_PROTO;
@@ -165,7 +188,7 @@ class JSFunction : public JSObject
     }
 
     JSAtom *atom() const { return hasGuessedAtom() ? NULL : atom_.get(); }
-    js::PropertyName *name() const { return hasGuessedAtom() ? NULL : atom_->asPropertyName(); }
+    js::PropertyName *name() const { return hasGuessedAtom() || !atom_ ? NULL : atom_->asPropertyName(); }
     inline void initAtom(JSAtom *atom);
     JSAtom *displayAtom() const { return atom_; }
 
@@ -189,6 +212,7 @@ class JSFunction : public JSObject
 
     js::RawScript getOrCreateScript(JSContext *cx) {
         JS_ASSERT(isInterpreted());
+				JS_ASSERT(cx);
         if (isInterpretedLazy()) {
             JS::RootedFunction self(cx, this);
             js::MaybeCheckStackRoots(cx);
@@ -271,21 +295,35 @@ class JSFunction : public JSObject
     inline js::FunctionExtended *toExtended();
     inline const js::FunctionExtended *toExtended() const;
 
+  public:
     inline bool isExtended() const {
         JS_STATIC_ASSERT(FinalizeKind != ExtendedFinalizeKind);
-        JS_ASSERT(!!(flags & EXTENDED) == (getAllocKind() == ExtendedFinalizeKind));
+        JS_ASSERT_IF(isTenured(), !!(flags & EXTENDED) == (tenuredGetAllocKind() == ExtendedFinalizeKind));
         return !!(flags & EXTENDED);
     }
 
-  public:
-    /* Accessors for data stored in extended functions. */
+    /*
+     * Accessors for data stored in extended functions. Use setExtendedSlot if
+     * the function has already been initialized. Otherwise use
+     * initExtendedSlot.
+     */
     inline void initializeExtended();
+    inline void initExtendedSlot(size_t which, const js::Value &val);
     inline void setExtendedSlot(size_t which, const js::Value &val);
     inline const js::Value &getExtendedSlot(size_t which) const;
 
     /* Constructs a new type for the function if necessary. */
     static bool setTypeForScriptedFunction(JSContext *cx, js::HandleFunction fun,
                                            bool singleton = false);
+
+    /* GC support. */
+    js::gc::AllocKind getAllocKind() const {
+        js::gc::AllocKind kind = FinalizeKind;
+        if (isExtended())
+            kind = ExtendedFinalizeKind;
+        JS_ASSERT_IF(isTenured(), kind == tenuredGetAllocKind());
+        return kind;
+    }
 
   private:
     /*
@@ -337,15 +375,19 @@ DefineFunction(JSContext *cx, HandleObject obj, HandleId id, JSNative native,
 
 /*
  * Function extended with reserved slots for use by various kinds of functions.
- * Most functions do not have these extensions, but enough are that efficient
+ * Most functions do not have these extensions, but enough do that efficient
  * storage is required (no malloc'ed reserved slots).
  */
 class FunctionExtended : public JSFunction
 {
+  public:
+    static const unsigned NUM_EXTENDED_SLOTS = 2;
+
+  private:
     friend class JSFunction;
 
     /* Reserved slots available for storage by particular native functions. */
-    HeapValue extendedSlots[2];
+    HeapValue extendedSlots[NUM_EXTENDED_SLOTS];
 };
 
 extern JSFunction *

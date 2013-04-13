@@ -147,6 +147,9 @@ endif
 
 ifeq (windows,$(MOZ_WIDGET_TOOLKIT))
 TEST_HARNESS_BINS += screenshot$(BIN_SUFFIX)
+ifdef MOZ_METRO
+TEST_HARNESS_BINS += metrotestharness$(BIN_SUFFIX)
+endif
 endif
 
 # Components / typelibs that don't get packaged with
@@ -177,6 +180,9 @@ stage-chromejar:
 	$(NSINSTALL) -D $(PKG_CHROMEJAR)
 	cp -RL $(DEPTH)/_tests/testing/mochitest/browser $(PKG_CHROMEJAR)
 	cp -RL $(DEPTH)/_tests/testing/mochitest/chrome $(PKG_CHROMEJAR)
+ifdef MOZ_METRO
+	cp -RL $(DEPTH)/_tests/testing/mochitest/metro $(PKG_CHROMEJAR)
+endif
 ifdef ACCESSIBILITY
 	cp -RL $(DEPTH)/_tests/testing/mochitest/a11y $(PKG_CHROMEJAR)
 endif

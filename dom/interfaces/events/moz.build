@@ -1,3 +1,4 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -42,11 +43,16 @@ XPIDL_SOURCES += [
     'nsIDOMScrollAreaEvent.idl',
     'nsIDOMSimpleGestureEvent.idl',
     'nsIDOMSmartCardEvent.idl',
+    'nsIDOMStyleSheetAddedEvent.idl',
+    'nsIDOMStyleSheetRemovedEvent.idl',
     'nsIDOMTouchEvent.idl',
     'nsIDOMTransitionEvent.idl',
     'nsIDOMUIEvent.idl',
     'nsIDOMUserProximityEvent.idl',
     'nsIDOMWheelEvent.idl',
+    'nsIDOMGamepadButtonEvent.idl',
+    'nsIDOMGamepadAxisMoveEvent.idl',
+    'nsIDOMGamepadEvent.idl',
 ]
 
 XPIDL_MODULE = 'dom_events'

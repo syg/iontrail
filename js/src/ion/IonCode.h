@@ -8,6 +8,8 @@
 #ifndef jsion_coderef_h__
 #define jsion_coderef_h__
 
+#include "mozilla/PodOperations.h"
+
 #include "IonTypes.h"
 #include "gc/Heap.h"
 
@@ -28,9 +30,8 @@ namespace ion {
 // bit on offsets.
 static const uint32_t MAX_BUFFER_SIZE = (1 << 30) - 1;
 
-// Maximum number of scripted arg and stack slots.
+// Maximum number of scripted arg slots.
 static const uint32_t SNAPSHOT_MAX_NARGS = 127;
-static const uint32_t SNAPSHOT_MAX_STACK = 127;
 
 class MacroAssembler;
 class CodeOffsetLabel;
@@ -131,6 +132,7 @@ class IonCode : public gc::Cell
     static IonCode *New(JSContext *cx, uint8_t *code, uint32_t bufferSize, JSC::ExecutablePool *pool);
 
   public:
+    JS::Zone *zone() const { return tenuredZone(); }
     static void readBarrier(IonCode *code);
     static void writeBarrierPre(IonCode *code);
     static void writeBarrierPost(IonCode *code, void *addr);
@@ -170,7 +172,7 @@ struct IonScript
     uint32_t invalidateEpilogueDataOffset_;
 
     // Flag set when we bailout, to avoid frequent bailouts.
-    bool bailoutExpected_;
+    uint32_t bailoutExpected_;
 
     // Flag set when we bailed out in parallel execution and should ensure its
     // call targets are compiled.
@@ -229,12 +231,6 @@ struct IonScript
     uint32_t callTargetList_;
     uint32_t callTargetEntries_;
 
-    // Dispatch table for ICs, if caches for this IonScript are dispatch
-    // instead of repatch. If dispatch is on, there are as many entries as
-    // there are caches, else there are 0.
-    uint32_t cacheDispatchTable_;
-    uint32_t cacheDispatchEntries_;
-
     // Number of references from invalidation records.
     size_t refcount_;
 
@@ -283,9 +279,6 @@ struct IonScript
     JSScript **callTargetList() {
         return (JSScript **) &bottomBuffer()[callTargetList_];
     }
-    uint8_t **cacheDispatchTable() {
-        return (uint8_t **) &bottomBuffer()[cacheDispatchTable_];
-    }
 
   private:
     void trace(JSTracer *trc);
@@ -297,8 +290,9 @@ struct IonScript
     static IonScript *New(JSContext *cx, uint32_t frameLocals, uint32_t frameSize,
                           size_t snapshotsSize, size_t snapshotEntries,
                           size_t constants, size_t safepointIndexEntries, size_t osiIndexEntries,
-                          size_t cacheEntries, size_t safepointsSize, size_t runtimeSize,
-                          size_t scriptEntries, size_t callTargetEntries, bool cachesUseDispatch);
+                          size_t cacheEntries, size_t runtimeSize,
+                          size_t safepointsSize, size_t scriptEntries,
+                          size_t callTargetEntries);
     static void Trace(JSTracer *trc, IonScript *script);
     static void Destroy(FreeOp *fop, IonScript *script);
 
@@ -307,6 +301,9 @@ struct IonScript
     }
     static inline size_t offsetOfOsrEntryOffset() {
         return offsetof(IonScript, osrEntryOffset_);
+    }
+    static size_t offsetOfBailoutExpected() {
+        return offsetof(IonScript, bailoutExpected_);
     }
 
   public:
@@ -358,10 +355,10 @@ struct IonScript
         return invalidateEpilogueDataOffset_;
     }
     void setBailoutExpected() {
-        bailoutExpected_ = true;
+        bailoutExpected_ = 1;
     }
     bool bailoutExpected() const {
-        return bailoutExpected_;
+        return bailoutExpected_ ? true : false;
     }
     void setHasInvalidatedCallTarget() {
         hasInvalidatedCallTarget_ = true;
@@ -429,17 +426,6 @@ struct IonScript
     }
     size_t numCaches() const {
         return cacheEntries_;
-    }
-    uint8_t **getCacheDispatchEntry(uint32_t index) {
-        JS_ASSERT(index < cacheDispatchEntries_);
-        return &cacheDispatchTable()[index];
-    }
-    uint8_t **maybeGetCacheDispatchEntry(uint32_t index) {
-        // If caches are not dispatch style, there are 0 entries in the
-        // dispatch table.
-        if (cacheDispatchEntries_ > 0)
-            return getCacheDispatchEntry(index);
-        return NULL;
     }
     size_t runtimeSize() const {
         return runtimeSize_;
@@ -600,7 +586,7 @@ struct IonScriptCounts
   public:
 
     IonScriptCounts() {
-        PodZero(this);
+        mozilla::PodZero(this);
     }
 
     ~IonScriptCounts() {

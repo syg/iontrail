@@ -10,10 +10,11 @@ import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
 import org.mozilla.gecko.gfx.BitmapUtils;
-import org.mozilla.gecko.util.UiAsyncTask;
+import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.StringUtils;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.gecko.util.UiAsyncTask;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -30,10 +31,6 @@ import android.os.Message;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
-import android.view.animation.AccelerateInterpolator;
-import android.view.animation.AlphaAnimation;
-import android.view.animation.Animation;
-import android.view.animation.TranslateAnimation;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.LayoutInflater;
@@ -43,6 +40,10 @@ import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
+import android.view.animation.TranslateAnimation;
 import android.widget.AdapterView;
 import android.widget.FilterQueryProvider;
 import android.widget.ImageView;
@@ -134,6 +135,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                      handleItemClick(parent, view, position, id);
                 }
             });
+            list.setOnKeyListener(GamepadUtils.getListItemClickDispatcher());
 
             AwesomeBarCursorAdapter adapter = getCursorAdapter();
             list.setAdapter(adapter);
@@ -145,19 +147,26 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
     @Override
     public void destroy() {
-        AwesomeBarCursorAdapter adapter = getCursorAdapter();
         unregisterEventListener("SearchEngines:Data");
-        if (adapter == null) {
-            return;
-        }
-
-        Cursor cursor = adapter.getCursor();
-        if (cursor != null)
-            cursor.close();
 
         mHandler.removeMessages(MESSAGE_UPDATE_FAVICONS);
         mHandler.removeMessages(MESSAGE_LOAD_FAVICONS);
         mHandler = null;
+
+        // Can't use getters for adapter or listview. They will create them if null.
+        if (mCursorAdapter != null && mListView != null) {
+            mListView.setAdapter(null);
+            final Cursor cursor = mCursorAdapter.getCursor();
+            // Gingerbread locks the DB when closing a cursor, so do it in the
+            // background.
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (cursor != null && !cursor.isClosed())
+                        cursor.close();
+                }
+            });
+        }
     }
 
     public void filter(String searchTerm) {
@@ -668,7 +677,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
         anim1.setDuration(ANIMATION_DURATION);
         anim1.setInterpolator(new AccelerateInterpolator());
         anim1.setFillAfter(true);
-        mSuggestionsOptInPrompt.setAnimation(anim1);
+        mSuggestionsOptInPrompt.findViewById(R.id.prompt_container).setAnimation(anim1);
 
         TranslateAnimation anim2 = new TranslateAnimation(0, 0, 0, -1 * mSuggestionsOptInPrompt.getHeight());
         anim2.setDuration(ANIMATION_DURATION);
@@ -844,15 +853,16 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
         if (urls.size() == 0)
             return;
 
-        (new UiAsyncTask<Void, Void, Cursor>(ThreadUtils.getBackgroundHandler()) {
+        (new UiAsyncTask<Void, Void, Void>(ThreadUtils.getBackgroundHandler()) {
             @Override
-            public Cursor doInBackground(Void... params) {
-                return BrowserDB.getFaviconsForUrls(getContentResolver(), urls);
+            public Void doInBackground(Void... params) {
+                Cursor cursor = BrowserDB.getFaviconsForUrls(getContentResolver(), urls);
+                storeFaviconsInMemCache(cursor);
+                return null;
             }
 
             @Override
-            public void onPostExecute(Cursor c) {
-                storeFaviconsInMemCache(c);
+            public void onPostExecute(Void result) {
                 postUpdateFavicons();
             }
         }).execute();

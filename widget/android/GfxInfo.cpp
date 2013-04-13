@@ -365,11 +365,26 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
           CompareVersions(mOSVersion.get(), "2.4.0") < 0)
       {
         // Gingerbread HTC devices are whitelisted.
-        // Gingerbread Samsung devices are whitelisted.
+        // Gingerbread Samsung devices are whitelisted except for:
+        //   Samsung devices identified in Bug 847837
         // All other Gingerbread devices are blacklisted.
-	bool isWhitelisted =
+        bool isWhitelisted =
           cManufacturer.Equals("htc", nsCaseInsensitiveCStringComparator()) ||
           cManufacturer.Equals("samsung", nsCaseInsensitiveCStringComparator());
+
+        if (cModel.Equals("GT-I8160", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-I8160L", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-I8530", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-I9070", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-I9070P", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-I8160P", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-S7500", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-S7500T", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-S7500L", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("GT-S6500T", nsCaseInsensitiveCStringComparator()))
+        {
+          isWhitelisted = false;
+        }
 
         if (!isWhitelisted) {
           *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
@@ -406,6 +421,30 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
           cModel.Equals("galaxy nexus", nsCaseInsensitiveCStringComparator()); // some Galaxy Nexus have manufacturer=amazon
 
         if (!isWhitelisted) {
+          *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+          return NS_OK;
+        }
+      }
+      else if (CompareVersions(mOSVersion.get(), "4.2.0") < 0)
+      {
+        // Whitelist:
+        //   All JB phones except for those in blocklist below
+        // Blocklist:
+        //   Samsung SPH-L710 (Bug 812881)
+        //   Samsung SGH-T999 (Bug 812881)
+        //   Samsung SCH-I535 (Bug 812881)
+        //   Samsung GT-I8190 (Bug 812881)
+        //   Samsung SGH-I747M (Bug 812881)
+        //   Samsung SGH-I747 (Bug 812881)
+        bool isBlocklisted =
+          cModel.Equals("SAMSUNG-SPH-L710", nsCaseInsensitiveCStringComparator()) ||
+          cModel.Equals("SAMSUNG-SGH-T999", nsCaseInsensitiveCStringComparator()) ||
+          cModel.Equals("SAMSUNG-SCH-I535", nsCaseInsensitiveCStringComparator()) ||
+          cModel.Equals("SAMSUNG-GT-I8190", nsCaseInsensitiveCStringComparator()) ||
+          cModel.Equals("SAMSUNG-SGH-I747M", nsCaseInsensitiveCStringComparator()) ||
+          cModel.Equals("SAMSUNG-SGH-I747", nsCaseInsensitiveCStringComparator());
+
+        if (isBlocklisted) {
           *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
           return NS_OK;
         }

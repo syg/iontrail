@@ -12,15 +12,20 @@ include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	= gkconevents_s
 LIBXUL_LIBRARY  = 1
-ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
-endif # !_MSC_VER
+
+EXPORTS_NAMESPACES = mozilla/dom
+
+EXPORTS_mozilla/dom = \
+		Touch.h \
+		$(NULL)
 
 EXPORTS		= \
 		nsEventStateManager.h \
 		nsEventListenerManager.h \
 		nsDOMEventTargetHelper.h \
 		nsDOMEvent.h \
+		nsDOMGamepad.h \
 		nsDOMTouchEvent.h \
 		nsDOMUIEvent.h \
 		$(NULL)
@@ -62,7 +67,14 @@ CPPSRCS		= \
 		nsDOMClipboardEvent.cpp \
 		DOMWheelEvent.cpp \
 		TextComposition.cpp \
+		Touch.cpp \
 		$(NULL)
+
+ifdef MOZ_GAMEPAD
+CPPSRCS += \
+  nsDOMGamepad.cpp \
+  $(NULL)
+endif
 
 # we don't want the shared lib, but we want to force the creation of a static lib.
 FORCE_STATIC_LIB = 1

@@ -355,23 +355,6 @@ class JSObject : public js::ObjectImpl
     inline bool hasUncacheableProto() const;
     inline bool setUncacheableProto(JSContext *cx);
 
-    bool generateOwnShape(JSContext *cx, js::Shape *newShape = NULL) {
-        return replaceWithNewEquivalentShape(cx, lastProperty(), newShape);
-    }
-
-  private:
-    js::Shape *replaceWithNewEquivalentShape(JSContext *cx, js::Shape *existingShape,
-                                             js::Shape *newShape = NULL);
-
-    enum GenerateShape {
-        GENERATE_NONE,
-        GENERATE_SHAPE
-    };
-
-    bool setFlag(JSContext *cx, /*BaseShape::Flag*/ uint32_t flag,
-                 GenerateShape generateShape = GENERATE_NONE);
-    bool clearFlag(JSContext *cx, /*BaseShape::Flag*/ uint32_t flag);
-
   public:
     inline bool nativeEmpty() const;
 
@@ -387,9 +370,7 @@ class JSObject : public js::ObjectImpl
 
     inline bool hasShapeTable() const;
 
-    inline size_t computedSizeOfThisSlotsElements() const;
-
-    inline void sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf, JS::ObjectsExtraSizes *sizes);
+    void sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf, JS::ObjectsExtraSizes *sizes);
 
     bool hasIdempotentProtoChain() const;
 
@@ -469,7 +450,7 @@ class JSObject : public js::ObjectImpl
      *    GC in order to compute the proto. Currently, it will not run JS code.
      */
     inline JSObject *getProto() const;
-    inline js::TaggedProto getTaggedProto() const;
+    using js::ObjectImpl::getTaggedProto;
     static inline bool getProto(JSContext *cx, js::HandleObject obj,
                                 js::MutableHandleObject protop);
 
@@ -541,7 +522,7 @@ class JSObject : public js::ObjectImpl
     inline JSObject *enclosingScope();
 
     inline js::GlobalObject &global() const;
-    inline JSCompartment *compartment() const;
+    using js::ObjectImpl::compartment;
 
     /* Remove the type (and prototype) or parent from a new object. */
     static inline bool clearType(JSContext *cx, js::HandleObject obj);
@@ -567,8 +548,6 @@ class JSObject : public js::ObjectImpl
     static inline unsigned getSealedOrFrozenAttributes(unsigned attrs, ImmutabilityType it);
 
   public:
-    bool preventExtensions(JSContext *cx);
-
     /* ES5 15.2.3.8: non-extensible, all props non-configurable */
     static inline bool seal(JSContext *cx, js::HandleObject obj) { return sealOrFreeze(cx, obj, SEAL); }
     /* ES5 15.2.3.9: non-extensible, all properties non-configurable, all data props read-only */
@@ -758,8 +737,6 @@ class JSObject : public js::ObjectImpl
                                             bool allowDictionary);
 
   private:
-    bool toDictionaryMode(JSContext *cx);
-
     struct TradeGutsReserved;
     static bool ReserveForTradeGuts(JSContext *cx, JSObject *a, JSObject *b,
                                     TradeGutsReserved &reserved);
@@ -981,7 +958,7 @@ class JSObject : public js::ObjectImpl
     inline bool isObject() const;
     inline bool isPrimitive() const;
     inline bool isPropertyIterator() const;
-    inline bool isProxy() const;
+    using js::ObjectImpl::isProxy;
     inline bool isRegExp() const;
     inline bool isRegExpStatics() const;
     inline bool isScope() const;
@@ -1177,6 +1154,10 @@ extern JSBool
 js_DefineOwnProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                      const JS::Value &descriptor, JSBool *bp);
 
+extern JSBool
+js_DefineOwnProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
+                     const js::PropertyDescriptor &descriptor, JSBool *bp);
+
 namespace js {
 
 /*
@@ -1199,7 +1180,14 @@ enum NewObjectKind {
      * be allocated on the correct heap, but are not automatically setup as a
      * singleton after allocation.
      */
-    MaybeSingletonObject
+    MaybeSingletonObject,
+
+    /*
+     * Objects which will not benefit from being allocated in the nursery
+     * (e.g. because they are known to have a long lifetime) may be allocated
+     * with this kind to place them immediately into the tenured generation.
+     */
+    TenuredObject
 };
 
 inline gc::InitialHeap
@@ -1357,13 +1345,13 @@ GetPropertyHelper(JSContext *cx, HandleObject obj, PropertyName *name, uint32_t 
  */
 
 bool
-LookupPropertyPure(RawObject obj, jsid id, RawObject *objp, RawShape *propp);
+LookupPropertyPure(JSObject *obj, jsid id, JSObject **objp, Shape **propp);
 
 bool
-GetPropertyPure(RawObject obj, jsid id, Value *vp);
+GetPropertyPure(JSObject *obj, jsid id, Value *vp);
 
 inline bool
-GetPropertyPure(RawObject obj, PropertyName *name, Value *vp)
+GetPropertyPure(JSObject *obj, PropertyName *name, Value *vp)
 {
     return GetPropertyPure(obj, NameToId(name), vp);
 }
@@ -1493,7 +1481,7 @@ inline void
 DestroyIdArray(FreeOp *fop, JSIdArray *ida);
 
 extern bool
-GetFirstArgumentAsObject(JSContext *cx, unsigned argc, Value *vp, const char *method,
+GetFirstArgumentAsObject(JSContext *cx, const CallArgs &args, const char *method,
                          MutableHandleObject objp);
 
 /* Helpers for throwing. These always return false. */

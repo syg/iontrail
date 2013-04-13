@@ -19,6 +19,8 @@ Cu.import("resource://gre/modules/AddonRepository.jsm");
 
 
 const PREF_DISCOVERURL = "extensions.webservice.discoverURL";
+const PREF_DISCOVER_ENABLED = "extensions.getAddons.showPane";
+const PREF_XPI_ENABLED = "xpinstall.enabled";
 const PREF_MAXRESULTS = "extensions.getAddons.maxResults";
 const PREF_GETADDONS_CACHE_ENABLED = "extensions.getAddons.cache.enabled";
 const PREF_GETADDONS_CACHE_ID_ENABLED = "extensions.%ID%.getAddons.cache.enabled";
@@ -68,7 +70,7 @@ document.addEventListener("load", initialize, true);
 window.addEventListener("unload", shutdown, false);
 
 var gPendingInitializations = 1;
-__defineGetter__("gIsInitializing", function gIsInitializingGetter() gPendingInitializations > 0);
+this.__defineGetter__("gIsInitializing", function gIsInitializingGetter() gPendingInitializations > 0);
 
 function initialize(event) {
   // XXXbz this listener gets _all_ load events for all nodes in the
@@ -141,6 +143,23 @@ function loadView(aViewId) {
   } else {
     gViewController.loadView(aViewId);
   }
+}
+
+function isDiscoverEnabled() {
+  if (Services.prefs.getPrefType(PREF_DISCOVERURL) == Services.prefs.PREF_INVALID)
+    return false;
+
+  try {
+    if (!Services.prefs.getBoolPref(PREF_DISCOVER_ENABLED))
+      return false;
+  } catch (e) {}
+
+  try {
+    if (!Services.prefs.getBoolPref(PREF_XPI_ENABLED))
+      return false;
+  } catch (e) {}
+
+  return true;
 }
 
 /**
@@ -891,6 +910,8 @@ var gViewController = {
             aAddon.optionsType == AddonManager.OPTIONS_TYPE_INLINE) {
           return false;
         }
+        if (aAddon.optionsType == AddonManager.OPTIONS_TYPE_INLINE_INFO)
+          return false;
         return true;
       },
       doCommand: function cmd_showItemPreferences_doCommand(aAddon) {
@@ -1161,6 +1182,11 @@ var gViewController = {
 
   onEvent: function gVC_onEvent() {}
 };
+
+function hasInlineOptions(aAddon) {
+  return (aAddon.optionsType == AddonManager.OPTIONS_TYPE_INLINE ||
+          aAddon.optionsType == AddonManager.OPTIONS_TYPE_INLINE_INFO);
+}
 
 function openOptionsInTab(optionsURL) {
   var mainWindow = window.QueryInterface(Ci.nsIInterfaceRequestor)
@@ -1742,8 +1768,8 @@ var gDiscoverView = {
   _loadListeners: [],
 
   initialize: function gDiscoverView_initialize() {
-    if (Services.prefs.getPrefType(PREF_DISCOVERURL) == Services.prefs.PREF_INVALID) {
-      this.enabled = false;
+    this.enabled = isDiscoverEnabled();
+    if (!this.enabled) {
       gCategories.get("addons://discover/").hidden = true;
       return;
     }
@@ -2727,7 +2753,7 @@ var gDetailView = {
     AddonManager.removeManagerListener(this);
     this.clearLoading();
     if (this._addon) {
-      if (this._addon.optionsType == AddonManager.OPTIONS_TYPE_INLINE) {
+      if (hasInlineOptions(this._addon)) {
         Services.obs.notifyObservers(document,
                                      AddonManager.OPTIONS_NOTIFICATION_HIDDEN,
                                      this._addon.id);
@@ -2849,7 +2875,7 @@ var gDetailView = {
 
   fillSettingsRows: function gDetailView_fillSettingsRows(aScrollToPreferences, aCallback) {
     this.emptySettingsRows();
-    if (this._addon.optionsType != AddonManager.OPTIONS_TYPE_INLINE) {
+    if (!hasInlineOptions(this._addon)) {
       if (aCallback)
         aCallback();
       return;
@@ -2970,8 +2996,7 @@ var gDetailView = {
 
   onDisabling: function gDetailView_onDisabling(aNeedsRestart) {
     this.updateState();
-    if (!aNeedsRestart &&
-        this._addon.optionsType == AddonManager.OPTIONS_TYPE_INLINE) {
+    if (!aNeedsRestart && hasInlineOptions(this._addon)) {
       Services.obs.notifyObservers(document,
                                    AddonManager.OPTIONS_NOTIFICATION_HIDDEN,
                                    this._addon.id);

@@ -22,6 +22,7 @@ nsDOMSimpleGestureEvent::nsDOMSimpleGestureEvent(mozilla::dom::EventTarget* aOwn
     mEvent->refPoint.x = mEvent->refPoint.y = 0;
     static_cast<nsMouseEvent*>(mEvent)->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
   }
+  SetIsDOMBinding();
 }
 
 nsDOMSimpleGestureEvent::~nsDOMSimpleGestureEvent()
@@ -42,12 +43,30 @@ NS_INTERFACE_MAP_BEGIN(nsDOMSimpleGestureEvent)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SimpleGestureEvent)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMMouseEvent)
 
+/* attribute unsigned long allowedDirections; */
+NS_IMETHODIMP
+nsDOMSimpleGestureEvent::GetAllowedDirections(PRUint32 *aAllowedDirections)
+{
+  NS_ENSURE_ARG_POINTER(aAllowedDirections);
+  *aAllowedDirections =
+    static_cast<nsSimpleGestureEvent*>(mEvent)->allowedDirections;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMSimpleGestureEvent::SetAllowedDirections(PRUint32 aAllowedDirections)
+{
+  static_cast<nsSimpleGestureEvent*>(mEvent)->allowedDirections =
+    aAllowedDirections;
+  return NS_OK;
+}
+
 /* readonly attribute unsigned long direction; */
 NS_IMETHODIMP
 nsDOMSimpleGestureEvent::GetDirection(uint32_t *aDirection)
 {
   NS_ENSURE_ARG_POINTER(aDirection);
-  *aDirection = static_cast<nsSimpleGestureEvent*>(mEvent)->direction;
+  *aDirection = Direction();
   return NS_OK;
 }
 
@@ -56,7 +75,7 @@ NS_IMETHODIMP
 nsDOMSimpleGestureEvent::GetDelta(double *aDelta)
 {
   NS_ENSURE_ARG_POINTER(aDelta);
-  *aDelta = static_cast<nsSimpleGestureEvent*>(mEvent)->delta;
+  *aDelta = Delta();
   return NS_OK;
 }
 
@@ -65,7 +84,7 @@ NS_IMETHODIMP
 nsDOMSimpleGestureEvent::GetClickCount(uint32_t *aClickCount)
 {
   NS_ENSURE_ARG_POINTER(aClickCount);
-  *aClickCount = static_cast<nsSimpleGestureEvent*>(mEvent)->clickCount;
+  *aClickCount = ClickCount();
   return NS_OK;
 }
 
@@ -85,6 +104,7 @@ nsDOMSimpleGestureEvent::InitSimpleGestureEvent(const nsAString& aTypeArg,
                                                 bool aMetaKeyArg,
                                                 uint16_t aButton,
                                                 nsIDOMEventTarget* aRelatedTarget,
+                                                uint32_t aAllowedDirectionsArg,
                                                 uint32_t aDirectionArg,
                                                 double aDeltaArg,
                                                 uint32_t aClickCountArg)
@@ -107,6 +127,7 @@ nsDOMSimpleGestureEvent::InitSimpleGestureEvent(const nsAString& aTypeArg,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsSimpleGestureEvent* simpleGestureEvent = static_cast<nsSimpleGestureEvent*>(mEvent);
+  simpleGestureEvent->allowedDirections = aAllowedDirectionsArg;
   simpleGestureEvent->direction = aDirectionArg;
   simpleGestureEvent->delta = aDeltaArg;
   simpleGestureEvent->clickCount = aClickCountArg;

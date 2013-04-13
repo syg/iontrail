@@ -7,6 +7,7 @@
 
 #include "TypeOracle.h"
 
+#include "Ion.h"
 #include "IonSpewer.h"
 #include "jsinferinlines.h"
 #include "jsobjinlines.h"
@@ -18,11 +19,104 @@ using namespace js::types;
 using namespace js::analyze;
 
 bool
-TypeInferenceOracle::init(JSContext *cx, JSScript *script)
+TypeInferenceOracle::init(JSContext *cx, JSScript *script, bool inlinedCall)
 {
+    AutoEnterAnalysis enter(cx);
+
     this->cx = cx;
     this->script_.init(script);
-    return script->ensureRanInference(cx);
+
+    if (inlinedCall) {
+        JS_ASSERT_IF(script->length != 1, script->analysis()->ranInference());
+        return script->ensureRanInference(cx);
+    }
+
+    Vector<JSScript*> seen(cx);
+    return analyzeTypesForInlinableCallees(cx, script, seen);
+}
+
+bool
+TypeInferenceOracle::analyzeTypesForInlinableCallees(JSContext *cx, JSScript *script,
+                                                     Vector<JSScript*> &seen)
+{
+    // Don't analyze scripts which will not be inlined (but always analyze the first script).
+    if (seen.length() > 0 && script->getUseCount() < js_IonOptions.usesBeforeInlining())
+        return true;
+
+    for (size_t i = 0; i < seen.length(); i++) {
+        if (seen[i] == script)
+            return true;
+    }
+    if (!seen.append(script))
+        return false;
+
+    if (!script->ensureRanInference(cx))
+        return false;
+
+    ScriptAnalysis *analysis = script->analysis();
+    JS_ASSERT(analysis->ranInference());
+
+    for (jsbytecode *pc = script->code;
+         pc < script->code + script->length;
+         pc += GetBytecodeLength(pc))
+    {
+        if (!(js_CodeSpec[*pc].format & JOF_INVOKE))
+            continue;
+
+        if (!analysis->maybeCode(pc))
+            continue;
+
+        uint32_t argc = GET_ARGC(pc);
+
+        StackTypeSet *calleeTypes = analysis->poppedTypes(pc, argc + 1);
+        if (!analyzeTypesForInlinableCallees(cx, calleeTypes, seen))
+            return false;
+
+        // For foo.call() and foo.apply(), also look for any callees in the
+        // 'this' types of the call, which might be inlined by Ion.
+        if (*pc == JSOP_FUNCALL || *pc == JSOP_FUNAPPLY) {
+            StackTypeSet *thisTypes = analysis->poppedTypes(pc, argc);
+            if (!analyzeTypesForInlinableCallees(cx, thisTypes, seen))
+                return false;
+        }
+    }
+
+    return true;
+}
+
+bool
+TypeInferenceOracle::analyzeTypesForInlinableCallees(JSContext *cx, StackTypeSet *calleeTypes,
+                                                     Vector<JSScript*> &seen)
+{
+    if (calleeTypes->unknownObject())
+        return true;
+
+    size_t count = calleeTypes->getObjectCount();
+    for (size_t i = 0; i < count; i++) {
+        JSScript *script;
+        if (JSObject *singleton = calleeTypes->getSingleObject(i)) {
+            if (!singleton->isFunction() || !singleton->toFunction()->hasScript())
+                continue;
+            script = singleton->toFunction()->nonLazyScript();
+        } else if (TypeObject *type = calleeTypes->getTypeObject(i)) {
+            JSFunction *fun = type->interpretedFunction;
+            if (!fun || !fun->hasScript())
+                continue;
+            script = fun->nonLazyScript();
+        } else {
+            continue;
+        }
+
+        if (!analyzeTypesForInlinableCallees(cx, script, seen))
+            return false;
+
+        // The contents of type sets can change after analyzing the types in a
+        // script. Make a sanity check to ensure the set is ok to keep using.
+        if (calleeTypes->unknownObject() || calleeTypes->getObjectCount() != count)
+            break;
+    }
+
+    return true;
 }
 
 MIRType
@@ -228,9 +322,6 @@ TypeInferenceOracle::propertyReadBarrier(HandleScript script, jsbytecode *pc)
 bool
 TypeInferenceOracle::propertyReadIdempotent(HandleScript script, jsbytecode *pc, HandleId id)
 {
-    if (script->analysis()->getCode(pc).notIdempotent)
-        return false;
-
     if (id != IdToTypeId(id))
         return false;
 
@@ -546,8 +637,13 @@ TypeInferenceOracle::elementWriteNeedsBarrier(RawScript script, jsbytecode *pc)
 {
     // Return true if SETELEM-like instructions need a write barrier before modifying
     // a property. The object is the third value popped by SETELEM.
-    StackTypeSet *types = script->analysis()->poppedTypes(pc, 2);
-    return types->propertyNeedsBarrier(cx, JSID_VOID);
+    return elementWriteNeedsBarrier(script->analysis()->poppedTypes(pc, 2));
+}
+
+bool
+TypeInferenceOracle::elementWriteNeedsBarrier(StackTypeSet *obj)
+{
+    return obj->propertyNeedsBarrier(cx, JSID_VOID);
 }
 
 StackTypeSet *
@@ -598,7 +694,7 @@ TypeInferenceOracle::callArgsBarrier(HandleScript caller, jsbytecode *pc)
 }
 
 bool
-TypeInferenceOracle::canEnterInlinedFunction(RawScript caller, jsbytecode *pc, RawFunction target)
+TypeInferenceOracle::canEnterInlinedFunction(RawFunction target)
 {
     RootedScript targetScript(cx, target->nonLazyScript());
 
@@ -631,9 +727,20 @@ TypeInferenceOracle::canEnterInlinedFunction(RawScript caller, jsbytecode *pc, R
     if (!targetType || targetType->unknownProperties())
         return false;
 
-    JSOp op = JSOp(*pc);
+    // TI calls ObjectStateChange to trigger invalidation of the caller.
+    HeapTypeSet::WatchObjectStateChange(cx, targetType);
+    return true;
+}
+
+bool
+TypeInferenceOracle::callReturnTypeSetMatches(RawScript callerScript, jsbytecode *callerPc,
+                                              RawFunction callee)
+{
+    RootedScript targetScript(cx, callee->nonLazyScript());
+
+    JSOp op = JSOp(*callerPc);
     TypeSet *returnTypes = TypeScript::ReturnTypes(targetScript);
-    TypeSet *callReturn = getCallReturn(caller, pc);
+    TypeSet *callReturn = getCallReturn(callerScript, callerPc);
     if (op == JSOP_NEW) {
         if (!returnTypes->isSubsetIgnorePrimitives(callReturn))
             return false;
@@ -642,8 +749,74 @@ TypeInferenceOracle::canEnterInlinedFunction(RawScript caller, jsbytecode *pc, R
             return false;
     }
 
-    // TI calls ObjectStateChange to trigger invalidation of the caller.
-    HeapTypeSet::WatchObjectStateChange(cx, targetType);
+    return true;
+}
+
+bool
+TypeInferenceOracle::callArgsTypeSetMatches(types::StackTypeSet *thisType, Vector<types::StackTypeSet *> &argvType, RawFunction callee)
+{
+    RootedScript targetScript(cx, callee->nonLazyScript());
+    types::TypeSet *calleeType;
+
+    size_t nargs = Min<size_t>(callee->nargs, argvType.length());
+
+    // This
+    calleeType = types::TypeScript::ThisTypes(targetScript);
+    if (!thisType->isSubset(calleeType))
+        return false;
+
+    // Arguments
+    for (size_t i = 0; i < nargs; i++) {
+        calleeType = types::TypeScript::ArgTypes(targetScript, i);
+        if (!argvType[i]->isSubset(calleeType))
+            return false;
+    }
+
+    // Arguments that weren't provided will be Undefined
+    for (size_t i = nargs; i < callee->nargs; i++) {
+        calleeType = types::TypeScript::ArgTypes(targetScript, i);
+        if (calleeType->unknown() ||
+            !calleeType->hasType(types::Type::UndefinedType()))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool
+TypeInferenceOracle::callArgsTypeSetIntersects(types::StackTypeSet *thisType, Vector<types::StackTypeSet *> &argvType, RawFunction callee)
+{
+    RootedScript targetScript(cx, callee->nonLazyScript());
+    types::TypeSet *calleeType;
+
+    size_t nargs = Min<size_t>(callee->nargs, argvType.length());
+
+    // This
+    if (thisType) {
+        calleeType = types::TypeScript::ThisTypes(targetScript);
+        if (thisType->intersectionEmpty(calleeType))
+            return false;
+    }
+
+    // Arguments
+    for (size_t i = 0; i < nargs; i++) {
+        calleeType = types::TypeScript::ArgTypes(targetScript, i);
+        if (argvType[i]->intersectionEmpty(calleeType))
+            return false;
+    }
+
+    // Arguments that weren't provided will be Undefined
+    for (size_t i = nargs; i < callee->nargs; i++) {
+        calleeType = types::TypeScript::ArgTypes(targetScript, i);
+        if (calleeType->unknown() ||
+            !calleeType->hasType(types::Type::UndefinedType()))
+        {
+            return false;
+        }
+    }
+
     return true;
 }
 

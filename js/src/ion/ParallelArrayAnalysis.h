@@ -40,6 +40,7 @@ class ParallelCompileContext
         worklist_(cx)
     { }
 
+    // Should we append a script to the worklist?
     bool appendToWorklist(HandleScript script);
 
     ExecutionMode executionMode() {

@@ -42,6 +42,19 @@ CPPSRCS = \
   HalWakeLock.cpp \
   $(NULL)
 
+ifeq (stub,$(MOZ_GAMEPAD_BACKEND))
+CPPSRCS += FallbackGamepad.cpp
+endif
+ifeq (cocoa,$(MOZ_GAMEPAD_BACKEND))
+CPPSRCS += CocoaGamepad.cpp
+endif
+ifeq (windows,$(MOZ_GAMEPAD_BACKEND))
+CPPSRCS += WindowsGamepad.cpp
+endif
+ifeq (linux,$(MOZ_GAMEPAD_BACKEND))
+CPPSRCS += LinuxGamepad.cpp
+endif
+
 ifeq (android,$(MOZ_WIDGET_TOOLKIT))
 CPPSRCS += \
   AndroidHal.cpp \
@@ -116,6 +129,10 @@ CPPSRCS += \
   $(NULL)
 endif
 
+ifdef MOZ_GAMEPAD
+LOCAL_INCLUDES = -I$(topsrcdir)/dom/base
+endif
+
 # Fallbacks for backends implemented on Gonk only.
 ifneq (gonk,$(MOZ_WIDGET_TOOLKIT)) #{
 CPPSRCS += \
@@ -139,8 +156,8 @@ include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
 include $(topsrcdir)/config/rules.mk
 
-CFLAGS          += $(MOZ_DBUS_GLIB_CFLAGS)
-CXXFLAGS        += $(MOZ_DBUS_GLIB_CFLAGS)
+CFLAGS          += $(GLIB_CFLAGS) $(MOZ_DBUS_GLIB_CFLAGS)
+CXXFLAGS        += $(GLIB_CFLAGS) $(MOZ_DBUS_GLIB_CFLAGS)
 
 ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
 # So that we can call nsScreenManagerGonk::GetConfiguration().

@@ -35,7 +35,6 @@
 #include "nsDirectoryServiceDefs.h"
 #include "nsCategoryManager.h"
 #include "nsCategoryManagerUtils.h"
-#include "nsIEnumerator.h"
 #include "xptiprivate.h"
 #include "nsIConsoleService.h"
 #include "nsIMemoryReporter.h"
@@ -200,7 +199,7 @@ ArenaStrdup(const char *s, PLArenaPool *arena)
 
 namespace {
 
-class NS_STACK_CLASS MutexLock
+class MOZ_STACK_CLASS MutexLock
 {
 public:
     MutexLock(SafeMutex& aMutex)

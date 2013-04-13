@@ -42,9 +42,6 @@ var ContextMenuHandler = {
       case "Browser:ContextCommand":
         this._onContextCommand(aMessage);
       break;
-      case "Browser:InvokeContextAtPoint":
-        this._onContextAtPoint(aMessage);
-      break;
     }
   },
 
@@ -69,21 +66,6 @@ var ContextMenuHandler = {
         this._onPaste();
         break;
 
-      case "play":
-      case "pause":
-        if (node instanceof Ci.nsIDOMHTMLMediaElement)
-          node[command]();
-        break;
-
-      case "videotab":
-        if (node instanceof Ci.nsIDOMHTMLVideoElement) {
-          node.pause();
-          Cu.import("resource:///modules/video.jsm");
-          Video.fullScreenSourceElement = node;
-          sendAsyncMessage("Browser:FullScreenVideo:Start");
-        }
-        break;
-
       case "select-all":
         this._onSelectAll();
         break;
@@ -92,18 +74,6 @@ var ContextMenuHandler = {
         this._onCopyImage();
         break;
     }
-  },
-
-  /*
-   * Handler for selection overlay context menu events.
-   */
-  _onContextAtPoint: function _onContextAtPoint(aMessage) {
-    // we need to find popupNode as if the context menu were
-    // invoked on underlying content.
-    let { element, frameX, frameY } =
-      elementFromPoint(aMessage.json.xPos, aMessage.json.yPos);
-    this._processPopupNode(element, frameX, frameY,
-                           Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH);
   },
 
   /******************************************************
@@ -306,12 +276,13 @@ var ContextMenuHandler = {
 
           // Don't include "copy" for password fields.
           if (!(elem instanceof Ci.nsIDOMHTMLInputElement) || elem.mozIsTextField(true)) {
+            // If there is a selection add cut and copy
             if (selectionStart != selectionEnd) {
               state.types.push("cut");
               state.types.push("copy");
               state.string = elem.value.slice(selectionStart, selectionEnd);
-            }
-            if (elem.value && (selectionStart > 0 || selectionEnd < elem.textLength)) {
+            } else if (elem.value && elem.textLength) {
+              // There is text and it is not selected so add selectable items
               state.types.push("selectable");
               state.string = elem.value;
             }

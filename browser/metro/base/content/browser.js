@@ -133,53 +133,6 @@ var Browser = {
     if (window.arguments && window.arguments[0])
       commandURL = window.arguments[0];
 
-    // Activation URIs come from protocol activations, secondary tiles, and file activations
-    let activationURI = this.getShortcutOrURI(MetroUtils.activationURI);
-
-    let self = this;
-    function loadStartupURI() {
-      let uri = activationURI || commandURL || Browser.getHomePage();
-      if (StartUI.isStartURI(uri)) {
-        self.addTab(uri, true);
-        StartUI.show(); // This makes about:start load a lot faster
-      } else if (activationURI) {
-        self.addTab(uri, true, null, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP });
-      } else {
-        self.addTab(uri, true);
-      }
-    }
-
-    // Should we restore the previous session (crash or some other event)
-    let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    if (ss.shouldRestore() || Services.prefs.getBoolPref("browser.startup.sessionRestore")) {
-      let bringFront = false;
-      // First open any commandline URLs, except the homepage
-      if (activationURI && !StartUI.isStartURI(activationURI)) {
-        this.addTab(activationURI, true, null, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP });
-      } else if (commandURL && !StartUI.isStartURI(commandURL)) {
-        this.addTab(commandURL, true);
-      } else {
-        bringFront = true;
-        // Initial window resizes call functions that assume a tab is in the tab list
-        // and restored tabs are added too late. We add a dummy to to satisfy the resize
-        // code and then remove the dummy after the session has been restored.
-        let dummy = this.addTab("about:blank", true);
-        let dummyCleanup = {
-          observe: function(aSubject, aTopic, aData) {
-            Services.obs.removeObserver(dummyCleanup, "sessionstore-windows-restored");
-            if (aData == "fail")
-              loadStartupURI();
-            dummy.chromeTab.ignoreUndo = true;
-            Browser.closeTab(dummy, { forceClose: true });
-          }
-        };
-        Services.obs.addObserver(dummyCleanup, "sessionstore-windows-restored", false);
-      }
-      ss.restoreLastSession(bringFront);
-    } else {
-      loadStartupURI();
-    }
-
     messageManager.addMessageListener("DOMLinkAdded", this);
     messageManager.addMessageListener("MozScrolledAreaChanged", this);
     messageManager.addMessageListener("Browser:ViewportMetadata", this);
@@ -197,10 +150,59 @@ var Browser = {
     // starting with:
     InputSourceHelper.fireUpdate();
 
-    // Broadcast a UIReady message so add-ons know we are finished with startup
-    let event = document.createEvent("Events");
-    event.initEvent("UIReady", true, false);
-    window.dispatchEvent(event);
+    Task.spawn(function() {
+      // Activation URIs come from protocol activations, secondary tiles, and file activations
+      let activationURI = yield this.getShortcutOrURI(MetroUtils.activationURI);
+
+      let self = this;
+      function loadStartupURI() {
+        let uri = activationURI || commandURL || Browser.getHomePage();
+        if (StartUI.isStartURI(uri)) {
+          self.addTab(uri, true);
+          StartUI.show(); // This makes about:start load a lot faster
+        } else if (activationURI) {
+          self.addTab(uri, true, null, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP });
+        } else {
+          self.addTab(uri, true);
+        }
+      }
+
+      // Should we restore the previous session (crash or some other event)
+      let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
+      if (ss.shouldRestore() || Services.prefs.getBoolPref("browser.startup.sessionRestore")) {
+        let bringFront = false;
+        // First open any commandline URLs, except the homepage
+        if (activationURI && !StartUI.isStartURI(activationURI)) {
+          this.addTab(activationURI, true, null, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP });
+        } else if (commandURL && !StartUI.isStartURI(commandURL)) {
+          this.addTab(commandURL, true);
+        } else {
+          bringFront = true;
+          // Initial window resizes call functions that assume a tab is in the tab list
+          // and restored tabs are added too late. We add a dummy to to satisfy the resize
+          // code and then remove the dummy after the session has been restored.
+          let dummy = this.addTab("about:blank", true);
+          let dummyCleanup = {
+            observe: function(aSubject, aTopic, aData) {
+              Services.obs.removeObserver(dummyCleanup, "sessionstore-windows-restored");
+              if (aData == "fail")
+                loadStartupURI();
+              dummy.chromeTab.ignoreUndo = true;
+              Browser.closeTab(dummy, { forceClose: true });
+            }
+          };
+          Services.obs.addObserver(dummyCleanup, "sessionstore-windows-restored", false);
+        }
+        ss.restoreLastSession(bringFront);
+      } else {
+        loadStartupURI();
+      }
+
+      // Broadcast a UIReady message so add-ons know we are finished with startup
+      let event = document.createEvent("Events");
+      event.initEvent("UIReady", true, false);
+      window.dispatchEvent(event);
+    }.bind(this));
   },
 
   quit: function quit() {
@@ -212,46 +214,7 @@ var Browser = {
     }
   },
 
-  _waitingToClose: false,
   closing: function closing() {
-    // If we are already waiting for the close prompt, don't show another
-    if (this._waitingToClose)
-      return false;
-
-    // Prompt if we have multiple tabs before closing window
-    let numTabs = this._tabs.length;
-    if (numTabs > 1) {
-      let shouldPrompt = Services.prefs.getBoolPref("browser.tabs.warnOnClose");
-      if (shouldPrompt) {
-        let prompt = Services.prompt;
-
-        // Default to true: if it were false, we wouldn't get this far
-        let warnOnClose = { value: true };
-
-        let messageBase = Strings.browser.GetStringFromName("tabs.closeWarning");
-        let message = PluralForm.get(numTabs, messageBase).replace("#1", numTabs);
-
-        let title = Strings.browser.GetStringFromName("tabs.closeWarningTitle");
-        let closeText = Strings.browser.GetStringFromName("tabs.closeButton");
-        let checkText = Strings.browser.GetStringFromName("tabs.closeWarningPromptMe");
-        let buttons = (prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_0) +
-                      (prompt.BUTTON_TITLE_CANCEL * prompt.BUTTON_POS_1);
-
-        this._waitingToClose = true;
-        let pressed = prompt.confirmEx(window, title, message, buttons, closeText, null, null, checkText, warnOnClose);
-        this._waitingToClose = false;
-
-        // Don't set the pref unless they press OK and it's false
-        let reallyClose = (pressed == 0);
-        if (reallyClose && !warnOnClose.value)
-          Services.prefs.setBoolPref("browser.tabs.warnOnClose", false);
-
-        // If we don't want to close, return now. If we are closing, continue with other housekeeping.
-        if (!reallyClose)
-          return false;
-      }
-    }
-
     // Figure out if there's at least one other browser window around.
     let lastBrowser = true;
     let e = Services.wm.getEnumerator("navigator:browser");
@@ -275,7 +238,7 @@ var Browser = {
 
   shutdown: function shutdown() {
     BrowserUI.uninit();
-    ContentAreaObserver.uninit();
+    ContentAreaObserver.shutdown();
 
     messageManager.removeMessageListener("MozScrolledAreaChanged", this);
     messageManager.removeMessageListener("Browser:ViewportMetadata", this);
@@ -290,12 +253,12 @@ var Browser = {
 
     var os = Services.obs;
     os.removeObserver(SessionHistoryObserver, "browser:purge-session-history");
-    os.removeObserver(ActivityObserver, "application-background", false);
-    os.removeObserver(ActivityObserver, "application-foreground", false);
-    os.removeObserver(ActivityObserver, "system-active", false);
-    os.removeObserver(ActivityObserver, "system-idle", false);
-    os.removeObserver(ActivityObserver, "system-display-on", false);
-    os.removeObserver(ActivityObserver, "system-display-off", false);
+    os.removeObserver(ActivityObserver, "application-background");
+    os.removeObserver(ActivityObserver, "application-foreground");
+    os.removeObserver(ActivityObserver, "system-active");
+    os.removeObserver(ActivityObserver, "system-idle");
+    os.removeObserver(ActivityObserver, "system-display-on");
+    os.removeObserver(ActivityObserver, "system-display-off");
 
     window.controllers.removeController(this);
     window.controllers.removeController(BrowserUI);
@@ -348,77 +311,80 @@ var Browser = {
    * Determine if the given URL is a shortcut/keyword and, if so, expand it
    * @param aURL String
    * @param aPostDataRef Out param contains any required post data for a search
-   * @returns the expanded shortcut, or the original URL if not a shortcut
+   * @return {Promise}
+   * @result the expanded shortcut, or the original URL if not a shortcut
    */
   getShortcutOrURI: function getShortcutOrURI(aURL, aPostDataRef) {
-    if (!aURL)
-      return aURL;
+    return Task.spawn(function() {
+      if (!aURL)
+        throw new Task.Result(aURL);
 
-    let shortcutURL = null;
-    let keyword = aURL;
-    let param = "";
+      let shortcutURL = null;
+      let keyword = aURL;
+      let param = "";
 
-    let offset = aURL.indexOf(" ");
-    if (offset > 0) {
-      keyword = aURL.substr(0, offset);
-      param = aURL.substr(offset + 1);
-    }
-
-    if (!aPostDataRef)
-      aPostDataRef = {};
-
-    let engine = Services.search.getEngineByAlias(keyword);
-    if (engine) {
-      let submission = engine.getSubmission(param);
-      aPostDataRef.value = submission.postData;
-      return submission.uri.spec;
-    }
-
-    try {
-      [shortcutURL, aPostDataRef.value] = PlacesUtils.getURLAndPostDataForKeyword(keyword);
-    } catch (e) {}
-
-    if (!shortcutURL)
-      return aURL;
-
-    let postData = "";
-    if (aPostDataRef.value)
-      postData = unescape(aPostDataRef.value);
-
-    if (/%s/i.test(shortcutURL) || /%s/i.test(postData)) {
-      let charset = "";
-      const re = /^(.*)\&mozcharset=([a-zA-Z][_\-a-zA-Z0-9]+)\s*$/;
-      let matches = shortcutURL.match(re);
-      if (matches)
-        [, shortcutURL, charset] = matches;
-      else {
-        // Try to get the saved character-set.
-        try {
-          // makeURI throws if URI is invalid.
-          // Will return an empty string if character-set is not found.
-          charset = PlacesUtils.history.getCharsetForURI(Util.makeURI(shortcutURL));
-        } catch (e) { dump("--- error " + e + "\n"); }
+      let offset = aURL.indexOf(" ");
+      if (offset > 0) {
+        keyword = aURL.substr(0, offset);
+        param = aURL.substr(offset + 1);
       }
 
-      let encodedParam = "";
-      if (charset)
-        encodedParam = escape(convertFromUnicode(charset, param));
-      else // Default charset is UTF-8
-        encodedParam = encodeURIComponent(param);
+      if (!aPostDataRef)
+        aPostDataRef = {};
 
-      shortcutURL = shortcutURL.replace(/%s/g, encodedParam).replace(/%S/g, param);
+      let engine = Services.search.getEngineByAlias(keyword);
+      if (engine) {
+        let submission = engine.getSubmission(param);
+        aPostDataRef.value = submission.postData;
+        throw new Task.Result(submission.uri.spec);
+      }
 
-      if (/%s/i.test(postData)) // POST keyword
-        aPostDataRef.value = getPostDataStream(postData, param, encodedParam, "application/x-www-form-urlencoded");
-    } else if (param) {
-      // This keyword doesn't take a parameter, but one was provided. Just return
-      // the original URL.
-      aPostDataRef.value = null;
+      try {
+        [shortcutURL, aPostDataRef.value] = PlacesUtils.getURLAndPostDataForKeyword(keyword);
+      } catch (e) {}
 
-      return aURL;
-    }
+      if (!shortcutURL)
+        throw new Task.Result(aURL);
 
-    return shortcutURL;
+      let postData = "";
+      if (aPostDataRef.value)
+        postData = unescape(aPostDataRef.value);
+
+      if (/%s/i.test(shortcutURL) || /%s/i.test(postData)) {
+        let charset = "";
+        const re = /^(.*)\&mozcharset=([a-zA-Z][_\-a-zA-Z0-9]+)\s*$/;
+        let matches = shortcutURL.match(re);
+        if (matches)
+          [, shortcutURL, charset] = matches;
+        else {
+          // Try to get the saved character-set.
+          try {
+            // makeURI throws if URI is invalid.
+            // Will return an empty string if character-set is not found.
+            charset = yield PlacesUtils.getCharsetForURI(Util.makeURI(shortcutURL));
+          } catch (e) { dump("--- error " + e + "\n"); }
+        }
+
+        let encodedParam = "";
+        if (charset)
+          encodedParam = escape(convertFromUnicode(charset, param));
+        else // Default charset is UTF-8
+          encodedParam = encodeURIComponent(param);
+
+        shortcutURL = shortcutURL.replace(/%s/g, encodedParam).replace(/%S/g, param);
+
+        if (/%s/i.test(postData)) // POST keyword
+          aPostDataRef.value = getPostDataStream(postData, param, encodedParam, "application/x-www-form-urlencoded");
+      } else if (param) {
+        // This keyword doesn't take a parameter, but one was provided. Just return
+        // the original URL.
+        aPostDataRef.value = null;
+
+        throw new Task.Result(aURL);
+      }
+
+      throw new Task.Result(shortcutURL);
+    });
   },
 
   /**
@@ -487,7 +453,7 @@ var Browser = {
 
   closeTab: function closeTab(aTab, aOptions) {
     let tab = aTab instanceof XULElement ? this.getTabFromChrome(aTab) : aTab;
-    if (!tab || !this._getNextTab(tab))
+    if (!tab || !this.getNextTab(tab))
       return;
 
     if (aOptions && "forceClose" in aOptions && aOptions.forceClose) {
@@ -503,7 +469,7 @@ var Browser = {
   },
 
   _doCloseTab: function _doCloseTab(aTab) {
-    let nextTab = this._getNextTab(aTab);
+    let nextTab = this.getNextTab(aTab);
     if (!nextTab)
        return;
 
@@ -529,14 +495,28 @@ var Browser = {
     container.dispatchEvent(event);
   },
 
-  _getNextTab: function _getNextTab(aTab) {
+  getNextTab: function getNextTab(aTab) {
     let tabIndex = this._tabs.indexOf(aTab);
     if (tabIndex == -1)
       return null;
 
-    let nextTab = this._selectedTab;
-    if (nextTab == aTab) {
-      nextTab = this.getTabAtIndex(tabIndex + 1) || this.getTabAtIndex(tabIndex - 1);
+    if (this._selectedTab == aTab || this._selectedTab.chromeTab.hasAttribute("closing")) {
+      let nextTabIndex = tabIndex + 1;
+      let nextTab = null;
+
+      while (nextTabIndex < this._tabs.length && (!nextTab || nextTab.chromeTab.hasAttribute("closing"))) {
+        nextTab = this.getTabAtIndex(nextTabIndex);
+        nextTabIndex++;
+      }
+
+      nextTabIndex = tabIndex - 1;
+      while (nextTabIndex >= 0 && (!nextTab || nextTab.chromeTab.hasAttribute("closing"))) {
+        nextTab = this.getTabAtIndex(nextTabIndex);
+        nextTabIndex--;
+      }
+
+      if (!nextTab || nextTab.chromeTab.hasAttribute("closing"))
+        return null;
 
       // If the next tab is not a sibling, switch back to the parent.
       if (aTab.owner && nextTab.owner != aTab.owner)
@@ -544,9 +524,11 @@ var Browser = {
 
       if (!nextTab)
         return null;
+
+      return nextTab;
     }
 
-    return nextTab;
+    return this._selectedTab;
   },
 
   get selectedTab() {
@@ -569,7 +551,6 @@ var Browser = {
 
     let isFirstTab = this._selectedTab == null;
     let lastTab = this._selectedTab;
-    let oldBrowser = lastTab ? lastTab._browser : null;
     let browser = tab.browser;
 
     this._selectedTab = tab;
@@ -777,9 +758,9 @@ var Browser = {
     zoomLevel = tab.clampZoomLevel(zoomLevel);
 
     let browserRect = browser.getBoundingClientRect();
-    let center = browser.transformClientToBrowser(browserRect.width / 2,
-                                                  browserRect.height / 2);
-    let rect = this._getZoomRectForPoint(center.x, center.y, zoomLevel);
+    let center = browser.ptClientToBrowser(browserRect.width / 2,
+                                           browserRect.height / 2);
+    let rect = this._getZoomRectForPoint(center.xPos, center.yPos, zoomLevel);
     AnimatedZoom.animateTo(rect);
   },
 
@@ -1278,14 +1259,12 @@ var PopupBlockerObserver = {
     if (!cBrowser.pageReport.reported) {
       if (Services.prefs.getBoolPref("privacy.popups.showBrowserMessage")) {
         var brandShortName = Strings.brand.GetStringFromName("brandShortName");
-        var message;
         var popupCount = cBrowser.pageReport.length;
 
         let strings = Strings.browser;
-        if (popupCount > 1)
-          message = strings.formatStringFromName("popupWarningMultiple", [brandShortName, popupCount], 2);
-        else
-          message = strings.formatStringFromName("popupWarning", [brandShortName], 1);
+        let message = PluralForm.get(popupCount, strings.GetStringFromName("popupWarning.message"))
+                                .replace("#1", brandShortName)
+                                .replace("#2", popupCount);
 
         var notificationBox = Browser.getNotificationBox();
         var notification = notificationBox.getNotificationWithValue("popup-blocked");
@@ -1615,8 +1594,10 @@ Tab.prototype = {
 
     let browser = this._browser = document.createElement("browser");
     browser.id = "browser-" + this._id;
-    browser.setAttribute("class", "viewable-width viewable-height");
     this._chromeTab.linkedBrowser = browser;
+
+    // let the content area manager know about this browser.
+    ContentAreaObserver.onBrowserCreated(browser);
 
     browser.setAttribute("type", "content");
 
@@ -1830,197 +1811,4 @@ function rendererFactory(aBrowser, aCanvas) {
   }
 
   return wrapper;
-};
-
-var ContentAreaObserver = {
-  styles: {},
-  
-  // In desktop mode avoids breaking window dims before
-  // the desktop window is displayed.
-  get width() { return window.innerWidth || 1366; },
-  get height() { return window.innerHeight || 768; },
-
-  get contentHeight() {
-    return this._getContentHeightForWindow(this.height);
-  },
-
-  get contentTop () {
-    return Elements.toolbar.getBoundingClientRect().bottom;
-  },
-
-  get viewableHeight() {
-    return this._getViewableHeightForContent(this.contentHeight);
-  },
-
-  get isKeyboardOpened() { return MetroUtils.keyboardVisible; },
-  get hasVirtualKeyboard() { return true; },
-
-  init: function cao_init() {
-    window.addEventListener("resize", this, false);
-
-    let os = Services.obs;
-    os.addObserver(this, "metro_softkeyboard_shown", false);
-    os.addObserver(this, "metro_softkeyboard_hidden", false);
-
-    // Create styles for the following class names.  The 'width' and 'height'
-    // properties of these styles are updated whenever various parts of the UI
-    // are resized.
-    //
-    // * window-width, window-height: The innerWidth/innerHeight of the main
-    //     chrome window.
-    // * content-width, content-height: The area of the window dedicated to web
-    //     content; this is equal to the innerWidth/Height minus any toolbars
-    //     or similar chrome.
-    // * viewable-width, viewable-height: The portion of the content area that
-    //     is not obscured by the on-screen keyboard.
-    let stylesheet = document.styleSheets[0];
-    for (let style of ["window-width", "window-height",
-                       "content-height", "content-width",
-                       "viewable-height", "viewable-width"]) {
-      let index = stylesheet.insertRule("." + style + " {}", stylesheet.cssRules.length);
-      this.styles[style] = stylesheet.cssRules[index].style;
-    }
-    this.update();
-  },
-
-  uninit: function cao_uninit() {
-    let os = Services.obs;
-    os.removeObserver(this, "metro_softkeyboard_shown");
-    os.removeObserver(this, "metro_softkeyboard_hidden");
-  },
-
-  update: function cao_update (width, height) {
-    let oldWidth = parseInt(this.styles["window-width"].width);
-    let oldHeight = parseInt(this.styles["window-height"].height);
-
-    let newWidth = width || this.width;
-    let newHeight = height || this.height;
-
-    if (newHeight == oldHeight && newWidth == oldWidth)
-      return;
-
-    this.styles["window-width"].width = newWidth + "px";
-    this.styles["window-width"].maxWidth = newWidth + "px";
-    this.styles["window-height"].height = newHeight + "px";
-    this.styles["window-height"].maxHeight = newHeight + "px";
-
-    let isStartup = !oldHeight && !oldWidth;
-    for (let i = Browser.tabs.length - 1; i >=0; i--) {
-      let tab = Browser.tabs[i];
-      let oldContentWindowWidth = tab.browser.contentWindowWidth;
-      tab.updateViewportSize(newWidth, newHeight); // contentWindowWidth may change here.
-      
-      // Don't bother updating the zoom level on startup
-      if (!isStartup) {
-        // If the viewport width is still the same, the page layout has not
-        // changed, so we can keep keep the same content on-screen.
-        if (tab.browser.contentWindowWidth == oldContentWindowWidth)
-          tab.restoreViewportPosition(oldWidth, newWidth);
-
-        tab.updateDefaultZoomLevel();
-      }
-    }
-
-    // We want to keep the current focused element into view if possible
-    if (!isStartup) {
-      let currentElement = document.activeElement;
-      let [scrollbox, scrollInterface] = ScrollUtils.getScrollboxFromElement(currentElement);
-      if (scrollbox && scrollInterface && currentElement && currentElement != scrollbox) {
-        // retrieve the direct child of the scrollbox
-        while (currentElement && currentElement.parentNode != scrollbox)
-          currentElement = currentElement.parentNode;
-  
-        setTimeout(function() { scrollInterface.ensureElementIsVisible(currentElement) }, 0);
-      }
-    }
-
-    this.updateContentArea(newWidth, this._getContentHeightForWindow(newHeight));
-    this._fire("SizeChanged");
-  },
-
-  updateContentArea: function cao_updateContentArea (width, height) {
-    let oldHeight = parseInt(this.styles["content-height"].height);
-    let oldWidth = parseInt(this.styles["content-width"].width);
-
-    let newWidth = width || this.width;
-    let newHeight = height || this.contentHeight;
-
-    if (newHeight == oldHeight && newWidth == oldWidth)
-      return;
-
-    this.styles["content-height"].height = newHeight + "px";
-    this.styles["content-height"].maxHeight = newHeight + "px";
-    this.styles["content-width"].width = newWidth + "px";
-    this.styles["content-width"].maxWidth = newWidth + "px";
-
-    this.updateViewableArea(newWidth, this._getViewableHeightForContent(newHeight));
-    this._fire("ContentSizeChanged");
-  },
-
-  updateViewableArea: function cao_updateViewableArea (width, height) {
-    let oldHeight = parseInt(this.styles["viewable-height"].height);
-    let oldWidth = parseInt(this.styles["viewable-width"].width);
-
-    let newWidth = width || this.width;
-    let newHeight = height || this.viewableHeight;
-
-    if (newHeight == oldHeight && newWidth == oldWidth)
-      return;
-
-    this.styles["viewable-height"].height = newHeight + "px";
-    this.styles["viewable-height"].maxHeight = newHeight + "px";
-    this.styles["viewable-width"].width = newWidth + "px";
-    this.styles["viewable-width"].maxWidth = newWidth + "px";
-
-    this._fire("ViewableSizeChanged");
-  },
-
-  observe: function cao_observe(aSubject, aTopic, aData) {
-    switch (aTopic) {
-      case "metro_softkeyboard_shown":
-      case "metro_softkeyboard_hidden": {
-        let event = document.createEvent("UIEvents");
-        let eventDetails = {
-          opened: aTopic == "metro_softkeyboard_shown",
-          details: aData
-        };
-
-        event.initUIEvent("KeyboardChanged", true, false, window, eventDetails);
-        window.dispatchEvent(event);
-
-        this.updateViewableArea();
-        break;
-      }
-    };
-  },
-
-  handleEvent: function cao_handleEvent(anEvent) {
-    switch (anEvent.type) {
-      case 'resize':
-        if (anEvent.target != window)
-          return;
-
-        ContentAreaObserver.update();
-        break;
-    }
-  },
-
-  _fire: function (aName) {
-    // setTimeout(callback, 0) to ensure the resize event handler dispatch is finished
-    setTimeout(function() {
-      let event = document.createEvent("Events");
-      event.initEvent(aName, true, false);
-      Elements.browsers.dispatchEvent(event);
-    }, 0);
-  },
-
-  _getContentHeightForWindow: function (windowHeight) {
-    let contextUIHeight = BrowserUI.isTabsOnly ? Elements.toolbar.getBoundingClientRect().bottom : 0;
-    return windowHeight - contextUIHeight;
-  },
-
-  _getViewableHeightForContent: function (contentHeight) {
-    let keyboardHeight = MetroUtils.keyboardHeight;
-    return contentHeight - keyboardHeight;
-  }
 };

@@ -118,7 +118,7 @@ namespace
 // If several of these objects are allocated on the stack, the update will not
 // be performed until the last object for a given nsSMILTimedElement is
 // destroyed.
-class NS_STACK_CLASS nsSMILTimedElement::AutoIntervalUpdateBatcher
+class MOZ_STACK_CLASS nsSMILTimedElement::AutoIntervalUpdateBatcher
 {
 public:
   AutoIntervalUpdateBatcher(nsSMILTimedElement& aTimedElement)
@@ -442,7 +442,7 @@ nsSMILTimedElement::RemoveInstanceTime(nsSMILInstanceTime* aInstanceTime,
 
 namespace
 {
-  class NS_STACK_CLASS RemoveByCreator
+  class MOZ_STACK_CLASS RemoveByCreator
   {
   public:
     RemoveByCreator(const nsSMILTimeValueSpec* aCreator) : mCreator(aCreator)
@@ -485,8 +485,8 @@ void
 nsSMILTimedElement::SetTimeClient(nsSMILAnimationFunction* aClient)
 {
   //
-  // No need to check for NULL. A NULL parameter simply means to remove the
-  // previous client which we do by setting to NULL anyway.
+  // No need to check for nullptr. A nullptr parameter simply means to remove the
+  // previous client which we do by setting to nullptr anyway.
   //
 
   mClient = aClient;
@@ -1305,7 +1305,7 @@ namespace
   // pointers instead.
   // Without this we'd have to either templatize ClearSpecs and all its callers
   // or pass bool flags around to specify which removal function to use here.
-  class NS_STACK_CLASS RemoveByFunction
+  class MOZ_STACK_CLASS RemoveByFunction
   {
   public:
     RemoveByFunction(nsSMILTimedElement::RemovalTestFunction aFunction)
@@ -1383,7 +1383,7 @@ nsSMILTimedElement::ApplyEarlyEnd(const nsSMILTimeValue& aSampleTime)
 
 namespace
 {
-  class NS_STACK_CLASS RemoveReset
+  class MOZ_STACK_CLASS RemoveReset
   {
   public:
     RemoveReset(const nsSMILInstanceTime* aCurrentIntervalBegin)
@@ -1542,7 +1542,7 @@ nsSMILTimedElement::FilterIntervals()
 
 namespace
 {
-  class NS_STACK_CLASS RemoveFiltered
+  class MOZ_STACK_CLASS RemoveFiltered
   {
   public:
     RemoveFiltered(nsSMILTimeValue aCutoff) : mCutoff(aCutoff) { }
@@ -1562,7 +1562,7 @@ namespace
     nsSMILTimeValue mCutoff;
   };
 
-  class NS_STACK_CLASS RemoveBelowThreshold
+  class MOZ_STACK_CLASS RemoveBelowThreshold
   {
   public:
     RemoveBelowThreshold(uint32_t aThreshold,

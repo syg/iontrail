@@ -2394,7 +2394,8 @@ class _FindFriends(ipdl.ast.Visitor):
 
     def findFriends(self, ptype):
         self.mytype = ptype
-        self.walkDownTheProtocolTree(ptype.toplevel())
+        for toplvl in ptype.toplevels():
+            self.walkDownTheProtocolTree(toplvl);
         return self.friends
 
     # TODO could make this into a _iterProtocolTreeHelper ...
@@ -3851,6 +3852,11 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
 
         # bool DeallocShmem(Shmem& mem):
         #   bool ok = DestroySharedMemory(mem);
+        ##ifdef DEBUG
+        #   if (!ok) {
+        #     NS_RUNTIMEABORT("bad Shmem");
+        #   }
+        ##endif // DEBUG
         #   mem.forget();
         #   return ok;
         deallocShmem = MethodDefn(MethodDecl(
@@ -3859,10 +3865,16 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
             ret=Type.BOOL))
         okvar = ExprVar('ok')
 
+        ifbad = StmtIf(ExprNot(okvar))
+        ifbad.addifstmt(_runtimeAbort('bad Shmem'))
+
         deallocShmem.addstmts([
             StmtDecl(Decl(Type.BOOL, okvar.name),
                      init=ExprCall(p.destroySharedMemory(),
                                    args=[ memvar ])),
+            CppDirective('ifdef', 'DEBUG'),
+            ifbad,
+            CppDirective('endif', '// DEBUG'),
             StmtExpr(_shmemForget(memvar)),
             StmtReturn(okvar)
         ])
@@ -4932,6 +4944,7 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
                 args=[ ExprLiteral.String(md.prettyMsgName(self.protocol.name
                                                            +'::')) ])),
             self.logMessage(md, md.msgCast(msgexpr), 'Received '),
+            self.profilerLabel('Recv', md.decl.progname),
             Whitespace.NL
         ])
 
@@ -4986,13 +4999,13 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
 
         return stmts
 
-
     def sendAsync(self, md, msgexpr, actor=None):
         sendok = ExprVar('__sendok')
         return (
             sendok,
             ([ Whitespace.NL,
-               self.logMessage(md, msgexpr, 'Sending ') ]
+               self.logMessage(md, msgexpr, 'Sending '),
+               self.profilerLabel('AsyncSend', md.decl.progname) ]
             + self.transition(md, 'out', actor)
             + [ Whitespace.NL,
                 StmtDecl(Decl(Type.BOOL, sendok.name),
@@ -5008,7 +5021,8 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
         return (
             sendok,
             ([ Whitespace.NL,
-               self.logMessage(md, msgexpr, 'Sending ') ]
+               self.logMessage(md, msgexpr, 'Sending '),
+               self.profilerLabel('Send', md.decl.progname) ]
             + self.transition(md, 'out', actor)
             + [ Whitespace.NL,
                 StmtDecl(
@@ -5083,6 +5097,11 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
                 ExprSelect(msgptr, '->', 'Log'),
                 args=[ ExprLiteral.String('['+ actorname +'] '+ pfx),
                        ExprVar('stderr') ])) ])
+
+    def profilerLabel(self, tag, msgname):
+        return StmtExpr(ExprCall(ExprVar('PROFILER_LABEL'),
+                                 [ ExprLiteral.String('IPDL::' + self.protocol.name),
+                                   ExprLiteral.String(tag + msgname) ]))
 
     def saveActorId(self, md):
         idvar = ExprVar('__id')

@@ -647,10 +647,24 @@ LIRGenerator::visitTest(MTest *test)
 }
 
 bool
+LIRGenerator::visitFunctionDispatch(MFunctionDispatch *ins)
+{
+    LFunctionDispatch *lir = new LFunctionDispatch(useRegister(ins->input()));
+    return add(lir, ins);
+}
+
+bool
+LIRGenerator::visitTypeObjectDispatch(MTypeObjectDispatch *ins)
+{
+    LTypeObjectDispatch *lir = new LTypeObjectDispatch(useRegister(ins->input()), temp());
+    return add(lir, ins);
+}
+
+bool
 LIRGenerator::visitPolyInlineDispatch(MPolyInlineDispatch *ins)
 {
     LDefinition tempDef = LDefinition::BogusTemp();
-    if (ins->inlinePropertyTable())
+    if (ins->propTable())
         tempDef = temp();
     LPolyInlineDispatch *lir = new LPolyInlineDispatch(useRegister(ins->input()), tempDef);
     return add(lir, ins);
@@ -862,14 +876,12 @@ LIRGenerator::visitTypeOf(MTypeOf *ins)
 bool
 LIRGenerator::visitToId(MToId *ins)
 {
-    LToIdV *lir = new LToIdV();
-    if (!useBoxAtStart(lir, LToIdV::Object, ins->lhs()))
+    LToIdV *lir = new LToIdV(tempFloat());
+    if (!useBox(lir, LToIdV::Object, ins->lhs()))
         return false;
-    if (!useBoxAtStart(lir, LToIdV::Index, ins->rhs()))
+    if (!useBox(lir, LToIdV::Index, ins->rhs()))
         return false;
-    if (!defineReturn(lir, ins))
-        return false;
-    return assignSafepoint(lir, ins);
+    return defineBox(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -2138,7 +2150,7 @@ LIRGenerator::visitGetPropertyCache(MGetPropertyCache *ins)
         return assignSafepoint(lir, ins);
     }
 
-    LGetPropertyCacheT *lir = new LGetPropertyCacheT(useRegister(ins->object()));
+    LGetPropertyCacheT *lir = newLGetPropertyCacheT(ins);
     if (!define(lir, ins))
         return false;
     return assignSafepoint(lir, ins);
@@ -2762,4 +2774,3 @@ LIRGenerator::generate()
     JS_ASSERT(prepareCallStack_.empty());
     return true;
 }
-

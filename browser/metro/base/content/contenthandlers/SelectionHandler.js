@@ -11,6 +11,7 @@ dump("### SelectionHandler.js loaded\n");
   http://mxr.mozilla.org/mozilla-central/source/content/base/public/nsISelectionPrivate.idl
   http://mxr.mozilla.org/mozilla-central/source/content/base/public/nsISelectionController.idl
   http://mxr.mozilla.org/mozilla-central/source/content/base/public/nsISelection.idl
+  http://mxr.mozilla.org/mozilla-central/source/dom/interfaces/core/nsIDOMDocument.idl#372
     rangeCount
     getRangeAt
     containsNode
@@ -27,18 +28,13 @@ dump("### SelectionHandler.js loaded\n");
     getClientRect
   http://mxr.mozilla.org/mozilla-central/source/layout/generic/nsFrameSelection.h
   http://mxr.mozilla.org/mozilla-central/source/editor/idl/nsIEditor.idl
-
-  nsIDOMCaretPosition - not implemented
-
-  TODO:
-  - window resize
-  - typing with selection in text input
-  - magnetic monocles should snap to sentence start/end
-  - sub frames:
-    1) general testing
-    2) sub frames scroll
+  http://mxr.mozilla.org/mozilla-central/source/dom/interfaces/base/nsIFocusManager.idl
 
 */
+
+// selection node parameters for various apis
+const kSelectionNodeAnchor = 1;
+const kSelectionNodeFocus = 2;
 
 var SelectionHandler = {
   _debugEvents: false,
@@ -49,7 +45,6 @@ var SelectionHandler = {
   _contentOffset: { x:0, y:0 },
   _domWinUtils: null,
   _selectionMoveActive: false,
-  _lastMarker: "",
   _debugOptions: { dumpRanges: false, displayRanges: false },
   _snap: true,
 
@@ -62,9 +57,13 @@ var SelectionHandler = {
     addMessageListener("Browser:SelectionMoveEnd", this);
     addMessageListener("Browser:SelectionUpdate", this);
     addMessageListener("Browser:SelectionClose", this);
-    addMessageListener("Browser:SelectionClear", this);
     addMessageListener("Browser:SelectionCopy", this);
     addMessageListener("Browser:SelectionDebug", this);
+    addMessageListener("Browser:CaretAttach", this);
+    addMessageListener("Browser:CaretMove", this);
+    addMessageListener("Browser:CaretUpdate", this);
+    addMessageListener("Browser:SelectionSwitchMode", this);
+    addMessageListener("Browser:RepositionInfoRequest", this);
   },
 
   shutdown: function shutdown() {
@@ -76,13 +75,25 @@ var SelectionHandler = {
     removeMessageListener("Browser:SelectionMoveEnd", this);
     removeMessageListener("Browser:SelectionUpdate", this);
     removeMessageListener("Browser:SelectionClose", this);
-    removeMessageListener("Browser:SelectionClear", this);
     removeMessageListener("Browser:SelectionCopy", this);
     removeMessageListener("Browser:SelectionDebug", this);
+    removeMessageListener("Browser:CaretAttach", this);
+    removeMessageListener("Browser:CaretMove", this);
+    removeMessageListener("Browser:CaretUpdate", this);
+    removeMessageListener("Browser:SelectionSwitchMode", this);
+    removeMessageListener("Browser:RepositionInfoRequest", this);
   },
 
-  isActive: function isActive() {
-    return (this._contentWindow != null);
+  /*************************************************
+   * Properties
+   */
+
+  get isActive() {
+    return !!this._targetElement;
+  },
+
+  get targetIsEditable() {
+    return this._targetIsEditable || false;
   },
 
   /*
@@ -90,7 +101,6 @@ var SelectionHandler = {
    * SelectionMoveEnd event is received. Typically you would disable
    * snap when zoom is < 1.0 for precision selection.
    */
-
   get snap() {
     return this._snap;
   },
@@ -105,7 +115,7 @@ var SelectionHandler = {
   _onSelectionStart: function _onSelectionStart(aX, aY) {
     // Init content window information
     if (!this._initTargetInfo(aX, aY)) {
-      this._onFail("failed to get frame offset");
+      this._onFail("failed to get target information");
       return;
     }
 
@@ -137,6 +147,39 @@ var SelectionHandler = {
   },
 
   /*
+   * Switch selection modes. Currently we only support switching
+   * from "caret" to "selection".
+   */
+  _onSwitchMode: function _onSwitchMode(aMode, aMarker, aX, aY) {
+    if (aMode != "selection") {
+      this._onFail("unsupported mode switch");
+      return;
+    }
+    
+    // Sanity check to be sure we are initialized
+    if (!this._targetElement) {
+      this._onFail("not initialized");
+      return;
+    }
+
+    // Similar to _onSelectionStart - we need to create initial selection
+    // but without the initialization bits.
+    let framePoint = this._clientPointToFramePoint({ xPos: aX, yPos: aY });
+    if (!this._domWinUtils.selectAtPoint(framePoint.xPos, framePoint.yPos,
+                                         Ci.nsIDOMWindowUtils.SELECT_CHARACTER)) {
+      this._onFail("failed to set selection at point");
+      return;
+    }
+
+    // We bail if things get out of sync here implying we missed a message.
+    this._selectionMoveActive = true;
+
+    // Update the position of the selection marker that is *not*
+    // being dragged.
+    this._updateSelectionUI(aMarker == "end", aMarker == "start");
+  },
+
+  /*
    * Selection monocle start move event handler
    */
   _onSelectionMoveStart: function _onSelectionMoveStart(aMsg) {
@@ -152,6 +195,14 @@ var SelectionHandler = {
 
     // We bail if things get out of sync here implying we missed a message.
     this._selectionMoveActive = true;
+
+    if (this._targetIsEditable) {
+      // If we're coming out of an out-of-bounds scroll, the node the user is
+      // trying to drag may be hidden (the monocle will be pegged to the edge
+      // of the edit). Make sure the node the user wants to move is visible
+      // and has focus.
+      this._updateInputFocus(aMsg.change);
+    }
 
     // Update the position of our selection monocles
     this._updateSelectionUI(true, true);
@@ -208,10 +259,72 @@ var SelectionHandler = {
     
     // _handleSelectionPoint may set a scroll timer, so this must
     // be reset after the last call.
-    this.clearTimers();
+    this._clearTimers();
 
     // Update the position of our selection monocles
     this._updateSelectionUI(true, true);
+  },
+
+   /*
+    * _onCaretAttach - called by SelectionHelperUI when the user taps in a
+    * form input. Initializes SelectionHandler, updates the location of the
+    * caret, and messages back with current monocle position information.
+    *
+    * @param aX, aY tap location in client coordinates.
+    */
+  _onCaretAttach: function _onCaretAttach(aX, aY) {
+    // Init content window information
+    if (!this._initTargetInfo(aX, aY)) {
+      this._onFail("failed to get target information");
+      return;
+    }
+
+    // This should never happen, but we check to make sure
+    if (!this._targetIsEditable || !Util.isTextInput(this._targetElement)) {
+      this._onFail("Unexpected, coordiates didn't find a text input element.");
+      return;
+    }
+
+    // Locate and sanity check the caret position
+    let selection = this._getSelection();
+    if (!selection || !selection.isCollapsed) {
+      this._onFail("Unexpected, No selection or selection is not collapsed.");
+      return;
+    }
+
+    // Update the position of our selection monocles
+    this._updateSelectionUI(false, false, true);
+  },
+
+   /*
+    * _onCaretPositionUpdate - sets the current caret location based on
+    * a client coordinates. Messages back with updated monocle position
+    * information.
+    *
+    * @param aX, aY drag location in client coordinates.
+    */
+  _onCaretPositionUpdate: function _onCaretPositionUpdate(aX, aY) {
+    this._onCaretMove(aX, aY);
+
+    // Update the position of our selection monocles
+    this._updateSelectionUI(false, false, true);
+  },
+
+   /*
+    * _onCaretMove - updates the current caret location based on a client
+    * coordinates.
+    *
+    * @param aX, aY drag location in client coordinates.
+    */
+  _onCaretMove: function _onCaretMove(aX, aY) {
+    if (!this._targetIsEditable) {
+      this._onFail("Unexpected, caret position isn't supported with non-inputs.");
+      return;
+    }
+    let cp = this._contentWindow.document.caretPositionFromPoint(aX, aY);
+    let input = cp.offsetNode;
+    let offset = cp.offset;
+    input.selectionStart = input.selectionEnd = offset;
   },
 
   /*
@@ -227,14 +340,14 @@ var SelectionHandler = {
       yPos: aMsg.yPos,
     };
 
-    let tapInSelection = (tap.xPos > this._cache.rect.left &&
-                          tap.xPos < this._cache.rect.right) &&
-                         (tap.yPos > this._cache.rect.top &&
-                          tap.yPos < this._cache.rect.bottom);
+    let tapInSelection = (tap.xPos > this._cache.selection.left &&
+                          tap.xPos < this._cache.selection.right) &&
+                         (tap.yPos > this._cache.selection.top &&
+                          tap.yPos < this._cache.selection.bottom);
     // Util.dumpLn(tapInSelection,
-    //             tap.xPos, tap.yPos, "|", this._cache.rect.left,
-    //             this._cache.rect.right, this._cache.rect.top,
-    //             this._cache.rect.bottom);
+    //             tap.xPos, tap.yPos, "|", this._cache.selection.left,
+    //             this._cache.selection.right, this._cache.selection.top,
+    //             this._cache.selection.bottom);
     let success = false;
     let selectedText = this._getSelectedText();
     if (tapInSelection && selectedText.length) {
@@ -248,16 +361,14 @@ var SelectionHandler = {
 
   /*
    * Selection close event handler
+   *
+   * @param aClearSelection requests that selection be cleared.
    */
-  _onSelectionClose: function _onSelectionClose() {
+  _onSelectionClose: function _onSelectionClose(aClearSelection) {
+    if (aClearSelection) {
+      this._clearSelection();
+    }
     this._closeSelection();
-  },
-
-  /*
-   * Selection clear event handler
-   */
-  _onSelectionClear: function _onSelectionClear() {
-    this._clearSelection();
   },
 
   /*
@@ -294,6 +405,37 @@ var SelectionHandler = {
     this._debugEvents = aMsg.dumpEvents;
   },
 
+  /*
+   * _repositionInfoRequest - fired at us by ContentAreaObserver when the
+   * soft keyboard is being displayed. CAO wants to make a decision about
+   * whether the browser deck needs repositioning.
+   */
+  _repositionInfoRequest: function _repositionInfoRequest(aJsonMsg) {
+    if (!this.isActive) {
+      Util.dumpLn("unexpected: repositionInfoRequest but selection isn't active.");
+      sendAsyncMessage("Content:RepositionInfoResponse", { reposition: false });
+      return;
+    }
+    
+    if (!this.targetIsEditable) {
+      Util.dumpLn("unexpected: repositionInfoRequest but targetIsEditable is false.");
+      sendAsyncMessage("Content:RepositionInfoResponse", { reposition: false });
+    }
+    
+    let result = this._calcNewContentPosition(aJsonMsg.viewHeight);
+
+    // no repositioning needed
+    if (result == 0) {
+      sendAsyncMessage("Content:RepositionInfoResponse", { reposition: false });
+      return;
+    }
+
+    sendAsyncMessage("Content:RepositionInfoResponse", {
+      reposition: true,
+      raiseContent: result,
+    });
+  },
+
   /*************************************************
    * Selection helpers
    */
@@ -304,7 +446,7 @@ var SelectionHandler = {
    * Clear existing selection if it exists and reset our internla state.
    */
   _clearSelection: function _clearSelection() {
-    this.clearTimers();
+    this._clearTimers();
     if (this._contentWindow) {
       let selection = this._getSelection();
       if (selection)
@@ -323,32 +465,53 @@ var SelectionHandler = {
    * Shuts SelectionHandler down.
    */
   _closeSelection: function _closeSelection() {
-    this.clearTimers();
+    this._clearTimers();
     this._cache = null;
     this._contentWindow = null;
+    this._targetElement = null;
     this.selectedText = "";
     this._selectionMoveActive = false;
+    this._contentOffset = null;
+    this._domWinUtils = null;
+    this._targetIsEditable = false;
   },
 
   /*
-   * Informs SelectionHelperUI of the current selection start and end position
+   * _updateSelectionUI
+   *
+   * Informs SelectionHelperUI about selection marker position
    * so that our selection monocles can be positioned properly.
+   *
+   * @param aUpdateStart bool update start marker position
+   * @param aUpdateEnd bool update end marker position
+   * @param aUpdateCaret bool update caret marker position, can be
+   * undefined, defaults to false.
    */
-  _updateSelectionUI: function _updateSelectionUI(aUpdateStart, aUpdateEnd) {
+  _updateSelectionUI: function _updateSelectionUI(aUpdateStart, aUpdateEnd,
+                                                  aUpdateCaret) {
     let selection = this._getSelection();
 
     // If the range didn't have any text, let's bail
-    if (!selection || !selection.toString().trim().length) {
-      this._onFail("no text was present in the current selection");
+    if (!selection) {
+      this._onFail("no selection was present");
       return;
     }
 
     // Updates this._cache content selection position data which we send over
-    // to SelectionHelperUI.
-    this._updateUIMarkerRects(selection);
+    // to SelectionHelperUI. Note updateUIMarkerRects will fail if there isn't
+    // any selection in the page. This can happen when we start a monocle drag
+    // but haven't dragged enough to create selection. Just return.
+    try {
+      this._updateUIMarkerRects(selection);
+    } catch (ex) {
+      Util.dumpLn("_updateUIMarkerRects:", ex.message);
+      return;
+    }
 
     this._cache.updateStart = aUpdateStart;
     this._cache.updateEnd = aUpdateEnd;
+    this._cache.updateCaret = aUpdateCaret || false;
+    this._cache.targetIsEditable = this._targetIsEditable;
 
     // Get monocles positioned correctly
     sendAsyncMessage("Content:SelectionRange", this._cache);
@@ -372,17 +535,7 @@ var SelectionHandler = {
     this._contentWindow = contentWindow;
     this._contentOffset = offset;
     this._domWinUtils = utils;
-    this._targetIsEditable = false;
-    if (this._isTextInput(this._targetElement)) {
-      this._targetIsEditable = true;
-      // Since we have an overlay, focus will not get set, so set it. There
-      // are ways around this if this causes trouble - we have the selection
-      // controller, so we can turn selection display on manually. (Selection
-      // display is setup on edits when focus changes.) I think web pages will
-      // prefer that focus be set when we are interacting with selection in
-      // the element.
-      this._targetElement.focus();
-    }
+    this._targetIsEditable = this._isTextInput(this._targetElement);
     return true;
   },
 
@@ -394,12 +547,14 @@ var SelectionHandler = {
    * SelectionHelperUI.
    */
   _updateUIMarkerRects: function _updateUIMarkerRects(aSelection) {
-    this._cache = this._extractClientRectFromRange(aSelection.getRangeAt(0));
+    this._cache = this._extractUIRects(aSelection.getRangeAt(0));
     if (this. _debugOptions.dumpRanges)  {
        Util.dumpLn("start:", "(" + this._cache.start.xPos + "," +
                    this._cache.start.yPos + ")");
        Util.dumpLn("end:", "(" + this._cache.end.xPos + "," +
                    this._cache.end.yPos + ")");
+       Util.dumpLn("caret:", "(" + this._cache.caret.xPos + "," +
+                   this._cache.caret.yPos + ")");
     }
     this._restrictSelectionRectToEditBounds();
   },
@@ -417,19 +572,27 @@ var SelectionHandler = {
       this._cache.start.xPos = bounds.left;
     if (this._cache.end.xPos < bounds.left)
       this._cache.end.xPos = bounds.left;
+    if (this._cache.caret.xPos < bounds.left)
+      this._cache.caret.xPos = bounds.left;
     if (this._cache.start.xPos > bounds.right)
       this._cache.start.xPos = bounds.right;
     if (this._cache.end.xPos > bounds.right)
       this._cache.end.xPos = bounds.right;
+    if (this._cache.caret.xPos > bounds.right)
+      this._cache.caret.xPos = bounds.right;
 
     if (this._cache.start.yPos < bounds.top)
       this._cache.start.yPos = bounds.top;
     if (this._cache.end.yPos < bounds.top)
       this._cache.end.yPos = bounds.top;
+    if (this._cache.caret.yPos < bounds.top)
+      this._cache.caret.yPos = bounds.top;
     if (this._cache.start.yPos > bounds.bottom)
       this._cache.start.yPos = bounds.bottom;
     if (this._cache.end.yPos > bounds.bottom)
       this._cache.end.yPos = bounds.bottom;
+    if (this._cache.caret.yPos > bounds.bottom)
+      this._cache.caret.yPos = bounds.bottom;
   },
 
   /*
@@ -460,63 +623,16 @@ var SelectionHandler = {
     }
 
     // Adjust our y position up such that we are sending coordinates on
-    // the text line vs. below it where the monocle is positioned. This
-    // applies to free floating text areas. For text inputs we'll constrain
-    // coordinates further below.
+    // the text line vs. below it where the monocle is positioned.
     let halfLineHeight = this._queryHalfLineHeight(aMarker, selection);
     clientPoint.yPos -= halfLineHeight;
 
+    // Modify selection based on monocle movement
     if (this._targetIsEditable) {
-      // Check to see if we are beyond the bounds of selection in a input
-      // control. If we are we want to add selection and scroll the added
-      // selection into view.
-      let result = this.updateTextEditSelection(clientPoint);
-
-      // If we're targeting a text input of any kind, make sure clientPoint
-      // is contained within the bounds of the text control. For example, if
-      // a user drags up too close to an upper bounds, selectAtPoint might
-      // select the content above the control. This looks crappy and breaks
-      // our selection rect management.
-      clientPoint =
-       this._constrainPointWithinControl(clientPoint, halfLineHeight);
-
-      // If result.trigger is true, the monocle is outside the bounds of the
-      // control. If it's false, fall through to our additive text selection
-      // below.
-      if (result.trigger) {
-        // _handleSelectionPoint is triggered by input movement, so if we've
-        // tested positive for out-of-bounds scrolling here, we need to set a
-        // recurring timer to keep the expected selection behavior going as
-        // long as the user keeps the monocle out of bounds.
-        if (!this._scrollTimer)
-          this._scrollTimer = new Util.Timeout();
-        this._setTextEditUpdateInterval(result.speed);
-
-        // Smooth the selection
-        this._setContinuousSelection();
-
-        // Update the other monocle's position if we've dragged off to one side
-        this._updateSelectionUI(result.start, result.end);
-
-        return;
-      }
-    }
-
-    this._lastMarker = aMarker;
-
-    // If we aren't out-of-bounds, clear the scroll timer if it exists.
-    this.clearTimers();
-
-    // Adjusts the selection based on monocle movement
-    this._adjustSelection(aMarker, clientPoint, aEndOfSelection);
-
-    // Update the other monocle's position. We do this because the dragging
-    // monocle may reset the static monocle to a new position if the dragging
-    // monocle drags ahead or behind the other.
-    if (aMarker == "start") {
-      this._updateSelectionUI(false, true);
+      this._adjustEditableSelection(aMarker, clientPoint,
+                                    halfLineHeight, aEndOfSelection);
     } else {
-      this._updateSelectionUI(true, false);
+      this._adjustSelection(aMarker, clientPoint, aEndOfSelection);
     }
   },
 
@@ -525,6 +641,59 @@ var SelectionHandler = {
    */
 
   /*
+   * _adjustEditableSelection
+   *
+   * Based on a monocle marker and position, adds or subtracts from the
+   * existing selection in editable controls. Handles auto-scroll as well.
+   *
+   * @param the marker currently being manipulated
+   * @param aAdjustedClientPoint client point adjusted for line height.
+   * @param aHalfLineHeight half line height in pixels
+   * @param aEndOfSelection indicates if this is the end of a selection
+   * move, in which case we may want to snap to the end of a word or
+   * sentence.
+   */
+  _adjustEditableSelection: function _adjustEditableSelection(aMarker,
+                                                              aAdjustedClientPoint,
+                                                              aHalfLineHeight,
+                                                              aEndOfSelection) {
+    // Test to see if we need to handle auto-scroll in cases where the
+    // monocle is outside the bounds of the control. This also handles
+    // adjusting selection if out-of-bounds is true.
+    let result = this.updateTextEditSelection(aAdjustedClientPoint);
+
+    // If result.trigger is true, the monocle is outside the bounds of the
+    // control.
+    if (result.trigger) {
+      // _handleSelectionPoint is triggered by input movement, so if we've
+      // tested positive for out-of-bounds scrolling here, we need to set a
+      // recurring timer to keep the expected selection behavior going as
+      // long as the user keeps the monocle out of bounds.
+      this._setTextEditUpdateInterval(result.speed);
+
+      // Smooth the selection
+      this._setContinuousSelection();
+
+      // Update the other monocle's position if we've dragged off to one side
+      this._updateSelectionUI(result.start, result.end);
+    } else {
+      // If we aren't out-of-bounds, clear the scroll timer if it exists.
+      this._clearTimers();
+
+      // Restrict the client point to the interior of the control. Prevents
+      // _adjustSelection from accidentally selecting content outside the
+      // control.
+      let constrainedPoint =
+        this._constrainPointWithinControl(aAdjustedClientPoint, aHalfLineHeight);
+
+      // Add or subtract selection
+      this._adjustSelection(aMarker, constrainedPoint, aEndOfSelection);
+    }
+  },
+
+  /*
+   * _adjustSelection
+   *
    * Based on a monocle marker and position, adds or subtracts from the
    * existing selection.
    *
@@ -573,6 +742,15 @@ var SelectionHandler = {
 
     // Smooth over the selection between all existing ranges.
     this._setContinuousSelection();
+
+    // Update the other monocle's position. We do this because the dragging
+    // monocle may reset the static monocle to a new position if the dragging
+    // monocle drags ahead or behind the other.
+    if (aMarker == "start") {
+      this._updateSelectionUI(false, true);
+    } else {
+      this._updateSelectionUI(true, false);
+    }
   },
 
   /*
@@ -646,9 +824,9 @@ var SelectionHandler = {
   /*
    * updateTextEditSelection(aPoint, aClientPoint)
    *
-   * Checks to see if the monocle point is outside the bounds of the
-   * target edit. If so, use the selection controller to select and
-   * scroll the edit appropriately.
+   * Checks to see if the monocle point is outside the bounds of the target
+   * edit. If so, use the selection controller to select and scroll the edit
+   * appropriately.
    *
    * @param aClientPoint raw pointer position
    * @return { speed: 0.0 -> 1.0,
@@ -666,12 +844,12 @@ var SelectionHandler = {
     let result = { speed: 1, trigger: false, start: false, end: false };
 
     if (orientation.left || orientation.top) {
-      this._addEditStartSelection();
+      this._addEditSelection(kSelectionNodeAnchor);
       result.speed = orientation.left + orientation.top;
       result.trigger = true;
       result.end = true;
     } else if (orientation.right || orientation.bottom) {
-      this._addEditEndSelection();
+      this._addEditSelection(kSelectionNodeFocus);
       result.speed = orientation.right + orientation.bottom;
       result.trigger = true;
       result.start = true;
@@ -689,43 +867,51 @@ var SelectionHandler = {
 
   _setTextEditUpdateInterval: function _setTextEditUpdateInterval(aSpeedValue) {
     let timeout = (75 - (aSpeedValue * 75));
+    if (!this._scrollTimer)
+      this._scrollTimer = new Util.Timeout();
     this._scrollTimer.interval(timeout, this.scrollTimerCallback);
   },
 
-  /*
-   * Selection control call wrapper
-   */
-  _addEditStartSelection: function _addEditStartSelection() {
-    let selCtrl = this._getSelectController();
-    let selection = this._getSelection();
-    try {
-      this._backupRangeList();
-      selection.collapseToStart();
-      // State: focus = anchor
-      // Only step back if we can, otherwise selCtrl will exception:
-      if (selection.getRangeAt(0).startOffset > 0) {
-        selCtrl.characterMove(false, true);
-      }
-      // State: focus = (anchor - 1)
-      selection.collapseToStart();
-      // State: focus = anchor and both are -1 from the original offset
-      selCtrl.characterMove(true, true);
-      // State: focus = anchor + 1, both have been moved back one char
-      // Restore the rest of the selection:
-      this._restoreRangeList();
-      selCtrl.scrollSelectionIntoView(Ci.nsISelectionController.SELECTION_NORMAL,
-                                      Ci.nsISelectionController.SELECTION_ANCHOR_REGION,
-                                      Ci.nsISelectionController.SCROLL_SYNCHRONOUS);
-    } catch (ex) { Util.dumpLn(ex.message);}
+  _clearTimers: function _clearTimers() {
+    if (this._scrollTimer) {
+      this._scrollTimer.clear();
+    }
   },
 
   /*
-   * Selection control call wrapper
+   * _addEditSelection - selection control call wrapper for text inputs.
+   * Adds selection on the anchor or focus side of selection in a text
+   * input. Scrolls the location into view as well.
+   *
+   * @param const selection node identifier
    */
-  _addEditEndSelection: function _addEditEndSelection() {
+  _addEditSelection: function _addEditSelection(aLocation) {
+    let selCtrl = this._getSelectController();
+    try {
+      if (aLocation == kSelectionNodeAnchor) {
+        let start = Math.max(this._targetElement.selectionStart - 1, 0);
+        this._targetElement.setSelectionRange(start, this._targetElement.selectionEnd,
+                                              "backward");
+      } else {
+        let end = Math.min(this._targetElement.selectionEnd + 1,
+                           this._targetElement.textLength);
+        this._targetElement.setSelectionRange(this._targetElement.selectionStart,
+                                              end,
+                                              "forward");
+      }
+      selCtrl.scrollSelectionIntoView(Ci.nsISelectionController.SELECTION_NORMAL,
+                                      Ci.nsISelectionController.SELECTION_FOCUS_REGION,
+                                      Ci.nsISelectionController.SCROLL_SYNCHRONOUS);
+    } catch (ex) { Util.dumpLn(ex);}
+  },
+
+  _updateInputFocus: function _updateInputFocus(aMarker) {
     try {
       let selCtrl = this._getSelectController();
-      selCtrl.characterMove(true, true);
+      this._targetElement.setSelectionRange(this._targetElement.selectionStart,
+                                            this._targetElement.selectionEnd,
+                                            aMarker == "start" ?
+                                              "backward" : "forward");
       selCtrl.scrollSelectionIntoView(Ci.nsISelectionController.SELECTION_NORMAL,
                                       Ci.nsISelectionController.SELECTION_FOCUS_REGION,
                                       Ci.nsISelectionController.SCROLL_SYNCHRONOUS);
@@ -759,15 +945,6 @@ var SelectionHandler = {
       height = rects[len].bottom - rects[len].top;
     }
     return height / 2;
-  },
-
-  _findBetterLowerTextRangePoint: function _findBetterLowerTextRangePoint(aClientPoint, aHalfLineHeight) {
-    let range = this._getSelection().getRangeAt(0);
-    let clientRect = range.getBoundingClientRect();
-    if (aClientPoint.y > clientRect.bottom && clientRect.right < aClientPoint.x) {
-      aClientPoint.y = (clientRect.bottom - aHalfLineHeight);
-      this._setDebugPoint(aClientPoint, "red");
-    }
   },
 
   /*
@@ -893,6 +1070,79 @@ var SelectionHandler = {
   },
 
   /*
+   * _calcNewContentPosition - calculates the distance the browser should be
+   * raised to move the focused form input out of the way of the soft
+   * keyboard.
+   *
+   * @param aNewViewHeight the new content view height
+   * @return 0 if no positioning is required or a positive val equal to the
+   * distance content should be raised to center the target element.
+   */
+  _calcNewContentPosition: function _calcNewContentPosition(aNewViewHeight) {
+    // We don't support this on non-editable elements
+    if (!this._targetIsEditable) {
+      return 0;
+    }
+
+    // If the bottom of the target bounds is higher than the new height,
+    // there's no need to adjust. It will be above the keyboard.
+    if (this._cache.element.bottom <= aNewViewHeight) {
+      return 0;
+    }
+    
+    // height of the target element
+    let targetHeight = this._cache.element.bottom - this._cache.element.top;
+    // height of the browser view.
+    let viewBottom = this._targetElement.ownerDocument.defaultView.innerHeight;
+
+    // If the target is shorter than the new content height, we can go ahead
+    // and center it.
+    if (targetHeight <= aNewViewHeight) {
+      // Try to center the element vertically in the new content area, but
+      // don't position such that the bottom of the browser view moves above
+      // the top of the chrome. We purposely do not resize the browser window
+      // by making it taller when trying to center elements that are near the
+      // lower bounds. This would trigger reflow which can cause content to
+      // shift around. 
+      let splitMargin = Math.round((aNewViewHeight - targetHeight) * .5);
+      let distanceToPageBounds = viewBottom - this._cache.element.bottom;
+      let distanceFromChromeTop = this._cache.element.bottom - aNewViewHeight;
+      let distanceToCenter =
+        distanceFromChromeTop + Math.min(distanceToPageBounds, splitMargin);
+      return distanceToCenter;
+    }
+
+    // Special case: we are dealing with an input that is taller than the
+    // desired height of content. We need to center on the caret location.
+    let rect =
+      this._domWinUtils.sendQueryContentEvent(this._domWinUtils.QUERY_CARET_RECT,
+                                              this._targetElement.selectionEnd,
+                                              0, 0, 0);
+    if (!rect || !rect.succeeded) {
+      Util.dumpLn("no caret was present, unexpected.");
+      return 0;
+    }
+
+    // Note sendQueryContentEvent with QUERY_CARET_RECT is really buggy. If it
+    // can't find the exact location of the caret position it will "guess".
+    // Sometimes this can put the result in unexpected locations.
+    let caretLocation = Math.max(Math.min(Math.round(rect.top + (rect.height * .5)),
+                                          viewBottom), 0);
+
+    // Caret is above the bottom of the new view bounds, no need to shift.
+    if (caretLocation <= aNewViewHeight) {
+      return 0;
+    }
+
+    // distance from the top of the keyboard down to the caret location
+    return caretLocation - aNewViewHeight;
+  },
+
+  /*
+   * Events
+   */
+
+  /*
    * Scroll + selection advancement timer when the monocle is
    * outside the bounds of an input control.
    */
@@ -907,16 +1157,6 @@ var SelectionHandler = {
     }
   },
 
-  clearTimers: function clearTimers() {
-    if (this._scrollTimer) {
-      this._scrollTimer.clear();
-    }
-  },
-
-  /*
-   * Events
-   */
-
   receiveMessage: function sh_receiveMessage(aMessage) {
     if (this._debugEvents && aMessage.name != "Browser:SelectionMove") {
       Util.dumpLn("SelectionHandler:", aMessage.name);
@@ -929,10 +1169,26 @@ var SelectionHandler = {
 
       case "Browser:SelectionAttach":
         this._onSelectionAttach(json.xPos, json.yPos);
-      break;
+        break;
+
+      case "Browser:CaretAttach":
+        this._onCaretAttach(json.xPos, json.yPos);
+        break;
+
+      case "Browser:CaretMove":
+        this._onCaretMove(json.caret.xPos, json.caret.yPos);
+        break;
+
+      case "Browser:CaretUpdate":
+        this._onCaretPositionUpdate(json.caret.xPos, json.caret.yPos);
+        break;
+
+      case "Browser:SelectionSwitchMode":
+        this._onSwitchMode(json.newMode, json.change, json.xPos, json.yPos);
+        break;
 
       case "Browser:SelectionClose":
-        this._onSelectionClose();
+        this._onSelectionClose(json.clearSelection);
         break;
 
       case "Browser:SelectionMoveStart":
@@ -951,16 +1207,16 @@ var SelectionHandler = {
         this._onSelectionCopy(json);
         break;
 
-      case "Browser:SelectionClear":
-        this._onSelectionClear();
-        break;
-
       case "Browser:SelectionDebug":
         this._onSelectionDebug(json);
         break;
 
       case "Browser:SelectionUpdate":
         this._onSelectionUpdate();
+        break;
+
+      case "Browser:RepositionInfoRequest":
+        this._repositionInfoRequest(json);
         break;
     }
   },
@@ -970,46 +1226,58 @@ var SelectionHandler = {
    */
 
   /*
-   * Returns data on the position of a selection using the relative
-   * coordinates in a range extracted from any sub frames. If aRange
-   * is in the root frame offset should be zero. 
+   * _extractUIRects - Extracts selection and target element information
+   * used by SelectionHelperUI. Returns client relative coordinates.
+   *
+   * @return table containing various ui rects and information
    */
-  _extractClientRectFromRange: function _extractClientRectFromRange(aRange) {
-    let cache = {
-      start: {}, end: {},
-      rect: { left: 0, top: 0, right: 0, bottom: 0 }
+  _extractUIRects: function _extractUIRects(aRange) {
+    let seldata = {
+      start: {}, end: {}, caret: {},
+      selection: { left: 0, top: 0, right: 0, bottom: 0 },
+      element: { left: 0, top: 0, right: 0, bottom: 0 }
     };
 
     // When in an iframe, aRange coordinates are relative to the frame origin.
     let rects = aRange.getClientRects();
 
-    let startSet = false;
-    for (let idx = 0; idx < rects.length; idx++) {
-      if (this. _debugOptions.dumpRanges) Util.dumpDOMRect(idx, rects[idx]);
-      if (!startSet && !Util.isEmptyDOMRect(rects[idx])) {
-        cache.start.xPos = rects[idx].left + this._contentOffset.x;
-        cache.start.yPos = rects[idx].bottom + this._contentOffset.y;
-        startSet = true;
-        if (this. _debugOptions.dumpRanges) Util.dumpLn("start set");
+    if (rects && rects.length) {
+      let startSet = false;
+      for (let idx = 0; idx < rects.length; idx++) {
+        if (this. _debugOptions.dumpRanges) Util.dumpDOMRect(idx, rects[idx]);
+        if (!startSet && !Util.isEmptyDOMRect(rects[idx])) {
+          seldata.start.xPos = rects[idx].left + this._contentOffset.x;
+          seldata.start.yPos = rects[idx].bottom + this._contentOffset.y;
+          seldata.caret = seldata.start;
+          startSet = true;
+          if (this. _debugOptions.dumpRanges) Util.dumpLn("start set");
+        }
+        if (!Util.isEmptyDOMRect(rects[idx])) {
+          seldata.end.xPos = rects[idx].right + this._contentOffset.x;
+          seldata.end.yPos = rects[idx].bottom + this._contentOffset.y;
+          if (this. _debugOptions.dumpRanges) Util.dumpLn("end set");
+        }
       }
-      if (!Util.isEmptyDOMRect(rects[idx])) {
-        cache.end.xPos = rects[idx].right + this._contentOffset.x;
-        cache.end.yPos = rects[idx].bottom + this._contentOffset.y;
-        if (this. _debugOptions.dumpRanges) Util.dumpLn("end set");
-      }
+
+      // Store the client rect of selection
+      let r = aRange.getBoundingClientRect();
+      seldata.selection.left = r.left + this._contentOffset.x;
+      seldata.selection.top = r.top + this._contentOffset.y;
+      seldata.selection.right = r.right + this._contentOffset.x;
+      seldata.selection.bottom = r.bottom + this._contentOffset.y;
     }
 
-    let r = aRange.getBoundingClientRect();
-    cache.rect.left = r.left + this._contentOffset.x;
-    cache.rect.top = r.top + this._contentOffset.y;
-    cache.rect.right = r.right + this._contentOffset.x;
-    cache.rect.bottom = r.bottom + this._contentOffset.y;
+    // Store the client rect of target element
+    r = this._getTargetClientRect();
+    seldata.element.left = r.left + this._contentOffset.x;
+    seldata.element.top = r.top + this._contentOffset.y;
+    seldata.element.right = r.right + this._contentOffset.x;
+    seldata.element.bottom = r.bottom + this._contentOffset.y;
 
-    if (!rects.length) {
-      Util.dumpLn("no rects in selection range. unexpected.");
-    }
+    // If we don't have a range we can attach to let SelectionHelperUI know.
+    seldata.selectionRangeFound = !!rects.length;
 
-    return cache;
+    return seldata;
   },
 
   _getTargetClientRect: function _getTargetClientRect() {
@@ -1104,11 +1372,11 @@ var SelectionHandler = {
   },
 
   _getSelection: function _getSelection() {
-    if (this._targetElement instanceof Ci.nsIDOMNSEditableElement)
+    if (this._targetElement instanceof Ci.nsIDOMNSEditableElement) {
       return this._targetElement
                  .QueryInterface(Ci.nsIDOMNSEditableElement)
                  .editor.selection;
-    else if (this._contentWindow)
+    } else if (this._contentWindow)
       return this._contentWindow.getSelection();
     return null;
   },

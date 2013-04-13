@@ -124,6 +124,11 @@ this.PermissionsTable =  { geolocation: {
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
                            },
+                           push: {
+                            app: ALLOW_ACTION,
+                            privileged: ALLOW_ACTION,
+                            certified: ALLOW_ACTION
+                           },
                            settings: {
                              app: DENY_ACTION,
                              privileged: DENY_ACTION,
@@ -295,7 +300,7 @@ this.appendAccessToPermName = function appendAccessToPermName(aPermName, aAccess
  **/
 this.expandPermissions = function expandPermissions(aPermName, aAccess) {
   if (!PermissionsTable[aPermName]) {
-    let errorMsg = 
+    let errorMsg =
       "PermissionsTable.jsm: expandPermissions: Unknown Permission: " + aPermName;
     Cu.reportError(errorMsg);
     dump(errorMsg);
@@ -305,7 +310,7 @@ this.expandPermissions = function expandPermissions(aPermName, aAccess) {
   const tableEntry = PermissionsTable[aPermName];
 
   if (tableEntry.substitute && tableEntry.additional) {
-    let errorMsg = 
+    let errorMsg =
       "PermissionsTable.jsm: expandPermissions: Can't handle both 'substitute' " +
       "and 'additional' entries for permission: " + aPermName;
     Cu.reportError(errorMsg);
@@ -315,12 +320,12 @@ this.expandPermissions = function expandPermissions(aPermName, aAccess) {
 
   if (!aAccess && tableEntry.access ||
       aAccess && !tableEntry.access) {
-    let errorMsg = 
-      "PermissionsTable.jsm: expandPermissions: Invalid Manifest : " +
-      aPermName + " " + aAccess + "\n";
+    let errorMsg =
+      "PermissionsTable.jsm: expandPermissions: Invalid access for permission " +
+      aPermName + ": " + aAccess + "\n";
     Cu.reportError(errorMsg);
     dump(errorMsg);
-    throw new Error(errorMsg);
+    return [];
   }
 
   let expandedPermNames = [];
@@ -418,7 +423,7 @@ this.isExplicitInPermissionsTable = function(aPermName, aIntStatus) {
   let realPerm = PermissionsReverseTable[aPermName];
 
   if (realPerm) {
-    return (PermissionsTable[realPerm][appStatus] == 
+    return (PermissionsTable[realPerm][appStatus] ==
             Ci.nsIPermissionManager.PROMPT_ACTION);
   } else {
     return false;

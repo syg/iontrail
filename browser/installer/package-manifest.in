@@ -69,7 +69,6 @@
 @BINPATH@/@DLL_PREFIX@plds4@DLL_SUFFIX@
 #endif
 #endif
-@BINPATH@/@DLL_PREFIX@xpcom@DLL_SUFFIX@
 #ifdef XP_MACOSX
 @BINPATH@/XUL
 #else
@@ -203,6 +202,7 @@
 #endif
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
+@BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
 @BINPATH@/components/dom_permissionsettings.xpt
@@ -211,9 +211,15 @@
 @BINPATH@/components/dom_storage.xpt
 @BINPATH@/components/dom_stylesheets.xpt
 @BINPATH@/components/dom_traversal.xpt
+#ifdef MOZ_WEBSPEECH
+@BINPATH@/components/dom_webspeechrecognition.xpt
+#endif
 @BINPATH@/components/dom_xbl.xpt
 @BINPATH@/components/dom_xpath.xpt
 @BINPATH@/components/dom_xul.xpt
+#ifdef MOZ_GAMEPAD
+@BINPATH@/components/dom_gamepad.xpt
+#endif
 @BINPATH@/components/downloads.xpt
 @BINPATH@/components/editor.xpt
 @BINPATH@/components/embed_base.xpt
@@ -242,7 +248,6 @@
 @BINPATH@/components/jsdebugger.xpt
 @BINPATH@/components/jsinspector.xpt
 @BINPATH@/components/layout_base.xpt
-@BINPATH@/components/layout_forms.xpt
 #ifdef NS_PRINTING
 @BINPATH@/components/layout_printing.xpt
 #endif
@@ -502,16 +507,23 @@
 @BINPATH@/components/nsDOMIdentity.js
 @BINPATH@/components/nsIDService.js
 @BINPATH@/components/Identity.manifest
+@BINPATH@/components/recording-cmdline.js
+@BINPATH@/components/recording-cmdline.manifest
 
 @BINPATH@/components/PermissionSettings.js
 @BINPATH@/components/PermissionSettings.manifest
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
+@BINPATH@/components/NavigatorPropertyHelper.js
+@BINPATH@/components/NavigatorPropertyHelper.manifest
 @BINPATH@/components/AlarmsManager.js
 @BINPATH@/components/AlarmsManager.manifest
 @BINPATH@/components/TCPSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
 @BINPATH@/components/TCPSocket.manifest
+
+@BINPATH@/components/AppProtocolHandler.js
+@BINPATH@/components/AppProtocolHandler.manifest
 
 #ifdef MOZ_WEBRTC
 @BINPATH@/components/PeerConnection.js
@@ -523,6 +535,10 @@
 @BINPATH@/chrome/marionette.manifest
 @BINPATH@/components/MarionetteComponents.manifest
 @BINPATH@/components/marionettecomponent.js
+#endif
+
+#ifdef MOZ_WEBSPEECH
+@BINPATH@/components/dom_webspeechsynth.xpt
 #endif
 
 ; Modules
@@ -558,6 +574,8 @@
 #endif
 @BINPATH@/chrome/toolkit@JAREXT@
 @BINPATH@/chrome/toolkit.manifest
+@BINPATH@/chrome/recording.manifest
+@BINPATH@/chrome/recording/*
 #ifdef MOZ_GTK2
 @BINPATH@/browser/chrome/icons/default/default16.png
 @BINPATH@/browser/chrome/icons/default/default32.png
@@ -758,6 +776,8 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/metro/chrome.manifest
 @BINPATH@/metro/searchplugins
 @BINPATH@/metro/metroapp.ini
+@BINPATH@/metro/chrome/browser@JAREXT@
+@BINPATH@/metro/chrome/browser.manifest
 @BINPATH@/metro/chrome/chrome@JAREXT@
 @BINPATH@/metro/chrome/chrome.manifest
 @BINPATH@/metro/chrome/@AB_CD@@JAREXT@

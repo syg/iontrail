@@ -18,6 +18,7 @@
 #include "nsSerializationHelper.h"
 
 #include "mozilla/Telemetry.h"
+#include "mozilla/VisualEventTracer.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -889,6 +890,12 @@ nsDiskCacheMap::WriteDiskCacheEntry(nsDiskCacheBinding *  binding)
     CACHE_LOG_DEBUG(("CACHE: WriteDiskCacheEntry [%x]\n",
         binding->mRecord.HashNumber()));
 
+    mozilla::eventtracer::AutoEventTracer writeDiskCacheEntry(
+        binding->mCacheEntry,
+        mozilla::eventtracer::eExec,
+        mozilla::eventtracer::eDone,
+        "net::cache::WriteDiskCacheEntry");
+
     nsresult            rv        = NS_OK;
     uint32_t            size;
     nsDiskCacheEntry *  diskEntry =  CreateDiskCacheEntry(binding, &size);
@@ -1013,6 +1020,12 @@ nsDiskCacheMap::WriteDataCacheBlocks(nsDiskCacheBinding * binding, char * buffer
     CACHE_LOG_DEBUG(("CACHE: WriteDataCacheBlocks [%x size=%u]\n",
         binding->mRecord.HashNumber(), size));
 
+    mozilla::eventtracer::AutoEventTracer writeDataCacheBlocks(
+        binding->mCacheEntry,
+        mozilla::eventtracer::eExec,
+        mozilla::eventtracer::eDone,
+        "net::cache::WriteDataCacheBlocks");
+
     nsresult  rv = NS_OK;
     
     // determine block file & number of blocks
@@ -1021,7 +1034,10 @@ nsDiskCacheMap::WriteDataCacheBlocks(nsDiskCacheBinding * binding, char * buffer
     int32_t   startBlock = 0;
 
     if (size > 0) {
-        while (1) {
+        // if fileIndex is 0, bad things happen below, which makes gcc 4.7
+        // complain, but it's not supposed to happen. See bug 854105.
+        MOZ_ASSERT(fileIndex);
+        while (fileIndex) {
             uint32_t  blockSize  = GetBlockSizeForIndex(fileIndex);
             blockCount = ((size - 1) / blockSize) + 1;
 

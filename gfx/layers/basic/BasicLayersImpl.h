@@ -74,7 +74,7 @@ protected:
  * This helper class manages the gfxASurface-or-SurfaceDescriptor
  * logic.
  */
-class NS_STACK_CLASS AutoMaskData {
+class MOZ_STACK_CLASS AutoMaskData {
 public:
   AutoMaskData() { }
   ~AutoMaskData() { }
@@ -137,11 +137,12 @@ ToShadowable(Layer* aLayer);
 bool
 ShouldShadow(Layer* aLayer);
 
+
 template<class OpT> BasicShadowableLayer*
 GetBasicShadowable(const OpT& op)
 {
   return static_cast<BasicShadowableLayer*>(
-    static_cast<const ShadowLayerChild*>(op.layerChild())->layer());
+    static_cast<const ShadowLayerChild*>(op.textureChild()->Manager())->layer());
 }
 
 // Create a shadow layer (PLayerChild) for aLayer, if we're forwarding

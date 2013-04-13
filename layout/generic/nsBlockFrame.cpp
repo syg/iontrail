@@ -75,6 +75,7 @@ static const PRUnichar kSquareCharacter = 0x25aa;
 
 using namespace mozilla;
 using namespace mozilla::css;
+using namespace mozilla::layout;
 
 #ifdef DEBUG
 #include "nsBlockDebugFlags.h"
@@ -248,12 +249,9 @@ DestroyOverflowLines(void* aPropertyValue)
 }
 
 NS_DECLARE_FRAME_PROPERTY(OverflowLinesProperty, DestroyOverflowLines)
-NS_DECLARE_FRAME_PROPERTY(OverflowOutOfFlowsProperty,
-                          nsContainerFrame::DestroyFrameList)
-NS_DECLARE_FRAME_PROPERTY(PushedFloatProperty,
-                          nsContainerFrame::DestroyFrameList)
-NS_DECLARE_FRAME_PROPERTY(OutsideBulletProperty,
-                          nsContainerFrame::DestroyFrameList)
+NS_DECLARE_FRAME_PROPERTY_FRAMELIST(OverflowOutOfFlowsProperty)
+NS_DECLARE_FRAME_PROPERTY_FRAMELIST(PushedFloatProperty)
+NS_DECLARE_FRAME_PROPERTY_FRAMELIST(OutsideBulletProperty)
 NS_DECLARE_FRAME_PROPERTY(InsideBulletProperty, nullptr)
 
 //----------------------------------------------------------------------
@@ -279,12 +277,16 @@ nsBlockFrame::DestroyFrom(nsIFrame* aDestructRoot)
   DestroyAbsoluteFrames(aDestructRoot);
   mFloats.DestroyFramesFrom(aDestructRoot);
   nsPresContext* presContext = PresContext();
+  nsIPresShell* shell = presContext->PresShell();
   nsLineBox::DeleteLineList(presContext, mLines, aDestructRoot,
                             &mFrames);
 
-  nsFrameList* pushedFloats = RemovePushedFloats();
-  if (pushedFloats) {
-    pushedFloats->DestroyFrom(aDestructRoot);
+  FramePropertyTable* props = presContext->PropertyTable();
+
+  if (HasPushedFloats()) {
+    SafelyDestroyFrameListProp(aDestructRoot, shell, props,
+                               PushedFloatProperty());
+    RemoveStateBits(NS_BLOCK_HAS_PUSHED_FLOATS);
   }
 
   // destroy overflow lines now
@@ -295,10 +297,16 @@ nsBlockFrame::DestroyFrom(nsIFrame* aDestructRoot)
     delete overflowLines;
   }
 
-  {
-    nsAutoOOFFrameList oofs(this);
-    oofs.mList.DestroyFramesFrom(aDestructRoot);
-    // oofs is now empty and will remove the frame list property
+  if (GetStateBits() & NS_BLOCK_HAS_OVERFLOW_OUT_OF_FLOWS) {
+    SafelyDestroyFrameListProp(aDestructRoot, shell, props,
+                               OverflowOutOfFlowsProperty());
+    RemoveStateBits(NS_BLOCK_HAS_OVERFLOW_OUT_OF_FLOWS);
+  }
+
+  if (HasOutsideBullet()) {
+    SafelyDestroyFrameListProp(aDestructRoot, shell, props,
+                               OutsideBulletProperty());
+    RemoveStateBits(NS_BLOCK_FRAME_HAS_OUTSIDE_BULLET);
   }
 
   nsBlockFrameSuper::DestroyFrom(aDestructRoot);
@@ -971,7 +979,7 @@ nsBlockFrame::Reflow(nsPresContext*           aPresContext,
   // make sure our kids fit too.
   if (aReflowState.availableHeight != NS_UNCONSTRAINEDSIZE &&
       aReflowState.ComputedHeight() != NS_AUTOHEIGHT &&
-      ApplyOverflowClipping(this, aReflowState.mStyleDisplay)) {
+      ShouldApplyOverflowClipping(this, aReflowState.mStyleDisplay)) {
     nsMargin heightExtras = aReflowState.mComputedBorderPadding;
     if (GetSkipSides() & NS_SIDE_TOP) {
       heightExtras.top = 0;
@@ -1494,7 +1502,7 @@ nsBlockFrame::ComputeOverflowAreas(const nsRect&         aBounds,
   // XXX_perf: This can be done incrementally.  It is currently one of
   // the things that makes incremental reflow O(N^2).
   nsOverflowAreas areas(aBounds, aBounds);
-  if (!ApplyOverflowClipping(this, aDisplay)) {
+  if (!ShouldApplyOverflowClipping(this, aDisplay)) {
     for (line_iterator line = begin_lines(), line_end = end_lines();
          line != line_end;
          ++line) {
@@ -1984,7 +1992,8 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
     // push lines?  Why does that work?
     if (!line->IsDirty() &&
         aState.mReflowState.availableHeight != NS_UNCONSTRAINEDSIZE &&
-        (deltaY != 0 || aState.mReflowState.mFlags.mVResize) &&
+        (deltaY != 0 || aState.mReflowState.mFlags.mVResize ||
+         aState.mReflowState.mFlags.mMustReflowPlaceholders) &&
         (line->IsBlock() || line->HasFloats() || line->HadFloatPushed())) {
       line->MarkDirty();
     }
@@ -3214,7 +3223,6 @@ nsBlockFrame::ReflowBlockFrame(nsBlockReflowState& aState,
             // Push continuation to a new line, but only if we actually made one.
             if (madeContinuation) {
               nsLineBox* line = NewLineBox(nextFrame, true);
-              NS_ENSURE_TRUE(line, NS_ERROR_OUT_OF_MEMORY);
               mLines.after_insert(aLine, line);
             }
 
@@ -3998,9 +4006,6 @@ nsBlockFrame::SplitLine(nsBlockReflowState& aState,
 
     // Put frames being split out into their own line
     nsLineBox* newLine = NewLineBox(aLine, aFrame, pushCount);
-    if (!newLine) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
     mLines.after_insert(aLine, newLine);
 #ifdef DEBUG
     if (gReallyNoisyReflow) {
@@ -4477,7 +4482,8 @@ nsBlockFrame::DrainPushedFloats(nsBlockReflowState& aState)
   // rather than this block?  Might we need to pull it back so we don't
   // report ourselves complete?
   // FIXME: Maybe we should just pull all of them back?
-  nsFrameList *ourPushedFloats = GetPushedFloats();
+  nsPresContext* presContext = PresContext();
+  nsFrameList* ourPushedFloats = GetPushedFloats();
   if (ourPushedFloats) {
     // When we pull back floats, we want to put them with the pushed
     // floats, which must live at the start of our float list, but we
@@ -4490,7 +4496,6 @@ nsBlockFrame::DrainPushedFloats(nsBlockReflowState& aState)
       insertionPrevSibling = f;
     }
 
-    nsPresContext *presContext = PresContext();
     for (nsIFrame *f = ourPushedFloats->LastChild(), *next; f; f = next) {
       next = f->GetPrevSibling();
 
@@ -4513,7 +4518,7 @@ nsBlockFrame::DrainPushedFloats(nsBlockReflowState& aState)
     }
 
     if (ourPushedFloats->IsEmpty()) {
-      delete RemovePushedFloats();
+      RemovePushedFloats()->Delete(presContext->PresShell());
     }
   }
 
@@ -4521,12 +4526,9 @@ nsBlockFrame::DrainPushedFloats(nsBlockReflowState& aState)
   // floats list, containing floats that we need to own.  Take these.
   nsBlockFrame* prevBlock = static_cast<nsBlockFrame*>(GetPrevInFlow());
   if (prevBlock) {
-    nsFrameList *list = prevBlock->RemovePushedFloats();
-    if (list) {
-      if (list->NotEmpty()) {
-        mFloats.InsertFrames(this, nullptr, *list);
-      }
-      delete list;
+    AutoFrameListPtr list(presContext, prevBlock->RemovePushedFloats());
+    if (list && list->NotEmpty()) {
+      mFloats.InsertFrames(this, nullptr, *list);
     }
   }
 }
@@ -4618,11 +4620,11 @@ nsBlockFrame::SetOverflowOutOfFlows(const nsFrameList& aList,
     if (!(GetStateBits() & NS_BLOCK_HAS_OVERFLOW_OUT_OF_FLOWS)) {
       return;
     }
-    nsFrameList* list =
-      RemovePropTableFrames(PresContext(),
-                            OverflowOutOfFlowsProperty());
+    nsPresContext* pc = PresContext();
+    nsFrameList* list = RemovePropTableFrames(pc, OverflowOutOfFlowsProperty());
     NS_ASSERTION(aPropValue == list, "prop value mismatch");
-    delete list;
+    list->Clear();
+    list->Delete(pc->PresShell());
     RemoveStateBits(NS_BLOCK_HAS_OVERFLOW_OUT_OF_FLOWS);
   }
   else if (GetStateBits() & NS_BLOCK_HAS_OVERFLOW_OUT_OF_FLOWS) {
@@ -4632,7 +4634,8 @@ nsBlockFrame::SetOverflowOutOfFlows(const nsFrameList& aList,
     *aPropValue = aList;
   }
   else {
-    SetPropTableFrames(PresContext(), new nsFrameList(aList),
+    nsPresContext* pc = PresContext();
+    SetPropTableFrames(pc, new (pc->PresShell()) nsFrameList(aList),
                        OverflowOutOfFlowsProperty());
     AddStateBits(NS_BLOCK_HAS_OVERFLOW_OUT_OF_FLOWS);
   }
@@ -4694,7 +4697,7 @@ nsBlockFrame::EnsurePushedFloats()
   if (result)
     return result;
 
-  result = new nsFrameList;
+  result = new (PresContext()->PresShell()) nsFrameList;
   Properties().Set(PushedFloatProperty(), result);
   AddStateBits(NS_BLOCK_HAS_PUSHED_FLOATS);
 
@@ -4754,12 +4757,8 @@ nsBlockFrame::AppendFrames(ChildListID  aListID,
   }
   printf("\n");
 #endif
-  nsresult rv = AddFrames(aFrameList, lastKid);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-  aFrameList.Clear();
 
+  AddFrames(aFrameList, lastKid);
   PresContext()->PresShell()->
     FrameNeedsReflow(this, nsIPresShell::eTreeChange,
                      NS_FRAME_HAS_DIRTY_CHILDREN); // XXX sufficient?
@@ -4801,10 +4800,9 @@ nsBlockFrame::InsertFrames(ChildListID aListID,
   }
   printf("\n");
 #endif
-  nsresult rv = AddFrames(aFrameList, aPrevFrame);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+
+  AddFrames(aFrameList, aPrevFrame);
+
 #ifdef IBMBIDI
   if (aListID != kNoReflowPrincipalList)
 #endif // IBMBIDI
@@ -4830,14 +4828,14 @@ ShouldPutNextSiblingOnNewLine(nsIFrame* aLastFrame)
   return false;
 }
 
-nsresult
+void
 nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling)
 {
   // Clear our line cursor, since our lines may change.
   ClearLineCursor();
 
   if (aFrameList.IsEmpty()) {
-    return NS_OK;
+    return;
   }
 
   // If we're inserting at the beginning of our list and we have an
@@ -4893,9 +4891,6 @@ nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling)
     if (rem) {
       // Split the line in two where the frame(s) are being inserted.
       nsLineBox* line = NewLineBox(prevSibLine, aPrevSibling->GetNextSibling(), rem);
-      if (!line) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
       lineList->after_insert(prevSibLine, line);
       // Mark prevSibLine dirty and as needing textrun invalidation, since
       // we may be breaking up text in the line. Its previous line may also
@@ -4938,9 +4933,6 @@ nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling)
       // Create a new line for the frame and add its line to the line
       // list.
       nsLineBox* line = NewLineBox(newFrame, isBlock);
-      if (!line) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
       if (prevSibLine != lineList->end()) {
         // Append new line after prevSibLine
         lineList->after_insert(prevSibLine, line);
@@ -4964,9 +4956,9 @@ nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling)
   }
 
 #ifdef DEBUG
+  MOZ_ASSERT(aFrameList.IsEmpty());
   VerifyLines(true);
 #endif
-  return NS_OK;
 }
 
 void
@@ -5622,12 +5614,66 @@ nsBlockFrame::DoRemoveFrame(nsIFrame* aDeletedFrame, uint32_t aFlags)
   return RemoveBlockChild(aDeletedFrame, !(aFlags & REMOVE_FIXED_CONTINUATIONS));
 }
 
+static bool
+FindBlockLineFor(nsIFrame*             aChild,
+                 nsLineList::iterator  aBegin,
+                 nsLineList::iterator  aEnd,
+                 nsLineList::iterator* aResult)
+{
+  MOZ_ASSERT(aChild->IsBlockOutside());
+  for (nsLineList::iterator line = aBegin; line != aEnd; ++line) {
+    MOZ_ASSERT(line->GetChildCount() > 0);
+    if (line->IsBlock() && line->mFirstChild == aChild) {
+      MOZ_ASSERT(line->GetChildCount() == 1);
+      *aResult = line;
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool
+FindInlineLineFor(nsIFrame*             aChild,
+                  const nsFrameList&    aFrameList,
+                  nsLineList::iterator  aBegin,
+                  nsLineList::iterator  aEnd,
+                  nsLineList::iterator* aResult)
+{
+  MOZ_ASSERT(!aChild->IsBlockOutside());
+  for (nsLineList::iterator line = aBegin; line != aEnd; ++line) {
+    MOZ_ASSERT(line->GetChildCount() > 0);
+    if (!line->IsBlock()) {
+      // Optimize by comparing the line's last child first.
+      nsLineList::iterator next = line.next();
+      if (aChild == (next == aEnd ? aFrameList.LastChild()
+                                  : next->mFirstChild->GetPrevSibling()) ||
+          line->Contains(aChild)) {
+        *aResult = line;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static bool
+FindLineFor(nsIFrame*             aChild,
+            const nsFrameList&    aFrameList,
+            nsLineList::iterator  aBegin,
+            nsLineList::iterator  aEnd,
+            nsLineList::iterator* aResult)
+{
+  return aChild->IsBlockOutside() ?
+    FindBlockLineFor(aChild, aBegin, aEnd, aResult) :
+    FindInlineLineFor(aChild, aFrameList, aBegin, aEnd, aResult);
+}
+
 nsresult
 nsBlockFrame::StealFrame(nsPresContext* aPresContext,
                          nsIFrame*      aChild,
                          bool           aForceNormal)
 {
-  NS_PRECONDITION(aPresContext && aChild, "null pointer");
+  MOZ_ASSERT(aChild->GetParent() == this);
 
   if ((aChild->GetStateBits() & NS_FRAME_OUT_OF_FLOW) &&
       aChild->IsFloating()) {
@@ -5636,81 +5682,52 @@ nsBlockFrame::StealFrame(nsPresContext* aPresContext,
   }
 
   if ((aChild->GetStateBits() & NS_FRAME_IS_OVERFLOW_CONTAINER)
-      && !aForceNormal)
+      && !aForceNormal) {
     return nsContainerFrame::StealFrame(aPresContext, aChild);
+  }
 
-  // Find the line and the previous sibling that contains
-  // aChild; we also find the pointer to the line.
-  nsLineList::iterator line = mLines.begin(),
-                       line_start = line,
-                       line_end = mLines.end();
-  bool searchingOverflowList = false;
-  FrameLines* overflowLines = nullptr;
-  nsIFrame* prevSibling = nullptr;
-  // Make sure we look in the overflow lines even if the normal line
-  // list is empty
-  TryAllLines(&line, &line_start, &line_end, &searchingOverflowList,
-              &overflowLines);
-  while (line != line_end) {
-    nsIFrame* frame = line->mFirstChild;
-    int32_t n = line->GetChildCount();
-    while (--n >= 0) {
-      if (frame == aChild) {
-        if (frame == line->mFirstChild) {
-          line->mFirstChild = frame->GetNextSibling();
-        }
-        if (searchingOverflowList) {
-          overflowLines->mFrames.RemoveFrame(frame);
-        } else {
-          mFrames.RemoveFrame(frame);
-        }
+  MOZ_ASSERT(!(aChild->GetStateBits() & NS_FRAME_OUT_OF_FLOW));
 
-        // Register removal with the line boxes
-        line->NoteFrameRemoved(frame);
-        if (line->GetChildCount() > 0) {
-           line->MarkDirty();
-        } else {
-          // Remove the line box
-          nsLineBox* lineBox = line;
-          if (searchingOverflowList) {
-            // Erase the line, destroy the property if it was the last one.
-            line = overflowLines->mLines.erase(line);
-            if (overflowLines->mLines.empty()) {
-              DestroyOverflowLines();
-              overflowLines = nullptr;
-              // We just invalidated our iterators.  Since we were in
-              // the overflow lines list, which is now empty, set them
-              // so we're at the end of the regular line list.
-              line_start = mLines.begin();
-              line_end = mLines.end();
-              line = line_end;
-            }
-          } else {
-            line = mLines.erase(line);
-          }
-          FreeLineBox(lineBox);
-          if (line != line_end) {
-            // Line disappeared, so tell next line it may have to change position
-            line->MarkPreviousMarginDirty();
-          }
-        }
-
-        // Ok, we're done
-        return NS_OK;
-      }
-      prevSibling = frame;
-      frame = frame->GetNextSibling();
-    }
-    ++line;
-    TryAllLines(&line, &line_start, &line_end, &searchingOverflowList,
-                &overflowLines);
-    if (prevSibling && !prevSibling->GetNextSibling()) {
-      // We just switched to the overflow list.  Null out prevSibling
-      prevSibling = nullptr;
+  nsLineList::iterator line;
+  if (FindLineFor(aChild, mFrames, mLines.begin(), mLines.end(), &line)) {
+    RemoveFrameFromLine(aChild, line, mFrames, mLines);
+  } else {
+    FrameLines* overflowLines = GetOverflowLines();
+    DebugOnly<bool> found;
+    found = FindLineFor(aChild, overflowLines->mFrames,
+                        overflowLines->mLines.begin(),
+                        overflowLines->mLines.end(), &line);
+    MOZ_ASSERT(found);
+    RemoveFrameFromLine(aChild, line, overflowLines->mFrames,
+                        overflowLines->mLines);
+    if (overflowLines->mLines.empty()) {
+      DestroyOverflowLines();
     }
   }
-  MOZ_ASSERT(false, "StealFrame failed to remove the frame");
-  return NS_ERROR_UNEXPECTED;
+
+  return NS_OK;
+}
+
+void
+nsBlockFrame::RemoveFrameFromLine(nsIFrame* aChild, nsLineList::iterator aLine,
+                                  nsFrameList& aFrameList, nsLineList& aLineList)
+{
+  aFrameList.RemoveFrame(aChild);
+  if (aChild == aLine->mFirstChild) {
+    aLine->mFirstChild = aChild->GetNextSibling();
+  }
+  aLine->NoteFrameRemoved(aChild);
+  if (aLine->GetChildCount() > 0) {
+    aLine->MarkDirty();
+  } else {
+    // The line became empty - destroy it.
+    nsLineBox* lineBox = aLine;
+    aLine = aLineList.erase(aLine);
+    if (aLine != aLineList.end()) {
+      aLine->MarkPreviousMarginDirty();
+    }
+    FreeLineBox(lineBox);
+  }
 }
 
 void
@@ -6483,8 +6500,6 @@ nsBlockFrame::SetInitialChildList(ChildListID     aListID,
                                   NS_BLOCK_FRAME_HAS_OUTSIDE_BULLET)) == 0,
                "how can we have a bullet already?");
 
-  nsresult rv = NS_OK;
-
   if (kAbsoluteList == aListID) {
     nsContainerFrame::SetInitialChildList(aListID, aChildList);
   }
@@ -6518,10 +6533,7 @@ nsBlockFrame::SetInitialChildList(ChildListID     aListID,
                  "NS_BLOCK_HAS_FIRST_LETTER_STYLE state out of sync");
 #endif
     
-    rv = AddFrames(aChildList, nullptr);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
+    AddFrames(aChildList, nullptr);
 
     // Create a list bullet if this is a list-item. Note that this is
     // done here so that RenumberLists will work (it needs the bullets
@@ -6570,9 +6582,6 @@ nsBlockFrame::SetInitialChildList(ChildListID     aListID,
 
       // Create bullet frame
       nsBulletFrame* bullet = new (shell) nsBulletFrame(kidSC);
-      if (!bullet) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
       bullet->Init(mContent, this, nullptr);
 
       // If the list bullet frame should be positioned inside then add
@@ -6584,7 +6593,7 @@ nsBlockFrame::SetInitialChildList(ChildListID     aListID,
         Properties().Set(InsideBulletProperty(), bullet);
         AddStateBits(NS_BLOCK_FRAME_HAS_INSIDE_BULLET);
       } else {
-        nsFrameList* bulletList = new nsFrameList(bullet, bullet);
+        nsFrameList* bulletList = new (shell) nsFrameList(bullet, bullet);
         Properties().Set(OutsideBulletProperty(), bulletList);
         AddStateBits(NS_BLOCK_FRAME_HAS_OUTSIDE_BULLET);
       }

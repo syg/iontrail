@@ -8,10 +8,12 @@
 #ifndef LifoAlloc_h__
 #define LifoAlloc_h__
 
+#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/MemoryChecking.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/TypeTraits.h"
 
 // This data structure supports stacky LIFO allocation (mark/release and
@@ -33,9 +35,9 @@ JS_ALWAYS_INLINE
 char *
 AlignPtr(void *orig)
 {
-    typedef tl::StaticAssert<
-        tl::FloorLog2<LIFO_ALLOC_ALIGN>::result == tl::CeilingLog2<LIFO_ALLOC_ALIGN>::result
-    >::result _;
+    MOZ_STATIC_ASSERT(tl::FloorLog2<LIFO_ALLOC_ALIGN>::result ==
+                      tl::CeilingLog2<LIFO_ALLOC_ALIGN>::result,
+                      "LIFO_ALLOC_ALIGN must be a power of two");
 
     char *result = (char *) ((uintptr_t(orig) + (LIFO_ALLOC_ALIGN - 1)) & (~LIFO_ALLOC_ALIGN + 1));
     JS_ASSERT(uintptr_t(result) % LIFO_ALLOC_ALIGN == 0);
@@ -220,7 +222,7 @@ class LifoAlloc
         // Copy everything from |other| to |this| except for |peakSize_|, which
         // requires some care.
         size_t oldPeakSize = peakSize_;
-        PodCopy((char *) this, (char *) other, sizeof(*this));
+        mozilla::PodAssign(this, other);
         peakSize_ = Max(oldPeakSize, curSize_);
 
         other->reset(defaultChunkSize_);

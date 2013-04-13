@@ -18,6 +18,7 @@ Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
 Cu.import('resource://gre/modules/Keyboard.jsm');
+Cu.import('resource://gre/modules/ErrorPage.jsm');
 #ifdef MOZ_B2G_RIL
 Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 #endif
@@ -406,7 +407,7 @@ var shell = {
   needBufferSysMsgs: true,
   bufferedSysMsgs: [],
   timer: null,
-  visibleAudioActive: false,
+  visibleNormalAudioActive: false,
 
   handleEvent: function shell_handleEvent(evt) {
     let content = this.contentBrowser.contentWindow;
@@ -424,7 +425,7 @@ var shell = {
           Services.fm.focusedWindow = window;
         break;
       case 'sizemodechange':
-        if (window.windowState == window.STATE_MINIMIZED && !this.visibleAudioActive) {
+        if (window.windowState == window.STATE_MINIMIZED && !this.visibleNormalAudioActive) {
           this.contentBrowser.setVisible(false);
         } else {
           this.contentBrowser.setVisible(true);
@@ -921,7 +922,7 @@ let IndexedDBPromptHelper = {
 
   uninit:
   function IndexedDBPromptHelper_uninit() {
-    Services.obs.removeObserver(this, this._quotaPrompt, false);
+    Services.obs.removeObserver(this, this._quotaPrompt);
   },
 
   observe:
@@ -1127,7 +1128,7 @@ window.addEventListener('ContentStart', function update_onContentStart() {
       type: 'visible-audio-channel-changed',
       channel: aData
     });
-    shell.visibleAudioActive = (aData !== 'none');
+    shell.visibleNormalAudioActive = (aData == 'normal');
 }, "visible-audio-channel-changed", false);
 })();
 

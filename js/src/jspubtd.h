@@ -45,8 +45,6 @@ struct Zone;
  * oblivious to the change. This feature can be explicitly disabled in debug
  * builds by defining JS_NO_JSVAL_JSID_STRUCT_TYPES.
  */
-#ifdef __cplusplus
-
 # if defined(DEBUG) && !defined(JS_NO_JSVAL_JSID_STRUCT_TYPES)
 #  define JS_USE_JSID_STRUCT_TYPES
 # endif
@@ -63,10 +61,6 @@ struct jsid
 typedef ptrdiff_t jsid;
 #  define JSID_BITS(id) (id)
 # endif  /* defined(JS_USE_JSID_STRUCT_TYPES) */
-#else  /* defined(__cplusplus) */
-typedef ptrdiff_t jsid;
-# define JSID_BITS(id) (id)
-#endif
 
 #ifdef WIN32
 typedef wchar_t   jschar;
@@ -190,20 +184,12 @@ typedef struct JSStructuredCloneReader      JSStructuredCloneReader;
 typedef struct JSStructuredCloneWriter      JSStructuredCloneWriter;
 typedef struct JSTracer                     JSTracer;
 
-#ifdef __cplusplus
 class                                       JSFlatString;
 class                                       JSFunction;
 class                                       JSObject;
 class                                       JSScript;
 class                                       JSStableString;  // long story
 class                                       JSString;
-#else
-typedef struct JSFlatString                 JSFlatString;
-typedef struct JSFunction                   JSFunction;
-typedef struct JSObject                     JSObject;
-typedef struct JSScript                     JSScript;
-typedef struct JSString                     JSString;
-#endif /* !__cplusplus */
 
 #ifdef JS_THREADSAFE
 typedef struct PRCallOnceType    JSCallOnceType;
@@ -212,7 +198,31 @@ typedef JSBool                   JSCallOnceType;
 #endif
 typedef JSBool                 (*JSInitCallback)(void);
 
-#ifdef __cplusplus
+namespace JS {
+namespace shadow {
+
+struct Runtime
+{
+    /* Restrict zone access during Minor GC. */
+    bool needsBarrier_;
+
+#ifdef JSGC_GENERATIONAL
+    /* Allow inlining of Nursery::isInside. */
+    uintptr_t gcNurseryStart_;
+    uintptr_t gcNurseryEnd_;
+#endif
+
+    Runtime()
+      : needsBarrier_(false)
+#ifdef JSGC_GENERATIONAL
+      , gcNurseryStart_(0)
+      , gcNurseryEnd_(0)
+#endif
+    {}
+};
+
+} /* namespace shadow */
+} /* namespace JS */
 
 namespace js {
 
@@ -300,21 +310,6 @@ struct ContextFriendFields {
 #endif
 };
 
-struct RuntimeFriendFields {
-    /*
-     * If non-zero, we were been asked to call the operation callback as soon
-     * as possible.
-     */
-    volatile int32_t    interrupt;
-
-    RuntimeFriendFields()
-      : interrupt(0) { }
-
-    static const RuntimeFriendFields *get(const JSRuntime *rt) {
-        return reinterpret_cast<const RuntimeFriendFields *>(rt);
-    }
-};
-
 class PerThreadData;
 
 struct PerThreadDataFriendFields
@@ -323,7 +318,7 @@ struct PerThreadDataFriendFields
     // Note: this type only exists to permit us to derive the offset of
     // the perThread data within the real JSRuntime* type in a portable
     // way.
-    struct RuntimeDummy : RuntimeFriendFields
+    struct RuntimeDummy : JS::shadow::Runtime
     {
         struct PerThreadDummy {
             void *field1;
@@ -368,14 +363,14 @@ struct PerThreadDataFriendFields
     }
 
     static inline PerThreadDataFriendFields *getMainThread(JSRuntime *rt) {
-        // mainThread must always appear directly after |RuntimeFriendFields|.
+        // mainThread must always appear directly after |JS::shadow::Runtime|.
         // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
         return reinterpret_cast<PerThreadDataFriendFields *>(
             reinterpret_cast<char*>(rt) + RuntimeMainThreadOffset);
     }
 
     static inline const PerThreadDataFriendFields *getMainThread(const JSRuntime *rt) {
-        // mainThread must always appear directly after |RuntimeFriendFields|.
+        // mainThread must always appear directly after |JS::shadow::Runtime|.
         // Tested by a JS_STATIC_ASSERT in |jsfriendapi.cpp|
         return reinterpret_cast<const PerThreadDataFriendFields *>(
             reinterpret_cast<const char*>(rt) + RuntimeMainThreadOffset);
@@ -383,7 +378,5 @@ struct PerThreadDataFriendFields
 };
 
 } /* namespace js */
-
-#endif /* __cplusplus */
 
 #endif /* jspubtd_h___ */

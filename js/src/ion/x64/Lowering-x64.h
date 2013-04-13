@@ -37,11 +37,14 @@ class LIRGeneratorX64 : public LIRGeneratorX86Shared
                      MDefinition *rhs);
     bool lowerForFPU(LMathD *ins, MDefinition *mir, MDefinition *lhs, MDefinition *rhs);
 
+    LGetPropertyCacheT *newLGetPropertyCacheT(MGetPropertyCache *ins);
+
   public:
     bool visitBox(MBox *box);
     bool visitUnbox(MUnbox *unbox);
     bool visitReturn(MReturn *ret);
     bool visitStoreTypedArrayElement(MStoreTypedArrayElement *ins);
+    bool visitStoreTypedArrayElementHole(MStoreTypedArrayElementHole *ins);
     bool visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble *ins);
     bool visitAsmJSStoreHeap(MAsmJSStoreHeap *ins);
     bool visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr *ins);
@@ -53,4 +56,3 @@ typedef LIRGeneratorX64 LIRGeneratorSpecific;
 } // namespace js
 
 #endif // jsion_ion_lowering_x64_h__
-

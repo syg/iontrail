@@ -16,7 +16,6 @@
 #include "nsIDOMMozMmsEvent.h"
 #include "nsIDOMMozSmsMessage.h"
 #include "nsIDOMMozMmsMessage.h"
-#include "SmsRequest.h"
 #include "nsJSUtils.h"
 #include "nsContentUtils.h"
 #include "nsIMobileMessageDatabaseService.h"
@@ -26,6 +25,8 @@
 #include "DOMRequest.h"
 #include "nsIMobileMessageCallback.h"
 #include "MobileMessageCallback.h"
+#include "MobileMessageCursorCallback.h"
+#include "DOMCursor.h"
 
 #define RECEIVED_EVENT_NAME         NS_LITERAL_STRING("received")
 #define SENDING_EVENT_NAME          NS_LITERAL_STRING("sending")
@@ -74,11 +75,6 @@ MobileMessageManager::Init(nsPIDOMWindow *aWindow)
   obs->AddObserver(this, kSmsFailedObserverTopic, false);
   obs->AddObserver(this, kSmsDeliverySuccessObserverTopic, false);
   obs->AddObserver(this, kSmsDeliveryErrorObserverTopic, false);
-
-  obs->AddObserver(this, kMmsSendingObserverTopic, false);
-  obs->AddObserver(this, kMmsSentObserverTopic, false);
-  obs->AddObserver(this, kMmsFailedObserverTopic, false);
-  obs->AddObserver(this, kMmsReceivedObserverTopic, false);
 }
 
 void
@@ -96,11 +92,6 @@ MobileMessageManager::Shutdown()
   obs->RemoveObserver(this, kSmsFailedObserverTopic);
   obs->RemoveObserver(this, kSmsDeliverySuccessObserverTopic);
   obs->RemoveObserver(this, kSmsDeliveryErrorObserverTopic);
-
-  obs->RemoveObserver(this, kMmsSendingObserverTopic);
-  obs->RemoveObserver(this, kMmsSentObserverTopic);
-  obs->RemoveObserver(this, kMmsFailedObserverTopic);
-  obs->RemoveObserver(this, kMmsReceivedObserverTopic);
 }
 
 NS_IMETHODIMP
@@ -115,24 +106,24 @@ MobileMessageManager::GetSegmentInfoForText(const nsAString& aText,
 
 nsresult
 MobileMessageManager::Send(JSContext* aCx, JSObject* aGlobal, JSString* aNumber,
-                           const nsAString& aMessage, jsval* aRequest)
+                           const nsAString& aMessage, JS::Value* aRequest)
 {
   nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
-  if (!smsService) {
-    NS_ERROR("No SMS Service!");
-    return NS_ERROR_FAILURE;
-  }
+  NS_ENSURE_TRUE(smsService, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDOMMozSmsRequest> request = SmsRequest::Create(this);
   nsDependentJSString number;
   number.init(aCx, aNumber);
 
-  nsCOMPtr<nsIMobileMessageCallback> forwarder =
-    new SmsRequestForwarder(static_cast<SmsRequest*>(request.get()));
+  nsRefPtr<DOMRequest> request = new DOMRequest(GetOwner());
+  nsCOMPtr<nsIMobileMessageCallback> msgCallback =
+    new MobileMessageCallback(request);
 
-  smsService->Send(number, aMessage, forwarder);
+  nsresult rv = smsService->Send(number, aMessage, msgCallback);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsresult rv = nsContentUtils::WrapNative(aCx, aGlobal, request, aRequest);
+  rv = nsContentUtils::WrapNative(aCx, aGlobal,
+                                  static_cast<nsIDOMDOMRequest*>(request.get()),
+                                  aRequest);
   if (NS_FAILED(rv)) {
     NS_ERROR("Failed to create the js value!");
     return rv;
@@ -142,7 +133,7 @@ MobileMessageManager::Send(JSContext* aCx, JSObject* aGlobal, JSString* aNumber,
 }
 
 NS_IMETHODIMP
-MobileMessageManager::Send(const jsval& aNumber, const nsAString& aMessage, jsval* aReturn)
+MobileMessageManager::Send(const JS::Value& aNumber, const nsAString& aMessage, JS::Value* aReturn)
 {
   nsresult rv;
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
@@ -171,10 +162,10 @@ MobileMessageManager::Send(const jsval& aNumber, const nsAString& aMessage, jsva
   uint32_t size;
   JS_ALWAYS_TRUE(JS_GetArrayLength(cx, &numbers, &size));
 
-  jsval* requests = new jsval[size];
+  JS::Value* requests = new JS::Value[size];
 
   for (uint32_t i=0; i<size; ++i) {
-    jsval number;
+    JS::Value number;
     if (!JS_GetElement(cx, &numbers, i, &number)) {
       return NS_ERROR_INVALID_ARG;
     }
@@ -192,7 +183,7 @@ MobileMessageManager::Send(const jsval& aNumber, const nsAString& aMessage, jsva
 NS_IMETHODIMP
 MobileMessageManager::SendMMS(const JS::Value& aParams, nsIDOMDOMRequest** aRequest)
 {
-  nsCOMPtr<nsIMmsService> mmsService = do_GetService(RIL_MMSSERVICE_CONTRACTID);
+  nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
   NS_ENSURE_TRUE(mmsService, NS_ERROR_FAILURE);
 
   nsRefPtr<DOMRequest> request = new DOMRequest(GetOwner());
@@ -237,7 +228,7 @@ MobileMessageManager::Delete(int32_t aId, nsIDOMDOMRequest** aRequest)
 }
 
 NS_IMETHODIMP
-MobileMessageManager::Delete(const jsval& aParam, nsIDOMDOMRequest** aRequest)
+MobileMessageManager::Delete(const JS::Value& aParam, nsIDOMDOMRequest** aRequest)
 {
   if (aParam.isInt32()) {
     return Delete(aParam.toInt32(), aRequest);
@@ -271,23 +262,30 @@ MobileMessageManager::Delete(const jsval& aParam, nsIDOMDOMRequest** aRequest)
 }
 
 NS_IMETHODIMP
-MobileMessageManager::GetMessages(nsIDOMMozSmsFilter* aFilter, bool aReverse,
-                                  nsIDOMMozSmsRequest** aRequest)
+MobileMessageManager::GetMessages(nsIDOMMozSmsFilter* aFilter,
+                                  bool aReverse,
+                                  nsIDOMDOMCursor** aCursor)
 {
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(dbService, NS_ERROR_FAILURE);
+
   nsCOMPtr<nsIDOMMozSmsFilter> filter = aFilter;
-  
   if (!filter) {
     filter = new SmsFilter();
   }
 
-  nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder =
-    new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  mobileMessageDBService->CreateMessageList(filter, aReverse, forwarder);
-  req.forget(aRequest);
+  nsRefPtr<MobileMessageCursorCallback> cursorCallback =
+    new MobileMessageCursorCallback();
+
+  nsCOMPtr<nsICursorContinueCallback> continueCallback;
+  nsresult rv = dbService->CreateMessageCursor(filter, aReverse, cursorCallback,
+                                               getter_AddRefs(continueCallback));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  cursorCallback->mDOMCursor = new DOMCursor(GetOwner(), continueCallback);
+  NS_ADDREF(*aCursor = cursorCallback->mDOMCursor);
+
   return NS_OK;
 }
 
@@ -309,47 +307,78 @@ MobileMessageManager::MarkMessageRead(int32_t aId, bool aValue,
 }
 
 NS_IMETHODIMP
-MobileMessageManager::GetThreadList(nsIDOMMozSmsRequest** aRequest)
+MobileMessageManager::GetThreads(nsIDOMDOMCursor** aCursor)
 {
-  nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
     do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder =
-    new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  mobileMessageDBService->GetThreadList(forwarder);
-  req.forget(aRequest);
+  NS_ENSURE_TRUE(dbService, NS_ERROR_FAILURE);
+
+  nsRefPtr<MobileMessageCursorCallback> cursorCallback =
+    new MobileMessageCursorCallback();
+
+  nsCOMPtr<nsICursorContinueCallback> continueCallback;
+  nsresult rv = dbService->CreateThreadCursor(cursorCallback,
+                                              getter_AddRefs(continueCallback));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  cursorCallback->mDOMCursor = new DOMCursor(GetOwner(), continueCallback);
+  NS_ADDREF(*aCursor = cursorCallback->mDOMCursor);
+
   return NS_OK;
 }
 
-nsresult
-MobileMessageManager::DispatchTrustedSmsEventToSelf(const nsAString& aEventName,
-                                                    nsIDOMMozSmsMessage* aMessage)
+NS_IMETHODIMP
+MobileMessageManager::RetrieveMMS(int32_t id,
+                                  nsIDOMDOMRequest** aRequest)
 {
-  nsCOMPtr<nsIDOMEvent> event;
-  NS_NewDOMMozSmsEvent(getter_AddRefs(event), this, nullptr, nullptr);
-  NS_ASSERTION(event, "This should never fail!");
+    nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
+    NS_ENSURE_TRUE(mmsService, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDOMMozSmsEvent> se = do_QueryInterface(event);
-  nsresult rv = se->InitMozSmsEvent(aEventName, false, false, aMessage);
-  NS_ENSURE_SUCCESS(rv, rv);
+    nsRefPtr<DOMRequest> request = new DOMRequest(GetOwner());
+    nsCOMPtr<nsIMobileMessageCallback> msgCallback = new MobileMessageCallback(request);
 
-  return DispatchTrustedEvent(event);
+    nsresult rv = mmsService->Retrieve(id, msgCallback);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    request.forget(aRequest);
+    return NS_OK;
 }
 
 nsresult
-MobileMessageManager::DispatchTrustedMmsEventToSelf(const nsAString& aEventName,
-                                                    nsIDOMMozMmsMessage* aMessage)
+MobileMessageManager::DispatchTrustedSmsEventToSelf(const char* aTopic,
+                                                    const nsAString& aEventName,
+                                                    nsISupports* aMsg)
 {
   nsCOMPtr<nsIDOMEvent> event;
-  NS_NewDOMMozMmsEvent(getter_AddRefs(event), this, nullptr, nullptr);
-  NS_ASSERTION(event, "This should never fail!");
 
-  nsCOMPtr<nsIDOMMozMmsEvent> se = do_QueryInterface(event);
-  nsresult rv = se->InitMozMmsEvent(aEventName, false, false, aMessage);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMsg);
+  if (sms) {
+    NS_NewDOMMozSmsEvent(getter_AddRefs(event), this, nullptr, nullptr);
+    NS_ASSERTION(event, "This should never fail!");
 
-  return DispatchTrustedEvent(event);
+    nsCOMPtr<nsIDOMMozSmsEvent> se = do_QueryInterface(event);
+    nsresult rv = se->InitMozSmsEvent(aEventName, false, false, sms);
+    NS_ENSURE_SUCCESS(rv, rv);
+    return DispatchTrustedEvent(event);
+  }
+
+  nsCOMPtr<nsIDOMMozMmsMessage> mms = do_QueryInterface(aMsg);
+  if (mms) {
+    NS_NewDOMMozMmsEvent(getter_AddRefs(event), this, nullptr, nullptr);
+    NS_ASSERTION(event, "This should never fail!");
+
+    nsCOMPtr<nsIDOMMozMmsEvent> se = do_QueryInterface(event);
+    nsresult rv = se->InitMozMmsEvent(aEventName, false, false, mms);
+    NS_ENSURE_SUCCESS(rv, rv);
+    return DispatchTrustedEvent(event);
+  }
+
+  nsAutoCString errorMsg;
+  errorMsg.AssignLiteral("Got a '");
+  errorMsg.Append(aTopic);
+  errorMsg.AppendLiteral("' topic without a valid message!");
+  NS_ERROR(errorMsg.get());
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -357,113 +386,27 @@ MobileMessageManager::Observe(nsISupports* aSubject, const char* aTopic,
                               const PRUnichar* aData)
 {
   if (!strcmp(aTopic, kSmsReceivedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-received' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedSmsEventToSelf(RECEIVED_EVENT_NAME, message);
-    return NS_OK;
+    return DispatchTrustedSmsEventToSelf(aTopic, RECEIVED_EVENT_NAME, aSubject);
   }
 
   if (!strcmp(aTopic, kSmsSendingObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-sending' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedSmsEventToSelf(SENDING_EVENT_NAME, message);
-    return NS_OK;
+    return DispatchTrustedSmsEventToSelf(aTopic, SENDING_EVENT_NAME, aSubject);
   }
 
   if (!strcmp(aTopic, kSmsSentObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-sent' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedSmsEventToSelf(SENT_EVENT_NAME, message);
-    return NS_OK;
+    return DispatchTrustedSmsEventToSelf(aTopic, SENT_EVENT_NAME, aSubject);
   }
 
   if (!strcmp(aTopic, kSmsFailedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-failed' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedSmsEventToSelf(FAILED_EVENT_NAME, message);
-    return NS_OK;
+    return DispatchTrustedSmsEventToSelf(aTopic, FAILED_EVENT_NAME, aSubject);
   }
 
   if (!strcmp(aTopic, kSmsDeliverySuccessObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-delivery-success' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedSmsEventToSelf(DELIVERY_SUCCESS_EVENT_NAME, message);
-    return NS_OK;
+    return DispatchTrustedSmsEventToSelf(aTopic, DELIVERY_SUCCESS_EVENT_NAME, aSubject);
   }
 
   if (!strcmp(aTopic, kSmsDeliveryErrorObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-delivery-error' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedSmsEventToSelf(DELIVERY_ERROR_EVENT_NAME, message);
-    return NS_OK;
-  }
-
-  if (!strcmp(aTopic, kMmsSendingObserverTopic)) {
-    nsCOMPtr<nsIDOMMozMmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'mms-sending' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedMmsEventToSelf(SENDING_EVENT_NAME, message);
-    return NS_OK;
-  }
-
-  if (!strcmp(aTopic, kMmsSentObserverTopic)) {
-    nsCOMPtr<nsIDOMMozMmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'mms-sent' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedMmsEventToSelf(SENT_EVENT_NAME, message);
-    return NS_OK;
-  }
-
-  if (!strcmp(aTopic, kMmsFailedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozMmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'mms-failed' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedMmsEventToSelf(FAILED_EVENT_NAME, message);
-    return NS_OK;
-  }
-
-  if (!strcmp(aTopic, kMmsReceivedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozMmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'mms-received' topic without a valid message!");
-      return NS_OK;
-    }
-
-    DispatchTrustedMmsEventToSelf(RECEIVED_EVENT_NAME, message);
-    return NS_OK;
+    return DispatchTrustedSmsEventToSelf(aTopic, DELIVERY_ERROR_EVENT_NAME, aSubject);
   }
 
   return NS_OK;

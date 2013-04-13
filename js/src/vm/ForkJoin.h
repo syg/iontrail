@@ -390,24 +390,31 @@ public:
 // Locks a JSContext for its scope.
 class LockedJSContext
 {
+#if defined(JS_THREADSAFE) && defined(JS_ION)
     ForkJoinSlice *slice_;
+#endif
     JSContext *cx_;
 
   public:
     LockedJSContext(ForkJoinSlice *slice)
+#if defined(JS_THREADSAFE) && defined(JS_ION)
       : slice_(slice),
         cx_(slice->acquireContext())
+#else
+      : cx_(NULL)
+#endif
     { }
 
     ~LockedJSContext() {
+#if defined(JS_THREADSAFE) && defined(JS_ION)
         slice_->releaseContext();
+#endif
     }
 
     operator JSContext *() { return cx_; }
     JSContext *operator->() { return cx_; }
 };
 
-// True if parallel threads are currently active.
 static inline bool
 ParallelJSActive()
 {

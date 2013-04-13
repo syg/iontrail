@@ -34,6 +34,8 @@
 #include "util_string.h"
 #include "platform_api.h"
 
+static const char* logTag = "lsm";
+
 #ifndef NO
 #define NO  (0)
 #endif
@@ -51,8 +53,6 @@ static cc_rcs_t lsm_stop_tone (lsm_lcb_t *lcb, cc_action_data_tone_t *data);
 
 static lsm_lcb_t *lsm_lcbs;
 static uint32_t lsm_call_perline[MAX_REG_LINES];
-boolean lsm_mnc_reached[MAX_REG_LINES]; // maxnumcalls reached
-static boolean lsm_bt_reached[MAX_REG_LINES]; //busy trigger reached
 
 /* This variable is used locally to reflect the CFA state (set/clear)
  * when in CCM mode.
@@ -380,7 +380,7 @@ void lsm_set_lcb_prevent_ringing (callid_t call_id)
         return;
     }
 
-    LSM_DEBUG(DEB_L_C_F_PREFIX"gcid=%d.\n",
+    LSM_DEBUG(DEB_L_C_F_PREFIX"gcid=%s",
               DEB_L_C_F_PREFIX_ARGS(LSM, lcb->line, call_id, "lsm_set_lcb_prevent_ringing"), gcid);
 
     FSM_FOR_ALL_CBS(lcb, lsm_lcbs, LSM_MAX_LCBS) {
@@ -410,7 +410,7 @@ void lsm_remove_lcb_prevent_ringing (callid_t call_id)
         return;
     }
 
-    LSM_DEBUG(DEB_L_C_F_PREFIX"gcid=%d.\n",
+    LSM_DEBUG(DEB_L_C_F_PREFIX"gcid=%s",
               DEB_L_C_F_PREFIX_ARGS(LSM, lcb->line, call_id, "lsm_remove_lcb_prevent_ringing"), gcid);
 
     FSM_FOR_ALL_CBS(lcb, lsm_lcbs, LSM_MAX_LCBS) {
@@ -418,7 +418,7 @@ void lsm_remove_lcb_prevent_ringing (callid_t call_id)
             if ((lcb->gcid != NULL) && (strncmp(gcid, lcb->gcid, CC_GCID_LEN) == 0)) {
                 //FSM_RESET_FLAGS(lcb->flags, LSM_FLAGS_ANSWER_PENDING);
                 lcb->flags = 0;
-                LSM_DEBUG(DEB_L_C_F_PREFIX"found ringing call, gcid=%d, lcb->flags=%d.\n",
+                LSM_DEBUG(DEB_L_C_F_PREFIX"found ringing call, gcid=%s, lcb->flags=%d.",
                           DEB_L_C_F_PREFIX_ARGS(LSM, lcb->line, lcb->call_id, "lsm_remove_lcb_prevent_ringing"), gcid, lcb->flags);
             }
             break;
@@ -905,11 +905,20 @@ lsm_rx_start (lsm_lcb_t *lcb, const char *fname, fsmdef_media_t *media)
          * For SRTP, the receive can not be opened if the remote's crypto
          * parameters are not received yet.
          */
-        if (!gsmsdp_is_crypto_ready(media, TRUE)) {
+        if (media->type != SDP_MEDIA_APPLICATION &&
+            !gsmsdp_is_crypto_ready(media, TRUE)) {
             LSM_DEBUG(DEB_L_C_F_PREFIX"%s: Not ready to open receive port (%d)\n",
                       DEB_L_C_F_PREFIX_ARGS(LSM, dcb->line, dcb->call_id, fname1), fname, media->src_port);
             continue;
         }
+
+        /* TODO(ekr@rtfm.com): Needs changing for when we
+           have > 2 streams. (adam@nostrum.com): For now,
+           we use all the same stream so pc_stream_id == 0
+           and the tracks are assigned in order and are
+           equal to the level in the media objects */
+        pc_stream_id = 0;
+        pc_track_id = media->level;
 
         /*
          * Open the RTP receive channel if it is not already open.
@@ -975,23 +984,14 @@ lsm_rx_start (lsm_lcb_t *lcb, const char *fname, fsmdef_media_t *media)
                     media->src_port = open_rcv.port;
                 }
 
-                /* TODO(ekr@rtfm.com): Needs changing for when we
-                   have > 2 streams. (adam@nostrum.com): For now,
-                   we use all the same stream so pc_stream_id == 0
-                   and the tracks are assigned in order and are
-                   equal to the level in the media objects */
                 if ( media->cap_index == CC_VIDEO_1 ) {
                     attrs.video.opaque = media->video;
-                    pc_stream_id = 0;
-                    pc_track_id = media->level;
                 } else {
                     attrs.audio.packetization_period = media->packetization_period;
                     attrs.audio.max_packetization_period = media->max_packetization_period;
                     attrs.audio.avt_payload_type = media->avt_payload_type;
                     attrs.audio.mixing_mode = mix_mode;
                     attrs.audio.mixing_party = mix_party;
-                    pc_stream_id = 0;
-                    pc_track_id = media->level;
                 }
                 dcb->cur_video_avail &= ~CC_ATTRIB_CAST;
 
@@ -1050,6 +1050,13 @@ lsm_rx_start (lsm_lcb_t *lcb, const char *fname, fsmdef_media_t *media)
                                                                direction);
                 }
             }
+        }
+
+        if (media->type == SDP_MEDIA_APPLICATION) {
+          /* Enable datachannels
+             Datachannels are always two-way so initializing only here in rx_start.
+          */
+          lsm_initialize_datachannel(dcb, media, pc_track_id);
         }
     }
 }
@@ -1534,31 +1541,15 @@ int lsm_get_all_used_instances_cnt ()
  */
 void lsm_increment_call_chn_cnt (line_t line)
 {
-    uint32_t  maxnumcalls = 0;
-    uint32_t  busy_trigger = 0;
-    static const char fname[] = "lsm_increment_call_chn_cnt";
-
     if ( line <=0 || line > MAX_REG_LINES ) {
-        LSM_ERR_MSG(LSM_F_PREFIX"invalid line (%d)\n", fname, line);
+        LSM_ERR_MSG(LSM_F_PREFIX"invalid line (%d)\n", __FUNCTION__, line);
         return;
     }
     lsm_call_perline[line-1]++;
-    config_get_line_value(CFGID_LINE_MAXNUMCALLS, &maxnumcalls, sizeof(maxnumcalls), line);
-    config_get_line_value(CFGID_LINE_BUSY_TRIGGER, &busy_trigger, sizeof(busy_trigger), line);
-    if (lsm_call_perline[line-1] ==  maxnumcalls) {
-        lsm_mnc_reached[line-1] = TRUE;;
-        ui_mnc_reached(line, TRUE);
-    }
-    if (lsm_call_perline[line - 1] ==  busy_trigger) {
-        lsm_bt_reached[line - 1] = TRUE;;
-    }
 
-    LSM_DEBUG(DEB_F_PREFIX"number of calls on line[%d]=%d"
-        "MaxNumCalls[%d]_reached=%s BusyTrigger[%d]_reached=%s\n",
-        DEB_F_PREFIX_ARGS(LSM, fname),
-        line, lsm_call_perline[line-1],
-        maxnumcalls, (lsm_mnc_reached[line-1] == TRUE) ? "TRUE" : "FALSE",
-        busy_trigger,(lsm_bt_reached[line-1] == TRUE) ? "TRUE" : "FALSE");
+    LSM_DEBUG(DEB_F_PREFIX"number of calls on line[%d]=%d",
+        DEB_F_PREFIX_ARGS(LSM, __FUNCTION__),
+        line, lsm_call_perline[line-1]);
 }
 
 /*
@@ -1573,31 +1564,16 @@ void lsm_increment_call_chn_cnt (line_t line)
  */
 void lsm_decrement_call_chn_cnt (line_t line)
 {
-    uint32_t  maxnumcalls = 0;
-    uint32_t  busy_trigger = 0;
-    static const char fname[] = "lsm_decrement_call_chn_cnt";
-
     if ( line <=0 || line > MAX_REG_LINES ) {
-        LSM_ERR_MSG(LSM_F_PREFIX"invalid line (%d)\n", fname, line);
+        LSM_ERR_MSG(LSM_F_PREFIX"invalid line (%d)\n", __FUNCTION__, line);
         return;
     }
 
     lsm_call_perline[line-1]--;
-    config_get_line_value(CFGID_LINE_MAXNUMCALLS, &maxnumcalls, sizeof(maxnumcalls), line);
-    config_get_line_value(CFGID_LINE_BUSY_TRIGGER, &busy_trigger, sizeof(busy_trigger), line);
-    if (lsm_call_perline[line-1] <=  (maxnumcalls-1)) {
-        lsm_mnc_reached[line-1] = FALSE;
-        ui_mnc_reached(line, FALSE);
-    }
-    if (lsm_call_perline[line - 1] ==  (busy_trigger -1)) {
-        lsm_bt_reached[line - 1] = FALSE;;
-    }
-    LSM_DEBUG(DEB_F_PREFIX"number of calls on line[%d]=%d"
-        "MaxNumCalls[%d]_reached=%s BusyTrigger[%d]_reached=%s\n",
-        DEB_F_PREFIX_ARGS(LSM, fname),
-        line, lsm_call_perline[line-1],
-        maxnumcalls, (lsm_mnc_reached[line-1] == TRUE) ? "TRUE" : "FALSE",
-        busy_trigger,(lsm_bt_reached[line-1] == TRUE) ? "TRUE" : "FALSE");
+
+    LSM_DEBUG(DEB_F_PREFIX"number of calls on line[%d]=%d",
+        DEB_F_PREFIX_ARGS(LSM, __FUNCTION__),
+        line, lsm_call_perline[line-1]);
 }
 
 #define NO_ROLLOVER 0
@@ -1623,15 +1599,6 @@ line_t lsm_find_next_available_line (line_t line, boolean same_dn, boolean incom
     char dn_name[MAX_LINE_NAME_SIZE];
     uint32_t line_feature;
     line_t  i, j;
-    boolean *limit_reached;
-
-    /* determine whether to use MNC or BT limit */
-    if (incoming == TRUE) {
-        limit_reached = lsm_bt_reached;
-    }
-    else {
-        limit_reached = lsm_mnc_reached;
-    }
 
     config_get_line_string(CFGID_LINE_NAME, current_line_dn_name, line, sizeof(current_line_dn_name));
     /* This line has exhausted its  limit, start rollover */
@@ -1643,17 +1610,15 @@ line_t lsm_find_next_available_line (line_t line, boolean same_dn, boolean incom
         if (line_feature != cfgLineFeatureDN) {
             continue;
         }
-        /* Does this line have room to take the call */
-        if (limit_reached[i-1] == FALSE) {
-            if (same_dn == TRUE) {
-                config_get_line_string(CFGID_LINE_NAME, dn_name, i, sizeof(dn_name));
-                /* Does this line have the same DN */
-                if (cpr_strcasecmp(dn_name, current_line_dn_name) == 0) {
-                    return (i);
-                }
-            } else {
+
+        if (same_dn == TRUE) {
+            config_get_line_string(CFGID_LINE_NAME, dn_name, i, sizeof(dn_name));
+            /* Does this line have the same DN */
+            if (cpr_strcasecmp(dn_name, current_line_dn_name) == 0) {
                 return (i);
             }
+        } else {
+            return (i);
         }
     }
     /*
@@ -1669,18 +1634,16 @@ line_t lsm_find_next_available_line (line_t line, boolean same_dn, boolean incom
         if (line_feature != cfgLineFeatureDN) {
             continue;
         }
-        /* Does this line have room to take the call */
-        if (limit_reached[j-1] == FALSE) {
-            if (same_dn == TRUE) {
-                config_get_line_string(CFGID_LINE_NAME, dn_name, j, sizeof(dn_name));
-                /* Does this line have the same DN */
-                if (cpr_strcasecmp(dn_name, current_line_dn_name) == 0) {
-                    return (j);
-                }
-            } else {
+
+        if (same_dn == TRUE) {
+            config_get_line_string(CFGID_LINE_NAME, dn_name, j, sizeof(dn_name));
+            /* Does this line have the same DN */
+            if (cpr_strcasecmp(dn_name, current_line_dn_name) == 0) {
                 return (j);
             }
-         }
+        } else {
+            return (j);
+        }
     }
 
     return (NO_LINES_AVAILABLE);
@@ -1698,46 +1661,7 @@ line_t lsm_find_next_available_line (line_t line, boolean same_dn, boolean incom
  */
 line_t lsm_get_newcall_line (line_t line)
 {
-    static const char fname[] = "lsm_get_newcall_line";
-    int rollover;
-    line_t found_line;
-
-    if (!lsm_mnc_reached[line-1]) {
-        /* Still room for extra calls on this line */
-        return (line);
-    }
-
-    config_get_value(CFGID_ROLLOVER, &rollover, sizeof(int));
-
-    if (rollover == NO_ROLLOVER) {
-        DEF_DEBUG(DEB_F_PREFIX"NO Rollover, no lines\n", DEB_F_PREFIX_ARGS(LSM, fname));
-        return (NO_LINES_AVAILABLE);
-    }
-
-
-    if (rollover == ROLLOVER_ACROSS_SAME_DN) {
-        /* Look for a line with the same DN */
-        return (lsm_find_next_available_line(line, TRUE, FALSE));
-    }
-
-    if (rollover == ROLLOVER_NEXT_AVAILABLE_LINE) {
-        /* Look for a line with the same DN first */
-        found_line = lsm_find_next_available_line(line, TRUE, FALSE);
-
-        if (found_line == NO_LINES_AVAILABLE) {
-            /*
-             * If nothing found, just look for any line, does
-             * not necessarily have to have the same DN
-             */
-            return (lsm_find_next_available_line(line, FALSE, FALSE));
-        } else {
-            return (found_line);
-        }
-    }
-
-    DEF_DEBUG(DEB_F_PREFIX"No lines available\n", DEB_F_PREFIX_ARGS(LSM, fname));
-
-    return (NO_LINES_AVAILABLE);
+    return line;
 }
 
 /*
@@ -1753,21 +1677,7 @@ line_t lsm_get_newcall_line (line_t line)
  */
 line_t lsm_get_available_line (boolean incoming)
 {
-    line_t line = 1; /* start with line 1 */
-
-    if (incoming == FALSE) {
-        if (!lsm_mnc_reached[line-1]) {
-            /* Still room for extra calls on this line */
-            return (line);
-        }
-    }
-    else {
-        if (!lsm_bt_reached[line-1]) {
-            /* Still room for extra calls on this line */
-            return (line);
-        }
-    }
-    return (lsm_find_next_available_line(line, FALSE, incoming));
+    return 1;
 }
 
 /*
@@ -1783,19 +1693,7 @@ line_t lsm_get_available_line (boolean incoming)
  */
 boolean lsm_is_line_available (line_t line, boolean incoming)
 {
-    if (incoming == FALSE) {
-        if (!lsm_mnc_reached[line-1]) {
-            /* Still room for extra calls on this line */
-            return (TRUE);
-        }
-    }
-    else {
-        if (!lsm_bt_reached[line-1]) {
-            /* Still room for incoming calls on this line */
-            return (TRUE);
-        }
-    }
-    return (FALSE);
+    return TRUE;
 }
 
 /*
@@ -2829,9 +2727,9 @@ lsm_set_beep_only_settings (fsmdef_dcb_t *dcb, vcm_tones_t *toneMode_p)
          */
         if (sip_regmgr_get_cc_mode(dcb->line) == REG_MODE_CCM) {
             dcb->alerting_tone = VCM_CALL_WAITING_TONE;
-            LSM_DEBUG(DEB_F_PREFIX"%s - Overriding value in Alert-Info header as line %d is \
-                      connected to a Call Manager.\n",
-                      DEB_F_PREFIX_ARGS(LSM, "lsm_set_beep_only_settings"), dcb->line);
+            LSM_DEBUG(DEB_F_PREFIX" - Overriding value in Alert-Info header as line %d is \
+                      connected to a Call Manager.",
+                      DEB_F_PREFIX_ARGS(LSM, __FUNCTION__), dcb->line);
         }
         *toneMode_p = dcb->alerting_tone;
         switch (dcb->alerting_tone) {
@@ -3622,10 +3520,10 @@ lsm_far_end_alerting (lsm_lcb_t *lcb, cc_state_data_far_end_alerting_t *data)
                 continue;
             }
             LSM_DEBUG(DEB_L_C_F_PREFIX"direction_set:%d direction:%d"
-                      " dest_addr:0x%x is_multicast:%d\n",
+                      " dest_addr:%p is_multicast:%d",
                       DEB_L_C_F_PREFIX_ARGS(LSM, dcb->line, dcb->call_id, fname),
                       media->direction_set,
-                      media->direction, media->dest_addr,
+                      media->direction, &media->dest_addr,
                       media->is_multicast);
 
             if (media->direction_set) {
@@ -3860,11 +3758,11 @@ lsm_update_media (lsm_lcb_t *lcb, const char *caller_fname)
             for (i = 0; i < media->num_payloads; i++)
             {
                 LSM_DEBUG(DEB_L_C_F_PREFIX"%d rx, tx refresh's are %d %d"
-                          ", dir=%d, payload=%d addr=%s, multicast=%d\n",
+                          ", dir=%d, payload=%p addr=%s, multicast=%d\n",
                           DEB_L_C_F_PREFIX_ARGS(LSM, dcb->line,
                           dcb->call_id, fname), media->refid, rx_refresh,
                           tx_refresh, media->direction,
-                          media->payloads[i], addr_str, media->is_multicast );
+                          &media->payloads[i], addr_str, media->is_multicast );
             }
         }
         if (rx_refresh ||
@@ -5012,8 +4910,6 @@ lsm_init (void)
 
     for (i=0 ; i<MAX_REG_LINES; i++) {
         lsm_call_perline[i] = 0;
-        lsm_mnc_reached[i] = FALSE;
-        lsm_bt_reached[i] = FALSE;
     }
 
     memset(cfwdall_state_in_ccm_mode, 0, sizeof(cfwdall_state_in_ccm_mode));
@@ -5053,8 +4949,6 @@ lsm_reset (void)
 
     for (i=0 ; i<MAX_REG_LINES; i++) {
         lsm_call_perline[i] = 0;
-        lsm_mnc_reached[i] = FALSE;
-        lsm_bt_reached[i] = FALSE;
     }
 
     for (line=0; line < MAX_REG_LINES+1; line++) {
@@ -5278,63 +5172,74 @@ lsm_stop_media (lsm_lcb_t *lcb, callid_t call_id, line_t line,
  *   [in]  call_id - GSM call ID
  *   [in]  media - media line to add as remote stream
  *   [out] pc_stream_id
- * Returns: None
+ *
+ * Returns: CC_RC_SUCCESS or CC_RC_ERROR if unable to create or add stream
  */
-void lsm_add_remote_stream (line_t line, callid_t call_id, fsmdef_media_t *media, int *pc_stream_id)
+cc_rcs_t
+lsm_add_remote_stream (line_t line, callid_t call_id, fsmdef_media_t *media, int *pc_stream_id)
 {
-    static const char fname[] = "lsm_add_remote_stream";
-    fsmdef_dcb_t   *dcb;
     lsm_lcb_t *lcb;
+    fsmdef_dcb_t *dcb;
+    int vcm_ret;
 
     lcb = lsm_get_lcb_by_call_id(call_id);
-    if (lcb != NULL) {
-        dcb = lcb->dcb;
-        if (dcb == NULL) {
-            LSM_ERR_MSG(get_debug_string(DEBUG_INPUT_NULL), fname);
-            return;
-        }
-
-        vcmCreateRemoteStream(media->cap_index, dcb->peerconnection,
-                pc_stream_id);
-
+    if (!lcb) {
+        CSFLogError(logTag, "%s: lcb is null", __FUNCTION__);
+        return CC_RC_ERROR;
     }
+
+    dcb = lcb->dcb;
+    if (!dcb) {
+        CSFLogError(logTag, "%s: dcb is null", __FUNCTION__);
+        return CC_RC_ERROR;
+    }
+
+    vcm_ret = vcmCreateRemoteStream(media->cap_index, dcb->peerconnection,
+            pc_stream_id);
+
+    if (vcm_ret) {
+        CSFLogError(logTag, "%s: vcmCreateRemoteStream returned error: %d",
+            __FUNCTION__, vcm_ret);
+        return CC_RC_ERROR;
+    }
+
+    return CC_RC_SUCCESS;
 }
 
 /*
- * lsm_data_channel_negotiated
+ * lsm_initialize_datachannel
  *
  * Description:
- *    The function informs the API of a negotiated data channel m= line
+ *    The function initializes the datachannel with port and
+ *    protocol info.
  *
  * Parameters:
- *   [in]  line - line
- *   [in]  call_id - GSM call ID
- *   [in]  media - media line to add as remote stream
- *   [out] pc_stream_id
+ *   [in]  dcb - pointer to get the peerconnection id
+ *   [in]  media - pointer to get the datachannel info
+ *   [in]  track_id - track ID (aka m-line number)
  * Returns: None
  */
-void lsm_data_channel_negotiated (line_t line, callid_t call_id, fsmdef_media_t *media, int *pc_stream_id)
+void lsm_initialize_datachannel (fsmdef_dcb_t *dcb, fsmdef_media_t *media,
+                                 int track_id)
 {
-    static const char fname[] = "lsm_data_channel_negotiated";
-    fsmdef_dcb_t   *dcb;
-    lsm_lcb_t *lcb;
-
-    lcb = lsm_get_lcb_by_call_id(call_id);
-    if (lcb) {
-        dcb = lcb->dcb;
-        if (dcb == NULL) {
-            LSM_ERR_MSG(get_debug_string(DEBUG_INPUT_NULL), fname);
-            return;
-        }
-
-        /*
-         * have access to media->streams, media->protocol, media->sctp_port
-         * vcmSetDataChannelParameters may need renaming TODO: jesup
-         */
-
-        vcmSetDataChannelParameters(dcb->peerconnection, media->streams, media->sctp_port, media->protocol);
-
+    if (!dcb) {
+        CSFLogError(logTag, "%s DCB is NULL", __FUNCTION__);
+        return;
     }
+
+    if (!media) {
+        CSFLogError(logTag, "%s media is NULL", __FUNCTION__);
+        return;
+    }
+
+    /*
+     * have access to media->cap_index, media->streams, media->protocol,
+     * media->local/remote_datachannel_port
+     */
+    vcmInitializeDataChannel(dcb->peerconnection,
+        track_id, media->datachannel_streams,
+        media->local_datachannel_port, media->remote_datachannel_port,
+        media->datachannel_protocol);
 }
 
 /**

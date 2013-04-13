@@ -11,18 +11,18 @@ let blocklistURL = "http://test:80/browser/browser/base/content/test/social/bloc
 let blocklistEmpty = "http://test:80/browser/browser/base/content/test/social/blocklistEmpty.xml";
 
 let manifest = { // normal provider
-  name: "provider 1",
+  name: "provider ok",
   origin: "https://example.com",
   sidebarURL: "https://example.com/browser/browser/base/content/test/social/social_sidebar.html",
   workerURL: "https://example.com/browser/browser/base/content/test/social/social_worker.js",
   iconURL: "https://example.com/browser/browser/base/content/test/moz.png"
 };
 let manifest_bad = { // normal provider
-  name: "provider 1",
-  origin: "https://bad.com",
-  sidebarURL: "https://bad.com/browser/browser/base/content/test/social/social_sidebar.html",
-  workerURL: "https://bad.com/browser/browser/base/content/test/social/social_worker.js",
-  iconURL: "https://bad.com/browser/browser/base/content/test/moz.png"
+  name: "provider blocked",
+  origin: "https://test1.example.com",
+  sidebarURL: "https://test1.example.com/browser/browser/base/content/test/social/social_sidebar.html",
+  workerURL: "https://test1.example.com/browser/browser/base/content/test/social/social_worker.js",
+  iconURL: "https://test1.example.com/browser/browser/base/content/test/moz.png"
 };
 
 function test() {
@@ -37,13 +37,11 @@ function test() {
 var tests = {
   testSimpleBlocklist: function(next) {
     // this really just tests adding and clearing our blocklist for later tests
-    var blocklist = Components.classes["@mozilla.org/extensions/blocklist;1"]
-                        .getService(Components.interfaces.nsIBlocklistService);
     setAndUpdateBlocklist(blocklistURL, function() {
-      ok(blocklist.isAddonBlocklisted("bad.com@services.mozilla.org", "0", "0", "0"), "blocking 'blocked'");
-      ok(!blocklist.isAddonBlocklisted("good.cpm@services.mozilla.org", "0", "0", "0"), "not blocking 'good'");
+      ok(Services.blocklist.isAddonBlocklisted("test1.example.com@services.mozilla.org", "0", "0", "0"), "blocking 'blocked'");
+      ok(!Services.blocklist.isAddonBlocklisted("example.com@services.mozilla.org", "0", "0", "0"), "not blocking 'good'");
       setAndUpdateBlocklist(blocklistEmpty, function() {
-        ok(!blocklist.isAddonBlocklisted("bad.com@services.mozilla.org", "0", "0", "0"), "blocklist cleared");
+        ok(!Services.blocklist.isAddonBlocklisted("test1.example.com@services.mozilla.org", "0", "0", "0"), "blocklist cleared");
         next();
       });
     });
@@ -54,7 +52,7 @@ var tests = {
       Services.prefs.clearUserPref("social.manifest.good");
       setAndUpdateBlocklist(blocklistEmpty, next);
     }
-    Services.prefs.setCharPref("social.manifest.good", JSON.stringify(manifest));
+    setManifestPref("social.manifest.good", manifest);
     setAndUpdateBlocklist(blocklistURL, function() {
       try {
         SocialService.addProvider(manifest, function(provider) {
@@ -79,7 +77,7 @@ var tests = {
       Services.prefs.clearUserPref("social.manifest.blocked");
       setAndUpdateBlocklist(blocklistEmpty, next);
     }
-    Services.prefs.setCharPref("social.manifest.blocked", JSON.stringify(manifest_bad));
+    setManifestPref("social.manifest.blocked", manifest_bad);
     setAndUpdateBlocklist(blocklistURL, function() {
       try {
         SocialService.addProvider(manifest_bad, function(provider) {
@@ -102,20 +100,26 @@ var tests = {
       Services.prefs.clearUserPref("social.whitelist");
       setAndUpdateBlocklist(blocklistEmpty, next);
     }
-    let installFrom = "https://bad.com";
-    // whitelist to avoid the 3rd party install dialog, we only want to test
-    // the blocklist inside installProvider.
-    Services.prefs.setCharPref("social.whitelist", installFrom);
-    setAndUpdateBlocklist(blocklistURL, function() {
-      try {
-        // expecting an exception when attempting to install a hard blocked
-        // provider
-        Social.installProvider(installFrom, manifest_bad, function(addonManifest) {
-          finish(false);
-        });
-      } catch(e) {
-        finish(true);
-      }
+    let activationURL = manifest_bad.origin + "/browser/browser/base/content/test/social/social_activate.html"
+    addTab(activationURL, function(tab) {
+      let doc = tab.linkedBrowser.contentDocument;
+      let installFrom = doc.nodePrincipal.origin;
+      // whitelist to avoid the 3rd party install dialog, we only want to test
+      // the blocklist inside installProvider.
+      Services.prefs.setCharPref("social.whitelist", installFrom);
+      setAndUpdateBlocklist(blocklistURL, function() {
+        try {
+          // expecting an exception when attempting to install a hard blocked
+          // provider
+          Social.installProvider(doc, manifest_bad, function(addonManifest) {
+            gBrowser.removeTab(tab);
+            finish(false);
+          });
+        } catch(e) {
+          gBrowser.removeTab(tab);
+          finish(true);
+        }
+      });
     });
   },
   testBlockingExistingProvider: function(next) {
@@ -130,7 +134,7 @@ var tests = {
       Services.prefs.clearUserPref("social.manifest.blocked");
       setAndUpdateBlocklist(blocklistEmpty, next);
     }
-    Services.prefs.setCharPref("social.manifest.blocked", JSON.stringify(manifest_bad));
+    setManifestPref("social.manifest.blocked", manifest_bad);
     SocialService.addProvider(manifest_bad, function(provider) {
       if (provider) {
         setAndUpdateBlocklist(blocklistURL, function() {

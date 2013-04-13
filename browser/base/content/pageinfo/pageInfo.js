@@ -1,7 +1,6 @@
-# -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 //******** define a js object to implement nsITreeView
 function pageInfoTreeView(treeid, copycol)
@@ -310,10 +309,8 @@ function onLoadPageInfo()
   gStrings.mediaEmbed = gBundle.getString("mediaEmbed");
   gStrings.mediaLink = gBundle.getString("mediaLink");
   gStrings.mediaInput = gBundle.getString("mediaInput");
-#ifdef MOZ_MEDIA
   gStrings.mediaVideo = gBundle.getString("mediaVideo");
   gStrings.mediaAudio = gBundle.getString("mediaAudio");
-#endif
 
   var args = "arguments" in window &&
              window.arguments.length >= 1 &&
@@ -677,14 +674,12 @@ function grabAll(elem)
       addImage(href, gStrings.mediaImg, "", elem, false);
     } catch (e) { }
   }
-#ifdef MOZ_MEDIA
   else if (elem instanceof HTMLVideoElement) {
     addImage(elem.currentSrc, gStrings.mediaVideo, "", elem, false);
   }
   else if (elem instanceof HTMLAudioElement) {
     addImage(elem.currentSrc, gStrings.mediaAudio, "", elem, false);
   }
-#endif
   else if (elem instanceof HTMLLinkElement) {
     if (elem.rel && /\bicon\b/i.test(elem.rel))
       addImage(elem.href, gStrings.mediaLink, "", elem, false);
@@ -1015,7 +1010,6 @@ function makePreview(row)
       document.getElementById("theimagecontainer").collapsed = false
       document.getElementById("brokenimagecontainer").collapsed = true;
     }
-#ifdef MOZ_MEDIA
     else if (item instanceof HTMLVideoElement && isProtocolAllowed) {
       newImage = document.createElementNS("http://www.w3.org/1999/xhtml", "video");
       newImage.id = "thepreviewimage";
@@ -1037,7 +1031,6 @@ function makePreview(row)
       document.getElementById("theimagecontainer").collapsed = false;
       document.getElementById("brokenimagecontainer").collapsed = true;
     }
-#endif
     else {
       // fallback image for protocols not allowed (e.g., javascript:)
       // or elements not [yet] handled (e.g., object, embed).

@@ -23,9 +23,7 @@ endif
 LIBRARY_NAME     = dom_mobilemessage_s
 LIBXUL_LIBRARY   = 1
 FORCE_STATIC_LIB = 1
-ifndef _MSC_VER
 FAIL_ON_WARNINGS := 1
-endif # !_MSC_VER
 
 include $(topsrcdir)/dom/dom-config.mk
 
@@ -39,7 +37,6 @@ EXPORTS_mozilla/dom = \
   MobileMessageManager.h \
   SmsMessage.h \
   MmsMessage.h \
-  SmsRequest.h \
   SmsSegmentInfo.h \
   SmsFilter.h \
   $(NULL)
@@ -55,6 +52,8 @@ EXPORTS_mozilla/dom/mobilemessage = \
   $(NULL)
 
 CPPSRCS = \
+  MobileMessageCursorCallback.cpp \
+  MobileMessageThread.cpp \
   SmsManager.cpp \
   MobileMessageManager.cpp \
   SmsService.cpp \
@@ -66,11 +65,9 @@ CPPSRCS = \
   MmsMessage.cpp \
   Constants.cpp \
   SmsChild.cpp \
-  SmsRequest.cpp \
   MobileMessageCallback.cpp \
   SmsFilter.cpp \
   SmsSegmentInfo.cpp \
-  SmsCursor.cpp \
   $(NULL)
 
 LOCAL_INCLUDES = \
@@ -95,10 +92,12 @@ EXTRA_COMPONENTS = \
 else
 EXPORTS_mozilla/dom/mobilemessage += \
   MobileMessageDatabaseService.h \
+  MmsService.h \
   $(NULL)
 
 CPPSRCS += \
   MobileMessageDatabaseService.cpp \
+  MmsService.cpp \
   $(NULL)
 endif
 

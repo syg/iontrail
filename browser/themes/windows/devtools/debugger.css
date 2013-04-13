@@ -17,20 +17,6 @@
   -moz-border-start-color: transparent;
 }
 
-/* Watch expressions, variables and other instruments pane */
-
-#instruments-pane {
-  min-width: 50px;
-  -moz-margin-start: 0px !important;
-  /* Unfortunately, transitions don't work properly with locale-aware properties,
-     so both the left and right margins are set via js, while the start margin
-     is always overridden here. */
-}
-
-#instruments-pane[animated] {
-  transition: margin 0.25s ease-in-out;
-}
-
 /* ListWidget items */
 
 .list-widget-item {
@@ -138,14 +124,14 @@
   padding-bottom: 2px;
 }
 
-/* Filtering results panel */
+/* Searchbox results panel */
 
-#filtered-sources-panel {
+.results-panel {
   padding: 4px;
   opacity: 0.9;
 }
 
-.dbg-source-item {
+.results-panel-item {
   background: #f4f4f4;
   border: 1px solid #ddd;
   border-top-color: #fff;
@@ -153,31 +139,37 @@
   cursor: pointer;
 }
 
-.dbg-source-item:first-of-type {
+.results-panel-item:first-of-type {
   border-top-color: #ddd;
   border-radius: 4px 4px 0 0;
 }
 
-.dbg-source-item:last-of-type {
+.results-panel-item:last-of-type {
   border-radius: 0 0 4px 4px;
 }
 
-.dbg-source-item:only-of-type {
+.results-panel-item:only-of-type {
   border-radius: 4px;
 }
 
-.dbg-source-item:not(.selected):not(:hover) {
+.results-panel-item:not(.selected):not(:hover) {
   text-shadow: 0 1px #fff;
 }
 
-.dbg-source-item-name {
+.results-panel-item-pre {
+  -moz-margin-end: 5px !important;
+  color: #444;
+  cursor: inherit;
+}
+
+.results-panel-item-name {
   color: #111;
   font-weight: 600;
   cursor: inherit;
 }
 
-.dbg-source-item-details {
-  color: #777;
+.results-panel-item-details {
+  color: #7f7f7f;
   cursor: inherit;
 }
 
@@ -257,6 +249,14 @@
 
 /* Toolbar Controls */
 
+#resumption-panel-desc {
+  width: 200px;
+}
+
+#resumption-order-panel {
+  -moz-margin-start: -8px;
+}
+
 #resume {
   list-style-image: url("chrome://browser/skin/devtools/debugger-play.png");
   -moz-image-region: rect(0px,16px,16px,0px);
@@ -305,12 +305,12 @@
   background: none;
   box-shadow: none;
   border: none;
-  list-style-image: url("chrome://browser/skin/devtools/debugger-expand.png");
+  list-style-image: url("chrome://browser/skin/devtools/debugger-collapse.png");
   -moz-image-region: rect(0px,16px,16px,0px);
 }
 
-#instruments-pane-toggle:not([toggled]) {
-  list-style-image: url("chrome://browser/skin/devtools/debugger-collapse.png");
+#instruments-pane-toggle[pane-collapsed] {
+  list-style-image: url("chrome://browser/skin/devtools/debugger-expand.png");
 }
 
 #instruments-pane-toggle:hover {

@@ -10,8 +10,6 @@
 #include "gfxMatrix.h"
 #include "SVGAnimatedTransformList.h"
 
-class nsIDOMSVGRect;
-
 namespace mozilla {
 class DOMSVGAnimatedTransformList;
 
@@ -19,6 +17,7 @@ namespace dom {
 
 class SVGGraphicsElement;
 class SVGMatrix;
+class SVGIRect;
 
 class SVGTransformableElement : public nsSVGElement
 {
@@ -27,13 +26,13 @@ public:
     : nsSVGElement(aNodeInfo) {}
   virtual ~SVGTransformableElement() {}
 
-  NS_DECL_ISUPPORTS_INHERITED
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE = 0;
 
   // WebIDL
   already_AddRefed<DOMSVGAnimatedTransformList> Transform();
   nsSVGElement* GetNearestViewportElement();
   nsSVGElement* GetFarthestViewportElement();
-  already_AddRefed<nsIDOMSVGRect> GetBBox(ErrorResult& rv);
+  already_AddRefed<SVGIRect> GetBBox(ErrorResult& rv);
   already_AddRefed<SVGMatrix> GetCTM();
   already_AddRefed<SVGMatrix> GetScreenCTM();
   already_AddRefed<SVGMatrix> GetTransformToElement(SVGGraphicsElement& aElement,
@@ -59,6 +58,8 @@ public:
   virtual nsIAtom* GetTransformListAttrName() const {
     return nsGkAtoms::transform;
   }
+
+  virtual bool IsTransformable() { return true; }
 
 protected:
   // nsSVGElement overrides

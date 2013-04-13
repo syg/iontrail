@@ -33,13 +33,20 @@ public:
    * Set the ImageContainer. aContainer must have the same layer manager
    * as this layer.
    */
-  void SetContainer(ImageContainer* aContainer);
+  virtual void SetContainer(ImageContainer* aContainer);
 
   /**
    * CONSTRUCTION PHASE ONLY
    * Set the filter used to resample this image if necessary.
    */
-  void SetFilter(gfxPattern::GraphicsFilter aFilter) { mFilter = aFilter; }
+  void SetFilter(gfxPattern::GraphicsFilter aFilter)
+  {
+    if (mFilter != aFilter) {
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) Filter", this));
+      mFilter = aFilter;
+      Mutated();
+    }
+  }
 
   /**
    * CONSTRUCTION PHASE ONLY
@@ -66,8 +73,11 @@ public:
    */
   void SetForceSingleTile(bool aForceSingleTile)
   {
-    mForceSingleTile = aForceSingleTile;
-    Mutated();
+    if (mForceSingleTile != aForceSingleTile) {
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ForceSingleTile", this));
+      mForceSingleTile = aForceSingleTile;
+      Mutated();
+    }
   }
 
 protected:

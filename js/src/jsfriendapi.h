@@ -601,6 +601,16 @@ GetNativeStackLimit(const JSRuntime *rt)
         }                                                                       \
     JS_END_MACRO
 
+#define JS_CHECK_RECURSION_WITH_EXTRA_DONT_REPORT(cx, extra, onerror)           \
+    JS_BEGIN_MACRO                                                              \
+        uint8_t stackDummy_;                                                    \
+        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(js::GetRuntime(cx)),   \
+                                 &stackDummy_ - (extra)))                       \
+        {                                                                       \
+            onerror;                                                            \
+        }                                                                       \
+    JS_END_MACRO
+
 #define JS_CHECK_CHROME_RECURSION(cx, onerror)                                  \
     JS_BEGIN_MACRO                                                              \
         int stackDummy_;                                                        \
@@ -1439,5 +1449,9 @@ inline void assertEnteredPolicy(JSContext *cx, JSObject *obj, jsid id) {};
 #endif
 
 } /* namespace js */
+
+extern JS_FRIEND_API(JSBool)
+js_DefineOwnProperty(JSContext *cx, JSObject *objArg, jsid idArg,
+                     const js::PropertyDescriptor& descriptor, JSBool *bp);
 
 #endif /* jsfriendapi_h___ */

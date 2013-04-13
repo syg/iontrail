@@ -212,7 +212,7 @@ private:
                                       uint32_t aInternalIndex,
                                       uint32_t aArgCountForItem);
   void MaybeRemoveItemFromAnimValListAt(uint32_t aIndex,
-                                        uint32_t aArgCountForItem);
+                                        int32_t aArgCountForItem);
 
   // Calls UpdateListIndex on all elements in |mItems| that satisfy ItemAt(),
   // from |aStartingIndex| to the end of |mItems|.  Also adjusts
@@ -246,7 +246,7 @@ private:
 
   // Weak refs to our DOMSVGPathSeg items. The items are friends and take care
   // of clearing our pointer to them when they die.
-  nsTArray<ItemProxy> mItems;
+  FallibleTArray<ItemProxy> mItems;
 
   // Strong ref to our element to keep it alive. We hold this not only for
   // ourself, but also for our DOMSVGPathSeg items too.

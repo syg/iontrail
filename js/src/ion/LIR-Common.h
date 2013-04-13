@@ -607,16 +607,26 @@ class LTypeOfV : public LInstructionHelper<1, BOX_PIECES, 0>
     }
 };
 
-class LToIdV : public LCallInstructionHelper<BOX_PIECES, 2 * BOX_PIECES, 0>
+class LToIdV : public LInstructionHelper<BOX_PIECES, 2 * BOX_PIECES, 1>
 {
   public:
     LIR_HEADER(ToIdV)
+    BOX_OUTPUT_ACCESSORS()
+
+    LToIdV(const LDefinition &temp)
+    {
+        setTemp(0, temp);
+    }
 
     static const size_t Object = 0;
     static const size_t Index = BOX_PIECES;
 
     MToId *mir() const {
         return mir_->toToId();
+    }
+
+    const LDefinition *tempFloat() {
+        return getTemp(0);
     }
 };
 
@@ -1225,6 +1235,47 @@ class LTestVAndBranch : public LInstructionHelper<0, BOX_PIECES, 3>
 
     MTest *mir() {
         return mir_->toTest();
+    }
+};
+
+// Dispatches control flow to a successor based on incoming JSFunction*.
+// Used to implemenent polymorphic inlining.
+class LFunctionDispatch : public LInstructionHelper<0, 1, 0>
+{
+    // Dispatch is performed based on a function -> block map
+    // stored in the MIR.
+
+  public:
+    LIR_HEADER(FunctionDispatch);
+
+    LFunctionDispatch(const LAllocation &in) {
+        setOperand(0, in);
+    }
+
+    MFunctionDispatch *mir() {
+        return mir_->toFunctionDispatch();
+    }
+};
+
+class LTypeObjectDispatch : public LInstructionHelper<0, 1, 1>
+{
+    // Dispatch is performed based on a TypeObject -> block
+    // map inferred by the MIR.
+
+  public:
+    LIR_HEADER(TypeObjectDispatch);
+
+    LTypeObjectDispatch(const LAllocation &in, const LDefinition &temp) {
+        setOperand(0, in);
+        setTemp(0, temp);
+    }
+
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
+
+    MTypeObjectDispatch *mir() {
+        return mir_->toTypeObjectDispatch();
     }
 };
 
@@ -3056,6 +3107,37 @@ class LStoreTypedArrayElement : public LInstructionHelper<0, 3, 0>
     }
 };
 
+class LStoreTypedArrayElementHole : public LInstructionHelper<0, 4, 0>
+{
+  public:
+    LIR_HEADER(StoreTypedArrayElementHole)
+
+    LStoreTypedArrayElementHole(const LAllocation &elements, const LAllocation &length,
+                                const LAllocation &index, const LAllocation &value)
+    {
+        setOperand(0, elements);
+        setOperand(1, length);
+        setOperand(2, index);
+        setOperand(3, value);
+    }
+
+    const MStoreTypedArrayElementHole *mir() const {
+        return mir_->toStoreTypedArrayElementHole();
+    }
+    const LAllocation *elements() {
+        return getOperand(0);
+    }
+    const LAllocation *length() {
+        return getOperand(1);
+    }
+    const LAllocation *index() {
+        return getOperand(2);
+    }
+    const LAllocation *value() {
+        return getOperand(3);
+    }
+};
+
 class LEffectiveAddress : public LInstructionHelper<1, 2, 0>
 {
   public:
@@ -3247,13 +3329,17 @@ class LGetPropertyCacheV : public LInstructionHelper<BOX_PIECES, 1, 0>
 
 // Patchable jump to stubs generated for a GetProperty cache, which loads a
 // value of a known type, possibly into an FP register.
-class LGetPropertyCacheT : public LInstructionHelper<1, 1, 0>
+class LGetPropertyCacheT : public LInstructionHelper<1, 1, 1>
 {
   public:
     LIR_HEADER(GetPropertyCacheT)
 
-    LGetPropertyCacheT(const LAllocation &object) {
+    LGetPropertyCacheT(const LAllocation &object, const LDefinition &temp) {
         setOperand(0, object);
+        setTemp(0, temp);
+    }
+    const LDefinition *temp() {
+        return getTemp(0);
     }
     const MGetPropertyCache *mir() const {
         return mir_->toGetPropertyCache();

@@ -57,7 +57,7 @@ nsDOMEvent::nsDOMEvent(mozilla::dom::EventTarget* aOwner,
     /*
       A derived class might want to allocate its own type of aEvent
       (derived from nsEvent). To do this, it should take care to pass
-      a non-NULL aEvent to this ctor, e.g.:
+      a non-nullptr aEvent to this ctor, e.g.:
       
         nsDOMFooEvent::nsDOMFooEvent(..., nsEvent* aEvent)
         : nsDOMEvent(..., aEvent ? aEvent : new nsFooEvent())
@@ -558,6 +558,8 @@ nsDOMEvent::InitEvent(const nsAString& aEventTypeArg, bool aCanBubbleArg, bool a
 
   mEvent->mFlags.mBubbles = aCanBubbleArg;
   mEvent->mFlags.mCancelable = aCancelableArg;
+
+  mEvent->mFlags.mDefaultPrevented = false;
 
   // Clearing the old targets, so that the event is targeted correctly when
   // re-dispatching it.

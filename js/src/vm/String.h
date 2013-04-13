@@ -10,6 +10,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/GuardObjects.h"
+#include "mozilla/PodOperations.h"
 
 #include "jsapi.h"
 #include "jsatom.h"
@@ -414,6 +415,9 @@ class JSString : public js::gc::Cell
         return offsetof(JSString, d.u1.chars);
     }
 
+    JS::Zone *zone() const { return tenuredZone(); }
+    js::gc::AllocKind getAllocKind() const { return tenuredGetAllocKind(); }
+
     static inline void writeBarrierPre(JSString *str);
     static inline void writeBarrierPost(JSString *str, void *addr);
     static inline bool needWriteBarrierPre(JS::Zone *zone);
@@ -771,9 +775,9 @@ class StaticStrings
     JSAtom *length2StaticTable[NUM_SMALL_CHARS * NUM_SMALL_CHARS];
 
     void clear() {
-        PodArrayZero(unitStaticTable);
-        PodArrayZero(length2StaticTable);
-        PodArrayZero(intStaticTable);
+        mozilla::PodArrayZero(unitStaticTable);
+        mozilla::PodArrayZero(length2StaticTable);
+        mozilla::PodArrayZero(intStaticTable);
     }
 
   public:

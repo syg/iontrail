@@ -657,6 +657,15 @@ public:
                                            const nscoord aRadii[8],
                                            const nsRect& aContainedRect);
 
+  /**
+   * Return whether any part of aTestRect is inside of the rounded
+   * rectangle formed by aBounds and aRadii (which are indexed by the
+   * NS_CORNER_* constants in nsStyleConsts.h). This is precise.
+   */
+  static bool RoundedRectIntersectsRect(const nsRect& aRoundedRect,
+                                        const nscoord aRadii[8],
+                                        const nsRect& aTestRect);
+
   enum {
     PAINT_IN_TRANSFORM = 0x01,
     PAINT_SYNC_DECODE_IMAGES = 0x02,
@@ -938,11 +947,12 @@ public:
 
   /*
    * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block width.
+   * containing block size.
+   * @param aPercentBasis The width or height of the containing block
+   * (whichever the client wants to use for resolving percentages).
    */
-  static nscoord ComputeWidthDependentValue(
-                   nscoord              aContainingBlockWidth,
-                   const nsStyleCoord&  aCoord);
+  static nscoord ComputeCBDependentValue(nscoord aPercentBasis,
+                                         const nsStyleCoord& aCoord);
 
   /*
    * Convert nsStyleCoord to nscoord when percentages depend on the

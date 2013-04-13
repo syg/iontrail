@@ -40,6 +40,12 @@
 #define PREF_TS_SYNCHRONOUS "toolkit.storage.synchronous"
 #define PREF_TS_SYNCHRONOUS_DEFAULT 1
 
+#define PREF_TS_PAGESIZE "toolkit.storage.pageSize"
+
+// This value must be kept in sync with the value of SQLITE_DEFAULT_PAGE_SIZE in
+// db/sqlite3/src/Makefile.in.
+#define PREF_TS_PAGESIZE_DEFAULT 32768
+
 namespace mozilla {
 namespace storage {
 
@@ -222,71 +228,6 @@ NS_IMPL_THREADSAFE_ISUPPORTS1(
 )
 
 ////////////////////////////////////////////////////////////////////////////////
-//// Helpers
-
-class ServiceMainThreadInitializer : public nsRunnable
-{
-public:
-  ServiceMainThreadInitializer(Service *aService,
-                               nsIObserver *aObserver,
-                               nsIXPConnect **aXPConnectPtr,
-                               int32_t *aSynchronousPrefValPtr)
-  : mService(aService)
-  , mObserver(aObserver)
-  , mXPConnectPtr(aXPConnectPtr)
-  , mSynchronousPrefValPtr(aSynchronousPrefValPtr)
-  {
-  }
-
-  NS_IMETHOD Run()
-  {
-    NS_PRECONDITION(NS_IsMainThread(), "Must be running on the main thread!");
-
-    // NOTE:  All code that can only run on the main thread and needs to be run
-    //        during initialization should be placed here.  During the off-
-    //        chance that storage is initialized on a background thread, this
-    //        will ensure everything that isn't threadsafe is initialized in
-    //        the right place.
-
-    // Register for xpcom-shutdown so we can cleanup after ourselves.  The
-    // observer service can only be used on the main thread.
-    nsCOMPtr<nsIObserverService> os =
-      mozilla::services::GetObserverService();
-    NS_ENSURE_TRUE(os, NS_ERROR_FAILURE);
-    nsresult rv = os->AddObserver(mObserver, "xpcom-shutdown", false);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = os->AddObserver(mObserver, "xpcom-shutdown-threads", false);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // We cache XPConnect for our language helpers.  XPConnect can only be
-    // used on the main thread.
-    (void)CallGetService(nsIXPConnect::GetCID(), mXPConnectPtr);
-
-    // We need to obtain the toolkit.storage.synchronous preferences on the main
-    // thread because the preference service can only be accessed there.  This
-    // is cached in the service for all future Open[Unshared]Database calls.
-    int32_t synchronous =
-      Preferences::GetInt(PREF_TS_SYNCHRONOUS, PREF_TS_SYNCHRONOUS_DEFAULT);
-    ::PR_ATOMIC_SET(mSynchronousPrefValPtr, synchronous);
-
-    // Create and register our SQLite memory reporters.  Registration can only
-    // happen on the main thread (otherwise you'll get cryptic crashes).
-    mService->mStorageSQLiteReporter = new NS_MEMORY_REPORTER_NAME(StorageSQLite);
-    mService->mStorageSQLiteMultiReporter = new StorageSQLiteMultiReporter(mService);
-    (void)::NS_RegisterMemoryReporter(mService->mStorageSQLiteReporter);
-    (void)::NS_RegisterMemoryMultiReporter(mService->mStorageSQLiteMultiReporter);
-
-    return NS_OK;
-  }
-
-private:
-  Service *mService;
-  nsIObserver *mObserver;
-  nsIXPConnect **mXPConnectPtr;
-  int32_t *mSynchronousPrefValPtr;
-};
-
-////////////////////////////////////////////////////////////////////////////////
 //// Service
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(
@@ -321,6 +262,9 @@ Service::getSingleton()
     ::PR_Abort();
   }
 
+  // The first reference to the storage service must be obtained on the
+  // main thread.
+  NS_ENSURE_TRUE(NS_IsMainThread(), nullptr);
   gService = new Service();
   if (gService) {
     NS_ADDREF(gService);
@@ -359,6 +303,8 @@ Service::getSynchronousPref()
 {
   return sSynchronousPref;
 }
+
+int32_t Service::sDefaultPageSize = PREF_TS_PAGESIZE_DEFAULT;
 
 Service::Service()
 : mMutex("Service::mMutex")
@@ -552,6 +498,8 @@ const sqlite3_mem_methods memMethods = {
 nsresult
 Service::initialize()
 {
+  MOZ_ASSERT(NS_IsMainThread(), "Must be initialized on the main thread");
+
   int rc;
 
 #ifdef MOZ_STORAGE_MEMORY
@@ -576,19 +524,37 @@ Service::initialize()
     NS_WARNING("Failed to register telemetry VFS");
   }
 
-  // Set the default value for the toolkit.storage.synchronous pref.  It will be
-  // updated with the user preference on the main thread.
-  sSynchronousPref = PREF_TS_SYNCHRONOUS_DEFAULT;
+  // Register for xpcom-shutdown so we can cleanup after ourselves.  The
+  // observer service can only be used on the main thread.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  NS_ENSURE_TRUE(os, NS_ERROR_FAILURE);
+  nsresult rv = os->AddObserver(this, "xpcom-shutdown", false);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = os->AddObserver(this, "xpcom-shutdown-threads", false);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // Run the things that need to run on the main thread there.
-  nsCOMPtr<nsIRunnable> event =
-    new ServiceMainThreadInitializer(this, this, &sXPConnect, &sSynchronousPref);
-  if (event && ::NS_IsMainThread()) {
-    (void)event->Run();
-  }
-  else {
-    (void)::NS_DispatchToMainThread(event);
-  }
+  // We cache XPConnect for our language helpers.  XPConnect can only be
+  // used on the main thread.
+  (void)CallGetService(nsIXPConnect::GetCID(), &sXPConnect);
+
+  // We need to obtain the toolkit.storage.synchronous preferences on the main
+  // thread because the preference service can only be accessed there.  This
+  // is cached in the service for all future Open[Unshared]Database calls.
+  sSynchronousPref =
+    Preferences::GetInt(PREF_TS_SYNCHRONOUS, PREF_TS_SYNCHRONOUS_DEFAULT);
+
+  // We need to obtain the toolkit.storage.pageSize preferences on the main
+  // thread because the preference service can only be accessed there.  This
+  // is cached in the service for all future Open[Unshared]Database calls.
+  sDefaultPageSize =
+      Preferences::GetInt(PREF_TS_PAGESIZE, PREF_TS_PAGESIZE_DEFAULT);
+
+  // Create and register our SQLite memory reporters.  Registration can only
+  // happen on the main thread (otherwise you'll get cryptic crashes).
+  mStorageSQLiteReporter = new NS_MEMORY_REPORTER_NAME(StorageSQLite);
+  mStorageSQLiteMultiReporter = new StorageSQLiteMultiReporter(this);
+  (void)::NS_RegisterMemoryReporter(mStorageSQLiteReporter);
+  (void)::NS_RegisterMemoryMultiReporter(mStorageSQLiteMultiReporter);
 
   return NS_OK;
 }

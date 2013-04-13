@@ -28,12 +28,12 @@ UnwrapNW(JSContext *cx, unsigned argc, jsval *vp)
     return ThrowException(NS_ERROR_XPC_NOT_ENOUGH_ARGS, cx);
   }
 
-  jsval v = JS_ARGV(cx, vp)[0];
+  JS::RootedValue v(cx, JS_ARGV(cx, vp)[0]);
   if (JSVAL_IS_PRIMITIVE(v)) {
     return ThrowException(NS_ERROR_INVALID_ARG, cx);
   }
 
-  JSObject *obj = JSVAL_TO_OBJECT(v);
+  JS::RootedObject obj(cx, JSVAL_TO_OBJECT(v));
   if (!js::IsWrapper(obj)) {
     JS_SET_RVAL(cx, vp, v);
     return true;
@@ -64,7 +64,7 @@ XrayWrapperConstructor(JSContext *cx, unsigned argc, jsval *vp)
     return true;
   }
 
-  obj = js::UnwrapObject(obj);
+  obj = js::UncheckedUnwrap(obj);
 
   *vp = OBJECT_TO_JSVAL(obj);
   return JS_WrapValue(cx, vp);
@@ -86,29 +86,13 @@ AttachNewConstructorObject(XPCCallContext &ccx, JSObject *aGlobalObject)
 
 } // namespace XPCNativeWrapper
 
-namespace xpc {
-
-JSObject *
-Unwrap(JSContext *cx, JSObject *wrapper, bool stopAtOuter)
-{
-  if (js::IsWrapper(wrapper)) {
-    if (xpc::AccessCheck::isScriptAccessOnly(cx, wrapper))
-      return nullptr;
-    return js::UnwrapObject(wrapper, stopAtOuter);
-  }
-
-  return nullptr;
-}
-
-} // namespace xpc
-
 namespace XPCWrapper {
 
 JSObject *
 UnsafeUnwrapSecurityWrapper(JSObject *obj)
 {
   if (js::IsProxy(obj)) {
-    return js::UnwrapObject(obj);
+    return js::UncheckedUnwrap(obj);
   }
 
   return obj;

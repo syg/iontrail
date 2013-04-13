@@ -63,7 +63,7 @@
 
 #include "nsFrameManager.h"
 #include "nsRuleProcessorData.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -186,23 +186,6 @@ protected:
 nsFrameManager::~nsFrameManager()
 {
   NS_ASSERTION(!mPresShell, "nsFrameManager::Destroy never called");
-}
-
-nsresult
-nsFrameManager::Init(nsStyleSet* aStyleSet)
-{
-  if (!mPresShell) {
-    NS_ERROR("null pres shell");
-    return NS_ERROR_FAILURE;
-  }
-
-  if (!aStyleSet) {
-    NS_ERROR("null style set");
-    return NS_ERROR_FAILURE;
-  }
-
-  mStyleSet = aStyleSet;
-  return NS_OK;
 }
 
 void
@@ -1658,7 +1641,7 @@ nsFrameManager::ComputeStyleChangeFor(nsIFrame          *aFrame,
                                       RestyleTracker&    aRestyleTracker,
                                       bool               aRestyleDescendants)
 {
-  SAMPLE_LABEL("CSS", "ComputeStyleChangeFor");
+  PROFILER_LABEL("CSS", "ComputeStyleChangeFor");
 
   nsIContent *content = aFrame->GetContent();
   if (aMinChange) {

@@ -127,10 +127,25 @@
   }
 }
 
-#tray:not([tabsonly]) documenttab > .documenttab-container {
-  animation: open-documenttab;
-  animation-duration: 0.4s;
-  animation-timing-function: ease-out;
+@-moz-keyframes close-documenttab {
+  0% {
+    opacity: 1;
+    transform: scale(1, 1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0, 0);
+  }
+}
+
+#tray:not([tabsonly]) .documenttab-container {
+  animation: open-documenttab 0.4s ease-out;
+}
+
+#tray:not([tabsonly]) documenttab[closing] > .documenttab-container {
+  animation: close-documenttab 0.4s ease-out;
+  animation-fill-mode: forwards;
 }
 
 #tray:not([tabsonly]) .documenttab-favicon {
@@ -267,6 +282,10 @@ documenttab[selected] .documenttab-selection {
 #page,
 .selection-overlay {
   -moz-stack-sizing: ignore;
+}
+
+.selection-overlay {
+  pointer-events: none;  
 }
 
 .selection-overlay:-moz-focusring {
@@ -625,8 +644,68 @@ appbar toolbarbutton[disabled] {
   -moz-image-region: rect(80px, 360px, 120px, 320px) !important;
 }
 
-/* Flyouts ---------------------------------------------------------------- */
+/* Tile-selection-Specific */
+#contextualactions-tray > toolbarbutton {
+  opacity: 1;
+}
+#contextualactions-tray > toolbarbutton[fade] {
+  opacity: 0;
+}
+#contextualactions-tray > toolbarbutton:not([immediate]) {
+  transition-property: opacity;
+  transition-duration: .3s;
+  transition-timing-function: ease-in;
+  transition-delay: 80ms;
+}
 
+#pin-selected-button {
+  -moz-image-region: rect(0px, 240px, 40px, 200px) !important;
+}
+#pin-selected-button:hover {
+  -moz-image-region: rect(40px, 240px, 80px, 200px) !important;
+}
+#pin-selected-button:active {
+  -moz-image-region: rect(80px, 240px, 120px, 200px) !important;
+}
+#unpin-selected-button {
+  -moz-image-region: rect(0px, 280px, 40px, 240px) !important;
+}
+#unpin-selected-button:hover {
+  -moz-image-region: rect(40px, 280px, 80px, 240px) !important;
+}
+#unpin-selected-button:active {
+  -moz-image-region: rect(80px, 280px, 120px, 240px) !important;
+}
+#delete-selected-button {
+  -moz-image-region: rect(0px, 480px, 40px, 440px) !important;
+}
+#delete-selected-button:hover {
+  -moz-image-region: rect(40px, 480px, 80px, 440px) !important;
+}
+#delete-selected-button:active {
+  -moz-image-region: rect(80px, 480px, 120px, 440px) !important;
+}
+#clear-selected-button {
+  -moz-image-region: rect(0px, 520px, 40px, 480px) !important;
+}
+#clear-selected-button:hover {
+  -moz-image-region: rect(40px, 520px, 80px, 480px) !important;
+}
+#clear-selected-button:active {
+  -moz-image-region: rect(80px, 520px, 120px, 480px) !important;
+}
+
+#restore-selected-button {
+  -moz-image-region: rect(0px, 560px, 40px, 520px) !important;
+}
+#restore-selected-button:hover {
+  -moz-image-region: rect(40px, 560px, 80px, 520px) !important;
+}
+#restore-selected-button:active {
+  -moz-image-region: rect(80px, 560px, 120px, 520px) !important;
+}
+
+/* Flyouts ---------------------------------------------------------------- */
 /* don't add a margin to the very top settings entry in flyouts */
 flyoutpanel > settings:first-child {
   margin-top: 0px;
@@ -732,6 +811,31 @@ setting[type="directory"] > .preferences-alignment {
   display: none;
 }
 
+/* Clear private data prefs */
+
+/* hide subitems when other data checkbox is not checked */
+#prefs-privdata-other:not([checked]) + #prefs-privdata-subitems {
+  display: none;
+}
+
+#prefs-privdata-subitems {
+  display: block;
+  padding-left: @metro_spacing_xnormal@;
+  font-size: @metro_font_snormal@;
+}
+
+/* arrange sub-items in two columns */
+.privdata-subitem-item {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0;
+  width: 50%;
+}
+
+#clear-notification-done {
+  font-weight: bold;
+}
+
 /* Start UI (Autocomplete + New Tab Page) ----------------------------------- */
 
 #start-container {
@@ -754,6 +858,11 @@ setting[type="directory"] > .preferences-alignment {
   visibility: collapse;
 }
 
+/*tile content should be on same line in snapped view */
+#snapped-topsites-grid > richgriditem > .richgrid-item-content {
+  -moz-box-orient: horizontal;
+}
+
 /* if snapped, hide the fullscreen awesome screen, if viewstate is anything
  *  other than snapped, hide the snapped awesome screen */
 #start[viewstate="snapped"],
@@ -769,8 +878,12 @@ setting[type="directory"] > .preferences-alignment {
   visibility: collapse;
 }
 
+/* a 'margin-top' is applied dynamically in ContentAreaObserver */
 #browsers {
   background: white;
+  transition-property: margin-top;
+  transition-duration: .3s;
+  transition-timing-function: ease-in-out;
 }
 
 /* Panel UI ---------------------------------------------------------------- */
@@ -868,6 +981,79 @@ setting[type="directory"] > .preferences-alignment {
   -moz-margin-end: @margin_large@;
 }
 
+/* overlay buttons */
+
+.overlay-button {
+  position: fixed;
+  top: 50%;
+  margin-top: -65px;
+  width: 118px;
+  height: 118px;
+  background-color: hsla(210,30%,10%,.2);
+  background-size: 60px;
+  background-repeat: no-repeat;
+  background-origin: padding-box;
+  background-clip: padding-box;
+  border: 6px solid hsla(0,0%,100%,.7);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px hsla(0,0%,0%,.04),
+              0 0 9px 0 hsla(0,0%,0%,.1);
+  transition-duration: 550ms;
+  transition-timing-function: cubic-bezier(0.1, 0.9, 0.2, 1);
+}
+
+#overlay-back {
+  background-image: url(chrome://browser/skin/images/overlay-back.png);
+}
+
+#overlay-plus {
+  background-image: url(chrome://browser/skin/images/overlay-plus.png);
+}
+
+#overlay-back:-moz-locale-dir(ltr),
+#overlay-plus:-moz-locale-dir(rtl) {
+  left: -70px;
+  background-position: right 6px center;
+}
+
+#overlay-plus:-moz-locale-dir(ltr),
+#overlay-back:-moz-locale-dir(rtl) {
+  right: -70px;
+  background-position: left 6px center;
+}
+
+.overlay-button[disabled] {
+  box-shadow: none;
+}
+
+#overlay-back[disabled]:-moz-locale-dir(ltr),
+#overlay-plus[disabled]:-moz-locale-dir(rtl) {
+  transform: translateX(-60px);
+}
+
+#overlay-plus[disabled]:-moz-locale-dir(ltr),
+#overlay-back[disabled]:-moz-locale-dir(rtl) {
+  transform: translateX(60px);
+}
+
+.overlay-button:not([disabled]):hover {
+  background-color: hsla(210,30%,10%,.4);
+  background-size: 90px;
+  border-color: hsla(0,0%,100%,.9);
+}
+
+#overlay-back:not([disabled]):-moz-locale-dir(ltr):hover,
+#overlay-plus:not([disabled]):-moz-locale-dir(rtl):hover {
+  background-position: right 12px center;
+  transform: translateX(40px) scale(1.2);
+}
+
+#overlay-plus:not([disabled]):-moz-locale-dir(ltr):hover,
+#overlay-back:not([disabled]):-moz-locale-dir(rtl):hover {
+  background-position: left 12px center;
+  transform: translateX(-40px) scale(1.2);
+}
+
 /* helperapp (save-as) popup ----------------------------------------------- */
 #helperapp-target {
   font-size: @font_small@ !important;
@@ -934,20 +1120,15 @@ setting[type="directory"] > .preferences-alignment {
 
 /* Text selection handles */
 
-#selectionhandle-start,
-#selectionhandle-end {
+#selectionhandle-mark1,
+#selectionhandle-mark2,
+#selectionhandle-mark3 {
+  list-style-image: url("chrome://browser/skin/images/selection-monocle.png");
   border: 0px solid gray;
   padding: 0px;
   margin-top: -30px;
   margin-left: -18px;
-}
-
-#selectionhandle-start {
-  list-style-image: url("chrome://browser/skin/images/selection-monocle.png");
-}
-
-#selectionhandle-end {
-  list-style-image: url("chrome://browser/skin/images/selection-monocle.png");
+  pointer-events: auto;
 }
 
 /* Capture picker ------------------------------------------------------------- */

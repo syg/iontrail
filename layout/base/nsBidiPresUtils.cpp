@@ -874,7 +874,7 @@ nsBidiPresUtils::ResolveParagraph(nsBlockFrame* aBlockFrame,
     }
   } // for
 
-  if (aBpd->mParagraphDepth > 1) {
+  if (aBpd->mParagraphDepth > 0) {
     nsIFrame* child;
     nsIFrame* parent;
     if (firstFrame) {
@@ -1981,7 +1981,7 @@ nsresult nsBidiPresUtils::ProcessText(const PRUnichar*       aText,
   return NS_OK;
 }
 
-class NS_STACK_CLASS nsIRenderingContextBidiProcessor : public nsBidiPresUtils::BidiProcessor {
+class MOZ_STACK_CLASS nsIRenderingContextBidiProcessor : public nsBidiPresUtils::BidiProcessor {
 public:
   nsIRenderingContextBidiProcessor(nsRenderingContext* aCtx,
                                    nsRenderingContext* aTextRunConstructionContext,

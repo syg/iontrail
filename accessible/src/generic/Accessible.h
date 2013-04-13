@@ -16,8 +16,8 @@
 #include "nsIAccessibleSelectable.h"
 #include "nsIAccessibleValue.h"
 #include "nsIAccessibleStates.h"
-#include "nsIContent.h"
 
+#include "nsIContent.h"
 #include "nsStringGlue.h"
 #include "nsTArray.h"
 #include "nsRefPtrHashtable.h"
@@ -25,7 +25,6 @@
 struct nsRoleMapEntry;
 
 struct nsRect;
-class nsIContent;
 class nsIFrame;
 class nsIAtom;
 class nsView;
@@ -521,6 +520,8 @@ public:
     { return const_cast<Accessible*>(this)->AsTableCell(); }
 
   bool IsTableRow() const { return HasGenericType(eTableRow); }
+
+  bool IsTextField() const { return mType == eHTMLTextFieldType; }
 
   bool IsTextLeaf() const { return mType == eTextLeafType; }
   TextLeafAccessible* AsTextLeaf();

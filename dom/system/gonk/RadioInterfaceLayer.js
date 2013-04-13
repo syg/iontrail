@@ -99,7 +99,7 @@ const RIL_IPC_MOBILECONNECTION_MSG_NAMES = [
   "RIL:IccOpenChannel",
   "RIL:IccExchangeAPDU",
   "RIL:IccCloseChannel",
-  "RIL:IccUpdateContact",
+  "RIL:UpdateIccContact",
   "RIL:RegisterMobileConnectionMsg",
   "RIL:RegisterIccMsg",
   "RIL:SetCallForwardingOption",
@@ -226,6 +226,7 @@ function RadioInterfaceLayer() {
   this.rilContext = {
     radioState:     RIL.GECKO_RADIOSTATE_UNAVAILABLE,
     cardState:      RIL.GECKO_CARDSTATE_UNKNOWN,
+    networkSelectionMode: RIL.GECKO_NETWORK_SELECTION_UNKNOWN,
     iccInfo:        null,
     imsi:           null,
 
@@ -511,9 +512,9 @@ RadioInterfaceLayer.prototype = {
         this.saveRequestTarget(msg);
         this.iccExchangeAPDU(msg.json);
         break;
-      case "RIL:IccUpdateContact":
+      case "RIL:UpdateIccContact":
         this.saveRequestTarget(msg);
-        this.updateICCContact(msg.json);
+        this.updateIccContact(msg.json);
         break;
       case "RIL:RegisterMobileConnectionMsg":
         this.registerMessageTarget("mobileconnection", msg.target);
@@ -657,7 +658,7 @@ RadioInterfaceLayer.prototype = {
         this.handleNitzTime(message);
         break;
       case "iccinfochange":
-        this.handleICCInfoChange(message);
+        this.handleIccInfoChange(message);
         break;
       case "iccimsi":
         this.rilContext.imsi = message.imsi;
@@ -665,7 +666,7 @@ RadioInterfaceLayer.prototype = {
       case "iccGetCardLock":
       case "iccSetCardLock":
       case "iccUnlockCardLock":
-        this.handleICCCardLockResult(message);
+        this.handleIccCardLockResult(message);
         break;
       case "icccontacts":
         if (!this._contactsCallbacks) {
@@ -680,10 +681,10 @@ RadioInterfaceLayer.prototype = {
         }
         break;
       case "icccontactupdate":
-        this.handleIccUpdateContact(message);
+        this.handleUpdateIccContact(message);
         break;
       case "iccmbdn":
-        this.handleICCMbdn(message);
+        this.handleIccMbdn(message);
         break;
       case "USSDReceived":
         debug("USSDReceived " + JSON.stringify(message));
@@ -714,6 +715,10 @@ RadioInterfaceLayer.prototype = {
         break;
       case "setCellBroadcastSearchList":
         this.handleSetCellBroadcastSearchList(message);
+        break;
+      case "setRadioEnabled":
+        let lock = gSettingsService.createLock();
+        lock.set("ril.radio.disabled", !message.on, null, null);
         break;
       default:
         throw new Error("Don't know about this message type: " +
@@ -1394,9 +1399,9 @@ RadioInterfaceLayer.prototype = {
     this._sendRequestResults("RIL:EnumerateCalls", options);
   },
 
-  handleIccUpdateContact: function handleIccUpdateContact(message) {
-    debug("handleIccUpdateContact: " + JSON.stringify(message));
-    this._sendRequestResults("RIL:IccUpdateContact", message);
+  handleUpdateIccContact: function handleUpdateIccContact(message) {
+    debug("handleUpdateIccContact: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:UpdateIccContact", message);
   },
 
   /**
@@ -1437,6 +1442,7 @@ RadioInterfaceLayer.prototype = {
    */
   updateNetworkSelectionMode: function updateNetworkSelectionMode(message) {
     debug("updateNetworkSelectionMode: " + JSON.stringify(message));
+    this.rilContext.networkSelectionMode = message.mode;
     this._sendMobileConnectionMessage("RIL:NetworkSelectionModeChanged", message);
   },
 
@@ -1485,6 +1491,36 @@ RadioInterfaceLayer.prototype = {
     };
     WAP.WapPushManager.receiveWdpPDU(message.fullData, message.fullData.length,
                                      0, options);
+  },
+
+  /**
+   * A helper to broadcast the system message to launch registered apps
+   * like Costcontrol, Notification and Message app... etc.
+   *
+   * @param aName
+   *        The system message name.
+   * @param aDomMessage
+   *        The nsIDOMMozSmsMessage object.
+   */
+  broadcastSmsSystemMessage: function broadcastSmsSystemMessage(aName, aDomMessage) {
+    debug("Broadcasting the SMS system message: " + aName);
+
+    // Sadly we cannot directly broadcast the aDomMessage object
+    // because the system message mechamism will rewrap the object
+    // based on the content window, which needs to know the properties.
+    gSystemMessenger.broadcastMessage(aName, {
+      type:           aDomMessage.type,
+      id:             aDomMessage.id,
+      threadId:       aDomMessage.threadId,
+      delivery:       aDomMessage.delivery,
+      deliveryStatus: aDomMessage.deliveryStatus,
+      sender:         aDomMessage.sender,
+      receiver:       aDomMessage.receiver,
+      body:           aDomMessage.body,
+      messageClass:   aDomMessage.messageClass,
+      timestamp:      aDomMessage.timestamp.getTime(),
+      read:           aDomMessage.read
+    });
   },
 
   portAddressedSmsApps: null,
@@ -1547,18 +1583,7 @@ RadioInterfaceLayer.prototype = {
         return;
       }
 
-      gSystemMessenger.broadcastMessage("sms-received", {
-        id: message.id,
-        delivery: DOM_MOBILE_MESSAGE_DELIVERY_RECEIVED,
-        deliveryStatus: RIL.GECKO_SMS_DELIVERY_STATUS_SUCCESS,
-        sender: message.sender,
-        receiver: message.receiver,
-        body: message.fullBody,
-        messageClass: message.messageClass,
-        timestamp: message.timestamp,
-        read: false
-      });
-
+      this.broadcastSmsSystemMessage("sms-received", domMessage);
       Services.obs.notifyObservers(domMessage, kSmsReceivedObserverTopic, null);
     }.bind(this);
 
@@ -1567,12 +1592,14 @@ RadioInterfaceLayer.prototype = {
                                                                      notifyReceived);
     } else {
       message.id = -1;
+      message.threadId = 0;
       message.delivery = DOM_MOBILE_MESSAGE_DELIVERY_RECEIVED;
       message.deliveryStatus = RIL.GECKO_SMS_DELIVERY_STATUS_SUCCESS;
       message.read = false;
 
       let domMessage =
         gMobileMessageService.createSmsMessage(message.id,
+                                               message.threadId,
                                                message.delivery,
                                                message.deliveryStatus,
                                                message.sender,
@@ -1617,17 +1644,8 @@ RadioInterfaceLayer.prototype = {
                                                      DOM_MOBILE_MESSAGE_DELIVERY_SENT,
                                                      options.sms.deliveryStatus,
                                                      function notifyResult(rv, domMessage) {
-      //TODO bug 832140 handle !Components.isSuccessCode(rv)
-      gSystemMessenger.broadcastMessage("sms-sent",
-                                        {id: options.sms.id,
-                                         delivery: DOM_MOBILE_MESSAGE_DELIVERY_SENT,
-                                         deliveryStatus: options.sms.deliveryStatus,
-                                         sender: message.sender || null,
-                                         receiver: options.sms.receiver,
-                                         body: options.sms.body,
-                                         messageClass: options.sms.messageClass,
-                                         timestamp: options.sms.timestamp,
-                                         read: true});
+      // TODO bug 832140 handle !Components.isSuccessCode(rv)
+      this.broadcastSmsSystemMessage("sms-sent", domMessage);
 
       if (!options.requestStatusReport) {
         // No more used if STATUS-REPORT not requested.
@@ -1655,7 +1673,7 @@ RadioInterfaceLayer.prototype = {
                                                      options.sms.delivery,
                                                      message.deliveryStatus,
                                                      function notifyResult(rv, domMessage) {
-      //TODO bug 832140 handle !Components.isSuccessCode(rv)
+      // TODO bug 832140 handle !Components.isSuccessCode(rv)
       let topic = (message.deliveryStatus == RIL.GECKO_SMS_DELIVERY_STATUS_SUCCESS)
                   ? kSmsDeliverySuccessObserverTopic
                   : kSmsDeliveryErrorObserverTopic;
@@ -1684,7 +1702,7 @@ RadioInterfaceLayer.prototype = {
                                                      DOM_MOBILE_MESSAGE_DELIVERY_ERROR,
                                                      RIL.GECKO_SMS_DELIVERY_STATUS_ERROR,
                                                      function notifyResult(rv, domMessage) {
-      //TODO bug 832140 handle !Components.isSuccessCode(rv)
+      // TODO bug 832140 handle !Components.isSuccessCode(rv)
       options.request.notifySendMessageFailed(error);
       Services.obs.notifyObservers(domMessage, kSmsFailedObserverTopic, null);
     }.bind(this));
@@ -1764,7 +1782,7 @@ RadioInterfaceLayer.prototype = {
     }
   },
 
-  handleICCMbdn: function handleICCMbdn(message) {
+  handleIccMbdn: function handleIccMbdn(message) {
     let voicemailInfo = this.voicemailInfo;
 
     voicemailInfo.number = message.number;
@@ -1773,7 +1791,7 @@ RadioInterfaceLayer.prototype = {
     this._sendVoicemailMessage("RIL:VoicemailInfoChanged", voicemailInfo);
   },
 
-  handleICCInfoChange: function handleICCInfoChange(message) {
+  handleIccInfoChange: function handleIccInfoChange(message) {
     let oldIccInfo = this.rilContext.iccInfo;
     this.rilContext.iccInfo = message;
 
@@ -1810,7 +1828,7 @@ RadioInterfaceLayer.prototype = {
     }
   },
 
-  handleICCCardLockResult: function handleICCCardLockResult(message) {
+  handleIccCardLockResult: function handleIccCardLockResult(message) {
     this._sendRequestResults("RIL:CardLockResult", message);
   },
 
@@ -2065,7 +2083,7 @@ RadioInterfaceLayer.prototype = {
 
     this.handleCallError({
       callIndex: -1,
-      error: RIL.RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[RIL.CALL_FAIL_UNOBTAINABLE_NUMBER]
+      errorMsg: RIL.RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[RIL.CALL_FAIL_UNOBTAINABLE_NUMBER]
     });
     debug("Number '" + number + "' doesn't seem to be a viable number. Drop.");
 
@@ -2686,7 +2704,7 @@ RadioInterfaceLayer.prototype = {
 
     let id = gMobileMessageDatabaseService.saveSendingMessage(sendingMessage,
                                                               function notifyResult(rv, domMessage) {
-      //TODO bug 832140 handle !Components.isSuccessCode(rv)
+      // TODO bug 832140 handle !Components.isSuccessCode(rv)
       Services.obs.notifyObservers(domMessage, kSmsSendingObserverTopic, null);
 
       // Keep current SMS message info for sent/delivered notifications
@@ -2885,7 +2903,7 @@ RadioInterfaceLayer.prototype = {
                              requestId: requestId});
   },
 
-  updateICCContact: function updateICCContact(message) {
+  updateIccContact: function updateIccContact(message) {
     message.rilMessageType = "updateICCContact";
     this.worker.postMessage(message);
   },

@@ -12,9 +12,7 @@ include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	= gkconhtmldoc_s
 LIBXUL_LIBRARY	= 1
-ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
-endif # !_MSC_VER
 
 CPPSRCS		= \
 		nsHTMLContentSink.cpp \
@@ -22,11 +20,8 @@ CPPSRCS		= \
 		ImageDocument.cpp \
 		MediaDocument.cpp \
 		PluginDocument.cpp \
+		VideoDocument.cpp \
 		$(NULL)
-
-ifdef MOZ_MEDIA
-CPPSRCS += VideoDocument.cpp
-endif
 
 EXPORTS		= \
 		nsIHTMLDocument.h \

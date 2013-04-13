@@ -6,6 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/GuardObjects.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/StandardInteger.h"
 
 #include "jscntxt.h"
@@ -22,6 +23,8 @@
 
 using namespace js;
 using namespace JS;
+
+using mozilla::PodArrayZero;
 
 // Required by PerThreadDataFriendFields::getMainThread()
 JS_STATIC_ASSERT(offsetof(JSRuntime, mainThread) ==
@@ -68,7 +71,7 @@ JS_FindCompilationScope(JSContext *cx, RawObject objArg)
      * asked of us.
      */
     if (obj->isWrapper())
-        obj = UnwrapObject(obj);
+        obj = UncheckedUnwrap(obj);
 
     /*
      * Innerize the target_obj so that we compile in the correct (inner)
@@ -903,7 +906,9 @@ JS::IncrementalReferenceBarrier(void *ptr, JSGCTraceKind kind)
         return;
 
     gc::Cell *cell = static_cast<gc::Cell *>(ptr);
-    Zone *zone = cell->zone();
+    Zone *zone = kind == JSTRACE_OBJECT
+                 ? static_cast<JSObject *>(cell)->zone()
+                 : cell->tenuredZone();
 
     JS_ASSERT(!zone->rt->isHeapBusy());
 
@@ -1034,4 +1039,21 @@ js::AutoCTypesActivityCallback::AutoCTypesActivityCallback(JSContext *cx,
 
     if (callback)
         callback(cx, beginType);
+}
+
+JS_FRIEND_API(JSBool)
+js_DefineOwnProperty(JSContext *cx, JSObject *objArg, jsid idArg,
+                     const js::PropertyDescriptor& descriptor, JSBool *bp)
+{
+    RootedObject obj(cx, objArg);
+    RootedId id(cx, idArg);
+    JS_ASSERT(cx->runtime->heapState == js::Idle);
+    CHECK_REQUEST(cx);
+    assertSameCompartment(cx, obj, id, descriptor.value);
+    if (descriptor.attrs & JSPROP_GETTER)
+        assertSameCompartment(cx, CastAsObjectJsval(descriptor.getter));
+    if (descriptor.attrs & JSPROP_SETTER)
+        assertSameCompartment(cx, CastAsObjectJsval(descriptor.setter));
+
+    return js_DefineOwnProperty(cx, HandleObject(obj), id, descriptor, bp);
 }

@@ -61,6 +61,10 @@ namespace layout {
 class RenderFrameChild;
 }
 
+namespace layers {
+struct TextureFactoryIdentifier;
+}
+
 namespace dom {
 
 class TabChild;
@@ -80,10 +84,10 @@ public:
   NS_FORWARD_SAFE_NSIMESSAGELISTENERMANAGER(mMessageManager)
   NS_FORWARD_SAFE_NSIMESSAGESENDER(mMessageManager)
   NS_IMETHOD SendSyncMessage(const nsAString& aMessageName,
-                             const jsval& aObject,
+                             const JS::Value& aObject,
                              JSContext* aCx,
                              uint8_t aArgc,
-                             jsval* aRetval)
+                             JS::Value* aRetval)
   {
     return mMessageManager
       ? mMessageManager->SendSyncMessage(aMessageName, aObject, aCx, aArgc, aRetval)
@@ -332,8 +336,7 @@ public:
 
 protected:
     virtual PRenderFrameChild* AllocPRenderFrame(ScrollingBehavior* aScrolling,
-                                                 LayersBackend* aBackend,
-                                                 int32_t* aMaxTextureSize,
+                                                 TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                                  uint64_t* aLayersId) MOZ_OVERRIDE;
     virtual bool DeallocPRenderFrame(PRenderFrameChild* aFrame) MOZ_OVERRIDE;
     virtual bool RecvDestroy() MOZ_OVERRIDE;

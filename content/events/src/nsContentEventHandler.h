@@ -11,14 +11,15 @@
 
 #include "nsISelection.h"
 #include "nsRange.h"
-#include "nsIContent.h"
 #include "nsIDOMTreeWalker.h"
 
-class nsPresContext;
+class nsCaret;
+class nsIContent;
 class nsIPresShell;
+class nsPresContext;
 class nsQueryContentEvent;
 class nsSelectionEvent;
-class nsCaret;
+
 struct nsRect;
 
 /*
@@ -29,7 +30,7 @@ struct nsRect;
  *   This class answers to NS_QUERY_* events from actual contents.
  */
 
-class NS_STACK_CLASS nsContentEventHandler {
+class MOZ_STACK_CLASS nsContentEventHandler {
 public:
   nsContentEventHandler(nsPresContext *aPresContext);
 

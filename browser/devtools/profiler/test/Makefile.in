@@ -11,12 +11,14 @@ relativesrcdir = @relativesrcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MOCHITEST_BROWSER_TESTS = \
-		browser_profiler_run.js \
-		browser_profiler_controller.js \
 		browser_profiler_profiles.js \
 		browser_profiler_remote.js \
-		browser_profiler_bug_830664_multiple_profiles.js \
 		browser_profiler_bug_834878_source_buttons.js \
+		browser_profiler_cmd.js \
+		browser_profiler_run.js \
+		browser_profiler_controller.js \
+		browser_profiler_bug_830664_multiple_profiles.js \
+		browser_profiler_bug_855244_multiple_tabs.js \
 		head.js \
 		$(NULL)
 

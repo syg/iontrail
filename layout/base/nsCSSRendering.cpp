@@ -30,6 +30,7 @@
 #include "nsIScrollableFrame.h"
 #include "imgIRequest.h"
 #include "imgIContainer.h"
+#include "ImageOps.h"
 #include "nsCSSRendering.h"
 #include "nsCSSColorUtils.h"
 #include "nsITheme.h"
@@ -50,7 +51,7 @@
 #include "nsSVGEffects.h"
 #include "nsSVGIntegrationUtils.h"
 #include "gfxDrawable.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 #include "nsCSSRenderingBorders.h"
 #include "mozilla/css/ImageLoader.h"
 #include "ImageContainer.h"
@@ -60,6 +61,7 @@
 
 using namespace mozilla;
 using namespace mozilla::css;
+using mozilla::image::ImageOps;
 
 static int gFrameTreeLockCount = 0;
 
@@ -583,7 +585,7 @@ nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
                             nsStyleContext* aStyleContext,
                             int aSkipSides)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintBorder");
+  PROFILER_LABEL("nsCSSRendering", "PaintBorder");
   nsStyleContext *styleIfVisited = aStyleContext->GetStyleIfVisited();
   const nsStyleBorder *styleBorder = aStyleContext->StyleBorder();
   // Don't check RelevantLinkVisited here, since we want to take the
@@ -1541,7 +1543,7 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
                                 nsRect* aBGClipRect,
                                 int32_t aLayer)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintBackground");
+  PROFILER_LABEL("nsCSSRendering", "PaintBackground");
   NS_PRECONDITION(aForFrame,
                   "Frame is expected to be provided to PaintBackground");
 
@@ -1578,7 +1580,7 @@ nsCSSRendering::PaintBackgroundColor(nsPresContext* aPresContext,
                                      const nsRect& aBorderArea,
                                      uint32_t aFlags)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintBackgroundColor");
+  PROFILER_LABEL("nsCSSRendering", "PaintBackgroundColor");
   NS_PRECONDITION(aForFrame,
                   "Frame is expected to be provided to PaintBackground");
 
@@ -2086,7 +2088,7 @@ nsCSSRendering::PaintGradient(nsPresContext* aPresContext,
                               const nsRect& aOneCellArea,
                               const nsRect& aFillArea)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintGradient");
+  PROFILER_LABEL("nsCSSRendering", "PaintGradient");
   Telemetry::AutoTimer<Telemetry::GRADIENT_DURATION, Telemetry::Microsecond> gradientTimer;
   if (aOneCellArea.IsEmpty())
     return;
@@ -3314,20 +3316,10 @@ DrawBorderImageComponent(nsRenderingContext&  aRenderingContext,
   if (aFill.IsEmpty() || aSrc.IsEmpty())
     return;
 
-  // Don't bother trying to cache sub images if the border image is animated
-  // We can only sucessfully call GetAnimated() if we are fully decoded, so default to true
-  bool animated = true;
-  aImage->GetAnimated(&animated);
-
   nsCOMPtr<imgIContainer> subImage;
-  if (animated || (subImage = aStyleBorder.GetSubImage(aIndex)) == 0) {
-    if (NS_FAILED(aImage->ExtractFrame(imgIContainer::FRAME_CURRENT, aSrc,
-                                       imgIContainer::FLAG_SYNC_DECODE,
-                                       getter_AddRefs(subImage))))
-      return;
-
-    if (!animated)
-      aStyleBorder.SetSubImage(aIndex, subImage);
+  if ((subImage = aStyleBorder.GetSubImage(aIndex)) == nullptr) {
+    subImage = ImageOps::Clip(aImage, aSrc);
+    aStyleBorder.SetSubImage(aIndex, subImage);
   }
 
   gfxPattern::GraphicsFilter graphicsFilter =
@@ -4293,18 +4285,7 @@ nsImageRenderer::PrepareImage()
           // The cropped image is identical to the source image
           mImageContainer.swap(srcImage);
         } else {
-          nsCOMPtr<imgIContainer> subImage;
-          uint32_t aExtractFlags = (mFlags & FLAG_SYNC_DECODE_IMAGES)
-                                     ? (uint32_t) imgIContainer::FLAG_SYNC_DECODE
-                                     : (uint32_t) imgIContainer::FLAG_NONE;
-          nsresult rv = srcImage->ExtractFrame(imgIContainer::FRAME_CURRENT,
-                                               actualCropRect, aExtractFlags,
-                                               getter_AddRefs(subImage));
-          if (NS_FAILED(rv)) {
-            NS_WARNING("The cropped image contains no pixels to draw; "
-                       "maybe the crop rect is outside the image frame rect");
-            return false;
-          }
+          nsCOMPtr<imgIContainer> subImage = ImageOps::Clip(srcImage, actualCropRect);
           mImageContainer.swap(subImage);
         }
       }

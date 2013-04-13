@@ -11,17 +11,12 @@
 #include "nsIDOMMutationEvent.h"
 #include "nsIFrame.h"
 #include "nsISVGChildFrame.h"
-#include "nsSVGRect.h"
+#include "mozilla/dom/SVGRect.h"
 #include "nsSVGUtils.h"
 #include "SVGContentUtils.h"
 
 namespace mozilla {
 namespace dom {
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ISUPPORTS_INHERITED0(SVGTransformableElement, nsSVGElement)
 
 already_AddRefed<DOMSVGAnimatedTransformList>
 SVGTransformableElement::Transform()
@@ -160,7 +155,7 @@ SVGTransformableElement::GetFarthestViewportElement()
   return SVGContentUtils::GetOuterSVGElement(this);
 }
 
-already_AddRefed<nsIDOMSVGRect>
+already_AddRefed<SVGIRect>
 SVGTransformableElement::GetBBox(ErrorResult& rv)
 {
   nsIFrame* frame = GetPrimaryFrame(Flush_Layout);
@@ -176,7 +171,7 @@ SVGTransformableElement::GetBBox(ErrorResult& rv)
     return nullptr;
   }
 
-  nsCOMPtr<nsIDOMSVGRect> rect;
+  nsRefPtr<SVGRect> rect;
   rv = NS_NewSVGRect(getter_AddRefs(rect), nsSVGUtils::GetBBox(frame));
   return rect.forget();
 }

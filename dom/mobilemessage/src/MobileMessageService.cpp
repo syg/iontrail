@@ -4,6 +4,7 @@
 
 #include "SmsMessage.h"
 #include "MmsMessage.h"
+#include "MobileMessageThread.h"
 #include "MobileMessageService.h"
 #include "SmsSegmentInfo.h"
 #include "jsapi.h"
@@ -30,18 +31,20 @@ MobileMessageService::GetInstance()
 
 NS_IMETHODIMP
 MobileMessageService::CreateSmsMessage(int32_t aId,
+                                       uint64_t aThreadId,
                                        const nsAString& aDelivery,
                                        const nsAString& aDeliveryStatus,
                                        const nsAString& aSender,
                                        const nsAString& aReceiver,
                                        const nsAString& aBody,
                                        const nsAString& aMessageClass,
-                                       const jsval& aTimestamp,
+                                       const JS::Value& aTimestamp,
                                        const bool aRead,
                                        JSContext* aCx,
                                        nsIDOMMozSmsMessage** aMessage)
 {
   return SmsMessage::Create(aId,
+                            aThreadId,
                             aDelivery,
                             aDeliveryStatus,
                             aSender,
@@ -56,7 +59,8 @@ MobileMessageService::CreateSmsMessage(int32_t aId,
 
 NS_IMETHODIMP
 MobileMessageService::CreateMmsMessage(int32_t               aId,
-                                       const nsAString&      aState,
+                                       uint64_t              aThreadId,
+                                       const nsAString&      aDelivery,
                                        const JS::Value&      aDeliveryStatus,
                                        const nsAString&      aSender,
                                        const JS::Value&      aReceivers,
@@ -69,7 +73,8 @@ MobileMessageService::CreateMmsMessage(int32_t               aId,
                                        nsIDOMMozMmsMessage** aMessage)
 {
   return MmsMessage::Create(aId,
-                            aState,
+                            aThreadId,
+                            aDelivery,
                             aDeliveryStatus,
                             aSender,
                             aReceivers,
@@ -92,6 +97,24 @@ MobileMessageService::CreateSmsSegmentInfo(int32_t aSegments,
       new SmsSegmentInfo(aSegments, aCharsPerSegment, aCharsAvailableInLastSegment);
   info.forget(aSegmentInfo);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+MobileMessageService::CreateThread(uint64_t aId,
+                                   const JS::Value& aParticipants,
+                                   const JS::Value& aTimestamp,
+                                   const nsAString& aBody,
+                                   uint64_t aUnreadCount,
+                                   JSContext* aCx,
+                                   nsIDOMMozMobileMessageThread** aThread)
+{
+  return MobileMessageThread::Create(aId,
+                                     aParticipants,
+                                     aTimestamp,
+                                     aBody,
+                                     aUnreadCount,
+                                     aCx,
+                                     aThread);
 }
 
 } // namespace mobilemessage

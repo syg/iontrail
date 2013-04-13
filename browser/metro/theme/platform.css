@@ -206,11 +206,11 @@ menulist {
   color: black;
 }
 
-.menu-popup > richlistbox[left-hand] > richlistitem {
+.menu-popup > richlistbox[left-hand="true"] > richlistitem {
   padding-left: 50px;
 }
 
-.menu-popup > richlistbox[right-hand] > richlistitem {
+.menu-popup > richlistbox[left-hand="false"] > richlistitem {
   padding-right: 50px;
 }
 
@@ -463,8 +463,8 @@ richgriditem .richgrid-item-content {
   box-shadow: 0 0 @metro_spacing_snormal@ rgba(0, 0, 0, 0.1);
   -moz-box-sizing: border-box;
   padding: 10px 8px 6px 8px;
+  position: relative;
 }
-
 .richgrid-item-content {
   background: #fff;
 }
@@ -483,24 +483,34 @@ richgriditem .richgrid-icon-box {
   background: #fff;
   opacity: 1.0;
 }
-
-
-richgriditem[customColorPresent] {
+/* <sfoster> placeholder pinned-state indication, tracked as 854960 */
+richgriditem[pinned] .richgrid-item-content:after {
+    content: "\2193";
+    text-align: center;
+    position: absolute;
+    width: 16px;
+    right: 0;
+    top: 0;
+    outline: 1px solid rgb(255,153,0);
+    background-color: rgba(255,153,0,0.6);
+    color: rgb(153,51,0);
+}
+richgriditem[customColor] {
   color: #f1f1f1;
 }
-richgriditem[customImagePresent] {
+richgriditem[customImage] {
   color: #1a1a1a;
 }
 
 
-richgriditem[customColorPresent] .richgrid-icon-box {
+richgriditem[customColor] .richgrid-icon-box {
   opacity: 0.8;
   background-color: #fff;
 }
 
-.richgrid-item-content[customImagePresent] {
-  height: 120px;
-  width: 200px;
+.richgrid-item-content[customImage] {
+  height: 160px;
+  width: 250px;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -509,7 +519,7 @@ richgriditem[customColorPresent] .richgrid-icon-box {
 }
 
 /* hide icon if there is an image background */
-.richgrid-icon-container[customImagePresent] {
+.richgrid-icon-container[customImage] {
   visibility: collapse;
 }
 
@@ -520,7 +530,7 @@ richgriditem[customColorPresent] .richgrid-icon-box {
   padding-left: 0px !important;
 }
 
-.richgrid-item-content[customImagePresent] > .richgrid-item-desc {
+.richgrid-item-content[customImage] > .richgrid-item-desc {
   background: hsla(0,2%,98%,.95);
   /*margin-bottom: 0px;
   margin-right: 0px;*/

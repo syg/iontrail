@@ -93,6 +93,10 @@
 #include "mozilla/dom/bluetooth/PBluetoothChild.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 
+#ifdef MOZ_WEBSPEECH
+#include "mozilla/dom/PSpeechSynthesisChild.h"
+#endif
+
 #include "nsDOMFile.h"
 #include "nsIRemoteBlob.h"
 #include "ProcessUtils.h"
@@ -308,21 +312,6 @@ ContentChild::Init(MessageLoop* aIOLoop,
 #ifdef MOZ_CRASHREPORTER
     SendPCrashReporterConstructor(CrashReporter::CurrentThreadId(),
                                   XRE_GetProcessType());
-#if defined(MOZ_WIDGET_ANDROID)
-    PCrashReporterChild* crashreporter = ManagedPCrashReporterChild()[0];
-
-    InfallibleTArray<Mapping> mappings;
-    const struct mapping_info *info = getLibraryMapping();
-    while (info && info->name) {
-        mappings.AppendElement(Mapping(nsDependentCString(info->name),
-                                       nsDependentCString(info->file_id),
-                                       info->base,
-                                       info->len,
-                                       info->offset));
-        info++;
-    }
-    crashreporter->SendAddLibraryMappings(mappings);
-#endif
 #endif
 
     SendGetProcessAttributes(&mID, &mIsForApp, &mIsForBrowser);
@@ -505,14 +494,14 @@ ContentChild::DeallocPMemoryReportRequest(PMemoryReportRequestChild* actor)
 }
 
 bool
-ContentChild::RecvDumpMemoryReportsToFile(const nsString& aIdentifier,
+ContentChild::RecvDumpMemoryInfoToTempDir(const nsString& aIdentifier,
                                           const bool& aMinimizeMemoryUsage,
                                           const bool& aDumpChildProcesses)
 {
     nsCOMPtr<nsIMemoryInfoDumper> dumper = do_GetService("@mozilla.org/memory-info-dumper;1");
 
-    dumper->DumpMemoryReportsToFile(
-        aIdentifier, aMinimizeMemoryUsage, aDumpChildProcesses);
+    dumper->DumpMemoryInfoToTempDir(aIdentifier, aMinimizeMemoryUsage,
+                                    aDumpChildProcesses);
     return true;
 }
 
@@ -884,6 +873,28 @@ ContentChild::DeallocPBluetooth(PBluetoothChild* aActor)
     return true;
 #else
     MOZ_NOT_REACHED("No support for bluetooth on this platform!");
+    return false;
+#endif
+}
+
+PSpeechSynthesisChild*
+ContentChild::AllocPSpeechSynthesis()
+{
+#ifdef MOZ_WEBSPEECH
+    MOZ_NOT_REACHED("No one should be allocating PSpeechSynthesisChild actors");
+    return nullptr;
+#else
+    return nullptr;
+#endif
+}
+
+bool
+ContentChild::DeallocPSpeechSynthesis(PSpeechSynthesisChild* aActor)
+{
+#ifdef MOZ_WEBSPEECH
+    delete aActor;
+    return true;
+#else
     return false;
 #endif
 }

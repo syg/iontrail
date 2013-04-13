@@ -37,12 +37,6 @@ public:
   static void* GetNativeData(uint32_t aDataType);
 
   /**
-   * Returns true if our message loop can optimize the message order for
-   * a key message or an IME message.  Otherwise, false.
-   */
-  static bool CanOptimizeKeyAndIMEMessages();
-
-  /**
    * Returns true if the context or IME state is enabled.  Otherwise, false.
    */
   static bool IsIMEEnabled(const InputContext& aInputContext);
@@ -108,7 +102,9 @@ public:
    * Called when nsIWidget::SetInputContext() is called before the window's
    * InputContext is modified actually.
    */
-  static void SetInputContext(nsWindow* aWindow, InputContext& aInputContext);
+  static void SetInputContext(nsWindow* aWindow,
+                              InputContext& aInputContext,
+                              const InputContextAction& aAction);
 
   /**
    * Called when the window is created.

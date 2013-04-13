@@ -118,7 +118,7 @@
 #include "WinUtils.h"
 #include "WidgetUtils.h"
 #include "nsIWidgetListener.h"
-#include "nsDOMTouchEvent.h"
+#include "mozilla/dom/Touch.h"
 
 #ifdef MOZ_ENABLE_D3D9_LAYER
 #include "LayerManagerD3D9.h"
@@ -164,9 +164,10 @@
 #include "mozilla/HangMonitor.h"
 #include "WinIMEHandler.h"
 
-using namespace mozilla::widget;
-using namespace mozilla::layers;
 using namespace mozilla;
+using namespace mozilla::dom;
+using namespace mozilla::layers;
+using namespace mozilla::widget;
 
 /**************************************************************
  **************************************************************
@@ -958,15 +959,7 @@ float nsWindow::GetDPI()
 
 double nsWindow::GetDefaultScaleInternal()
 {
-  HDC dc = ::GetDC(mWnd);
-  if (!dc)
-    return 1.0;
-
-  // LOGPIXELSY returns the number of logical pixels per inch. This is based
-  // on font DPI settings rather than the actual screen DPI.
-  double pixelsPerInch = ::GetDeviceCaps(dc, LOGPIXELSY);
-  ::ReleaseDC(mWnd, dc);
-  return pixelsPerInch/96.0;
+  return gfxWindowsPlatform::GetPlatform()->GetDPIScale();
 }
 
 nsWindow* nsWindow::GetParentWindow(bool aIncludeOwner)
@@ -1632,11 +1625,18 @@ NS_IMETHODIMP nsWindow::SetSizeMode(int32_t aMode) {
 }
 
 // Constrain a potential move to fit onscreen
+// Position (aX, aY) is specified in Windows screen (logical) pixels
 NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
                                       int32_t *aX, int32_t *aY)
 {
   if (!mIsTopWidgetWindow) // only a problem for top-level windows
     return NS_OK;
+
+  double dpiScale = GetDefaultScale();
+
+  // we need to use the window size in logical screen pixels
+  int32_t logWidth = std::max<int32_t>(NSToIntRound(mBounds.width / dpiScale), 1);
+  int32_t logHeight = std::max<int32_t>(NSToIntRound(mBounds.height / dpiScale), 1);
 
   bool doConstrain = false; // whether we have enough info to do anything
 
@@ -1649,23 +1649,20 @@ NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
     nsCOMPtr<nsIScreen> screen;
     int32_t left, top, width, height;
 
-    // zero size rects confuse the screen manager
-    width = mBounds.width > 0 ? mBounds.width : 1;
-    height = mBounds.height > 0 ? mBounds.height : 1;
-    screenmgr->ScreenForRect(*aX, *aY, width, height,
+    screenmgr->ScreenForRect(*aX, *aY, logWidth, logHeight,
                              getter_AddRefs(screen));
     if (screen) {
       if (mSizeMode != nsSizeMode_Fullscreen) {
         // For normalized windows, use the desktop work area.
-        screen->GetAvailRect(&left, &top, &width, &height);
+        screen->GetAvailRectDisplayPix(&left, &top, &width, &height);
       } else {
         // For full screen windows, use the desktop.
-        screen->GetRect(&left, &top, &width, &height);
+        screen->GetRectDisplayPix(&left, &top, &width, &height);
       }
       screenRect.left = left;
-      screenRect.right = left+width;
+      screenRect.right = left + width;
       screenRect.top = top;
-      screenRect.bottom = top+height;
+      screenRect.bottom = top + height;
       doConstrain = true;
     }
   } else {
@@ -1688,13 +1685,13 @@ NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
   }
 
   if (aAllowSlop) {
-    if (*aX < screenRect.left - mBounds.width + kWindowPositionSlop)
-      *aX = screenRect.left - mBounds.width + kWindowPositionSlop;
+    if (*aX < screenRect.left - logWidth + kWindowPositionSlop)
+      *aX = screenRect.left - logWidth + kWindowPositionSlop;
     else if (*aX >= screenRect.right - kWindowPositionSlop)
       *aX = screenRect.right - kWindowPositionSlop;
 
-    if (*aY < screenRect.top - mBounds.height + kWindowPositionSlop)
-      *aY = screenRect.top - mBounds.height + kWindowPositionSlop;
+    if (*aY < screenRect.top - logHeight + kWindowPositionSlop)
+      *aY = screenRect.top - logHeight + kWindowPositionSlop;
     else if (*aY >= screenRect.bottom - kWindowPositionSlop)
       *aY = screenRect.bottom - kWindowPositionSlop;
 
@@ -1702,13 +1699,13 @@ NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
 
     if (*aX < screenRect.left)
       *aX = screenRect.left;
-    else if (*aX >= screenRect.right - mBounds.width)
-      *aX = screenRect.right - mBounds.width;
+    else if (*aX >= screenRect.right - logWidth)
+      *aX = screenRect.right - logWidth;
 
     if (*aY < screenRect.top)
       *aY = screenRect.top;
-    else if (*aY >= screenRect.bottom - mBounds.height)
-      *aY = screenRect.bottom - mBounds.height;
+    else if (*aY >= screenRect.bottom - logHeight)
+      *aY = screenRect.bottom - logHeight;
   }
 
   return NS_OK;
@@ -6336,16 +6333,16 @@ bool nsWindow::OnTouch(WPARAM wParam, LPARAM lParam)
       touchPoint.y = TOUCH_COORD_TO_PIXEL(pInputs[i].y);
       touchPoint.ScreenToClient(mWnd);
       nsCOMPtr<nsIDOMTouch> touch =
-        new nsDOMTouch(pInputs[i].dwID,
-                       touchPoint,
-                       /* radius, if known */
-                       pInputs[i].dwFlags & TOUCHINPUTMASKF_CONTACTAREA ?
-                         nsIntPoint(
-                           TOUCH_COORD_TO_PIXEL(pInputs[i].cxContact) / 2,
-                           TOUCH_COORD_TO_PIXEL(pInputs[i].cyContact) / 2) :
-                         nsIntPoint(1,1),
-                       /* rotation angle and force */
-                       0.0f, 0.0f);
+        new Touch(pInputs[i].dwID,
+                  touchPoint,
+                  /* radius, if known */
+                  pInputs[i].dwFlags & TOUCHINPUTMASKF_CONTACTAREA ?
+                    nsIntPoint(
+                      TOUCH_COORD_TO_PIXEL(pInputs[i].cxContact) / 2,
+                      TOUCH_COORD_TO_PIXEL(pInputs[i].cyContact) / 2) :
+                    nsIntPoint(1,1),
+                  /* rotation angle and force */
+                  0.0f, 0.0f);
 
       // Append to the appropriate event
       if (msg == NS_TOUCH_START || msg == NS_TOUCH_MOVE) {
@@ -7386,7 +7383,7 @@ nsWindow::SetInputContext(const InputContext& aContext,
                           const InputContextAction& aAction)
 {
   InputContext newInputContext = aContext;
-  IMEHandler::SetInputContext(this, newInputContext);
+  IMEHandler::SetInputContext(this, newInputContext, aAction);
   mInputContext = newInputContext;
 }
 

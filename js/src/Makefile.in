@@ -13,7 +13,6 @@ include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	    = mozjs
 STATIC_LIBRARY_NAME = js_static
-GRE_MODULE	    = 1
 
 LIBS		= $(NSPR_LIBS)
 
@@ -142,8 +141,13 @@ CPPSRCS		= \
 		Unicode.cpp \
 		Xdr.cpp \
 		Module.cpp \
+		$(NULL)
+
+ifdef MOZ_INSTRUMENTS
+CPPSRCS		+= \
 		Instruments.cpp \
 		$(NULL)
+endif
 
 # Changes to internal header files, used externally, massively slow down
 # browser builds.  Don't add new files here unless you know what you're
@@ -211,6 +215,7 @@ EXPORTS_js = \
 #
 ifeq (,$(filter beta release esr,$(MOZ_UPDATE_CHANNEL)))
 DEFINES += -DENABLE_TYPEDARRAY_MOVE
+DEFINES += -DENABLE_PARALLEL_JS
 endif
 
 ifdef ENABLE_TRACE_LOGGING
@@ -252,6 +257,13 @@ VPATH +=	$(srcdir)/ion
 VPATH +=	$(srcdir)/ion/shared
 
 CPPSRCS +=	MIR.cpp \
+		BaselineCompiler.cpp \
+		BaselineIC.cpp \
+		BaselineFrame.cpp \
+		BaselineFrameInfo.cpp \
+		BaselineJIT.cpp \
+		BaselineInspector.cpp \
+		BaselineBailouts.cpp \
 		BacktrackingAllocator.cpp \
 		Bailouts.cpp \
 		BitSet.cpp \
@@ -289,6 +301,7 @@ CPPSRCS +=	MIR.cpp \
 		AliasAnalysis.cpp \
 		ParallelArrayAnalysis.cpp \
 		UnreachableCodeElimination.cpp \
+		BaselineCompiler-shared.cpp \
 		EffectiveAddressAnalysis.cpp \
 		AsmJS.cpp \
 		AsmJSLink.cpp \
@@ -302,6 +315,8 @@ CPPSRCS +=	IonFrames-x86-shared.cpp
 CPPSRCS +=	MoveEmitter-x86-shared.cpp
 CPPSRCS +=	Assembler-x86-shared.cpp
 CPPSRCS +=	Lowering-x86-shared.cpp
+CPPSRCS +=	BaselineCompiler-x86-shared.cpp
+CPPSRCS +=	BaselineIC-x86-shared.cpp
 endif #ENABLE_ION
 ifeq (x86_64, $(TARGET_CPU))
 ifdef _MSC_VER
@@ -323,6 +338,8 @@ CPPSRCS += 	Lowering-x64.cpp \
 		Assembler-x64.cpp \
 		Bailouts-x64.cpp \
 		MacroAssembler-x64.cpp \
+		BaselineCompiler-x64.cpp \
+		BaselineIC-x64.cpp \
 		$(NULL)
 endif #ENABLE_ION
 else
@@ -334,6 +351,8 @@ CPPSRCS +=	Lowering-x86.cpp \
 		Assembler-x86.cpp \
 		Bailouts-x86.cpp \
 		MacroAssembler-x86.cpp \
+		BaselineCompiler-x86.cpp \
+		BaselineIC-x86.cpp \
 		$(NULL)
 endif #ENABLE_ION
 ifdef SOLARIS_SUNPRO_CXX
@@ -354,6 +373,8 @@ CPPSRCS +=	Lowering-arm.cpp \
 		MoveEmitter-arm.cpp \
 		Architecture-arm.cpp \
 		MacroAssembler-arm.cpp \
+		BaselineCompiler-arm.cpp \
+		BaselineIC-arm.cpp \
 		$(NULL)
 endif #ENABLE_ION
 endif
@@ -408,10 +429,7 @@ CPPSRCS += ExecutableAllocatorOS2.cpp \
            $(NONE)
 endif
 
-ifneq (,$(filter arm% sparc %86 x86_64 mips%,$(TARGET_CPU)))
-ENABLE_YARR_JIT = 1
-DEFINES += -DENABLE_YARR_JIT=1
-
+ifneq (,$(ENABLE_METHODJIT)$(ENABLE_ION)$(ENABLE_YARR_JIT))
 VPATH += 	$(srcdir)/assembler/assembler \
 		$(srcdir)/methodjit \
 		$(NONE)
@@ -419,8 +437,11 @@ VPATH += 	$(srcdir)/assembler/assembler \
 CPPSRCS +=	ARMAssembler.cpp \
 		MacroAssemblerARM.cpp \
 		MacroAssemblerX86Common.cpp \
-		YarrJIT.cpp \
 		$(NONE)
+
+ifdef ENABLE_YARR_JIT
+CPPSRCS +=	YarrJIT.cpp
+endif
 
 ifeq (86, $(findstring 86,$(TARGET_CPU)))
 ifeq (x86_64, $(TARGET_CPU))
@@ -868,12 +889,6 @@ SDK_BINARY = js-config
 install:: $(INSTALLED_HEADERS)
 	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)
 
-install:: $(EXPORTS_ds)
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)/ds
-
-install:: $(EXPORTS_gc)
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)/gc
-
 install:: $(EXPORTS_js)
 	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)/js
 
@@ -957,9 +972,12 @@ selfhosting_srcs := \
   $(srcdir)/builtin/Utilities.js \
   $(srcdir)/builtin/Array.js \
   $(srcdir)/builtin/ParallelArray.js \
+  $(srcdir)/builtin/Date.js \
   $(srcdir)/builtin/Intl.js \
   $(srcdir)/builtin/IntlData.js \
+  $(srcdir)/builtin/Number.js \
   $(srcdir)/builtin/ParallelArray.js \
+  $(srcdir)/builtin/String.js \
   $(NULL)
 
 selfhosted_out_h_deps := \

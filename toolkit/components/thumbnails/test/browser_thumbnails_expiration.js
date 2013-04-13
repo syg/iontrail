@@ -6,9 +6,6 @@ const URL1 = URL + "#1";
 const URL2 = URL + "#2";
 const URL3 = URL + "#3";
 
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-  "resource://gre/modules/FileUtils.jsm");
-
 let tmp = {};
 Cc["@mozilla.org/moz/jssubscript-loader;1"]
   .getService(Ci.mozIJSSubScriptLoader)
@@ -17,14 +14,23 @@ Cc["@mozilla.org/moz/jssubscript-loader;1"]
 const {EXPIRATION_MIN_CHUNK_SIZE, PageThumbsExpiration} = tmp;
 
 function runTests() {
+  // Create dummy URLs.
+  let dummyURLs = [];
+  for (let i = 0; i < EXPIRATION_MIN_CHUNK_SIZE + 10; i++) {
+    dummyURLs.push(URL + "#dummy" + i);
+  }
+
+  // Make sure our thumbnails aren't expired too early.
+  dontExpireThumbnailURLs([URL1, URL2, URL3].concat(dummyURLs));
+
   // Create three thumbnails.
-  createDummyThumbnail(URL1);
+  yield createDummyThumbnail(URL1);
   ok(thumbnailExists(URL1), "first thumbnail created");
 
-  createDummyThumbnail(URL2);
+  yield createDummyThumbnail(URL2);
   ok(thumbnailExists(URL2), "second thumbnail created");
 
-  createDummyThumbnail(URL3);
+  yield createDummyThumbnail(URL3);
   ok(thumbnailExists(URL3), "third thumbnail created");
 
   // Remove the third thumbnail.
@@ -43,25 +49,15 @@ function runTests() {
   ok(!thumbnailExists(URL1), "all thumbnails have been removed");
 
   // Create some more files than the min chunk size.
-  let urls = [];
-  for (let i = 0; i < EXPIRATION_MIN_CHUNK_SIZE + 10; i++) {
-    urls.push(URL + "#dummy" + i);
+  for (let url of dummyURLs) {
+    yield createDummyThumbnail(url);
   }
 
-  urls.forEach(createDummyThumbnail);
-  ok(urls.every(thumbnailExists), "all dummy thumbnails created");
-
-  // Make sure our dummy thumbnails aren't expired too early.
-  let dontExpireDummyURLs = function (cb) cb(urls);
-  PageThumbs.addExpirationFilter(dontExpireDummyURLs);
-
-  registerCleanupFunction(function () {
-    PageThumbs.removeExpirationFilter(dontExpireDummyURLs);
-  });
+  ok(dummyURLs.every(thumbnailExists), "all dummy thumbnails created");
 
   // Expire thumbnails and expect 10 remaining.
   yield expireThumbnails([]);
-  let remainingURLs = [u for (u of urls) if (thumbnailExists(u))];
+  let remainingURLs = [u for (u of dummyURLs) if (thumbnailExists(u))];
   is(remainingURLs.length, 10, "10 dummy thumbnails remaining");
 
   // Expire thumbnails again. All should be gone by now.
@@ -71,16 +67,30 @@ function runTests() {
 }
 
 function createDummyThumbnail(aURL) {
-  let file = PageThumbsStorage.getFileForURL(aURL);
-  let fos = FileUtils.openSafeFileOutputStream(file);
-
-  let data = "dummy";
-  fos.write(data, data.length);
-  FileUtils.closeSafeFileOutputStream(fos);
+  info("Creating dummy thumbnail for " + aURL);
+  let dummy = new Uint8Array(10);
+  for (let i = 0; i < 10; ++i) {
+    dummy[i] = i;
+  }
+  PageThumbsStorage.writeData(aURL, dummy).then(
+    function onSuccess() {
+      info("createDummyThumbnail succeeded");
+      executeSoon(next);
+    },
+    function onFailure(error) {
+      ok(false, "createDummyThumbnail failed " + error);
+    }
+  );
 }
 
 function expireThumbnails(aKeep) {
-  PageThumbsExpiration.expireThumbnails(aKeep, function () {
-    executeSoon(next);
-  });
+  PageThumbsExpiration.expireThumbnails(aKeep).then(
+    function onSuccess() {
+      info("expireThumbnails succeeded");
+      executeSoon(next);
+    },
+    function onFailure(error) {
+      ok(false, "expireThumbnails failed " + error);
+    }
+  );
 }

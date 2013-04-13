@@ -146,10 +146,14 @@ var TouchModule = {
             // once we get omtc and the apzc. Currently though dblclick is delivered to
             // content and triggers selection of text, so fire up the SelectionHelperUI
             // once selection is present.
-            setTimeout(function () {
-              SelectionHelperUI.attachEditSession(Browser.selectedTab.browser,
-                                                  aEvent.clientX, aEvent.clientY);
-            }, 50);
+            if (!InputSourceHelper.isPrecise &&
+                !SelectionHelperUI.isActive &&
+                !FindHelperUI.isActive) {
+              setTimeout(function () {
+                SelectionHelperUI.attachEditSession(Browser.selectedTab.browser,
+                                                    aEvent.clientX, aEvent.clientY);
+              }, 50);
+            }
             break;
         }
       }

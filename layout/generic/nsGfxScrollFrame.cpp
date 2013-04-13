@@ -160,7 +160,7 @@ nsHTMLScrollFrame::GetType() const
  All other things being equal, we prefer layouts with fewer scrollbars showing.
 */
 
-struct ScrollReflowState {
+struct MOZ_STACK_CLASS ScrollReflowState {
   const nsHTMLReflowState& mReflowState;
   nsBoxLayoutState mBoxState;
   nsGfxScrollFrameInner::ScrollbarStyles mStyles;
@@ -2127,7 +2127,36 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   }
 
   nsDisplayListCollection set;
-  mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, set);
+  {
+    DisplayListClipState::AutoSaveRestore clipState(aBuilder);
+
+    if (usingDisplayport) {
+      nsRect clip = displayPort + aBuilder->ToReferenceFrame(mOuter);
+      if (mIsRoot) {
+        clipState.ClipContentDescendants(clip);
+      } else {
+        clipState.ClipContainingBlockDescendants(clip, nullptr);
+      }
+    } else {
+      nsRect clip = mScrollPort + aBuilder->ToReferenceFrame(mOuter);
+      // Our override of GetBorderRadii ensures we never have a radius at
+      // the corners where we have a scrollbar.
+      if (mIsRoot) {
+#ifdef DEBUG
+        nscoord radii[8];
+#endif
+        NS_ASSERTION(!mOuter->GetPaddingBoxBorderRadii(radii),
+                     "Roots with radii not supported");
+        clipState.ClipContentDescendants(clip);
+      } else {
+        nscoord radii[8];
+        bool haveRadii = mOuter->GetPaddingBoxBorderRadii(radii);
+        clipState.ClipContainingBlockDescendants(clip, haveRadii ? radii : nullptr);
+      }
+    }
+
+    mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, aLists);
+  }
 
   // Since making new layers is expensive, only use nsDisplayScrollLayer
   // if the area is scrollable and we're the content process.
@@ -2146,27 +2175,6 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
         (scrollRange.width > 0 || scrollRange.height > 0) &&
         (!mIsRoot || !mOuter->PresContext()->IsRootContentDocument()));
   }
-
-  nsRect clip;
-  nscoord radii[8];
-
-  if (usingDisplayport) {
-    clip = displayPort + aBuilder->ToReferenceFrame(mOuter);
-    memset(radii, 0, sizeof(nscoord) * ArrayLength(radii));
-  } else {
-    clip = mScrollPort + aBuilder->ToReferenceFrame(mOuter);
-    // Our override of GetBorderRadii ensures we never have a radius at
-    // the corners where we have a scrollbar.
-    mOuter->GetPaddingBoxBorderRadii(radii);
-  }
-
-  // mScrolledFrame may have given us a background, e.g., the scrolled canvas
-  // frame below the viewport. If so, we want it to be clipped. We also want
-  // to end up on our BorderBackground list.
-  // If we are the viewport scrollframe, then clip all our descendants (to ensure
-  // that fixed-pos elements get clipped by us).
-  mOuter->OverflowClip(aBuilder, set, aLists, clip, radii,
-                       true, mIsRoot);
 
   if (ShouldBuildLayer()) {
     // ScrollLayerWrapper must always be created because it initializes the
@@ -3418,6 +3426,7 @@ nsGfxScrollFrameInner::FinishReflowForScrollbar(nsIContent* aContent,
 bool
 nsGfxScrollFrameInner::ReflowFinished()
 {
+  nsAutoScriptBlocker scriptBlocker;
   mPostedReflowCallback = false;
 
   ScrollToRestoredPosition();
@@ -3887,7 +3896,16 @@ nsGfxScrollFrameInner::SaveState()
   }
 
   nsPresState* state = new nsPresState();
-  state->SetScrollState(GetLogicalScrollPosition());
+  // Save mRestorePos instead of our actual current scroll position, if it's
+  // valid and we haven't moved since the last update of mLastPos (same check
+  // that ScrollToRestoredPosition uses). This ensures if a reframe occurs
+  // while we're in the process of loading content to scroll to a restored
+  // position, we'll keep trying after the reframe.
+  nsPoint pt = GetLogicalScrollPosition();
+  if (mRestorePos.y != -1 && pt == mLastPos) {
+    pt = mRestorePos;
+  }
+  state->SetScrollState(pt);
   return state;
 }
 
@@ -3895,8 +3913,6 @@ void
 nsGfxScrollFrameInner::RestoreState(nsPresState* aState)
 {
   mRestorePos = aState->GetScrollState();
-  mLastPos.x = -1;
-  mLastPos.y = -1;
   mDidHistoryRestore = true;
   mLastPos = mScrolledFrame ? GetLogicalScrollPosition() : nsPoint(0,0);
 }

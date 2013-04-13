@@ -32,6 +32,7 @@ function checkMessage(message, delivery, body) {
      "message is instanceof " + message.constructor);
 
   ok(message.id, "message.id");
+  ok(message.threadId, "message.threadId");
   is(message.delivery, delivery, "message.delivery");
   is(message.deliveryStatus, "pending", "message.deliveryStatus");
   is(message.sender, SENDER, "message.sender");
@@ -92,9 +93,9 @@ function doSendMessageAndCheckSuccess(receivers, body, callback) {
   }
 
   function onRequestSuccess(event) {
-    log("SmsRequest.onsuccess event received.");
+    log("request.onsuccess event received.");
 
-    ok(event.target instanceof MozSmsRequest,
+    ok(event.target instanceof DOMRequest,
        "event.target is instanceof " + event.target.constructor);
     event.target.removeEventListener("success", onRequestSuccess);
 
@@ -157,7 +158,7 @@ function doSendMessageAndCheckSuccess(receivers, body, callback) {
 
   for (let i = 0; i < result.length; i++) {
     let request = result[i];
-    ok(request instanceof MozSmsRequest,
+    ok(request instanceof DOMRequest,
        "request is instanceof " + request.constructor);
     request.addEventListener("success", onRequestSuccess);
   }

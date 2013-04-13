@@ -589,8 +589,7 @@ private:
 
 RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
                                      ScrollingBehavior aScrollingBehavior,
-                                     LayersBackend* aBackendType,
-                                     int* aMaxTextureSize,
+                                     TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                      uint64_t* aId)
   : mLayersId(0)
   , mFrameLoader(aFrameLoader)
@@ -600,15 +599,14 @@ RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
   mContentViews[FrameMetrics::ROOT_SCROLL_ID] =
     new nsContentView(aFrameLoader, FrameMetrics::ROOT_SCROLL_ID);
 
-  *aBackendType = mozilla::layers::LAYERS_NONE;
-  *aMaxTextureSize = 0;
   *aId = 0;
 
   nsRefPtr<LayerManager> lm = GetFrom(mFrameLoader);
   // Perhaps the document containing this frame currently has no presentation?
-  if (lm) {
-    *aBackendType = lm->GetBackendType();
-    *aMaxTextureSize = lm->GetMaxTextureSize();
+  if (lm && lm->AsShadowManager()) {
+    *aTextureFactoryIdentifier = lm->GetTextureFactoryIdentifier();
+  } else {
+    *aTextureFactoryIdentifier = TextureFactoryIdentifier();
   }
 
   if (CompositorParent::CompositorLoop()) {
@@ -948,25 +946,22 @@ RenderFrameParent::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 {
   // We're the subdoc for <browser remote="true"> and it has
   // painted content.  Display its shadow layer tree.
-  nsDisplayList shadowTree;
+  DisplayListClipState::AutoSaveRestore clipState(aBuilder);
+
+  nsPoint offset = aBuilder->ToReferenceFrame(aFrame);
+  nsRect bounds = aFrame->EnsureInnerView()->GetBounds() + offset;
+  clipState.ClipContentDescendants(bounds);
+
   ContainerLayer* container = GetRootLayer();
   if (aBuilder->IsForEventDelivery() && container) {
     ViewTransform offset =
       ViewTransform(GetContentRectLayerOffset(aFrame, aBuilder), 1, 1);
     BuildListForLayer(container, mFrameLoader, offset,
-                      aBuilder, shadowTree, aFrame);
+                      aBuilder, *aLists.Content(), aFrame);
   } else {
-    shadowTree.AppendToTop(
+    aLists.Content()->AppendToTop(
       new (aBuilder) nsDisplayRemote(aBuilder, aFrame, this));
   }
-
-  // Clip the shadow layers to subdoc bounds
-  nsPoint offset = aBuilder->ToReferenceFrame(aFrame);
-  nsRect bounds = aFrame->EnsureInnerView()->GetBounds() + offset;
-
-  aLists.Content()->AppendNewToTop(
-    new (aBuilder) nsDisplayClip(aBuilder, aFrame, &shadowTree,
-                                 bounds));
 }
 
 void

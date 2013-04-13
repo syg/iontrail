@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <netinet/in.h>
 #ifdef MOZ_B2G_BT
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sco.h>
@@ -141,7 +142,7 @@ public:
 
   virtual ~UnixSocketConsumer();
 
-  SocketConnectionStatus GetConnectionStatus()
+  SocketConnectionStatus GetConnectionStatus() const
   {
     return mConnectionStatus;
   }

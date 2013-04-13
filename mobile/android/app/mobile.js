@@ -219,7 +219,6 @@ pref("dom.disable_window_print", true);
 pref("dom.disable_window_find", true);
 
 pref("keyword.enabled", true);
-pref("keyword.URL", "");
 
 pref("accessibility.typeaheadfind", false);
 pref("accessibility.typeaheadfind.timeout", 5000);
@@ -444,7 +443,7 @@ pref("plugins.click_to_play", true);
 pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 pref("app.support.baseURL", "http://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/");
 // Used to submit data to input from about:feedback
-pref("app.feedback.postURL", "http://m.input.mozilla.org/%LOCALE%/feedback");
+pref("app.feedback.postURL", "https://input.mozilla.org/%LOCALE%/feedback");
 pref("app.privacyURL", "http://www.mozilla.com/%LOCALE%/m/privacy.html");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
@@ -545,12 +544,6 @@ pref("dom.indexedDB.warningQuota", 5);
 pref("media.preload.default", 1); // default to preload none
 pref("media.preload.auto", 2);    // preload metadata if preload=auto
 
-//  0: don't show fullscreen keyboard
-//  1: always show fullscreen keyboard
-// -1: show fullscreen keyboard based on threshold pref
-pref("widget.ime.android.landscape_fullscreen", 1);
-pref("widget.ime.android.fullscreen_threshold", 250); // in hundreths of inches
-
 // optimize images memory usage
 pref("image.mem.decodeondraw", true);
 pref("content.image.allow_locking", false);
@@ -639,6 +632,8 @@ pref("ui.scrolling.min_scrollable_distance", -1);
 // Enable accessibility mode if platform accessibility is enabled.
 pref("accessibility.accessfu.activate", 2);
 pref("accessibility.accessfu.quicknav_modes", "Link,Heading,FormElement,ListItem");
+// Setting for an utterance order (0 - description first, 1 - description last).
+pref("accessibility.accessfu.utterance", 0);
 
 // Mobile manages state by autodetection
 pref("network.manage-offline-status", true);
@@ -687,4 +682,23 @@ pref("browser.chrome.dynamictoolbar", true);
 // Disable webgl on ARMv6 because running the reftests takes
 // too long for some reason (bug 843738)
 pref("webgl.disabled", true);
+#endif
+
+// initial web feed readers list
+pref("browser.contentHandlers.types.0.title", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.0.uri", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.0.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.1.title", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.1.uri", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.1.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.2.title", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.2.uri", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.2.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.3.title", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.3.uri", "chrome://browser/locale/region.properties");
+pref("browser.contentHandlers.types.3.type", "application/vnd.mozilla.maybe.feed");
+
+#ifndef RELEASE_BUILD
+// Enable Web Audio for Firefox for Android in Nightly and Aurora
+pref("media.webaudio.enabled", true);
 #endif

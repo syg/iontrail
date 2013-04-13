@@ -54,25 +54,31 @@ ToolSidebar.prototype = {
     iframe.className = "iframe-" + id;
     iframe.setAttribute("flex", "1");
     iframe.setAttribute("src", url);
+    iframe.tooltip = "aHTMLTooltip";
 
     let tab = this._tabbox.tabs.appendItem();
     tab.setAttribute("label", ""); // Avoid showing "undefined" while the tab is loading
 
     let onIFrameLoaded = function() {
       tab.setAttribute("label", iframe.contentDocument.title);
-      iframe.removeEventListener("DOMContentLoaded", onIFrameLoaded, true);
+      iframe.removeEventListener("load", onIFrameLoaded, true);
       if ("setPanel" in iframe.contentWindow) {
         iframe.contentWindow.setPanel(this._toolPanel, iframe);
       }
       this.emit(id + "-ready");
     }.bind(this);
 
-    iframe.addEventListener("DOMContentLoaded", onIFrameLoaded, true);
+    iframe.addEventListener("load", onIFrameLoaded, true);
 
     let tabpanel = this._panelDoc.createElementNS(XULNS, "tabpanel");
     tabpanel.setAttribute("id", "sidebar-panel-" + id);
     tabpanel.appendChild(iframe);
     this._tabbox.tabpanels.appendChild(tabpanel);
+
+    this._tooltip = this._panelDoc.createElementNS(XULNS, "tooltip");
+    this._tooltip.id = "aHTMLTooltip";
+    tabpanel.appendChild(this._tooltip);
+    this._tooltip.page = true;
 
     tab.linkedPanel = "sidebar-panel-" + id;
 
@@ -85,7 +91,7 @@ ToolSidebar.prototype = {
       // the "selected" attribute set to true.
       this._panelDoc.defaultView.setTimeout(function() {
         this.select(id);
-      }.bind(this), 0);
+      }.bind(this), 10);
     }
 
     this.emit("new-tab-registered", id);

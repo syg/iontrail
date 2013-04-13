@@ -6,6 +6,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jsmath.h"
+#include "jsworkers.h"
+
 #include "frontend/ParseNode.h"
 #include "ion/AsmJS.h"
 #include "ion/AsmJSModule.h"
@@ -244,6 +246,14 @@ FunctionArgsList(ParseNode *fn, unsigned *numFormals)
     return ListHead(argsBody);
 }
 
+static inline unsigned
+FunctionNumFormals(ParseNode *fn)
+{
+    unsigned numFormals;
+    FunctionArgsList(fn, &numFormals);
+    return numFormals;
+}
+
 static inline bool
 FunctionHasStatementList(ParseNode *fn)
 {
@@ -380,7 +390,7 @@ class Type
     }
 
     bool isExtern() const {
-        return isDouble() || isSigned() || isUnsigned();
+        return isDouble() || isSigned();
     }
 
     MIRType toMIRType() const {
@@ -1029,26 +1039,19 @@ class ModuleCompiler
     typedef Vector<AsmJSGlobalAccess> GlobalAccessVector;
 
     JSContext *                    cx_;
-    LifoAlloc                      lifo_;
-    TempAllocator                  alloc_;
-    IonContext                     ionContext_;
+    IonContext                     ictx_;
     MacroAssembler                 masm_;
 
     ScopedJSDeletePtr<AsmJSModule> module_;
 
     PropertyName *                 moduleFunctionName_;
-    PropertyName *                 globalArgumentName_;
-    PropertyName *                 importArgumentName_;
-    PropertyName *                 bufferArgumentName_;
 
     GlobalMap                      globals_;
     FuncVector                     functions_;
     FuncPtrTableVector             funcPtrTables_;
     ExitMap                        exits_;
     MathNameMap                    standardLibraryMathNames_;
-
     GlobalAccessVector             globalAccesses_;
-
     Label                          stackOverflowLabel_;
     Label                          operationCallbackLabel_;
 
@@ -1065,19 +1068,12 @@ class ModuleCompiler
         return standardLibraryMathNames_.putNew(atom->asPropertyName(), builtin);
     }
 
-    static const size_t LIFO_ALLOC_PRIMARY_CHUNK_SIZE = 1 << 12;
-
   public:
     ModuleCompiler(JSContext *cx, TokenStream &ts)
       : cx_(cx),
-        lifo_(LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
-        alloc_(&lifo_),
-        ionContext_(cx, &alloc_),
-        masm_(),
+        ictx_(cx->runtime),
+        masm_(cx),
         moduleFunctionName_(NULL),
-        globalArgumentName_(NULL),
-        importArgumentName_(NULL),
-        bufferArgumentName_(NULL),
         globals_(cx),
         functions_(cx),
         funcPtrTables_(cx),
@@ -1129,7 +1125,7 @@ class ModuleCompiler
             return false;
         }
 
-        module_ = cx_->new_<AsmJSModule>();
+        module_ = cx_->new_<AsmJSModule>(cx_);
         if (!module_)
             return false;
 
@@ -1149,8 +1145,6 @@ class ModuleCompiler
     /*************************************************** Read-only interface */
 
     JSContext *cx() const { return cx_; }
-    LifoAlloc &lifo() { return lifo_; }
-    TempAllocator &alloc() { return alloc_; }
     MacroAssembler &masm() { return masm_; }
     Label &stackOverflowLabel() { return stackOverflowLabel_; }
     Label &operationCallbackLabel() { return operationCallbackLabel_; }
@@ -1158,9 +1152,6 @@ class ModuleCompiler
     const AsmJSModule &module() const { return *module_.get(); }
 
     PropertyName *moduleFunctionName() const { return moduleFunctionName_; }
-    PropertyName *globalArgumentName() const { return globalArgumentName_; }
-    PropertyName *importArgumentName() const { return importArgumentName_; }
-    PropertyName *bufferArgumentName() const { return bufferArgumentName_; }
 
     const Global *lookupGlobal(PropertyName *name) const {
         if (GlobalMap::Ptr p = globals_.lookup(name))
@@ -1201,9 +1192,10 @@ class ModuleCompiler
     /***************************************************** Mutable interface */
 
     void initModuleFunctionName(PropertyName *n) { moduleFunctionName_ = n; }
-    void initGlobalArgumentName(PropertyName *n) { globalArgumentName_ = n; }
-    void initImportArgumentName(PropertyName *n) { importArgumentName_ = n; }
-    void initBufferArgumentName(PropertyName *n) { bufferArgumentName_ = n; }
+
+    void initGlobalArgumentName(PropertyName *n) { module_->initGlobalArgumentName(n); }
+    void initImportArgumentName(PropertyName *n) { module_->initImportArgumentName(n); }
+    void initBufferArgumentName(PropertyName *n) { module_->initBufferArgumentName(n); }
 
     bool addGlobalVarInitConstant(PropertyName *varName, VarType type, const Value &v) {
         JS_ASSERT(currentPass_ == 1);
@@ -1279,9 +1271,13 @@ class ModuleCompiler
         return globals_.putNew(varName, g);
     }
     bool collectAccesses(MIRGenerator &gen) {
+#ifdef JS_CPU_ARM
+        if (!module_->addBoundsChecks(gen.asmBoundsChecks()))
+            return false;
+#else
         if (!module_->addHeapAccesses(gen.heapAccesses()))
             return false;
-
+#endif
         for (unsigned i = 0; i < gen.globalAccesses().length(); i++) {
             if (!globalAccesses_.append(gen.globalAccesses()[i]))
                 return false;
@@ -1337,10 +1333,16 @@ class ModuleCompiler
 
     void setExitOffset(unsigned exitIndex) {
         JS_ASSERT(currentPass_ == 3);
+#if defined(JS_CPU_ARM)
+        masm_.flush();
+#endif
         module_->exit(exitIndex).initCodeOffset(masm_.size());
     }
     void setEntryOffset(unsigned exportIndex) {
         JS_ASSERT(currentPass_ == 3);
+#if defined(JS_CPU_ARM)
+        masm_.flush();
+#endif
         module_->exportedFunction(exportIndex).initCodeOffset(masm_.size());
     }
 
@@ -1412,11 +1414,19 @@ class ModuleCompiler
         JS_ASSERT(elemIndex == module_->numFuncPtrTableElems());
 
         // Global accesses in function bodies
+#ifdef JS_CPU_ARM
+        JS_ASSERT(globalAccesses_.length() == 0);
+        // The AsmJSHeapAccess offsets need to be updated to reflect the
+        // "actualOffset" (an ARM distinction).
+        module_->convertBoundsChecksToActualOffset(masm_);
+
+#else
+
         for (unsigned i = 0; i < globalAccesses_.length(); i++) {
             AsmJSGlobalAccess access = globalAccesses_[i];
             masm_.patchAsmJSGlobalAccess(access.offset, code, codeBytes, access.globalDataOffset);
         }
-
+#endif
         // The AsmJSHeapAccess offsets need to be updated to reflect the
         // "actualOffset" (an ARM distinction).
         for (unsigned i = 0; i < module_->numHeapAccesses(); i++) {
@@ -1461,10 +1471,7 @@ class FunctionCompiler
     ModuleCompiler::Func & func_;
     LocalMap               locals_;
 
-    LifoAllocScope         lifoAllocScope_;
-    MIRGraph               mirGraph_;
-    MIRGenerator           mirGen_;
-    CompileInfo            compileInfo_;
+    MIRGenerator *         mirGen_;
     AutoFlushCache         autoFlushCache_;
 
     MBasicBlock *          curBlock_;
@@ -1476,14 +1483,12 @@ class FunctionCompiler
     LabeledBlockMap        labeledContinues_;
 
   public:
-    FunctionCompiler(ModuleCompiler &m, ModuleCompiler::Func &func, MoveRef<LocalMap> locals)
+    FunctionCompiler(ModuleCompiler &m, ModuleCompiler::Func &func,
+                     MoveRef<LocalMap> locals, MIRGenerator *mirGen)
       : m_(m),
         func_(func),
         locals_(locals),
-        lifoAllocScope_(&m.lifo()),
-        mirGraph_(&m.alloc()),
-        mirGen_(m.cx()->compartment, &m.alloc(), &mirGraph_, &compileInfo_),
-        compileInfo_(locals_.count()),
+        mirGen_(mirGen),
         autoFlushCache_("asm.js"),
         curBlock_(NULL),
         loopStack_(m.cx()),
@@ -1512,7 +1517,7 @@ class FunctionCompiler
         for (ABIArgIter i(func_.argMIRTypes()); !i.done(); i++) {
             MAsmJSParameter *ins = MAsmJSParameter::New(*i, i.mirType());
             curBlock_->add(ins);
-            curBlock_->initSlot(compileInfo_.localSlot(i.index()), ins);
+            curBlock_->initSlot(info().localSlot(i.index()), ins);
         }
 
         for (LocalMap::Range r = locals_.all(); !r.empty(); r.popFront()) {
@@ -1520,7 +1525,7 @@ class FunctionCompiler
             if (local.which == Local::Var) {
                 MConstant *ins = MConstant::New(local.initialValue);
                 curBlock_->add(ins);
-                curBlock_->initSlot(compileInfo_.localSlot(local.slot), ins);
+                curBlock_->initSlot(info().localSlot(local.slot), ins);
             }
         }
 
@@ -1551,8 +1556,9 @@ class FunctionCompiler
     ModuleCompiler &       m() const { return m_; }
     const AsmJSModule &    module() const { return m_.module(); }
     ModuleCompiler::Func & func() const { return func_; }
-    MIRGraph &             mirGraph() { return mirGraph_; }
-    MIRGenerator &         mirGen() { return mirGen_; }
+    MIRGenerator &         mirGen() { return *mirGen_; }
+    MIRGraph &             mirGraph() { return mirGen_->graph(); }
+    CompileInfo &          info() { return mirGen_->info(); }
 
     const Local *lookupLocal(PropertyName *name) const
     {
@@ -1565,7 +1571,7 @@ class FunctionCompiler
     {
         if (!curBlock_)
             return NULL;
-        return curBlock_->getSlot(compileInfo_.localSlot(local.slot));
+        return curBlock_->getSlot(info().localSlot(local.slot));
     }
 
     const ModuleCompiler::Func *lookupFunction(PropertyName *name) const
@@ -1678,7 +1684,7 @@ class FunctionCompiler
     {
         if (!curBlock_)
             return;
-        curBlock_->setSlot(compileInfo_.localSlot(local.slot), def);
+        curBlock_->setSlot(info().localSlot(local.slot), def);
     }
 
     MDefinition *loadHeap(ArrayBufferView::ViewType vt, MDefinition *ptr)
@@ -1770,7 +1776,7 @@ class FunctionCompiler
     {
         if (!curBlock_)
             return;
-        args->prevMaxStackBytes_ = mirGen_.resetAsmJSMaxStackArgBytes();
+        args->prevMaxStackBytes_ = mirGen().resetAsmJSMaxStackArgBytes();
     }
 
     bool passArg(MDefinition *argDef, Type type, Args *args)
@@ -1781,7 +1787,7 @@ class FunctionCompiler
         if (!curBlock_)
             return true;
 
-        uint32_t childStackBytes = mirGen_.resetAsmJSMaxStackArgBytes();
+        uint32_t childStackBytes = mirGen().resetAsmJSMaxStackArgBytes();
         args->maxChildStackBytes_ = Max(args->maxChildStackBytes_, childStackBytes);
         if (childStackBytes > 0 && !args->stackArgs_.empty())
             args->childClobbers_ = true;
@@ -1816,7 +1822,7 @@ class FunctionCompiler
             newStackBytes = Max(args->prevMaxStackBytes_,
                                 Max(args->maxChildStackBytes_, parentStackBytes));
         }
-        mirGen_.setAsmJSMaxStackArgBytes(newStackBytes);
+        mirGen_->setAsmJSMaxStackArgBytes(newStackBytes);
     }
 
   private:
@@ -1925,7 +1931,7 @@ class FunctionCompiler
             joinBlock->addPredecessor(curBlock_);
         }
         curBlock_ = joinBlock;
-        mirGraph_.moveBlockToEnd(curBlock_);
+        mirGraph().moveBlockToEnd(curBlock_);
     }
 
     MBasicBlock *switchToElse(MBasicBlock *elseBlock)
@@ -1934,7 +1940,7 @@ class FunctionCompiler
             return NULL;
         MBasicBlock *thenEnd = curBlock_;
         curBlock_ = elseBlock;
-        mirGraph_.moveBlockToEnd(curBlock_);
+        mirGraph().moveBlockToEnd(curBlock_);
         return thenEnd;
     }
 
@@ -1960,7 +1966,7 @@ class FunctionCompiler
     {
         if (!curBlock_)
             return;
-        JS_ASSERT(curBlock_->stackDepth() == compileInfo_.firstStackSlot());
+        JS_ASSERT(curBlock_->stackDepth() == info().firstStackSlot());
         curBlock_->push(def);
     }
 
@@ -1968,7 +1974,7 @@ class FunctionCompiler
     {
         if (!curBlock_)
             return NULL;
-        JS_ASSERT(curBlock_->stackDepth() == compileInfo_.firstStackSlot() + 1);
+        JS_ASSERT(curBlock_->stackDepth() == info().firstStackSlot() + 1);
         return curBlock_->pop();
     }
 
@@ -1981,10 +1987,10 @@ class FunctionCompiler
             *loopEntry = NULL;
             return true;
         }
-        *loopEntry = MBasicBlock::NewPendingLoopHeader(mirGraph_, compileInfo_, curBlock_, NULL);
+        *loopEntry = MBasicBlock::NewPendingLoopHeader(mirGraph(), info(), curBlock_, NULL);
         if (!*loopEntry)
             return false;
-        mirGraph_.addBlock(*loopEntry);
+        mirGraph().addBlock(*loopEntry);
         (*loopEntry)->setLoopDepth(loopStack_.length());
         curBlock_->end(MGoto::New(*loopEntry));
         curBlock_ = *loopEntry;
@@ -2042,7 +2048,7 @@ class FunctionCompiler
         }
         curBlock_ = afterLoop;
         if (curBlock_)
-            mirGraph_.moveBlockToEnd(curBlock_);
+            mirGraph().moveBlockToEnd(curBlock_);
         return bindUnlabeledBreaks(pn);
     }
 
@@ -2155,7 +2161,7 @@ class FunctionCompiler
                 (*cases)[i] = bb;
             }
         }
-        mirGraph_.moveBlockToEnd(*defaultBlock);
+        mirGraph().moveBlockToEnd(*defaultBlock);
         return true;
     }
 
@@ -2182,10 +2188,10 @@ class FunctionCompiler
   private:
     bool newBlockWithDepth(MBasicBlock *pred, unsigned loopDepth, MBasicBlock **block)
     {
-        *block = MBasicBlock::New(mirGraph_, compileInfo_, pred, /* pc = */ NULL, MBasicBlock::NORMAL);
+        *block = MBasicBlock::New(mirGraph(), info(), pred, /* pc = */ NULL, MBasicBlock::NORMAL);
         if (!*block)
             return false;
-        mirGraph_.addBlock(*block);
+        mirGraph().addBlock(*block);
         (*block)->setLoopDepth(loopDepth);
         return true;
     }
@@ -2301,6 +2307,20 @@ js::AsmJSModuleObjectToModule(JSObject *obj)
     return *(AsmJSModule *)obj->getReservedSlot(ASM_CODE_RESERVED_SLOT).toPrivate();
 }
 
+static const unsigned ASM_MODULE_FUNCTION_MODULE_OBJECT_SLOT = 0;
+
+JSObject &
+js::AsmJSModuleObject(JSFunction *moduleFun)
+{
+    return moduleFun->getExtendedSlot(ASM_MODULE_FUNCTION_MODULE_OBJECT_SLOT).toObject();
+}
+
+void
+js::SetAsmJSModuleObject(JSFunction *moduleFun, JSObject *moduleObj)
+{
+    moduleFun->setExtendedSlot(ASM_MODULE_FUNCTION_MODULE_OBJECT_SLOT, OBJECT_TO_JSVAL(moduleObj));
+}
+
 static void
 AsmJSModuleObject_finalize(FreeOp *fop, RawObject obj)
 {
@@ -2342,9 +2362,9 @@ CheckModuleLevelName(ModuleCompiler &m, PropertyName *name, ParseNode *nameNode)
         return false;
 
     if (name == m.moduleFunctionName() ||
-        name == m.globalArgumentName() ||
-        name == m.importArgumentName() ||
-        name == m.bufferArgumentName() ||
+        name == m.module().globalArgumentName() ||
+        name == m.module().importArgumentName() ||
+        name == m.module().bufferArgumentName() ||
         m.lookupGlobal(name))
     {
         return m.fail("Duplicate names not allowed", nameNode);
@@ -2507,7 +2527,7 @@ CheckGlobalVariableInitImport(ModuleCompiler &m, PropertyName *varName, ParseNod
     ParseNode *base = DotBase(coercedExpr);
     PropertyName *field = DotMember(coercedExpr);
 
-    if (!IsUseOfName(base, m.importArgumentName()))
+    if (!IsUseOfName(base, m.module().importArgumentName()))
         return m.fail("Expecting c.y where c is the import parameter", coercedExpr);
 
     return m.addGlobalVarImport(varName, field, coercion);
@@ -2523,7 +2543,7 @@ CheckNewArrayView(ModuleCompiler &m, PropertyName *varName, ParseNode *newExpr, 
     ParseNode *base = DotBase(ctorExpr);
     PropertyName *field = DotMember(ctorExpr);
 
-    if (!IsUseOfName(base, m.globalArgumentName()))
+    if (!IsUseOfName(base, m.module().globalArgumentName()))
         return m.fail("Expecting global.y", base);
 
     ParseNode *bufArg = NextNode(ctorExpr);
@@ -2533,7 +2553,7 @@ CheckNewArrayView(ModuleCompiler &m, PropertyName *varName, ParseNode *newExpr, 
     if (NextNode(bufArg) != NULL)
         return m.fail("Only one argument may be passed to a typed array constructor", bufArg);
 
-    if (!IsUseOfName(bufArg, m.bufferArgumentName()))
+    if (!IsUseOfName(bufArg, m.module().bufferArgumentName()))
         return m.fail("Argument to typed array constructor must be ArrayBuffer name", bufArg);
 
     JSAtomState &names = m.cx()->names();
@@ -2569,7 +2589,7 @@ CheckGlobalDotImport(ModuleCompiler &m, PropertyName *varName, ParseNode *initNo
     if (base->isKind(PNK_DOT)) {
         ParseNode *global = DotBase(base);
         PropertyName *math = DotMember(base);
-        if (!IsUseOfName(global, m.globalArgumentName()) || math != m.cx()->names().Math)
+        if (!IsUseOfName(global, m.module().globalArgumentName()) || math != m.cx()->names().Math)
             return m.fail("Expecting global.Math", base);
 
         AsmJSMathBuiltin mathBuiltin;
@@ -2579,7 +2599,7 @@ CheckGlobalDotImport(ModuleCompiler &m, PropertyName *varName, ParseNode *initNo
         return m.addMathBuiltin(varName, mathBuiltin, field);
     }
 
-    if (IsUseOfName(base, m.globalArgumentName())) {
+    if (IsUseOfName(base, m.module().globalArgumentName())) {
         if (field == m.cx()->names().NaN)
             return m.addGlobalConstant(varName, js_NaN, field);
         if (field == m.cx()->names().Infinity)
@@ -2587,7 +2607,7 @@ CheckGlobalDotImport(ModuleCompiler &m, PropertyName *varName, ParseNode *initNo
         return m.fail("Does not match a standard global constant", initNode);
     }
 
-    if (IsUseOfName(base, m.importArgumentName()))
+    if (IsUseOfName(base, m.module().importArgumentName()))
         return m.addFFI(varName, field);
 
     return m.fail("Expecting c.y where c is either the global or import parameter", initNode);
@@ -3823,7 +3843,7 @@ CheckExpr(FunctionCompiler &f, ParseNode *expr, Use use, MDefinition **def, Type
 {
     JS_CHECK_RECURSION(f.cx(), return false);
 
-    if (!f.m().alloc().ensureBallast())
+    if (!f.mirGen().ensureBallast())
         return false;
 
     if (IsNumericLiteral(expr))
@@ -4251,7 +4271,7 @@ CheckStatement(FunctionCompiler &f, ParseNode *stmt, LabelVector *maybeLabels)
 {
     JS_CHECK_RECURSION(f.cx(), return false);
 
-    if (!f.m().alloc().ensureBallast())
+    if (!f.mirGen().ensureBallast())
         return false;
 
     switch (stmt->getKind()) {
@@ -4332,8 +4352,8 @@ CheckVariableDecls(ModuleCompiler &m, FunctionCompiler::LocalMap *locals, ParseN
     return true;
 }
 
-static bool
-CheckFunctionBody(ModuleCompiler &m, ModuleCompiler::Func &func)
+static MIRGenerator *
+CheckFunctionBody(ModuleCompiler &m, ModuleCompiler::Func &func, LifoAlloc &lifo)
 {
     // CheckFunctionSignature already has already checked the
     // function head as well as argument type declarations. The ParseNode*
@@ -4342,66 +4362,292 @@ CheckFunctionBody(ModuleCompiler &m, ModuleCompiler::Func &func)
 
     FunctionCompiler::LocalMap locals(m.cx());
     if (!locals.init())
-        return false;
+        return NULL;
 
     unsigned numFormals;
     ParseNode *arg = FunctionArgsList(func.fn(), &numFormals);
     for (unsigned i = 0; i < numFormals; i++, arg = NextNode(arg)) {
         if (!locals.putNew(arg->name(), FunctionCompiler::Local(func.argType(i), i)))
-            return false;
+            return NULL;
     }
 
     if (!CheckVariableDecls(m, &locals, &stmtIter))
-        return false;
+        return NULL;
 
-    FunctionCompiler f(m, func, Move(locals));
+    // Force Ion allocations to occur in the LifoAlloc while in scope.
+    TempAllocator *tempAlloc = lifo.new_<TempAllocator>(&lifo);
+    IonContext icx(m.cx()->compartment, tempAlloc);
+
+    // Allocate objects required for MIR generation.
+    // Memory for the objects is provided by the LifoAlloc argument,
+    // which may be explicitly tracked by the caller.
+    MIRGraph *graph = lifo.new_<MIRGraph>(tempAlloc);
+    CompileInfo *info = lifo.new_<CompileInfo>(locals.count());
+    MIRGenerator *mirGen = lifo.new_<MIRGenerator>(m.cx()->compartment, tempAlloc, graph, info);
+    JS_ASSERT(tempAlloc && graph && info && mirGen);
+
+    FunctionCompiler f(m, func, Move(locals), mirGen);
     if (!f.init())
-        return false;
+        return NULL;
 
     if (!CheckStatements(f, stmtIter))
-        return false;
+        return NULL;
 
     f.returnVoid();
+    JS_ASSERT(!tempAlloc->rootList());
 
+    return mirGen;
+}
+
+static bool
+GenerateAsmJSCode(ModuleCompiler &m, ModuleCompiler::Func &func,
+                  MIRGenerator &mirGen, LIRGraph &lir)
+{
     m.masm().bind(func.codeLabel());
 
-    ScopedJSDeletePtr<CodeGenerator> codegen(CompileBackEnd(&f.mirGen(), &m.masm()));
+    ScopedJSDeletePtr<CodeGenerator> codegen(GenerateCode(&mirGen, &lir, &m.masm()));
     if (!codegen)
-        return m.fail("Internal compiler failure (probably out of memory)", func.fn());
+        return m.fail("Internal codegen failure (probably out of memory)", func.fn());
 
-    if (!m.collectAccesses(f.mirGen()))
+    if (!m.collectAccesses(mirGen))
         return false;
+
+    // A single MacroAssembler is reused for all function compilations so
+    // that there is a single linear code segment for each module. To avoid
+    // spiking memory, a LifoAllocScope in the caller frees all MIR/LIR
+    // after each function is compiled. This method is responsible for cleaning
+    // out any dangling pointers that the MacroAssembler may have kept.
+    m.masm().resetForNewCodeGenerator();
+
+    // Align internal function headers.
+    m.masm().align(CodeAlignment);
 
     // Unlike regular IonMonkey which links and generates a new IonCode for
     // every function, we accumulate all the functions in the module in a
     // single MacroAssembler and link at end. Linking asm.js doesn't require a
-    // CodeGenerator so we can destory it now.
+    // CodeGenerator so we can destroy it now.
     return true;
 }
 
-static const unsigned CodeAlignment = 8;
+static const size_t LIFO_ALLOC_PRIMARY_CHUNK_SIZE = 1 << 12;
 
 static bool
-CheckFunctionBodies(ModuleCompiler &m)
+CheckFunctionBodiesSequential(ModuleCompiler &m)
 {
+    LifoAlloc lifo(LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
+
     for (unsigned i = 0; i < m.numFunctions(); i++) {
-        if (!CheckFunctionBody(m, m.function(i)))
+        ModuleCompiler::Func &func = m.function(i);
+
+        // Use the scoped LifoAlloc for all temporaries,
+        // including the MIRGenerator, MIRGraph, and LIRGraph.
+        LifoAllocScope scope(&lifo);
+
+        MIRGenerator *mirGen = CheckFunctionBody(m, func, lifo);
+        if (!mirGen)
             return false;
 
-        // A single MacroAssembler is reused for all function compilations so
-        // that there is a single linear code segment for each module. To avoid
-        // spiking memory, each FunctionCompiler creates a LifoAllocScope so
-        // that all MIR/LIR nodes are freed after each function is compiled.
-        // This method is responsible for cleaning out any dangling pointers
-        // that the MacroAssembler may have kept.
-        m.masm().resetForNewCodeGenerator();
+        if (!OptimizeMIR(mirGen))
+            return m.fail("Internal compiler failure (probably out of memory)", func.fn());
 
-        // Align internal function headers.
-        m.masm().align(CodeAlignment);
+        LIRGraph *lir = GenerateLIR(mirGen);
+        if (!lir)
+            return m.fail("Internal compiler failure (probably out of memory)", func.fn());
+
+        if (!GenerateAsmJSCode(m, func, *mirGen, *lir))
+            return false;
     }
 
     return true;
 }
+
+#ifdef JS_PARALLEL_COMPILATION
+// State of compilation as tracked and updated by the main thread.
+struct ParallelGroupState
+{
+    WorkerThreadState &state;
+    Vector<AsmJSParallelTask> &tasks;
+    int32_t outstandingJobs; // Good work, jobs!
+    uint32_t compiledJobs;
+
+    ParallelGroupState(WorkerThreadState &state, Vector<AsmJSParallelTask> &tasks)
+      : state(state), tasks(tasks), outstandingJobs(0), compiledJobs(0)
+    { }
+};
+
+// Block until a worker-assigned LifoAlloc becomes finished.
+static AsmJSParallelTask *
+GetFinishedCompilation(ModuleCompiler &m, ParallelGroupState &group)
+{
+    AutoLockWorkerThreadState lock(m.cx()->runtime);
+
+    while (!group.state.asmJSWorkerFailed()) {
+        if (!group.state.asmJSFinishedList.empty()) {
+            group.outstandingJobs--;
+            return group.state.asmJSFinishedList.popCopy();
+        }
+        group.state.wait(WorkerThreadState::MAIN);
+    }
+
+    return NULL;
+}
+
+static bool
+GenerateCodeForFinishedJob(ModuleCompiler &m, ParallelGroupState &group, AsmJSParallelTask **outTask)
+{
+    // Block until a used LifoAlloc becomes available.
+    AsmJSParallelTask *task = GetFinishedCompilation(m, group);
+    if (!task)
+        return false;
+
+    // Perform code generation on the main thread.
+    if (!GenerateAsmJSCode(m, m.function(task->funcNum), *task->mir, *task->lir))
+        return false;
+    group.compiledJobs++;
+
+    // Clear the LifoAlloc for use by another worker.
+    TempAllocator &tempAlloc = task->mir->temp();
+    tempAlloc.TempAllocator::~TempAllocator();
+    task->lifo.releaseAll();
+
+    *outTask = task;
+    return true;
+}
+
+static inline bool
+GetUnusedTask(ParallelGroupState &group, uint32_t funcNum, AsmJSParallelTask **outTask)
+{
+    // Since functions are dispatched in order, if fewer than |numLifos| functions
+    // have been generated, then the |funcNum'th| LifoAlloc must never have been
+    // assigned to a worker thread.
+    if (funcNum >= group.tasks.length())
+        return false;
+    *outTask = &group.tasks[funcNum];
+    return true;
+}
+
+static bool
+CheckFunctionBodiesParallelImpl(ModuleCompiler &m, ParallelGroupState &group)
+{
+    JS_ASSERT(group.state.asmJSWorklist.empty());
+    JS_ASSERT(group.state.asmJSFinishedList.empty());
+    group.state.resetAsmJSFailureState();
+
+    // Dispatch work for each function.
+    for (uint32_t i = 0; i < m.numFunctions(); i++) {
+        ModuleCompiler::Func &func = m.function(i);
+
+        // Get exclusive access to an empty LifoAlloc from the thread group's pool.
+        AsmJSParallelTask *task = NULL;
+        if (!GetUnusedTask(group, i, &task) && !GenerateCodeForFinishedJob(m, group, &task))
+            return false;
+
+        // Generate MIR into the LifoAlloc on the main thread.
+        MIRGenerator *mir = CheckFunctionBody(m, func, task->lifo);
+        if (!mir)
+            return false;
+
+        // Perform optimizations and LIR generation on a worker thread.
+        task->init(i, mir);
+        if (!StartOffThreadAsmJSCompile(m.cx(), task))
+            return false;
+
+        group.outstandingJobs++;
+    }
+
+    // Block for all outstanding workers to complete.
+    while (group.outstandingJobs > 0) {
+        AsmJSParallelTask *ignored = NULL;
+        if (!GenerateCodeForFinishedJob(m, group, &ignored))
+            return false;
+    }
+
+    JS_ASSERT(group.outstandingJobs == 0);
+    JS_ASSERT(group.compiledJobs == m.numFunctions());
+    JS_ASSERT(group.state.asmJSWorklist.empty());
+    JS_ASSERT(group.state.asmJSFinishedList.empty());
+    JS_ASSERT(!group.state.asmJSWorkerFailed());
+
+    return true;
+}
+
+static void
+CancelOutstandingJobs(ModuleCompiler &m, ParallelGroupState &group)
+{
+    // This is failure-handling code, so it's not allowed to fail.
+    // The problem is that all memory for compilation is stored in LifoAllocs
+    // maintained in the scope of CheckFunctionBodiesParallel() -- so in order
+    // for that function to safely return, and thereby remove the LifoAllocs,
+    // none of that memory can be in use or reachable by workers.
+
+    JS_ASSERT(group.outstandingJobs >= 0);
+    if (!group.outstandingJobs)
+        return;
+
+    AutoLockWorkerThreadState lock(m.cx()->runtime);
+
+    // From the compiling tasks, eliminate those waiting for worker assignation.
+    group.outstandingJobs -= group.state.asmJSWorklist.length();
+    group.state.asmJSWorklist.clear();
+
+    // From the compiling tasks, eliminate those waiting for codegen.
+    group.outstandingJobs -= group.state.asmJSFinishedList.length();
+    group.state.asmJSFinishedList.clear();
+
+    // Eliminate tasks that failed without adding to the finished list.
+    group.outstandingJobs -= group.state.harvestFailedAsmJSJobs();
+
+    // Any remaining tasks are therefore undergoing active compilation.
+    JS_ASSERT(group.outstandingJobs >= 0);
+    while (group.outstandingJobs > 0) {
+        group.state.wait(WorkerThreadState::MAIN);
+
+        group.outstandingJobs -= group.state.harvestFailedAsmJSJobs();
+        group.outstandingJobs -= group.state.asmJSFinishedList.length();
+        group.state.asmJSFinishedList.clear();
+    }
+
+    JS_ASSERT(group.outstandingJobs == 0);
+    JS_ASSERT(group.state.asmJSWorklist.empty());
+    JS_ASSERT(group.state.asmJSFinishedList.empty());
+}
+
+static const size_t LIFO_ALLOC_PARALLEL_CHUNK_SIZE = 1 << 12;
+
+static bool
+CheckFunctionBodiesParallel(ModuleCompiler &m)
+{
+    // Saturate all worker threads plus the main thread.
+    WorkerThreadState &state = *m.cx()->runtime->workerThreadState;
+    size_t numParallelJobs = state.numThreads + 1;
+
+    // Allocate scoped AsmJSParallelTask objects. Each contains a unique
+    // LifoAlloc that provides all necessary memory for compilation.
+    Vector<AsmJSParallelTask, 0> tasks(m.cx());
+    if (!tasks.initCapacity(numParallelJobs))
+        return false;
+
+    for (size_t i = 0; i < numParallelJobs; i++)
+        tasks.infallibleAppend(LIFO_ALLOC_PARALLEL_CHUNK_SIZE);
+
+    // With compilation memory in-scope, dispatch worker threads.
+    ParallelGroupState group(state, tasks);
+    if (!CheckFunctionBodiesParallelImpl(m, group)) {
+        CancelOutstandingJobs(m, group);
+
+        // If failure was triggered by a worker thread, report error.
+        int32_t maybeFailureIndex = state.maybeGetAsmJSFailedFunctionIndex();
+        if (maybeFailureIndex >= 0) {
+            ParseNode *fn = m.function(maybeFailureIndex).fn();
+            return m.fail("Internal compiler failure (probably out of memory)", fn);
+        }
+
+        // Otherwise, the error occurred on the main thread and was already reported.
+        return false;
+    }
+    return true;
+}
+#endif // JS_PARALLEL_COMPILATION
 
 static RegisterSet AllRegs = RegisterSet(GeneralRegisterSet(Registers::AllMask),
                                          FloatRegisterSet(FloatRegisters::AllMask));
@@ -4457,7 +4703,7 @@ StackDecrementForCall(MacroAssembler &masm, const MIRTypeVector &argTypes, unsig
 
 static const unsigned FramePushedAfterSave = NonVolatileRegs.gprs().size() * STACK_SLOT_SIZE +
                                              NonVolatileRegs.fpus().size() * sizeof(double);
-
+#ifndef JS_CPU_ARM
 static bool
 GenerateEntry(ModuleCompiler &m, const AsmJSModule::ExportedFunction &exportedFunc)
 {
@@ -4557,6 +4803,118 @@ GenerateEntry(ModuleCompiler &m, const AsmJSModule::ExportedFunction &exportedFu
     masm.ret();
     return true;
 }
+#else
+static bool
+GenerateEntry(ModuleCompiler &m, const AsmJSModule::ExportedFunction &exportedFunc)
+{
+    const ModuleCompiler::Func &func = *m.lookupFunction(exportedFunc.name());
+
+    MacroAssembler &masm = m.masm();
+
+    // In constrast to the X64 system ABI, the Ion convention is that all
+    // registers are clobbered by calls. Thus, we must save the caller's
+    // non-volatile registers.
+    //
+    // NB: GenerateExits assumes that masm.framePushed() == 0 before
+    // PushRegsInMask(NonVolatileRegs).
+    masm.setFramePushed(0);
+    masm.PushRegsInMask(NonVolatileRegs);
+    JS_ASSERT(masm.framePushed() == FramePushedAfterSave);
+    JS_ASSERT(masm.framePushed() % 8 == 0);
+
+    // Remember the stack pointer in the current AsmJSActivation. This will be
+    // used by error exit paths to set the stack pointer back to what it was
+    // right after the (C++) caller's non-volatile registers were saved so that
+    // they can be restored.
+
+    LoadAsmJSActivationIntoRegister(masm, r9);
+    masm.ma_str(StackPointer, Address(r9, AsmJSActivation::offsetOfErrorRejoinSP()));
+    //    masm.storeErrorRejoinSp();
+
+    // Move the parameters into non-argument registers since we are about to
+    // clobber these registers with the contents of argv.
+    Register argv = r9;
+    masm.movePtr(IntArgReg1, GlobalReg);  // globalData
+    masm.movePtr(IntArgReg0, argv);       // argv
+
+    masm.ma_ldr(Operand(GlobalReg, Imm32(m.module().heapOffset())), HeapReg);
+    // Remember argv so that we can load argv[0] after the call.
+    JS_ASSERT(masm.framePushed() % 8 == 0);
+    masm.Push(argv);
+    JS_ASSERT(masm.framePushed() % 8 == 4);
+
+    // Determine how many stack slots we need to hold arguments that don't fit
+    // in registers.
+    unsigned numStackArgs = 0;
+    for (ABIArgIter iter(func.argMIRTypes()); !iter.done(); iter++) {
+        if (iter->kind() == ABIArg::Stack)
+            numStackArgs++;
+    }
+
+    // Before calling, we must ensure sp % 16 == 0. Since (sp % 16) = 8 on
+    // entry, we need to push 8 (mod 16) bytes.
+    //JS_ASSERT(AlignmentAtPrologue == 8);
+    JS_ASSERT(masm.framePushed() % 8 == 4);
+    unsigned stackDec = numStackArgs * sizeof(double) + (masm.framePushed() >> 2) % 2 * sizeof(uint32_t);
+    masm.reserveStack(stackDec);
+    //JS_ASSERT(masm.framePushed() % 8 == 0);
+    if(getenv("GDB_BREAK")) {
+        masm.breakpoint(js::ion::Assembler::Always);
+    }
+    // Copy parameters out of argv into the registers/stack-slots specified by
+    // the system ABI.
+    for (ABIArgIter iter(func.argMIRTypes()); !iter.done(); iter++) {
+        unsigned argOffset = iter.index() * sizeof(uint64_t);
+        switch (iter->kind()) {
+          case ABIArg::GPR:
+            masm.ma_ldr(Operand(argv, argOffset), iter->gpr());
+            break;
+          case ABIArg::FPU:
+#if defined(JS_CPU_ARM_HARDFP)
+            masm.ma_vldr(Operand(argv, argOffset), iter->fpu());
+#else
+            // The ABI is expecting a double value in a pair of gpr's.  Figure out which gprs it is,
+            // and use them explicityl.
+            masm.ma_dataTransferN(IsLoad, 64, true, argv, Imm32(argOffset), Register::FromCode(iter->fpu().code()*2));
+#endif
+            break;
+          case ABIArg::Stack:
+            if (iter.mirType() == MIRType_Int32) {
+                masm.memMove32(Address(argv, argOffset), Address(StackPointer, iter->offsetFromArgBase()));
+            } else {
+                masm.memMove64(Address(argv, argOffset), Address(StackPointer, iter->offsetFromArgBase()));
+            }
+            break;
+        }
+    }
+    masm.ma_vimm(js_NaN, NANReg);
+    masm.call(func.codeLabel());
+
+    // Recover argv.
+    masm.freeStack(stackDec);
+    masm.Pop(argv);
+
+    // Store the result in argv[0].
+    switch (func.returnType().which()) {
+      case RetType::Void:
+        break;
+      case RetType::Signed:
+        masm.storeValue(JSVAL_TYPE_INT32, ReturnReg, Address(argv, 0));
+        break;
+      case RetType::Double:
+        masm.ma_vxfer(r0, r1, d0);
+        masm.canonicalizeDouble(ReturnFloatReg);
+        masm.storeDouble(ReturnFloatReg, Address(argv, 0));
+        break;
+    }
+
+    masm.PopRegsInMask(NonVolatileRegs);
+
+    masm.ma_mov(Imm32(true), ReturnReg);
+    masm.abiret();
+    return true;
+}
+#endif
 
 static bool
 GenerateEntries(ModuleCompiler &m)
@@ -4621,7 +4979,7 @@ GenerateFFIExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit, u
     MacroAssembler &masm = m.masm();
     masm.align(CodeAlignment);
     m.setExitOffset(exitIndex);
-
+#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
     MIRType typeArray[] = { MIRType_Pointer,   // cx
                             MIRType_Pointer,   // exitDatum
                             MIRType_Int32,     // argc
@@ -4741,6 +5099,90 @@ GenerateFFIExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit, u
     // registers to restore.
     masm.freeStack(stackDec);
     masm.ret();
+#else
+    const unsigned arrayLength = Max<size_t>(1, exit.argTypes().length());
+    const unsigned arraySize = arrayLength * sizeof(Value);
+    const unsigned reserveSize = AlignBytes(arraySize, StackAlignment) +
+        ShadowStackSpace;
+    const unsigned callerArgsOffset = reserveSize + NativeFrameSize + sizeof(int32_t);
+    masm.setFramePushed(0);
+    masm.Push(lr);
+    masm.reserveStack(reserveSize + sizeof(int32_t));
+
+    for (ABIArgIter i(exit.argTypes()); !i.done(); i++) {
+        Address dstAddr = Address(StackPointer, ShadowStackSpace + i.index() * sizeof(Value));
+        switch (i->kind()) {
+          case ABIArg::GPR:
+            masm.storeValue(JSVAL_TYPE_INT32, i->gpr(), dstAddr);
+            break;
+          case ABIArg::FPU: {
+#ifndef JS_CPU_ARM_HARDFP
+              FloatRegister fr = i->fpu();
+              int srcId = fr.code() * 2;
+              masm.ma_vxfer(Register::FromCode(srcId), Register::FromCode(srcId+1), fr);
+#endif
+              masm.canonicalizeDouble(i->fpu());
+              masm.storeDouble(i->fpu(), dstAddr);
+              break;
+          }
+          case ABIArg::Stack:
+            if (i.mirType() == MIRType_Int32) {
+                Address src(StackPointer, callerArgsOffset + i->offsetFromArgBase());
+                masm.memIntToValue(src, dstAddr);
+            } else {
+                JS_ASSERT(i.mirType() == MIRType_Double);
+                Address src(StackPointer, callerArgsOffset + i->offsetFromArgBase());
+                masm.loadDouble(src, ScratchFloatReg);
+                masm.canonicalizeDouble(ScratchFloatReg);
+                masm.storeDouble(ScratchFloatReg, dstAddr);
+            }
+            break;
+        }
+    }
+
+    // argument 0: cx
+    Register activation = IntArgReg3;
+    LoadAsmJSActivationIntoRegister(masm, activation);
+
+    LoadJSContextFromActivation(masm, activation, IntArgReg0);
+
+    // argument 1: exitDatum
+    masm.lea(Operand(GlobalReg, m.module().exitIndexToGlobalDataOffset(exitIndex)), IntArgReg1);
+
+    // argument 2: argc
+    masm.mov(Imm32(exit.argTypes().length()), IntArgReg2);
+
+    // argument 3: argv
+    Address argv(StackPointer, ShadowStackSpace);
+    masm.lea(Operand(argv), IntArgReg3);
+
+    AssertStackAlignment(masm);
+    switch (exit.use().which()) {
+      case Use::NoCoercion:
+        masm.call(ImmWord(JS_FUNC_TO_DATA_PTR(void*, &InvokeFromAsmJS_Ignore)));
+        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
+        break;
+      case Use::ToInt32:
+        masm.call(ImmWord(JS_FUNC_TO_DATA_PTR(void*, &InvokeFromAsmJS_ToInt32)));
+        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
+        masm.unboxInt32(argv, ReturnReg);
+        break;
+      case Use::ToNumber:
+        masm.call(ImmWord(JS_FUNC_TO_DATA_PTR(void*, &InvokeFromAsmJS_ToNumber)));
+        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
+#if defined(JS_CPU_ARM) && !defined(JS_CPU_ARM_HARDFP)
+        masm.loadValue(argv, softfpReturnOperand);
+#else
+        masm.loadDouble(argv, ReturnFloatReg);
+#endif
+        break;
+      case Use::AddOrSub:
+        JS_NOT_REACHED("Should have been a type error");
+    }
+
+    masm.freeStack(reserveSize + sizeof(int32_t));
+    masm.ret();
+#endif
 }
 
 // The stack-overflow exit is called when the stack limit has definitely been
@@ -4774,12 +5216,16 @@ GenerateStackOverflowExit(ModuleCompiler &m, Label *throwLabel)
     LoadAsmJSActivationIntoRegister(masm, IntArgReg0);
     LoadJSContextFromActivation(masm, IntArgReg0, IntArgReg0);
 #else
-# error "ARM here"
-#endif
 
+    // on ARM, we should always be aligned, just do the context manipulation
+    // and make the call.
+    LoadAsmJSActivationIntoRegister(masm, IntArgReg0);
+    LoadJSContextFromActivation(masm, IntArgReg0, IntArgReg0);
+
+#endif
     void (*pf)(JSContext*) = js_ReportOverRecursed;
     masm.call(ImmWord(JS_FUNC_TO_DATA_PTR(void*, pf)));
-    masm.jmp(throwLabel);
+    masm.jump(throwLabel);
 }
 
 // The operation-callback exit is called from arbitrarily-interrupted asm.js
@@ -4797,6 +5243,7 @@ GenerateOperationCallbackExit(ModuleCompiler &m, Label *throwLabel)
     masm.align(CodeAlignment);
     masm.bind(&m.operationCallbackLabel());
 
+#ifndef JS_CPU_ARM
     // Be very careful here not to perturb the machine state before saving it
     // to the stack. In particular, add/sub instructions may set conditions in
     // the flags register.
@@ -4843,6 +5290,57 @@ GenerateOperationCallbackExit(ModuleCompiler &m, Label *throwLabel)
     masm.PopRegsInMask(AllRegs);  // restore all GP/FP registers
     masm.popFlags();              // after this, nothing that sets conditions
     masm.ret();                   // pop resumePC into PC
+#else
+    masm.setFramePushed(0);         // set to zero so we can use masm.framePushed() below
+    masm.PushRegsInMask(RegisterSet(GeneralRegisterSet(Registers::AllMask & ~(1<<Registers::sp)), FloatRegisterSet(uint32_t(0))));   // save all GP registers,excep sp
+
+    // Save both the APSR and FPSCR in non-volatile registers.
+    masm.as_mrs(r4);
+    masm.as_vmrs(r5);
+    // Save the stack pointer in a non-volatile register.
+    masm.mov(sp,r6);
+    // Align the stack.
+    masm.ma_and(Imm32(~7), sp, sp);
+
+    // Store resumePC into the return PC stack slot.
+    LoadAsmJSActivationIntoRegister(masm, IntArgReg0);
+    masm.loadPtr(Address(IntArgReg0, AsmJSActivation::offsetOfResumePC()), IntArgReg1);
+    masm.storePtr(IntArgReg1, Address(r6, 14 * sizeof(uint32_t*)));
+
+    // argument 0: cx
+    masm.loadPtr(Address(IntArgReg0, AsmJSActivation::offsetOfContext()), IntArgReg0);
+
+    masm.PushRegsInMask(RegisterSet(GeneralRegisterSet(0), FloatRegisterSet(FloatRegisters::AllMask)));   // save all FP registers
+    JSBool (*pf)(JSContext*) = js_HandleExecutionInterrupt;
+    masm.call(ImmWord(JS_FUNC_TO_DATA_PTR(void*, pf)));
+    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
+
+    // Restore the machine state to before the interrupt. this will set the pc!
+    masm.PopRegsInMask(RegisterSet(GeneralRegisterSet(0), FloatRegisterSet(FloatRegisters::AllMask)));   // restore all FP registers
+    masm.mov(r6,sp);
+    masm.as_vmsr(r5);
+    masm.as_msr(r4);
+    // Restore all GP registers
+    masm.startDataTransferM(IsLoad, sp, IA, WriteBack);
+    masm.transferReg(r0);
+    masm.transferReg(r1);
+    masm.transferReg(r2);
+    masm.transferReg(r3);
+    masm.transferReg(r4);
+    masm.transferReg(r5);
+    masm.transferReg(r6);
+    masm.transferReg(r7);
+    masm.transferReg(r8);
+    masm.transferReg(r9);
+    masm.transferReg(r10);
+    masm.transferReg(r11);
+    masm.transferReg(r12);
+    masm.transferReg(lr);
+    masm.finishDataTransfer();
+    masm.ret();
+
+#endif
+
 }
 
 // If an exception is thrown, simply pop all frames (since asm.js does not
@@ -4861,12 +5359,14 @@ GenerateThrowExit(ModuleCompiler &m, Label *throwLabel)
     LoadAsmJSActivationIntoRegister(masm, activation);
 
     masm.setFramePushed(FramePushedAfterSave);
-    masm.mov(Operand(activation, AsmJSActivation::offsetOfErrorRejoinSP()), StackPointer);
+    masm.loadPtr(Address(activation, AsmJSActivation::offsetOfErrorRejoinSP()), StackPointer);
+
     masm.PopRegsInMask(NonVolatileRegs);
     JS_ASSERT(masm.framePushed() == 0);
 
     masm.mov(Imm32(0), ReturnReg);
-    masm.ret();
+    masm.abiret();
+
 }
 
 static bool
@@ -4930,8 +5430,18 @@ CheckModule(JSContext *cx, TokenStream &ts, ParseNode *fn, ScopedJSDeletePtr<Asm
 
     m.setFirstPassComplete();
 
-    if (!CheckFunctionBodies(m))
+#ifdef JS_PARALLEL_COMPILATION
+    if (OffThreadCompilationEnabled(cx)) {
+        if (!CheckFunctionBodiesParallel(m))
+            return false;
+    } else {
+        if (!CheckFunctionBodiesSequential(m))
+            return false;
+    }
+#else
+    if (!CheckFunctionBodiesSequential(m))
         return false;
+#endif
 
     m.setSecondPassComplete();
 
@@ -4954,10 +5464,12 @@ Warn(JSContext *cx, int code, const char *str = NULL)
 }
 
 extern bool
-EnsureAsmJSSignalHandlersInstalled();
+EnsureAsmJSSignalHandlersInstalled(JSRuntime *rt);
 
 bool
-js::CompileAsmJS(JSContext *cx, TokenStream &ts, ParseNode *fn, HandleScript script)
+js::CompileAsmJS(JSContext *cx, TokenStream &ts, ParseNode *fn, const CompileOptions &options,
+                 ScriptSource *scriptSource, uint32_t bufStart, uint32_t bufEnd,
+                 MutableHandleFunction moduleFun)
 {
     if (!JSC::MacroAssembler().supportsFloatingPoint())
         return Warn(cx, JSMSG_USE_ASM_TYPE_FAIL, "Disabled by lack of floating point support");
@@ -4970,19 +5482,39 @@ js::CompileAsmJS(JSContext *cx, TokenStream &ts, ParseNode *fn, HandleScript scr
         return Warn(cx, JSMSG_USE_ASM_TYPE_FAIL, "Disabled by debugger");
 
 #ifdef JS_ASMJS
-    if (!EnsureAsmJSSignalHandlersInstalled())
+    if (!EnsureAsmJSSignalHandlersInstalled(cx->runtime))
         return Warn(cx, JSMSG_USE_ASM_TYPE_FAIL, "Platform missing signal handler support");
+
+# ifdef JS_PARALLEL_COMPILATION
+    if (OffThreadCompilationEnabled(cx)) {
+        if (!EnsureParallelCompilationInitialized(cx->runtime))
+            return Warn(cx, JSMSG_USE_ASM_TYPE_FAIL, "Failed compilation thread initialization");
+    }
+# endif
 
     ScopedJSDeletePtr<AsmJSModule> module;
     if (!CheckModule(cx, ts, fn, &module))
         return !cx->isExceptionPending();
 
+    module->initPostLinkFailureInfo(options, scriptSource, bufStart, bufEnd);
+
     RootedObject moduleObj(cx, NewAsmJSModuleObject(cx, &module));
     if (!moduleObj)
         return false;
 
-    JS_ASSERT(!script->asmJS);
-    script->asmJS.init(moduleObj);
+    // Replace the existing interpreted function representing the asm.js module
+    // with a native function call to LinkAsmJS.  The native holds, in an
+    // extended slot, a reference to the module object, which holds enough
+    // information that we can recompile the function normally if linking
+    // fails.
+    RootedPropertyName name(cx, FunctionName(fn));
+    moduleFun.set(NewFunction(cx, NullPtr(), LinkAsmJS, FunctionNumFormals(fn),
+                              JSFunction::NATIVE_FUN, NullPtr(), name,
+                              JSFunction::ExtendedFinalizeKind));
+    if (!moduleFun)
+        return false;
+
+    SetAsmJSModuleObject(moduleFun, moduleObj);
 
     return Warn(cx, JSMSG_USE_ASM_TYPE_OK);
 #else
@@ -4997,7 +5529,8 @@ js::IsAsmJSCompilationAvailable(JSContext *cx, unsigned argc, Value *vp)
 
 #ifdef JS_ASMJS
     bool available = JSC::MacroAssembler().supportsFloatingPoint() &&
-                     !cx->compartment->debugMode();
+                     !cx->compartment->debugMode() &&
+                     cx->hasOption(JSOPTION_ASMJS);
 #else
     bool available = false;
 #endif

@@ -12,6 +12,9 @@ const testcases = [
     // non-XID character
     ["I♥NY",     "xn--iny-zx5a",                     false, false, false],
 
+    // U+30FB KATAKANA MIDDLE DOT is excluded from non-XID characters (bug 857490)
+    ["乾燥肌・石けん", "xn--08j4gylj12hz80b0uhfup",     false, true,  true],
+
     // Cyrillic alone
     ["толсто́й",  "xn--lsa83dealbred",                false, true,  true],
 
@@ -172,10 +175,10 @@ const testcases = [
     ["万城",     "xn--chq31v",                       false, true,  true],
 
     // Simplified-only and Traditional-only Chinese in the same label
-    ["万萬城",   "xn--chq31vsl1b",                   false, false, false],
+    ["万萬城",   "xn--chq31vsl1b",                   false, true,  true],
 
     // Traditional-only and Simplified-only Chinese in the same label
-    ["萬万城",   "xn--chq31vrl1b",                   false, false, false],
+    ["萬万城",   "xn--chq31vrl1b",                   false, true,  true],
 
     // Han and Latin and Bopomofo
     ["注音符号bopomofoㄅㄆㄇㄈ",

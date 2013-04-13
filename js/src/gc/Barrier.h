@@ -255,7 +255,7 @@ class RelocatablePtr : public EncapsulatedPtr<T>
         if (v)
             post();
     }
-    explicit RelocatablePtr(const RelocatablePtr<T> &v) : EncapsulatedPtr<T>(v) {
+    RelocatablePtr(const RelocatablePtr<T> &v) : EncapsulatedPtr<T>(v) {
         if (this->value)
             post();
     }
@@ -376,7 +376,6 @@ class EncapsulatedValue : public ValueOperations<EncapsulatedValue>
      */
     EncapsulatedValue() MOZ_DELETE;
 
-
   public:
     EncapsulatedValue(const Value &v) : value(v) {
         JS_ASSERT(!IsPoisonedValue(v));
@@ -460,8 +459,7 @@ class RelocatableValue : public EncapsulatedValue
 
   private:
     inline void post();
-    inline void post(JSRuntime *rt);
-    inline void relocate();
+    inline void relocate(JSRuntime *rt);
 };
 
 class HeapSlot : public EncapsulatedValue

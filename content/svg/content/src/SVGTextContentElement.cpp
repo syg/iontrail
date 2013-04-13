@@ -8,7 +8,7 @@
 #include "nsSVGTextContainerFrame.h"
 #include "nsSVGTextFrame2.h"
 #include "nsIDOMSVGAnimatedLength.h"
-#include "nsIDOMSVGRect.h"
+#include "mozilla/dom/SVGIRect.h"
 #include "nsIDOMSVGAnimatedEnum.h"
 
 namespace mozilla {
@@ -67,6 +67,20 @@ SVGTextContentElement::GetComputedTextLength()
   }
 }
 
+void
+SVGTextContentElement::SelectSubString(uint32_t charnum, uint32_t nchars, ErrorResult& rv)
+{
+  if (FrameIsSVGText()) {
+    nsSVGTextFrame2* textFrame = GetSVGTextFrame();
+    if (!textFrame)
+      return;
+
+    rv = textFrame->SelectSubString(this, charnum, nchars);
+  } else {
+    rv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+  }
+}
+
 float
 SVGTextContentElement::GetSubStringLength(uint32_t charnum, uint32_t nchars, ErrorResult& rv)
 {
@@ -75,16 +89,9 @@ SVGTextContentElement::GetSubStringLength(uint32_t charnum, uint32_t nchars, Err
     if (!textFrame)
       return 0.0f;
 
-    uint32_t charcount = textFrame->GetNumberOfChars(this);
-    if (charcount <= charnum || nchars > charcount - charnum) {
-      rv.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
-      return 0.0f;
-    }
-
-    if (nchars == 0)
-      return 0.0f;
-
-    return textFrame->GetSubStringLength(this, charnum, nchars);
+    float length = 0.0f;
+    rv = textFrame->GetSubStringLength(this, charnum, nchars, &length);
+    return length;
   } else {
     nsSVGTextContainerFrame* metrics = GetTextContainerFrame();
     if (!metrics)
@@ -153,10 +160,10 @@ SVGTextContentElement::GetEndPositionOfChar(uint32_t charnum, ErrorResult& rv)
   return point.forget();
 }
 
-already_AddRefed<nsIDOMSVGRect>
+already_AddRefed<SVGIRect>
 SVGTextContentElement::GetExtentOfChar(uint32_t charnum, ErrorResult& rv)
 {
-  nsCOMPtr<nsIDOMSVGRect> rect;
+  nsRefPtr<SVGIRect> rect;
   if (FrameIsSVGText()) {
     nsSVGTextFrame2* textFrame = GetSVGTextFrame();
 

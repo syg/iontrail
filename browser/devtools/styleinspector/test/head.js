@@ -13,6 +13,10 @@ let CssHtmlTree = tempScope.CssHtmlTree;
 let gDevTools = tempScope.gDevTools;
 Cu.import("resource:///modules/devtools/Target.jsm", tempScope);
 let TargetFactory = tempScope.TargetFactory;
+let {
+  editableField,
+  getInplaceEditorForSpan: inplaceEditor
+} = Cu.import("resource:///modules/devtools/InplaceEditor.jsm", {});
 Components.utils.import("resource://gre/modules/devtools/Console.jsm", tempScope);
 let console = tempScope.console;
 
@@ -93,6 +97,12 @@ function waitForEditorBlur(aEditor, aCallback)
       aCallback();
     });
   }, false);
+}
+
+function fireCopyEvent(element) {
+  let evt = element.ownerDocument.createEvent("Event");
+  evt.initEvent("copy", true, true);
+  element.dispatchEvent(evt);
 }
 
 function contextMenuClick(element) {

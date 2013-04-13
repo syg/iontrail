@@ -2,36 +2,61 @@
 
 "use strict";
 
+var ignoreIndirectCalls = {
+    "mallocSizeOf" : true,
+    "aMallocSizeOf" : true,
+    "_malloc_message" : true,
+    "__conv" : true,
+    "__convf" : true,
+    "prerrortable.c:callback_newtable" : true,
+};
+
 function indirectCallCannotGC(caller, name)
 {
-    if (name == "mallocSizeOf")
+    if (name in ignoreIndirectCalls)
+        return true;
+
+    if (name == "mapper" && caller == "ptio.c:pt_MapError")
+        return true;
+
+    if (name == "params" && caller == "PR_ExplodeTime")
         return true;
 
     // hook called during script finalization which cannot GC.
     if (/CallDestroyScriptHook/.test(caller))
         return true;
 
+    // hooks called deep inside utility libraries.
+    if (name == "_malloc_message")
+        return true;
+
     return false;
 }
 
 // classes to ignore indirect calls on.
-var ignoreClasses = [
-    "JSTracer",
-    "JSStringFinalizer",
-    "SprintfStateStr",
-    "JSLocaleCallbacks",
-    "JSC::ExecutableAllocator"
-];
+var ignoreClasses = {
+    "JSTracer" : true,
+    "JSStringFinalizer" : true,
+    "SprintfStateStr" : true,
+    "JSLocaleCallbacks" : true,
+    "JSC::ExecutableAllocator" : true,
+    "PRIOMethods": true,
+    "XPCOMFunctions" : true, // I'm a little unsure of this one
+    "_MD_IOVector" : true,
+    "PRIOMethods" : true,
+};
 
-function fieldCallCannotGC(csu, field)
+var ignoreCallees = {
+    "js::Class.trace" : true,
+    "js::Class.finalize" : true,
+    "JSRuntime.destroyPrincipals" : true,
+};
+
+function fieldCallCannotGC(csu, fullfield)
 {
-    for (var i = 0; i < ignoreClasses.length; i++) {
-        if (csu == ignoreClasses[i])
-            return true;
-    }
-    if (csu == "js::Class" && (field == "trace" || field == "finalize"))
+    if (csu in ignoreClasses)
         return true;
-    if (csu == "JSRuntime" && field == "destroyPrincipals")
+    if (fullfield in ignoreCallees)
         return true;
     return false;
 }
@@ -67,8 +92,19 @@ function ignoreEdgeUse(edge, variable)
     return false;
 }
 
+var ignoreFunctions = [
+    "ptio.c:pt_MapError",
+    "PR_ExplodeTime",
+    "PR_ErrorInstallTable"
+];
+
 function ignoreGCFunction(fun)
 {
+    for (var i = 0; i < ignoreFunctions.length; i++) {
+        if (fun == ignoreFunctions[i])
+            return true;
+    }
+
     // XXX modify refillFreeList<NoGC> to not need data flow analysis to understand it cannot GC.
     if (/refillFreeList/.test(fun) && /\(js::AllowGC\)0u/.test(fun))
         return true;
@@ -76,6 +112,13 @@ function ignoreGCFunction(fun)
 }
 
 function isRootedTypeName(name)
+{
+    if (name == "mozilla::ErrorResult")
+        return true;
+    return false;
+}
+
+function isRootedPointerTypeName(name)
 {
     if (name.startsWith('struct '))
         name = name.substr(7);
@@ -87,6 +130,9 @@ function isRootedTypeName(name)
         name = name.substr(4);
     if (name.startsWith('JS::'))
         name = name.substr(4);
+
+    if (name.startsWith('MaybeRooted<'))
+        return /\(js::AllowGC\)1u>::RootType/.test(name);
 
     return name.startsWith('Rooted');
 }

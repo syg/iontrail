@@ -15,8 +15,6 @@
 #
 # Note: The description below will be part of the error message shown to users.
 #
-#  *** Important! ***
-#  If changing this file you must manually clobber immediately before landing,
-#  (due to bug 837323), using: https://secure.pub.build.mozilla.org/clobberer/
+# Modifying this file will now automatically clobber the buildbot machines \o/
 #
-Bug 844654 changed all the Makefiles.
+Bug 856358: Needs a clobber because it renames an IDL file. See also bug 860894.

@@ -48,7 +48,6 @@ class nsIDOMDocument;
 class nsIDOMDocumentFragment;
 class nsIDOMDocumentType;
 class nsIDOMElement;
-class nsIDOMEventTarget;
 class nsIDOMNodeList;
 class nsIDOMTouch;
 class nsIDOMTouchList;
@@ -77,6 +76,7 @@ class nsSmallVoidArray;
 class nsDOMCaretPosition;
 class nsViewportInfo;
 class nsDOMEvent;
+class nsIGlobalObject;
 
 namespace mozilla {
 class ErrorResult;
@@ -87,6 +87,7 @@ class ImageLoader;
 } // namespace css
 
 namespace dom {
+class Attr;
 class CDATASection;
 class Comment;
 class DocumentFragment;
@@ -94,6 +95,7 @@ class DocumentType;
 class DOMImplementation;
 class Element;
 struct ElementRegistrationOptions;
+class EventTarget;
 class GlobalObject;
 class HTMLBodyElement;
 class Link;
@@ -110,8 +112,8 @@ typedef CallbackObjectHolder<NodeFilter, nsIDOMNodeFilter> NodeFilterHolder;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x45ce048f, 0x5970, 0x411e, \
-  { 0xaa, 0x99, 0x12, 0xed, 0x3a, 0x55, 0xc9, 0xc3 } }
+{ 0x8f33bc23, 0x5625, 0x448a, \
+  { 0xb3, 0x38, 0xfe, 0x88, 0x16, 0xe, 0xb3, 0xdb } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -806,7 +808,8 @@ public:
    * document is truly gone. Use this object when you're trying to find a
    * content wrapper in XPConnect.
    */
-  virtual nsIScriptGlobalObject* GetScopeObject() const = 0;
+  virtual nsIGlobalObject* GetScopeObject() const = 0;
+  virtual void SetScopeObject(nsIGlobalObject* aGlobal) = 0;
 
   /**
    * Return the window containing the document (the outer window).
@@ -969,7 +972,7 @@ public:
 
   virtual void RequestPointerLock(Element* aElement) = 0;
 
-  static void UnlockPointer();
+  static void UnlockPointer(nsIDocument* aDoc = nullptr);
 
 
   //----------------------------------------------------------------------
@@ -1262,7 +1265,7 @@ public:
    * document won't be altered.
    */
   virtual void OnPageShow(bool aPersisted,
-                          nsIDOMEventTarget* aDispatchStartTarget) = 0;
+                          mozilla::dom::EventTarget* aDispatchStartTarget) = 0;
 
   /**
    * Notification that the page has been hidden, for documents which are loaded
@@ -1277,8 +1280,8 @@ public:
    * document won't be altered.
    */
   virtual void OnPageHide(bool aPersisted,
-                          nsIDOMEventTarget* aDispatchStartTarget) = 0;
-  
+                          mozilla::dom::EventTarget* aDispatchStartTarget) = 0;
+
   /*
    * We record the set of links in the document that are relevant to
    * style.
@@ -1306,7 +1309,9 @@ public:
    * Get the box object for an element. This is not exposed through a
    * scriptable interface except for XUL documents.
    */
-  NS_IMETHOD GetBoxObjectFor(nsIDOMElement* aElement, nsIBoxObject** aResult) = 0;
+  virtual already_AddRefed<nsIBoxObject>
+    GetBoxObjectFor(mozilla::dom::Element* aElement,
+                    mozilla::ErrorResult& aRv) = 0;
 
   /**
    * Get the compatibility mode for this document
@@ -1631,6 +1636,12 @@ public:
   }
 
   /**
+   * Returns the template content owner document that owns the content of
+   * HTMLTemplateElement.
+   */
+  virtual nsIDocument* GetTemplateContentsOwner() = 0;
+
+  /**
    * true when this document is a static clone of a normal document.
    * For example print preview and printing use static documents.
    */
@@ -1900,7 +1911,7 @@ public:
   }
 
   // WebIDL API
-  nsIScriptGlobalObject* GetParentObject() const
+  nsIGlobalObject* GetParentObject() const
   {
     return GetScopeObject();
   }
@@ -1940,11 +1951,10 @@ public:
                                             const nsAString& aQualifiedName,
                                             mozilla::ErrorResult& rv);
   already_AddRefed<mozilla::dom::DocumentFragment>
-    CreateDocumentFragment(mozilla::ErrorResult& rv) const;
-  already_AddRefed<nsTextNode> CreateTextNode(const nsAString& aData,
-                                              mozilla::ErrorResult& rv) const;
+    CreateDocumentFragment() const;
+  already_AddRefed<nsTextNode> CreateTextNode(const nsAString& aData) const;
   already_AddRefed<mozilla::dom::Comment>
-    CreateComment(const nsAString& aData, mozilla::ErrorResult& rv) const;
+    CreateComment(const nsAString& aData) const;
   already_AddRefed<mozilla::dom::ProcessingInstruction>
     CreateProcessingInstruction(const nsAString& target, const nsAString& data,
                                 mozilla::ErrorResult& rv) const;
@@ -1973,9 +1983,9 @@ public:
   // Deprecated WebIDL bits
   already_AddRefed<mozilla::dom::CDATASection>
     CreateCDATASection(const nsAString& aData, mozilla::ErrorResult& rv);
-  already_AddRefed<nsIDOMAttr>
+  already_AddRefed<mozilla::dom::Attr>
     CreateAttribute(const nsAString& aName, mozilla::ErrorResult& rv);
-  already_AddRefed<nsIDOMAttr>
+  already_AddRefed<mozilla::dom::Attr>
     CreateAttributeNS(const nsAString& aNamespaceURI,
                       const nsAString& aQualifiedName,
                       mozilla::ErrorResult& rv);
@@ -2021,7 +2031,7 @@ public:
   Element* GetMozPointerLockElement();
   void MozExitPointerLock()
   {
-    UnlockPointer();
+    UnlockPointer(this);
   }
   bool Hidden() const
   {
@@ -2145,6 +2155,10 @@ protected:
     mDirectionality = aDir;
   }
 
+  // All document WrapNode implementations MUST call this method.  A
+  // false return value means an exception was thrown.
+  bool PostCreateWrapper(JSContext* aCx, JSObject *aNewObject);
+
   nsCString mReferrer;
   nsString mLastModified;
 
@@ -2222,7 +2236,7 @@ protected:
   // as scripts and plugins, disabled.
   bool mLoadedAsData;
 
-  // This flag is only set in nsXMLDocument, for e.g. documents used in XBL. We
+  // This flag is only set in XMLDocument, for e.g. documents used in XBL. We
   // don't want animations to play in such documents, so we need to store the
   // flag here so that we can check it in nsDocument::GetAnimationController.
   bool mLoadedAsInteractiveData;
@@ -2299,6 +2313,8 @@ protected:
   // If true, we have an input encoding.  If this is false, then the
   // document was created entirely in memory
   bool mHaveInputEncoding;
+
+  bool mHasHadDefaultView;
 
   // The document's script global object, the object from which the
   // document can get its script context and scope. This is the
@@ -2414,7 +2430,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIDocument, NS_IDOCUMENT_IID)
  * event is dispatched, if necessary, when the outermost mozAutoSubtreeModified
  * object is deleted.
  */
-class NS_STACK_CLASS mozAutoSubtreeModified
+class MOZ_STACK_CLASS mozAutoSubtreeModified
 {
 public:
   /**
@@ -2451,7 +2467,7 @@ private:
   nsCOMPtr<nsIDocument> mSubtreeOwner;
 };
 
-class NS_STACK_CLASS nsAutoSyncOperation
+class MOZ_STACK_CLASS nsAutoSyncOperation
 {
 public:
   nsAutoSyncOperation(nsIDocument* aDocument);
@@ -2474,18 +2490,8 @@ NS_NewSVGDocument(nsIDocument** aInstancePtrResult);
 nsresult
 NS_NewImageDocument(nsIDocument** aInstancePtrResult);
 
-#ifdef MOZ_MEDIA
 nsresult
 NS_NewVideoDocument(nsIDocument** aInstancePtrResult);
-#endif
-
-already_AddRefed<mozilla::dom::DocumentFragment>
-NS_NewDocumentFragment(nsNodeInfoManager* aNodeInfoManager,
-                       mozilla::ErrorResult& aRv);
-
-nsresult
-NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
-                       nsNodeInfoManager *aNodeInfoManager);
 
 // Note: it's the caller's responsibility to create or get aPrincipal as needed
 // -- this method will not attempt to get a principal based on aDocumentURI.
@@ -2499,7 +2505,7 @@ NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
                   nsIURI* aBaseURI,
                   nsIPrincipal* aPrincipal,
                   bool aLoadedAsData,
-                  nsIScriptGlobalObject* aEventObject,
+                  nsIGlobalObject* aEventObject,
                   DocumentFlavor aFlavor);
 
 // This is used only for xbl documents created from the startup cache.

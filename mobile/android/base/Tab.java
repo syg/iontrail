@@ -5,17 +5,12 @@
 
 package org.mozilla.gecko;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import org.json.JSONException;
-import org.json.JSONObject;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.util.ThreadUtils;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import android.content.ContentResolver;
 import android.graphics.Bitmap;
@@ -27,6 +22,12 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 public class Tab {
     private static final String LOGTAG = "GeckoTab";
 
@@ -34,10 +35,12 @@ public class Tab {
     private final int mId;
     private long mLastUsed;
     private String mUrl;
+    private String mUserSearch;
     private String mTitle;
     private Bitmap mFavicon;
     private String mFaviconUrl;
     private int mFaviconSize;
+    private boolean mFeedsEnabled;
     private JSONObject mIdentityData;
     private boolean mReaderEnabled;
     private BitmapDrawable mThumbnail;
@@ -70,12 +73,14 @@ public class Tab {
         mId = id;
         mLastUsed = 0;
         mUrl = url;
+        mUserSearch = "";
         mExternal = external;
         mParentId = parentId;
         mTitle = title == null ? "" : title;
         mFavicon = null;
         mFaviconUrl = null;
         mFaviconSize = 0;
+        mFeedsEnabled = false;
         mIdentityData = null;
         mReaderEnabled = false;
         mEnteringReaderMode = false;
@@ -120,6 +125,11 @@ public class Tab {
     // may be null if user-entered query hasn't yet been resolved to a URI
     public synchronized String getURL() {
         return mUrl;
+    }
+
+    // mUserSearch should never be null, but it may be an empty string
+    public synchronized String getUserSearch() {
+        return mUserSearch;
     }
 
     // mTitle should never be null, but it may be an empty string
@@ -189,6 +199,10 @@ public class Tab {
         return mFaviconUrl;
     }
 
+    public boolean getFeedsEnabled() {
+        return mFeedsEnabled;
+    }
+
     public String getSecurityMode() {
         try {
             return mIdentityData.getString("mode");
@@ -223,6 +237,10 @@ public class Tab {
             mUrl = url;
             updateBookmark();
         }
+    }
+
+    private synchronized void updateUserSearch(String userSearch) {
+        mUserSearch = userSearch;
     }
 
     public void setDocumentURI(String documentURI) {
@@ -310,6 +328,10 @@ public class Tab {
         mFavicon = null;
         mFaviconUrl = null;
         mFaviconSize = 0;
+    }
+
+    public void setFeedsEnabled(boolean feedsEnabled) {
+        mFeedsEnabled = feedsEnabled;
     }
 
     public void updateIdentityData(JSONObject identityData) {
@@ -516,6 +538,7 @@ public class Tab {
         final String uri = message.getString("uri");
         mEnteringReaderMode = ReaderModeUtils.isEnteringReaderMode(mUrl, uri);
         updateURL(uri);
+        updateUserSearch(message.getString("userSearch"));
 
         setDocumentURI(message.getString("documentURI"));
         if (message.getBoolean("sameDocument")) {
@@ -525,6 +548,7 @@ public class Tab {
 
         setContentType(message.getString("contentType"));
         clearFavicon();
+        setFeedsEnabled(false);
         updateTitle(null);
         updateIdentityData(null);
         setReaderEnabled(false);

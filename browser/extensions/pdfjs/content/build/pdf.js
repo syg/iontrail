@@ -16,8 +16,8 @@
  */
 
 var PDFJS = {};
-PDFJS.version = '0.7.337';
-PDFJS.build = 'f58aee1';
+PDFJS.version = '0.7.423';
+PDFJS.build = 'aa22bef';
 
 (function pdfjsWrapper() {
   // Use strict in our context only - users might not want it
@@ -832,6 +832,23 @@ var Util = PDFJS.Util = (function UtilClosure() {
     return [xt, yt];
   };
 
+  // Applies the transform to the rectangle and finds the minimum axially
+  // aligned bounding box.
+  Util.getAxialAlignedBoundingBox =
+    function Util_getAxialAlignedBoundingBox(r, m) {
+
+    var p1 = Util.applyTransform(r, m);
+    var p2 = Util.applyTransform(r.slice(2, 4), m);
+    var p3 = Util.applyTransform([r[0], r[3]], m);
+    var p4 = Util.applyTransform([r[2], r[1]], m);
+    return [
+      Math.min(p1[0], p2[0], p3[0], p4[0]),
+      Math.min(p1[1], p2[1], p3[1], p4[1]),
+      Math.max(p1[0], p2[0], p3[0], p4[0]),
+      Math.max(p1[1], p2[1], p3[1], p4[1])
+    ];
+  };
+
   Util.inverseTransform = function Util_inverseTransform(m) {
     var d = m[0] * m[3] - m[1] * m[2];
     return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d,
@@ -940,13 +957,19 @@ var Util = PDFJS.Util = (function UtilClosure() {
 })();
 
 var PageViewport = PDFJS.PageViewport = (function PageViewportClosure() {
-  function PageViewport(viewBox, scale, rotate, offsetX, offsetY) {
+  function PageViewport(viewBox, scale, rotation, offsetX, offsetY) {
+    this.viewBox = viewBox;
+    this.scale = scale;
+    this.rotation = rotation;
+    this.offsetX = offsetX;
+    this.offsetY = offsetY;
+
     // creating transform to convert pdf coordinate system to the normal
     // canvas like coordinates taking in account scale and rotation
     var centerX = (viewBox[2] + viewBox[0]) / 2;
     var centerY = (viewBox[3] + viewBox[1]) / 2;
     var rotateA, rotateB, rotateC, rotateD;
-    switch (rotate % 360) {
+    switch (rotation % 360) {
       case -180:
       case 180:
         rotateA = -1; rotateB = 0; rotateC = 0; rotateD = 1;
@@ -990,13 +1013,18 @@ var PageViewport = PDFJS.PageViewport = (function PageViewportClosure() {
       offsetCanvasY - rotateB * scale * centerX - rotateD * scale * centerY
     ];
 
-    this.offsetX = offsetX;
-    this.offsetY = offsetY;
     this.width = width;
     this.height = height;
     this.fontScale = scale;
   }
   PageViewport.prototype = {
+    clone: function PageViewPort_clone(args) {
+      args = args || {};
+      var scale = 'scale' in args ? args.scale : this.scale;
+      var rotation = 'rotation' in args ? args.rotation : this.rotation;
+      return new PageViewport(this.viewBox.slice(), scale, rotation,
+                              this.offsetX, this.offsetY);
+    },
     convertToViewportPoint: function PageViewport_convertToViewportPoint(x, y) {
       return Util.applyTransform([x, y], this.transform);
     },
@@ -1708,11 +1736,11 @@ var PDFPageProxy = (function PDFPageProxyClosure() {
       var stats = this.stats;
       stats.time('Rendering');
 
-      gfx.beginDrawing(viewport);
+      var operatorList = this.operatorList;
+      gfx.beginDrawing(viewport, operatorList.transparency);
 
       var startIdx = 0;
-      var length = this.operatorList.fnArray.length;
-      var operatorList = this.operatorList;
+      var length = operatorList.fnArray.length;
       var stepper = null;
       if (PDFJS.pdfBug && 'StepperManager' in globalScope &&
           globalScope['StepperManager'].enabled) {
@@ -2260,6 +2288,7 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
     this.objs = objs;
     this.textLayer = textLayer;
     this.imageLayer = imageLayer;
+    this.groupStack = [];
     if (canvasCtx) {
       addContextCurrentTransform(canvasCtx);
     }
@@ -2392,6 +2421,25 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
     return tmpCanvas;
   }
 
+  function copyCtxState(sourceCtx, destCtx) {
+    var properties = ['strokeStyle', 'fillStyle', 'fillRule', 'globalAlpha',
+                      'lineWidth', 'lineCap', 'lineJoin', 'miterLimit',
+                      'globalCompositeOperation', 'font'];
+    for (var i = 0, ii = properties.length; i < ii; i++) {
+      var property = properties[i];
+      if (property in sourceCtx) {
+        destCtx[property] = sourceCtx[property];
+      }
+    }
+    if ('setLineDash' in sourceCtx) {
+      destCtx.setLineDash(sourceCtx.getLineDash());
+      destCtx.lineDashOffset =  sourceCtx.lineDashOffset;
+    } else if ('mozDash' in sourceCtx) {
+      destCtx.mozDash = sourceCtx.mozDash;
+      destCtx.mozDashOffset = sourceCtx.mozDashOffset;
+    }
+  }
+
   var LINE_CAP_STYLES = ['butt', 'round', 'square'];
   var LINE_JOIN_STYLES = ['miter', 'round', 'bevel'];
   var NORMAL_CLIP = {};
@@ -2430,7 +2478,24 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
       'shadingFill': true
     },
 
-    beginDrawing: function CanvasGraphics_beginDrawing(viewport) {
+    beginDrawing: function CanvasGraphics_beginDrawing(viewport, transparency) {
+      // For pdfs that use blend modes we have to clear the canvas else certain
+      // blend modes can look wrong since we'd be blending with a white
+      // backdrop. The problem with a transparent backdrop though is we then
+      // don't get sub pixel anti aliasing on text, so we fill with white if
+      // we can.
+      var width = this.ctx.canvas.width;
+      var height = this.ctx.canvas.height;
+      if (transparency) {
+        this.ctx.clearRect(0, 0, width, height);
+      } else {
+        this.ctx.mozOpaque = true;
+        this.ctx.save();
+        this.ctx.fillStyle = 'rgb(255, 255, 255)';
+        this.ctx.fillRect(0, 0, width, height);
+        this.ctx.restore();
+      }
+
       var transform = viewport.transform;
       this.ctx.save();
       this.ctx.transform.apply(this.ctx, transform);
@@ -2595,6 +2660,22 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
           case 'ca':
             this.current.fillAlpha = state[1];
             this.ctx.globalAlpha = state[1];
+            break;
+          case 'BM':
+            if (value && value.name && (value.name !== 'Normal')) {
+              var mode = value.name.replace(/([A-Z])/g,
+                function(c) {
+                  return '-' + c.toLowerCase();
+                }
+              ).substring(1);
+              this.ctx.globalCompositeOperation = mode;
+              if (this.ctx.globalCompositeOperation !== mode) {
+                warn('globalCompositeOperation "' + mode +
+                     '" is not supported');
+              }
+            } else {
+              this.ctx.globalCompositeOperation = 'source-over';
+            }
             break;
         }
       }
@@ -3008,7 +3089,8 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
           var character = glyph.fontChar;
           var vmetric = glyph.vmetric || defaultVMetrics;
           if (vertical) {
-            var vx = vmetric[1] * fontSize * current.fontMatrix[0];
+            var vx = glyph.vmetric ? vmetric[1] : glyph.width * 0.5;
+            vx = -vx * fontSize * current.fontMatrix[0];
             var vy = vmetric[2] * fontSize * current.fontMatrix[0];
           }
           var width = vmetric ? -vmetric[0] : glyph.width;
@@ -3083,7 +3165,7 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
         geom.canvasWidth = canvasWidth;
         if (vertical) {
           var vmetric = font.defaultVMetrics;
-          geom.x -= vmetric[1] * fontSize * current.fontMatrix[0] /
+          geom.x += vmetric[1] * fontSize * current.fontMatrix[0] /
                     fontSizeScale * geom.hScale;
           geom.y += vmetric[2] * fontSize * current.fontMatrix[0] /
                     fontSizeScale * geom.vScale;
@@ -3144,7 +3226,7 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
         if (vertical) {
           var fontSizeScale = current.fontSizeScale;
           var vmetric = font.defaultVMetrics;
-          geom.x -= vmetric[1] * fontSize * current.fontMatrix[0] /
+          geom.x += vmetric[1] * fontSize * current.fontMatrix[0] /
                     fontSizeScale * geom.hScale;
           geom.y += vmetric[2] * fontSize * current.fontMatrix[0] /
                     fontSizeScale * geom.vScale;
@@ -3363,6 +3445,89 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
         // some pdf don't close all restores inside object
         // closing those for them
       } while (this.current.paintFormXObjectDepth >= depth);
+    },
+
+    beginGroup: function CanvasGraphics_beginGroup(group) {
+      this.save();
+      var currentCtx = this.ctx;
+      // TODO non-isolated groups - according to Rik at adobe non-isolated
+      // group results aren't usually that different and they even have tools
+      // that ignore this setting. Notes from Rik on implmenting:
+      // - When you encounter an transparency group, create a new canvas with
+      // the dimensions of the bbox
+      // - copy the content from the previous canvas to the new canvas
+      // - draw as usual
+      // - remove the backdrop alpha:
+      // alphaNew = 1 - (1 - alpha)/(1 - alphaBackdrop) with 'alpha' the alpha
+      // value of your transparency group and 'alphaBackdrop' the alpha of the
+      // backdrop
+      // - remove background color:
+      // colorNew = color - alphaNew *colorBackdrop /(1 - alphaNew)
+      if (!group.isolated) {
+        TODO('Support non-isolated groups.');
+      }
+
+      // TODO knockout - supposedly possible with the clever use of compositing
+      // modes.
+      if (group.knockout) {
+        TODO('Support knockout groups.');
+      }
+
+      var currentTransform = currentCtx.mozCurrentTransform;
+      if (group.matrix) {
+        currentCtx.transform.apply(currentCtx, group.matrix);
+      }
+      assert(group.bbox, 'Bounding box is required.');
+
+      // Based on the current transform figure out how big the bounding box
+      // will actually be.
+      var bounds = Util.getAxialAlignedBoundingBox(
+                    group.bbox,
+                    currentCtx.mozCurrentTransform);
+      // Use ceil in case we're between sizes so we don't create canvas that is
+      // too small.
+      var drawnWidth = Math.ceil(bounds[2] - bounds[0]);
+      var drawnHeight = Math.ceil(bounds[3] - bounds[1]);
+      var scratchCanvas = createScratchCanvas(drawnWidth, drawnHeight);
+      var groupCtx = scratchCanvas.getContext('2d');
+      addContextCurrentTransform(groupCtx);
+      // Since we created a new canvas that is just the size of the bounding box
+      // we have to translate the group ctx.
+      var offsetX = bounds[0];
+      var offsetY = bounds[1];
+      groupCtx.translate(-offsetX, -offsetY);
+      groupCtx.transform.apply(groupCtx, currentTransform);
+
+      // Setup the current ctx so when the group is popped we draw it the right
+      // location.
+      currentCtx.setTransform(1, 0, 0, 1, 0, 0);
+      currentCtx.translate(offsetX, offsetY);
+
+      // The transparency group inherits all off the current graphics state
+      // except the blend mode, soft mask, and alpha constants.
+      copyCtxState(currentCtx, groupCtx);
+      this.ctx = groupCtx;
+      this.setGState([
+        ['SMask', 'None'],
+        ['BM', 'Normal'],
+        ['ca', 1],
+        ['CA', 1]
+      ]);
+      this.groupStack.push(currentCtx);
+    },
+
+    endGroup: function CanvasGraphics_endGroup(group) {
+      var groupCtx = this.ctx;
+      this.ctx = this.groupStack.pop();
+      // Turn off image smoothing to avoid sub pixel interpolation which can
+      // look kind of blurry for some pdfs.
+      if ('imageSmoothingEnabled' in this.ctx) {
+        this.ctx.imageSmoothingEnabled = false;
+      } else {
+        this.ctx.mozImageSmoothingEnabled = false;
+      }
+      this.ctx.drawImage(groupCtx.canvas, 0, 0);
+      this.restore();
     },
 
     paintJpegXObject: function CanvasGraphics_paintJpegXObject(objId, w, h) {
@@ -3920,7 +4085,7 @@ var Catalog = (function CatalogClosure() {
           if (isStream(js)) {
             js = bytesToString(js.getBytes());
           }
-          javaScript.push(js);
+          javaScript.push(stringToPDFString(js));
         }
       }
       return shadow(this, 'javaScript', javaScript);
@@ -4385,6 +4550,9 @@ var NameTree = (function NameTreeClosure() {
       while (queue.length > 0) {
         var i, n;
         var obj = xref.fetchIfRef(queue.shift());
+        if (!isDict(obj)) {
+          continue;
+        }
         if (obj.has('Kids')) {
           var kids = obj.get('Kids');
           for (i = 0, n = kids.length; i < n; i++) {
@@ -12490,8 +12658,35 @@ var ColorSpace = (function ColorSpaceClosure() {
       if (this.isPassthrough(bits)) {
         return src.subarray(srcOffset);
       }
-      var destLength = this.getOutputLength(count * this.numComps);
-      var dest = new Uint8Array(destLength);
+      var dest = new Uint8Array(count * 3);
+      var numComponentColors = 1 << bits;
+      // Optimization: create a color map when there is just one component and
+      // we are converting more colors than the size of the color map. We
+      // don't build the map if the colorspace is gray or rgb since those
+      // methods are faster than building a map. This mainly offers big speed
+      // ups for indexed and alternate colorspaces.
+      if (this.numComps === 1 && count > numComponentColors &&
+          this.name !== 'DeviceGray' && this.name !== 'DeviceRGB') {
+        // TODO it may be worth while to cache the color map. While running
+        // testing I never hit a cache so I will leave that out for now (perhaps
+        // we are reparsing colorspaces too much?).
+        var allColors = bits <= 8 ? new Uint8Array(numComponentColors) :
+                                    new Uint16Array(numComponentColors);
+        for (var i = 0; i < numComponentColors; i++) {
+          allColors[i] = i;
+        }
+        var colorMap = new Uint8Array(numComponentColors * 3);
+        this.getRgbBuffer(allColors, 0, numComponentColors, colorMap, 0, bits);
+
+        var destOffset = 0;
+        for (var i = 0; i < count; ++i) {
+          var key = src[srcOffset++] * 3;
+          dest[destOffset++] = colorMap[key];
+          dest[destOffset++] = colorMap[key + 1];
+          dest[destOffset++] = colorMap[key + 2];
+        }
+        return dest;
+      }
       this.getRgbBuffer(src, srcOffset, count, dest, 0, bits);
       return dest;
     }
@@ -12894,7 +13089,7 @@ var DeviceRgbCS = (function DeviceRgbCSClosure() {
       var scale = 255 / ((1 << bits) - 1);
       var j = srcOffset, q = destOffset;
       for (var i = 0; i < length; ++i) {
-        dest[q++] = (scale * input[j++]) | 0;
+        dest[q++] = (scale * src[j++]) | 0;
       }
     },
     getOutputLength: function DeviceRgbCS_getOutputLength(inputLength) {
@@ -14652,6 +14847,60 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         return loadedName;
       }
 
+      function buildFormXObject(xobj, smask) {
+        var matrix = xobj.dict.get('Matrix');
+        var bbox = xobj.dict.get('BBox');
+        var group = xobj.dict.get('Group');
+        if (group) {
+          var groupOptions = {
+            matrix: matrix,
+            bbox: bbox,
+            smask: !!smask,
+            isolated: false,
+            knockout: false
+          };
+
+          var groupSubtype = group.get('S');
+          if (isName(groupSubtype) && groupSubtype.name === 'Transparency') {
+            groupOptions.isolated = group.get('I') || false;
+            groupOptions.knockout = group.get('K') || false;
+            // There is also a group colorspace, but since we put everything in
+            // RGB I'm not sure we need it.
+          }
+          fnArray.push('beginGroup');
+          argsArray.push([groupOptions]);
+        }
+
+        fnArray.push('paintFormXObjectBegin');
+        argsArray.push([matrix, bbox]);
+
+        // This adds the operatorList of the xObj to the current queue.
+        var depIdx = dependencyArray.length;
+
+        // Pass in the current `queue` object. That means the `fnArray`
+        // and the `argsArray` in this scope is reused and new commands
+        // are added to them.
+        self.getOperatorList(xobj,
+            xobj.dict.get('Resources') || resources,
+            dependencyArray, queue);
+
+        self.getOperatorList(xobj,
+                             xobj.dict.get('Resources') || resources,
+                             dependencyArray, queue);
+
+        // Add the dependencies that are required to execute the
+        // operatorList.
+        insertDependency(dependencyArray.slice(depIdx));
+
+        fnArray.push('paintFormXObjectEnd');
+        argsArray.push([]);
+
+        if (group) {
+          fnArray.push('endGroup');
+          argsArray.push([groupOptions]);
+        }
+      }
+
       function buildPaintImageXObject(image, inline) {
         var dict = image.dict;
         var w = dict.get('Width', 'W');
@@ -14715,8 +14964,11 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
           }, handler, xref, resources, image, inline);
       }
 
-      if (!queue)
-        queue = {};
+      if (!queue) {
+        queue = {
+          transparency: false
+        };
+      }
 
       if (!queue.argsArray) {
         queue.argsArray = [];
@@ -14825,28 +15077,9 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
               );
 
               if ('Form' == type.name) {
-                var matrix = xobj.dict.get('Matrix');
-                var bbox = xobj.dict.get('BBox');
-
-                fnArray.push('paintFormXObjectBegin');
-                argsArray.push([matrix, bbox]);
-
-                // This adds the operatorList of the xObj to the current queue.
-                var depIdx = dependencyArray.length;
-
-                // Pass in the current `queue` object. That means the `fnArray`
-                // and the `argsArray` in this scope is reused and new commands
-                // are added to them.
-                this.getOperatorList(xobj,
-                    xobj.dict.get('Resources') || resources,
-                    dependencyArray, queue);
-
-               // Add the dependencies that are required to execute the
-               // operatorList.
-               insertDependency(dependencyArray.slice(depIdx));
-
-                fn = 'paintFormXObjectEnd';
+                buildFormXObject(xobj);
                 args = [];
+                continue;
               } else if ('Image' == type.name) {
                 buildPaintImageXObject(xobj, false);
               } else {
@@ -14915,9 +15148,10 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                       ]);
                       break;
                     case 'BM':
-                      // We support the default so don't trigger the TODO.
-                      if (!isName(value) || value.name != 'Normal')
-                        TODO('graphic state operator ' + key);
+                      if (!isName(value) || value.name !== 'Normal') {
+                        queue.transparency = true;
+                      }
+                      gsStateObj.push([key, value]);
                       break;
                     case 'SMask':
                       // We support the default so don't trigger the TODO.
@@ -15459,7 +15693,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
         if (properties.vertical) {
           var vmetrics = dict.get('DW2') || [880, -1000];
-          defaultVMetrics = [vmetrics[1], vmetrics[1] / 2, vmetrics[0]];
+          defaultVMetrics = [vmetrics[1], defaultWidth * 0.5, vmetrics[0]];
           vmetrics = dict.get('W2');
           if (vmetrics) {
             for (var i = 0, ii = vmetrics.length; i < ii; i++) {
@@ -16073,7 +16307,23 @@ var nonStdFontMap = {
   'LucidaConsole': 'Courier',
   'LucidaConsole-Bold': 'Courier-Bold',
   'LucidaConsole-BoldItalic': 'Courier-BoldOblique',
-  'LucidaConsole-Italic': 'Courier-Oblique'
+  'LucidaConsole-Italic': 'Courier-Oblique',
+  'MS-Gothic': 'MS Gothic',
+  'MS-Gothic-Bold': 'MS Gothic-Bold',
+  'MS-Gothic-BoldItalic': 'MS Gothic-BoldItalic',
+  'MS-Gothic-Italic': 'MS Gothic-Italic',
+  'MS-Mincho': 'MS Mincho',
+  'MS-Mincho-Bold': 'MS Mincho-Bold',
+  'MS-Mincho-BoldItalic': 'MS Mincho-BoldItalic',
+  'MS-Mincho-Italic': 'MS Mincho-Italic',
+  'MS-PGothic': 'MS PGothic',
+  'MS-PGothic-Bold': 'MS PGothic-Bold',
+  'MS-PGothic-BoldItalic': 'MS PGothic-BoldItalic',
+  'MS-PGothic-Italic': 'MS PGothic-Italic',
+  'MS-PMincho': 'MS PMincho',
+  'MS-PMincho-Bold': 'MS PMincho-Bold',
+  'MS-PMincho-BoldItalic': 'MS PMincho-BoldItalic',
+  'MS-PMincho-Italic': 'MS PMincho-Italic',
 };
 
 var serifFonts = {
@@ -16139,6 +16389,7 @@ var CMapConverterList = {
   '90msp-RKSJ-H': sjisToUnicode,
   '90msp-RKSJ-V': sjisToUnicode,
   'GBK-EUC-H': gbkToUnicode,
+  'B5pc-H': big5ToUnicode,
   'ETenms-B5-H': big5ToUnicode,
   'ETenms-B5-V': big5ToUnicode,
 };
@@ -17985,6 +18236,10 @@ var Font = (function FontClosure() {
         // Repair the TrueType file. It is can be damaged in the point of
         // view of the sanitizer
         data = this.checkAndRepair(name, file, properties);
+        if (!data) {
+          // TrueType data is not found, e.g. when the font is an OpenType font
+          warn('Font is not a TrueType font');
+        }
         break;
 
       default:
@@ -18164,8 +18419,8 @@ var Font = (function FontClosure() {
     }
     var bmpLength = i + 1;
 
-    var trailingRangesCount = ranges[bmpLength - 1][1] < 0xFFFF ? 1 : 0;
-    var segCount = bmpLength + trailingRangesCount;
+    if (ranges[i][1] === 0xFFFF) { ranges[i][1] = 0xFFFE; }
+    var segCount = bmpLength + 1;
     var segCount2 = segCount * 2;
     var searchRange = getMaxPower2(segCount) * 2;
     var searchEntry = Math.log(segCount) / Math.log(2);
@@ -18210,12 +18465,10 @@ var Font = (function FontClosure() {
       }
     }
 
-    if (trailingRangesCount > 0) {
-      endCount += '\xFF\xFF';
-      startCount += '\xFF\xFF';
-      idDeltas += '\x00\x01';
-      idRangeOffsets += '\x00\x00';
-    }
+    endCount += '\xFF\xFF';
+    startCount += '\xFF\xFF';
+    idDeltas += '\x00\x01';
+    idRangeOffsets += '\x00\x00';
 
     var format314 = '\x00\x00' + // language
                     string16(segCount2) +
@@ -18302,6 +18555,14 @@ var Font = (function FontClosure() {
     if (firstChar > lastChar) {
       return false;
     }
+    stream.getBytes(6); // skipping sTypoAscender/Descender/LineGap
+    var usWinAscent = int16(stream.getBytes(2));
+    if (usWinAscent === 0) { // makes font unreadable by windows
+      return false;
+    }
+
+    // OS/2 appears to be valid, resetting some fields
+    os2.data[8] = os2.data[9] = 0; // IE rejects fonts if fsType != 0
     return true;
   }
 
@@ -19151,16 +19412,6 @@ var Font = (function FontClosure() {
         return names;
       }
 
-      function isOS2Valid(os2Table) {
-        var data = os2Table.data;
-        // usWinAscent == 0 makes font unreadable by windows
-        var usWinAscent = (data[74] << 8) | data[75];
-        if (usWinAscent === 0)
-          return false;
-
-        return true;
-      }
-
       var TTOpsStackDeltas = [
         0, 0, 0, 0, 0, 0, 0, 0, -2, -2, -2, -2, 0, 0, -2, -5,
         -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, -1, 0, -1, -1, -1, -1,
@@ -19335,6 +19586,8 @@ var Font = (function FontClosure() {
             prep = table;
           else if (table.tag == 'cvt ')
             cvt = table;
+          else if (table.tag == 'CFF ')
+            return null; // XXX: OpenType font is found, stopping
           else // skipping table if it's not a required or optional table
             continue;
         }
@@ -19354,12 +19607,6 @@ var Font = (function FontClosure() {
       // The new numbers of tables will be the last one plus the num
       // of missing tables
       createOpenTypeHeader(header.version, ttf, numTables);
-
-      // Invalid OS/2 can break the font for the Windows
-      if (os2 && !isOS2Valid(os2)) {
-        tables.splice(tables.indexOf(os2), 1);
-        os2 = null;
-      }
 
       // Ensure the hmtx table contains the advance width and
       // sidebearings information for numGlyphs in the maxp table
@@ -20974,6 +21221,7 @@ Type1Font.prototype = {
   getOrderedCharStrings: function Type1Font_getOrderedCharStrings(glyphs,
                                                             properties) {
     var charstrings = [];
+    var usedUnicodes = [];
     var i, length, glyphName;
     var unusedUnicode = CMAP_GLYPH_OFFSET;
     for (i = 0, length = glyphs.length; i < length; i++) {
@@ -20981,6 +21229,10 @@ Type1Font.prototype = {
       var glyphName = item.glyph;
       var unicode = glyphName in GlyphsUnicode ?
         GlyphsUnicode[glyphName] : unusedUnicode++;
+      while (usedUnicodes[unicode]) {
+        unicode = unusedUnicode++;
+      }
+      usedUnicodes[unicode] = true;
       charstrings.push({
         glyph: glyphName,
         unicode: unicode,
@@ -21658,10 +21910,19 @@ var CFFParser = (function CFFParserClosure() {
       }
       return { charStrings: charStrings, seacs: seacs };
     },
+    emptyPrivateDictionary:
+      function CFFParser_emptyPrivateDictionary(parentDict) {
+      var privateDict = this.createDict(CFFPrivateDict, [],
+                                        parentDict.strings);
+      parentDict.setByKey(18, [0, 0]);
+      parentDict.privateDict = privateDict;
+    },
     parsePrivateDict: function CFFParser_parsePrivateDict(parentDict) {
       // no private dict, do nothing
-      if (!parentDict.hasName('Private'))
+      if (!parentDict.hasName('Private')) {
+        this.emptyPrivateDictionary(parentDict);
         return;
+      }
       var privateOffset = parentDict.getByName('Private');
       // make sure the params are formatted correctly
       if (!isArray(privateOffset) || privateOffset.length !== 2) {
@@ -21672,7 +21933,7 @@ var CFFParser = (function CFFParserClosure() {
       var offset = privateOffset[1];
       // remove empty dicts or ones that refer to invalid location
       if (size === 0 || offset >= this.bytes.length) {
-        parentDict.removeByName('Private');
+        this.emptyPrivateDictionary(parentDict);
         return;
       }
 
@@ -21690,7 +21951,7 @@ var CFFParser = (function CFFParserClosure() {
       var relativeOffset = offset + subrsOffset;
       // Validate the offset.
       if (subrsOffset === 0 || relativeOffset >= this.bytes.length) {
-        privateDict.removeByName('Subrs');
+        this.emptyPrivateDictionary(parentDict);
         return;
       }
       var subrsIndex = this.parseIndex(relativeOffset);
@@ -22371,15 +22632,23 @@ var CFFCompiler = (function CFFCompilerClosure() {
                                                                   output) {
       for (var i = 0, ii = dicts.length; i < ii; ++i) {
         var fontDict = dicts[i];
-        if (!fontDict.privateDict || !fontDict.hasName('Private'))
-          continue;
+        assert(fontDict.privateDict && fontDict.hasName('Private'),
+               'There must be an private dictionary.');
         var privateDict = fontDict.privateDict;
         var privateDictTracker = new CFFOffsetTracker();
         var privateDictData = this.compileDict(privateDict, privateDictTracker);
 
-        privateDictTracker.offset(output.length);
+        var outputLength = output.length;
+        privateDictTracker.offset(outputLength);
+        if (!privateDictData.length) {
+          // The private dictionary was empty, set the output length to zero to
+          // ensure the offset length isn't out of bounds in the eyes of the
+          // sanitizer.
+          outputLength = 0;
+        }
+
         trackers[i].setEntryLocation('Private',
-                                     [privateDictData.length, output.length],
+                                     [privateDictData.length, outputLength],
                                      output);
         output.add(privateDictData);
 

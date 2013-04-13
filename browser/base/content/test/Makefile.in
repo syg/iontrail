@@ -126,6 +126,7 @@ _BROWSER_FILES = \
                  browser_bug581242.js \
                  browser_bug581253.js \
                  browser_bug581947.js \
+                 browser_bug585558.js \
                  browser_bug585785.js \
                  browser_bug585830.js \
                  browser_bug590206.js \
@@ -144,6 +145,9 @@ _BROWSER_FILES = \
                  browser_bug647886.js \
                  browser_bug655584.js \
                  browser_bug664672.js \
+                 browser_bug678392.js \
+                 browser_bug678392-1.html \
+                 browser_bug678392-2.html \
                  browser_bug710878.js \
                  browser_bug719271.js \
                  browser_bug724239.js \
@@ -159,6 +163,7 @@ _BROWSER_FILES = \
                  browser_bug817947.js \
                  browser_bug822367.js \
                  browser_bug832435.js \
+                 browser_bug839103.js \
                  browser_canonizeURL.js \
                  browser_customize.js \
                  browser_findbarClose.js \
@@ -208,6 +213,8 @@ _BROWSER_FILES = \
                  bug792517.html \
                  bug792517-2.html \
                  bug792517.sjs \
+                 test_bug839103.html \
+                 bug839103.css \
                  browser_scope.js \
                  browser_selectTabAtIndex.js \
                  browser_tab_dragdrop.js \
@@ -315,6 +322,9 @@ _BROWSER_FILES = \
                  browser_pluginCrashCommentAndURL.js \
                  pluginCrashCommentAndURL.html \
                  browser_private_no_prompt.js \
+                 browser_blob-channelname.js \
+                 browser_aboutHealthReport.js \
+                 healthreport_testRemoteCommands.html \
                  $(NULL)
 
 # Disable test on Windows due to frequent failures (bug 841341)

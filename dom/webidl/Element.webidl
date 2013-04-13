@@ -13,7 +13,6 @@
  * liability, trademark and document use rules apply.
  */
 
-interface Attr;
 interface MozNamedAttrMap;
 
 interface Element : Node {
@@ -137,15 +136,14 @@ interface Element : Node {
   void mozRequestPointerLock();
 
   // Obsolete methods.
-  Attr getAttributeNode(DOMString name);
+  Attr? getAttributeNode(DOMString name);
   [Throws]
-  Attr setAttributeNode(Attr newAttr);
+  Attr? setAttributeNode(Attr newAttr);
   [Throws]
-  Attr removeAttributeNode(Attr oldAttr);
+  Attr? removeAttributeNode(Attr oldAttr);
+  Attr? getAttributeNodeNS(DOMString? namespaceURI, DOMString localName);
   [Throws]
-  Attr getAttributeNodeNS(DOMString? namespaceURI, DOMString localName);
-  [Throws]
-  Attr setAttributeNodeNS(Attr newAttr);
+  Attr? setAttributeNodeNS(Attr newAttr);
 };
 
 // http://dev.w3.org/csswg/cssom-view/#extensions-to-the-element-interface

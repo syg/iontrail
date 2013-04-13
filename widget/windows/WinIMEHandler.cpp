@@ -73,19 +73,6 @@ IMEHandler::GetNativeData(uint32_t aDataType)
 
 // static
 bool
-IMEHandler::CanOptimizeKeyAndIMEMessages()
-{
-#ifdef NS_ENABLE_TSF
-  if (IsTSFAvailable()) {
-    return nsTextStore::CanOptimizeKeyAndIMEMessages();
-  }
-#endif // #ifdef NS_ENABLE_TSF
-
-  return nsIMM32Handler::CanOptimizeKeyAndIMEMessages();
-}
-
-// static
-bool
 IMEHandler::IsIMEEnabled(const InputContext& aInputContext)
 {
   return IsIMEEnabled(aInputContext.mIMEState.mEnabled);
@@ -266,7 +253,9 @@ IMEHandler::OnDestroyWindow(nsWindow* aWindow)
 
 // static
 void
-IMEHandler::SetInputContext(nsWindow* aWindow, InputContext& aInputContext)
+IMEHandler::SetInputContext(nsWindow* aWindow,
+                            InputContext& aInputContext,
+                            const InputContextAction& aAction)
 {
   // FYI: If there is no composition, this call will do nothing.
   NotifyIME(aWindow, REQUEST_TO_COMMIT_COMPOSITION);
@@ -285,12 +274,14 @@ IMEHandler::SetInputContext(nsWindow* aWindow, InputContext& aInputContext)
 #ifdef NS_ENABLE_TSF
   // Note that even while a plugin has focus, we need to notify TSF of that.
   if (sIsInTSFMode) {
-    nsTextStore::SetInputContext(aInputContext);
+    nsTextStore::SetInputContext(aWindow, aInputContext, aAction);
     if (IsTSFAvailable()) {
       aInputContext.mNativeIMEContext = nsTextStore::GetTextStore();
+      if (adjustOpenState) {
+        nsTextStore::SetIMEOpenState(open);
+      }
+      return;
     }
-    // Currently, nsTextStore doesn't set focus to keyboard disabled document.
-    // Therefore, we still need to perform the following legacy code.
   }
 #endif // #ifdef NS_ENABLE_TSF
 
@@ -311,12 +302,6 @@ IMEHandler::SetInputContext(nsWindow* aWindow, InputContext& aInputContext)
   }
 
   if (adjustOpenState) {
-#ifdef NS_ENABLE_TSF
-    if (IsTSFAvailable()) {
-      nsTextStore::SetIMEOpenState(open);
-      return;
-    }
-#endif // #ifdef NS_ENABLE_TSF
     IMEContext.SetOpenState(open);
   }
 }
@@ -330,7 +315,9 @@ IMEHandler::InitInputContext(nsWindow* aWindow, InputContext& aInputContext)
 
 #ifdef NS_ENABLE_TSF
   if (sIsInTSFMode) {
-    nsTextStore::SetInputContext(aInputContext);
+    nsTextStore::SetInputContext(aWindow, aInputContext,
+      InputContextAction(InputContextAction::CAUSE_UNKNOWN,
+                         InputContextAction::GOT_FOCUS));
     aInputContext.mNativeIMEContext = nsTextStore::GetTextStore();
     MOZ_ASSERT(aInputContext.mNativeIMEContext);
     return;

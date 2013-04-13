@@ -94,6 +94,7 @@ class nsDOMNavigationTiming;
 class nsWindowSizes;
 class nsHtml5TreeOpExecutor;
 class nsDocumentOnStack;
+class nsPointerLockPermissionRequest;
 
 namespace mozilla {
 namespace dom {
@@ -133,13 +134,14 @@ public:
   }
   ~nsIdentifierMapEntry();
 
-  void SetInvalidName();
-  bool IsInvalidName();
   void AddNameElement(nsIDocument* aDocument, Element* aElement);
   void RemoveNameElement(Element* aElement);
   bool IsEmpty();
   nsBaseContentList* GetNameContentList() {
     return mNameContentList;
+  }
+  bool HasNameElement() const {
+    return mNameContentList && !mNameContentList->Length() != 0;
   }
 
   /**
@@ -461,6 +463,29 @@ protected:
   bool mHaveShutDown;
 };
 
+class CSPErrorQueue
+{
+  public:
+    /**
+     * Note this was designed to be passed string literals. If you give it
+     * a dynamically allocated string, it is your responsibility to make sure
+     * it never dies and is properly freed!
+     */
+    void Add(const char* aMessageName);
+    void Flush(nsIDocument* aDocument);
+
+    CSPErrorQueue()
+    {
+    }
+
+    ~CSPErrorQueue()
+    {
+    }
+
+  private:
+    nsAutoTArray<const char*,5> mErrors;
+};
+
 // Base class for our document implementations.
 //
 // Note that this class *implements* nsIDOMXMLDocument, but it's not
@@ -635,8 +660,8 @@ public:
 
   virtual void SetScriptHandlingObject(nsIScriptGlobalObject* aScriptObject);
 
-  virtual nsIScriptGlobalObject* GetScopeObject() const;
-
+  virtual nsIGlobalObject* GetScopeObject() const;
+  void SetScopeObject(nsIGlobalObject* aGlobal);
   /**
    * Get the script loader for this document
    */
@@ -694,9 +719,9 @@ public:
                                  nsAString& Standalone);
   virtual bool IsScriptEnabled();
 
-  virtual void OnPageShow(bool aPersisted, nsIDOMEventTarget* aDispatchStartTarget);
-  virtual void OnPageHide(bool aPersisted, nsIDOMEventTarget* aDispatchStartTarget);
-  
+  virtual void OnPageShow(bool aPersisted, mozilla::dom::EventTarget* aDispatchStartTarget);
+  virtual void OnPageHide(bool aPersisted, mozilla::dom::EventTarget* aDispatchStartTarget);
+
   virtual void WillDispatchMutationEvent(nsINode* aTarget);
   virtual void MutationEventDispatched(nsINode* aTarget);
 
@@ -792,8 +817,6 @@ public:
                               int32_t aNamespaceID,
                               nsIContent **aResult);
 
-  nsresult CreateTextNode(const nsAString& aData, nsIContent** aReturn);
-
   virtual NS_HIDDEN_(nsresult) Sanitize();
 
   virtual NS_HIDDEN_(void) EnumerateSubDocuments(nsSubDocEnumFunc aCallback,
@@ -811,7 +834,8 @@ public:
   virtual NS_HIDDEN_(void) ForgetLink(mozilla::dom::Link* aLink);
 
   NS_HIDDEN_(void) ClearBoxObjectFor(nsIContent* aContent);
-  NS_IMETHOD GetBoxObjectFor(nsIDOMElement* aElement, nsIBoxObject** aResult);
+  already_AddRefed<nsIBoxObject> GetBoxObjectFor(mozilla::dom::Element* aElement,
+                                                 mozilla::ErrorResult& aRv);
 
   virtual NS_HIDDEN_(nsresult) GetXBLChildNodesFor(nsIContent* aContent,
                                                    nsIDOMNodeList** aResult);
@@ -862,6 +886,8 @@ public:
     --mEventsSuppressed;
     MaybeRescheduleAnimationFrameNotifications();
   }
+
+  virtual nsIDocument* GetTemplateContentsOwner();
 
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsDocument,
                                                                    nsIDocument)
@@ -1002,9 +1028,10 @@ public:
   virtual Element* GetMozFullScreenElement(mozilla::ErrorResult& rv);
 
   void RequestPointerLock(Element* aElement);
-  bool ShouldLockPointer(Element* aElement);
+  bool ShouldLockPointer(Element* aElement, Element* aCurrentLock,
+                         bool aNoFocusCheck = false);
   bool SetPointerLock(Element* aElement, int aCursorStyle);
-  static void UnlockPointer();
+  static void UnlockPointer(nsIDocument* aDoc = nullptr);
 
   // This method may fire a DOM event; if it does so it will happen
   // synchronously.
@@ -1113,6 +1140,7 @@ public:
   // Set our title
   virtual void SetTitle(const nsAString& aTitle, mozilla::ErrorResult& rv);
 
+  static void XPCOMShutdown();
 protected:
   nsresult doCreateShell(nsPresContext* aContext,
                          nsViewManager* aViewManager, nsStyleSet* aStyleSet,
@@ -1128,7 +1156,7 @@ protected:
   // Return whether all the presshells for this document are safe to flush
   bool IsSafeToFlush() const;
   
-  void DispatchPageTransition(nsIDOMEventTarget* aDispatchTarget,
+  void DispatchPageTransition(mozilla::dom::EventTarget* aDispatchTarget,
                               const nsAString& aType,
                               bool aPersisted);
 
@@ -1173,24 +1201,10 @@ protected:
   // Array of observers
   nsTObserverArray<nsIDocumentObserver*> mObservers;
 
-  // If document is created for example using
-  // document.implementation.createDocument(...), mScriptObject points to
-  // the script global object of the original document.
-  nsWeakPtr mScriptObject;
-
   // Weak reference to the scope object (aka the script global object)
   // that, unlike mScriptGlobalObject, is never unset once set. This
   // is a weak reference to avoid leaks due to circular references.
   nsWeakPtr mScopeObject;
-
-  // Weak reference to the document which owned the pending pointer lock
-  // element, at the time it requested pointer lock.
-  static nsWeakPtr sPendingPointerLockDoc;
-
-  // Weak reference to the element which requested pointer lock. This request
-  // is "pending", and will be processed once the element's document has had
-  // the "fullscreen" permission granted.
-  static nsWeakPtr sPendingPointerLockElement;
 
   // Stack of full-screen elements. When we request full-screen we push the
   // full-screen element onto this stack, and when we cancel full-screen we
@@ -1279,6 +1293,16 @@ protected:
   // fullscreen will have an observer.
   bool mHasFullscreenApprovedObserver:1;
 
+  friend class nsPointerLockPermissionRequest;
+  friend class nsCallRequestFullScreen;
+  // When set, trying to lock the pointer doesn't require permission from the
+  // user.
+  bool mAllowRelocking:1;
+
+  bool mAsyncFullscreenPending:1;
+
+  uint32_t mCancelledPointerLockRequests;
+
   uint8_t mXMLDeclarationBits;
 
   nsInterfaceHashtable<nsPtrHashKey<nsIContent>, nsPIBoxObject> *mBoxObjectTable;
@@ -1286,6 +1310,10 @@ protected:
   // The channel that got passed to StartDocumentLoad(), if any
   nsCOMPtr<nsIChannel> mChannel;
   nsRefPtr<nsHTMLCSSStyleSheet> mStyleAttrStyleSheet;
+
+  // A document "without a browsing context" that owns the content of
+  // HTMLTemplateElement.
+  nsCOMPtr<nsIDocument> mTemplateContentsOwner;
 
   // Our update nesting level
   uint32_t mUpdateNestLevel;
@@ -1304,6 +1332,8 @@ private:
   friend class nsUnblockOnloadEvent;
   // Recomputes the visibility state but doesn't set the new value.
   mozilla::dom::VisibilityState GetVisibilityState() const;
+  void NotifyStyleSheetAdded(nsIStyleSheet* aSheet, bool aDocumentSheet);
+  void NotifyStyleSheetRemoved(nsIStyleSheet* aSheet, bool aDocumentSheet);
 
   void PostUnblockOnloadEvent();
   void DoUnblockOnload();
@@ -1311,15 +1341,10 @@ private:
   nsresult CheckFrameOptions();
   nsresult InitCSP(nsIChannel* aChannel);
 
-  // Sets aElement to be the pending pointer lock element. Once this document's
-  // node principal's URI is granted the "fullscreen" permission, the pointer
-  // lock request will be processed. At any one time there can be only one
-  // pending pointer lock request; calling this clears the previous pending
-  // request.
-  static nsresult SetPendingPointerLockRequest(Element* aElement);
-
-  // Clears any pending pointer lock request.
-  static void ClearPendingPointerLockRequest(bool aDispatchErrorEvents);
+  void FlushCSPWebConsoleErrorQueue()
+  {
+    mCSPWebConsoleErrorQueue.Flush(this);
+  }
 
   /**
    * Find the (non-anonymous) content in this document for aFrame. It will
@@ -1418,6 +1443,8 @@ private:
 
   nsrefcnt mStackRefCnt;
   bool mNeedsReleaseAfterStackRefCntRelease;
+
+  CSPErrorQueue mCSPWebConsoleErrorQueue;
 
 #ifdef DEBUG
 protected:

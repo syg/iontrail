@@ -20,44 +20,31 @@ function test()
 {
   let scriptShown = false;
   let framesAdded = false;
+  let resumed = false;
   let testStarted = false;
 
-  gTab = addTab(TAB_URL, function onAddTab() {
-    info("tab added");
-    gDebuggee = gTab.linkedBrowser.contentWindow.wrappedJSObject;
+  debug_tab_pane(TAB_URL, function(aTab, aDebuggee, aPane) {
+    gTab = aTab;
+    gDebuggee = aDebuggee;
+    gPane = aPane;
+    gDebugger = gPane.panelWin;
+    resumed = true;
 
-    let target = TargetFactory.forTab(gTab);
-
-    gDevTools.showToolbox(target, "jsdebugger").then(function(toolbox) {
-      info("jsdebugger panel opened");
-      gPane = toolbox.getCurrentPanel();
-      gDebugger = gPane.panelWin;
-      gDebugger.addEventListener("Debugger:AfterSourcesAdded", onAfterSourcesAdded);
-    });
-  });
-
-  function onAfterSourcesAdded()
-  {
-    info("scripts added");
-    gDebugger.removeEventListener("Debugger:AfterSourcesAdded",onAfterSourcesAdded);
     gDebugger.addEventListener("Debugger:SourceShown", onSourceShown);
 
-    gDebugger.DebuggerController.activeThread.addOneTimeListener("framesadded",
-      function onFramesAdded() {
-        info("frames added");
-        framesAdded = true;
-        executeSoon(startTest);
-      });
+    gDebugger.DebuggerController.activeThread.addOneTimeListener("framesadded", function() {
+      framesAdded = true;
+      executeSoon(startTest);
+    });
 
     executeSoon(function() {
       gDebuggee.firstCall();
     });
-  }
+  });
 
   function onSourceShown(aEvent)
   {
     scriptShown = aEvent.detail.url.indexOf("-02.js") != -1;
-    info("script shown " + aEvent.detail.url);
     executeSoon(startTest);
   }
 
@@ -66,7 +53,6 @@ function test()
     if (scriptShown && framesAdded && !testStarted) {
       gDebugger.removeEventListener("Debugger:SourceShown", onSourceShown);
       testStarted = true;
-      info("test started");
       Services.tm.currentThread.dispatch({ run: performTest }, 0);
     }
   }
@@ -171,7 +157,8 @@ function test()
   {
     info("add a breakpoint to the second script which is not selected");
 
-    is(Object.keys(gBreakpoints).length, 0, "no breakpoints in the debugger");
+    is(Object.keys(gBreakpoints).length, 0,
+      "no breakpoints in the debugger");
     ok(!gPane.getBreakpoint(gSources.selectedValue, 6),
       "getBreakpoint(selectedScript, 6) returns no breakpoint");
     isnot(gSources.values[0], gSources.selectedValue,
@@ -204,7 +191,9 @@ function test()
     executeSoon(function() {
       ok(aBreakpointClient.actor in gBreakpoints,
         "breakpoint2 client found in the list of debugger breakpoints");
-      is(Object.keys(gBreakpoints).length, 1, "one breakpoint in the debugger");
+
+      is(Object.keys(gBreakpoints).length, 1,
+        "one breakpoint in the debugger");
       is(gPane.getBreakpoint(gSources.values[0], 5), aBreakpointClient,
         "getBreakpoint(locations[0], 5) returns the correct breakpoint");
 
@@ -229,7 +218,7 @@ function test()
     is(aEvent.added[0].line, 4, "editor breakpoint line is correct");
 
     is(gEditor.getBreakpoints().length, 1,
-       "editor.getBreakpoints().length is correct");
+      "editor.getBreakpoints().length is correct");
   }
 
   function onEditorTextChanged()
@@ -247,26 +236,32 @@ function test()
     isnot(gEditor.getText().indexOf("firstCall"), -1,
       "The first script is displayed.");
 
-    executeSoon(function() {
-      info("remove the second breakpoint using the mouse");
-      gEditor.addEventListener(SourceEditor.EVENTS.BREAKPOINT_CHANGE, onEditorBreakpointRemoveSecond);
+    let window = gEditor.editorElement.contentWindow;
+    executeSoon(() => window.mozRequestAnimationFrame(onReadyForClick));
+  }
 
-      let iframe = gEditor.editorElement;
-      let testWin = iframe.ownerDocument.defaultView;
+  function onReadyForClick()
+  {
+    info("remove the second breakpoint using the mouse");
+    gEditor.addEventListener(SourceEditor.EVENTS.BREAKPOINT_CHANGE, onEditorBreakpointRemoveSecond);
 
-      // flush the layout for the iframe
-      info("rect " + iframe.contentDocument.documentElement.getBoundingClientRect());
+    let iframe = gEditor.editorElement;
+    let testWin = iframe.ownerDocument.defaultView;
 
-      let utils = testWin.QueryInterface(Ci.nsIInterfaceRequestor)
-                  .getInterface(Ci.nsIDOMWindowUtils);
+    // flush the layout for the iframe
+    info("rect " + iframe.contentDocument.documentElement.getBoundingClientRect());
 
-      let rect = iframe.getBoundingClientRect();
-      let left = rect.left + 10;
-      let top = rect.top + 70;
-      utils.sendMouseEventToWindow("mousedown", left, top, 0, 1, 0, false, 0, 0);
-      utils.sendMouseEventToWindow("mouseup", left, top, 0, 1, 0, false, 0, 0);
-    });
+    let utils = testWin.QueryInterface(Ci.nsIInterfaceRequestor)
+                .getInterface(Ci.nsIDOMWindowUtils);
 
+    let lineOffset = gEditor.getLineStart(4);
+    let coords = gEditor.getLocationAtOffset(lineOffset);
+
+    let rect = iframe.getBoundingClientRect();
+    let left = rect.left + 10;
+    let top = rect.top + coords.y + 4;
+    utils.sendMouseEventToWindow("mousedown", left, top, 0, 1, 0, false, 0, 0);
+    utils.sendMouseEventToWindow("mouseup", left, top, 0, 1, 0, false, 0, 0);
   }
 
   function onEditorBreakpointRemoveSecond(aEvent)

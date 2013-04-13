@@ -11,6 +11,7 @@
 
 #include "mozilla/DebugOnly.h"
 #include "mozilla/FloatingPoint.h"
+#include "mozilla/PodOperations.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -50,7 +51,11 @@
 #include "methodjit/Logging.h"
 #endif
 #include "ion/Ion.h"
-#include "ion/ParallelArrayAnalysis.h"
+#include "ion/BaselineJIT.h"
+
+#ifdef JS_ION
+#include "ion/IonFrames-inl.h"
+#endif
 
 #include "jsatominlines.h"
 #include "jsboolinlines.h"
@@ -83,6 +88,7 @@ using namespace js::gc;
 using namespace js::types;
 
 using mozilla::DebugOnly;
+using mozilla::PodCopy;
 
 /* Some objects (e.g., With) delegate 'this' to another object. */
 static inline JSObject *
@@ -326,6 +332,23 @@ js::RunScript(JSContext *cx, StackFrame *fp)
             return !IsErrorStatus(status);
         }
     }
+
+    if (ion::IsBaselineEnabled(cx)) {
+        ion::MethodStatus status = ion::CanEnterBaselineJIT(cx, script, fp, false);
+        if (status == ion::Method_Error)
+            return false;
+        if (status == ion::Method_Compiled) {
+            ion::IonExecStatus status = ion::EnterBaselineMethod(cx, fp);
+
+            // For now, we can never bail out from the baseline jit.
+            // TODO: This may need to be removed when we want to add support for
+            // OSR into Ion, which will be implemented by bailing out to the interpreter
+            // from baseline.
+            JS_ASSERT(status != ion::IonExec_Bailout);
+
+            return !IsErrorStatus(status);
+        }
+    }
 #endif
 
 #ifdef JS_METHODJIT
@@ -451,9 +474,7 @@ js::InvokeConstructorKernel(JSContext *cx, CallArgs args)
         RootedFunction fun(cx, callee.toFunction());
 
         if (fun->isNativeConstructor()) {
-            Probes::calloutBegin(cx, fun);
             bool ok = CallJSNativeConstructor(cx, fun->native(), args);
-            Probes::calloutEnd(cx, fun);
             return ok;
         }
 
@@ -960,8 +981,8 @@ JS_STATIC_ASSERT(JSOP_INCNAME_LENGTH == JSOP_NAMEDEC_LENGTH);
  * Inline fast paths for iteration. js_IteratorMore and js_IteratorNext handle
  * all cases, but we inline the most frequently taken paths here.
  */
-static inline bool
-IteratorMore(JSContext *cx, JSObject *iterobj, bool *cond, MutableHandleValue rval)
+bool
+js::IteratorMore(JSContext *cx, JSObject *iterobj, bool *cond, MutableHandleValue rval)
 {
     if (iterobj->isPropertyIterator()) {
         NativeIterator *ni = iterobj->asPropertyIterator().getNativeIterator();
@@ -977,8 +998,8 @@ IteratorMore(JSContext *cx, JSObject *iterobj, bool *cond, MutableHandleValue rv
     return true;
 }
 
-static inline bool
-IteratorNext(JSContext *cx, HandleObject iterobj, MutableHandleValue rval)
+bool
+js::IteratorNext(JSContext *cx, HandleObject iterobj, MutableHandleValue rval)
 {
     if (iterobj->isPropertyIterator()) {
         NativeIterator *ni = iterobj->asPropertyIterator().getNativeIterator();
@@ -1006,7 +1027,7 @@ TypeCheckNextBytecode(JSContext *cx, HandleScript script, unsigned n, const Fram
 }
 
 JS_NEVER_INLINE InterpretStatus
-js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode)
+js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode, bool useNewType)
 {
     JSAutoResolveFlags rf(cx, RESOLVE_INFER);
 
@@ -1435,46 +1456,33 @@ BEGIN_CASE(JSOP_LOOPENTRY)
             goto leave_on_safe_point;
         }
     }
+
+    if (ion::IsBaselineEnabled(cx)) {
+        ion::MethodStatus status = ion::CanEnterBaselineJIT(cx, script, regs.fp(), false);
+        if (status == ion::Method_Error)
+            goto error;
+        if (status == ion::Method_Compiled) {
+            ion::IonExecStatus maybeOsr = ion::EnterBaselineAtBranch(cx, regs.fp(), regs.pc);
+
+            // We can never bail out from the baseline jit.
+            JS_ASSERT(maybeOsr != ion::IonExec_Bailout);
+
+            // We failed to call into baseline at all, so treat as an error.
+            if (maybeOsr == ion::IonExec_Aborted)
+                goto error;
+
+            interpReturnOK = (maybeOsr == ion::IonExec_Ok);
+
+            if (entryFrame != regs.fp())
+                goto jit_return;
+
+            regs.fp()->setFinishedInInterpreter();
+            goto leave_on_safe_point;
+        }
+    }
 #endif /* JS_ION */
 
 END_CASE(JSOP_LOOPENTRY)
-
-BEGIN_CASE(JSOP_LINKASMJS)
-#ifdef JS_ASMJS
-{
-    RootedValue &rval = rootValue0;
-
-    /*
-     * The callee specified "use asm" and the entire body type-checked
-     * according to the asm.js type system. However, there are still a set of
-     * dynamic checks required to validate the input parameters which are
-     * performed by LinkAsmJS.
-     */
-    rval = NullValue();
-    if (!LinkAsmJS(cx, regs.fp(), &rval))
-        goto error;
-
-    /*
-     * If the linking step succeeded, then 'rval' contains the result of
-     * executing the "use asm" function (i.e., the exported functions) so we
-     * can just return.
-     */
-    if (rval.isObject()) {
-        regs.fp()->setReturnValue(rval);
-        regs.setToEndOfScript();
-        interpReturnOK = true;
-        if (entryFrame != regs.fp())
-            goto inline_return;
-        goto exit;
-    }
-
-    /*
-     * Otherwise, linking failed. This will emit a warning, but is not
-     * otherwise a JS semantic error so we keep executing as normal.
-     */
-}
-#endif
-END_CASE(JSOP_LINKASMJS)
 
 BEGIN_CASE(JSOP_NOTEARG)
 END_CASE(JSOP_NOTEARG)
@@ -1553,7 +1561,7 @@ BEGIN_CASE(JSOP_STOP)
             Probes::exitScript(cx, script, script->function(), regs.fp());
 
         /* The JIT inlines the epilogue. */
-#ifdef JS_METHODJIT
+#if defined(JS_METHODJIT) || defined(JS_ION)
   jit_return:
 #endif
 
@@ -1640,10 +1648,10 @@ BEGIN_CASE(JSOP_AND)
 }
 END_CASE(JSOP_AND)
 
-#define FETCH_ELEMENT_ID(obj, n, id)                                          \
+#define FETCH_ELEMENT_ID(n, id)                                               \
     JS_BEGIN_MACRO                                                            \
         const Value &idval_ = regs.sp[n];                                     \
-        if (!ValueToId<CanGC>(cx, obj, idval_, &id))                          \
+        if (!ValueToId<CanGC>(cx, idval_, &id))                               \
             goto error;                                                       \
     JS_END_MACRO
 
@@ -1673,7 +1681,7 @@ BEGIN_CASE(JSOP_IN)
     RootedObject &obj = rootObject0;
     obj = &rref.toObject();
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -2, id);
+    FETCH_ELEMENT_ID(-2, id);
     RootedObject &obj2 = rootObject1;
     RootedShape &prop = rootShape0;
     if (!JSObject::lookupGeneric(cx, obj, id, &obj2, &prop))
@@ -1781,11 +1789,9 @@ BEGIN_CASE(JSOP_SETCONST)
 
     RootedObject &obj = rootObject0;
     obj = &regs.fp()->varObj();
-    if (!JSObject::defineProperty(cx, obj, name, rval,
-                                  JS_PropertyStub, JS_StrictPropertyStub,
-                                  JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY)) {
+
+    if (!SetConstOperation(cx, obj, name, rval))
         goto error;
-    }
 }
 END_CASE(JSOP_SETCONST);
 
@@ -1798,7 +1804,7 @@ BEGIN_CASE(JSOP_ENUMCONSTELEM)
     RootedObject &obj = rootObject0;
     FETCH_OBJECT(cx, -2, obj);
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -1, id);
+    FETCH_ELEMENT_ID(-1, id);
     if (!JSObject::defineGeneric(cx, obj, id, rval,
                                  JS_PropertyStub, JS_StrictPropertyStub,
                                  JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY)) {
@@ -2099,29 +2105,19 @@ END_CASE(JSOP_POS)
 
 BEGIN_CASE(JSOP_DELNAME)
 {
+    /* Strict mode code should never contain JSOP_DELNAME opcodes. */
+    JS_ASSERT(!script->strict);
+
     RootedPropertyName &name = rootName0;
     name = script->getName(regs.pc);
 
     RootedObject &scopeObj = rootObject0;
     scopeObj = cx->stack.currentScriptedScopeChain();
 
-    RootedObject &scope = rootObject1;
-    RootedObject &pobj = rootObject2;
-    RootedShape &prop = rootShape0;
-    if (!LookupName(cx, name, scopeObj, &scope, &pobj, &prop))
-        goto error;
-
-    /* Strict mode code should never contain JSOP_DELNAME opcodes. */
-    JS_ASSERT(!script->strict);
-
-    /* ECMA says to return true if name is undefined or inherited. */
     PUSH_BOOLEAN(true);
-    if (prop) {
-        MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
-        if (!JSObject::deleteProperty(cx, scope, name, res, false))
-            goto error;
-    }
-    prop = NULL;
+    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
+    if (!DeleteNameOperation(cx, name, scopeObj, res))
+        goto error;
 }
 END_CASE(JSOP_DELNAME)
 
@@ -2312,7 +2308,7 @@ BEGIN_CASE(JSOP_SETELEM)
     RootedObject &obj = rootObject0;
     FETCH_OBJECT(cx, -3, obj);
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -2, id);
+    FETCH_ELEMENT_ID(-2, id);
     Value &value = regs.sp[-1];
     if (!SetObjectElementOperation(cx, obj, id, value, script->strict))
         goto error;
@@ -2329,7 +2325,7 @@ BEGIN_CASE(JSOP_ENUMELEM)
     /* Funky: the value to set is under the [obj, id] pair. */
     FETCH_OBJECT(cx, -2, obj);
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -1, id);
+    FETCH_ELEMENT_ID(-1, id);
     rval = regs.sp[-3];
     if (!JSObject::setGeneric(cx, obj, obj, id, &rval, script->strict))
         goto error;
@@ -2412,7 +2408,7 @@ BEGIN_CASE(JSOP_FUNCALL)
     funScript = fun->nonLazyScript();
     if (!cx->stack.pushInlineFrame(cx, regs, args, fun, funScript, initial))
         goto error;
- 
+
     if (newType)
         regs.fp()->setUseNewType();
 
@@ -2435,6 +2431,25 @@ BEGIN_CASE(JSOP_FUNCALL)
                 op = JSOp(*regs.pc);
                 DO_OP();
             }
+            interpReturnOK = !IsErrorStatus(exec);
+            goto jit_return;
+        }
+    }
+
+    if (ion::IsBaselineEnabled(cx)) {
+        ion::MethodStatus status = ion::CanEnterBaselineJIT(cx, script, regs.fp(), newType);
+        if (status == ion::Method_Error)
+            goto error;
+        if (status == ion::Method_Compiled) {
+            ion::IonExecStatus exec = ion::EnterBaselineMethod(cx, regs.fp());
+            CHECK_BRANCH();
+
+            // For now, we can never bail out from the baseline jit.
+            // TODO: This may need to be removed when we want to add support for
+            // OSR into Ion, which will be implemented by bailing out to the interpreter
+            // from baseline.
+            JS_ASSERT(exec != ion::IonExec_Bailout);
+
             interpReturnOK = !IsErrorStatus(exec);
             goto jit_return;
         }
@@ -2527,7 +2542,7 @@ BEGIN_CASE(JSOP_CALLINTRINSIC)
 {
     RootedValue &rval = rootValue0;
 
-    if (!GetIntrinsicOperation(cx, script, regs.pc, &rval))
+    if (!GetIntrinsicOperation(cx, regs.pc, &rval))
         goto error;
 
     PUSH_COPY(rval);
@@ -2836,7 +2851,7 @@ BEGIN_CASE(JSOP_SETTER)
 
     /* Ensure that id has a type suitable for use with obj. */
     if (JSID_IS_VOID(id))
-        FETCH_ELEMENT_ID(obj, i, id);
+        FETCH_ELEMENT_ID(i, id);
 
     if (!js_IsCallable(rval)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_BAD_GETTER_OR_SETTER,
@@ -2977,7 +2992,7 @@ BEGIN_CASE(JSOP_INITELEM)
 {
     JS_ASSERT(regs.stackDepth() >= 3);
     HandleValue val = HandleValue::fromMarkedLocation(&regs.sp[-1]);
-    MutableHandleValue id = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
+    HandleValue id = HandleValue::fromMarkedLocation(&regs.sp[-2]);
 
     RootedObject &obj = rootObject0;
     obj = &regs.sp[-3].toObject();
@@ -3461,17 +3476,22 @@ js::Lambda(JSContext *cx, HandleFunction fun, HandleObject parent)
         return NULL;
 
     if (fun->isArrow()) {
-        StackFrame *fp = cx->fp();
-
         // Note that this will assert if called from Ion code. Ion can't yet
         // emit code for a bound arrow function (bug 851913).
-        if (!ComputeThis(cx, fp))
+        AbstractFramePtr frame = cx->fp();
+#ifdef JS_ION
+        if (cx->fp()->runningInIon())
+            frame = ion::GetTopBaselineFrame(cx);
+#endif
+
+        if (!ComputeThis(cx, frame))
             return NULL;
 
-        RootedValue thisval(cx, fp->thisValue());
+        RootedValue thisval(cx, frame.thisValue());
         clone = js_fun_bind(cx, clone, thisval, NULL, 0);
         if (!clone)
             return NULL;
+        clone->toFunction()->flags |= JSFunction::ARROW;
     }
 
     JS_ASSERT(clone->global() == clone->global());
@@ -3492,7 +3512,7 @@ js::DefFunOperation(JSContext *cx, HandleScript script, HandleObject scopeChain,
      * requests in server-side JS.
      */
     RootedFunction fun(cx, funArg);
-    if (fun->environment() != scopeChain) {
+    if (fun->isNative() || fun->environment() != scopeChain) {
         fun = CloneFunctionObjectIfNotSingleton(cx, fun, scopeChain);
         if (!fun)
             return false;
@@ -3615,6 +3635,25 @@ js::DeleteProperty(JSContext *cx, HandleValue v, HandlePropertyName name, JSBool
 template bool js::DeleteProperty<true> (JSContext *cx, HandleValue val, HandlePropertyName name, JSBool *bp);
 template bool js::DeleteProperty<false>(JSContext *cx, HandleValue val, HandlePropertyName name, JSBool *bp);
 
+template <bool strict>
+bool
+js::DeleteElement(JSContext *cx, HandleValue val, HandleValue index, JSBool *bp)
+{
+    RootedObject obj(cx, ToObjectFromStack(cx, val));
+    if (!obj)
+        return false;
+
+    RootedValue result(cx);
+    if (!JSObject::deleteByValue(cx, obj, index, &result, strict))
+        return false;
+
+    *bp = result.toBoolean();
+    return true;
+}
+
+template bool js::DeleteElement<true> (JSContext *, HandleValue, HandleValue, JSBool *);
+template bool js::DeleteElement<false>(JSContext *, HandleValue, HandleValue, JSBool *);
+
 bool
 js::GetElement(JSContext *cx, MutableHandleValue lref, HandleValue rref, MutableHandleValue vp)
 {
@@ -3643,8 +3682,7 @@ js::SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleV
                      JSBool strict)
 {
     RootedId id(cx);
-    RootedValue indexval(cx, index);
-    if (!FetchElementId(cx, obj, indexval, &id, &indexval))
+    if (!ValueToId<CanGC>(cx, index, &id))
         return false;
     return SetObjectElementOperation(cx, obj, id, value, strict);
 }
@@ -3655,8 +3693,7 @@ js::SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleV
 {
     JS_ASSERT(pc);
     RootedId id(cx);
-    RootedValue indexval(cx, index);
-    if (!FetchElementId(cx, obj, indexval, &id, &indexval))
+    if (!ValueToId<CanGC>(cx, index, &id))
         return false;
     return SetObjectElementOperation(cx, obj, id, value, strict, script, pc);
 }
@@ -3707,4 +3744,31 @@ js::UrshValues(JSContext *cx, HandleScript script, jsbytecode *pc,
                Value *res)
 {
     return UrshOperation(cx, script, pc, lhs, rhs, res);
+}
+
+bool
+js::DeleteNameOperation(JSContext *cx, HandlePropertyName name, HandleObject scopeObj,
+                        MutableHandleValue res)
+{
+    RootedObject scope(cx), pobj(cx);
+    RootedShape shape(cx);
+    if (!LookupName(cx, name, scopeObj, &scope, &pobj, &shape))
+        return false;
+
+    /* ECMA says to return true if name is undefined or inherited. */
+    res.setBoolean(true);
+    if (shape)
+        return JSObject::deleteProperty(cx, scope, name, res, false);
+    return true;
+}
+
+bool
+js::ImplicitThisOperation(JSContext *cx, HandleObject scopeObj, HandlePropertyName name,
+                          MutableHandleValue res)
+{
+    RootedObject obj(cx);
+    if (!LookupNameWithGlobalDefault(cx, name, scopeObj, &obj))
+        return false;
+
+    return ComputeImplicitThis(cx, obj, res);
 }

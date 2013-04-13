@@ -5,9 +5,16 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.LayerView;
+import org.mozilla.gecko.widget.AboutHomeContent;
+import org.mozilla.gecko.widget.AddonsSection;
 import org.mozilla.gecko.widget.IconTabWidget;
+import org.mozilla.gecko.widget.LastTabsSection;
+import org.mozilla.gecko.widget.LinkTextView;
+import org.mozilla.gecko.widget.PromoBox;
+import org.mozilla.gecko.widget.RemoteTabsSection;
 import org.mozilla.gecko.widget.TabRow;
 import org.mozilla.gecko.widget.ThumbnailView;
+import org.mozilla.gecko.widget.TopSitesView;
 
 import android.content.Context;
 import android.text.TextUtils;
@@ -17,8 +24,8 @@ import android.view.LayoutInflater;
 import android.view.View;
 
 import java.lang.reflect.Constructor;
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 
 public final class GeckoViewsFactory implements LayoutInflater.Factory {
     private static final String LOGTAG = "GeckoViewsFactory";
@@ -39,10 +46,12 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
         Class<Context> arg1Class = Context.class;
         Class<AttributeSet> arg2Class = AttributeSet.class;
         try {
-            mFactoryMap.put("AboutHomePromoBox", AboutHomePromoBox.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("AboutHomeContent", AboutHomeContent.class.getConstructor(arg1Class, arg2Class));
-            mFactoryMap.put("AboutHomeContent$TopSitesGridView", AboutHomeContent.TopSitesGridView.class.getConstructor(arg1Class, arg2Class));
-            mFactoryMap.put("AboutHomeSection", AboutHomeSection.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("AddonsSection", AddonsSection.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("LastTabsSection", LastTabsSection.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("PromoBox", PromoBox.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("RemoteTabsSection", RemoteTabsSection.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("TopSitesView", TopSitesView.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("AwesomeBarTabs", AwesomeBarTabs.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("AwesomeBarTabs$BackgroundLayout", AwesomeBarTabs.BackgroundLayout.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("BackButton", BackButton.class.getConstructor(arg1Class, arg2Class));
@@ -56,11 +65,12 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
             mFactoryMap.put("MenuItemDefault", MenuItemDefault.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("FindInPageBar", FindInPageBar.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("IconTabWidget", IconTabWidget.class.getConstructor(arg1Class, arg2Class));
-            mFactoryMap.put("MenuButton", MenuButton.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("RemoteTabs", RemoteTabs.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("ShapedButton", ShapedButton.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("TabRow", TabRow.class.getConstructor(arg1Class, arg2Class));
-            mFactoryMap.put("TabsButton", TabsButton.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("TabsPanel", TabsPanel.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("TabsPanel$TabsListContainer", TabsPanel.TabsListContainer.class.getConstructor(arg1Class, arg2Class));
+            mFactoryMap.put("TabsPanel$TabsPanelToolbar", TabsPanel.TabsPanelToolbar.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("TabsTray", TabsTray.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("ThumbnailView", ThumbnailView.class.getConstructor(arg1Class, arg2Class));
             mFactoryMap.put("TextSelectionHandle", TextSelectionHandle.class.getConstructor(arg1Class, arg2Class));

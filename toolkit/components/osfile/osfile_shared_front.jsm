@@ -54,7 +54,7 @@ AbstractFile.prototype = {
       bytes = this.stat().size;
     }
     let buffer = new Uint8Array(bytes);
-    let size = this.readTo(buffer, bytes);
+    let size = this.readTo(buffer, {bytes: bytes});
     if (size == bytes) {
       return buffer;
     } else {
@@ -80,8 +80,7 @@ AbstractFile.prototype = {
    * @return {number} The number of bytes actually read, which may be
    * less than |bytes| if the file did not contain that many bytes left.
    */
-  readTo: function readTo(buffer, options) {
-    options = options || noOptions;
+  readTo: function readTo(buffer, options = noOptions) {
     let {ptr, bytes} = AbstractFile.normalizeToPointer(buffer, options.bytes);
     let pos = 0;
     while (pos < bytes) {
@@ -113,8 +112,7 @@ AbstractFile.prototype = {
    *
    * @return {number} The number of bytes actually written.
    */
-  write: function write(buffer, options) {
-    options = options || noOptions;
+  write: function write(buffer, options = noOptions) {
 
     let {ptr, bytes} = AbstractFile.normalizeToPointer(buffer, options.bytes);
 
@@ -342,12 +340,17 @@ AbstractFile.read = function read(path, bytes) {
  * @return {number} The number of bytes actually written.
  */
 AbstractFile.writeAtomic =
-     function writeAtomic(path, buffer, options) {
-  options = options || noOptions;
+     function writeAtomic(path, buffer, options = noOptions) {
 
   let noOverwrite = options.noOverwrite;
   if (noOverwrite && OS.File.exists(path)) {
     throw OS.File.Error.exists("writeAtomic");
+  }
+
+  if (typeof buffer == "string") {
+    // Normalize buffer to a C buffer by encoding it
+    let encoding = options.encoding || "utf-8";
+    buffer = new TextEncoder(encoding).encode(buffer);
   }
 
   if ("flush" in options && !options.flush) {
@@ -360,7 +363,6 @@ AbstractFile.writeAtomic =
       dest.close();
     }
   }
-
 
   let tmpPath = options.tmpPath;
   if (!tmpPath) {

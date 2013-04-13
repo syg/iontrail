@@ -39,8 +39,6 @@
             for (let childItem of this.selectedItems) {
               childItem.removeAttribute("selected");
             }
-            // reset context actions
-            this._contextActions = null;
           ]]>
         </body>
       </method>
@@ -54,11 +52,8 @@
               this.clearSelection();
             }
             this._selectedItem = wasSelected ? null : anItem;
-            if(anItem.selected) {
-              anItem.removeAttribute("selected");
-            } else {
-              anItem.setAttribute("selected", true);
-            }
+            anItem.selected = !wasSelected;
+
             this._fireOnSelectionChange();
           ]]>
         </body>
@@ -107,36 +102,20 @@
           ]]>
         </body>
       </method>
-
-      <field name="_contextActions">null</field>
       <property name="contextActions">
         <getter>
           <![CDATA[
             // return the subset of verbs that apply to all selected tiles
-            // use cached list, it'll get cleared out when selection changes
-            if (this._contextActions) {
-              return this._contextActions;
-            }
             let tileNodes = this.selectedItems;
             if (!tileNodes.length) {
               return new Set();
-            }
-
-            function cloneSet(aSet) {
-              let clone = new Set();
-              if (aSet) {
-                for (let item of aSet) {
-                  clone.add(item);
-                }
-              }
-              return clone;
             }
 
             // given one or more sets of values,
             // return a set with only those values present in each
             let initialItem = tileNodes[0];
 
-            let verbSet = cloneSet(initialItem.contextActions);
+            let verbSet = new Set(initialItem.contextActions);
             for (let i=1; i<tileNodes.length; i++){
               let set = tileNodes[i].contextActions;
               for (let item of verbSet) {
@@ -145,10 +124,12 @@
                 }
               }
             }
-
-            this._contextActions = verbSet;
+            // add the clear-selection button if more than one tiles are selected
+            if (tileNodes.length > 1) {
+              verbSet.add('clear');
+            }
             // returns Set
-            return this._contextActions;
+            return verbSet;
           ]]>
         </getter>
       </property>
@@ -196,11 +177,13 @@
       <method name="appendItem">
         <parameter name="aLabel"/>
         <parameter name="aValue"/>
+        <parameter name="aSkipArrange"/>
         <body>
           <![CDATA[
             let addition = this._createItemElement(aLabel, aValue);
             this.appendChild(addition);
-            this.arrangeItems();
+            if (!aSkipArrange)
+              this.arrangeItems();
             return addition;
           ]]>
         </body>
@@ -213,7 +196,6 @@
               this.removeChild(this.firstChild);
             }
             this._grid.style.width = "0px";
-            this._contextActions = null;
           ]]>
         </body>
       </method>
@@ -222,6 +204,7 @@
         <parameter name="anIndex"/>
         <parameter name="aLabel"/>
         <parameter name="aValue"/>
+        <parameter name="aSkipArrange"/>
         <body>
           <![CDATA[
             let existing = this.getItemAtIndex(anIndex);
@@ -231,19 +214,21 @@
             } else {
               this.appendChild(addition);
             }
-            this.arrangeItems();
+            if (!aSkipArrange)
+              this.arrangeItems();
             return addition;
           ]]>
         </body>
       </method>
-
       <method name="removeItemAt">
         <parameter name="anIndex"/>
+        <parameter name="aSkipArrange"/>
         <body>
           <![CDATA[
             let removal = this.getItemAtIndex(anIndex);
             this.removeChild(removal);
-            this.arrangeItems();
+            if (!aSkipArrange)
+              this.arrangeItems();
             return removal;
           ]]>
         </body>
@@ -337,15 +322,15 @@
       <field name="_itemHeightRenderThreshold">10</field>
 
       <method name="arrangeItems">
-        <parameter name="aNumRows"/>
-        <parameter name="aNumColumns"/>
         <body>
           <![CDATA[
-            if (this.itemCount <= 0)
+            if (this.itemCount <= 0) {
               return;
+            }
             let item = this.getItemAtIndex(0);
-            if (item == null)
+            if (item == null) {
               return;
+            }
             let gridItemRect = item.getBoundingClientRect();
 
             // cap the number of times we reschedule calling arrangeItems
@@ -388,24 +373,25 @@
               container = this.parentNode.getBoundingClientRect();
 
             // If we don't have valid dimensions we can't arrange yet
-            if (!container.height || !gridItemRect.height)
+            if (!container.height || !gridItemRect.height) {
               return;
+            }
 
             // We favor overflowing horizontally, not vertically
             let maxRowCount = Math.floor(container.height / gridItemRect.height) - 1;
 
-            if (aNumRows) {
-              this._rowCount = aNumRows;
-            } else {
+            this._rowCount = this.getAttribute("rows");
+            this._columnCount = this.getAttribute("columns");
+
+            if (!this._rowCount) {
               this._rowCount = Math.min(this.itemCount, maxRowCount);
             }
-            if (aNumColumns) {
-              this._columnCount = aNumColumns;
-            } else {
+            if (!this._columnCount){
               this._columnCount = Math.ceil(this.itemCount / this._rowCount);
             }
 
             this._grid.style.width = (this._columnCount * gridItemRect.width) + "px";
+
           ]]>
         </body>
       </method>
@@ -450,11 +436,6 @@
             item.setAttribute("label", aLabel);
             if (aValue)
               item.setAttribute("value", aValue);
-
-            // copy over the richgrid's data-contextactions as each child is created
-            if (this.hasAttribute("data-contextactions")) {
-              item.setAttribute("data-contextactions", this.getAttribute("data-contextactions"));
-            }
             return item;
           ]]>
         </body>
@@ -476,8 +457,6 @@
         <body>
           <![CDATA[
             // flush out selection-related cached properties so they get recalc'd next time
-            this._contextActions = null;
-
             // fire an event?
             if (this.suppressOnSelect || this._suppressOnSelect)
               return;
@@ -488,34 +467,86 @@
           ]]>
         </body>
       </method>
-
     </implementation>
+    <handlers>
+      <handler event="context-action">
+        <![CDATA[
+          // context-action is an event fired by the appbar typically
+          // which directs us to do something to the selected tiles
+          switch (event.action) {
+            case "clear":
+              this.clearSelection();
+              break;
+            default:
+              if (this.controller && this.controller.doActionOnSelectedTiles) {
+                this.controller.doActionOnSelectedTiles(event.action, event);
+              }
+          }
+        ]]>
+      </handler>
+    </handlers>
   </binding>
-
   <binding id="richgrid-item">
     <content>
-      <xul:vbox anonid="anon-richgrid-item" class="richgrid-item-content" xbl:inherits="customImagePresent">
-        <xul:hbox class="richgrid-icon-container" xbl:inherits="customImagePresent">
-          <xul:box class="richgrid-icon-box"><xul:image xbl:inherits="src=iconURI"/></xul:box>
+      <xul:vbox anonid="anon-richgrid-item" class="richgrid-item-content" xbl:inherits="customImage">
+        <xul:hbox class="richgrid-icon-container" xbl:inherits="customImage">
+          <xul:box class="richgrid-icon-box"><xul:image anonid="anon-richgrid-item-icon" xbl:inherits="src=iconURI"/></xul:box>
           <xul:box flex="1" />
         </xul:hbox>
-        <xul:description class="richgrid-item-desc" xbl:inherits="value=label" crop="end"/>
+        <xul:description anonid="anon-richgrid-item-label" class="richgrid-item-desc" xbl:inherits="value=label" crop="end"/>
       </xul:vbox>
     </content>
 
     <implementation>
       <property name="_box" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-richgrid-item');"/>
-      <property name="color" onset="this._color = val; this.setColor();" onget="return this._color;"/>
-      <property name="backgroundimage"
-                onset="this._backgroundimage = val; this.setBackgroundImage();"
-                onget="return this._backgroundimage;" />
+      <property name="_textbox" onget="return document.getAnonymousElementByAttribute(this, 'class', 'richgrid-item-desc');"/>
+      <property name="_icon" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-richgrid-item-icon');"/>
+      <property name="_label" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-richgrid-item-label');"/>
+      <property name="iconSrc"
+                onset="this._icon.src = val; this.setAttribute('iconURI', val);"
+                onget="return this._icon.src;" />
+
       <property name="selected"
-                onget="return this.getAttribute('selected') == 'true';" />
+                onget="return this.hasAttribute('selected');"
+                onset="if (val) this.setAttribute('selected', val); else this.removeAttribute('selected');" />
+      <property name="url"
+                onget="return this.getAttribute('value')"
+                onset="this.setAttribute('value', val);"/>
+      <property name="label"
+                onget="return this._label.getAttribute('value')"
+                onset="this.setAttribute('label', val); this._label.setAttribute('value', val);"/>
+      <property name="pinned"
+                onget="return this.hasAttribute('pinned')"
+                onset="if (val) { this.setAttribute('pinned', val) } else this.removeAttribute('pinned');"/>
 
       <constructor>
         <![CDATA[
+            this.refresh();
         ]]>
       </constructor>
+      <method name="refresh">
+        <body>
+          <![CDATA[
+            // Prevent an exception in case binding is not done yet.
+            if (!this._icon)
+              return;
+
+            // Seed the binding properties from bound-node attribute values
+            // Usage: node.refresh()
+            //        - reinitializes all binding properties from their associated attributes
+
+            this.iconSrc = this.getAttribute('iconURI');
+            this.color = this.getAttribute("customColor");
+            this.label = this.getAttribute('label');
+            // url getter just looks directly at attribute
+            // selected getter just looks directly at attribute
+            // pinned getter just looks directly at attribute
+            // value getter just looks directly at attribute
+            this._contextActions = null;
+            this.refreshBackgroundImage();
+          ]]>
+        </body>
+      </method>
 
       <property name="control">
         <getter><![CDATA[
@@ -529,32 +560,32 @@
         ]]></getter>
       </property>
 
-      <method name="setColor">
-        <body>
-          <![CDATA[
-            if (this._color != undefined) {
-              this._box.parentNode.setAttribute("customColorPresent", "true");
-              this._box.style.backgroundColor = this.color;
-            } else {
-              this._box.parentNode.removeAttribute("customColorPresent");
-            }
-          ]]>
-        </body>
-      </method>
+      <property name="color" onget="return this.getAttribute('customColor');">
+        <setter><![CDATA[
+          if (val) {
+            this.setAttribute("customColor", val);
+            this._box.style.backgroundColor = val;
+            this._textbox.style.backgroundColor = val;
+          } else {
+            this.removeAttribute("customColor");
+            this._box.style.removeProperty("background-color");
+            this._textbox.style.removeProperty("background-color");
+          }
+        ]]></setter>
+      </property>
 
-      <method name="setBackgroundImage">
-        <body>
-          <![CDATA[
-            if (this._backgroundImage != undefined) {
-              this._box.parentNode.setAttribute("customImagePresent", "true");
-              this._box.style.backgroundImage = this.backgroundImage;
-            } else {
-              this._box.parentNode.removeAttribute("customImagePresent");
-              this._box.style.removeProperty("background-image");
-            }
-          ]]>
-        </body>
-      </method>
+      <property name="backgroundImage" onget="return this.getAttribute('customImage');">
+        <setter><![CDATA[
+          if (val) {
+            this.setAttribute("customImage", val);
+            this._box.style.backgroundImage = val;
+          } else {
+            this.removeAttribute("customImage");
+            this._box.style.removeProperty("background-image");
+          }
+        ]]></setter>
+      </property>
+
       <method name="refreshBackgroundImage">
         <body><![CDATA[
           if (this.backgroundImage) {
@@ -582,7 +613,6 @@
           ]]>
         </getter>
       </property>
-
     </implementation>
 
     <handlers>

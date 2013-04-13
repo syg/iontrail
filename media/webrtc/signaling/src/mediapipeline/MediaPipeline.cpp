@@ -4,9 +4,11 @@
 
 // Original author: ekr@rtfm.com
 
-#include "CSFLog.h"
-
 #include "MediaPipeline.h"
+
+#ifndef USE_FAKE_MEDIA_STREAMS
+#include "MediaStreamGraphImpl.h"
+#endif
 
 #include <math.h>
 
@@ -54,43 +56,52 @@ static char kDTLSExporterLabel[] = "EXTRACTOR-dtls_srtp";
 nsresult MediaPipeline::Init() {
   ASSERT_ON_THREAD(main_thread_);
 
-  // TODO(ekr@rtfm.com): is there a way to make this async?
-  nsresult ret;
   RUN_ON_THREAD(sts_thread_,
-		WrapRunnableRet(this, &MediaPipeline::Init_s, &ret),
-		NS_DISPATCH_SYNC);
-  return ret;
+                WrapRunnable(
+                    nsRefPtr<MediaPipeline>(this),
+                    &MediaPipeline::Init_s),
+                NS_DISPATCH_NORMAL);
+
+  return NS_OK;
 }
 
 nsresult MediaPipeline::Init_s() {
   ASSERT_ON_THREAD(sts_thread_);
   conduit_->AttachTransport(transport_);
 
-  MOZ_ASSERT(rtp_transport_);
-
   nsresult res;
-
+  MOZ_ASSERT(rtp_transport_);
   // Look to see if the transport is ready
   rtp_transport_->SignalStateChange.connect(this,
                                             &MediaPipeline::StateChange);
 
   if (rtp_transport_->state() == TransportLayer::TS_OPEN) {
-    res = TransportReady(rtp_transport_);
+    res = TransportReady_s(rtp_transport_);
     if (NS_FAILED(res)) {
-      MOZ_MTLOG(PR_LOG_ERROR, "Error calling TransportReady()");
+      MOZ_MTLOG(PR_LOG_ERROR, "Error calling TransportReady(); res="
+                << static_cast<uint32_t>(res) << " in " << __FUNCTION__);
       return res;
     }
+  } else if (rtp_transport_->state() == TransportLayer::TS_ERROR) {
+    MOZ_MTLOG(PR_LOG_ERROR, "RTP transport is already in error state");
+    TransportFailed_s(rtp_transport_);
+    return NS_ERROR_FAILURE;
   } else {
     if (!muxed_) {
       rtcp_transport_->SignalStateChange.connect(this,
                                                  &MediaPipeline::StateChange);
 
       if (rtcp_transport_->state() == TransportLayer::TS_OPEN) {
-        res = TransportReady(rtcp_transport_);
+        res = TransportReady_s(rtcp_transport_);
         if (NS_FAILED(res)) {
-          MOZ_MTLOG(PR_LOG_ERROR, "Error calling TransportReady()");
+          MOZ_MTLOG(PR_LOG_ERROR, "Error calling TransportReady(); res="
+                    << static_cast<uint32_t>(res) << " in " << __FUNCTION__);
           return res;
         }
+      } else if (rtcp_transport_->state() == TransportLayer::TS_ERROR) {
+        MOZ_MTLOG(PR_LOG_ERROR, "RTCP transport is already in error state");
+        TransportFailed_s(rtcp_transport_);
+        return NS_ERROR_FAILURE;
       }
     }
   }
@@ -100,7 +111,7 @@ nsresult MediaPipeline::Init_s() {
 
 // Disconnect us from the transport so that we can cleanly destruct
 // the pipeline on the main thread.
-void MediaPipeline::DetachTransport_s() {
+void MediaPipeline::ShutdownTransport_s() {
   ASSERT_ON_THREAD(sts_thread_);
 
   disconnect_all();
@@ -109,42 +120,23 @@ void MediaPipeline::DetachTransport_s() {
   rtcp_transport_ = NULL;
 }
 
-void MediaPipeline::DetachTransport() {
-  RUN_ON_THREAD(sts_thread_,
-                WrapRunnable(this, &MediaPipeline::DetachTransport_s),
-                NS_DISPATCH_SYNC);
-}
-
 void MediaPipeline::StateChange(TransportFlow *flow, TransportLayer::State state) {
   if (state == TransportLayer::TS_OPEN) {
     MOZ_MTLOG(MP_LOG_INFO, "Flow is ready");
-    TransportReady(flow);
+    TransportReady_s(flow);
   } else if (state == TransportLayer::TS_CLOSED ||
              state == TransportLayer::TS_ERROR) {
-    TransportFailed(flow);
+    TransportFailed_s(flow);
   }
 }
 
-nsresult MediaPipeline::TransportReady(TransportFlow *flow) {
-  nsresult rv;
-  nsresult res;
-
-  rv = RUN_ON_THREAD(sts_thread_,
-    WrapRunnableRet(this, &MediaPipeline::TransportReadyInt, flow, &res),
-    NS_DISPATCH_SYNC);
-
-  // res is invalid unless the dispatch succeeded
-  if (NS_FAILED(rv))
-    return rv;
-
-  return res;
-}
-
-nsresult MediaPipeline::TransportReadyInt(TransportFlow *flow) {
+nsresult MediaPipeline::TransportReady_s(TransportFlow *flow) {
   MOZ_ASSERT(!description_.empty());
   bool rtcp = !(flow == rtp_transport_);
   State *state = rtcp ? &rtcp_state_ : &rtp_state_;
 
+  // TODO(ekr@rtfm.com): implement some kind of notification on
+  // failure. bug 852665.
   if (*state != MP_CONNECTING) {
     MOZ_MTLOG(PR_LOG_ERROR, "Transport ready for flow in wrong state:" <<
 	      description_ << ": " << (rtcp ? "rtcp" : "rtp"));
@@ -166,6 +158,7 @@ nsresult MediaPipeline::TransportReadyInt(TransportFlow *flow) {
   res = dtls->GetSrtpCipher(&cipher_suite);
   if (NS_FAILED(res)) {
     MOZ_MTLOG(PR_LOG_ERROR, "Failed to negotiate DTLS-SRTP. This is an error");
+    *state = MP_CLOSED;
     return res;
   }
 
@@ -268,7 +261,8 @@ nsresult MediaPipeline::TransportReadyInt(TransportFlow *flow) {
   return NS_OK;
 }
 
-nsresult MediaPipeline::TransportFailed(TransportFlow *flow) {
+nsresult MediaPipeline::TransportFailed_s(TransportFlow *flow) {
+  ASSERT_ON_THREAD(sts_thread_);
   bool rtcp = !(flow == rtp_transport_);
 
   State *state = rtcp ? &rtcp_state_ : &rtp_state_;
@@ -368,6 +362,16 @@ void MediaPipeline::RtpPacketReceived(TransportLayer *layer,
     return;
   }
 
+  if (rtp_state_ != MP_OPEN) {
+    MOZ_MTLOG(PR_LOG_DEBUG, "Discarding incoming packet; pipeline not open");
+    return;
+  }
+
+  if (rtp_transport_->state() != TransportLayer::TS_OPEN) {
+    MOZ_MTLOG(PR_LOG_ERROR, "Discarding incoming packet; transport not open");
+    return;
+  }
+
   MOZ_ASSERT(rtp_recv_srtp_);  // This should never happen
 
   if (direction_ == TRANSMIT) {
@@ -403,6 +407,16 @@ void MediaPipeline::RtcpPacketReceived(TransportLayer *layer,
 
   if (!conduit_) {
     MOZ_MTLOG(PR_LOG_DEBUG, "Discarding incoming packet; media disconnected");
+    return;
+  }
+
+  if (rtcp_state_ != MP_OPEN) {
+    MOZ_MTLOG(PR_LOG_DEBUG, "Discarding incoming packet; pipeline not open");
+    return;
+  }
+
+  if (rtcp_transport_->state() != TransportLayer::TS_OPEN) {
+    MOZ_MTLOG(PR_LOG_ERROR, "Discarding incoming packet; transport not open");
     return;
   }
 
@@ -503,9 +517,9 @@ nsresult MediaPipelineTransmit::Init() {
   return MediaPipeline::Init();
 }
 
-nsresult MediaPipelineTransmit::TransportReady(TransportFlow *flow) {
+nsresult MediaPipelineTransmit::TransportReady_s(TransportFlow *flow) {
   // Call base ready function.
-  MediaPipeline::TransportReady(flow);
+  MediaPipeline::TransportReady_s(flow);
 
   if (flow == rtp_transport_) {
     // TODO(ekr@rtfm.com): Move onto MSG thread.
@@ -830,22 +844,90 @@ nsresult MediaPipelineReceiveAudio::Init() {
   description_ += track_id_string;
   description_ += "]";
 
-  stream_->AddListener(listener_);
+  listener_->AddSelf(new AudioSegment());
 
   return MediaPipelineReceive::Init();
 }
 
 
+// Add a track and listener on the MSG thread using the MSG command queue
+static void AddTrackAndListener(MediaStream* source,
+                                TrackID track_id, TrackRate track_rate,
+                                MediaStreamListener* listener, MediaSegment* segment,
+                                const RefPtr<TrackAddedCallback>& completed) {
+  // This both adds the listener and the track
+#ifdef MOZILLA_INTERNAL_API
+  class Message : public ControlMessage {
+   public:
+    Message(MediaStream* stream, TrackID track, TrackRate rate,
+            MediaSegment* segment, MediaStreamListener* listener,
+            const RefPtr<TrackAddedCallback>& completed)
+      : ControlMessage(stream),
+        track_id_(track),
+        track_rate_(rate),
+        segment_(segment),
+        listener_(listener),
+        completed_(completed) {}
+
+    virtual void Run() MOZ_OVERRIDE {
+      StreamTime current_end = mStream->GetBufferEnd();
+      TrackTicks current_ticks = TimeToTicksRoundUp(track_rate_, current_end);
+
+      mStream->AddListenerImpl(listener_.forget());
+
+      // Add a track 'now' to avoid possible underrun, especially if we add
+      // a track "later".
+
+      if (current_end != 0L) {
+        MOZ_MTLOG(MP_LOG_INFO, "added track @ " << current_end <<
+                  " -> " << MediaTimeToSeconds(current_end));
+      }
+
+      // To avoid assertions, we need to insert a dummy segment that covers up
+      // to the "start" time for the track
+      segment_->AppendNullData(current_ticks);
+      mStream->AsSourceStream()->AddTrack(track_id_, track_rate_,
+                                          current_ticks, segment_);
+      // AdvanceKnownTracksTicksTime(HEAT_DEATH_OF_UNIVERSE) means that in
+      // theory per the API, we can't add more tracks before that
+      // time. However, the impl actually allows it, and it avoids a whole
+      // bunch of locking that would be required (and potential blocking)
+      // if we used smaller values and updated them on each NotifyPull.
+      mStream->AsSourceStream()->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+
+      // We need to know how much has been "inserted" because we're given absolute
+      // times in NotifyPull.
+      completed_->TrackAdded(current_ticks);
+    }
+   private:
+    TrackID track_id_;
+    TrackRate track_rate_;
+    MediaSegment* segment_;
+    nsRefPtr<MediaStreamListener> listener_;
+    const RefPtr<TrackAddedCallback> completed_;
+  };
+
+  MOZ_ASSERT(listener);
+
+  source->GraphImpl()->AppendMessage(new Message(source, track_id, track_rate, segment, listener, completed));
+#else
+  source->AddListener(listener);
+  source->AsSourceStream()->AddTrack(track_id, track_rate, 0, segment);
+#endif
+}
+
+void GenericReceiveListener::AddSelf(MediaSegment* segment) {
+  RefPtr<TrackAddedCallback> callback = new GenericReceiveCallback(this);
+  AddTrackAndListener(source_, track_id_, track_rate_, this, segment, callback);
+}
+
 MediaPipelineReceiveAudio::PipelineListener::PipelineListener(
     SourceMediaStream * source, TrackID track_id,
     const RefPtr<MediaSessionConduit>& conduit)
-    : source_(source),
-      track_id_(track_id),
-      conduit_(conduit),
-      played_(0) {
-  mozilla::AudioSegment *segment = new mozilla::AudioSegment();
-  source_->AddTrack(track_id_, 16000, 0, segment);
-  source_->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+  : GenericReceiveListener(source, track_id, 16000), // XXX rate assumption
+    conduit_(conduit)
+{
+  MOZ_ASSERT(track_rate_%100 == 0);
 }
 
 void MediaPipelineReceiveAudio::PipelineListener::
@@ -857,21 +939,33 @@ NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
   }
 
   // This comparison is done in total time to avoid accumulated roundoff errors.
-  while (MillisecondsToMediaTime(played_) < desired_time) {
-    // TODO(ekr@rtfm.com): Is there a way to avoid mallocating here?
-    nsRefPtr<SharedBuffer> samples = SharedBuffer::Create(1000);
+  while (TicksToTimeRoundDown(track_rate_, played_ticks_) < desired_time) {
+    // TODO(ekr@rtfm.com): Is there a way to avoid mallocating here?  Or reduce the size?
+    // Max size given mono is 480*2*1 = 960 (48KHz)
+#define AUDIO_SAMPLE_BUFFER_MAX 1000
+    MOZ_ASSERT((track_rate_/100)*sizeof(uint16_t) <= AUDIO_SAMPLE_BUFFER_MAX);
+
+    nsRefPtr<SharedBuffer> samples = SharedBuffer::Create(AUDIO_SAMPLE_BUFFER_MAX);
     int16_t *samples_data = static_cast<int16_t *>(samples->Data());
     int samples_length;
 
+    // This fetches 10ms of data
     MediaConduitErrorCode err =
         static_cast<AudioSessionConduit*>(conduit_.get())->GetAudioFrame(
             samples_data,
-            16000,  // Sampling rate fixed at 16 kHz for now
-            0,  // TODO(ekr@rtfm.com): better estimate of capture delay
+            track_rate_,
+            0,  // TODO(ekr@rtfm.com): better estimate of "capture" (really playout) delay
             samples_length);
+    MOZ_ASSERT(samples_length < AUDIO_SAMPLE_BUFFER_MAX);
 
-    if (err != kMediaConduitNoError)
-      return;
+    if (err != kMediaConduitNoError) {
+      // Insert silence on conduit/GIPS failure (extremely unlikely)
+      MOZ_MTLOG(PR_LOG_ERROR, "Audio conduit failed (" << err << ") to return data @ " << played_ticks_ <<
+                " (desired " << desired_time << " -> " << MediaTimeToSeconds(desired_time) << ")");
+      MOZ_ASSERT(err == kMediaConduitNoError);
+      samples_length = (track_rate_/100)*sizeof(uint16_t); // if this is not enough we'll loop and provide more
+      memset(samples_data, '\0', samples_length);
+    }
 
     MOZ_MTLOG(PR_LOG_DEBUG, "Audio conduit returned buffer of length " << samples_length);
 
@@ -880,9 +974,15 @@ NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
     channels.AppendElement(samples_data);
     segment.AppendFrames(samples.forget(), channels, samples_length);
 
-    source_->AppendToTrack(track_id_, &segment);
-
-    played_ += 10;
+    // Handle track not actually added yet or removed/finished
+    if (source_->AppendToTrack(track_id_, &segment)) {
+      played_ticks_ += track_rate_/100; // 10ms in TrackTicks
+    } else {
+      MOZ_MTLOG(PR_LOG_ERROR, "AppendToTrack failed");
+      // we can't un-read the data, but that's ok since we don't want to
+      // buffer - but don't i-loop!
+      return;
+    }
   }
 }
 
@@ -898,7 +998,9 @@ nsresult MediaPipelineReceiveVideo::Init() {
   description_ += track_id_string;
   description_ += "]";
 
-  stream_->AddListener(listener_);
+#ifdef MOZILLA_INTERNAL_API
+  listener_->AddSelf(new VideoSegment());
+#endif
 
   static_cast<VideoSessionConduit *>(conduit_.get())->
       AttachRenderer(renderer_);
@@ -908,20 +1010,16 @@ nsresult MediaPipelineReceiveVideo::Init() {
 
 MediaPipelineReceiveVideo::PipelineListener::PipelineListener(
   SourceMediaStream* source, TrackID track_id)
-    : source_(source),
-      track_id_(track_id),
-      played_(0),
-      width_(640),
-      height_(480),
+  : GenericReceiveListener(source, track_id, USECS_PER_S),
+    width_(640),
+    height_(480),
 #ifdef MOZILLA_INTERNAL_API
-      image_container_(),
-      image_(),
+    image_container_(),
+    image_(),
 #endif
-      monitor_("Video PipelineListener") {
+    monitor_("Video PipelineListener") {
 #ifdef MOZILLA_INTERNAL_API
   image_container_ = layers::LayerManager::CreateImageContainer();
-  source_->AddTrack(track_id_, USECS_PER_S, 0, new VideoSegment());
-  source_->AdvanceKnownTracksTime(STREAM_TIME_MAX);
 #endif
 }
 
@@ -968,7 +1066,7 @@ NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
 #ifdef MOZILLA_INTERNAL_API
   nsRefPtr<layers::Image> image = image_;
   TrackTicks target = TimeToTicksRoundUp(USECS_PER_S, desired_time);
-  TrackTicks delta = target - played_;
+  TrackTicks delta = target - played_ticks_;
 
   // Don't append if we've already provided a frame that supposedly
   // goes past the current aDesiredTime Doing so means a negative
@@ -977,9 +1075,13 @@ NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
     VideoSegment segment;
     segment.AppendFrame(image ? image.forget() : nullptr, delta,
                         gfxIntSize(width_, height_));
-    source_->AppendToTrack(track_id_, &(segment));
-
-    played_ = target;
+    // Handle track not actually added yet or removed/finished
+    if (source_->AppendToTrack(track_id_, &segment)) {
+      played_ticks_ = target;
+    } else {
+      MOZ_MTLOG(PR_LOG_ERROR, "AppendToTrack failed");
+      return;
+    }
   }
 #endif
 }
