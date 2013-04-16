@@ -52,9 +52,33 @@ class ParallelArrayObject : public JSObject
     static bool is(const Value &v);
 };
 
+class ParallelMatrixObject : public JSObject
+{
+    static Class protoClass;
+    static JSFunctionSpec methods[];
+    static const uint32_t NumFixedSlots = 4;
+    static const uint32_t NumCtors = 1;
+    static FixedHeapPtr<PropertyName> ctorNames[NumCtors];
+
+    static bool initProps(JSContext *cx, HandleObject obj);
+
+  public:
+    static Class class_;
+
+    static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
+    static JSBool constructHelper(JSContext *cx, MutableHandleFunction ctor, CallArgs &args);
+    static JSObject *newInstance(JSContext *cx);
+    static JSFunction *getConstructor(JSContext *cx, unsigned argc);
+    static JSObject *initClass(JSContext *cx, HandleObject obj);
+    static bool is(const Value &v);
+};
+
 } // namespace js
 
 extern JSObject *
 js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj);
+
+extern JSObject *
+js_InitParallelMatrixClass(JSContext *cx, js::HandleObject obj);
 
 #endif // ParallelArray_h__

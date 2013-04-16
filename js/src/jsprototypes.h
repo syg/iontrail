@@ -56,5 +56,6 @@
     macro(DataView,              35,     js_InitTypedArrayClasses) \
     macro(ParallelArray,         36,     js_InitParallelArrayClass) \
     macro(Intl,                  37,     js_InitIntlClass) \
+    macro(ParallelMatrix,        38,     js_InitParallelMatrixClass) \
 
 #endif /* jsprototypes_h___ */

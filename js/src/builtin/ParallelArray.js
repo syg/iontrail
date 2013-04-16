@@ -1242,6 +1242,496 @@ function ParallelArrayToString() {
   return result;
 }
 
+function is_value_type(descriptor) {
+  if (typeof descriptor === "string") {
+    if (descriptor === "uint8" ||
+        descriptor === "uint8clamped" ||
+        descriptor === "uint16" ||
+        descriptor === "uint32" ||
+        descriptor === "int8" ||
+        descriptor === "int16" ||
+        descriptor === "int32" ||
+        descriptor === "float32" ||
+        descriptor === "float64" ||
+        descriptor === "any")
+    {
+      return true;
+    }
+    else
+    {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ' invalid data type specification "'+descriptor+'"');
+    }
+  }
+  else
+  {
+    // Other cases (e.g. for Data Type objects) could go here
+  }
+
+  return false;
+}
+
+function submatrix_matches_expectation(expect_shape, expect_valtype, actual_shape, actual_valtype)
+{
+  if (expect_shape.length !== actual_shape.length)
+    return false;
+  if (expect_valtype !== actual_valtype)
+    return false;
+  var len = expect_shape.length;
+  for (var i = 0; i < len; i++) {
+    if (expect_shape[i] !== actual_shape[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function value_type_to_buffer_allocator(descriptor) {
+  function make_univ_buffer(length)         { return NewDenseArray(length); }
+  function make_uint8_buffer(length)        { return new Uint8Array(new ArrayBuffer(length)); }
+  function make_uint8clamped_buffer(length) { return new Uint8ClampedArray(new ArrayBuffer(length)); }
+  function make_uint16_buffer(length)       { return new Uint16Array(new ArrayBuffer(length*2)); }
+  function make_uint32_buffer(length)       { return new Uint32Array(new ArrayBuffer(length*4)); }
+  function make_int8_buffer(length)         { return new Int8Array(new ArrayBuffer(length)); }
+  function make_int16_buffer(length)        { return new Int16Array(new ArrayBuffer(length*2)); }
+  function make_int32_buffer(length)        { return new Int32Array(new ArrayBuffer(length*4)); }
+  function make_flo32_buffer(length)        { return new Float32Array(new ArrayBuffer(length*4)); }
+  function make_flo64_buffer(length)        { return new Float64Array(new ArrayBuffer(length*8)); }
+
+  var lookup = {
+    uint8:   make_uint8_buffer,  uint8clamped: make_uint8clamped_buffer,
+    uint16:  make_uint16_buffer, uint32:       make_uint32_buffer,
+    int8:    make_int8_buffer,   int16:        make_int16_buffer,        int32: make_int32_buffer,
+    float32: make_flo32_buffer,  float64:      make_flo64_buffer,        any: make_univ_buffer
+  };
+
+  return lookup[descriptor];
+}
+
+
+function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
+  // (shape, grain, func, mode)
+
+  var frame = arg0 || [0];
+
+  if (!std_Array_isArray(frame)) {
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": frame argument "+frame+" is not an array of dimensions");
+  }
+
+  var valtype;
+  var grain;
+  var func;
+  var mode;
+
+  if (arg1 === undefined) {
+    grain = [];
+  } else if (typeof arg1 === "function") {
+    grain = [];
+    func = arg1;
+    mode = arg2;
+  } else {
+    grain = arg1;
+    func = arg2;
+    mode = arg3;
+  }
+
+  if (is_value_type(frame[frame.length - 1])) {
+    var desc = frame[frame.length - 1];
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ' data type specification ("'+desc+'") should only occur in grain argument');
+  }
+
+  if (is_value_type(grain[grain.length - 1])) {
+    valtype = grain.pop();
+  } else {
+    valtype = "any"; // this might be expressible as "ObjectPointer" in binary data spec
+  }
+
+  var shape = frame.concat(grain);
+  var buffer_maker = value_type_to_buffer_allocator(valtype);
+
+  if (func === undefined) {
+    func = function fill_with_undef () { return undefined; };
+  }
+
+  var len = 1;
+  var offset;
+  var buffer;
+  var sdims = shape.length;
+
+  for(var i = 0; i < shape.length; i++) {
+    len *= shape[i];
+  }
+  buffer = buffer_maker(len);
+  offset = 0;
+
+  var getFunc;
+  switch(shape.length) {
+    case 1: getFunc = ParallelArrayGet1; break;
+    case 2: getFunc = ParallelArrayGet2; break;
+    case 3: getFunc = ParallelArrayGet3; break;
+    default: getFunc = ParallelArrayGetN; break;
+  }
+
+  // At some point, should specialize on particular shape.length
+  // values (e.g. 1, 2, ...).  But more important for now to get
+  // the general case right.
+
+  var frame_len = 1;
+  var frame_dims = shape.length - grain.length;
+  for(i = 0; i < frame_dims; i++) {
+    frame_len *= shape[i];
+  }
+  var grain_len = 1;
+  for(i = frame_dims; i < shape.length; i++) {
+    var shape_amt = shape[i];
+    if (i == shape.length - 1 && typeof(shape_amt) !== "number")
+      shape_amt = 1;
+    grain_len *= shape_amt;
+  }
+
+  // fillN(offset, offset+len, grain_len);
+  var indexStart = offset;
+  var indexEnd = offset+len;
+  var grainLen = grain_len;
+
+  var computefunc;
+  var isLeaf = (grainLen == 1);
+  switch (frame.length) {
+  case 1:
+    computefunc = isLeaf ? fill1_leaf : fill1_subm;
+    break;
+/*
+  case 2:
+    computefunc = isLeaf ? fill2_leaf : fill2_subm;
+    break;
+  case 3:
+    computefunc = isLeaf ? fill3_leaf : fill3_subm;
+    break;
+*/
+  default:
+    computefunc = isLeaf ? fillN_leaf : fillN_subm;
+    break;
+  }
+
+  parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
+    if (ShouldForceSequential())
+      break parallel;
+    if (!TRY_PARALLEL(mode))
+      break parallel;
+    if (computefunc === fillN)
+      break parallel;
+
+    var chunks = ComputeNumChunks(frame_len);
+    var numSlices = ParallelSlices();
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    ParallelDo(constructSlice, CheckParallel(mode));
+    setup_fields_in_this(this);
+    return;
+  }
+
+  // Sequential fallback:
+  CHECK_SEQUENTIAL(mode);
+  computefunc(0, frame_len);
+  setup_fields_in_this(this);
+  return;
+
+  function constructSlice(sliceId, numSlices, warmup) {
+
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
+
+    if (warmup && chunkEnd > chunkPos)
+      chunkEnd = chunkPos + 1;
+
+    while (chunkPos < chunkEnd) {
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, frame_len);
+      computefunc(indexStart, indexEnd);
+      UnsafeSetElement(info, SLICE_POS(sliceId), ++chunkPos);
+    }
+  }
+
+  function setup_fields_in_this(self) {
+    self.buffer = buffer;
+    self.offset = offset;
+    self.shape = shape;
+    self.valtype = valtype;
+    self.get = getFunc;
+  }
+
+  function fill1_leaf(indexStart, indexEnd) {
+    for (var i = indexStart; i < indexEnd; i++) {
+      UnsafeSetElement(buffer, i, func(i)); 
+    }
+  }
+
+  function fill1_subm(indexStart, indexEnd) {
+    var bufoffset = indexStart;
+    for (var i = indexStart; i < indexEnd; i++, bufoffset += grainLen) {
+      var subarray = func(i);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+    }
+  }
+
+  function fill2_leaf(indexStart, indexEnd) {
+    var x = (indexStart / yDimension) | 0;
+    var y = indexStart - x*yDimension;
+    for (var i = indexStart; i < indexEnd; i++) {
+      UnsafeSetElement(buffer, i, func(x, y));
+      if (++y == yDimension) {
+        y = 0;
+        ++x;
+      }
+    }
+  }
+
+  function fill2_subm(indexStart, indexEnd) {
+    var bufoffset = indexStart;
+    var x = (indexStart / yDimension) | 0;
+    var y = indexStart - x*yDimension;
+    for (var i = indexStart; i < indexEnd; i++, bufoffset += grainLen) {
+      var subarray = func(x, y);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      if (++y == yDimension) {
+        y = 0;
+        ++x;
+      }
+    }
+  }
+
+  function fill3_leaf(indexStart, indexEnd) {
+    var x = (indexStart / (yDimension*zDimension)) | 0;
+    var r = indexStart - x*yDimension*zDimension;
+    var y = (r / zDimension) | 0;
+    var z = r - y*zDimension;
+    for (var i = indexStart; i < indexEnd; i++) {
+      UnsafeSetElement(buffer, i, func(x, y, z));
+      if (++z == zDimension) {
+        z = 0;
+        if (++y == yDimension) {
+          y = 0;
+          ++x;
+        }
+      }
+    }
+  }
+
+  function fill3_subm(indexStart, indexEnd) {
+    var bufoffset = indexStart;
+    var x = (indexStart / (yDimension*zDimension)) | 0;
+    var r = indexStart - x*yDimension*zDimension;
+    var y = (r / zDimension) | 0;
+    var z = r - y*zDimension;
+    for (var i = indexStart; i < indexEnd; i++, bufoffset += grainLen) {
+      var subarray = func(x, y, z);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      if (++z == zDimension) {
+        z = 0;
+        if (++y == yDimension) {
+          y = 0;
+          ++x;
+        }
+      }
+    }
+  }
+
+  function fillN_leaf(indexStart, indexEnd) {
+    var frame_indices = ComputeIndices(frame, indexStart);
+    for (i = indexStart; i < indexEnd; i++) {
+      var val = func.apply(null, frame_indices);
+      UnsafeSetElement(buffer, i, val);
+      StepIndices(frame, frame_indices);
+    }
+  }
+
+  function fillN_subm(indexStart, indexEnd) {
+    var bufoffset = indexStart;
+
+    // allocate new arrays and copy in computed subarrays.
+    var frame_indices = ComputeIndices(frame, indexStart);
+
+    // FIXME: Something seems off about handling of i, indexStart, bufoffset...
+    for (i = indexStart; i < indexEnd; i++, bufoffset += grainLen) {
+      var subarray = func.apply(null, frame_indices);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      StepIndices(frame, frame_indices);
+    }
+  }
+
+  function IdentifySubbufferAndSuboffset(subarray) {
+    var suboffset;
+    var subbuffer;
+
+    if (std_Array_isArray(subarray)) {
+      subbuffer = subarray;
+      suboffset = 0;
+    } else if (IsParallelArray(subarray) || IsParallelMatrix(subarray)) {
+      var subvaltype;
+      if (IsParallelArray(subarray)) {
+         subvaltype = "any";
+      } else {
+         subvaltype = subarray.valtype;
+      }
+      if (!submatrix_matches_expectation(grain, valtype, subarray.shape, subvaltype)) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " mismatched submatrix returned"+
+                                            " with shape: ["+subarray.shape+","+subvaltype+"];"+
+                                            " expected submatrix with shape: ["+grain+","+valtype+"]");
+      }
+      subbuffer = subarray.buffer;
+      suboffset = subarray.offset;
+    } else {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " non-submatrix returned: "+subarray+" expected submatrix with shape: ["+grain+"]");
+    }
+
+    return [subbuffer, suboffset];
+  }
+
+  function CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset) {
+    for (var j = 0; j < grainLen; j++) {
+      UnsafeSetElement(buffer, bufoffset+j, subbuffer[suboffset+j]);
+    }
+  }
+
+}
+
+function ParallelMatrixMap(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.map"); }
+function ParallelMatrixReduce(grain, func, mode) {
+  if (grain.length != 1 || !is_value_type(grain[0])) {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " submatrix grain not yet supported in ParallelMatrix.reduce");
+  }
+  var length = 1;
+  for (var i=0; i < shape.length; i++) { length *= shape[i]; }
+  if (length === 0)
+    ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
+
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
+    if (ShouldForceSequential())
+      break parallel;
+    if (!TRY_PARALLEL(mode))
+      break parallel;
+
+    var chunks = ComputeNumChunks(length);
+    var numSlices = ParallelSlices();
+    if (chunks < numSlices)
+      break parallel;
+
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    var subreductions = NewDenseArray(numSlices);
+    ParallelDo(reduceSlice, CheckParallel(mode));
+    var accumulator = subreductions[0];
+    for (var i = 1; i < numSlices; i++)
+      accumulator = func(accumulator, subreductions[i]);
+    return accumulator;
+  }
+
+  // Sequential fallback:
+  ASSERT_SEQUENTIAL_IS_OK(mode);
+  var accumulator = ParallelArrayGet1.call(self, 0);
+  for (var i = 1; i < length; i++)
+    accumulator = func(accumulator, ParallelArrayGet1.call(self, i));
+  return accumulator;
+
+  function reduceSlice(sliceId, numSlices, warmup) {
+    var chunkStart = info[SLICE_START(sliceId)];
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
+
+    // (*) This function is carefully designed so that the warmup
+    // (which executes with chunkStart === chunkPos) will execute all
+    // potential loads and stores. In particular, the warmup run
+    // processes two chunks rather than one. Moreover, it stores
+    // accumulator into subreductions and then loads it again to
+    // ensure that the load is executed during the warmup, as it will
+    // certainly be executed during subsequent runs.
+
+    if (warmup && chunkEnd > chunkPos + 2)
+      chunkEnd = chunkPos + 2;
+
+    if (chunkStart === chunkPos) {
+      var indexPos = chunkStart << CHUNK_SHIFT;
+      var accumulator = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
+
+      UnsafeSetElement(subreductions, sliceId, accumulator, // see (*) above
+                       info, SLICE_POS(sliceId), ++chunkPos);
+    }
+
+    var accumulator = subreductions[sliceId]; // see (*) above
+
+    while (chunkPos < chunkEnd) {
+      var indexPos = chunkPos << CHUNK_SHIFT;
+      accumulator = reduceChunk(accumulator, indexPos, indexPos + CHUNK_SIZE);
+      UnsafeSetElement(subreductions, sliceId, accumulator,
+                       info, SLICE_POS(sliceId), ++chunkPos);
+    }
+  }
+
+  function reduceChunk(accumulator, from, to) {
+    to = std_Math_min(to, length);
+    for (var i = from; i < to; i++)
+      accumulator = func(accumulator, self.get(i));
+    return accumulator;
+  }
+}
+
+function ParallelMatrixScan(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.scan"); }
+function ParallelMatrixScatter(targets, defaultValue, conflictFunc, length, mode) {
+  ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.scatter");
+}
+function ParallelMatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.filter"); }
+function ParallelMatrixPartition(amount) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.partition"); }
+function ParallelMatrixFlatten()  { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.flatten"); }
+
+function ParallelMatrixToString() {
+  var self = this;
+  var slen = self.shape.length;
+  if (slen == 1) {
+    return "[" + this.buffer.join(",") + "]";
+  }
+
+  var dim0 = self.shape[0];
+  var dim1 = self.shape[1];
+  var p = false;
+  if (slen > 2) {
+    p = 1;
+    for (var i=2; i < slen; i++) {
+      p *= self.shape[i];
+    }
+  }
+  var matrix = self;
+
+  var payload = false;
+  var ret = "[";
+  var matrixNeedsNewline = false;
+  for (var row=0; row < dim0; row++) {
+    if (matrixNeedsNewline)
+      ret += ",\n ";
+    ret += "[";
+    var rowNeedsComma = false;
+    for (var x=0; x < dim1; x++) {
+      if (rowNeedsComma)
+        ret += ", ";
+      var val = matrix.get(row, x);
+      if (IsParallelArray(val)) {
+        ret += "<"+val+">";
+      } else if (val !== undefined) {
+        ret += val;
+      }
+      rowNeedsComma = true;
+    }
+    ret += "]";
+    matrixNeedsNewline = true;
+  }
+  ret += "]";
+  return ret;
+}
+
 /**
  * Internal debugging tool: checks that the given `mode` permits
  * sequential execution

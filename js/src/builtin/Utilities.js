@@ -31,6 +31,7 @@
 var std_isFinite = isFinite;
 var std_isNaN = isNaN;
 var std_Array_indexOf = ArrayIndexOf;
+var std_Array_isArray = Array.isArray;
 var std_Array_join = Array.prototype.join;
 var std_Array_push = Array.prototype.push;
 var std_Array_shift = Array.prototype.shift;
