@@ -1434,10 +1434,15 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
     return;
   }
 
+<<<<<<< HEAD
   mode && mode.print && mode.print({called:"ParallelMatrixConstruct seq fallback"});
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
+=======
+  // Sequential fallback:
+  CHECK_SEQUENTIAL(mode);
+>>>>>>> stashing some rebase+extend work from today.
   computefunc(0, frame_len);
   setup_fields_in_this(this);
   return;
