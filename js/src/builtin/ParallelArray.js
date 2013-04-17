@@ -1417,7 +1417,7 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
       break parallel;
     if (!TRY_PARALLEL(mode))
       break parallel;
-    if (computefunc === fillN)
+    if (computefunc === fillN_leaf || computefunc == fillN_subm)
       break parallel;
 
     var chunks = ComputeNumChunks(frame_len);
@@ -1429,7 +1429,7 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   }
 
   // Sequential fallback:
-  CHECK_SEQUENTIAL(mode);
+  ASSERT_SEQUENTIAL_IS_OK(mode);
   computefunc(0, frame_len);
   setup_fields_in_this(this);
   return;
@@ -1602,11 +1602,20 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
 }
 
 function ParallelMatrixMap(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.map"); }
+
 function ParallelMatrixReduce(grain, func, mode) {
-  if (grain.length != 1 || !is_value_type(grain[0])) {
+  if (typeof grain === "function") {
+    // caller omitted grain argument; shift other arguments down
+    mode = func;
+    func = grain;
+    grain = ["any"];
+  } else if (grain.length != 1 || !is_value_type(grain[0])) {
       ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " submatrix grain not yet supported in ParallelMatrix.reduce");
   }
+  var self = this;
+  mode && mode.print && mode.print({where:"ParallelMatrixReduce", grain:grain, func:func, mode:mode, self:self});
   var length = 1;
+  var shape = self.shape;
   for (var i=0; i < shape.length; i++) { length *= shape[i]; }
   if (length === 0)
     ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
@@ -1633,9 +1642,9 @@ function ParallelMatrixReduce(grain, func, mode) {
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
-  var accumulator = ParallelArrayGet1.call(self, 0);
+  var accumulator = self.buffer[self.offset];
   for (var i = 1; i < length; i++)
-    accumulator = func(accumulator, ParallelArrayGet1.call(self, i));
+    accumulator = func(accumulator, self.buffer[self.offset+i]);
   return accumulator;
 
   function reduceSlice(sliceId, numSlices, warmup) {
