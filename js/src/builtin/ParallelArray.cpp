@@ -266,9 +266,9 @@ js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj)
 FixedHeapPtr<PropertyName> ParallelMatrixObject::ctorNames[NumCtors];
 
 JSFunctionSpec ParallelMatrixObject::methods[] = {
-    { "map",       JSOP_NULLWRAPPER, 2, 0, "ParallelMatrixMap"       },
-    { "reduce",    JSOP_NULLWRAPPER, 2, 0, "ParallelMatrixReduce"    },
-    { "scan",      JSOP_NULLWRAPPER, 2, 0, "ParallelMatrixScan"      },
+    { "map",       JSOP_NULLWRAPPER, 3, 0, "ParallelMatrixMap"       },
+    { "reduce",    JSOP_NULLWRAPPER, 3, 0, "ParallelMatrixReduce"    },
+    { "scan",      JSOP_NULLWRAPPER, 3, 0, "ParallelMatrixScan"      },
     { "scatter",   JSOP_NULLWRAPPER, 5, 0, "ParallelMatrixScatter"   },
     { "filter",    JSOP_NULLWRAPPER, 2, 0, "ParallelMatrixFilter"    },
     { "partition", JSOP_NULLWRAPPER, 1, 0, "ParallelMatrixPartition" },
