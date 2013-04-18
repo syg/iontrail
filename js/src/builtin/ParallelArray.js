@@ -1352,6 +1352,9 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
     func = function fill_with_undef () { return undefined; };
   }
 
+  mode && mode.print && mode.print({called:"ParallelMatrixConstruct",
+                                    shape:shape, frame:frame, grain:grain, valtype:valtype, mode:mode});
+
   var len = 1;
   var offset;
   var buffer;
@@ -1399,18 +1402,21 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   case 1:
     computefunc = isLeaf ? fill1_leaf : fill1_subm;
     break;
-
+/*
   case 2:
     computefunc = isLeaf ? fill2_leaf : fill2_subm;
     break;
   case 3:
     computefunc = isLeaf ? fill3_leaf : fill3_subm;
     break;
+*/
 
   default:
     computefunc = isLeaf ? fillN_leaf : fillN_subm;
     break;
   }
+
+  mode && mode.print && mode.print({called:"ParallelMatrixConstruct prior parallel"});
 
   parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ShouldForceSequential())
@@ -1427,6 +1433,8 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
     setup_fields_in_this(this);
     return;
   }
+
+  mode && mode.print && mode.print({called:"ParallelMatrixConstruct seq fallback"});
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
@@ -1541,26 +1549,65 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   }
 
   function fillN_leaf(indexStart, indexEnd) {
+    mode && mode.print && mode.print({called: "fillN_leaf", indexStart: indexStart, indexEnd: indexEnd, frame:frame});
     var frame_indices = ComputeIndices(frame, indexStart);
+    var used_outptr = false;
+    function set(v) { UnsafeSetElement(buffer, i, val); used_outptr = true; }
     for (i = indexStart; i < indexEnd; i++) {
+      used_outptr = false;
+      var outptr = {};
+      // outptr.set = set;
+      frame_indices.push(outptr);
       var val = func.apply(null, frame_indices);
-      UnsafeSetElement(buffer, i, val);
+      if (!used_outptr) {
+        UnsafeSetElement(buffer, i, val);
+      }
+      frame_indices.pop();
       StepIndices(frame, frame_indices);
     }
   }
 
   function fillN_subm(indexStart, indexEnd) {
+    mode && mode.print && mode.print({called: "fillN_subm", indexStart: indexStart, indexEnd: indexEnd});
     var bufoffset = indexStart;
 
     // allocate new arrays and copy in computed subarrays.
     var frame_indices = ComputeIndices(frame, indexStart);
+    var used_outptr = false;
+
+    function set() {
+      var v = arguments.pop();
+      var offset = 0;
+      if (arguments.length > grain.length) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
+      }
+      if (arguments.length < grain.length) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
+      }
+      for (var i = 0; i < grain.length; i++) {
+        var arg_i = arguments[i];
+        if (arg_i >= grain[i]) {
+          ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set index too large");
+        }
+        offset += arg_i * arguments.slice(i+1).reduce((a,b) => a*b);
+      }
+      UnsafeSetElement(buffer, bufoffset + offset, v);
+      used_outptr = true;
+    }
 
     // FIXME: Something seems off about handling of i, indexStart, bufoffset...
     for (i = indexStart; i < indexEnd; i++, bufoffset += grainLen) {
+      used_outptr = false;
+      var outptr = {};
+      // outptr.set = set;
+      frame_indices.push(outptr);
       var subarray = func.apply(null, frame_indices);
+      frame_indices.pop();
       var [subbuffer, suboffset] =
         IdentifySubbufferAndSuboffset(subarray);
-      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      if (!used_outptr) {
+        CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      }
       StepIndices(frame, frame_indices);
     }
   }
