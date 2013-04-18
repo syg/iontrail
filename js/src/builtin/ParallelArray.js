@@ -1399,14 +1399,14 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   case 1:
     computefunc = isLeaf ? fill1_leaf : fill1_subm;
     break;
-/*
+
   case 2:
     computefunc = isLeaf ? fill2_leaf : fill2_subm;
     break;
   case 3:
     computefunc = isLeaf ? fill3_leaf : fill3_subm;
     break;
-*/
+
   default:
     computefunc = isLeaf ? fillN_leaf : fillN_subm;
     break;
@@ -1812,3 +1812,7 @@ SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true, inline: true });
+
+SetScriptHints(ParallelMatrixConstructFromGrainFunctionMode,
+                                         { cloneAtCallsite: true });
+SetScriptHints(ParallelMatrixReduce,     { cloneAtCallsite: true });
