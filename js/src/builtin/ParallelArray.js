@@ -1410,7 +1410,6 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
     computefunc = isLeaf ? fill3_leaf : fill3_subm;
     break;
 */
-
   default:
     computefunc = isLeaf ? fillN_leaf : fillN_subm;
     break;
