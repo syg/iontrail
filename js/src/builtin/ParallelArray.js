@@ -1601,7 +1601,17 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
 
 }
 
-function ParallelMatrixMap(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.map"); }
+function ParallelMatrixMap(depth, func, mode) {
+  if (typeof depth === "function") {
+    mode = func;
+    func = depth;
+    depth = 1;
+  }
+  var iterationSpace = this.shape.slice(0, depth);
+  var indices = ComputeIndices(iterationSpace, 0);
+  
+  ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.map");
+}
 
 function ParallelMatrixReduce(grain, func, mode) {
   if (typeof grain === "function") {
