@@ -478,7 +478,7 @@ function ParallelArrayReduce(func, mode) {
 
     if (chunkStart === chunkPos) {
       var indexPos = chunkStart << CHUNK_SHIFT;
-      var accumulator = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
+      var accumulator = reduceChunk(self.buffer[self.offset+indexPos], indexPos + 1, indexPos + CHUNK_SIZE);
 
       UnsafeSetElement(subreductions, sliceId, accumulator, // see (*) above
                        info, SLICE_POS(sliceId), ++chunkPos);
@@ -497,7 +497,7 @@ function ParallelArrayReduce(func, mode) {
   function reduceChunk(accumulator, from, to) {
     to = std_Math_min(to, length);
     for (var i = from; i < to; i++)
-      accumulator = func(accumulator, self.get(i));
+      accumulator = func(accumulator, self.buffer[self.offset+i]);
     return accumulator;
   }
 }
