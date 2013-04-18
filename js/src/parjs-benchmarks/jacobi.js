@@ -18,7 +18,7 @@ function kernel(i,j) {
   return (a_north + a_west + a_east + a_south) / 4.0;
 }
 
-function jacobi() {
+function jacobi_par() {
   do {
     var Temp = new ParallelMatrix([n,n], ["float64"], kernel);
     var change = new ParallelMatrix([n,n], ["float64"],
@@ -29,3 +29,28 @@ function jacobi() {
     A = Temp;
   } while (err >= delta);
 }
+
+function jacobi_seq() {
+  // Ideally this would be written with bummed imperative code rather
+  // than using the mode parameter to force sequential execution.
+  // But I do not want to take the time to produce that ideal solution.
+  do {
+    var mode = {mode:"seq"};
+    var Temp = new ParallelMatrix([n,n], ["float64"], kernel, mode);
+    var change = new ParallelMatrix([n,n], ["float64"],
+        function (i,j) {
+          return Math.abs(A.get(i,j) - Temp.get(i,j));
+        }, mode);
+    var err = change.reduce( (a,b) => Math.max(a,b), mode);
+    A = Temp;
+  } while (err >= delta);
+}
+
+// temporarily reduce input size so that we can actually finish
+// a warmup run in a reasonable amount of time.
+n = 16;
+benchmark("JACOBI-16", DEFAULT_WARMUP, DEFAULT_MEASURE,
+          jacobi_seq, jacobi_par);
+n = 512;
+benchmark("JACOBI-512", DEFAULT_WARMUP, DEFAULT_MEASURE,
+          jacobi_seq, jacobi_par);
