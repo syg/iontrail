@@ -439,8 +439,7 @@ struct IonScript
     void copySafepointIndices(const SafepointIndex *firstSafepointIndex, MacroAssembler &masm);
     void copyOsiIndices(const OsiIndex *firstOsiIndex, MacroAssembler &masm);
     void copyRuntimeData(const uint8_t *data);
-    void copyCacheEntries(const uint32_t *caches, CodeOffsetLabel *dispatchLabels,
-                          MacroAssembler &masm);
+    void copyCacheEntries(const uint32_t *caches, MacroAssembler &masm);
     void copySafepoints(const SafepointWriter *writer);
     void copyScriptEntries(JSScript **scripts);
     void copyCallTargetEntries(JSScript **callTargets);
@@ -676,3 +675,4 @@ IsMarked(const ion::VMFunction *)
 } // namespace js
 
 #endif // jsion_coderef_h__
+

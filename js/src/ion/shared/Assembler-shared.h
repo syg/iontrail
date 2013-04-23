@@ -549,3 +549,4 @@ class CodeLocationLabel
 } // namespace js
 
 #endif // jsion_assembler_shared_h__
+

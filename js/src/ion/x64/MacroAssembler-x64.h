@@ -1039,3 +1039,4 @@ typedef MacroAssemblerX64 MacroAssemblerSpecific;
 } // namespace js
 
 #endif // jsion_macro_assembler_x64_h__
+

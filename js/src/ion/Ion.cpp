@@ -566,7 +566,6 @@ IonScript::IonScript()
 }
 
 static const int DataAlignment = 4;
-static const int PointerAlignment = sizeof(uintptr_t);
 
 IonScript *
 IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t snapshotsSize,
@@ -595,7 +594,6 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
     size_t paddedScriptSize = AlignBytes(scriptEntries * sizeof(RawScript), DataAlignment);
     size_t paddedCallTargetSize = AlignBytes(callTargetEntries * sizeof(RawScript), DataAlignment);
-
     size_t bytes = paddedSnapshotsSize +
                    paddedBailoutSize +
                    paddedConstantsSize +
@@ -749,8 +747,7 @@ IonScript::copyRuntimeData(const uint8_t *data)
 }
 
 void
-IonScript::copyCacheEntries(const uint32_t *caches, CodeOffsetLabel *dispatchLabels,
-                            MacroAssembler &masm)
+IonScript::copyCacheEntries(const uint32_t *caches, MacroAssembler &masm)
 {
     memcpy(cacheIndex(), caches, numCaches() * sizeof(uint32_t));
 

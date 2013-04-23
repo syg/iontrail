@@ -126,6 +126,7 @@ GetTopIonJSScript(PerThreadData *pt, const SafepointIndex **safepointIndexOut, v
     return iter.script();
 }
 
+
 inline RawScript
 GetTopIonJSScript(JSContext *cx, const SafepointIndex **safepointIndexOut, void **returnAddrOut)
 {

@@ -3716,18 +3716,6 @@ if test -n "$JS_GC_ZEAL" -o -n "$MOZ_DEBUG"; then
 fi
 
 dnl ========================================================
-dnl Manual threads
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(manual-threads,
-[  --enable-manual-threads Allow number of worker threads to be specified
-                          using the environment variable JSTHREADS ],
-    JS_MANUAL_THREADS=1,
-    JS_MANUAL_THREADS= )
-if test -n "$JS_MANUAL_THREADS" -o -n "$MOZ_DEBUG"; then
-    AC_DEFINE(JS_MANUAL_THREADS)
-fi
-
-dnl ========================================================
 dnl JS opt-mode assertions and minidump instrumentation
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(js-diagnostics,

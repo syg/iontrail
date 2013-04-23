@@ -7363,3 +7363,4 @@ typedef Vector<MDefinition *, 8, IonAllocPolicy> MDefinitionVector;
 } // namespace js
 
 #endif // jsion_mir_h__
+

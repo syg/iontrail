@@ -399,4 +399,3 @@ MSG_DEF(JSMSG_BAD_ARROW_ARGS,         345, 0, JSEXN_SYNTAXERR, "invalid arrow-fu
 MSG_DEF(JSMSG_YIELD_IN_ARROW,         346, 0, JSEXN_SYNTAXERR, "arrow function may not contain yield")
 MSG_DEF(JSMSG_WRONG_VALUE,            347, 2, JSEXN_ERR, "expected {0} but found {1}")
 MSG_DEF(JSMSG_PAR_ARRAY_SCATTER_BAD_TARGET, 348, 1, JSEXN_ERR, "target for index {0} is not an integer")
-

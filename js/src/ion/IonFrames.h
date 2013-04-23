@@ -223,7 +223,7 @@ class FrameSizeClass
 
     explicit FrameSizeClass(uint32_t class_) : class_(class_)
     { }
-
+  
   public:
     FrameSizeClass()
     { }
@@ -332,3 +332,4 @@ MarkCalleeToken(JSTracer *trc, CalleeToken token);
 } /* namespace js */
 
 #endif // jsion_frames_h__
+

@@ -74,9 +74,6 @@ class CodeGeneratorShared : public LInstructionVisitor
     // List of stack slots that have been pushed as arguments to an MCall.
     js::Vector<uint32_t, 0, SystemAllocPolicy> pushedArgumentSlots_;
 
-    // List of labels that need to be patched for dispatch-style ICs.
-    js::Vector<CodeOffsetLabel, 0, SystemAllocPolicy> cacheDispatchLabels_;
-
     // When profiling is enabled, this is the instrumentation manager which
     // maintains state of what script is currently being generated (for inline
     // scripts) and when instrumentation needs to be emitted or skipped.
@@ -652,3 +649,4 @@ class OutOfLinePropagateParallelAbort : public OutOfLineCode
 } // namespace js
 
 #endif // jsion_codegen_shared_h__
+

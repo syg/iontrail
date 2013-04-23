@@ -550,3 +550,4 @@ class AutoWrapperRooter : private AutoGCRooter {
 } /* namespace js */
 
 #endif /* jscompartment_h___ */
+

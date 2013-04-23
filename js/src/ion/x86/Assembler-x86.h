@@ -281,10 +281,6 @@ class Assembler : public AssemblerX86Shared
         push(Imm32(word.value));
         return masm.currentOffset();
     }
-    CodeOffsetLabel moveWithPatch(const ImmWord &word, const Register &dest) {
-        movl(Imm32(word.value), dest);
-        return masm.currentOffset();
-    }
 
     CodeOffsetLabel movWithPatch(const ImmWord &word, const Register &dest) {
         movl(Imm32(word.value), dest);

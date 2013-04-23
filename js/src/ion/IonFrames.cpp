@@ -512,7 +512,7 @@ HandleException(ResumeFromException *rfe)
 }
 
 void
-ion::HandleParallelFailure(ResumeFromException *rfe)
+HandleParallelFailure(ResumeFromException *rfe)
 {
     ForkJoinSlice *slice = ForkJoinSlice::Current();
     IonFrameIterator iter(slice->perThreadData->ionTop);
@@ -537,7 +537,7 @@ ion::HandleParallelFailure(ResumeFromException *rfe)
 }
 
 void
-ion::EnsureExitFrame(IonCommonFrameLayout *frame)
+EnsureExitFrame(IonCommonFrameLayout *frame)
 {
     if (frame->prevType() == IonFrame_Unwound_OptimizedJS ||
         frame->prevType() == IonFrame_Unwound_BaselineStub ||
@@ -1140,11 +1140,11 @@ IonFrameIterator::ionScript() const
     switch (GetCalleeTokenTag(calleeToken())) {
       case CalleeToken_Function:
       case CalleeToken_Script:
-        return script()->ionScript();
+		return script()->ionScript();
       case CalleeToken_ParallelFunction:
-        return script()->parallelIonScript();
+		return script()->parallelIonScript();
       default:
-        JS_NOT_REACHED("unknown callee token type");
+		JS_NOT_REACHED("unknown callee token type");
     }
 }
 

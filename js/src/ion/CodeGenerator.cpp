@@ -4531,10 +4531,6 @@ CodeGenerator::link()
     ExecutionMode executionMode = gen->info().executionMode();
     JS_ASSERT(!HasIonScript(script, executionMode));
 
-    // Either all ICs should be dispatch style or repatch style.
-    bool cachesUseDispatch = !cacheDispatchLabels_.empty();
-    JS_ASSERT_IF(cachesUseDispatch, cacheList_.length() == cacheDispatchLabels_.length());
-
     uint32_t scriptFrameSize = frameClass_ == FrameSizeClass::None()
                            ? frameDepth_
                            : FrameSizeClass::FromDepth(frameDepth_).frameSize();
@@ -4577,11 +4573,8 @@ CodeGenerator::link()
     // for generating inline caches during the execution.
     if (runtimeData_.length())
         ionScript->copyRuntimeData(&runtimeData_[0]);
-    if (cacheList_.length()) {
-        ionScript->copyCacheEntries(&cacheList_[0],
-                                    cachesUseDispatch ? &cacheDispatchLabels_[0] : NULL,
-                                    masm);
-    }
+    if (cacheList_.length())
+        ionScript->copyCacheEntries(&cacheList_[0], masm);
 
     // for marking during GC.
     if (safepointIndices_.length())

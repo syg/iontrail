@@ -701,3 +701,4 @@ class MDefinitionIterator
 } // namespace js
 
 #endif // jsion_mirgraph_h__
+

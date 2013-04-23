@@ -354,10 +354,6 @@ class Assembler : public AssemblerX86Shared
         push(ScratchReg);
         return label;
     }
-    CodeOffsetLabel moveWithPatch(const ImmWord &word, const Register &dest) {
-        movq(word, dest);
-        return masm.currentOffset();
-    }
 
     CodeOffsetLabel movWithPatch(const ImmWord &word, const Register &dest) {
         movq(word, dest);

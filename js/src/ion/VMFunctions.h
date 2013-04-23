@@ -554,3 +554,4 @@ bool InitBaselineFrameForOsr(BaselineFrame *frame, StackFrame *interpFrame,
 } // namespace js
 
 #endif // jsion_vm_functions_h_
+

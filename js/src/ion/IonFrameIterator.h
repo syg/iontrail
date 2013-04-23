@@ -355,3 +355,4 @@ typedef InlineFrameIteratorMaybeGC<NoGC> InlineFrameIteratorNoGC;
 } // namespace js
 
 #endif // jsion_frames_iterator_h__
+

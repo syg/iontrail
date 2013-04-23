@@ -61,10 +61,6 @@ void TraceLIR(uint32_t bblock, uint32_t lir, uint32_t execModeInt,
 
 void ParCallToUncompiledScript(JSFunction *func);
 
-// Defined in IonCaches.cpp to use the statics there.
-bool ParGetPropertyCache(ForkJoinSlice *slice, size_t cacheIndex, HandleObject obj,
-                         MutableHandleValue vp);
-
 } // namespace ion
 } // namespace js
 

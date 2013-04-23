@@ -240,9 +240,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     // Inline caches visitors.
     bool visitOutOfLineCache(OutOfLineUpdateCache *ool);
 
-    bool addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
-                             PropertyName *name, TypedOrValueRegister output,
-                             bool allowGetters);
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins);
     bool visitGetPropertyCacheT(LGetPropertyCacheT *ins);
     bool visitGetElementCacheV(LGetElementCacheV *ins);
@@ -263,6 +260,9 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCallsiteCloneIC(OutOfLineUpdateCache *ool, CallsiteCloneIC *ic);
 
   private:
+    bool addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
+                             PropertyName *name, TypedOrValueRegister output,
+                             bool allowGetters);
     bool checkForParallelBailout(LInstruction *lir);
 
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);
