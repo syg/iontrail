@@ -2308,6 +2308,50 @@ CodeGenerator::visitNewParallelArrayVMCall(LNewParallelArray *lir)
     return true;
 }
 
+// Out-of-line object allocation for LNewParallelMatrix.
+class OutOfLineNewParallelMatrix : public OutOfLineCodeBase<CodeGenerator>
+{
+    LNewParallelMatrix *lir_;
+
+  public:
+    OutOfLineNewParallelMatrix(LNewParallelMatrix *lir)
+      : lir_(lir)
+    { }
+
+    bool accept(CodeGenerator *codegen) {
+        return codegen->visitOutOfLineNewParallelMatrix(this);
+    }
+
+    LNewParallelMatrix *lir() const {
+        return lir_;
+    }
+};
+
+typedef JSObject *(*NewInitParallelMatrixFn)(JSContext *, HandleObject);
+static const VMFunction NewInitParallelMatrixInfo =
+    FunctionInfo<NewInitParallelMatrixFn>(NewInitParallelMatrix);
+
+bool
+CodeGenerator::visitNewParallelMatrixVMCall(LNewParallelMatrix *lir)
+{
+    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
+
+    Register objReg = ToRegister(lir->output());
+
+    JS_ASSERT(!lir->isCall());
+    saveLive(lir);
+
+    pushArg(ImmGCPtr(lir->mir()->templateObject()));
+    if (!callVM(NewInitParallelMatrixInfo, lir))
+        return false;
+
+    if (ReturnReg != objReg)
+        masm.movePtr(ReturnReg, objReg);
+
+    restoreLive(lir);
+    return true;
+}
+
 // Out-of-line object allocation for LNewArray.
 class OutOfLineNewArray : public OutOfLineCodeBase<CodeGenerator>
 {
@@ -2402,6 +2446,32 @@ bool
 CodeGenerator::visitOutOfLineNewParallelArray(OutOfLineNewParallelArray *ool)
 {
     if (!visitNewParallelArrayVMCall(ool->lir()))
+        return false;
+    masm.jump(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitNewParallelMatrix(LNewParallelMatrix *lir)
+{
+    Register objReg = ToRegister(lir->output());
+    JSObject *templateObject = lir->mir()->templateObject();
+
+    OutOfLineNewParallelMatrix *ool = new OutOfLineNewParallelMatrix(lir);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    masm.newGCThing(objReg, templateObject, ool->entry());
+    masm.initGCThing(objReg, templateObject);
+
+    masm.bind(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineNewParallelMatrix(OutOfLineNewParallelMatrix *ool)
+{
+    if (!visitNewParallelMatrixVMCall(ool->lir()))
         return false;
     masm.jump(ool->rejoin());
     return true;

@@ -21,6 +21,7 @@ namespace js {
 namespace ion {
 
 class OutOfLineNewParallelArray;
+class OutOfLineNewParallelMatrix;
 class OutOfLineTestObject;
 class OutOfLineNewArray;
 class OutOfLineNewObject;
@@ -102,8 +103,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitDoubleToInt32(LDoubleToInt32 *lir);
     bool visitNewSlots(LNewSlots *lir);
     bool visitNewParallelArrayVMCall(LNewParallelArray *lir);
+    bool visitNewParallelMatrixVMCall(LNewParallelMatrix *lir);
     bool visitNewParallelArray(LNewParallelArray *lir);
+    bool visitNewParallelMatrix(LNewParallelMatrix *lir);
     bool visitOutOfLineNewParallelArray(OutOfLineNewParallelArray *ool);
+    bool visitOutOfLineNewParallelMatrix(OutOfLineNewParallelMatrix *ool);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);
     bool visitOutOfLineNewArray(OutOfLineNewArray *ool);

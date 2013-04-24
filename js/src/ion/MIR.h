@@ -1096,6 +1096,32 @@ class MNewParallelArray : public MNullaryInstruction
     }
 };
 
+class MNewParallelMatrix : public MNullaryInstruction
+{
+    CompilerRootObject templateObject_;
+
+    MNewParallelMatrix(JSObject *templateObject)
+      : templateObject_(templateObject)
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(NewParallelMatrix);
+
+    static MNewParallelMatrix *New(JSObject *templateObject) {
+        return new MNewParallelMatrix(templateObject);
+    }
+
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+
+    JSObject *templateObject() const {
+        return templateObject_;
+    }
+};
+
 // Fabricate a type set containing only the type of the specified object.
 types::StackTypeSet *
 MakeSingletonTypeSet(JSObject *obj);
