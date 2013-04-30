@@ -1339,7 +1339,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
   }
 
   var indexStart = offset;
-  var indexEnd = offset+len;
+  var indexEnd = offset+frame_len;
   var grain_len = ProductOfArray(grain);
 
   mode && mode.print && mode.print(
@@ -1386,11 +1386,11 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
     return;
   }
 
-  mode && mode.print && mode.print({called:"ParallelMatrixFill seq fallback"});
+  mode && mode.print && mode.print({called:"ParallelMatrixFill seq fallback", frame_len:frame_len, indexStart:indexStart, indexEnd:indexEnd});
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
-  computefunc(0, frame_len);
+  computefunc(indexStart, indexEnd);
   return;
 
   function constructSlice(sliceId, numSlices, warmup) {
@@ -1503,7 +1503,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
   }
 
   function fillN_leaf(indexStart, indexEnd) {
-    mode && mode.print && mode.print({called: "fillN_leaf A", indexStart: indexStart, indexEnd: indexEnd, frame:frame});
+    mode && mode.print && mode.print({called: "fillN_leaf A", offset:offset, indexStart: indexStart, indexEnd: indexEnd, frame:frame});
     var frame_indices = ComputeIndices(frame, indexStart);
     mode && mode.print && mode.print({called: "fillN_leaf B", frame_indices:frame_indices});
     var used_outptr = false;
@@ -1526,7 +1526,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
 
   function fillN_subm(indexStart, indexEnd) {
 
-    mode && mode.print && mode.print({called: "fillN_subm A", indexStart: indexStart, indexEnd: indexEnd});
+    mode && mode.print && mode.print({called: "fillN_subm A", offset:offset, indexStart: indexStart, indexEnd: indexEnd});
 
     var bufoffset = indexStart;
 
@@ -1550,7 +1550,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
       return accum_idx;
     }
 
-    function set(...args) {
+    function outptr_set(...args) {
       mode && mode.print && mode.print({called: "outptr.set A", args:args});
       var v = args.pop();
       if (args.length > grain.length) {
@@ -1565,11 +1565,34 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
       used_outptr = true;
     }
 
+    function outptr_gather(arg0, arg1, arg2) { // ([depth,] func, [mode])
+      mode && mode.print && mode.print({called: "outptr.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
+      var depth, func, mode;
+      if (typeof arg0 === "function") {
+        depth = grain.length;
+        func = arg0;
+        mode = arg1;
+      } else { // assumes (typeof arg1 === "function")
+        depth = arg0;
+        func = arg1;
+        mode = arg2;
+      }
+
+      var subframe = grain.slice(0, depth);
+      var subgrain = grain.slice(depth);
+
+      mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
+
+      ParallelMatrixFill(buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+      used_outptr = true;
+    }
+
     // FIXME: Something seems off about handling of i, indexStart, bufoffset...
     for (i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
       used_outptr = false;
       var outptr = {};
-      outptr.set = set;
+      outptr.set = outptr_set;
+      outptr.gather = outptr_gather;
       frame_indices.push(outptr);
 
       mode && mode.print && mode.print({called: "fillN_subm C", i:i, frame_indices:frame_indices});
