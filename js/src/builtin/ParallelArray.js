@@ -1349,10 +1349,12 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
   var computefunc;
   var isLeaf = (grain.length == 0);
   switch (frame.length) {
-  case 1:
+/*
+   case 1:
     computefunc = isLeaf ? fill1_leaf : fill1_subm;
     mode && mode.print && mode.print({called:"ParallelMatrixFill computefunc is fill1"});
     break;
+*/
 /*
   case 2:
     computefunc = isLeaf ? fill2_leaf : fill2_subm;
@@ -1509,7 +1511,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
     for (i = indexStart; i < indexEnd; i++) {
       used_outptr = false;
       var outptr = {};
-      // outptr.set = set;
+      outptr.set = set;
       frame_indices.push(outptr);
       mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices});
       var val = func.apply(undefined, frame_indices);
@@ -1532,22 +1534,33 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
     var frame_indices = ComputeIndices(frame, indexStart);
     var used_outptr = false;
 
-    function set() {
-      var v = arguments.pop();
-      var offset = 0;
-      if (arguments.length > grain.length) {
-        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
-      }
-      if (arguments.length < grain.length) {
-        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
-      }
-      for (var i = 0; i < grain.length; i++) {
-        var arg_i = arguments[i];
-        if (arg_i >= grain[i]) {
+    function ndimIndexToOffset(...indices) {
+      mode && mode.print && mode.print({called: "outptr.ndimIndexToOffset", indices:indices});
+      var accum_idx  = 0;
+      var accum_prod = 1;
+      for (var i=indices.length-1; i>=0; i--) {
+        var arg_i = indices[i];
+        var grain_i = grain[i];
+        if (arg_i >= grain_i) {
           ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set index too large");
         }
-        offset += arg_i * arguments.slice(i+1).reduce((a,b) => a*b);
+        accum_idx += arg_i * accum_prod;
+        accum_prod *= grain_i;
       }
+      return accum_idx;
+    }
+
+    function set(...args) {
+      mode && mode.print && mode.print({called: "outptr.set A", args:args});
+      var v = args.pop();
+      if (args.length > grain.length) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
+      }
+      if (args.length < grain.length) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
+      }
+      var offset = ndimIndexToOffset.apply(null, args);
+      mode && mode.print && mode.print({called: "outptr.set Y", bufoffset: bufoffset, offset: offset, sum: bufoffset + offset, v:v});
       UnsafeSetElement(buffer, bufoffset + offset, v);
       used_outptr = true;
     }
@@ -1556,7 +1569,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
     for (i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
       used_outptr = false;
       var outptr = {};
-      // outptr.set = set;
+      outptr.set = set;
       frame_indices.push(outptr);
 
       mode && mode.print && mode.print({called: "fillN_subm C", i:i, frame_indices:frame_indices});
@@ -1566,12 +1579,9 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
 
       mode && mode.print && mode.print({called: "fillN_subm D", subarray:subarray});
 
-      var [subbuffer, suboffset] =
-        IdentifySubbufferAndSuboffset(subarray);
-
-      mode && mode.print && mode.print({called: "fillN_subm E", subbuffer:subbuffer, suboffset:suboffset});
-
       if (!used_outptr) {
+        var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
+        mode && mode.print && mode.print({called: "fillN_subm E", subbuffer:subbuffer, suboffset:suboffset});
         CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
       }
 
