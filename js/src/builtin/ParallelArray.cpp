@@ -260,36 +260,36 @@ js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj)
 }
 
 //
-// ParallelMatrixObject
+// MatrixObject
 //
 
-FixedHeapPtr<PropertyName> ParallelMatrixObject::ctorNames[NumCtors];
+FixedHeapPtr<PropertyName> MatrixObject::ctorNames[NumCtors];
 
-JSFunctionSpec ParallelMatrixObject::methods[] = {
-    { "map",       JSOP_NULLWRAPPER, 4, 0, "ParallelMatrixMap"       },
-    { "reduce",    JSOP_NULLWRAPPER, 3, 0, "ParallelMatrixReduce"    },
-    { "scan",      JSOP_NULLWRAPPER, 3, 0, "ParallelMatrixScan"      },
-    { "scatter",   JSOP_NULLWRAPPER, 5, 0, "ParallelMatrixScatter"   },
-    { "filter",    JSOP_NULLWRAPPER, 2, 0, "ParallelMatrixFilter"    },
-    { "partition", JSOP_NULLWRAPPER, 1, 0, "ParallelMatrixPartition" },
-    { "flatten",   JSOP_NULLWRAPPER, 0, 0, "ParallelMatrixFlatten" },
+JSFunctionSpec MatrixObject::methods[] = {
+    { "map",       JSOP_NULLWRAPPER, 4, 0, "MatrixMap"       },
+    { "reduce",    JSOP_NULLWRAPPER, 3, 0, "MatrixReduce"    },
+    { "scan",      JSOP_NULLWRAPPER, 3, 0, "MatrixScan"      },
+    { "scatter",   JSOP_NULLWRAPPER, 5, 0, "MatrixScatter"   },
+    { "filter",    JSOP_NULLWRAPPER, 2, 0, "MatrixFilter"    },
+    { "partition", JSOP_NULLWRAPPER, 1, 0, "MatrixPartition" },
+    { "flatten",   JSOP_NULLWRAPPER, 0, 0, "MatrixFlatten" },
 
     // FIXME #838906. Note that `get()` is not currently defined on this table but
-    // rather is assigned to each instance of ParallelArray (and likewise ParallelMatrix) as an own
+    // rather is assigned to each instance of ParallelArray (and likewise Matrix) as an own
     // property.  This is a bit of a hack designed to supply a
     // specialized version of get() based on the dimensionality of the
     // receiver.  In the future we can improve this by (1) extending
     // TI to track the dimensionality of the receiver and (2) using a
     // hint to aggressively inline calls to get().
-    // { "get",      JSOP_NULLWRAPPER, 1, 0, "ParallelMatrixGet" },
+    // { "get",      JSOP_NULLWRAPPER, 1, 0, "MatrixGet" },
 
-    { "toString", JSOP_NULLWRAPPER, 0, 0, "ParallelMatrixToString" },
+    { "toString", JSOP_NULLWRAPPER, 0, 0, "MatrixToString" },
     JS_FS_END
 };
 
-Class ParallelMatrixObject::protoClass = {
-    "ParallelMatrix",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_ParallelMatrix),
+Class MatrixObject::protoClass = {
+    "Matrix",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Matrix),
     JS_PropertyStub,         // addProperty
     JS_DeletePropertyStub,   // delProperty
     JS_PropertyStub,         // getProperty
@@ -299,9 +299,9 @@ Class ParallelMatrixObject::protoClass = {
     JS_ConvertStub
 };
 
-Class ParallelMatrixObject::class_ = {
-    "ParallelMatrix",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_ParallelMatrix),
+Class MatrixObject::class_ = {
+    "Matrix",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Matrix),
     JS_PropertyStub,         // addProperty
     JS_DeletePropertyStub,   // delProperty
     JS_PropertyStub,         // getProperty
@@ -312,7 +312,7 @@ Class ParallelMatrixObject::class_ = {
 };
 
 /*static*/ bool
-ParallelMatrixObject::initProps(JSContext *cx, HandleObject obj)
+MatrixObject::initProps(JSContext *cx, HandleObject obj)
 {
     RootedValue undef(cx, UndefinedValue());
     RootedValue zero(cx, Int32Value(0));
@@ -330,7 +330,7 @@ ParallelMatrixObject::initProps(JSContext *cx, HandleObject obj)
 }
 
 /*static*/ JSBool
-ParallelMatrixObject::construct(JSContext *cx, unsigned argc, Value *vp)
+MatrixObject::construct(JSContext *cx, unsigned argc, Value *vp)
 {
     RootedFunction ctor(cx, getConstructor(cx, argc));
     if (!ctor)
@@ -340,7 +340,7 @@ ParallelMatrixObject::construct(JSContext *cx, unsigned argc, Value *vp)
 }
 
 /* static */ JSFunction *
-ParallelMatrixObject::getConstructor(JSContext *cx, unsigned argc)
+MatrixObject::getConstructor(JSContext *cx, unsigned argc)
 {
     RootedPropertyName ctorName(cx, ctorNames[js::Min(argc, NumCtors - 1)]);
     RootedValue ctorValue(cx);
@@ -351,7 +351,7 @@ ParallelMatrixObject::getConstructor(JSContext *cx, unsigned argc)
 }
 
 /*static*/ JSObject *
-ParallelMatrixObject::newInstance(JSContext *cx)
+MatrixObject::newInstance(JSContext *cx)
 {
     gc::AllocKind kind = gc::GetGCObjectKind(NumFixedSlots);
     RootedObject result(cx, NewBuiltinClassInstance(cx, &class_, kind));
@@ -366,7 +366,7 @@ ParallelMatrixObject::newInstance(JSContext *cx)
 }
 
 /*static*/ JSBool
-ParallelMatrixObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, CallArgs &args0)
+MatrixObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, CallArgs &args0)
 {
     RootedObject result(cx, newInstance(cx));
     if (!result)
@@ -389,7 +389,7 @@ ParallelMatrixObject::constructHelper(JSContext *cx, MutableHandleFunction ctor,
             // must have been created by this same C++ code and hence would
             // already have properties if it had been returned before.
             types::TypeObject *pmTypeObject =
-                types::TypeScript::InitObject(cx, script, pc, JSProto_ParallelMatrix);
+                types::TypeScript::InitObject(cx, script, pc, JSProto_Matrix);
             if (!pmTypeObject)
                 return false;
             if (pmTypeObject->getPropertyCount() == 0) {
@@ -422,13 +422,13 @@ ParallelMatrixObject::constructHelper(JSContext *cx, MutableHandleFunction ctor,
 }
 
 JSObject *
-ParallelMatrixObject::initClass(JSContext *cx, HandleObject obj)
+MatrixObject::initClass(JSContext *cx, HandleObject obj)
 {
     JS_ASSERT(obj->isNative());
 
     // Cache constructor names.
     {
-        const char *ctorStrs[NumCtors] = { "ParallelMatrixConstructFromGrainFunctionMode"};
+        const char *ctorStrs[NumCtors] = { "MatrixConstructFromGrainFunctionMode"};
         for (uint32_t i = 0; i < NumCtors; i++) {
             JSAtom *atom = Atomize(cx, ctorStrs[i], strlen(ctorStrs[i]), InternAtom);
             if (!atom)
@@ -443,9 +443,9 @@ ParallelMatrixObject::initClass(JSContext *cx, HandleObject obj)
     if (!proto)
         return NULL;
 
-    JSProtoKey key = JSProto_ParallelMatrix;
+    JSProtoKey key = JSProto_Matrix;
     RootedFunction ctor(cx, global->createConstructor(cx, construct,
-                                                      cx->names().ParallelMatrix, 0));
+                                                      cx->names().Matrix, 0));
     if (!ctor ||
         !LinkConstructorAndPrototype(cx, ctor, proto) ||
         !DefinePropertiesAndBrand(cx, proto, NULL, methods) ||
@@ -458,7 +458,7 @@ ParallelMatrixObject::initClass(JSContext *cx, HandleObject obj)
 }
 
 JSObject *
-js_InitParallelMatrixClass(JSContext *cx, js::HandleObject obj)
+js_InitMatrixClass(JSContext *cx, js::HandleObject obj)
 {
-    return ParallelMatrixObject::initClass(cx, obj);
+    return MatrixObject::initClass(cx, obj);
 }

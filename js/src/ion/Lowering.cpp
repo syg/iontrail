@@ -163,9 +163,9 @@ LIRGenerator::visitNewParallelArray(MNewParallelArray *ins)
 }
 
 bool
-LIRGenerator::visitNewParallelMatrix(MNewParallelMatrix *ins)
+LIRGenerator::visitNewMatrix(MNewMatrix *ins)
 {
-    LNewParallelMatrix *lir = new LNewParallelMatrix();
+    LNewMatrix *lir = new LNewMatrix();
     return define(lir, ins) && assignSafepoint(lir, ins);
 }
 

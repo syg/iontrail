@@ -5,15 +5,15 @@ function cell(i,j,k) {
 }
 
 function test_2d() {
-  var pm1 = new ParallelMatrix([4, 3], [   4,"uint8"],
-    function(i,j) { return new ParallelMatrix([   4], ["uint8"],
+  var pm1 = new Matrix([4, 3], [   4,"uint8"],
+    function(i,j) { return new Matrix([   4], ["uint8"],
       function (   k) { return cell(i, j, k); }); });
 
-  var pm2 = new ParallelMatrix([4   ], [3, 4,"uint8"],
-    function(i  ) { return new ParallelMatrix([3, 4], ["uint8"],
+  var pm2 = new Matrix([4   ], [3, 4,"uint8"],
+    function(i  ) { return new Matrix([3, 4], ["uint8"],
       function (j, k) { return cell(i, j, k); }); });
 
-  assertEqParallelMatrix(pm1, pm2);
+  assertEqMatrix(pm1, pm2);
 }
 
 test_2d();

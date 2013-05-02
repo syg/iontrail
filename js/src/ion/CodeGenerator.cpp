@@ -1,8 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99:
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset:
+ * 4 -*- vim: set ts=8 sts=4 et sw=4 tw=99: This Source Code Form is
+ * subject to the terms of the Mozilla Public License, v. 2.0. If a
+ * copy of the MPL was not distributed with this file, You can obtain
+ * one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
@@ -2308,31 +2308,31 @@ CodeGenerator::visitNewParallelArrayVMCall(LNewParallelArray *lir)
     return true;
 }
 
-// Out-of-line object allocation for LNewParallelMatrix.
-class OutOfLineNewParallelMatrix : public OutOfLineCodeBase<CodeGenerator>
+// Out-of-line object allocation for LNewMatrix.
+class OutOfLineNewMatrix : public OutOfLineCodeBase<CodeGenerator>
 {
-    LNewParallelMatrix *lir_;
+    LNewMatrix *lir_;
 
   public:
-    OutOfLineNewParallelMatrix(LNewParallelMatrix *lir)
+    OutOfLineNewMatrix(LNewMatrix *lir)
       : lir_(lir)
     { }
 
     bool accept(CodeGenerator *codegen) {
-        return codegen->visitOutOfLineNewParallelMatrix(this);
+        return codegen->visitOutOfLineNewMatrix(this);
     }
 
-    LNewParallelMatrix *lir() const {
+    LNewMatrix *lir() const {
         return lir_;
     }
 };
 
-typedef JSObject *(*NewInitParallelMatrixFn)(JSContext *, HandleObject);
-static const VMFunction NewInitParallelMatrixInfo =
-    FunctionInfo<NewInitParallelMatrixFn>(NewInitParallelMatrix);
+typedef JSObject *(*NewInitMatrixFn)(JSContext *, HandleObject);
+static const VMFunction NewInitMatrixInfo =
+    FunctionInfo<NewInitMatrixFn>(NewInitMatrix);
 
 bool
-CodeGenerator::visitNewParallelMatrixVMCall(LNewParallelMatrix *lir)
+CodeGenerator::visitNewMatrixVMCall(LNewMatrix *lir)
 {
     JS_ASSERT(gen->info().executionMode() == SequentialExecution);
 
@@ -2342,7 +2342,7 @@ CodeGenerator::visitNewParallelMatrixVMCall(LNewParallelMatrix *lir)
     saveLive(lir);
 
     pushArg(ImmGCPtr(lir->mir()->templateObject()));
-    if (!callVM(NewInitParallelMatrixInfo, lir))
+    if (!callVM(NewInitMatrixInfo, lir))
         return false;
 
     if (ReturnReg != objReg)
@@ -2452,12 +2452,12 @@ CodeGenerator::visitOutOfLineNewParallelArray(OutOfLineNewParallelArray *ool)
 }
 
 bool
-CodeGenerator::visitNewParallelMatrix(LNewParallelMatrix *lir)
+CodeGenerator::visitNewMatrix(LNewMatrix *lir)
 {
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
-    OutOfLineNewParallelMatrix *ool = new OutOfLineNewParallelMatrix(lir);
+    OutOfLineNewMatrix *ool = new OutOfLineNewMatrix(lir);
     if (!addOutOfLineCode(ool))
         return false;
 
@@ -2469,9 +2469,9 @@ CodeGenerator::visitNewParallelMatrix(LNewParallelMatrix *lir)
 }
 
 bool
-CodeGenerator::visitOutOfLineNewParallelMatrix(OutOfLineNewParallelMatrix *ool)
+CodeGenerator::visitOutOfLineNewMatrix(OutOfLineNewMatrix *ool)
 {
-    if (!visitNewParallelMatrixVMCall(ool->lir()))
+    if (!visitNewMatrixVMCall(ool->lir()))
         return false;
     masm.jump(ool->rejoin());
     return true;

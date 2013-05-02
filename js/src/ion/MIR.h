@@ -1096,21 +1096,21 @@ class MNewParallelArray : public MNullaryInstruction
     }
 };
 
-class MNewParallelMatrix : public MNullaryInstruction
+class MNewMatrix : public MNullaryInstruction
 {
     CompilerRootObject templateObject_;
 
-    MNewParallelMatrix(JSObject *templateObject)
+    MNewMatrix(JSObject *templateObject)
       : templateObject_(templateObject)
     {
         setResultType(MIRType_Object);
     }
 
   public:
-    INSTRUCTION_HEADER(NewParallelMatrix);
+    INSTRUCTION_HEADER(NewMatrix);
 
-    static MNewParallelMatrix *New(JSObject *templateObject) {
-        return new MNewParallelMatrix(templateObject);
+    static MNewMatrix *New(JSObject *templateObject) {
+        return new MNewMatrix(templateObject);
     }
 
     AliasSet getAliasSet() const {

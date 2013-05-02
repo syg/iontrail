@@ -469,7 +469,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineNewDenseArrayForSequentialExecution(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForParallelExecution(CallInfo &callInfo);
     InliningStatus inlineNewParallelArray(CallInfo &callInfo);
-    InliningStatus inlineNewParallelMatrix(CallInfo &callInfo);
+    InliningStatus inlineNewMatrix(CallInfo &callInfo);
     InliningStatus inlineParallelArray(CallInfo &callInfo);
     InliningStatus inlineParallelArrayTail(CallInfo &callInfo,
                                            HandleFunction target,

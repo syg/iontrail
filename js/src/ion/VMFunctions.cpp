@@ -275,12 +275,12 @@ NewInitParallelArray(JSContext *cx, HandleObject templateObject)
 }
 
 JSObject *
-NewInitParallelMatrix(JSContext *cx, HandleObject templateObject)
+NewInitMatrix(JSContext *cx, HandleObject templateObject)
 {
-    JS_ASSERT(templateObject->getClass() == &ParallelMatrixObject::class_);
+    JS_ASSERT(templateObject->getClass() == &MatrixObject::class_);
     JS_ASSERT(!templateObject->hasSingletonType());
 
-    RootedObject obj(cx, ParallelMatrixObject::newInstance(cx));
+    RootedObject obj(cx, MatrixObject::newInstance(cx));
     if (!obj)
         return NULL;
 

@@ -1149,7 +1149,7 @@ function ParallelArrayGet1(i) {
   return this.buffer[this.offset + i];
 }
 
-function ParallelMatrixGet1(i) {
+function MatrixGet1(i) {
   if (i === undefined)
     return undefined;
   return this.buffer[this.offset + i];
@@ -1173,7 +1173,7 @@ function ParallelArrayGet2(x, y) {
   return this.buffer[this.offset + offset];
 }
 
-function ParallelMatrixGet2(x, y) {
+function MatrixGet2(x, y) {
   var xDimension = this.shape[0];
   var yDimension = this.shape[1];
   if (x === undefined)
@@ -1181,7 +1181,7 @@ function ParallelMatrixGet2(x, y) {
   if (x >= xDimension)
     return undefined;
   if (y === undefined)
-    return NewParallelMatrix(ParallelMatrixView, [yDimension], this.buffer, this.offset + x * yDimension,
+    return NewMatrix(MatrixView, [yDimension], this.buffer, this.offset + x * yDimension,
                              this.valtype);
   if (y >= yDimension)
     return undefined;
@@ -1214,7 +1214,7 @@ function ParallelArrayGet3(x, y, z) {
   return this.buffer[this.offset + offset];
 }
 
-function ParallelMatrixGet3(x, y, z) {
+function MatrixGet3(x, y, z) {
   var xDimension = this.shape[0];
   var yDimension = this.shape[1];
   var zDimension = this.shape[2];
@@ -1223,13 +1223,13 @@ function ParallelMatrixGet3(x, y, z) {
   if (x >= xDimension)
     return undefined;
   if (y === undefined)
-    return NewParallelMatrix(ParallelMatrixView, [yDimension, zDimension],
+    return NewMatrix(MatrixView, [yDimension, zDimension],
                             this.buffer, this.offset + x * yDimension * zDimension,
                             this.valtype);
   if (y >= yDimension)
     return undefined;
   if (z === undefined)
-    return NewParallelMatrix(ParallelMatrixView, [zDimension],
+    return NewMatrix(MatrixView, [zDimension],
                             this.buffer, this.offset + y * zDimension + x * yDimension * zDimension,
                             this.valtype);
   if (z >= zDimension)
@@ -1267,7 +1267,7 @@ function ParallelArrayGetN(...coords) {
   return this.buffer[offset];
 }
 
-function ParallelMatrixGetN(...coords) {
+function MatrixGetN(...coords) {
   if (coords.length == 0)
     return undefined;
 
@@ -1288,7 +1288,7 @@ function ParallelMatrixGetN(...coords) {
 
   if (cDimensionality < sDimensionality) {
     var shape = callFunction(std_Array_slice, this.shape, cDimensionality);
-    return NewParallelMatrix(ParallelMatrixView, shape, this.buffer, offset,
+    return NewMatrix(MatrixView, shape, this.buffer, offset,
                              this.valtype);
   }
   return this.buffer[offset];
@@ -1325,7 +1325,7 @@ function ParallelArrayToString() {
 // it has shape = frame x grain at that point, using func to
 // generate each element (of size grain) in the iteration space
 // defined by frame.
-function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
+function MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
 {
   mode && mode.print && mode.print({called:"PMF A1", buffer:buffer,
                                     offset:offset, frame:frame, grain:grain});
@@ -1352,7 +1352,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
 /*
    case 1:
     computefunc = isLeaf ? fill1_leaf : fill1_subm;
-    mode && mode.print && mode.print({called:"ParallelMatrixFill computefunc is fill1"});
+    mode && mode.print && mode.print({called:"MatrixFill computefunc is fill1"});
     break;
 */
 /*
@@ -1365,11 +1365,11 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
 */
   default:
     computefunc = isLeaf ? fillN_leaf : fillN_subm;
-    mode && mode.print && mode.print({called:"ParallelMatrixFill computefunc is fillN"});
+    mode && mode.print && mode.print({called:"MatrixFill computefunc is fillN"});
     break;
   }
 
-  mode && mode.print && mode.print({called:"ParallelMatrixFill prior parallel"});
+  mode && mode.print && mode.print({called:"MatrixFill prior parallel"});
 
   parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ShouldForceSequential())
@@ -1386,7 +1386,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
     return;
   }
 
-  mode && mode.print && mode.print({called:"ParallelMatrixFill seq fallback", frame_len:frame_len, indexStart:indexStart, indexEnd:indexEnd});
+  mode && mode.print && mode.print({called:"MatrixFill seq fallback", frame_len:frame_len, indexStart:indexStart, indexEnd:indexEnd});
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
@@ -1583,7 +1583,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
 
       mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
 
-      ParallelMatrixFill(buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+      MatrixFill(buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
       used_outptr = true;
     }
 
@@ -1621,7 +1621,7 @@ function ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, 
     if (std_Array_isArray(subarray)) {
       subbuffer = subarray;
       suboffset = 0;
-    } else if (IsParallelArray(subarray) || IsParallelMatrix(subarray)) {
+    } else if (IsParallelArray(subarray) || IsMatrix(subarray)) {
       var subvaltype;
       if (IsParallelArray(subarray)) {
          subvaltype = "any";
@@ -1720,7 +1720,7 @@ function make_buffer_from_shape_and_valtype(shape, descriptor) {
   return buffer_maker(elem_count);
 }
 
-function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
+function MatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   // (shape, grain, func, mode)
 
   // The five properties of matrix under construction.
@@ -1762,10 +1762,10 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   buffer = make_buffer_from_shape_and_valtype(shape, valtype);
 
   switch(shape.length) {
-    case 1: getFunc = ParallelMatrixGet1; break;
-    case 2: getFunc = ParallelMatrixGet2; break;
-    case 3: getFunc = ParallelMatrixGet3; break;
-    default: getFunc = ParallelMatrixGetN; break;
+    case 1: getFunc = MatrixGet1; break;
+    case 2: getFunc = MatrixGet2; break;
+    case 3: getFunc = MatrixGet3; break;
+    default: getFunc = MatrixGetN; break;
   }
 
   mode && mode.print && mode.print({called:"PMC C", shape:shape, valtype:valtype, buffer:buffer});
@@ -1774,7 +1774,7 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   // But more important for now to get semantics of general
   // case right (and also parallelize on at least *one* case).
 
-  ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode);
+  MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode);
   setup_fields_in_this(this);
   return this;
 
@@ -1807,7 +1807,7 @@ function ParallelMatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
 }
 
 // Analogous to ParallelArrayView
-function ParallelMatrixView(shape, buffer, offset, valtype)
+function MatrixView(shape, buffer, offset, valtype)
 {
   this.shape = shape;
   this.buffer = buffer;
@@ -1815,10 +1815,10 @@ function ParallelMatrixView(shape, buffer, offset, valtype)
   this.valtype = valtype;
 
   switch(shape.length) {
-    case 1: this.get = ParallelMatrixGet1; break;
-    case 2: this.get = ParallelMatrixGet2; break;
-    case 3: this.get = ParallelMatrixGet3; break;
-    default: this.get = ParallelMatrixGetN; break;
+    case 1: this.get = MatrixGet1; break;
+    case 2: this.get = MatrixGet2; break;
+    case 3: this.get = MatrixGet3; break;
+    default: this.get = MatrixGetN; break;
   }
 
   return this;
@@ -1829,7 +1829,7 @@ function ParallelMatrixView(shape, buffer, offset, valtype)
 // is interpreted as L+depth.  This way one can generically map over e.g.
 // ARGBV arrays at the leaves of the iteration space.
 // grain is the expected type of the *result* from invoking func.
-function ParallelMatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
+function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
   var depth = this.shape.length;
   var grain = ["any"];
   var func, mode;
@@ -1892,22 +1892,22 @@ function ParallelMatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func,
     default: fill = fillN; break;
   }
 
-  ParallelMatrixFill(buffer, offset, shape, frame, grain, valtype, fill, mode);
-  return NewParallelMatrix(ParallelMatrixView, shape, buffer, offset, valtype);
+  MatrixFill(buffer, offset, shape, frame, grain, valtype, fill, mode);
+  return NewMatrix(MatrixView, shape, buffer, offset, valtype);
 
 }
 
-function ParallelMatrixReduce(depth, func, mode) {
+function MatrixReduce(depth, func, mode) {
   if (typeof depth === "function") {
     // caller omitted depth argument; shift other arguments down
     mode = func;
     func = depth;
     depth = this.shape.length;
   } else if (depth !== this.shape.length) {
-      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " submatrix grain not yet supported in ParallelMatrix.reduce");
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " submatrix grain not yet supported in Matrix.reduce");
   }
   var self = this;
-  mode && mode.print && mode.print({where:"ParallelMatrixReduce", depth:depth, func:func, mode:mode, self:self});
+  mode && mode.print && mode.print({where:"MatrixReduce", depth:depth, func:func, mode:mode, self:self});
   var shape = self.shape;
   var length = ProductOfArray(shape);
   if (length === 0)
@@ -1982,28 +1982,28 @@ function ParallelMatrixReduce(depth, func, mode) {
   }
 }
 
-function ParallelMatrixScan(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.scan"); }
-function ParallelMatrixScatter(targets, defaultValue, conflictFunc, length, mode) {
-  ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.scatter");
+function MatrixScan(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.scan"); }
+function MatrixScatter(targets, defaultValue, conflictFunc, length, mode) {
+  ThrowError(JSMSG_BAD_BYTECODE, "Matrix.scatter");
 }
-function ParallelMatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.filter"); }
-function ParallelMatrixPartition(amount) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.partition"); }
+function MatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.filter"); }
+function MatrixPartition(amount) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.partition"); }
 
 /**
  * Collapses two outermost dimensions into one.  So if you had
  * a [X, Y, Z ...] matrix, you get a [X*Y, Z ...] matrix.
  */
-function ParallelMatrixFlatten()  {
+function MatrixFlatten()  {
   if (this.shape.length < 2)
     ThrowError(JSMSG_PAR_ARRAY_ALREADY_FLAT);
 
   var shape = [this.shape[0] * this.shape[1]];
   for (var i = 2; i < this.shape.length; i++)
     ARRAY_PUSH(shape, this.shape[i]);
-  return NewParallelMatrix(ParallelMatrixView, shape, this.buffer, this.offset, this.valtype);
+  return NewMatrix(MatrixView, shape, this.buffer, this.offset, this.valtype);
 }
 
-function ParallelMatrixToString() {
+function MatrixToString() {
   var self = this;
   var slen = self.shape.length;
   if (slen == 1) {
@@ -2120,10 +2120,9 @@ SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true, inline: true })
 SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true, inline: true });
 
-SetScriptHints(ParallelMatrixGet1,      { cloneAtCallsite: true, inline: true });
-SetScriptHints(ParallelMatrixGet2,      { cloneAtCallsite: true, inline: true });
-SetScriptHints(ParallelMatrixGet3,      { cloneAtCallsite: true, inline: true });
+SetScriptHints(MatrixGet1,      { cloneAtCallsite: true, inline: true });
+SetScriptHints(MatrixGet2,      { cloneAtCallsite: true, inline: true });
+SetScriptHints(MatrixGet3,      { cloneAtCallsite: true, inline: true });
 
-SetScriptHints(ParallelMatrixConstructFromGrainFunctionMode,
-                                         { cloneAtCallsite: true });
-SetScriptHints(ParallelMatrixReduce,     { cloneAtCallsite: true });
+SetScriptHints(MatrixConstructFromGrainFunctionMode, { cloneAtCallsite: true });
+SetScriptHints(MatrixReduce,                         { cloneAtCallsite: true });

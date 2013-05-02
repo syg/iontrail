@@ -6,7 +6,7 @@ var delta = 0.000001;
 
 load(libdir + "util.js");
 
-var A = new ParallelMatrix([n,n], ["float64"], (i,j) => 0.0);
+var A = new Matrix([n,n], ["float64"], (i,j) => 0.0);
 
 function kernel(i,j) {
   // south border is all 1.0; other borders are 0.0.
@@ -20,8 +20,8 @@ function kernel(i,j) {
 
 function jacobi_par() {
   do {
-    var Temp = new ParallelMatrix([n,n], ["float64"], kernel);
-    var change = new ParallelMatrix([n,n], ["float64"],
+    var Temp = new Matrix([n,n], ["float64"], kernel);
+    var change = new Matrix([n,n], ["float64"],
         function (i,j) {
           return Math.abs(A.get(i,j) - Temp.get(i,j));
         });
@@ -36,8 +36,8 @@ function jacobi_seq() {
   // But I do not want to take the time to produce that ideal solution.
   do {
     var mode = {mode:"seq"};
-    var Temp = new ParallelMatrix([n,n], ["float64"], kernel, mode);
-    var change = new ParallelMatrix([n,n], ["float64"],
+    var Temp = new Matrix([n,n], ["float64"], kernel, mode);
+    var change = new Matrix([n,n], ["float64"],
         function (i,j) {
           return Math.abs(A.get(i,j) - Temp.get(i,j));
         }, mode);

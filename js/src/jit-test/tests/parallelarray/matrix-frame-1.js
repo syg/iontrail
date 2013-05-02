@@ -11,47 +11,47 @@ function cell(...args) {
 }
 
 function test_2d() {
-  var pm2d_1 =  new ParallelMatrix([5,6], cell);
+  var pm2d_1 =  new Matrix([5,6], cell);
 
   // An grain of length 0 is synonymous with an omitted grain argument.
-  var pm2d_2 =  new ParallelMatrix([5,6], [], cell);
+  var pm2d_2 =  new Matrix([5,6], [], cell);
 
-  var pm2d_3 = new ParallelMatrix([5], [6],
+  var pm2d_3 = new Matrix([5], [6],
     function(i) {
-      return new ParallelMatrix([6], [], function (j) cell(i,j));
+      return new Matrix([6], [], function (j) cell(i,j));
     });
 
-  var pm2d_4 = new ParallelMatrix([5], [6],
+  var pm2d_4 = new Matrix([5], [6],
     function(i) {
-      return new ParallelMatrix([6], function (j) cell(i,j));
+      return new Matrix([6], function (j) cell(i,j));
     });
 
-  assertEqParallelMatrix(pm2d_1, pm2d_2);
-  assertEqParallelMatrix(pm2d_1, pm2d_3);
-  assertEqParallelMatrix(pm2d_1, pm2d_4);
+  assertEqMatrix(pm2d_1, pm2d_2);
+  assertEqMatrix(pm2d_1, pm2d_3);
+  assertEqMatrix(pm2d_1, pm2d_4);
 }
 
 function test_3d() {
-  var pm3d_1 = new ParallelMatrix([5,6,7], cell);
+  var pm3d_1 = new Matrix([5,6,7], cell);
 
-  var pm3d_2 = new ParallelMatrix([5,6], [7],
+  var pm3d_2 = new Matrix([5,6], [7],
     function(i,j) {
-      return new ParallelMatrix([7], function (k) cell(i,j,k)); });
+      return new Matrix([7], function (k) cell(i,j,k)); });
 
-  var pm3d_3 = new ParallelMatrix([5], [6,7],
+  var pm3d_3 = new Matrix([5], [6,7],
     function(i) {
-      return new ParallelMatrix([6,7], function (j,k) cell(i,j,k));
+      return new Matrix([6,7], function (j,k) cell(i,j,k));
     });
 
-  var pm3d_4 = new ParallelMatrix([5], [6,7],
+  var pm3d_4 = new Matrix([5], [6,7],
     function(i) {
-      return new ParallelMatrix([6], [7],
+      return new Matrix([6], [7],
         function (j) {
-          return new ParallelMatrix([7], function (k) cell(i,j,k)); }); });
+          return new Matrix([7], function (k) cell(i,j,k)); }); });
 
-  assertEqParallelMatrix(pm3d_1, pm3d_2);
-  assertEqParallelMatrix(pm3d_1, pm3d_3);
-  assertEqParallelMatrix(pm3d_1, pm3d_4);
+  assertEqMatrix(pm3d_1, pm3d_2);
+  assertEqMatrix(pm3d_1, pm3d_3);
+  assertEqMatrix(pm3d_1, pm3d_4);
 }
 
 function test_6d() {
@@ -65,24 +65,24 @@ function test_6d() {
   // this third goal is unimportant.
   var overall_6d = [3,3,3,3,3,3];
 
-  var pm6d_1 = new ParallelMatrix(overall_6d, cell);
+  var pm6d_1 = new Matrix(overall_6d, cell);
 
-  var pm6d_2 = new ParallelMatrix(overall_6d.slice(0,2), overall_6d.slice(2),
+  var pm6d_2 = new Matrix(overall_6d.slice(0,2), overall_6d.slice(2),
     function(i,j) {
-      return new ParallelMatrix(overall_6d.slice(2),
-                                function (k,l,m,n) cell(i,j,k,l,m,n)); });
+      return new Matrix(overall_6d.slice(2),
+                        function (k,l,m,n) cell(i,j,k,l,m,n)); });
 
-  var pm6d_3 = new ParallelMatrix(overall_6d.slice(0,2), overall_6d.slice(2),
+  var pm6d_3 = new Matrix(overall_6d.slice(0,2), overall_6d.slice(2),
     function(i,j) {
-      return new ParallelMatrix(overall_6d.slice(2,3), overall_6d.slice(3),
+      return new Matrix(overall_6d.slice(2,3), overall_6d.slice(3),
         function (k) {
-          return new ParallelMatrix(overall_6d.slice(3),
-                                    function(l,m,n) cell(i,j,k,l,m,n));
+          return new Matrix(overall_6d.slice(3),
+                            function(l,m,n) cell(i,j,k,l,m,n));
         });
     });
 
-  assertEqParallelMatrix(pm6d_1, pm6d_2);
-  assertEqParallelMatrix(pm6d_1, pm6d_3);
+  assertEqMatrix(pm6d_1, pm6d_2);
+  assertEqMatrix(pm6d_1, pm6d_3);
 }
 
 test_2d();

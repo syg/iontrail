@@ -12,26 +12,26 @@ function cell(...args) {
 
 function test_2d() {
   // An omitted grain is synonymous with a grain of ["any"]
-  var pm2d_1 =  new ParallelMatrix([5,6], cell);
+  var pm2d_1 =  new Matrix([5,6], cell);
 
-  var pm2d_2 =  new ParallelMatrix([5,6], ["any"], cell);
+  var pm2d_2 =  new Matrix([5,6], ["any"], cell);
 
-  var pm2d_3 = new ParallelMatrix([5], [6],
+  var pm2d_3 = new Matrix([5], [6],
     function(i) {
-      return new ParallelMatrix([6], ["any"], function (j) cell(i,j));
+      return new Matrix([6], ["any"], function (j) cell(i,j));
     });
 
-  var pm2d_4 = new ParallelMatrix([5], [6],
+  var pm2d_4 = new Matrix([5], [6],
     function(i) {
-      return new ParallelMatrix([6], function (j) cell(i,j));
+      return new Matrix([6], function (j) cell(i,j));
     });
 
-  var pm2d_5 =  new ParallelMatrix([5,6], ["uint32"], cell);
+  var pm2d_5 =  new Matrix([5,6], ["uint32"], cell);
 
-  assertEqParallelMatrix(pm2d_1, pm2d_2);
-  assertEqParallelMatrix(pm2d_1, pm2d_3);
-  assertEqParallelMatrix(pm2d_1, pm2d_4);
-  assertEqParallelMatrix(pm2d_1, pm2d_5);
+  assertEqMatrix(pm2d_1, pm2d_2);
+  assertEqMatrix(pm2d_1, pm2d_3);
+  assertEqMatrix(pm2d_1, pm2d_4);
+  assertEqMatrix(pm2d_1, pm2d_5);
 }
 
 test_2d();

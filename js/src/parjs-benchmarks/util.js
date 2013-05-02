@@ -92,7 +92,7 @@ function measureN(iters, f) {
 }
 
 function isParArrOrMat(e) {
-  return (e instanceof ParallelArray) || (e instanceof ParallelMatrix);
+  return (e instanceof ParallelArray) || (e instanceof Matrix);
 }
 
 function isTypedArr(e) {

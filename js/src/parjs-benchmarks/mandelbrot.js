@@ -56,7 +56,7 @@ function computeParallel() {
 }
 
 function computeParallelInt16() {
-  return new ParallelMatrix([rows, cols], ["int16"], function(r, c) {
+  return new Matrix([rows, cols], ["int16"], function(r, c) {
     return computeSetByRow(c, r);
   }).flatten();
 }

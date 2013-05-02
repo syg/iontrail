@@ -69,8 +69,8 @@ function assertAlmostEq(v1, v2) {
 }
 
 function assertStructuralEq(e1, e2) {
-    if (e1 instanceof ParallelMatrix && e2 instanceof ParallelMatrix) {
-      assertEqParallelMatrix(e1, e2);
+    if (e1 instanceof Matrix && e2 instanceof Matrix) {
+      assertEqMatrix(e1, e2);
     } else if (e1 instanceof ParallelArray && e2 instanceof ParallelArray) {
       assertEqParallelArray(e1, e2);
     } else if (e1 instanceof Array && e2 instanceof ParallelArray) {
@@ -145,9 +145,9 @@ function assertEqParallelGettableStructure(a, b) {
   } while (bump(iv));
 }
 
-function assertEqParallelMatrix(a, b) {
-  assertEq(a instanceof ParallelMatrix, true);
-  assertEq(b instanceof ParallelMatrix, true);
+function assertEqMatrix(a, b) {
+  assertEq(a instanceof Matrix, true);
+  assertEq(b instanceof Matrix, true);
 
   assertEqParallelGettableStructure(a, b);
 }
@@ -281,7 +281,7 @@ function dbprint(x) {
   // print(x);
 }
 
-ParallelMatrix.prototype.toSource =
+Matrix.prototype.toSource =
   function toSource() {
     var self = this;
     var slen = self.shape.length;

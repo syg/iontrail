@@ -528,8 +528,8 @@ GetClassForProtoKey(JSProtoKey key)
       case JSProto_ParallelArray:
         return &ParallelArrayObject::class_;
 
-      case JSProto_ParallelMatrix:
-        return &ParallelMatrixObject::class_;
+      case JSProto_Matrix:
+        return &MatrixObject::class_;
 
       default:
         JS_NOT_REACHED("Bad proto key");

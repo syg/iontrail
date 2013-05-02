@@ -79,7 +79,7 @@ namespace ion {
     _(ToString)                                                             \
     _(NewSlots)                                                             \
     _(NewParallelArray)                                                     \
-    _(NewParallelMatrix)                                                    \
+    _(NewMatrix)                                                            \
     _(NewArray)                                                             \
     _(NewObject)                                                            \
     _(NewDeclEnvObject)                                                     \
