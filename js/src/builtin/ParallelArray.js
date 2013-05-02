@@ -1325,7 +1325,7 @@ function ParallelArrayToString() {
 // it has shape = frame x grain at that point, using func to
 // generate each element (of size grain) in the iteration space
 // defined by frame.
-function MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
+function MatrixPFill(buffer, offset, shape, frame, grain, valtype, func, mode)
 {
   mode && mode.print && mode.print({called:"PMF A1", buffer:buffer,
                                     offset:offset, frame:frame, grain:grain});
@@ -1352,7 +1352,7 @@ function MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
 /*
    case 1:
     computefunc = isLeaf ? fill1_leaf : fill1_subm;
-    mode && mode.print && mode.print({called:"MatrixFill computefunc is fill1"});
+    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fill1"});
     break;
 */
 /*
@@ -1365,11 +1365,11 @@ function MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
 */
   default:
     computefunc = isLeaf ? fillN_leaf : fillN_subm;
-    mode && mode.print && mode.print({called:"MatrixFill computefunc is fillN"});
+    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fillN"});
     break;
   }
 
-  mode && mode.print && mode.print({called:"MatrixFill prior parallel"});
+  mode && mode.print && mode.print({called:"MatrixPFill prior parallel"});
 
   parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (ShouldForceSequential())
@@ -1386,7 +1386,7 @@ function MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
     return;
   }
 
-  mode && mode.print && mode.print({called:"MatrixFill seq fallback", frame_len:frame_len, indexStart:indexStart, indexEnd:indexEnd});
+  mode && mode.print && mode.print({called:"MatrixPFill seq fallback", frame_len:frame_len, indexStart:indexStart, indexEnd:indexEnd});
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
@@ -1583,7 +1583,7 @@ function MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode)
 
       mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
 
-      MatrixFill(buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+      MatrixPFill(buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
       used_outptr = true;
     }
 
@@ -1774,7 +1774,7 @@ function MatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
   // But more important for now to get semantics of general
   // case right (and also parallelize on at least *one* case).
 
-  MatrixFill(buffer, offset, shape, frame, grain, valtype, func, mode);
+  MatrixPFill(buffer, offset, shape, frame, grain, valtype, func, mode);
   setup_fields_in_this(this);
   return this;
 
@@ -1829,7 +1829,7 @@ function MatrixView(shape, buffer, offset, valtype)
 // is interpreted as L+depth.  This way one can generically map over e.g.
 // ARGBV arrays at the leaves of the iteration space.
 // grain is the expected type of the *result* from invoking func.
-function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
+function MatrixPMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
   var depth = this.shape.length;
   var grain = ["any"];
   var func, mode;
@@ -1892,12 +1892,12 @@ function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
     default: fill = fillN; break;
   }
 
-  MatrixFill(buffer, offset, shape, frame, grain, valtype, fill, mode);
+  MatrixPFill(buffer, offset, shape, frame, grain, valtype, fill, mode);
   return NewMatrix(MatrixView, shape, buffer, offset, valtype);
 
 }
 
-function MatrixReduce(depth, func, mode) {
+function MatrixPReduce(depth, func, mode) {
   if (typeof depth === "function") {
     // caller omitted depth argument; shift other arguments down
     mode = func;
@@ -1982,11 +1982,23 @@ function MatrixReduce(depth, func, mode) {
   }
 }
 
+function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
+  ThrowError(JSMSG_BAD_BYTECODE, "Matrix.map");
+}
+function MatrixReduce(arg0, arg1, arg2) { // ([depth,] func, [mode])
+  ThrowError(JSMSG_BAD_BYTECODE, "Matrix.reduce");
+}
 function MatrixScan(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.scan"); }
+function MatrixPScan(grain, func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.pscan"); }
 function MatrixScatter(targets, defaultValue, conflictFunc, length, mode) {
   ThrowError(JSMSG_BAD_BYTECODE, "Matrix.scatter");
 }
-function MatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.filter"); }
+function MatrixPScatter(targets, defaultValue, conflictFunc, length, mode) {
+  ThrowError(JSMSG_BAD_BYTECODE, "Matrix.pscatter");
+}
+function MatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.pfilter"); }
+function MatrixPFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.filter"); }
+
 function MatrixPartition(amount) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.partition"); }
 
 /**
@@ -2125,4 +2137,5 @@ SetScriptHints(MatrixGet2,      { cloneAtCallsite: true, inline: true });
 SetScriptHints(MatrixGet3,      { cloneAtCallsite: true, inline: true });
 
 SetScriptHints(MatrixConstructFromGrainFunctionMode, { cloneAtCallsite: true });
-SetScriptHints(MatrixReduce,                         { cloneAtCallsite: true });
+SetScriptHints(MatrixPMap,                           { cloneAtCallsite: true });
+SetScriptHints(MatrixPReduce,                        { cloneAtCallsite: true });

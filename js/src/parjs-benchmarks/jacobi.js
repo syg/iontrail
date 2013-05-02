@@ -25,7 +25,7 @@ function jacobi_par() {
         function (i,j) {
           return Math.abs(A.get(i,j) - Temp.get(i,j));
         });
-    var err = change.reduce( (a,b) => Math.max(a,b) );
+    var err = change.preduce( (a,b) => Math.max(a,b) );
     A = Temp;
   } while (err >= delta);
 }
@@ -41,7 +41,7 @@ function jacobi_seq() {
         function (i,j) {
           return Math.abs(A.get(i,j) - Temp.get(i,j));
         }, mode);
-    var err = change.reduce( (a,b) => Math.max(a,b), mode);
+    var err = change.preduce( (a,b) => Math.max(a,b), mode);
     A = Temp;
   } while (err >= delta);
 }

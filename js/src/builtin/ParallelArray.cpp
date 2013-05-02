@@ -267,10 +267,15 @@ FixedHeapPtr<PropertyName> MatrixObject::ctorNames[NumCtors];
 
 JSFunctionSpec MatrixObject::methods[] = {
     { "map",       JSOP_NULLWRAPPER, 4, 0, "MatrixMap"       },
+    { "pmap",      JSOP_NULLWRAPPER, 4, 0, "MatrixPMap"      },
     { "reduce",    JSOP_NULLWRAPPER, 3, 0, "MatrixReduce"    },
+    { "preduce",   JSOP_NULLWRAPPER, 3, 0, "MatrixPReduce"   },
     { "scan",      JSOP_NULLWRAPPER, 3, 0, "MatrixScan"      },
+    { "pscan",     JSOP_NULLWRAPPER, 3, 0, "MatrixPScan"     },
     { "scatter",   JSOP_NULLWRAPPER, 5, 0, "MatrixScatter"   },
+    { "pscatter",  JSOP_NULLWRAPPER, 5, 0, "MatrixPScatter"  },
     { "filter",    JSOP_NULLWRAPPER, 2, 0, "MatrixFilter"    },
+    { "pfilter",   JSOP_NULLWRAPPER, 2, 0, "MatrixPFilter"   },
     { "partition", JSOP_NULLWRAPPER, 1, 0, "MatrixPartition" },
     { "flatten",   JSOP_NULLWRAPPER, 0, 0, "MatrixFlatten" },
 
