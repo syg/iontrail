@@ -38,8 +38,25 @@ function computeSequentially() {
   return result;
 }
 
+function computeSequentiallyInt16() {
+  var buf = new ArrayBuffer(rows*cols*2);
+  result = new Int16Array(buf);
+  for (var r = 0; r < rows; r++) {
+    for (var c = 0; c < cols; c++) {
+      result[ r*cols + c ] = computeSetByRow(c, r);
+    }
+  }
+  return result;
+}
+
 function computeParallel() {
   return new ParallelArray([rows, cols], function(r, c) {
+    return computeSetByRow(c, r);
+  }).flatten();
+}
+
+function computeParallelInt16() {
+  return new ParallelMatrix([rows, cols], ["int16"], function(r, c) {
     return computeSetByRow(c, r);
   }).flatten();
 }
@@ -57,5 +74,8 @@ var rows = 1024;
 var cols = 1024;
 
 // Experimentally, warmup doesn't seem to be necessary:
-benchmark("MANDELBROT", 1, DEFAULT_MEASURE,
+benchmark("MANDELBROT ARRAY", 1, DEFAULT_MEASURE,
           computeSequentially, computeParallel);
+
+benchmark("MANDELBROT M I16", 1, DEFAULT_MEASURE,
+          computeSequentiallyInt16, computeParallelInt16);
