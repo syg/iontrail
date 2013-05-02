@@ -3,7 +3,7 @@ load(libdir + "parallelarray-helpers.js");
 function cell(...args) {
   var ret = 0;
   var d;
-  while ((d = args.shift()) != undefined) {
+  while ((d = args.shift()) != undefined && typeof d === "number") {
     ret *= 10;
     ret += d+1;
   }
