@@ -1988,7 +1988,20 @@ function ParallelMatrixScatter(targets, defaultValue, conflictFunc, length, mode
 }
 function ParallelMatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.filter"); }
 function ParallelMatrixPartition(amount) { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.partition"); }
-function ParallelMatrixFlatten()  { ThrowError(JSMSG_BAD_BYTECODE, "ParallelMatrix.flatten"); }
+
+/**
+ * Collapses two outermost dimensions into one.  So if you had
+ * a [X, Y, Z ...] matrix, you get a [X*Y, Z ...] matrix.
+ */
+function ParallelMatrixFlatten()  {
+  if (this.shape.length < 2)
+    ThrowError(JSMSG_PAR_ARRAY_ALREADY_FLAT);
+
+  var shape = [this.shape[0] * this.shape[1]];
+  for (var i = 2; i < this.shape.length; i++)
+    ARRAY_PUSH(shape, this.shape[i]);
+  return NewParallelMatrix(ParallelMatrixView, shape, this.buffer, this.offset, this.valtype);
+}
 
 function ParallelMatrixToString() {
   var self = this;
