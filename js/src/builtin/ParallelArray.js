@@ -234,10 +234,9 @@ function ParallelArrayView(shape, buffer, offset) {
   return this;
 }
 
-function ProductOfArray(shape) {
-  var count = shape.length;
+function ProductOfArrayRange(shape, start, limit) {
   var length = 1;
-  for (var i = 0; i < count; i++)
+  for (var i = start; i < limit; i++)
     length *= shape[i];
   return length;
 }
@@ -278,7 +277,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
     computefunc = fill3;
     break;
   default:
-    length = ProductOfArray(shape);
+    length = ProductOfArrayRange(shape, 0, shape.length);
     self.get = ParallelArrayGetN;
     computefunc = fillN;
     break;
@@ -1331,7 +1330,7 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
                                     offset:offset, frame:frame, grain:grain});
 
   var i;
-  var frame_len = ProductOfArray(frame);
+  var frame_len = ProductOfArrayRange(frame, 0, frame.length);
   for(i = frame_dims; i < shape.length; i++) {
     var shape_amt = shape[i];
     if (i == shape.length - 1 && typeof(shape_amt) !== "number")
@@ -1340,7 +1339,7 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
 
   var indexStart = offset;
   var indexEnd = offset+frame_len;
-  var grain_len = ProductOfArray(grain);
+  var grain_len = ProductOfArrayRange(grain, 0, grain.length);
 
   mode && mode.print && mode.print(
     {called:"PMF B", buffer:buffer, offset:offset, frame:frame, grain:grain,
@@ -1645,9 +1644,7 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   }
 
   function CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset) {
-    for (var j = 0; j < grain_len; j++) {
-      UnsafeSetElement(buffer, bufoffset+j, subbuffer[suboffset+j]);
-    }
+    UnsafeArrayCopy(buffer, bufoffset, subbuffer, suboffset, grain_len);
   }
 }
 
@@ -1718,7 +1715,7 @@ function value_type_to_buffer_allocator(descriptor) {
 
 function make_buffer_from_shape_and_valtype(shape, descriptor) {
   var buffer_maker = value_type_to_buffer_allocator(descriptor);
-  var elem_count = ProductOfArray(shape);
+  var elem_count = ProductOfArrayRange(shape, 0, shape.length);
   return buffer_maker(elem_count);
 }
 
@@ -1831,11 +1828,11 @@ function MatrixView(shape, buffer, offset, valtype)
 // is interpreted as L+depth.  This way one can generically map over e.g.
 // ARGBV arrays at the leaves of the iteration space.
 // grain is the expected type of the *result* from invoking func.
-function MatrixCommonMap(parexec, depth, grain, func, mode) {
+function MatrixCommonMap(self, parexec, depth, grain, func, mode) {
 
   mode && mode.print && mode.print({called:"PMM A", depth:depth, grain:grain});
 
-  var frame = this.shape.slice(0, depth);
+  var frame = self.shape.slice(0, depth);
   var indices = ComputeIndices(frame, 0);
 
   var valtype;
@@ -1849,11 +1846,10 @@ function MatrixCommonMap(parexec, depth, grain, func, mode) {
 
   var buffer_maker = value_type_to_buffer_allocator(valtype);
   var shape = frame.concat(grain);
-  var len = ProductOfArray(shape);
+  var len = ProductOfArrayRange(shape, 0, shape.length);
   var buffer = buffer_maker(len);
   var offset = 0;
 
-  var self = this;
   function fill1(i) {
     mode && mode.print && mode.print({called:"fill1",i:i});
     return func(self.get(i), i); }
@@ -1879,8 +1875,8 @@ function MatrixCommonMap(parexec, depth, grain, func, mode) {
 
 }
 
-function MatrixDecomposeArgsForMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
-  var depth = this.shape.length;
+function MatrixDecomposeArgsForMap(self, arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
+  var depth = self.shape.length;
   var grain = ["any"];
   var func, mode;
   if (typeof arg0 === "function") {
@@ -1905,25 +1901,26 @@ function MatrixDecomposeArgsForMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain
 }
 
 function MatrixPMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
-  var [depth, grain, func, mode] = MatrixDecomposeArgsForMap(arg0, arg1, arg2, arg3);
-  return MatrixCommonMap(true, depth, grain, func, mode);
+  var [depth, grain, func, mode] =
+    MatrixDecomposeArgsForMap(this, arg0, arg1, arg2, arg3);
+  return MatrixCommonMap(this, true, depth, grain, func, mode);
 }
 
 function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [grain,] func, [mode])
-  var [depth, grain, func, mode] = MatrixDecomposeArgsForMap(arg0, arg1, arg2, arg3);
-  return MatrixCommonMap(false, depth, grain, func, mode);
+  var [depth, grain, func, mode] =
+    MatrixDecomposeArgsForMap(this, arg0, arg1, arg2, arg3);
+  return MatrixCommonMap(this, false, depth, grain, func, mode);
 }
 
-function MatrixCommonReduce(parexec, depth, func, mode) {
+function MatrixCommonReduce(self, parexec, depth, func, mode) {
 
-  if (depth !== this.shape.length) {
+  if (depth !== self.shape.length) {
       ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " submatrix grain not yet supported in Matrix.reduce");
   }
 
-  var self = this;
   mode && mode.print && mode.print({where:"MatrixReduce", depth:depth, func:func, mode:mode, self:self});
   var shape = self.shape;
-  var length = ProductOfArray(shape);
+  var length = ProductOfArrayRange(shape, 0, shape.length);
   if (length === 0)
     ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
 
@@ -1998,14 +1995,14 @@ function MatrixCommonReduce(parexec, depth, func, mode) {
   }
 }
 
-function MatrixDecomposeArgsForReduce(arg0, arg1, arg2) { // ([depth], func, [mode])
+function MatrixDecomposeArgsForReduce(self, arg0, arg1, arg2) { // ([depth], func, [mode])
   var depth = arg0;
   var func = arg1;
   var mode = arg2;
 
   if (typeof arg0 === "function") {
     // caller omitted depth argument; shift other arguments down
-    depth = this.shape.length;
+    depth = self.shape.length;
     func = arg0;
     mode = arg1;
   } else {
@@ -2018,13 +2015,15 @@ function MatrixDecomposeArgsForReduce(arg0, arg1, arg2) { // ([depth], func, [mo
 }
 
 function MatrixPReduce(arg0, arg1, arg2) { // ([depth], func, [mode])
-  var [depth, func, mode] = MatrixDecomposeArgsForReduce(arg0, arg1, arg2);
-  return MatrixCommonReduce(true, depth, func, mode);
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduce(this, arg0, arg1, arg2);
+  return MatrixCommonReduce(this, true, depth, func, mode);
 }
 
 function MatrixReduce(arg0, arg1, arg2) { // ([depth,] func, [mode])
-  var [depth, func, mode] = MatrixDecomposeArgsForReduce(arg0, arg1, arg2);
-  return MatrixCommonReduce(false, depth, func, mode);
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduce(this, arg0, arg1, arg2);
+  return MatrixCommonReduce(this, false, depth, func, mode);
 }
 
 function MatrixScan(grain, func, mode) {
@@ -2044,155 +2043,69 @@ function MatrixPScatter(targets, defaultValue, conflictFunc, length, mode) {
  * The familiar filter() operation applied across the outermost
  * dimension.
  */
-function MatrixCommonFilter(parexec, func, mode) {
+function MatrixCommonFilter(self, parexec, func, mode) {
   // FIXME(bug 844887): Check |this instanceof ParallelArray|
   // FIXME(bug 844887): Check |IsCallable(func)|
 
-  var self = this;
+  mode && mode.print && mode.print({called:"MCF A"});
+
   var length = self.shape[0];
+  var grain_len = ProductOfArrayRange(self.shape, 1, self.shape.length);
 
-  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
-    if (!parexec)
-      break parallel;
-    if (ShouldForceSequential())
-      break parallel;
-    if (!TRY_PARALLEL(mode))
-      break parallel;
-
-    var chunks = ComputeNumChunks(length);
-    var numSlices = ParallelSlices();
-    if (chunks < numSlices * 2)
-      break parallel;
-
-    var info = ComputeAllSliceBounds(chunks, numSlices);
-
-    // Step 1. Compute which items from each slice of the result
-    // buffer should be preserved. When we're done, we have an array
-    // |survivors| containing a bitset for each chunk, indicating
-    // which members of the chunk survived. We also keep an array
-    // |counts| containing the total number of items that are being
-    // preserved from within one slice.
-    //
-    // FIXME(bug 844890): Use typed arrays here.
-    var counts = NewDenseArray(numSlices);
-    for (var i = 0; i < numSlices; i++)
-      UnsafeSetElement(counts, i, 0);
-    var survivors = NewDenseArray(chunks);
-    ParallelDo(findSurvivorsInSlice, CheckParallel(mode));
-
-    // Step 2. Compress the slices into one contiguous set.
-    var count = 0;
-    for (var i = 0; i < numSlices; i++)
-      count += counts[i];
-    var shape = [count];
-    for (var i = 1; i < this.shape.length; i++)
-      ARRAY_PUSH(shape, this.shape[i]);
-    var buffer = make_buffer_from_shape_and_valtype(shape, this.valtype);
-    if (count > 0)
-      ParallelDo(copySurvivorsInSlice, CheckParallel(mode));
-
-    return NewMatrix(MatrixView, shape, buffer, 0, this.valtype);
-  }
+  // The strategy we use for ParallelArrayFilter is
+  // specialized around setting a single element at a time.
+  // UnsafeSetElement cannot express an atomic combination of:
+  // - Copying a whole n-length substring
+  // - updating counts
+  // - updating info
+  // (It could be that such level of generality is not necessary, but
+  //  Felix is just skipping this problem for now.)
+  parallel: /* no code yet */
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
-  var buffer = [];
+  var buffer = make_buffer_from_shape_and_valtype(self.shape, self.valtype);
+  var count = 0;
+  mode && mode.print && mode.print({called:"MCF T2",count:count,length:length,buffer:buffer,self:self,grain_len:grain_len});
   for (var i = 0; i < length; i++) {
     var elem = self.get(i);
-    if (func(elem, i, self))
-      ARRAY_PUSH(buffer, elem);
-  }
-  var shape = [buffer.length];
-  for (var i = 1; i < this.shape.length; i++)
-    ARRAY_PUSH(shape, this.shape[i]);
-  return NewMatrix(MatrixView, shape, buffer, 0, this.valtype);
-
-  /**
-   * As described above, our goal is to determine which items we
-   * will preserve from a given slice. We do this one chunk at a
-   * time. When we finish a chunk, we record our current count and
-   * the next chunk sliceId, lest we should bail.
-   */
-  function findSurvivorsInSlice(sliceId, numSlices, warmup) {
-
-    var chunkPos = info[SLICE_POS(sliceId)];
-    var chunkEnd = info[SLICE_END(sliceId)];
-
-    if (warmup && chunkEnd > chunkPos)
-      chunkEnd = chunkPos + 1;
-
-    var count = counts[sliceId];
-    while (chunkPos < chunkEnd) {
-      var indexStart = chunkPos << CHUNK_SHIFT;
-      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, length);
-      var chunkBits = 0;
-
-      for (var bit = 0; indexStart + bit < indexEnd; bit++) {
-        var keep = !!func(self.get(indexStart + bit), indexStart + bit, self);
-        chunkBits |= keep << bit;
-        count += keep;
-      }
-
-      UnsafeSetElement(survivors, chunkPos, chunkBits,
-                       counts, sliceId, count,
-                       info, SLICE_POS(sliceId), ++chunkPos);
+    if (func(elem, i, self)) {
+      mode && mode.print && mode.print({called:"MCF U2 AC",to:count*grain_len,fro:i*grain_len});
+      UnsafeArrayCopy(buffer, count * grain_len,
+                      self.buffer, i * grain_len, grain_len);
+      count++;
     }
   }
+  mode && mode.print && mode.print({called:"MCF W2",count:count,length:length,buffer:buffer,self:self});
+  var shape = [count];
+  for (var i = 1; i < self.shape.length; i++)
+    ARRAY_PUSH(shape, self.shape[i]);
 
-  function copySurvivorsInSlice(sliceId, numSlices, warmup) {
-    // Copies the survivors from this slice into the correct position.
-    // Note that this is an idempotent operation that does not invoke
-    // user code. Therefore, we don't expect bailouts and make an
-    // effort to proceed chunk by chunk or avoid duplicating work.
+  mode && mode.print && mode.print({called:"MCF Z2"});
+  return NewMatrix(MatrixView, shape, buffer, 0, self.valtype);
+}
 
-    // During warmup, we only execute with sliceId 0. This would fail to
-    // execute the loop below. Therefore, during warmup, we
-    // substitute 1 for the sliceId.
-    if (warmup && sliceId == 0 && numSlices != 1)
-      sliceId = 1;
+// FIXME: 868422
+// This should be (heavily optimized) intrinsic; (think
+// System.arraycopy from Java).
+function UnsafeArrayCopy(buffer, bufoffset, subbuffer, suboffset, grain_len) {
+  for (var j = 0; j < grain_len; j++) {
+    UnsafeSetElement(buffer, bufoffset+j, subbuffer[suboffset+j]);
+  }
+}
 
-    // Total up the items preserved by previous slices.
-    var count = 0;
-    if (sliceId > 0) { // FIXME(#819219)---work around a bug in Ion's range checks
-      for (var i = 0; i < sliceId; i++)
-        count += counts[i];
-    }
-
-    // Compute the final index we expect to write.
-    var total = count + counts[sliceId];
-    if (count == total)
-      return;
-
-    // Iterate over the chunks assigned to us. Read the bitset for
-    // each chunk. Copy values where a 1 appears until we have
-    // written all the values that we expect to. We can just iterate
-    // from 0...CHUNK_SIZE without fear of a truncated final chunk
-    // because we are already checking for when count==total.
-    var chunkStart = info[SLICE_START(sliceId)];
-    var chunkEnd = info[SLICE_END(sliceId)];
-    for (var chunk = chunkStart; chunk < chunkEnd; chunk++) {
-      var chunkBits = survivors[chunk];
-      if (!chunkBits)
-        continue;
-
-      var indexStart = chunk << CHUNK_SHIFT;
-      for (var i = 0; i < CHUNK_SIZE; i++) {
-        if (chunkBits & (1 << i)) {
-          UnsafeSetElement(buffer, count++, self.get(indexStart + i));
-          if (count == total)
-            break;
-        }
-      }
-    }
+function ArrayCopy(buffer, bufoffset, subbuffer, suboffset, grain_len) {
+  for (var j = 0; j < grain_len; j++) {
+    buffer[bufoffset+j] = subbuffer[suboffset+j];
   }
 }
 
 function MatrixPFilter(func, mode) {
-  return MatrixCommonFilter(true, func, mode);
+  return MatrixCommonFilter(this, true, func, mode);
 }
 
 function MatrixFilter(func, mode) {
-  return MatrixCommonFilter(false, func, mode);
+  return MatrixCommonFilter(this, false, func, mode);
 }
 
 /**
@@ -2340,6 +2253,8 @@ SetScriptHints(ParallelArrayReduce,     { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayScan,       { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayScatter,    { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
+
+SetScriptHints(UnsafeArrayCopy,       { cloneAtCallsite: true });
 
 /*
  * Mark the common getters as clone-at-callsite and inline. This is
