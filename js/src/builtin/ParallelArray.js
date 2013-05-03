@@ -1999,7 +1999,30 @@ function MatrixPScatter(targets, defaultValue, conflictFunc, length, mode) {
 function MatrixFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.pfilter"); }
 function MatrixPFilter(func, mode) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.filter"); }
 
-function MatrixPartition(amount) { ThrowError(JSMSG_BAD_BYTECODE, "Matrix.partition"); }
+/**
+ * Divides the outermost dimension into two dimensions.  Does not copy
+ * or affect the underlying data, just how it is divided amongst
+ * dimensions.  So if we had a vector with shape [M, N, ...] and you
+ * partition with amount=4, you get a [M/4, 4, N, ...] vector.  The
+ * outermost dimension must be evenly divisble by amount (e.g. 4 must
+ * divide M in the above example).
+ */
+function MatrixPartition(amount) {
+  if (amount >>> 0 !== amount)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+
+  var length = this.shape[0];
+  var partitions = (length / amount) | 0;
+
+  if (partitions * amount !== length)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_PARTITION);
+
+  var shape = [partitions, amount];
+  for (var i = 1; i < this.shape.length; i++)
+      ARRAY_PUSH(shape, this.shape[i]);
+
+  return NewMatrix(MatrixView, shape, this.buffer, this.offset, this.valtype);
+}
 
 /**
  * Collapses two outermost dimensions into one.  So if you had
