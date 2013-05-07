@@ -1912,12 +1912,9 @@ function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] f
   return MatrixCommonMap(this, false, depth, grain, func, mode);
 }
 
-function MatrixCommonReduce(self, parexec, depth, outputgrain, func, mode) {
+function MatrixCommonReduceScalar(self, parexec, func, mode) {
 
-  if (depth !== self.shape.length) {
-      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " submatrix grain not yet supported in Matrix.reduce");
-  }
-
+  var depth = self.shape.length;
   mode && mode.print && mode.print({where:"MatrixReduce", depth:depth, func:func, mode:mode, self:self});
   var shape = self.shape;
   var length = ProductOfArrayRange(shape, 0, shape.length);
@@ -1995,11 +1992,138 @@ function MatrixCommonReduce(self, parexec, depth, outputgrain, func, mode) {
   }
 }
 
-function MatrixDecomposeArgsForReduceOrScan(self, arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] func, [mode])
+function MatrixCommonReduce(self, parexec, depth, func, mode) {
+  mode && mode.print && mode.print({where:"MatrixCommonReduce", depth:depth, func:func, mode:mode, self:self});
+
+  if (depth === self.shape.length)
+    return MatrixCommonReduceScalar(self, parexec, func, mode);
+
+  var shape = self.shape;
+  var frame = shape.slice(0, depth);
+  var grain = shape.slice(depth);
+  var valtype = self.valtype;
+  var length = ProductOfArrayRange(shape, 0, shape.length);
+  if (length === 0)
+    ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
+
+  var used_outptr = false;
+
+  function ndimIndexToOffset(...indices) {
+    mode && mode.print && mode.print({called: "outptr.ndimIndexToOffset", indices:indices});
+    var accum_idx  = 0;
+    var accum_prod = 1;
+    for (var i=indices.length-1; i>=0; i--) {
+      var arg_i = indices[i];
+      var grain_i = grain[i];
+      if (arg_i >= grain_i) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set index too large");
+      }
+      accum_idx += arg_i * accum_prod;
+      accum_prod *= grain_i;
+    }
+    return accum_idx;
+  }
+
+  function outptr_set(...args) {
+    mode && mode.print && mode.print({called: "outptr.set A", args:args});
+    var v = args.pop();
+    if (args.length > grain.length) {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
+    }
+    if (args.length < grain.length) {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
+    }
+    var offset = ndimIndexToOffset.apply(null, args);
+    mode && mode.print && mode.print({called: "outptr.set Y", bufoffset: bufoffset, offset: offset, sum: bufoffset + offset, v:v});
+    UnsafeSetElement(buffer, bufoffset + offset, v);
+    used_outptr = true;
+  }
+
+  function outptr_gather(arg0, arg1, arg2) { // ([depth,] func, [mode])
+    mode && mode.print && mode.print({called: "outptr.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
+    var depth, func, mode;
+    if (typeof arg0 === "function") {
+      depth = grain.length;
+      func = arg0;
+      mode = arg1;
+    } else { // assumes (typeof arg1 === "function")
+      depth = arg0;
+      func = arg1;
+      mode = arg2;
+    }
+
+    var subframe = grain.slice(0, depth);
+    var subgrain = grain.slice(depth);
+
+    mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
+
+    MatrixPFill(true, buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+    used_outptr = true;
+  }
+
+  mode && mode.print && mode.print({where:"MCR K", depth:depth, func:func, mode:mode, self:self});
+
+  parallel: { /* no code yet */
+    // Idea: preallocate N*3 result areas, where N is numSlices,
+    // and each area can hold a matrix matching [grain, valtype]
+    // Round-robin the use of the areas for intermediate results.
+    //
+    // Sequential code illustrates (simplified) round-robin.
+    var numSlices = ParallelSlices();
+  }
+
+  mode && mode.print && mode.print({where:"MCR L", depth:depth, func:func, mode:mode, self:self});
+
+  // Sequential fallback:
+  var buf0 = make_buffer_from_shape_and_valtype(grain, valtype);
+  var buf1 = make_buffer_from_shape_and_valtype(grain, valtype);
+  var mat0 = NewMatrix(MatrixView, grain, buf0, 0, valtype);
+  var mat1 = NewMatrix(MatrixView, grain, buf1, 0, valtype);
+  var mat2 = NewMatrix(MatrixView, grain, self.buffer, self.offset, valtype);
+  var grain_len = ProductOfArrayRange(grain, 0, grain.length);
+  UnsafeArrayCopy(buf1, 0, self.buffer, self.offset, grain_len);
+  var accumulator = self.buffer[self.offset];
+  var out0 = {set:outptr_set, gather:outptr_gather, buffer:buf0};
+  var out1 = {set:outptr_set, gather:outptr_gather, buffer:buf1};
+  var outptrs = [out0, out1];
+  var temps = [mat0, mat1];
+  for (var i = 1; i < length; i++) {
+    mat2.offset += grain_len;
+    used_outptr = false;
+
+    /* FIXME: must clear outptr[(i+1}%2] before letting control flow to func.*/
+    var result = func(temps[i%2], mat2, outptrs[(i+1)%2]);
+    if (!used_outptr) {
+      var subarray = result;
+      if (IsParallelArray(subarray) || IsMatrix(subarray)) {
+        var subvaltype;
+        if (IsParallelArray(subarray)) {
+          subvaltype = "any";
+        } else {
+          subvaltype = subarray.valtype;
+        }
+        if (!submatrix_matches_expectation(grain, valtype, subarray.shape, subvaltype)) {
+          ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " mismatched submatrix returned"+
+                                              " with shape: ["+subarray.shape+","+subvaltype+"];"+
+                                              " expected submatrix with shape: ["+grain+","+valtype+"]");
+        }
+        UnsafeArrayCopy(outptrs[i%2].buffer, 0,
+                        subarray.buffer, subarray.offset, grain_len);
+      } else {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " non-submatrix returned: "+subarray+" expected submatrix with shape: ["+grain+"]");
+      }
+    }
+  }
+
+  mode && mode.print && mode.print({where:"MCR Z", depth:depth, func:func, mode:mode, self:self});
+
+  return temps[(i+1)%2];
+}
+
+function MatrixDecomposeArgsForReduceOrScan(self, arg0, arg1, arg2) { // ([depth,] func, [mode])
   var depth = arg0;
-  var outputgrain = arg1;
-  var func = arg2;
-  var mode = arg3;
+  var func = arg1;
+  var mode = arg2;
 
   if (typeof arg0 === "function") {
     // caller omitted depth argument; shift other arguments down
@@ -2015,19 +2139,19 @@ function MatrixDecomposeArgsForReduceOrScan(self, arg0, arg1, arg2, arg3) { // (
   return [depth, func, mode];
 }
 
-function MatrixPReduce(arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] func, [mode])
-  var [depth, outputgrain, func, mode] =
-    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2, arg3);
+function MatrixPReduce(arg0, arg1, arg2) { // ([depth,] func, [mode])
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
   return MatrixCommonReduce(this, true, depth, func, mode);
 }
 
-function MatrixReduce(arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] func, [mode])
-  var [depth, outputgrain, func, mode] =
-    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2, arg3);
+function MatrixReduce(arg0, arg1, arg2) { // ([depth,] func, [mode])
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
   return MatrixCommonReduce(this, false, depth, func, mode);
 }
 
-function MatrixCommonScan(parexec, self, depth, outputgrain, func, mode) {
+function MatrixCommonScan(parexec, self, depth, func, mode) {
   // FIXME(bug 844887): Check |self instanceof Matrix|
   // FIXME(bug 844887): Check |IsCallable(func)|
 
@@ -2051,16 +2175,16 @@ function MatrixCommonScan(parexec, self, depth, outputgrain, func, mode) {
 
 }
 
-function MatrixPScan(arg0, arg1, arg2, arg3) {
-  var [depth, outputgrain, func, mode] =
-    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2, arg3);
-  return MatrixCommonScan(true, this, depth, outputgrain, func, mode);
+function MatrixPScan(arg0, arg1, arg2) {
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
+  return MatrixCommonScan(true, this, depth, func, mode);
 }
 
-function MatrixScan(arg0, arg1, arg2, arg3) {
-  var [depth, outputgrain, func, mode] =
-    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2, arg3);
-  return MatrixCommonScan(false, this, depth, outputgrain, func, mode);
+function MatrixScan(arg0, arg1, arg2) {
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
+  return MatrixCommonScan(false, this, depth, func, mode);
 }
 
 function MatrixScatter(targets, defaultValue, conflictFunc, length, mode) {
