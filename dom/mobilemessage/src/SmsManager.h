@@ -24,7 +24,7 @@ public:
   NS_DECL_NSIOBSERVER
   NS_DECL_NSIDOMMOZSMSMANAGER
 
-  NS_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper::)
+  NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper)
 
   static already_AddRefed<SmsManager>
   CreateInstanceIfAllowed(nsPIDOMWindow *aWindow);
@@ -36,7 +36,7 @@ private:
   /**
    * Internal Send() method used to send one message.
    */
-  nsresult Send(JSContext* aCx, JSObject* aGlobal, JSString* aNumber,
+  nsresult Send(JSContext* aCx, JSObject* aGlobal, JS::Handle<JSString*> aNumber,
                 const nsAString& aMessage, JS::Value* aRequest);
 
   /**

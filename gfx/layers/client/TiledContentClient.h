@@ -84,8 +84,8 @@ struct BasicTiledLayerPaintData {
   bool mPaintFinished : 1;
 };
 
-class BasicTiledThebesLayer;
-class BasicShadowLayerManager;
+class ClientTiledThebesLayer;
+class ClientLayerManager;
 
 /**
  * Provide an instance of TiledLayerBuffer backed by image surfaces.
@@ -99,17 +99,13 @@ class BasicTiledLayerBuffer
   friend class TiledLayerBuffer<BasicTiledLayerBuffer, BasicTiledLayerTile>;
 
 public:
-  BasicTiledLayerBuffer(BasicTiledThebesLayer* aThebesLayer,
-                        BasicShadowLayerManager* aManager)
-    : mThebesLayer(aThebesLayer)
-    , mManager(aManager)
-    , mLastPaintOpaque(false)
-    {}
- BasicTiledLayerBuffer()
+  BasicTiledLayerBuffer(ClientTiledThebesLayer* aThebesLayer,
+                        ClientLayerManager* aManager);
+  BasicTiledLayerBuffer()
     : mThebesLayer(nullptr)
     , mManager(nullptr)
     , mLastPaintOpaque(false)
-    {}
+  {}
 
   void PaintThebes(const nsIntRegion& aNewValidRegion,
                    const nsIntRegion& aPaintRegion,
@@ -134,8 +130,6 @@ public:
   void SetFrameResolution(const gfxSize& aResolution) { mFrameResolution = aResolution; }
 
   bool HasFormatChanged() const;
-
-  void LockCopyAndWrite();
 
   /**
    * Performs a progressive update of a given tiled buffer.
@@ -175,10 +169,11 @@ protected:
   }
 
   BasicTiledLayerTile GetPlaceholderTile() const { return BasicTiledLayerTile(); }
+
 private:
   gfxASurface::gfxContentType GetContentType() const;
-  BasicTiledThebesLayer* mThebesLayer;
-  BasicShadowLayerManager* mManager;
+  ClientTiledThebesLayer* mThebesLayer;
+  ClientLayerManager* mManager;
   LayerManager::DrawThebesLayerCallback mCallback;
   void* mCallbackData;
   gfxSize mFrameResolution;
@@ -189,8 +184,8 @@ private:
   nsIntPoint                    mSinglePaintBufferOffset;
 
   BasicTiledLayerTile ValidateTileInternal(BasicTiledLayerTile aTile,
-                                         const nsIntPoint& aTileOrigin,
-                                         const nsIntRect& aDirtyRect);
+                                           const nsIntPoint& aTileOrigin,
+                                           const nsIntRect& aDirtyRect);
 
   /**
    * Calculates the region to update in a single progressive update transaction.
@@ -218,6 +213,39 @@ private:
                                       nsIntRegion& aRegionToPaint,
                                       BasicTiledLayerPaintData* aPaintData,
                                       bool aIsRepeated);
+};
+
+class TiledContentClient : public CompositableClient
+{
+  // XXX: for now the layer which owns us interacts directly with our buffers.
+  // We should have a content client for each tiled buffer which manages its
+  // own valid region, resolution, etc. Then we could have a much cleaner
+  // interface and tidy up BasicTiledThebesLayer::PaintThebes (bug 862547).
+  friend class ClientTiledThebesLayer;
+
+public:
+  TiledContentClient(ClientTiledThebesLayer* aThebesLayer,
+                     ClientLayerManager* aManager);
+
+  ~TiledContentClient()
+  {
+    MOZ_COUNT_DTOR(TiledContentClient);
+  }
+
+  virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
+  {
+    return TextureInfo(BUFFER_TILED);
+  }
+
+  enum TiledBufferType {
+    TILED_BUFFER,
+    LOW_PRECISION_TILED_BUFFER
+  };
+  void LockCopyAndWrite(TiledBufferType aType);
+
+private:
+  BasicTiledLayerBuffer mTiledBuffer;
+  BasicTiledLayerBuffer mLowPrecisionTiledBuffer;
 };
 
 }

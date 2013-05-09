@@ -314,14 +314,14 @@ nsDOMEvent::SetTrusted(bool aTrusted)
 
 NS_IMETHODIMP
 nsDOMEvent::Initialize(nsISupports* aOwner, JSContext* aCx, JSObject* aObj,
-                       uint32_t aArgc, JS::Value* aArgv)
+                       const JS::CallArgs& aArgs)
 {
-  NS_ENSURE_TRUE(aArgc >= 1, NS_ERROR_XPC_NOT_ENOUGH_ARGS);
+  NS_ENSURE_TRUE(aArgs.length() >= 1, NS_ERROR_XPC_NOT_ENOUGH_ARGS);
 
   bool trusted = false;
   nsCOMPtr<nsPIDOMWindow> w = do_QueryInterface(aOwner);
   if (w) {
-    nsCOMPtr<nsIDocument> d = do_QueryInterface(w->GetExtantDocument());
+    nsCOMPtr<nsIDocument> d = w->GetExtantDoc();
     if (d) {
       trusted = nsContentUtils::IsChromeDoc(d);
       nsIPresShell* s = d->GetShell();
@@ -336,7 +336,7 @@ nsDOMEvent::Initialize(nsISupports* aOwner, JSContext* aCx, JSObject* aObj,
   }
 
   JSAutoRequest ar(aCx);
-  JSString* jsstr = JS_ValueToString(aCx, aArgv[0]);
+  JSString* jsstr = JS_ValueToString(aCx, aArgs[0]);
   if (!jsstr) {
     return NS_ERROR_DOM_SYNTAX_ERR;
   }
@@ -346,7 +346,7 @@ nsDOMEvent::Initialize(nsISupports* aOwner, JSContext* aCx, JSObject* aObj,
   nsDependentJSString type;
   NS_ENSURE_STATE(type.init(aCx, jsstr));
 
-  nsresult rv = InitFromCtor(type, aCx, aArgc >= 2 ? &(aArgv[1]) : nullptr);
+  nsresult rv = InitFromCtor(type, aCx, aArgs.length() >= 2 ? &(aArgs[1]) : nullptr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   SetTrusted(trusted);
@@ -369,7 +369,7 @@ nsDOMEvent::Init(mozilla::dom::EventTarget* aGlobal)
   bool trusted = false;
   nsCOMPtr<nsPIDOMWindow> w = do_QueryInterface(aGlobal);
   if (w) {
-    nsCOMPtr<nsIDocument> d = do_QueryInterface(w->GetExtantDocument());
+    nsCOMPtr<nsIDocument> d = w->GetExtantDoc();
     if (d) {
       trusted = nsContentUtils::IsChromeDoc(d);
       nsIPresShell* s = d->GetShell();
@@ -460,7 +460,7 @@ nsDOMEvent::StopImmediatePropagation()
 
 static nsIDocument* GetDocumentForReport(nsEvent* aEvent)
 {
-  nsIDOMEventTarget* target = aEvent->currentTarget;
+  EventTarget* target = aEvent->currentTarget;
   if (nsCOMPtr<nsINode> node = do_QueryInterface(target)) {
     return node->OwnerDoc();
   }
@@ -521,7 +521,7 @@ nsDOMEvent::PreventDefault()
       if (!node) {
         nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(mEvent->currentTarget);
         if (win) {
-          node = do_QueryInterface(win->GetExtantDocument());
+          node = win->GetExtantDoc();
         }
       }
       if (node && !nsContentUtils::IsChromeDoc(node->OwnerDoc())) {
@@ -620,6 +620,7 @@ nsDOMEvent::DuplicatePrivateData()
       keyEvent->charCode = oldKeyEvent->charCode;
       keyEvent->location = oldKeyEvent->location;
       keyEvent->isChar = oldKeyEvent->isChar;
+      keyEvent->mKeyNameIndex = oldKeyEvent->mKeyNameIndex;
       newEvent = keyEvent;
       break;
     }
@@ -828,7 +829,8 @@ nsDOMEvent::DuplicatePrivateData()
         static_cast<nsTransitionEvent*>(mEvent);
       newEvent = new nsTransitionEvent(false, msg,
                                        oldTransitionEvent->propertyName,
-                                       oldTransitionEvent->elapsedTime);
+                                       oldTransitionEvent->elapsedTime,
+                                       oldTransitionEvent->pseudoElement);
       NS_ENSURE_TRUE(newEvent, NS_ERROR_OUT_OF_MEMORY);
       break;
     }
@@ -838,7 +840,8 @@ nsDOMEvent::DuplicatePrivateData()
         static_cast<nsAnimationEvent*>(mEvent);
       newEvent = new nsAnimationEvent(false, msg,
                                       oldAnimationEvent->animationName,
-                                      oldAnimationEvent->elapsedTime);
+                                      oldAnimationEvent->elapsedTime,
+                                      oldAnimationEvent->pseudoElement);
       NS_ENSURE_TRUE(newEvent, NS_ERROR_OUT_OF_MEMORY);
       break;
     }

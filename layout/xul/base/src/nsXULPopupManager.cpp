@@ -12,6 +12,7 @@
 #include "nsMenuBarListener.h"
 #include "nsContentUtils.h"
 #include "nsIDOMDocument.h"
+#include "nsDOMEvent.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMXULElement.h"
 #include "nsIXULDocument.h"
@@ -39,6 +40,7 @@
 #include "mozilla/Services.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 const nsNavigationDirection DirectionFromKeyCodeTable[2][6] = {
   {
@@ -339,6 +341,10 @@ nsMenuPopupFrame* GetPopupToMoveOrResize(nsIFrame* aFrame)
   if (menuPopupFrame->PopupState() != ePopupOpenAndVisible)
     return nullptr;
 
+  nsIWidget* widget = menuPopupFrame->GetWidget();
+  if (widget && !widget->IsVisible())
+    return nullptr;
+
   return menuPopupFrame;
 }
 
@@ -447,11 +453,9 @@ nsXULPopupManager::InitTriggerEvent(nsIDOMEvent* aEvent, nsIContent* aPopup,
     *aTriggerContent = nullptr;
     if (aEvent) {
       // get the trigger content from the event
-      nsCOMPtr<nsIDOMEventTarget> target;
-      aEvent->GetTarget(getter_AddRefs(target));
-      if (target) {
-        CallQueryInterface(target, aTriggerContent);
-      }
+      nsCOMPtr<nsIContent> target = do_QueryInterface(
+        aEvent->InternalDOMEvent()->GetTarget());
+      target.forget(aTriggerContent);
     }
   }
 
@@ -1473,11 +1477,8 @@ nsXULPopupManager::MayShowPopup(nsMenuPopupFrame* aPopup)
   // window, so this is always disabled.
   nsCOMPtr<nsIWidget> mainWidget;
   baseWin->GetMainWidget(getter_AddRefs(mainWidget));
-  if (mainWidget) {
-    int32_t sizeMode;
-    mainWidget->GetSizeMode(&sizeMode);
-    if (sizeMode == nsSizeMode_Minimized)
-      return false;
+  if (mainWidget && mainWidget->SizeMode() == nsSizeMode_Minimized) {
+    return false;
   }
 
   // cannot open a popup that is a submenu of a menupopup that isn't open.
@@ -1597,16 +1598,16 @@ nsXULPopupManager::SetCaptureState(nsIContent* aOldPopup)
 void
 nsXULPopupManager::UpdateKeyboardListeners()
 {
-  nsCOMPtr<nsIDOMEventTarget> newTarget;
+  nsCOMPtr<EventTarget> newTarget;
   bool isForMenu = false;
   nsMenuChainItem* item = GetTopVisibleMenu();
   if (item) {
     if (!item->IgnoreKeys())
-      newTarget = do_QueryInterface(item->Content()->GetDocument());
+      newTarget = item->Content()->GetDocument();
     isForMenu = item->PopupType() == ePopupTypeMenu;
   }
   else if (mActiveMenuBar) {
-    newTarget = do_QueryInterface(mActiveMenuBar->GetContent()->GetDocument());
+    newTarget = mActiveMenuBar->GetContent()->GetDocument();
     isForMenu = true;
   }
 
@@ -1634,7 +1635,7 @@ nsXULPopupManager::UpdateMenuItems(nsIContent* aPopup)
 {
   // Walk all of the menu's children, checking to see if any of them has a
   // command attribute. If so, then several attributes must potentially be updated.
- 
+
   nsCOMPtr<nsIDocument> document = aPopup->GetCurrentDoc();
   if (!document) {
     return;

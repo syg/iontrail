@@ -10,6 +10,7 @@
 #include "CompositableHost.h"
 #include "nsTArray.h"
 #include "nsXULAppAPI.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 
 using namespace base;
 using namespace mozilla::ipc;
@@ -48,8 +49,7 @@ ImageBridgeParent::RecvUpdate(const EditArray& aEdits, EditReplyArray* aReply)
 {
   EditReplyVector replyv;
   for (EditArray::index_type i = 0; i < aEdits.Length(); ++i) {
-    ReceiveCompositableUpdate(aEdits[i],
-                              replyv);
+    ReceiveCompositableUpdate(aEdits[i], replyv);
   }
 
   aReply->SetCapacity(replyv.size());
@@ -60,7 +60,7 @@ ImageBridgeParent::RecvUpdate(const EditArray& aEdits, EditReplyArray* aReply)
   // Ensure that any pending operations involving back and front
   // buffers have completed, so that neither process stomps on the
   // other's buffer contents.
-  ShadowLayerManager::PlatformSyncBeforeReplyUpdate();
+  LayerManagerComposite::PlatformSyncBeforeReplyUpdate();
 
   return true;
 }
@@ -140,12 +140,12 @@ ImageBridgeParent::DeallocPGrallocBuffer(PGrallocBufferParent* actor)
 }
 
 PCompositableParent*
-ImageBridgeParent::AllocPCompositable(const CompositableType& aType,
-                                                         uint64_t* aID)
+ImageBridgeParent::AllocPCompositable(const TextureInfo& aInfo,
+                                      uint64_t* aID)
 {
   uint64_t id = GenImageContainerID();
   *aID = id;
-  return new CompositableParent(this, aType, id);
+  return new CompositableParent(this, aInfo, id);
 }
 
 bool ImageBridgeParent::DeallocPCompositable(PCompositableParent* aActor)

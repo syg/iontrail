@@ -141,7 +141,7 @@ SmsManager::GetSegmentInfoForText(const nsAString& aText,
 }
 
 nsresult
-SmsManager::Send(JSContext* aCx, JSObject* aGlobal, JSString* aNumber,
+SmsManager::Send(JSContext* aCx, JSObject* aGlobal, JS::Handle<JSString*> aNumber,
                  const nsAString& aMessage, JS::Value* aRequest)
 {
   nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
@@ -157,7 +157,8 @@ SmsManager::Send(JSContext* aCx, JSObject* aGlobal, JSString* aNumber,
   nsresult rv = smsService->Send(number, aMessage, msgCallback);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = nsContentUtils::WrapNative(aCx, aGlobal,
+  JS::Rooted<JSObject*> global(aCx, aGlobal);
+  rv = nsContentUtils::WrapNative(aCx, global,
                                   static_cast<nsIDOMDOMRequest*>(request.get()),
                                   aRequest);
   if (NS_FAILED(rv)) {
@@ -182,37 +183,55 @@ SmsManager::Send(const JS::Value& aNumber, const nsAString& aMessage, JS::Value*
     return NS_ERROR_INVALID_ARG;
   }
 
-  JSObject* global = sc->GetNativeGlobal();
+  JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
   NS_ASSERTION(global, "Failed to get global object!");
 
   JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, global);
 
   if (aNumber.isString()) {
-    return Send(cx, global, aNumber.toString(), aMessage, aReturn);
+    JS::Rooted<JSString*> number(cx, aNumber.toString());
+    return Send(cx, global, number, aMessage, aReturn);
   }
 
-  // Must be an array then.
-  JSObject& numbers = aNumber.toObject();
+  // Must be an object then.
+  if (!aNumber.isObject()) {
+    return NS_ERROR_FAILURE;
+  }
 
+  JS::Rooted<JSObject*> numbers(cx, &aNumber.toObject());
   uint32_t size;
-  JS_ALWAYS_TRUE(JS_GetArrayLength(cx, &numbers, &size));
+  if (!JS_GetArrayLength(cx, numbers, &size)) {
+    return NS_ERROR_FAILURE;
+  }
 
-  JS::Value* requests = new JS::Value[size];
+  JS::AutoValueVector requests(cx);
+  if (!requests.resize(size)) {
+    return NS_ERROR_FAILURE;
+  }
 
-  for (uint32_t i=0; i<size; ++i) {
-    JS::Value number;
-    if (!JS_GetElement(cx, &numbers, i, &number)) {
+  JS::RootedString str(cx);
+  for (uint32_t i = 0; i < size; ++i) {
+    JS::Rooted<JS::Value> number(cx);
+    if (!JS_GetElement(cx, numbers, i, number.address())) {
       return NS_ERROR_INVALID_ARG;
     }
 
-    nsresult rv = Send(cx, global, number.toString(), aMessage, &requests[i]);
+    str = JS_ValueToString(cx, number);
+    if (!str) {
+      return NS_ERROR_FAILURE;
+    }
+
+    nsresult rv = Send(cx, global, str, aMessage, &requests[i]);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  aReturn->setObjectOrNull(JS_NewArrayObject(cx, size, requests));
-  NS_ENSURE_TRUE(aReturn->isObject(), NS_ERROR_FAILURE);
+  JSObject* obj = JS_NewArrayObject(cx, requests.length(), requests.begin());
+  if (!obj) {
+    return NS_ERROR_FAILURE;
+  }
 
+  aReturn->setObject(*obj);
   return NS_OK;
 }
 

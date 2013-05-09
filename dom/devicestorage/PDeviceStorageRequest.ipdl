@@ -27,24 +27,24 @@ struct BlobResponse
 
 struct DeviceStorageFileValue
 {
-  nsString type;
   nsString name;
-  nsString fullpath;
 };
 
 struct EnumerationResponse
 {
+  nsString type;
+  nsString relpath;
   DeviceStorageFileValue[] paths;
 };
 
 struct FreeSpaceStorageResponse
 {
-  int64_t freeBytes;
+  uint64_t freeBytes;
 };
 
 struct UsedSpaceStorageResponse
 {
-  int64_t usedBytes;
+  uint64_t usedBytes;
 };
 
 struct AvailableStorageResponse

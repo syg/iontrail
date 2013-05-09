@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -567,6 +566,41 @@ CodeGeneratorARM::visitDivI(LDivI *ins)
     }
 
     masm.bind(&done);
+
+    return true;
+}
+
+bool
+CodeGeneratorARM::visitDivPowTwoI(LDivPowTwoI *ins)
+{
+    Register lhs = ToRegister(ins->numerator());
+    Register output = ToRegister(ins->output());
+    int32_t shift = ins->shift();
+
+    if (shift != 0) {
+        if (!ins->mir()->isTruncated()) {
+            // If the remainder is != 0, bailout since this must be a double.
+            masm.as_mov(ScratchRegister, lsl(lhs, 32 - shift), SetCond);
+            if (!bailoutIf(Assembler::NonZero, ins->snapshot()))
+                return false;
+        }
+
+        // Adjust the value so that shifting produces a correctly rounded result
+        // when the numerator is negative. See 10-1 "Signed Division by a Known
+        // Power of 2" in Henry S. Warren, Jr.'s Hacker's Delight.
+        // Note that we wouldn't need to do this adjustment if we could use
+        // Range Analysis to find cases when the value is never negative.
+        if (shift > 1) {
+            masm.as_mov(ScratchRegister, asr(lhs, 31));
+            masm.as_add(ScratchRegister, lhs, lsr(ScratchRegister, 32 - shift));
+        } else
+            masm.as_add(ScratchRegister, lhs, lsr(lhs, 32 - shift));
+
+        // Do the shift.
+        masm.as_mov(output, asr(ScratchRegister, shift));
+    } else {
+        masm.ma_mov(lhs, output);
+    }
 
     return true;
 }
@@ -1546,12 +1580,25 @@ CodeGeneratorARM::visitGuardShape(LGuardShape *guard)
 {
     Register obj = ToRegister(guard->input());
     Register tmp = ToRegister(guard->tempInt());
+
     masm.ma_ldr(DTRAddr(obj, DtrOffImm(JSObject::offsetOfShape())), tmp);
     masm.ma_cmp(tmp, ImmGCPtr(guard->mir()->shape()));
 
-    if (!bailoutIf(Assembler::NotEqual, guard->snapshot()))
-        return false;
-    return true;
+    return bailoutIf(Assembler::NotEqual, guard->snapshot());
+}
+
+bool
+CodeGeneratorARM::visitGuardObjectType(LGuardObjectType *guard)
+{
+    Register obj = ToRegister(guard->input());
+    Register tmp = ToRegister(guard->tempInt());
+
+    masm.ma_ldr(DTRAddr(obj, DtrOffImm(JSObject::offsetOfType())), tmp);
+    masm.ma_cmp(tmp, ImmGCPtr(guard->mir()->typeObject()));
+
+    Assembler::Condition cond =
+        guard->mir()->bailOnEquality() ? Assembler::Equal : Assembler::NotEqual;
+    return bailoutIf(cond, guard->snapshot());
 }
 
 bool
@@ -1647,6 +1694,20 @@ getBase(U *mir)
       case U::Global: return GlobalReg;
     }
     return InvalidReg;
+}
+
+bool
+CodeGeneratorARM::visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic *ins)
+{
+    JS_NOT_REACHED("NYI");
+    return true;
+}
+
+bool
+CodeGeneratorARM::visitStoreTypedArrayElementStatic(LStoreTypedArrayElementStatic *ins)
+{
+    JS_NOT_REACHED("NYI");
+    return true;
 }
 
 bool

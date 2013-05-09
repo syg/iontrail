@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,6 +13,7 @@
 #include "BaselineJIT.h"
 #include "BaselineFrame.h"
 #include "BaselineRegisters.h"
+#include "BytecodeAnalysis.h"
 #include "IonMacroAssembler.h"
 #include "FixedList.h"
 
@@ -159,8 +159,11 @@ class StackValue
 
 enum StackAdjustment { AdjustStack, DontAdjustStack };
 
+class BaselineCompilerShared;
+
 class FrameInfo
 {
+    BaselineCompilerShared &compiler;
     RootedScript script;
     MacroAssembler &masm;
 
@@ -168,8 +171,10 @@ class FrameInfo
     size_t spIndex;
 
   public:
-    FrameInfo(JSContext *cx, HandleScript script, MacroAssembler &masm)
-      : script(cx, script),
+    FrameInfo(JSContext *cx, BaselineCompilerShared &compiler, HandleScript script,
+              MacroAssembler &masm)
+      : compiler(compiler),
+        script(cx, script),
         masm(masm),
         stack(),
         spIndex(0)

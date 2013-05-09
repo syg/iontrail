@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -265,6 +264,20 @@ class AsmJSModule
         }
     };
 
+#if defined(MOZ_VTUNE)
+    // Function information to add to the VTune JIT profiler following linking.
+    struct ProfiledFunction
+    {
+        JSAtom *name;
+        unsigned startCodeOffset;
+        unsigned endCodeOffset;
+
+        ProfiledFunction(JSAtom *name, unsigned start, unsigned end)
+          : name(name), startCodeOffset(start), endCodeOffset(end)
+        { }
+    };
+#endif
+
     // If linking fails, we recompile the function as if it's ordinary JS.
     // This struct holds the data required to do this.
     struct PostLinkFailureInfo
@@ -306,6 +319,10 @@ class AsmJSModule
 #if defined(JS_CPU_ARM)
     typedef Vector<ion::AsmJSBoundsCheck, 0, SystemAllocPolicy> BoundsCheckVector;
 #endif
+    typedef Vector<ion::IonScriptCounts *, 0, SystemAllocPolicy> FunctionCountsVector;
+#if defined(MOZ_VTUNE)
+    typedef Vector<ProfiledFunction, 0, SystemAllocPolicy> ProfiledFunctionVector;
+#endif
 
     GlobalVector                          globals_;
     ExitVector                            exits_;
@@ -314,6 +331,10 @@ class AsmJSModule
 #if defined(JS_CPU_ARM)
     BoundsCheckVector                     boundsChecks_;
 #endif
+#if defined(MOZ_VTUNE)
+    ProfiledFunctionVector                profiledFunctions_;
+#endif
+
     uint32_t                              numGlobalVars_;
     uint32_t                              numFFIs_;
     uint32_t                              numFuncPtrTableElems_;
@@ -335,6 +356,8 @@ class AsmJSModule
 
     PostLinkFailureInfo                   postLinkFailureInfo_;
 
+    FunctionCountsVector                  functionCounts_;
+
   public:
     explicit AsmJSModule(JSContext *cx)
       : numGlobalVars_(0),
@@ -350,6 +373,8 @@ class AsmJSModule
         maybeHeap_(),
         postLinkFailureInfo_(cx)
     {}
+
+    ~AsmJSModule();
 
     void trace(JSTracer *trc) {
         for (unsigned i = 0; i < globals_.length(); i++)
@@ -426,8 +451,11 @@ class AsmJSModule
         *exitIndex = unsigned(exits_.length());
         return exits_.append(Exit(ffiIndex));
     }
+    bool addFunctionCounts(ion::IonScriptCounts *counts) {
+        return functionCounts_.append(counts);
+    }
 
-    bool addExportedFunction(RawFunction fun, PropertyName *maybeFieldName,
+    bool addExportedFunction(JSFunction *fun, PropertyName *maybeFieldName,
                              MoveRef<ArgCoercionVector> argCoercions, ReturnType returnType)
     {
         ExportedFunction func(fun, maybeFieldName, argCoercions, returnType);
@@ -442,6 +470,18 @@ class AsmJSModule
     ExportedFunction &exportedFunction(unsigned i) {
         return exports_[i];
     }
+#ifdef MOZ_VTUNE
+    bool trackProfiledFunction(JSAtom *name, unsigned startCodeOffset, unsigned endCodeOffset) {
+        ProfiledFunction func(name, startCodeOffset, endCodeOffset);
+        return profiledFunctions_.append(func);
+    }
+    unsigned numProfiledFunctions() const {
+        return profiledFunctions_.length();
+    }
+    const ProfiledFunction &profiledFunction(unsigned i) const {
+        return profiledFunctions_[i];
+    }
+#endif
     bool hasArrayView() const {
         return hasArrayView_;
     }
@@ -468,6 +508,12 @@ class AsmJSModule
     }
     const Exit &exit(unsigned i) const {
         return exits_[i];
+    }
+    unsigned numFunctionCounts() const {
+        return functionCounts_.length();
+    }
+    ion::IonScriptCounts *functionCounts(unsigned i) {
+        return functionCounts_[i];
     }
 
     // An Exit holds bookkeeping information about an exit; the ExitDatum
@@ -661,6 +707,9 @@ class AsmJSModule
 // 'trace' and the destructor on finalization.
 extern AsmJSModule &
 AsmJSModuleObjectToModule(JSObject *obj);
+
+extern bool
+IsAsmJSModuleObject(JSObject *obj);
 
 extern JSObject &
 AsmJSModuleObject(JSFunction *moduleFun);

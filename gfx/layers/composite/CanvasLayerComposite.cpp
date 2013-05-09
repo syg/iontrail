@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ipc/AutoOpenSurface.h"
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
 #include "mozilla/layers/ShadowLayers.h"
 #include "mozilla/layers/CompositorTypes.h" // for TextureInfo
 #include "mozilla/layers/Effects.h"
@@ -17,7 +17,7 @@ using namespace mozilla;
 using namespace mozilla::layers;
 
 CanvasLayerComposite::CanvasLayerComposite(LayerManagerComposite* aManager)
-  : ShadowCanvasLayer(aManager, nullptr)
+  : CanvasLayer(aManager, nullptr)
   , LayerComposite(aManager)
   , mImageHost(nullptr)
 {
@@ -30,17 +30,6 @@ CanvasLayerComposite::~CanvasLayerComposite()
   MOZ_COUNT_DTOR(CanvasLayerComposite);
 
   CleanupResources();
-}
-
-void
-CanvasLayerComposite::EnsureImageHost(CompositableType aHostType)
-{
-  if (!mImageHost ||
-      mImageHost->GetType() != aHostType) {
-    RefPtr<CompositableHost> bufferHost
-      = CompositableHost::Create(aHostType, mCompositeManager->GetCompositor());
-    mImageHost = static_cast<ImageHost*>(bufferHost.get());
-  }
 }
 
 void CanvasLayerComposite::SetCompositableHost(CompositableHost* aHost) {

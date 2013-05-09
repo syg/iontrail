@@ -53,7 +53,8 @@ public:
     return mContext;
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   float SampleRate() const
   {
@@ -89,21 +90,28 @@ public:
   }
 
   /**
-   * Returns a ThreadSharedFloatArrayBufferList containing the sample data
-   * at aRate. Sets *aLength to the number of samples per channel.
+   * Returns a ThreadSharedFloatArrayBufferList containing the sample data.
    */
-  ThreadSharedFloatArrayBufferList* GetThreadSharedChannelsForRate(JSContext* aContext,
-                                                                   uint32_t* aRate,
-                                                                   uint32_t* aLength);
+  ThreadSharedFloatArrayBufferList* GetThreadSharedChannelsForRate(JSContext* aContext);
 
   // aContents should either come from JS_AllocateArrayBufferContents or
   // JS_StealArrayBufferContents.
-  void SetChannelDataFromArrayBufferContents(JSContext* aJSContext,
+  bool SetChannelDataFromArrayBufferContents(JSContext* aJSContext,
                                              uint32_t aChannel,
                                              void* aContents);
 
+  // This replaces the contents of the JS array for the given channel.
+  // This function needs to be called on an AudioBuffer which has not been
+  // handed off to the content yet, and right after the object has been
+  // initialized.
+  void SetRawChannelContents(JSContext* aJSContext,
+                             uint32_t aChannel,
+                             float* aContents);
+
+  void MixToMono(JSContext* aJSContext);
+
 protected:
-  void RestoreJSChannelData(JSContext* aJSContext);
+  bool RestoreJSChannelData(JSContext* aJSContext);
   void ClearJSChannels();
 
   nsRefPtr<AudioContext> mContext;

@@ -31,17 +31,11 @@ public:
    * message will be sent to the compositor to create a corresponding image
    * host.
    */
-  static TemporaryRef<ImageClient> CreateImageClient(LayersBackend aBackendType,
-                                                     CompositableType aImageHostType,
+  static TemporaryRef<ImageClient> CreateImageClient(CompositableType aImageHostType,
                                                      CompositableForwarder* aFwd,
                                                      TextureFlags aFlags);
 
   virtual ~ImageClient() {}
-
-  virtual CompositableType GetType() const MOZ_OVERRIDE
-  {
-    return mType;
-  }
 
   /**
    * Update this ImageClient from aContainer in aLayer
@@ -88,12 +82,31 @@ public:
 
   virtual bool UpdateImage(ImageContainer* aContainer, uint32_t aContentFlags);
 
-  void EnsureTextureClient(TextureClientType aType);
+  /**
+   * Creates a texture client of the requested type.
+   * Returns true if the texture client was created succesfully,
+   * false otherwise.
+   */
+  bool EnsureTextureClient(TextureClientType aType);
 
   virtual void Updated();
+
+  virtual void SetDescriptorFromReply(TextureIdentifier aTextureId,
+                                      const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE
+  {
+    mTextureClient->SetDescriptorFromReply(aDescriptor);
+  }
+
+  virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
+  {
+    return mTextureInfo;
+  }
+
+  static bool SupportsBackend(LayersBackend aBackend);
+
 private:
   RefPtr<TextureClient> mTextureClient;
-  TextureFlags mFlags;
+  TextureInfo mTextureInfo;
 };
 
 /**
@@ -114,6 +127,13 @@ public:
   {
     mLayer = aLayer;
   }
+
+  virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
+  {
+    return TextureInfo(mType);
+  }
+
+  static bool SupportsBackend(LayersBackend aBackend);
 
 protected:
   uint64_t mAsyncContainerID;

@@ -202,9 +202,6 @@ BreakTypeToString(uint8_t aBreakType)
   case NS_STYLE_CLEAR_RIGHT: return "rightbr";
   case NS_STYLE_CLEAR_LEFT_AND_RIGHT: return "leftbr+rightbr";
   case NS_STYLE_CLEAR_LINE: return "linebr";
-  case NS_STYLE_CLEAR_BLOCK: return "blockbr";
-  case NS_STYLE_CLEAR_COLUMN: return "columnbr";
-  case NS_STYLE_CLEAR_PAGE: return "pagebr";
   default:
     break;
   }
@@ -239,8 +236,10 @@ nsLineBox::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
   }
   fprintf(out, "{%d,%d,%d,%d} ",
           mBounds.x, mBounds.y, mBounds.width, mBounds.height);
-  if (mData) {
-    fprintf(out, "vis-overflow={%d,%d,%d,%d} scr-overflow={%d,%d,%d,%d} ",
+  if (mData &&
+      (!mData->mOverflowAreas.VisualOverflow().IsEqualEdges(mBounds) ||
+       !mData->mOverflowAreas.ScrollableOverflow().IsEqualEdges(mBounds))) {
+    fprintf(out, "vis-overflow=%d,%d,%d,%d scr-overflow=%d,%d,%d,%d ",
             mData->mOverflowAreas.VisualOverflow().x,
             mData->mOverflowAreas.VisualOverflow().y,
             mData->mOverflowAreas.VisualOverflow().width,

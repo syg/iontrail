@@ -26,7 +26,7 @@
  *
  * # Main interfaces and abstractions
  *
- *  - Layer, ShadowableLayer and ShadowLayer
+ *  - Layer, ShadowableLayer and LayerComposite
  *    (see Layers.h and ipc/ShadowLayers.h)
  *  - CompositableClient and CompositableHost
  *    (client/CompositableClient.h composite/CompositableHost.h)
@@ -170,6 +170,7 @@ class Compositor : public RefCounted<Compositor>
 public:
   Compositor()
     : mCompositorID(0)
+    , mDrawColoredBorders(false)
   {
     MOZ_COUNT_CTOR(Compositor);
   }
@@ -219,14 +220,6 @@ public:
   virtual void MakeCurrent(MakeCurrentFlags aFlags = 0) = 0;
 
   /**
-   * Modifies the TextureIdentifier in aInfo to a more reliable kind. For use by
-   * when creating texture hosts/clients. If the desired texture cannot be
-   * created, this method allows the compositor to suggest a less desirable, but
-   * more reliable kind of texture.
-   */
-  virtual void FallbackTextureInfo(TextureInfo& aInfo) {}
-
-  /**
    * Creates a Surface that can be used as a rendering target by this
    * compositor.
    */
@@ -259,6 +252,12 @@ public:
    * be ignored, but compositor implementations are free to use it if they like.
    */
   virtual void SetDestinationSurfaceSize(const gfx::IntSize& aSize) = 0;
+
+  /**
+   * Declare an offset to use when rendering layers. This will be ignored when
+   * rendering to a target instead of the screen.
+   */
+  virtual void SetScreenRenderOffset(const gfx::Point& aOffset) = 0;
 
   /**
    * Tell the compositor to actually draw a quad. What to do draw and how it is
@@ -324,6 +323,22 @@ public:
    */
   virtual bool SupportsPartialTextureUpdate() = 0;
 
+  void EnableColoredBorders()
+  {
+    mDrawColoredBorders = true;
+  }
+  void DisableColoredBorders()
+  {
+    mDrawColoredBorders = false;
+  }
+
+  void DrawDiagnostics(const gfx::Color& color,
+                       const gfx::Rect& visibleRect,
+                       const gfx::Rect& aClipRect,
+                       const gfx::Matrix4x4& transform,
+                       const gfx::Point& aOffset);
+
+
 #ifdef MOZ_DUMP_PAINTING
   virtual const char* Name() const = 0;
 #endif // MOZ_DUMP_PAINTING
@@ -382,6 +397,7 @@ public:
 protected:
   uint32_t mCompositorID;
   static LayersBackend sBackend;
+  bool mDrawColoredBorders;
 };
 
 } // namespace layers

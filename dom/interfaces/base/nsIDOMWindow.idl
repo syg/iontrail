@@ -25,7 +25,7 @@ interface nsIVariant;
  * @see <http://www.whatwg.org/html/#window>
  */
 
-[scriptable, uuid(39cb59d4-fba9-48a9-b70b-570a7ec2ebfa)]
+[scriptable, uuid(b4cf7214-5385-4f72-aa83-f8d1ff17252b)]
 interface nsIDOMWindow : nsISupports
 {
   // the current browsing context
@@ -185,8 +185,8 @@ interface nsIDOMWindow : nsISupports
 
 
   // user prompts
-  void                      alert(in DOMString text);
-  boolean                   confirm(in DOMString text);
+  void                      alert([optional, Null(Stringify)] in DOMString text);
+  boolean                   confirm([optional] in DOMString text);
 
   // prompt() should return a null string if cancel is pressed
   DOMString                 prompt([optional] in DOMString aMessage,
@@ -367,8 +367,6 @@ interface nsIDOMWindow : nsISupports
   /* [replaceable] controllers */
   readonly attribute nsIControllers                     controllers;
 
-           attribute DOMString                          defaultStatus;
-
   readonly attribute float                              mozInnerScreenX;
   readonly attribute float                              mozInnerScreenY;
   readonly attribute float                              devicePixelRatio;
@@ -445,6 +443,9 @@ interface nsIDOMWindow : nsISupports
   // Argument is optional only so we can warn when it's null
   long
     mozRequestAnimationFrame([optional] in nsIFrameRequestCallback aCallback);
+  // jsval because we want a WebIDL callback here
+  [implicit_jscontext]
+  long requestAnimationFrame(in jsval aCallback);
 
   /**
    * Cancel a refresh callback.
@@ -506,5 +507,5 @@ interface nsIDOMWindowPerformance : nsISupports
  * Empty interface for compatibility with older versions.
  * @deprecated Use nsIDOMWindow instead
  */
-[scriptable, uuid(a5cd0946-bac1-4606-9aaa-9e68dd0a3279)]
+[scriptable, uuid(36aeaa8e-3126-49de-9581-276dd7117826)]
 interface nsIDOMWindowInternal : nsIDOMWindow {};

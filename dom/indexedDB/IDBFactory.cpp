@@ -7,14 +7,14 @@
 #include "base/basictypes.h"
 
 #include "IDBFactory.h"
+
 #include "nsIFile.h"
-#include "nsIJSContextStack.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptContext.h"
 #include "nsIXPConnect.h"
 #include "nsIXPCScriptable.h"
 
-#include "jsdbgapi.h"
+#include <algorithm>
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/IDBFactoryBinding.h"
@@ -43,9 +43,9 @@
 #include "IDBKeyRange.h"
 #include "IndexedDatabaseManager.h"
 #include "Key.h"
+#include "ProfilerHelpers.h"
 
 #include "ipc/IndexedDBChild.h"
-#include <algorithm>
 
 USING_INDEXEDDB_NAMESPACE
 USING_QUOTA_NAMESPACE
@@ -202,26 +202,13 @@ IDBFactory::Create(ContentParent* aContentParent,
   NS_ASSERTION(nsContentUtils::IsCallerChrome(), "Only for chrome!");
   NS_ASSERTION(aContentParent, "Null ContentParent!");
 
-#ifdef DEBUG
-  {
-    nsIThreadJSContextStack* cxStack = nsContentUtils::ThreadJSContextStack();
-    NS_ASSERTION(cxStack, "Couldn't get ThreadJSContextStack!");
-
-    JSContext* lastCx;
-    if (NS_SUCCEEDED(cxStack->Peek(&lastCx))) {
-      NS_ASSERTION(!lastCx, "We should only be called from C++!");
-    }
-    else {
-      NS_ERROR("nsIThreadJSContextStack::Peek should never fail!");
-    }
-  }
-#endif
+  NS_ASSERTION(!nsContentUtils::GetCurrentJSContext(), "Should be called from C++");
 
   nsCOMPtr<nsIPrincipal> principal =
     do_CreateInstance("@mozilla.org/nullprincipal;1");
   NS_ENSURE_TRUE(principal, NS_ERROR_FAILURE);
 
-  SafeAutoJSContext cx;
+  AutoSafeJSContext cx;
   JSAutoRequest ar(cx);
 
   nsIXPConnect* xpc = nsContentUtils::XPConnect();
@@ -231,13 +218,13 @@ IDBFactory::Create(ContentParent* aContentParent,
   nsresult rv = xpc->CreateSandbox(cx, principal, getter_AddRefs(globalHolder));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  JSObject* global;
-  rv = globalHolder->GetJSObject(&global);
+  JS::Rooted<JSObject*> global(cx);
+  rv = globalHolder->GetJSObject(global.address());
   NS_ENSURE_SUCCESS(rv, rv);
 
   // The CreateSandbox call returns a proxy to the actual sandbox object. We
   // don't need a proxy here.
-  global = JS_UnwrapObject(global);
+  global = js::UncheckedUnwrap(global);
 
   JSAutoCompartment ac(cx, global);
 
@@ -607,12 +594,29 @@ IDBFactory::OpenInternal(const nsAString& aName,
     dbActor->SetRequest(request);
   }
 
+#ifdef IDB_PROFILER_USE_MARKS
+  {
+    NS_ConvertUTF16toUTF8 profilerName(aName);
+    if (aDeleting) {
+      IDB_PROFILER_MARK("IndexedDB Request %llu: deleteDatabase(\"%s\")",
+                        "MT IDBFactory.deleteDatabase()",
+                        request->GetSerialNumber(), profilerName.get());
+    }
+    else {
+      IDB_PROFILER_MARK("IndexedDB Request %llu: open(\"%s\", %lld)",
+                        "MT IDBFactory.open()",
+                        request->GetSerialNumber(), profilerName.get(),
+                        aVersion);
+    }
+  }
+#endif
+
   request.forget(_retval);
   return NS_OK;
 }
 
 JSObject*
-IDBFactory::WrapObject(JSContext* aCx, JSObject* aScope)
+IDBFactory::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return IDBFactoryBinding::Wrap(aCx, aScope, this);
 }

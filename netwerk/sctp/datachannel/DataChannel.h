@@ -174,7 +174,7 @@ public:
                                      DataChannelListener *aListener,
                                      nsISupports *aContext,
                                      bool aExternalNegotiated,
-                                     uint16_t aStream);
+                                     uint16_t aStream) NS_WARN_UNUSED_RESULT;
 
   void Close(DataChannel *aChannel);
   // CloseInt() must be called with mLock held
@@ -233,12 +233,12 @@ private:
   int32_t SendMsgInternal(DataChannel *channel, const char *data,
                           uint32_t length, uint32_t ppid);
   int32_t SendBinary(DataChannel *channel, const char *data,
-                     uint32_t len);
+                     uint32_t len, uint32_t ppid_partial, uint32_t ppid_final);
   int32_t SendMsgCommon(uint16_t stream, const nsACString &aMsg, bool isBinary);
 
   void DeliverQueuedData(uint16_t stream);
 
-  already_AddRefed<DataChannel> OpenFinish(already_AddRefed<DataChannel> channel);
+  already_AddRefed<DataChannel> OpenFinish(already_AddRefed<DataChannel> channel) NS_WARN_UNUSED_RESULT;
 
   void StartDefer();
   bool SendDeferredMessages();
@@ -341,6 +341,7 @@ public:
     , mPrPolicy(policy)
     , mPrValue(value)
     , mFlags(0)
+    , mIsRecvBinary(false)
     {
       NS_ASSERTION(mConnection,"NULL connection");
     }
@@ -436,7 +437,8 @@ private:
   uint32_t mPrValue;
   uint32_t mFlags;
   uint32_t mId;
-  nsCString mBinaryBuffer;
+  bool mIsRecvBinary;
+  nsCString mRecvBuffer;
   nsTArray<nsAutoPtr<BufferedMsg> > mBufferedData;
   nsTArray<nsCOMPtr<nsIRunnable> > mQueuedMessages;
 };

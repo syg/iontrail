@@ -34,6 +34,8 @@ const TextureFlags AllowRepeat        = 0x8;
 const TextureFlags NewTile            = 0x10;
 // The host is responsible for tidying up any shared resources.
 const TextureFlags HostRelease        = 0x20;
+// The texture is part of a component-alpha pair
+const TextureFlags ComponentAlpha     = 0x40;
 
 /**
  * The kind of memory held by the texture client/host pair. This will
@@ -74,8 +76,7 @@ enum TextureHostFlags
 {
   TEXTURE_HOST_DEFAULT = 0,       // The default texture host for the given
                                   // SurfaceDescriptor
-  TEXTURE_HOST_TILED = 1 << 0,    // A texture host that supports tiling
-  TEXTURE_HOST_DIRECT = 1 << 1    // Direct texturing
+  TEXTURE_HOST_TILED = 1 << 0     // A texture host that supports tiling
 };
 
 /**
@@ -96,6 +97,16 @@ struct TextureFactoryIdentifier
 };
 
 /**
+ * Identify a texture to a compositable. Many textures can have the same id, but
+ * the id is unique for any texture owned by a particular compositable.
+ */
+typedef uint32_t TextureIdentifier;
+const TextureIdentifier TextureFront = 1;
+const TextureIdentifier TextureBack = 2;
+const TextureIdentifier TextureOnWhiteFront = 3;
+const TextureIdentifier TextureOnWhiteBack = 4;
+
+/**
  * Information required by the compositor from the content-side for creating or
  * using compositables and textures.
  */
@@ -110,8 +121,30 @@ struct TextureInfo
     , mTextureHostFlags(0)
     , mTextureFlags(0)
   {}
+
+  TextureInfo(CompositableType aType)
+    : mCompositableType(aType)
+    , mTextureHostFlags(0)
+    , mTextureFlags(0)
+  {}
+
+  bool operator==(const TextureInfo& aOther) const
+  {
+    return mCompositableType == aOther.mCompositableType &&
+           mTextureHostFlags == aOther.mTextureHostFlags &&
+           mTextureFlags == aOther.mTextureFlags;
+  }
 };
 
+/**
+ * How a SurfaceDescriptor will be opened.
+ *
+ * See ShadowLayerForwarder::OpenDescriptor for example.
+ */
+enum OpenMode {
+  OPEN_READ_ONLY,
+  OPEN_READ_WRITE
+};
 
 } // namespace layers
 } // namespace mozilla

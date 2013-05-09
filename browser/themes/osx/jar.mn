@@ -58,6 +58,10 @@ browser.jar:
   skin/classic/browser/page-livemarks.png
   skin/classic/browser/page-livemarks@2x.png
   skin/classic/browser/pageInfo.css
+  skin/classic/browser/pluginInstall-16.png
+  skin/classic/browser/pluginInstall-16@2x.png
+  skin/classic/browser/pluginInstall-64.png
+  skin/classic/browser/pluginInstall-64@2x.png
   skin/classic/browser/pointerLock-16.png
   skin/classic/browser/pointerLock-16@2x.png
   skin/classic/browser/pointerLock-64.png
@@ -168,6 +172,8 @@ browser.jar:
   skin/classic/browser/social/services-16@2x.png            (social/services-16@2x.png)
   skin/classic/browser/social/services-64.png               (social/services-64.png)
   skin/classic/browser/social/services-64@2x.png            (social/services-64@2x.png)
+  skin/classic/browser/social/share-button.png              (social/share-button.png)
+  skin/classic/browser/social/share-button-active.png       (social/share-button-active.png)
   skin/classic/browser/social/chat-close.png                             (social/chat-close.png)
   skin/classic/browser/tabbrowser/alltabs-box-bkgnd-icon.png             (tabbrowser/alltabs-box-bkgnd-icon.png)
   skin/classic/browser/tabbrowser/newtab.png                             (tabbrowser/newtab.png)
@@ -216,6 +222,8 @@ browser.jar:
   skin/classic/browser/devtools/goto-mdn.png                (devtools/goto-mdn.png)
   skin/classic/browser/devtools/ruleview.css                (devtools/ruleview.css)
   skin/classic/browser/devtools/commandline.css             (devtools/commandline.css)
+  skin/classic/browser/devtools/checkbox-dark.png           (devtools/checkbox-dark.png)
+  skin/classic/browser/devtools/checkbox-light.png          (devtools/checkbox-light.png)
   skin/classic/browser/devtools/markup-view.css             (devtools/markup-view.css)
   skin/classic/browser/devtools/orion.css                   (devtools/orion.css)
   skin/classic/browser/devtools/orion-container.css         (devtools/orion-container.css)
@@ -256,6 +264,7 @@ browser.jar:
 * skin/classic/browser/devtools/debugger.css                (devtools/debugger.css)
 * skin/classic/browser/devtools/profiler.css                (devtools/profiler.css)
   skin/classic/browser/devtools/netmonitor.css              (devtools/netmonitor.css)
+* skin/classic/browser/devtools/scratchpad.css              (devtools/scratchpad.css)
   skin/classic/browser/devtools/magnifying-glass.png        (devtools/magnifying-glass.png)
   skin/classic/browser/devtools/option-icon.png             (devtools/option-icon.png)
   skin/classic/browser/devtools/itemToggle.png              (devtools/itemToggle.png)

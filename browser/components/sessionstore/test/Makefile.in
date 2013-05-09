@@ -15,16 +15,21 @@ include $(DEPTH)/config/autoconf.mk
 # browser_589246.js is disabled for leaking browser windows (bug 752467)
 # browser_580512.js is disabled for leaking browser windows (bug 752467)
 
-XPCSHELL_TESTS = \
+DISABLED_XPCSHELL_TESTS = \
 	unit \
 	$(NULL)
 
 MOCHITEST_BROWSER_FILES = \
 	head.js \
+	browser_capabilities.js \
+	browser_dying_cache.js \
 	browser_form_restore_events.js \
 	browser_form_restore_events_sample.html \
 	browser_formdata_format.js \
 	browser_formdata_format_sample.html \
+	browser_input.js \
+	browser_input_sample.html \
+	browser_pageshow.js \
 	browser_248970_b_perwindowpb.js \
 	browser_248970_b_sample.html \
 	browser_339445.js \
@@ -73,7 +78,6 @@ MOCHITEST_BROWSER_FILES = \
 	browser_490040.js \
 	browser_491168.js \
 	browser_491577.js \
-	browser_493467.js \
 	browser_495495.js \
 	browser_500328.js \
 	browser_514751.js \
@@ -136,6 +140,7 @@ MOCHITEST_BROWSER_FILES = \
 	browser_739531_sample.html \
 	browser_739805.js \
 	browser_819510_perwindowpb.js \
+	browser_833286_atomic_backup.js \
 	$(filter disabled-for-intermittent-failures--bug-766044, browser_459906_empty.html) \
 	$(filter disabled-for-intermittent-failures--bug-766044, browser_459906_sample.html) \
 	$(filter disabled-for-intermittent-failures--bug-765389, browser_461743_sample.html) \

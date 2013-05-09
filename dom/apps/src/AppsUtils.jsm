@@ -90,7 +90,9 @@ this.AppsUtils = {
       packageHash: aApp.packageHash,
       staged: aApp.staged,
       installerAppId: aApp.installerAppId || Ci.nsIScriptSecurityManager.NO_APP_ID,
-      installerIsBrowser: !!aApp.installerIsBrowser
+      installerIsBrowser: !!aApp.installerIsBrowser,
+      storeId: aApp.storeId || "",
+      storeVersion: aApp.storeVersion || 0
     };
   },
 
@@ -119,6 +121,17 @@ this.AppsUtils = {
     debug("getAppLocalIdByManifestURL " + aManifestURL);
     for (let id in aApps) {
       if (aApps[id].manifestURL == aManifestURL) {
+        return aApps[id].localId;
+      }
+    }
+
+    return Ci.nsIScriptSecurityManager.NO_APP_ID;
+  },
+
+  getAppLocalIdByStoreId: function(aApps, aStoreId) {
+    debug("getAppLocalIdByStoreId:" + aStoreId);
+    for (let id in aApps) {
+      if (aApps[id].storeId == aStoreId) {
         return aApps[id].localId;
       }
     }
@@ -206,12 +219,61 @@ this.AppsUtils = {
   },
 
   /**
+    * Remove potential HTML tags from displayable fields in the manifest.
+    * We check name, description, developer name, and permission description
+    */
+  sanitizeManifest: function(aManifest) {
+    let sanitizer = Cc["@mozilla.org/parserutils;1"]
+                      .getService(Ci.nsIParserUtils);
+    if (!sanitizer) {
+      return;
+    }
+
+    function sanitize(aStr) {
+      return sanitizer.convertToPlainText(aStr,
+               Ci.nsIDocumentEncoder.OutputRaw, 0);
+    }
+
+    function sanitizeEntryPoint(aRoot) {
+      aRoot.name = sanitize(aRoot.name);
+
+      if (aRoot.description) {
+        aRoot.description = sanitize(aRoot.description);
+      }
+
+      if (aRoot.developer && aRoot.developer.name) {
+        aRoot.developer.name = sanitize(aRoot.developer.name);
+      }
+
+      if (aRoot.permissions) {
+        for (let permission in aRoot.permissions) {
+          if (aRoot.permissions[permission].description) {
+            aRoot.permissions[permission].description =
+             sanitize(aRoot.permissions[permission].description);
+          }
+        }
+      }
+    }
+
+    // First process the main section, then the entry points.
+    sanitizeEntryPoint(aManifest);
+
+    if (aManifest.entry_points) {
+      for (let entry in aManifest.entry_points) {
+        sanitizeEntryPoint(aManifest.entry_points[entry]);
+      }
+    }
+  },
+
+  /**
    * From https://developer.mozilla.org/en/OpenWebApps/The_Manifest
    * Only the name property is mandatory.
    */
   checkManifest: function(aManifest, app) {
     if (aManifest.name == undefined)
       return false;
+
+    this.sanitizeManifest(aManifest);
 
     // launch_path, entry_points launch paths, message hrefs, and activity hrefs can't be absolute
     if (aManifest.launch_path && isAbsoluteURI(aManifest.launch_path))

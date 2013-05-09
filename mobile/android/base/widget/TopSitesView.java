@@ -15,6 +15,7 @@ import org.mozilla.gecko.db.BrowserContract.Thumbnails;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.TopSitesCursorWrapper;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
+import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.ActivityResultHandler;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
@@ -25,12 +26,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.ShapeDrawable;
 import android.graphics.drawable.shapes.PathShape;
+import android.net.Uri;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -60,19 +61,19 @@ public class TopSitesView extends GridView {
     private static int mNumberOfCols;
 
     public static enum UnpinFlags {
-        REMOVE_PIN,
-        REMOVE_HISTORY
+        REMOVE_PIN
     }
 
     private Context mContext;
     private BrowserApp mActivity;
-    private AboutHomeContent.UriLoadCallback mUriLoadCallback = null;
-    private AboutHomeContent.VoidCallback mLoadCompleteCallback = null;
+    private AboutHome.UriLoadListener mUriLoadListener;
+    private AboutHome.LoadCompleteListener mLoadCompleteListener;
 
     protected TopSitesCursorAdapter mTopSitesAdapter;
 
     private static Drawable sPinDrawable = null;
     private int mThumbnailBackground;
+    private Map<String, Bitmap> mPendingThumbnails;
 
     public TopSitesView(Context context) {
         super(context);
@@ -104,8 +105,10 @@ public class TopSitesView extends GridView {
                     return;
                 }
 
-                if (mUriLoadCallback != null)
-                    mUriLoadCallback.callback(spec);
+                if (mUriLoadListener != null) {
+                    // Decode "user-entered" URLs before loading them.
+                    mUriLoadListener.onAboutHomeUriLoad(decodeUserEnteredUrl(spec));
+                }
             }
         });
 
@@ -127,7 +130,6 @@ public class TopSitesView extends GridView {
                     menu.findItem(R.id.abouthome_open_private_tab).setVisible(false);
                     menu.findItem(R.id.abouthome_topsites_pin).setVisible(false);
                     menu.findItem(R.id.abouthome_topsites_unpin).setVisible(false);
-                    menu.findItem(R.id.abouthome_topsites_remove).setVisible(false);
                 } else if (holder.isPinned()) {
                     menu.findItem(R.id.abouthome_topsites_pin).setVisible(false);
                 } else {
@@ -192,42 +194,58 @@ public class TopSitesView extends GridView {
     }
 
     public void loadTopSites() {
-        final ContentResolver resolver = mContext.getContentResolver();
-
-        // Swap in the new cursor.
-        final Cursor oldCursor = (mTopSitesAdapter != null) ? mTopSitesAdapter.getCursor() : null;
-        final Cursor newCursor = BrowserDB.getTopSites(resolver, mNumberOfTopSites);
-
-        post(new Runnable() {
+        ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
             public void run() {
-                if (mTopSitesAdapter == null) {
-                    mTopSitesAdapter = new TopSitesCursorAdapter(mContext,
-                                                                 R.layout.abouthome_topsite_item,
-                                                                 newCursor,
-                                                                 new String[] { URLColumns.TITLE },
-                                                                 new int[] { R.id.title });
+                final ContentResolver resolver = mContext.getContentResolver();
 
-                    setAdapter(mTopSitesAdapter);
-                } else {
-                    mTopSitesAdapter.changeCursor(newCursor);
-                }
+                // Swap in the new cursor.
+                final Cursor oldCursor = (mTopSitesAdapter != null) ? mTopSitesAdapter.getCursor() : null;
+                final Cursor newCursor = BrowserDB.getTopSites(resolver, mNumberOfTopSites);
 
-                if (mTopSitesAdapter.getCount() > 0)
-                    loadTopSitesThumbnails(resolver);
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (mTopSitesAdapter == null) {
+                            mTopSitesAdapter = new TopSitesCursorAdapter(mContext,
+                                                                         R.layout.abouthome_topsite_item,
+                                                                         newCursor,
+                                                                         new String[] { URLColumns.TITLE },
+                                                                         new int[] { R.id.title });
 
-                // Free the old Cursor in the right thread now.
-                if (oldCursor != null && !oldCursor.isClosed())
-                    oldCursor.close();
+                            setAdapter(mTopSitesAdapter);
+                        } else {
+                            mTopSitesAdapter.changeCursor(newCursor);
+                        }
 
-                // Even if AboutHome isn't necessarily entirely loaded if we
-                // get here, for phones this is the part the user initially sees,
-                // so it's the one we will care about for now.
-                if (mLoadCompleteCallback != null)
-                    mLoadCompleteCallback.callback();
+                        if (mTopSitesAdapter.getCount() > 0)
+                            loadTopSitesThumbnails(resolver);
+
+                        // Free the old Cursor in the right thread now.
+                        if (oldCursor != null && !oldCursor.isClosed())
+                            oldCursor.close();
+
+                        // Even if AboutHome isn't necessarily entirely loaded if we
+                        // get here, for phones this is the part the user initially sees,
+                        // so it's the one we will care about for now.
+                        if (mLoadCompleteListener != null)
+                            mLoadCompleteListener.onAboutHomeLoadComplete();
+                    }
+                });
             }
         });
     }
+
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        super.onLayout(changed, l, t, r, b);
+
+        if (mPendingThumbnails != null) {
+            updateTopSitesThumbnails(mPendingThumbnails);
+            mPendingThumbnails = null;
+        }
+    }
+
 
     private List<String> getTopSitesUrls() {
         List<String> urls = new ArrayList<String>();
@@ -248,18 +266,18 @@ public class TopSitesView extends GridView {
         ImageView thumbnailView = (ImageView) view.findViewById(R.id.thumbnail);
 
         if (thumbnail == null) {
+            thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
             thumbnailView.setImageResource(R.drawable.abouthome_thumbnail_bg);
             thumbnailView.setBackgroundColor(mThumbnailBackground);
-            thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         } else {
             try {
+                thumbnailView.setScaleType(ImageView.ScaleType.CENTER_CROP);
                 thumbnailView.setImageBitmap(thumbnail);
                 thumbnailView.setBackgroundColor(0x0);
-                thumbnailView.setScaleType(ImageView.ScaleType.CENTER_CROP);
             } catch (OutOfMemoryError oom) {
                 Log.e(LOGTAG, "Unable to load thumbnail bitmap", oom);
-                thumbnailView.setImageResource(R.drawable.abouthome_thumbnail_bg);
                 thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                thumbnailView.setImageResource(R.drawable.abouthome_thumbnail_bg);
             }
         }
     }
@@ -276,14 +294,13 @@ public class TopSitesView extends GridView {
             TopSitesViewHolder holder = (TopSitesViewHolder)view.getTag();
             final String url = holder.getUrl();
             if (TextUtils.isEmpty(url)) {
-                holder.thumbnailView.setImageResource(R.drawable.abouthome_thumbnail_add);
                 holder.thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                holder.thumbnailView.setImageResource(R.drawable.abouthome_thumbnail_add);
+                holder.thumbnailView.setBackgroundColor(mThumbnailBackground);
             } else {
                 displayThumbnail(view, thumbnails.get(url));
             }
         }
-
-        invalidate();
     }
 
     public Map<String, Bitmap> getThumbnailsFromCursor(Cursor c) {
@@ -299,7 +316,7 @@ public class TopSitesView extends GridView {
                 if (b == null)
                     continue;
 
-                Bitmap thumbnail = BitmapFactory.decodeByteArray(b, 0, b.length);
+                Bitmap thumbnail = BitmapUtils.decodeByteArray(b);
                 if (thumbnail == null)
                     continue;
 
@@ -326,7 +343,14 @@ public class TopSitesView extends GridView {
 
             @Override
             public void onPostExecute(Map<String, Bitmap> thumbnails) {
-                updateTopSitesThumbnails(thumbnails);
+                // If we're waiting for a layout to happen, the GridView may be
+                // stale, so store the pending thumbnails here. They will be
+                // shown on the next layout pass.
+                if (isLayoutRequested()) {
+                    mPendingThumbnails = thumbnails;
+                } else {
+                    updateTopSitesThumbnails(thumbnails);
+                }
             }
         }).execute();
     }
@@ -336,12 +360,12 @@ public class TopSitesView extends GridView {
         mNumberOfCols = getResources().getInteger(R.integer.number_of_top_sites_cols);
     }
 
-    public void setUriLoadCallback(AboutHomeContent.UriLoadCallback uriLoadCallback) {
-        mUriLoadCallback = uriLoadCallback;
+    public void setUriLoadListener(AboutHome.UriLoadListener uriLoadListener) {
+        mUriLoadListener = uriLoadListener;
     }
 
-    public void setLoadCompleteCallback(AboutHomeContent.VoidCallback callback) {
-        mLoadCompleteCallback = callback;
+    public void setLoadCompleteListener(AboutHome.LoadCompleteListener listener) {
+        mLoadCompleteListener = listener;
     }
 
     private class TopSitesViewHolder {
@@ -490,16 +514,17 @@ public class TopSitesView extends GridView {
     private void clearThumbnail(TopSitesViewHolder holder) {
         holder.setTitle("");
         holder.setUrl("");
+        holder.thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         holder.thumbnailView.setImageResource(R.drawable.abouthome_thumbnail_add);
         holder.thumbnailView.setBackgroundColor(mThumbnailBackground);
-        holder.thumbnailView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         holder.setPinned(false);
     }
 
     private void openTab(ContextMenuInfo menuInfo, int flags) {
         AdapterContextMenuInfo info = (AdapterContextMenuInfo) menuInfo;
         final TopSitesViewHolder holder = (TopSitesViewHolder) info.targetView.getTag();
-        final String url = holder.getUrl();
+        // Decode "user-entered" URLs before loading them.
+        final String url = decodeUserEnteredUrl(holder.getUrl());
 
         Tabs.getInstance().loadUrl(url, flags);
         Toast.makeText(mActivity, R.string.new_tab_opened, Toast.LENGTH_SHORT).show();
@@ -527,9 +552,6 @@ public class TopSitesView extends GridView {
             public Void doInBackground(Void... params) {
                 final ContentResolver resolver = mContext.getContentResolver();
                 BrowserDB.unpinSite(resolver, position);
-                if (flags == UnpinFlags.REMOVE_HISTORY) {
-                    BrowserDB.removeHistoryEntry(resolver, url);
-                }
                 return null;
             }
         }).execute();
@@ -554,13 +576,26 @@ public class TopSitesView extends GridView {
         }).execute();
     }
 
+    private static String encodeUserEnteredUrl(String url) {
+        return Uri.fromParts("user-entered", url, null).toString();
+    }
+
+    private static String decodeUserEnteredUrl(String url) {
+        Uri uri = Uri.parse(url);
+        if ("user-entered".equals(uri.getScheme())) {
+            return uri.getSchemeSpecificPart();
+        }
+        return url;
+    }
+
     public void editSite(ContextMenuInfo menuInfo) {
         AdapterView.AdapterContextMenuInfo info = (AdapterView.AdapterContextMenuInfo) menuInfo;
         int position = info.position;
         View v = getChildAt(position);
 
         TopSitesViewHolder holder = (TopSitesViewHolder) v.getTag();
-        editSite(holder.getUrl(), position);
+        // Decode "user-entered" URLs before showing them to the user to edit.
+        editSite(decodeUserEnteredUrl(holder.getUrl()), position);
     }
 
     // Edit the site at position. Provide a url to start editing with
@@ -581,8 +616,22 @@ public class TopSitesView extends GridView {
                 final View v = getChildAt(position);
                 final TopSitesViewHolder holder = (TopSitesViewHolder) v.getTag();
 
-                final String title = data.getStringExtra(AwesomeBar.TITLE_KEY);
-                final String url = data.getStringExtra(AwesomeBar.URL_KEY);
+                String title = data.getStringExtra(AwesomeBar.TITLE_KEY);
+                String url = data.getStringExtra(AwesomeBar.URL_KEY);
+
+                // Bail if the user entered an empty string.
+                if (TextUtils.isEmpty(url)) {
+                    return;
+                }
+
+                // If the user manually entered a search term or URL, wrap the value in
+                // a special URI until we can get a valid URL for this bookmark.
+                if (data.getBooleanExtra(AwesomeBar.USER_ENTERED_KEY, false)) {
+                    // Store what the user typed as the bookmark's title.
+                    title = url;
+                    url = encodeUserEnteredUrl(url);
+                }
+
                 clearThumbnailsWithUrl(url);
 
                 holder.setUrl(url);
@@ -607,7 +656,7 @@ public class TopSitesView extends GridView {
                         final byte[] b = c.getBlob(c.getColumnIndexOrThrow(Thumbnails.DATA));
                         Bitmap bitmap = null;
                         if (b != null) {
-                            bitmap = BitmapFactory.decodeByteArray(b, 0, b.length);
+                            bitmap = BitmapUtils.decodeByteArray(b);
                         }
                         c.close();
 

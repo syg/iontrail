@@ -407,15 +407,17 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLMediaElement, nsGenericHTM
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSourcePointer)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLoadBlockedDoc)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSourceLoadCandidate)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAudioChannelAgent)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mError)
   for (uint32_t i = 0; i < tmp->mOutputStreams.Length(); ++i) {
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOutputStreams[i].mStream);
   }
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPlayed);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLMediaElement, nsGenericHTMLElement)
   if (tmp->mSrcStream) {
-    // Need to EndMediaStreamPlayback to clear mStream and make sure everything
+    // Need to EndMediaStreamPlayback to clear mSrcStream and make sure everything
     // gets unhooked correctly.
     tmp->EndSrcMediaStreamPlayback();
   }
@@ -423,10 +425,12 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLMediaElement, nsGenericHTMLE
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSourcePointer)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mLoadBlockedDoc)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSourceLoadCandidate)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAudioChannelAgent)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mError)
   for (uint32_t i = 0; i < tmp->mOutputStreams.Length(); ++i) {
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mOutputStreams[i].mStream);
   }
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPlayed);
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(HTMLMediaElement)
@@ -966,6 +970,11 @@ static bool IsAutoplayEnabled()
   return Preferences::GetBool("media.autoplay.enabled");
 }
 
+static bool UseAudioChannelService()
+{
+  return Preferences::GetBool("media.useAudioChannelService");
+}
+
 void HTMLMediaElement::UpdatePreloadAction()
 {
   PreloadAction nextAction = PRELOAD_UNDEFINED;
@@ -1272,7 +1281,10 @@ double
 HTMLMediaElement::CurrentTime() const
 {
   if (mSrcStream) {
-    return MediaTimeToSeconds(GetSrcMediaStream()->GetCurrentTime());
+    MediaStream* stream = GetSrcMediaStream();
+    if (stream) {
+      return MediaTimeToSeconds(stream->GetCurrentTime());
+    }
   }
 
   if (mDecoder) {
@@ -1307,7 +1319,7 @@ HTMLMediaElement::SetCurrentTime(double aCurrentTime, ErrorResult& aRv)
     LOG(PR_LOG_DEBUG, ("%p Adding \'played\' a range : [%f, %f]", this, mCurrentPlayRangeStart, rangeEndTime));
     // Multiple seek without playing, or seek while playing.
     if (mCurrentPlayRangeStart != rangeEndTime) {
-      mPlayed.Add(mCurrentPlayRangeStart, rangeEndTime);
+      mPlayed->Add(mCurrentPlayRangeStart, rangeEndTime);
     }
   }
 
@@ -1408,12 +1420,12 @@ HTMLMediaElement::Played()
   nsRefPtr<TimeRanges> ranges = new TimeRanges();
 
   uint32_t timeRangeCount = 0;
-  mPlayed.GetLength(&timeRangeCount);
+  mPlayed->GetLength(&timeRangeCount);
   for (uint32_t i = 0; i < timeRangeCount; i++) {
     double begin;
     double end;
-    mPlayed.Start(i, &begin);
-    mPlayed.End(i, &end);
+    mPlayed->Start(i, &begin);
+    mPlayed->End(i, &end);
     ranges->Add(begin, end);
   }
 
@@ -1458,7 +1470,10 @@ HTMLMediaElement::Pause(ErrorResult& aRv)
 
   if (!oldPaused) {
     if (mSrcStream) {
-      GetSrcMediaStream()->ChangeExplicitBlockerCount(1);
+      MediaStream* stream = GetSrcMediaStream();
+      if (stream) {
+        stream->ChangeExplicitBlockerCount(1);
+      }
     }
     FireTimeUpdate(false);
     DispatchAsyncEvent(NS_LITERAL_STRING("pause"));
@@ -1590,7 +1605,7 @@ HTMLMediaElement::MozGetMetadata(JSContext* cx, ErrorResult& aRv)
     return nullptr;
   }
 
-  JSObject* tags = JS_NewObject(cx, nullptr, nullptr, nullptr);
+  JS::Rooted<JSObject*> tags(cx, JS_NewObject(cx, nullptr, nullptr, nullptr));
   if (!tags) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -1888,6 +1903,7 @@ HTMLMediaElement::HTMLMediaElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     mDefaultPlaybackRate(1.0),
     mPlaybackRate(1.0),
     mPreservesPitch(true),
+    mPlayed(new TimeRanges),
     mCurrentPlayRangeStart(-1.0),
     mAllowAudioData(false),
     mBegun(false),
@@ -2078,21 +2094,47 @@ NS_IMETHODIMP HTMLMediaElement::Play()
   return rv.ErrorCode();
 }
 
-HTMLMediaElement::WakeLockBoolWrapper& HTMLMediaElement::WakeLockBoolWrapper::operator=(bool val) {
-  if (mValue == val)
+HTMLMediaElement::WakeLockBoolWrapper&
+HTMLMediaElement::WakeLockBoolWrapper::operator=(bool val) {
+  if (mValue == val) {
     return *this;
-  if (!mWakeLock && !val && mOuter) {
+  }
+
+  mValue = val;
+  UpdateWakeLock();
+  return *this;
+}
+
+void
+HTMLMediaElement::WakeLockBoolWrapper::SetCanPlay(bool aCanPlay)
+{
+  mCanPlay = aCanPlay;
+  UpdateWakeLock();
+}
+
+void
+HTMLMediaElement::WakeLockBoolWrapper::UpdateWakeLock()
+{
+  if (!mOuter) {
+    return;
+
+  }
+  bool playing = (!mValue && mCanPlay);
+
+  if (playing) {
     nsCOMPtr<nsIPowerManagerService> pmService =
       do_GetService(POWERMANAGERSERVICE_CONTRACTID);
-    NS_ENSURE_TRUE(pmService, *this);
+    NS_ENSURE_TRUE_VOID(pmService);
 
-    pmService->NewWakeLock(NS_LITERAL_STRING("Playing_media"), mOuter->OwnerDoc()->GetWindow(), getter_AddRefs(mWakeLock));
-  } else if (mWakeLock && val) {
+    if (!mWakeLock) {
+      pmService->NewWakeLock(NS_LITERAL_STRING("cpu"),
+                             mOuter->OwnerDoc()->GetWindow(),
+                             getter_AddRefs(mWakeLock));
+    }
+  } else if (mWakeLock) {
     mWakeLock->Unlock();
     mWakeLock = nullptr;
   }
-  mValue = val;
-  return *this;
 }
 
 bool HTMLMediaElement::ParseAttribute(int32_t aNamespaceID,
@@ -2158,7 +2200,10 @@ bool HTMLMediaElement::ParseAttribute(int32_t aNamespaceID,
 
 bool HTMLMediaElement::CheckAudioChannelPermissions(const nsAString& aString)
 {
-#ifdef ANDROID
+  if (!UseAudioChannelService()) {
+    return true;
+  }
+
   // Only normal channel doesn't need permission.
   if (!aString.EqualsASCII("normal")) {
     nsCOMPtr<nsIPermissionManager> permissionManager =
@@ -2174,7 +2219,7 @@ bool HTMLMediaElement::CheckAudioChannelPermissions(const nsAString& aString)
       return false;
     }
   }
-#endif
+
   return true;
 }
 
@@ -2350,7 +2395,7 @@ nsresult HTMLMediaElement::InitializeDecoderAsClone(MediaDecoder* aOriginal)
     decoder->SetMediaSeekable(aOriginal->IsMediaSeekable());
   }
 
-  MediaResource* resource = originalResource->CloneData(decoder);
+  nsRefPtr<MediaResource> resource = originalResource->CloneData(decoder);
   if (!resource) {
     LOG(PR_LOG_DEBUG, ("%p Failed to cloned stream for decoder %p", this, decoder.get()));
     return NS_ERROR_FAILURE;
@@ -2382,7 +2427,7 @@ nsresult HTMLMediaElement::InitializeDecoderForChannel(nsIChannel* aChannel,
 
   LOG(PR_LOG_DEBUG, ("%p Created decoder %p for type %s", this, decoder.get(), mimeType.get()));
 
-  MediaResource* resource = MediaResource::Create(decoder, aChannel);
+  nsRefPtr<MediaResource> resource = MediaResource::Create(decoder, aChannel);
   if (!resource)
     return NS_ERROR_OUT_OF_MEMORY;
 
@@ -2596,21 +2641,28 @@ void HTMLMediaElement::SetupSrcMediaStreamPlayback(DOMMediaStream* aStream)
 
 void HTMLMediaElement::EndSrcMediaStreamPlayback()
 {
-  GetSrcMediaStream()->RemoveListener(mSrcStreamListener);
+  MediaStream* stream = GetSrcMediaStream();
+  if (stream) {
+    stream->RemoveListener(mSrcStreamListener);
+  }
   // Kill its reference to this element
   mSrcStreamListener->Forget();
   mSrcStreamListener = nullptr;
-  GetSrcMediaStream()->RemoveAudioOutput(this);
+  if (stream) {
+    stream->RemoveAudioOutput(this);
+  }
   VideoFrameContainer* container = GetVideoFrameContainer();
   if (container) {
-    GetSrcMediaStream()->RemoveVideoOutput(container);
+    if (stream) {
+      stream->RemoveVideoOutput(container);
+    }
     container->ClearCurrentFrame();
   }
-  if (mPaused) {
-    GetSrcMediaStream()->ChangeExplicitBlockerCount(-1);
+  if (mPaused && stream) {
+    stream->ChangeExplicitBlockerCount(-1);
   }
-  if (mPausedForInactiveDocumentOrChannel) {
-    GetSrcMediaStream()->ChangeExplicitBlockerCount(-1);
+  if (mPausedForInactiveDocumentOrChannel && stream) {
+    stream->ChangeExplicitBlockerCount(-1);
   }
   mSrcStream = nullptr;
 }
@@ -2926,9 +2978,9 @@ void HTMLMediaElement::UpdateReadyStateForData(MediaDecoderOwner::NextFrameStatu
   // move to HAVE_ENOUGH_DATA if we can play through the entire media
   // without stopping to buffer.
   MediaDecoder::Statistics stats = mDecoder->GetStatistics();
-  if (stats.mTotalBytes < 0 ? stats.mDownloadRateReliable :
-                              stats.mTotalBytes == stats.mDownloadPosition ||
-      mDecoder->CanPlayThrough())
+  if (stats.mTotalBytes < 0 ? stats.mDownloadRateReliable
+                            : stats.mTotalBytes == stats.mDownloadPosition ||
+                              mDecoder->CanPlayThrough())
   {
     ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA);
     return;
@@ -3213,17 +3265,11 @@ void HTMLMediaElement::SuspendOrResumeElement(bool aPauseElement, bool aSuspendE
 void HTMLMediaElement::NotifyOwnerDocumentActivityChanged()
 {
   nsIDocument* ownerDoc = OwnerDoc();
-#ifdef ANDROID
-  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
-  if (domDoc) {
-    bool hidden = false;
-    domDoc->GetHidden(&hidden);
-    // SetVisibilityState will update mChannelSuspended via the CanPlayChanged callback.
-    if (mPlayingThroughTheAudioChannel && mAudioChannelAgent) {
-      mAudioChannelAgent->SetVisibilityState(!hidden);
-    }
+  // SetVisibilityState will update mChannelSuspended via the CanPlayChanged callback.
+  if (UseAudioChannelService() && mPlayingThroughTheAudioChannel &&
+      mAudioChannelAgent) {
+    mAudioChannelAgent->SetVisibilityState(!ownerDoc->Hidden());
   }
-#endif
   bool suspendEvents = !ownerDoc->IsActive() || !ownerDoc->IsVisible();
   bool pauseElement = suspendEvents || mChannelSuspended;
 
@@ -3651,9 +3697,10 @@ ImageContainer* HTMLMediaElement::GetImageContainer()
 
 nsresult HTMLMediaElement::UpdateChannelMuteState(bool aCanPlay)
 {
-  // Only on B2G we mute the HTMLMediaElement following the rules of
-  // AudioChannelService.
-#ifdef ANDROID
+  if (!UseAudioChannelService()) {
+    return NS_OK;
+  }
+
   // We have to mute this channel:
   if (!aCanPlay && !mChannelSuspended) {
     mChannelSuspended = true;
@@ -3664,15 +3711,15 @@ nsresult HTMLMediaElement::UpdateChannelMuteState(bool aCanPlay)
   }
 
   SuspendOrResumeElement(mChannelSuspended, false);
-#endif
-
   return NS_OK;
 }
 
 void HTMLMediaElement::UpdateAudioChannelPlayingState()
 {
-  // The HTMLMediaElement is registered to the AudioChannelService only on B2G.
-#ifdef ANDROID
+  if (!UseAudioChannelService()) {
+    return;
+  }
+
   bool playingThroughTheAudioChannel =
      (!mPaused &&
       (HasAttr(kNameSpaceID_None, nsGkAtoms::loop) ||
@@ -3689,24 +3736,18 @@ void HTMLMediaElement::UpdateAudioChannelPlayingState()
       }
       // Use a weak ref so the audio channel agent can't leak |this|.
       mAudioChannelAgent->InitWithWeakCallback(mAudioChannelType, this);
-
-      nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
-      if (domDoc) {
-        bool hidden = false;
-        domDoc->GetHidden(&hidden);
-        mAudioChannelAgent->SetVisibilityState(!hidden);
-      }
+      mAudioChannelAgent->SetVisibilityState(!OwnerDoc()->Hidden());
     }
 
     if (mPlayingThroughTheAudioChannel) {
       bool canPlay;
       mAudioChannelAgent->StartPlaying(&canPlay);
+      mPaused.SetCanPlay(canPlay);
     } else {
       mAudioChannelAgent->StopPlaying();
       mAudioChannelAgent = nullptr;
     }
   }
-#endif
 }
 
 /* void canPlayChanged (in boolean canPlay); */
@@ -3715,6 +3756,7 @@ NS_IMETHODIMP HTMLMediaElement::CanPlayChanged(bool canPlay)
   NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
 
   UpdateChannelMuteState(canPlay);
+  mPaused.SetCanPlay(canPlay);
   return NS_OK;
 }
 

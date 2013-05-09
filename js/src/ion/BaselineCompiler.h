@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,9 +13,11 @@
 #include "jsinfer.h"
 #include "jsinterp.h"
 
+#include "IonAllocPolicy.h"
 #include "BaselineJIT.h"
 #include "BaselineIC.h"
 #include "FixedList.h"
+#include "BytecodeAnalysis.h"
 
 #if defined(JS_CPU_X86)
 # include "x86/BaselineCompiler-x86.h"
@@ -231,6 +232,8 @@ class BaselineCompiler : public BaselineCompilerSpecific
     bool emitFormalArgAccess(uint32_t arg, bool get);
 
     bool emitEnterBlock();
+
+    bool addPCMappingEntry(bool addIndexEntry);
 
     Address getScopeCoordinateAddress(Register reg);
 };

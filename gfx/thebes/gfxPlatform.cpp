@@ -96,6 +96,8 @@ static int gCMSIntent = -2;
 static void ShutdownCMS();
 static void MigratePrefs();
 
+static bool sDrawLayerBorders = false;
+
 #include "mozilla/gfx/2D.h"
 using namespace mozilla::gfx;
 
@@ -400,6 +402,10 @@ gfxPlatform::Init()
 
     gPlatform->mOrientationSyncMillis = Preferences::GetUint("layers.orientation.sync.timeout", (uint32_t)0);
 
+    mozilla::Preferences::AddBoolVarCache(&sDrawLayerBorders,
+                                          "layers.draw-borders",
+                                          false);
+
     CreateCMSOutputProfile();
 }
 
@@ -513,9 +519,7 @@ gfxPlatform::OptimizeImage(gfxImageSurface *aSurface,
     tmpCtx.SetSource(aSurface);
     tmpCtx.Paint();
 
-    gfxASurface *ret = optSurface;
-    NS_ADDREF(ret);
-    return ret;
+    return optSurface.forget();
 }
 
 cairo_user_data_key_t kDrawTarget;
@@ -1104,6 +1108,13 @@ gfxPlatform::IsLangCJK(eFontPrefLang aLang)
             return false;
     }
 }
+
+bool
+gfxPlatform::DrawLayerBorders()
+{
+    return sDrawLayerBorders;
+}
+
 
 void
 gfxPlatform::GetLangPrefs(eFontPrefLang aPrefLangs[], uint32_t &aLen, eFontPrefLang aCharLang, eFontPrefLang aPageLang)

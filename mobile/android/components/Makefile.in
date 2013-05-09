@@ -27,11 +27,11 @@ EXTRA_COMPONENTS = \
         PromptService.js \
         ContentDispatchChooser.js \
         AddonUpdateService.js \
-        FormAutoComplete.js \
         LoginManagerPrompter.js \
         BlocklistPrompt.js \
         NSSDialogService.js \
         SiteSpecificUserAgent.js \
+        PaymentsUI.js \
         $(NULL)
 
 include $(topsrcdir)/config/rules.mk

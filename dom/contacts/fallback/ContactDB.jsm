@@ -16,13 +16,69 @@ const Ci = Components.interfaces;
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
 Cu.import("resource://gre/modules/PhoneNumberUtils.jsm");
-Cu.import("resource://gre/modules/Timer.jsm");
 
 const DB_NAME = "contacts";
-const DB_VERSION = 8;
+const DB_VERSION = 11;
 const STORE_NAME = "contacts";
 const SAVED_GETALL_STORE_NAME = "getallcache";
 const CHUNK_SIZE = 20;
+const REVISION_STORE = "revision";
+const REVISION_KEY = "revision";
+
+function ContactDispatcher(aContacts, aFullContacts, aCallback, aNewTxn, aClearDispatcher) {
+  let nextIndex = 0;
+
+  let sendChunk;
+  let count = 0;
+  if (aFullContacts) {
+    sendChunk = function() {
+      try {
+        let chunk = aContacts.splice(0, CHUNK_SIZE);
+        if (chunk.length > 0) {
+          aCallback(chunk);
+        }
+        if (aContacts.length === 0) {
+          aCallback(null);
+          aClearDispatcher();
+        }
+      } catch (e) {
+        aClearDispatcher();
+      }
+    }
+  } else {
+    sendChunk = function() {
+      try {
+        let start = nextIndex;
+        nextIndex += CHUNK_SIZE;
+        let chunk = [];
+        aNewTxn("readonly", STORE_NAME, function(txn, store) {
+          for (let i = start; i < Math.min(start+CHUNK_SIZE, aContacts.length); ++i) {
+            store.get(aContacts[i]).onsuccess = function(e) {
+              chunk.push(e.target.result);
+              count++;
+              if (count === aContacts.length) {
+                aCallback(chunk);
+                aCallback(null);
+                aClearDispatcher();
+              } else if (chunk.length === CHUNK_SIZE) {
+                aCallback(chunk);
+                chunk.length = 0;
+              }
+            }
+          }
+        });
+      } catch (e) {
+        aClearDispatcher();
+      }
+    }
+  }
+
+  return {
+    sendNow: function() {
+      sendChunk();
+    }
+  };
+}
 
 this.ContactDB = function ContactDB(aGlobal) {
   if (DEBUG) debug("Constructor");
@@ -31,6 +87,8 @@ this.ContactDB = function ContactDB(aGlobal) {
 
 ContactDB.prototype = {
   __proto__: IndexedDBHelper.prototype,
+
+  _dispatcher: {},
 
   upgradeSchema: function upgradeSchema(aTransaction, aDb, aOldVersion, aNewVersion) {
     if (DEBUG) debug("upgrade schema from: " + aOldVersion + " to " + aNewVersion + " called!");
@@ -244,6 +302,112 @@ ContactDB.prototype = {
       } else if (currVersion == 7) {
         if (DEBUG) debug("Adding object store for cached searches");
         db.createObjectStore(SAVED_GETALL_STORE_NAME);
+      } else if (currVersion == 8) {
+        if (DEBUG) debug("Make exactTel only contain the value entered by the user");
+        if (!objectStore) {
+          objectStore = aTransaction.objectStore(STORE_NAME);
+        }
+
+        objectStore.openCursor().onsuccess = function(event) {
+          let cursor = event.target.result;
+          if (cursor) {
+            if (cursor.value.properties.tel) {
+              cursor.value.search.exactTel = [];
+              cursor.value.properties.tel.forEach(
+                function(tel) {
+                  let normalized = PhoneNumberUtils.normalize(tel.value.toString());
+                  cursor.value.search.exactTel.push(normalized);
+                }
+              );
+              cursor.update(cursor.value);
+            }
+            cursor.continue();
+          }
+        };
+      } else if (currVersion == 9) {
+        if (DEBUG) debug("Add a telMatch index with national and international numbers");
+        objectStore.createIndex("telMatch", "search.parsedTel", {multiEntry: true});
+        objectStore.openCursor().onsuccess = function(event) {
+          let cursor = event.target.result;
+          if (cursor) {
+            if (cursor.value.properties.tel) {
+              cursor.value.search.parsedTel = [];
+              cursor.value.properties.tel.forEach(
+                function(tel) {
+                  let parsed = PhoneNumberUtils.parse(tel.value.toString());
+                  if (parsed) {
+                    cursor.value.search.parsedTel.push(parsed.nationalNumber);
+                    cursor.value.search.parsedTel.push(PhoneNumberUtils.normalize(parsed.nationalFormat));
+                    cursor.value.search.parsedTel.push(parsed.internationalNumber);
+                    cursor.value.search.parsedTel.push(PhoneNumberUtils.normalize(parsed.internationalFormat));
+                  }
+                  cursor.value.search.parsedTel.push(PhoneNumberUtils.normalize(tel.value.toString()));
+                }
+              );
+              cursor.update(cursor.value);
+            }
+            cursor.continue();
+          }
+        };
+      } else if (currVersion == 10) {
+        if (DEBUG) debug("Adding object store for database revision");
+        db.createObjectStore(REVISION_STORE).put(0, REVISION_KEY);
+      }
+
+      // Increment the DB revision on future schema changes as well
+      if (currVersion > 10) {
+        this.incrementRevision(aTransaction);
+      }
+    }
+
+    // Add default contacts
+    if (aOldVersion == 0) {
+      let jsm = {};
+      Cu.import("resource://gre/modules/FileUtils.jsm", jsm);
+      Cu.import("resource://gre/modules/NetUtil.jsm", jsm);
+      // Loading resource://app/defaults/contacts.json doesn't work because
+      // contacts.json is not in the omnijar.
+      // So we look for the app dir instead and go from here...
+      let contactsFile = jsm.FileUtils.getFile("DefRt", ["contacts.json"], false);
+      if (!contactsFile || (contactsFile && !contactsFile.exists())) {
+        // For b2g desktop
+        contactsFile = jsm.FileUtils.getFile("ProfD", ["contacts.json"], false);
+        if (!contactsFile || (contactsFile && !contactsFile.exists())) {
+          return;
+        }
+      }
+
+      let chan = jsm.NetUtil.newChannel(contactsFile);
+      let stream = chan.open();
+      // Obtain a converter to read from a UTF-8 encoded input stream.
+      let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"]
+                      .createInstance(Ci.nsIScriptableUnicodeConverter);
+      converter.charset = "UTF-8";
+      let rawstr = converter.ConvertToUnicode(jsm.NetUtil.readInputStreamToString(
+                                              stream,
+                                              stream.available()) || "");
+      stream.close();
+      let contacts;
+      try {
+        contacts = JSON.parse(rawstr);
+      } catch(e) {
+        if (DEBUG) debug("Error parsing " + contactsFile.path + " : " + e);
+        return;
+      }
+
+      let idService = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
+      objectStore = aTransaction.objectStore(STORE_NAME);
+
+      for (let i = 0; i < contacts.length; i++) {
+        let contact = {};
+        contact.properties = contacts[i];
+        contact.id = idService.generateUUID().toString().replace('-', '', 'g')
+                                                        .replace('{', '')
+                                                        .replace('}', '');
+        contact = this.makeImport(contact);
+        this.updateRecordMetadata(contact);
+        if (DEBUG) debug("import: " + JSON.stringify(contact));
+        objectStore.put(contact);
       }
     }
   },
@@ -280,7 +444,8 @@ ContactDB.prototype = {
       email:           [],
       category:        [],
       tel:             [],
-      exactTel:        []
+      exactTel:        [],
+      parsedTel:       []
     };
 
     for (let field in aContact.properties) {
@@ -290,27 +455,20 @@ ContactDB.prototype = {
         for (let i = 0; i <= aContact.properties[field].length; i++) {
           if (aContact.properties[field][i]) {
             if (field == "tel") {
-              // Special case telephone number.
-              // "+1-234-567" should also be found with 1234, 234-56, 23456
+              let number = aContact.properties.tel[i].value.toString();
+              let normalized = PhoneNumberUtils.normalize(number);
+              // We use an object here to avoid duplicates
+              let containsSearch = {};
+              let matchSearch = {};
 
-              // Chop off the first characters
-              let number = aContact.properties[field][i].value;
-              contact.search.exactTel.push(number);
-              let search = {};
-              if (number) {
-                for (let i = 0; i < number.length; i++) {
-                  search[number.substring(i, number.length)] = 1;
-                }
-                // Store +1-234-567 as ["1234567", "234567"...]
-                let digits = number.match(/\d/g);
-                if (digits && number.length != digits.length) {
-                  digits = digits.join('');
-                  for(let i = 0; i < digits.length; i++) {
-                    search[digits.substring(i, digits.length)] = 1;
-                  }
-                }
-                if (DEBUG) debug("lookup: " + JSON.stringify(contact.search[field]));
-                let parsedNumber = PhoneNumberUtils.parse(number.toString());
+              if (normalized) {
+                // exactTel holds normalized version of entered phone number.
+                // normalized: +1 (949) 123 - 4567 -> +19491234567
+                contact.search.exactTel.push(normalized);
+                // matchSearch holds normalized version of entered phone number,
+                // nationalNumber, nationalFormat, internationalNumber, internationalFormat
+                matchSearch[normalized] = 1;
+                let parsedNumber = PhoneNumberUtils.parse(number);
                 if (parsedNumber) {
                   if (DEBUG) {
                     debug("InternationalFormat: " + parsedNumber.internationalFormat);
@@ -318,23 +476,29 @@ ContactDB.prototype = {
                     debug("NationalNumber: " + parsedNumber.nationalNumber);
                     debug("NationalFormat: " + parsedNumber.nationalFormat);
                   }
-                  if (parsedNumber.internationalNumber &&
-                      number.toString() !== parsedNumber.internationalNumber) {
-                    contact.search.exactTel.push(parsedNumber.internationalNumber);
-                    let digits = parsedNumber.internationalNumber.match(/\d/g);
-                    if (digits) {
-                      digits = digits.join('');
-                      for(let i = 0; i < digits.length; i++) {
-                        search[digits.substring(i, digits.length)] = 1;
-                      }
-                    }
+                  matchSearch[parsedNumber.nationalNumber] = 1;
+                  matchSearch[parsedNumber.internationalNumber] = 1;
+                  matchSearch[PhoneNumberUtils.normalize(parsedNumber.nationalFormat)] = 1;
+                  matchSearch[PhoneNumberUtils.normalize(parsedNumber.internationalFormat)] = 1
+                }
+
+                // containsSearch holds incremental search values for:
+                // normalized number and national format
+                for (let i = 0; i < normalized.length; i++) {
+                  containsSearch[normalized.substring(i, normalized.length)] = 1;
+                }
+                if (parsedNumber && parsedNumber.nationalFormat) {
+                  let number = PhoneNumberUtils.normalize(parsedNumber.nationalFormat);
+                  for (let i = 0; i < number.length; i++) {
+                    containsSearch[number.substring(i, number.length)] = 1;
                   }
-                } else {
-                  dump("Warning: No international number found for " + number + "\n");
                 }
               }
-              for (let num in search) {
-                contact.search[field].push(num);
+              for (let num in containsSearch) {
+                contact.search.tel.push(num);
+              }
+              for (let num in matchSearch) {
+                contact.search.parsedTel.push(num);
               }
             } else if (field == "impp" || field == "email") {
               let value = aContact.properties[field][i].value;
@@ -418,7 +582,14 @@ ContactDB.prototype = {
     });
   },
 
-  saveContact: function saveContact(aContact, successCb, errorCb) {
+  incrementRevision: function CDB_incrementRevision(txn) {
+    let revStore = txn.objectStore(REVISION_STORE);
+    revStore.get(REVISION_KEY).onsuccess = function(e) {
+      revStore.put(parseInt(e.target.result, 10) + 1, REVISION_KEY);
+    };
+  },
+
+  saveContact: function CDB_saveContact(aContact, successCb, errorCb) {
     let contact = this.makeImport(aContact);
     this.newTxn("readwrite", STORE_NAME, function (txn, store) {
       if (DEBUG) debug("Going to update" + JSON.stringify(contact));
@@ -446,6 +617,8 @@ ContactDB.prototype = {
         }
         this.invalidateCache();
       }.bind(this);
+
+      this.incrementRevision(txn);
     }.bind(this), successCb, errorCb);
   },
 
@@ -456,7 +629,8 @@ ContactDB.prototype = {
         store.delete(aId).onsuccess = function() {
           aSuccessCb();
         };
-      }, null, aErrorCb);
+        this.incrementRevision(txn);
+      }.bind(this), null, aErrorCb);
     }.bind(this));
   },
 
@@ -464,7 +638,8 @@ ContactDB.prototype = {
     this.newTxn("readwrite", STORE_NAME, function (txn, store) {
       if (DEBUG) debug("Going to clear all!");
       store.clear();
-    }, aSuccessCb, aErrorCb);
+      this.incrementRevision(txn);
+    }.bind(this), aSuccessCb, aErrorCb);
   },
 
   createCacheForQuery: function CDB_createCacheForQuery(aQuery, aSuccessCb, aFailureCb) {
@@ -512,50 +687,46 @@ ContactDB.prototype = {
     }.bind(this));
   },
 
-  getAll: function CDB_getAll(aSuccessCb, aFailureCb, aOptions) {
+  sendNow: function CDB_sendNow(aCursorId) {
+    if (aCursorId in this._dispatcher) {
+      this._dispatcher[aCursorId].sendNow();
+    }
+  },
+
+  _clearDispatcher: function CDB_clearDispatcher(aCursorId) {
+    if (aCursorId in this._dispatcher) {
+      delete this._dispatcher[aCursorId];
+    }
+  },
+
+  getAll: function CDB_getAll(aSuccessCb, aFailureCb, aOptions, aCursorId) {
     if (DEBUG) debug("getAll")
     let optionStr = JSON.stringify(aOptions);
     this.getCacheForQuery(optionStr, function(aCachedResults, aFullContacts) {
       // aFullContacts is true if the cache didn't exist and had to be created.
       // In that case, we receive the full contacts since we already have them
-      // in memory to create the cache anyway. This allows us to avoid accessing
-      // the main object store again.
+      // in memory to create the cache. This allows us to avoid accessing the
+      // object store again.
       if (aCachedResults && aCachedResults.length > 0) {
-        if (DEBUG) debug("query returned " + aCachedResults.length + " contacts");
-        if (aFullContacts) {
-          if (DEBUG) debug("full contacts: " + aCachedResults.length);
-          while(aCachedResults.length) {
-            aSuccessCb(aCachedResults.splice(0, CHUNK_SIZE));
-          }
-          aSuccessCb(null);
-        } else {
-          let count = 0;
-          let sendChunk = function(start) {
-            let chunk = [];
-            this.newTxn("readonly", STORE_NAME, function(txn, store) {
-              for (let i = start; i < Math.min(start+CHUNK_SIZE, aCachedResults.length); ++i) {
-                store.get(aCachedResults[i]).onsuccess = function(e) {
-                  chunk.push(e.target.result);
-                  count++;
-                  if (count == aCachedResults.length) {
-                    aSuccessCb(chunk);
-                    aSuccessCb(null);
-                  } else if (chunk.length == CHUNK_SIZE) {
-                    aSuccessCb(chunk);
-                    chunk.length = 0;
-                    setTimeout(sendChunk.bind(this, start+CHUNK_SIZE), 0);
-                  }
-                };
-              }
-            });
-          }.bind(this);
-          sendChunk(0);
-        }
+        let newTxnFn = this.newTxn.bind(this);
+        let clearDispatcherFn = this._clearDispatcher.bind(this, aCursorId);
+        this._dispatcher[aCursorId] = new ContactDispatcher(aCachedResults, aFullContacts,
+                                                            aSuccessCb, newTxnFn, clearDispatcherFn);
+        this._dispatcher[aCursorId].sendNow();
       } else { // no contacts
         if (DEBUG) debug("query returned no contacts");
         aSuccessCb(null);
       }
     }.bind(this));
+  },
+
+  getRevision: function CDB_getRevision(aSuccessCb) {
+    if (DEBUG) debug("getRevision");
+    this.newTxn("readonly", REVISION_STORE, function (txn, store) {
+      store.get(REVISION_KEY).onsuccess = function (e) {
+        aSuccessCb(e.target.result);
+      }
+    });
   },
 
   /*
@@ -621,7 +792,7 @@ ContactDB.prototype = {
     if (DEBUG) debug("ContactDB:find val:" + aOptions.filterValue + " by: " + aOptions.filterBy + " op: " + aOptions.filterOp);
     let self = this;
     this.newTxn("readonly", STORE_NAME, function (txn, store) {
-      if (aOptions && (aOptions.filterOp == "equals" || aOptions.filterOp == "contains")) {
+      if (aOptions && (["equals", "contains", "match"].indexOf(aOptions.filterOp) >= 0)) {
         self._findWithIndex(txn, store, aOptions);
       } else {
         self._findAll(txn, store, aOptions);
@@ -665,17 +836,26 @@ ContactDB.prototype = {
         if (DEBUG) debug("Getting index: " + key);
         // case sensitive
         let index = store.index(key);
-        request = index.mozGetAll(options.filterValue, limit);
+        let filterValue = options.filterValue;
+        if (key == "tel") {
+          filterValue = PhoneNumberUtils.normalize(filterValue);
+        }
+        request = index.mozGetAll(filterValue, limit);
+      } else if (options.filterOp == "match") {
+        if (DEBUG) debug("match");
+        if (key != "tel") {
+          dump("ContactDB: 'match' filterOp only works on tel\n");
+          return txn.abort();
+        }
+
+        let index = store.index("telMatch");
+        let normalized = PhoneNumberUtils.normalize(options.filterValue)
+        request = index.mozGetAll(normalized, limit);
       } else {
         // not case sensitive
-        let tmp = typeof options.filterValue == "string"
-                  ? options.filterValue.toLowerCase()
-                  : options.filterValue.toString().toLowerCase();
+        let tmp = options.filterValue.toString().toLowerCase();
         if (key === 'tel') {
-          let digits = tmp.match(/\d/g);
-          if (digits) {
-            tmp = digits.join('');
-          }
+          tmp = PhoneNumberUtils.normalize(tmp);
         }
         let range = this._global.IDBKeyRange.bound(tmp, tmp + "\uFFFF");
         let index = store.index(key + "LowerCase");
@@ -709,6 +889,6 @@ ContactDB.prototype = {
   },
 
   init: function init(aGlobal) {
-      this.initDBHelper(DB_NAME, DB_VERSION, [STORE_NAME, SAVED_GETALL_STORE_NAME], aGlobal);
+      this.initDBHelper(DB_NAME, DB_VERSION, [STORE_NAME, SAVED_GETALL_STORE_NAME, REVISION_STORE], aGlobal);
   }
 };

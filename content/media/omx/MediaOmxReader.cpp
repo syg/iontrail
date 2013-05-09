@@ -43,7 +43,7 @@ nsresult MediaOmxReader::Init(MediaDecoderReader* aCloneDonor)
 }
 
 nsresult MediaOmxReader::ReadMetadata(VideoInfo* aInfo,
-                                        MetadataTags** aTags)
+                                      MetadataTags** aTags)
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
 
@@ -118,7 +118,7 @@ nsresult MediaOmxReader::ResetDecode()
 }
 
 bool MediaOmxReader::DecodeVideoFrame(bool &aKeyframeSkip,
-                                        int64_t aTimeThreshold)
+                                      int64_t aTimeThreshold)
 {
   // Record number of frames decoded and parsed. Automatically update the
   // stats counters using the AutoNotifyDecoded stack-based class.
@@ -329,6 +329,19 @@ nsresult MediaOmxReader::GetBuffered(mozilla::dom::TimeRanges* aBuffered, int64_
     startOffset = stream->GetNextCachedData(endOffset);
   }
   return NS_OK;
+}
+
+void MediaOmxReader::OnDecodeThreadFinish() {
+  if (mOmxDecoder.get()) {
+    mOmxDecoder->Pause();
+  }
+}
+
+void MediaOmxReader::OnDecodeThreadStart() {
+  if (mOmxDecoder.get()) {
+    DebugOnly<nsresult> result = mOmxDecoder->Play();
+    NS_ASSERTION(result == NS_OK, "OmxDecoder should be in play state to continue decoding");
+  }
 }
 
 } // namespace mozilla

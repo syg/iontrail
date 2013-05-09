@@ -6,10 +6,10 @@
 
 #include "mozilla/dom/SVGTransform.h"
 #include "mozilla/dom/SVGMatrix.h"
-#include "SVGAnimatedTransformList.h"
 #include "nsError.h"
 #include "nsContentUtils.h"
 #include "nsAttrValueInlines.h"
+#include "nsSVGAnimatedTransformList.h"
 #include "nsSVGAttrTearoffTable.h"
 #include "mozilla/dom/SVGTransformBinding.h"
 
@@ -49,7 +49,7 @@ NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(SVGTransform, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(SVGTransform, Release)
 
 JSObject*
-SVGTransform::WrapObject(JSContext* aCx, JSObject* aScope)
+SVGTransform::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGTransformBinding::Wrap(aCx, aScope, this);
 }
@@ -283,7 +283,7 @@ SVGTransform::RemovingFromList()
 nsSVGTransform&
 SVGTransform::InternalItem()
 {
-  SVGAnimatedTransformList *alist = Element()->GetAnimatedTransformList();
+  nsSVGAnimatedTransformList *alist = Element()->GetAnimatedTransformList();
   return mIsAnimValItem && alist->mAnimVal ?
     (*alist->mAnimVal)[mListIndex] :
     alist->mBaseVal[mListIndex];
@@ -299,7 +299,7 @@ SVGTransform::InternalItem() const
 bool
 SVGTransform::IndexIsValid()
 {
-  SVGAnimatedTransformList *alist = Element()->GetAnimatedTransformList();
+  nsSVGAnimatedTransformList *alist = Element()->GetAnimatedTransformList();
   return (mIsAnimValItem &&
           mListIndex < alist->GetAnimValue().Length()) ||
          (!mIsAnimValItem &&

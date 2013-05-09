@@ -4,7 +4,6 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/* $Id$ */
 
 #include "ssl.h" 	/* prereq to sslimpl.h */
 #include "certt.h"	/* prereq to sslimpl.h */
@@ -764,8 +763,9 @@ SSL_CanBypass(CERTCertificate *cert, SECKEYPrivateKey *srvPrivkey,
 		     requiredECCbits = signatureKeyStrength;
 
 		ec_curve =
-		    ssl3_GetCurveWithECKeyStrength(SSL3_SUPPORTED_CURVES_MASK,
-						   requiredECCbits);
+		    ssl3_GetCurveWithECKeyStrength(
+					ssl3_GetSupportedECCCurveMask(NULL),
+				  	requiredECCbits);
 		rv = ssl3_ECName2Params(NULL, ec_curve, &ecParams);
 		if (rv == SECFailure) {
 		    break;

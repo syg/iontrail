@@ -10,8 +10,7 @@ Cu.import("resource://gre/modules/devtools/WebConsoleUtils.jsm", tempScope);
 let WebConsoleUtils = tempScope.WebConsoleUtils;
 Cu.import("resource:///modules/devtools/gDevTools.jsm", tempScope);
 let gDevTools = tempScope.gDevTools;
-Cu.import("resource:///modules/devtools/Target.jsm", tempScope);
-let TargetFactory = tempScope.TargetFactory;
+let TargetFactory = tempScope.devtools.TargetFactory;
 Components.utils.import("resource://gre/modules/devtools/Console.jsm", tempScope);
 let console = tempScope.console;
 let Promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {}).Promise;
@@ -25,6 +24,7 @@ const CATEGORY_JS = 2;
 const CATEGORY_WEBDEV = 3;
 const CATEGORY_INPUT = 4;
 const CATEGORY_OUTPUT = 5;
+const CATEGORY_SECURITY = 6;
 
 // The possible message severities.
 const SEVERITY_ERROR = 0;
@@ -252,7 +252,7 @@ function waitForOpenContextMenu(aContextMenu, aOptions) {
 function dumpConsoles()
 {
   if (gPendingOutputTest) {
-    console.log("dumpConsoles");
+    console.log("dumpConsoles start");
     for each (let hud in HUDService.hudReferences) {
       if (!hud.outputNode) {
         console.debug("no output content for", hud.hudId);
@@ -261,23 +261,36 @@ function dumpConsoles()
 
       console.debug("output content for", hud.hudId);
       for (let elem of hud.outputNode.childNodes) {
-        let text = getMessageElementText(elem);
-        let repeats = elem.querySelector(".webconsole-msg-repeat");
-        if (repeats) {
-          repeats = repeats.getAttribute("value");
-        }
-        console.debug("date", elem.timestamp,
-                      "class", elem.className,
-                      "category", elem.category,
-                      "severity", elem.severity,
-                      "repeats", repeats,
-                      "clipboardText", elem.clipboardText,
-                      "text", text);
+        dumpMessageElement(elem);
       }
     }
+    console.log("dumpConsoles end");
 
     gPendingOutputTest = 0;
   }
+}
+
+/**
+ * Dump to output debug information for the given webconsole message.
+ *
+ * @param nsIDOMNode aMessage
+ *        The message element you want to display.
+ */
+function dumpMessageElement(aMessage)
+{
+  let text = getMessageElementText(aMessage);
+  let repeats = aMessage.querySelector(".webconsole-msg-repeat");
+  if (repeats) {
+    repeats = repeats.getAttribute("value");
+  }
+  console.debug("id", aMessage.getAttribute("id"),
+                "date", aMessage.timestamp,
+                "class", aMessage.className,
+                "category", aMessage.category,
+                "severity", aMessage.severity,
+                "repeats", repeats,
+                "clipboardText", aMessage.clipboardText,
+                "text", text);
 }
 
 function finishTest()
@@ -856,6 +869,8 @@ function getMessageElementText(aElement)
  *        Properties:
  *            - text: string or RegExp to match the textContent of each new
  *            message.
+ *            - noText: string or RegExp that must not match in the message
+ *            textContent.
  *            - repeats: the number of message repeats, as displayed by the Web
  *            Console.
  *            - category: match message category. See CATEGORY_* constants at
@@ -864,8 +879,31 @@ function getMessageElementText(aElement)
  *            the top of this file.
  *            - count: how many unique web console messages should be matched by
  *            this rule.
+ *            - consoleTrace: boolean, set to |true| to match a console.trace()
+ *            message. Optionally this can be an object of the form
+ *            { file, fn, line } that can match the specified file, function
+ *            and/or line number in the trace message.
+ *            - consoleTime: string that matches a console.time() timer name.
+ *            Provide this if you want to match a console.time() message.
+ *            - consoleTimeEnd: same as above, but for console.timeEnd().
+ *            - consoleDir: boolean, set to |true| to match a console.dir()
+ *            message.
+ *            - longString: boolean, set to |true} to match long strings in the
+ *            message.
+ *            - objects: boolean, set to |true| if you expect inspectable
+ *            objects in the message.
  * @return object
  *         A Promise object is returned once the messages you want are found.
+ *         The promise is resolved with the array of rule objects you give in
+ *         the |messages| property. Each objects is the same as provided, with
+ *         additional properties:
+ *         - matched: a Set of web console messages that matched the rule.
+ *         - clickableElements: a list of inspectable objects. This is available
+ *         if any of the following properties are present in the rule:
+ *         |consoleTrace| or |objects|.
+ *         - longStrings: a list of long string ellipsis elements you can click
+ *         in the message element, to expand a long string. This is available
+ *         only if |longString| is present in the matching rule.
  */
 function waitForMessages(aOptions)
 {
@@ -876,32 +914,163 @@ function waitForMessages(aOptions)
   let listenerAdded = false;
   let deferred = Promise.defer();
 
+  function checkText(aRule, aText)
+  {
+    let result;
+    if (typeof aRule == "string") {
+      result = aText.indexOf(aRule) > -1;
+    }
+    else if (aRule instanceof RegExp) {
+      result = aRule.test(aText);
+    }
+    return result;
+  }
+
+  function checkConsoleTrace(aRule, aElement)
+  {
+    let elemText = getMessageElementText(aElement);
+    let trace = aRule.consoleTrace;
+
+    if (!checkText("Stack trace from ", elemText)) {
+      return false;
+    }
+
+    let clickable = aElement.querySelector(".hud-clickable");
+    if (!clickable) {
+      ok(false, "console.trace() message is missing .hud-clickable");
+      displayErrorContext(aRule, aElement);
+      return false;
+    }
+    aRule.clickableElements = [clickable];
+
+    if (trace.file &&
+        !checkText("from " + trace.file + ", ", elemText)) {
+      ok(false, "console.trace() message is missing the file name: " +
+                trace.file);
+      displayErrorContext(aRule, aElement);
+      return false;
+    }
+
+    if (trace.fn &&
+        !checkText(", function " + trace.fn + ", ", elemText)) {
+      ok(false, "console.trace() message is missing the function name: " +
+                trace.fn);
+      displayErrorContext(aRule, aElement);
+      return false;
+    }
+
+    if (trace.line &&
+        !checkText(", line " + trace.line + ".", elemText)) {
+      ok(false, "console.trace() message is missing the line number: " +
+                trace.line);
+      displayErrorContext(aRule, aElement);
+      return false;
+    }
+
+    aRule.category = CATEGORY_WEBDEV;
+    aRule.severity = SEVERITY_LOG;
+
+    return true;
+  }
+
+  function checkConsoleTime(aRule, aElement)
+  {
+    let elemText = getMessageElementText(aElement);
+    let time = aRule.consoleTime;
+
+    if (!checkText(time + ": timer started", elemText)) {
+      return false;
+    }
+
+    aRule.category = CATEGORY_WEBDEV;
+    aRule.severity = SEVERITY_LOG;
+
+    return true;
+  }
+
+  function checkConsoleTimeEnd(aRule, aElement)
+  {
+    let elemText = getMessageElementText(aElement);
+    let time = aRule.consoleTimeEnd;
+    let regex = new RegExp(time + ": \\d+ms");
+
+    if (!checkText(regex, elemText)) {
+      return false;
+    }
+
+    aRule.category = CATEGORY_WEBDEV;
+    aRule.severity = SEVERITY_LOG;
+
+    return true;
+  }
+
+  function checkConsoleDir(aRule, aElement)
+  {
+    if (!aElement.classList.contains("webconsole-msg-inspector")) {
+      return false;
+    }
+
+    let elemText = getMessageElementText(aElement);
+    if (!checkText(aRule.consoleDir, elemText)) {
+      return false;
+    }
+
+    let iframe = aElement.querySelector("iframe");
+    if (!iframe) {
+      ok(false, "console.dir message has no iframe");
+      return false;
+    }
+
+    return true;
+  }
+
   function checkMessage(aRule, aElement)
   {
-    if (aRule.text) {
-      let elemText = getMessageElementText(aElement);
-      let matched = false;
-      if (typeof aRule.text == "string") {
-        matched = elemText.indexOf(aRule.text) > -1;
-      }
-      else if (aRule.text instanceof RegExp) {
-        matched = aRule.text.test(elemText);
-      }
-      if (!matched) {
-        return false;
-      }
+    let elemText = getMessageElementText(aElement);
+
+    if (aRule.text && !checkText(aRule.text, elemText)) {
+      return false;
     }
 
-    if (aRule.category) {
-      if (aElement.category != aRule.category) {
-        return false;
-      }
+    if (aRule.noText && checkText(aRule.noText, elemText)) {
+      return false;
     }
 
-    if (aRule.severity) {
-      if (aElement.severity != aRule.severity) {
-        return false;
+    if (aRule.consoleTrace && !checkConsoleTrace(aRule, aElement)) {
+      return false;
+    }
+
+    if (aRule.consoleTime && !checkConsoleTime(aRule, aElement)) {
+      return false;
+    }
+
+    if (aRule.consoleTimeEnd && !checkConsoleTimeEnd(aRule, aElement)) {
+      return false;
+    }
+
+    if (aRule.consoleDir && !checkConsoleDir(aRule, aElement)) {
+      return false;
+    }
+
+    let partialMatch = !!(aRule.consoleTrace || aRule.consoleTime ||
+                          aRule.consoleTimeEnd);
+
+    if (aRule.category && aElement.category != aRule.category) {
+      if (partialMatch) {
+        is(aElement.category, aRule.category,
+           "message category for rule: " + displayRule(aRule));
+        displayErrorContext(aRule, aElement);
       }
+      return false;
+    }
+
+    if (aRule.severity && aElement.severity != aRule.severity) {
+      if (partialMatch) {
+        is(aElement.severity, aRule.severity,
+           "message severity for rule: " + displayRule(aRule));
+        displayErrorContext(aRule, aElement);
+      }
+      return false;
     }
 
     if (aRule.repeats) {
@@ -909,6 +1078,34 @@ function waitForMessages(aOptions)
       if (!repeats || repeats.getAttribute("value") != aRule.repeats) {
         return false;
       }
+    }
+
+    if ("longString" in aRule) {
+      let longStrings = aElement.querySelectorAll(".longStringEllipsis");
+      if (aRule.longString != !!longStrings[0]) {
+        if (partialMatch) {
+          is(!!longStrings[0], aRule.longString,
+             "long string existence check failed for message rule: " +
+             displayRule(aRule));
+          displayErrorContext(aRule, aElement);
+        }
+        return false;
+      }
+      aRule.longStrings = longStrings;
+    }
+
+    if ("objects" in aRule) {
+      let clickables = aElement.querySelectorAll(".hud-clickable");
+      if (aRule.objects != !!clickables[0]) {
+        if (partialMatch) {
+          is(!!clickables[0], aRule.objects,
+             "objects existence check failed for message rule: " +
+             displayRule(aRule));
+          displayErrorContext(aRule, aElement);
+        }
+        return false;
+      }
+      aRule.clickableElements = clickables;
     }
 
     let count = aRule.count || 1;
@@ -923,6 +1120,16 @@ function waitForMessages(aOptions)
   function onMessagesAdded(aEvent, aNewElements)
   {
     for (let elem of aNewElements) {
+      let location = elem.querySelector(".webconsole-location");
+      if (location) {
+        let url = location.getAttribute("title");
+        // Prevent recursion with the browser console and any potential
+        // messages coming from head.js.
+        if (url.indexOf("browser/devtools/webconsole/test/head.js") != -1) {
+          continue;
+        }
+      }
+
       for (let rule of rules) {
         if (rule._ruleMatched) {
           continue;
@@ -946,6 +1153,7 @@ function waitForMessages(aOptions)
     if (rulesMatched == rules.length) {
       if (listenerAdded) {
         webconsole.ui.off("messages-added", onMessagesAdded);
+        webconsole.ui.off("messages-updated", onMessagesAdded);
       }
       gPendingOutputTest--;
       deferred.resolve(rules);
@@ -965,7 +1173,7 @@ function waitForMessages(aOptions)
 
     for (let rule of rules) {
       if (!rule._ruleMatched) {
-        console.log("failed to match rule: " + displayRule(rule));
+        ok(false, "failed to match rule: " + displayRule(rule));
       }
     }
   }
@@ -975,14 +1183,41 @@ function waitForMessages(aOptions)
     return aRule.name || aRule.text;
   }
 
+  function displayErrorContext(aRule, aElement)
+  {
+    console.log("error occured during rule " + displayRule(aRule));
+    console.log("while checking the following message");
+    dumpMessageElement(aElement);
+  }
+
   executeSoon(() => {
     onMessagesAdded("messages-added", webconsole.outputNode.childNodes);
     if (rulesMatched != rules.length) {
       listenerAdded = true;
       registerCleanupFunction(testCleanup);
       webconsole.ui.on("messages-added", onMessagesAdded);
+      webconsole.ui.on("messages-updated", onMessagesAdded);
     }
   });
 
   return deferred.promise;
+}
+
+
+/**
+ * Scroll the Web Console output to the given node.
+ *
+ * @param nsIDOMNode aNode
+ *        The node to scroll to.
+ */
+function scrollOutputToNode(aNode)
+{
+  let richListBoxNode = aNode.parentNode;
+  while (richListBoxNode.tagName != "richlistbox") {
+    richListBoxNode = richListBoxNode.parentNode;
+  }
+
+  let boxObject = richListBoxNode.scrollBoxObject;
+  let nsIScrollBoxObject = boxObject.QueryInterface(Ci.nsIScrollBoxObject);
+  nsIScrollBoxObject.ensureElementIsVisible(aNode);
 }

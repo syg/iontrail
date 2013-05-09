@@ -199,7 +199,7 @@ class GeckoInputConnection
     private boolean mBatchSelectionChanged;
     private boolean mBatchTextChanged;
     private long mLastRestartInputTime;
-    private final InputConnection mPluginInputConnection;
+    private final InputConnection mKeyInputConnection;
 
     public static GeckoEditableListener create(View targetView,
                                                GeckoEditableClient editable) {
@@ -214,8 +214,8 @@ class GeckoInputConnection
         super(targetView, true);
         mEditableClient = editable;
         mIMEState = IME_STATE_DISABLED;
-        // InputConnection for plugins, which don't have full editors
-        mPluginInputConnection = new BaseInputConnection(targetView, false);
+        // InputConnection that sends keys for plugins, which don't have full editors
+        mKeyInputConnection = new BaseInputConnection(targetView, false);
     }
 
     @Override
@@ -641,12 +641,46 @@ class GeckoInputConnection
             // Since we are using a temporary string as the editable, the selection is at 0
             outAttrs.initialSelStart = 0;
             outAttrs.initialSelEnd = 0;
-            return mPluginInputConnection;
+            return mKeyInputConnection;
         }
         Editable editable = getEditable();
         outAttrs.initialSelStart = Selection.getSelectionStart(editable);
         outAttrs.initialSelEnd = Selection.getSelectionEnd(editable);
         return this;
+    }
+
+    private boolean replaceComposingSpanWithSelection() {
+        final Editable content = getEditable();
+        if (content == null) {
+            return false;
+        }
+        int a = getComposingSpanStart(content),
+            b = getComposingSpanEnd(content);
+        if (a != -1 && b != -1) {
+            if (DEBUG) {
+                Log.d(LOGTAG, "removing composition at " + a + "-" + b);
+            }
+            removeComposingSpans(content);
+            Selection.setSelection(content, a, b);
+        }
+        return true;
+    }
+
+    @Override
+    public boolean commitText(CharSequence text, int newCursorPosition) {
+        if (InputMethods.shouldCommitCharAsKey(mCurrentInputMethod) &&
+            text.length() == 1 && newCursorPosition > 0) {
+            if (DEBUG) {
+                Log.d(LOGTAG, "committing \"" + text + "\" as key");
+            }
+            // mKeyInputConnection is a BaseInputConnection that commits text as keys;
+            // but we first need to replace any composing span with a selection,
+            // so that the new key events will generate characters to replace
+            // text from the old composing span
+            return replaceComposingSpanWithSelection() &&
+                mKeyInputConnection.commitText(text, newCursorPosition);
+        }
+        return super.commitText(text, newCursorPosition);
     }
 
     @Override

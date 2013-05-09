@@ -267,6 +267,11 @@ pref("browser.search.noCurrentEngine", true);
 pref("browser.search.official", true);
 #endif
 
+// Enable sparse localization by setting a few package locale overrides
+pref("chrome.override_package.global", "browser");
+pref("chrome.override_package.mozapps", "browser");
+pref("chrome.override_package.passwordmgr", "browser");
+
 // enable xul error pages
 pref("browser.xul.error_pages.enabled", true);
 
@@ -444,7 +449,7 @@ pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 pref("app.support.baseURL", "http://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/");
 // Used to submit data to input from about:feedback
 pref("app.feedback.postURL", "https://input.mozilla.org/%LOCALE%/feedback");
-pref("app.privacyURL", "http://www.mozilla.com/%LOCALE%/m/privacy.html");
+pref("app.privacyURL", "http://www.mozilla.org/%LOCALE%/privacy/");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
 #if MOZ_UPDATE_CHANNEL == aurora
@@ -602,6 +607,9 @@ pref("browser.firstrun.show.localepicker", false);
 // $ adb shell start
 pref("browser.dom.window.dump.enabled", true);
 
+// SimplePush
+pref("services.push.enabled", false);
+
 // controls if we want camera support
 pref("device.camera.enabled", true);
 pref("media.realtime_decoder.enabled", true);
@@ -628,6 +636,9 @@ pref("ui.scrolling.overscroll_snap_limit", -1);
 // The minimum amount of space that must be present for an axis to be considered scrollable,
 // in 1/1000ths of pixels.
 pref("ui.scrolling.min_scrollable_distance", -1);
+// The axis lock mode for panning behaviour - set between standard, free and sticky
+pref("ui.scrolling.axis_lock_mode", "standard");
+
 
 // Enable accessibility mode if platform accessibility is enabled.
 pref("accessibility.accessfu.activate", 2);
@@ -641,6 +652,13 @@ pref("network.manage-offline-status", true);
 // increase the timeout clamp for background tabs to 15 minutes
 pref("dom.min_background_timeout_value", 900000);
 
+// The default state of reader mode works on loaded a page.
+pref("reader.parse-on-load.enabled", true);
+
+// Force to enable reader mode to parse on loaded a page.
+// Allow reader mode even on low-memory platforms
+pref("reader.parse-on-load.force-enabled", false);
+
 // The default of font size in reader (1-7)
 pref("reader.font_size", 4);
 
@@ -649,6 +667,9 @@ pref("reader.margin_size", 5);
 
 // The default color scheme in reader (light, dark, sepia)
 pref("reader.color_scheme", "light");
+
+// The font type in reader (sans-serif, serif)
+pref("reader.font_type", "sans-serif");
 
 // Used to show a first-launch tip in reader
 pref("reader.has_used_toolbar", false);
@@ -702,3 +723,16 @@ pref("browser.contentHandlers.types.3.type", "application/vnd.mozilla.maybe.feed
 // Enable Web Audio for Firefox for Android in Nightly and Aurora
 pref("media.webaudio.enabled", true);
 #endif
+
+pref("dom.payment.provider.0.name", "Firefox Marketplace");
+pref("dom.payment.provider.0.description", "marketplace.firefox.com");
+pref("dom.payment.provider.0.uri", "https://marketplace.firefox.com/mozpay/?req=");
+pref("dom.payment.provider.0.type", "mozilla/payments/pay/v1");
+pref("dom.payment.provider.0.requestMethod", "GET");
+
+// This needs more tests and stability fixes first, as well as UI.
+pref("media.navigator.enabled", false);
+pref("media.peerconnection.enabled", false);
+
+// Make <audio> and <video> talk to the AudioChannelService.
+pref("media.useAudioChannelService", true);

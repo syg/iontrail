@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -26,8 +25,10 @@ class BaselineCompilerShared
     jsbytecode *pc;
     MacroAssembler masm;
     bool ionCompileable_;
+    bool ionOSRCompileable_;
     bool debugMode_;
 
+    BytecodeAnalysis analysis_;
     FrameInfo frame;
 
     FallbackICStubSpace stubSpace_;
@@ -113,33 +114,6 @@ class BaselineCompilerShared
         }
     }
 
-    bool addPCMappingEntry(uint32_t nativeOffset, PCMappingSlotInfo slotInfo, bool addIndexEntry) {
-
-        // Don't add multiple entries for a single pc.
-        size_t nentries = pcMappingEntries_.length();
-        if (nentries > 0 && pcMappingEntries_[nentries - 1].pcOffset == unsigned(pc - script->code))
-            return true;
-
-        PCMappingEntry entry;
-        entry.pcOffset = pc - script->code;
-        entry.nativeOffset = nativeOffset;
-        entry.slotInfo = slotInfo;
-        entry.addIndexEntry = addIndexEntry;
-
-        IonSpew(IonSpew_BaselineOp, "PCMapping (%s:%u): %u => %u (%u:%u:%u)!",
-                        script->filename(), script->lineno,
-                        entry.pcOffset, entry.nativeOffset,
-                        (entry.slotInfo.toByte() & 0x3),
-                        ((entry.slotInfo.toByte() >> 2) & 0x3),
-                        ((entry.slotInfo.toByte() >> 4) & 0x3));
-
-        return pcMappingEntries_.append(entry);
-    }
-
-    bool addPCMappingEntry(bool addIndexEntry) {
-        return addPCMappingEntry(masm.currentOffset(), getStackTopSlotInfo(), addIndexEntry);
-    }
-
     template <typename T>
     void pushArg(const T& t) {
         masm.Push(t);
@@ -156,6 +130,11 @@ class BaselineCompilerShared
     }
 
     bool callVM(const VMFunction &fun);
+
+  public:
+    BytecodeAnalysis &analysis() {
+        return analysis_;
+    }
 };
 
 } // namespace ion

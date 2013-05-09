@@ -35,6 +35,12 @@ GetCompartmentPrincipal(JSCompartment *compartment)
     return nsJSPrincipals::get(JS_GetCompartmentPrincipals(compartment));
 }
 
+nsIPrincipal *
+GetObjectPrincipal(JSObject *obj)
+{
+    return GetCompartmentPrincipal(js::GetObjectCompartment(obj));
+}
+
 // Does the principal of compartment a subsume the principal of compartment b?
 bool
 AccessCheck::subsumes(JSCompartment *a, JSCompartment *b)
@@ -166,8 +172,11 @@ IsPermitted(const char *name, JSFlatString *prop, bool set)
 #undef W
 
 static bool
-IsFrameId(JSContext *cx, JSObject *obj, jsid id)
+IsFrameId(JSContext *cx, JSObject *objArg, jsid idArg)
 {
+    RootedObject obj(cx, objArg);
+    RootedId id(cx, idArg);
+
     obj = JS_ObjectToInnerObject(cx, obj);
     MOZ_ASSERT(!js::IsWrapper(obj));
     XPCWrappedNative *wn = IS_WN_WRAPPER(obj) ? XPCWrappedNative::Get(obj)
@@ -206,7 +215,7 @@ IsWindow(const char *name)
 }
 
 bool
-AccessCheck::isCrossOriginAccessPermitted(JSContext *cx, JSObject *wrapper, jsid id,
+AccessCheck::isCrossOriginAccessPermitted(JSContext *cx, JSObject *wrapperArg, jsid idArg,
                                           Wrapper::Action act)
 {
     if (!XPCWrapper::GetSecurityManager())
@@ -215,7 +224,9 @@ AccessCheck::isCrossOriginAccessPermitted(JSContext *cx, JSObject *wrapper, jsid
     if (act == Wrapper::CALL)
         return true;
 
-    JSObject *obj = Wrapper::wrappedObject(wrapper);
+    RootedId id(cx, idArg);
+    RootedObject wrapper(cx, wrapperArg);
+    RootedObject obj(cx, Wrapper::wrappedObject(wrapper));
 
     const char *name;
     js::Class *clasp = js::GetObjectClass(obj);
@@ -230,14 +241,20 @@ AccessCheck::isCrossOriginAccessPermitted(JSContext *cx, JSObject *wrapper, jsid
             return true;
     }
 
-    return IsWindow(name) && IsFrameId(cx, obj, id);
-}
-
-bool
-AccessCheck::isSystemOnlyAccessPermitted(JSContext *cx)
-{
-    MOZ_ASSERT(cx == nsContentUtils::GetCurrentJSContext());
-    return nsContentUtils::CanAccessNativeAnon();
+    // Check for frame IDs. If we're resolving named frames, make sure to only
+    // resolve ones that don't shadow native properties. See bug 860494.
+    if (IsWindow(name)) {
+        if (JSID_IS_STRING(id) && !XrayUtils::IsXrayResolving(cx, wrapper, id)) {
+            bool wouldShadow = false;
+            if (!XrayUtils::HasNativeProperty(cx, wrapper, id, &wouldShadow) ||
+                wouldShadow)
+            {
+                return false;
+            }
+        }
+        return IsFrameId(cx, obj, id);
+    }
+    return false;
 }
 
 bool
@@ -254,21 +271,6 @@ AccessCheck::needsSystemOnlyWrapper(JSObject *obj)
     return wn->NeedsSOW();
 }
 
-bool
-OnlyIfSubjectIsSystem::isSafeToUnwrap()
-{
-    // It's nasty to use the context stack here, but the alternative is passing cx all
-    // the way down through CheckedUnwrap, which we just undid in a 100k patch. :-(
-    JSContext *cx = nsContentUtils::GetCurrentJSContext();
-    if (!cx)
-        return true;
-    // If XBL scopes are enabled for this compartment, this hook doesn't need to
-    // be dynamic at all, since SOWs can be opaque.
-    if (xpc::AllowXBLScope(js::GetContextCompartment(cx)))
-        return false;
-    return AccessCheck::isSystemOnlyAccessPermitted(cx);
-}
-
 enum Access { READ = (1<<0), WRITE = (1<<1), NO_ACCESS = 0 };
 
 static void
@@ -279,14 +281,16 @@ EnterAndThrow(JSContext *cx, JSObject *wrapper, const char *msg)
 }
 
 bool
-ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper::Action act)
+ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapperArg, jsid idArg, Wrapper::Action act)
 {
-    JSObject *wrappedObject = Wrapper::wrappedObject(wrapper);
+    RootedObject wrapper(cx, wrapperArg);
+    RootedId id(cx, idArg);
+    RootedObject wrappedObject(cx, Wrapper::wrappedObject(wrapper));
 
     if (act == Wrapper::CALL)
         return true;
 
-    jsid exposedPropsId = GetRTIdByIndex(cx, XPCJSRuntime::IDX_EXPOSEDPROPS);
+    RootedId exposedPropsId(cx, GetRTIdByIndex(cx, XPCJSRuntime::IDX_EXPOSEDPROPS));
 
     // We need to enter the wrappee's compartment to look at __exposedProps__,
     // but we want to be in the wrapper's compartment if we call Deny().
@@ -314,8 +318,8 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
     if (id == JSID_VOID)
         return true;
 
-    JS::Value exposedProps;
-    if (!JS_LookupPropertyById(cx, wrappedObject, exposedPropsId, &exposedProps))
+    RootedValue exposedProps(cx);
+    if (!JS_LookupPropertyById(cx, wrappedObject, exposedPropsId, exposedProps.address()))
         return false;
 
     if (exposedProps.isNullOrUndefined())
@@ -326,7 +330,7 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
         return false;
     }
 
-    JSObject *hallpass = &exposedProps.toObject();
+    RootedObject hallpass(cx, &exposedProps.toObject());
 
     if (!AccessCheck::subsumes(js::UncheckedUnwrap(hallpass), wrappedObject)) {
         EnterAndThrow(cx, wrapper, "Invalid __exposedProps__");
@@ -335,19 +339,19 @@ ExposedPropertiesOnly::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper:
 
     Access access = NO_ACCESS;
 
-    JSPropertyDescriptor desc;
-    if (!JS_GetPropertyDescriptorById(cx, hallpass, id, 0, &desc)) {
+    Rooted<JSPropertyDescriptor> desc(cx);
+    if (!JS_GetPropertyDescriptorById(cx, hallpass, id, 0, desc.address())) {
         return false; // Error
     }
-    if (!desc.obj || !(desc.attrs & JSPROP_ENUMERATE))
+    if (!desc.object() || !desc.isEnumerable())
         return false;
 
-    if (!JSVAL_IS_STRING(desc.value)) {
+    if (!desc.value().isString()) {
         EnterAndThrow(cx, wrapper, "property must be a string");
         return false;
     }
 
-    JSString *str = JSVAL_TO_STRING(desc.value);
+    JSString *str = desc.value().toString();
     size_t length;
     const jschar *chars = JS_GetStringCharsAndLength(cx, str, &length);
     if (!chars)
@@ -398,8 +402,10 @@ ExposedPropertiesOnly::allowNativeCall(JSContext *cx, JS::IsAcceptableThis test,
 }
 
 bool
-ComponentsObjectPolicy::check(JSContext *cx, JSObject *wrapper, jsid id, Wrapper::Action act)
+ComponentsObjectPolicy::check(JSContext *cx, JSObject *wrapperArg, jsid idArg, Wrapper::Action act)
 {
+    RootedObject wrapper(cx, wrapperArg);
+    RootedId id(cx, idArg);
     JSAutoCompartment ac(cx, wrapper);
 
     if (JSID_IS_STRING(id) && act == Wrapper::GET) {

@@ -944,6 +944,7 @@ endif
 # so no need to conditionalize on OS version or debugging format.
 
 $(SHARED_LIBRARY): $(OBJS) $(LOBJS) $(DEF_FILE) $(RESFILE) $(LIBRARY) $(EXTRA_DEPS) $(GLOBAL_DEPS)
+	$(info $(notdir $@))
 ifndef INCREMENTAL_LINKER
 	$(RM) $@
 endif
@@ -1283,12 +1284,6 @@ endif
 # on win32, pref files need CRLF line endings... see bug 206029
 ifeq (WINNT,$(OS_ARCH))
 PREF_PPFLAGS += --line-endings=crlf
-endif
-
-# Set a flag that can be used in pref files to disable features if
-# we are not building for Aurora or Nightly.
-ifeq (,$(findstring a,$(GRE_MILESTONE)))
-PREF_PPFLAGS += -DRELEASE_BUILD
 endif
 
 ifneq ($(PREF_JS_EXPORTS),)
@@ -1824,7 +1819,7 @@ default all:: $(PURGECACHES_FILES)
 $(PURGECACHES_FILES):
 	if test -d $(@D) ; then touch $@ ; fi
 
-.DEFAULT_GOAL ?= default
+.DEFAULT_GOAL := $(or $(OVERRIDE_DEFAULT_GOAL),default)
 
 #############################################################################
 # Derived targets and dependencies

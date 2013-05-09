@@ -11,7 +11,6 @@
 #include "mozilla/StaticPtr.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
-#include "nsIJSContextStack.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsISettingsService.h"
@@ -169,18 +168,7 @@ TimeZoneSettingObserver::Observe(nsISupports *aSubject,
   // The string that we're interested in will be a JSON string that looks like:
   // {"key":"time.timezone","value":"America/Chicago"}
 
-  // Get the safe JS context.
-  nsCOMPtr<nsIThreadJSContextStack> stack =
-    do_GetService("@mozilla.org/js/xpc/ContextStack;1");
-  if (!stack) {
-    ERR("Failed to get JSContextStack");
-    return NS_OK;
-  }
-  JSContext *cx = stack->GetSafeJSContext();
-  if (!cx) {
-    ERR("Failed to GetSafeJSContext");
-    return NS_OK;
-  }
+  AutoSafeJSContext cx;
 
   // Parse the JSON value.
   nsDependentString dataStr(aData);

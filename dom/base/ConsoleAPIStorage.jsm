@@ -40,24 +40,19 @@ this.ConsoleAPIStorage = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
 
-  /** @private */
   observe: function CS_observe(aSubject, aTopic, aData)
   {
     if (aTopic == "xpcom-shutdown") {
       Services.obs.removeObserver(this, "xpcom-shutdown");
       Services.obs.removeObserver(this, "inner-window-destroyed");
       Services.obs.removeObserver(this, "memory-pressure");
-      delete _consoleStorage;
     }
     else if (aTopic == "inner-window-destroyed") {
       let innerWindowID = aSubject.QueryInterface(Ci.nsISupportsPRUint64).data;
       this.clearEvents(innerWindowID);
     }
     else if (aTopic == "memory-pressure") {
-      /* Handle both low-memory and low-memory-no-forward events */
-      if (aData.startsWith("low-memory")) {
-        this.clearEvents();
-      }
+      this.clearEvents();
     }
   },
 

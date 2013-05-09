@@ -28,7 +28,7 @@
           <xul:notificationbox flex="1">
             <xul:hbox flex="1" class="browserSidebarContainer">
               <xul:vbox flex="1" class="browserContainer">
-                <xul:stack flex="1" class="browserStack">
+                <xul:stack flex="1" class="browserStack" anonid="browserStack">
                   <xul:browser anonid="initialBrowser" type="content-primary" message="true" disablehistory="true"
                                xbl:inherits="tooltip=contenttooltip,contextmenu=contentcontextmenu,autocompletepopup"/>
                 </xul:stack>
@@ -39,7 +39,7 @@
       </xul:tabbox>
       <children/>
     </content>
-    <implementation implements="nsIDOMEventListener">
+    <implementation implements="nsIDOMEventListener, nsIMessageListener">
 
       <property name="tabContextMenu" readonly="true"
                 onget="return this.tabContainer.contextMenu;"/>
@@ -293,6 +293,19 @@
         </body>
       </method>
 
+      <method name="_getTabForBrowser">
+        <parameter name="aBrowser"/>
+        <body>
+        <![CDATA[
+          for (let i = 0; i < this.tabs.length; i++) {
+            if (this.tabs[i].linkedBrowser == aBrowser)
+              return this.tabs[i];
+          }
+          return null;
+        ]]>
+        </body>
+      </method>
+
       <method name="getNotificationBox">
         <parameter name="aBrowser"/>
         <body>
@@ -452,6 +465,9 @@
               if (this.mBlank)
                 return false;
 
+              if (gMultiProcessBrowser)
+                return true;
+
               // Don't show progress indicators in tabs for about: URIs
               // pointing to local resources.
               try {
@@ -523,14 +539,16 @@
                 // We need to add 2 because loadURIWithFlags may have
                 // cancelled a pending load which would have cleared
                 // its anchor scroll detection temporary increment.
-                if (aWebProgress.DOMWindow == this.mBrowser.contentWindow)
+                if (aWebProgress.isTopLevel)
                   this.mBrowser.userTypedClear += 2;
 
                 if (this._shouldShowProgress(aRequest)) {
                   if (!(aStateFlags & nsIWebProgressListener.STATE_RESTORING)) {
                     this.mTab.setAttribute("busy", "true");
-                    if (!(this.mBrowser.docShell.loadType & Ci.nsIDocShell.LOAD_CMD_RELOAD))
-                      this.mTabBrowser.setTabTitleLoading(this.mTab);
+                    if (!gMultiProcessBrowser) {
+                      if (!(this.mBrowser.docShell.loadType & Ci.nsIDocShell.LOAD_CMD_RELOAD))
+                        this.mTabBrowser.setTabTitleLoading(this.mTab);
+                    }
                   }
 
                   if (this.mTab.selected)
@@ -548,7 +566,7 @@
                 }
                 this.mTab.removeAttribute("progress");
 
-                if (aWebProgress.DOMWindow == this.mBrowser.contentWindow) {
+                if (aWebProgress.isTopLevel) {
                   if (!Components.isSuccessCode(aStatus) &&
                       !isTabEmpty(this.mTab)) {
                     // Restore the current document's location in case the
@@ -617,7 +635,7 @@
                                         aFlags) {
               // OnLocationChange is called for both the top-level content
               // and the subframes.
-              let topLevel = aWebProgress.DOMWindow == this.mBrowser.contentWindow;
+              let topLevel = aWebProgress.isTopLevel;
 
               if (topLevel) {
                 // The document loaded correctly, clear the value if we should
@@ -631,9 +649,11 @@
 
                 // Don't clear the favicon if this onLocationChange was
                 // triggered by a pushState or a replaceState.  See bug 550565.
-                if (aWebProgress.isLoadingDocument &&
-                    !(this.mBrowser.docShell.loadType & Ci.nsIDocShell.LOAD_CMD_PUSHSTATE))
-                  this.mBrowser.mIconURL = null;
+                if (!gMultiProcessBrowser) {
+                  if (aWebProgress.isLoadingDocument &&
+                      !(this.mBrowser.docShell.loadType & Ci.nsIDocShell.LOAD_CMD_PUSHSTATE))
+                    this.mBrowser.mIconURL = null;
+                }
 
                 let autocomplete = this.mTabBrowser._placesAutocomplete;
                 if (this.mBrowser.registeredOpenURI) {
@@ -643,7 +663,8 @@
                 // Tabs in private windows aren't registered as "Open" so
                 // that they don't appear as switch-to-tab candidates.
                 if (!isBlankPageURL(aLocation.spec) &&
-                    !PrivateBrowsingUtils.isWindowPrivate(window)) {
+                    (!PrivateBrowsingUtils.isWindowPrivate(window) ||
+                    PrivateBrowsingUtils.permanentPrivateBrowsing)) {
                   autocomplete.registerOpenPage(aLocation);
                   this.mBrowser.registeredOpenURI = aLocation;
                 }
@@ -755,6 +776,10 @@
         <parameter name="aTab"/>
         <body>
           <![CDATA[
+            // Bug 691610 - e10s support for useDefaultIcon
+            if (gMultiProcessBrowser)
+              return;
+
             var browser = this.getBrowserForTab(aTab);
             var docURIObject = browser.contentDocument.documentURIObject;
             var icon = null;
@@ -916,10 +941,7 @@
             // Update the URL bar.
             var loc = this.mCurrentBrowser.currentURI;
 
-#ifdef MOZ_E10S_COMPAT
-            // Bug 666801 - WebProgress support for e10s and
             // Bug 666809 - SecurityUI support for e10s
-#else
             var webProgress = this.mCurrentBrowser.webProgress;
             var securityUI = this.mCurrentBrowser.securityUI;
 
@@ -931,7 +953,6 @@
               this._callProgressListeners(null, "onSecurityChange",
                                           [webProgress, null, securityUI.state], true, false);
             }
-#endif
 
             var listener = this.mTabListeners[this.tabContainer.selectedIndex] || null;
             if (listener && listener.mStateFlags) {
@@ -945,11 +966,9 @@
               this.mCurrentTab.removeAttribute("unread");
               this.selectedTab.lastAccessed = Date.now();
 
-#ifdef MOZ_E10S_COMPAT
               // Bug 666816 - TypeAheadFind support for e10s
-#else
-              this._fastFind.setDocShell(this.mCurrentBrowser.docShell);
-#endif
+              if (!gMultiProcessBrowser)
+                this._fastFind.setDocShell(this.mCurrentBrowser.docShell);
 
               this.updateTitlebar();
 
@@ -1038,15 +1057,18 @@
 
                 // Otherwise, focus the content area.
                 let fm = Cc["@mozilla.org/focus-manager;1"].getService(Ci.nsIFocusManager);
-                let newFocusedElement = fm.getFocusedElementForWindow(window.content, true, {});
-
-                // for anchors, use FLAG_SHOWRING so that it is clear what link was
-                // last clicked when switching back to that tab
                 let focusFlags = fm.FLAG_NOSCROLL;
-                if (newFocusedElement &&
-                    (newFocusedElement instanceof HTMLAnchorElement ||
-                     newFocusedElement.getAttributeNS("http://www.w3.org/1999/xlink", "type") == "simple"))
-                  focusFlags |= fm.FLAG_SHOWRING;
+
+                if (!gMultiProcessBrowser) {
+                  let newFocusedElement = fm.getFocusedElementForWindow(window.content, true, {});
+
+                  // for anchors, use FLAG_SHOWRING so that it is clear what link was
+                  // last clicked when switching back to that tab
+                  if (newFocusedElement &&
+                      (newFocusedElement instanceof HTMLAnchorElement ||
+                       newFocusedElement.getAttributeNS("http://www.w3.org/1999/xlink", "type") == "simple"))
+                    focusFlags |= fm.FLAG_SHOWRING;
+                }
                 fm.setFocus(newBrowser, focusFlags);
               } while (false);
             }
@@ -1106,7 +1128,7 @@
                 // Let's try to unescape it using a character set
                 // in case the URI is not ASCII.
                 try {
-                  var characterSet = browser.contentDocument.characterSet;
+                  var characterSet = browser.characterSet;
                   const textToSubURI = Components.classes["@mozilla.org/intl/texttosuburi;1"]
                                                  .getService(Components.interfaces.nsITextToSubURI);
                   title = textToSubURI.unEscapeNonAsciiURI(characterSet, title);
@@ -1241,6 +1263,7 @@
         <parameter name="aAllowThirdPartyFixup"/>
         <body>
           <![CDATA[
+            const NS_XUL = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
             var aFromExternal;
             var aRelatedToCurrent;
             var aSkipAnimation;
@@ -1264,9 +1287,7 @@
             if (this.mCurrentTab.owner)
               this.mCurrentTab.owner = null;
 
-            var t = document.createElementNS(
-              "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-                                             "tab");
+            var t = document.createElementNS(NS_XUL, "tab");
 
             var uriIsAboutBlank = !aURI || aURI == "about:blank";
 
@@ -1327,33 +1348,27 @@
             b.setAttribute("autoscrollpopup", this._autoScrollPopup.id);
 
             // Create the browserStack container
-            var stack = document.createElementNS(
-                                    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-                                    "stack");
+            var stack = document.createElementNS(NS_XUL, "stack");
             stack.className = "browserStack";
             stack.appendChild(b);
             stack.setAttribute("flex", "1");
 
             // Create the browserContainer
-            var browserContainer = document.createElementNS(
-                                    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-                                    "vbox");
+            var browserContainer = document.createElementNS(NS_XUL, "vbox");
             browserContainer.className = "browserContainer";
             browserContainer.appendChild(stack);
             browserContainer.setAttribute("flex", "1");
 
             // Create the sidebar container
-            var browserSidebarContainer = document.createElementNS(
-                                      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-                                      "hbox");
+            var browserSidebarContainer = document.createElementNS(NS_XUL,
+                                                                   "hbox");
             browserSidebarContainer.className = "browserSidebarContainer";
             browserSidebarContainer.appendChild(browserContainer);
             browserSidebarContainer.setAttribute("flex", "1");
 
             // Add the Message and the Browser to the box
-            var notificationbox = document.createElementNS(
-                                    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-                                    "notificationbox");
+            var notificationbox = document.createElementNS(NS_XUL,
+                                                           "notificationbox");
             notificationbox.setAttribute("flex", "1");
             notificationbox.appendChild(browserSidebarContainer);
 
@@ -1386,11 +1401,7 @@
             const filter = Components.classes["@mozilla.org/appshell/component/browser-status-filter;1"]
                                      .createInstance(Components.interfaces.nsIWebProgress);
             filter.addProgressListener(tabListener, Components.interfaces.nsIWebProgress.NOTIFY_ALL);
-#ifdef MOZ_E10S_COMPAT
-            // Bug 666801 - WebProgress support for e10s
-#else
             b.webProgress.addProgressListener(filter, Components.interfaces.nsIWebProgress.NOTIFY_ALL);
-#endif
             this.mTabListeners[position] = tabListener;
             this.mTabFilters[position] = filter;
 
@@ -1685,18 +1696,18 @@
             evt.initUIEvent("TabClose", true, false, window, aTabWillBeMoved ? 1 : 0);
             aTab.dispatchEvent(evt);
 
-            // Prevent this tab from showing further dialogs, since we're closing it
-            var windowUtils = browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).
-                              getInterface(Ci.nsIDOMWindowUtils);
-            windowUtils.preventFurtherDialogs();
+            if (!gMultiProcessBrowser) {
+              // Prevent this tab from showing further dialogs, since we're closing it
+              var windowUtils = browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).
+                                getInterface(Ci.nsIDOMWindowUtils);
+              windowUtils.preventFurtherDialogs();
+            }
 
             // Remove the tab's filter and progress listener.
             const filter = this.mTabFilters[aTab._tPos];
-#ifdef MOZ_E10S_COMPAT
-            // Bug 666801 - WebProgress support for e10s
-#else
+
             browser.webProgress.removeProgressListener(filter);
-#endif
+
             filter.removeProgressListener(this.mTabListeners[aTab._tPos]);
             this.mTabListeners[aTab._tPos].destroy();
 
@@ -2678,9 +2689,34 @@
         ]]></body>
       </method>
 
+      <method name="receiveMessage">
+        <parameter name="aMessage"/>
+        <body><![CDATA[
+          let json = aMessage.json;
+          let browser = aMessage.target;
+
+          switch (aMessage.name) {
+            case "DOMTitleChanged":
+              let tab = this._getTabForBrowser(browser);
+              if (!tab)
+                return;
+              let titleChanged = this.setTabTitle(tab);
+              if (titleChanged && !tab.selected && !tab.hasAttribute("busy"))
+                tab.setAttribute("titlechanged", "true");
+          }
+        ]]></body>
+      </method>
+
       <constructor>
         <![CDATA[
+          let browserStack = document.getAnonymousElementByAttribute(this, "anonid", "browserStack");
           this.mCurrentBrowser = document.getAnonymousElementByAttribute(this, "anonid", "initialBrowser");
+          if (Services.prefs.getBoolPref("browser.tabs.remote")) {
+            browserStack.removeChild(this.mCurrentBrowser);
+            this.mCurrentBrowser.setAttribute("remote", true);
+            browserStack.appendChild(this.mCurrentBrowser);
+          }
+
           this.mCurrentTab = this.tabContainer.firstChild;
           document.addEventListener("keypress", this, false);
           window.addEventListener("sizemodechange", this, false);
@@ -2714,6 +2750,9 @@
             Services.prefs.getBoolPref("browser.display.use_system_colors") ?
               "-moz-default-background-color" :
               Services.prefs.getCharPref("browser.display.background_color");
+
+          if (Services.prefs.getBoolPref("browser.tabs.remote"))
+            messageManager.addMessageListener("DOMTitleChanged", this);
         ]]>
       </constructor>
 
@@ -2747,6 +2786,9 @@
           }
           document.removeEventListener("keypress", this, false);
           window.removeEventListener("sizemodechange", this, false);
+
+          if (Services.prefs.getBoolPref("browser.tabs.remote"))
+            messageManager.removeMessageListener("DOMTitleChanged", this);
         ]]>
       </destructor>
 
@@ -3003,14 +3045,6 @@
 
           let lastVisible = visibleTabs.length - 1;
 
-          // selectedItem will not be in visibleTabs briefly when
-          // browser.tabs.closeWindowWithLastTab is disabled and the user closes
-          // the last tab
-          if (!this.selectedItem.closing && selectedIndex != 0) {
-            let beforeSelectedTab = visibleTabs[selectedIndex - 1];
-            beforeSelectedTab.removeAttribute("beforehovered");
-          }
-
           if (this._afterSelectedTab)
             this._afterSelectedTab.removeAttribute("afterselected-visible");
           if (this.selectedItem.closing || selectedIndex == lastVisible) {
@@ -3019,7 +3053,6 @@
             this._afterSelectedTab = visibleTabs[selectedIndex + 1];
             this._afterSelectedTab.setAttribute("afterselected-visible",
                                                 "true");
-            this._afterSelectedTab.removeAttribute("afterhovered");
           }
 
           if (this._firstTab)
@@ -4185,16 +4218,17 @@
          */
         var clickedOnce = false;
         function enableDblClick(event) {
-          if (event.detail == 1 && !clickedOnce) {
+          var target = event.originalTarget;
+          if (target.className == 'tab-close-button')
+            target._ignoredClick = true;
+          if (!clickedOnce) {
             clickedOnce = true;
             return;
           }
-          setTimeout(function() {
-            tabContainer._blockDblClick = false;
-          }, 0);
-          tabContainer.removeEventListener("click", enableDblClick, false);
+          tabContainer._blockDblClick = false;
+          tabContainer.removeEventListener("click", enableDblClick, true);
         }
-        tabContainer.addEventListener("click", enableDblClick, false);
+        tabContainer.addEventListener("click", enableDblClick, true);
       ]]></handler>
 
       <handler event="dblclick" button="0" phase="capturing">
@@ -4271,7 +4305,7 @@
           this.mOverCloseButton = true;
 
         let tab = event.target;
-        if (tab.selected || tab.closing)
+        if (tab.closing)
           return;
 
         let tabContainer = this.parentNode;

@@ -1214,7 +1214,8 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
   } else {
     nativeTheme = false;
     nscoord twipsRadii[8];
-    NS_ASSERTION(aFrameArea.Size() == aForFrame->GetSize(), "unexpected size");
+    NS_ASSERTION(aFrameArea.Size() == aForFrame->VisualBorderRectRelativeToSelf().Size(),
+                 "unexpected size");
     hasBorderRadius = aForFrame->GetBorderRadii(twipsRadii);
     if (hasBorderRadius) {
       ComputePixelRadii(twipsRadii, twipsPerPixel, &borderRadii);
@@ -2949,6 +2950,9 @@ nsCSSRendering::PrepareBackgroundLayer(nsPresContext* aPresContext,
   if (aFlags & nsCSSRendering::PAINTBG_SYNC_DECODE_IMAGES) {
     irFlags |= nsImageRenderer::FLAG_SYNC_DECODE_IMAGES;
   }
+  if (aFlags & nsCSSRendering::PAINTBG_TO_WINDOW) {
+    irFlags |= nsImageRenderer::FLAG_PAINTING_TO_WINDOW;
+  }
 
   nsBackgroundLayerState state(aForFrame, &aLayer.mImage, irFlags);
   if (!state.mImageRenderer.PrepareImage()) {
@@ -4636,9 +4640,14 @@ nsImageRenderer::Draw(nsPresContext*       aPresContext,
   switch (mType) {
     case eStyleImageType_Image:
     {
-      uint32_t drawFlags = (mFlags & FLAG_SYNC_DECODE_IMAGES)
-                             ? (uint32_t) imgIContainer::FLAG_SYNC_DECODE
-                             : (uint32_t) imgIContainer::FLAG_NONE;
+      uint32_t drawFlags = imgIContainer::FLAG_NONE;
+      if (mFlags & FLAG_SYNC_DECODE_IMAGES) {
+        drawFlags |= imgIContainer::FLAG_SYNC_DECODE;
+      }
+      if (mFlags & FLAG_PAINTING_TO_WINDOW) {
+        drawFlags |= imgIContainer::FLAG_HIGH_QUALITY_SCALING;
+      }
+
       nsLayoutUtils::DrawBackgroundImage(&aRenderingContext, mImageContainer,
           nsIntSize(nsPresContext::AppUnitsToIntCSSPixels(mSize.width),
                     nsPresContext::AppUnitsToIntCSSPixels(mSize.height)),

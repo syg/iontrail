@@ -993,7 +993,7 @@ nsCocoaWindow::ConfigureChildren(const nsTArray<Configuration>& aConfigurations)
 }
 
 LayerManager*
-nsCocoaWindow::GetLayerManager(PLayersChild* aShadowManager,
+nsCocoaWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
                                LayersBackend aBackendHint,
                                LayerManagerPersistence aPersistence,
                                bool* aAllowRetaining)
@@ -1344,7 +1344,7 @@ nsresult nsCocoaWindow::DoResize(double aX, double aY,
   int32_t height = NSToIntRound(aHeight * scale);
   ConstrainSize(&width, &height);
 
-  nsIntRect newBounds(aX, aY,
+  nsIntRect newBounds(NSToIntRound(aX), NSToIntRound(aY),
                       NSToIntRound(width / scale),
                       NSToIntRound(height / scale));
 
@@ -1475,6 +1475,9 @@ GetBackingScaleFactor(NSWindow* aWindow)
 
   // Workaround: instead of asking the window, we'll find the screen it is on
   // and ask that for *its* backing scale factor.
+
+  // (See bug 853252 and additional comments in windowDidChangeScreen: below
+  // for further complications this causes.)
 
   // First, expand the rect so that it actually has a measurable area,
   // for FindTargetScreenForRect to use.
@@ -2183,6 +2186,30 @@ bool nsCocoaWindow::ShouldFocusPlugin()
   if (!mGeckoWindow)
     return;
 
+  // Because of Cocoa's peculiar treatment of zero-size windows (see comments
+  // at GetBackingScaleFactor() above), we sometimes have a situation where
+  // our concept of backing scale (based on the screen where the zero-sized
+  // window is positioned) differs from Cocoa's idea (always based on the
+  // Retina screen, AFAICT, even when an external non-Retina screen is the
+  // primary display).
+  //
+  // As a result, if the window was created with zero size on an external
+  // display, but then made visible on the (secondary) Retina screen, we
+  // will *not* get a windowDidChangeBackingProperties notification for it.
+  // This leads to an incorrect GetDefaultScale(), and widget coordinate
+  // confusion, as per bug 853252.
+  //
+  // To work around this, we check for a backing scale mismatch when we
+  // receive a windowDidChangeScreen notification, as we will receive this
+  // even if Cocoa was already treating the zero-size window as having
+  // Retina backing scale.
+  NSWindow *window = (NSWindow *)[aNotification object];
+  if ([window respondsToSelector:@selector(backingScaleFactor)]) {
+    if (GetBackingScaleFactor(window) != mGeckoWindow->BackingScaleFactor()) {
+      mGeckoWindow->BackingScaleFactorChanged();
+    }
+  }
+
   mGeckoWindow->ReportMoveEvent();
 }
 
@@ -2558,6 +2585,20 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
   return [contentView superview] ? [contentView superview] : contentView;
 }
 
+- (ChildView*)mainChildView
+{
+  NSView *contentView = [self contentView];
+  // A PopupWindow's contentView is a ChildView object.
+  if ([contentView isKindOfClass:[ChildView class]]) {
+    return (ChildView*)contentView;
+  }
+  NSView* lastView = [[contentView subviews] lastObject];
+  if ([lastView isKindOfClass:[ChildView class]]) {
+    return (ChildView*)lastView;
+  }
+  return nil;
+}
+
 - (void)removeTrackingArea
 {
   if (mTrackingArea) {
@@ -2666,6 +2707,22 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
 
   return retval;
 }
+
+// If we were built on OS X 10.6 or with the 10.6 SDK and are running on Lion,
+// the OS (specifically -[NSWindow sendEvent:]) won't send NSEventTypeGesture
+// events to -[ChildView magnifyWithEvent:] as it should.  The following code
+// gets around this.  See bug 863841.
+#if !defined( MAC_OS_X_VERSION_10_7 ) || \
+    ( MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7 )
+- (void)sendEvent:(NSEvent *)anEvent
+{
+  if ([ChildView isLionSmartMagnifyEvent: anEvent]) {
+    [[self mainChildView] magnifyWithEvent:anEvent];
+    return;
+  }
+  [super sendEvent:anEvent];
+}
+#endif
 
 @end
 
@@ -2874,6 +2931,8 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
   } else {
     [borderView setNeedsDisplayInRect:rect];
   }
+
+  [[self mainChildView] maybeDrawInTitlebar];
 }
 
 - (NSRect)titlebarRect
@@ -2984,14 +3043,6 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
   [mTitlebarView removeFromSuperview];
   [mTitlebarView release];
   mTitlebarView = nil;
-}
-
-- (ChildView*)mainChildView
-{
-  NSView* view = [[[self contentView] subviews] lastObject];
-  if (view && [view isKindOfClass:[ChildView class]])
-    return (ChildView*)view;
-  return nil;
 }
 
 // Returning YES here makes the setShowsToolbarButton method work even though

@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -184,7 +183,7 @@ obj_toSource(JSContext *cx, unsigned argc, Value *vp)
         }
 
         /* Convert id to a linear string. */
-        RawString s = ToString<CanGC>(cx, IdToValue(id));
+        JSString *s = ToString<CanGC>(cx, IdToValue(id));
         if (!s)
             return false;
         Rooted<JSLinearString*> idstr(cx, s->ensureLinear(cx));
@@ -279,7 +278,7 @@ obj_toSource(JSContext *cx, unsigned argc, Value *vp)
     if (outermost && !buf.append(')'))
         return false;
 
-    RawString str = buf.finishString();
+    JSString *str = buf.finishString();
     if (!str)
         return false;
     args.rval().setString(str);
@@ -288,13 +287,11 @@ obj_toSource(JSContext *cx, unsigned argc, Value *vp)
 #endif /* JS_HAS_TOSOURCE */
 
 JSString *
-js::obj_toStringHelper(JSContext *cx, HandleObject obj)
+JS_BasicObjectToString(JSContext *cx, HandleObject obj)
 {
-    if (obj->isProxy())
-        return Proxy::obj_toString(cx, obj);
+    const char *className = JSObject::className(cx, obj);
 
     StringBuffer sb(cx);
-    const char *className = obj->getClass()->name;
     if (!sb.append("[object ") || !sb.appendInflated(className, strlen(className)) ||
         !sb.append("]"))
     {
@@ -327,7 +324,7 @@ obj_toString(JSContext *cx, unsigned argc, Value *vp)
         return false;
 
     /* Steps 4-5. */
-    RawString str = js::obj_toStringHelper(cx, obj);
+    JSString *str = JS_BasicObjectToString(cx, obj);
     if (!str)
         return false;
     args.rval().setString(str);
@@ -977,7 +974,7 @@ obj_isSealed(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSFunctionSpec js::object_methods[] = {
+const JSFunctionSpec js::object_methods[] = {
 #if JS_HAS_TOSOURCE
     JS_FN(js_toSource_str,             obj_toSource,                0,0),
 #endif
@@ -1000,7 +997,7 @@ JSFunctionSpec js::object_methods[] = {
     JS_FS_END
 };
 
-JSFunctionSpec js::object_static_methods[] = {
+const JSFunctionSpec js::object_static_methods[] = {
     JS_FN("getPrototypeOf",            obj_getPrototypeOf,          1,0),
     JS_FN("getOwnPropertyDescriptor",  obj_getOwnPropertyDescriptor,2,0),
     JS_FN("keys",                      obj_keys,                    1,0),

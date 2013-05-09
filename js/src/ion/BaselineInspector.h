@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,6 +12,7 @@
 
 #include "BaselineJIT.h"
 #include "BaselineIC.h"
+#include "MIR.h"
 
 namespace js {
 namespace ion {
@@ -39,6 +39,7 @@ class SetElemICInspector : public ICInspector
       : ICInspector(inspector, pc, icEntry)
     { }
 
+    bool sawOOBDenseWrite() const;
     bool sawOOBTypedArrayWrite() const;
 };
 
@@ -49,7 +50,7 @@ class BaselineInspector
     ICEntry *prevLookedUpEntry;
 
   public:
-    BaselineInspector(JSContext *cx, RawScript rawScript)
+    BaselineInspector(JSContext *cx, JSScript *rawScript)
       : script(cx, rawScript), prevLookedUpEntry(NULL)
     {
         JS_ASSERT(script);
@@ -89,12 +90,22 @@ class BaselineInspector
         return ICInspectorType(this, pc, ent);
     }
 
+    ICStub *monomorphicStub(jsbytecode *pc);
+    bool dimorphicStub(jsbytecode *pc, ICStub **pfirst, ICStub **psecond);
+
   public:
-    RawShape maybeMonomorphicShapeForPropertyOp(jsbytecode *pc);
+    bool maybeShapesForPropertyOp(jsbytecode *pc, Vector<Shape *> &shapes);
 
     SetElemICInspector setElemICInspector(jsbytecode *pc) {
         return makeICInspector<SetElemICInspector>(pc, ICStub::SetElem_Fallback);
     }
+
+    MIRType expectedResultType(jsbytecode *pc);
+    MCompare::CompareType expectedCompareType(jsbytecode *pc);
+    MIRType expectedBinaryArithSpecialization(jsbytecode *pc);
+
+    bool hasSeenNonNativeGetElement(jsbytecode *pc);
+    bool hasSeenAccessedGetter(jsbytecode *pc);
 };
 
 } // namespace ion

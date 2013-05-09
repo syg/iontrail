@@ -6,11 +6,11 @@
 #ifndef GFX_ThebesLayerComposite_H
 #define GFX_ThebesLayerComposite_H
 
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
 #include "mozilla/layers/ShadowLayers.h"
 
 #include "Layers.h"
-#include "LayerManagerComposite.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 #include "base/task.h"
 
 
@@ -25,7 +25,7 @@ namespace layers {
 
 class ContentHost;
 
-class ThebesLayerComposite : public ShadowThebesLayer,
+class ThebesLayerComposite : public ThebesLayer,
                              public LayerComposite
 {
 public:
@@ -33,11 +33,6 @@ public:
   virtual ~ThebesLayerComposite();
 
   virtual void Disconnect() MOZ_OVERRIDE;
-
-  virtual void SetValidRegion(const nsIntRegion& aRegion) MOZ_OVERRIDE
-  {
-    ShadowThebesLayer::SetValidRegion(aRegion);
-  }
 
   virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
 
@@ -47,7 +42,7 @@ public:
 
   virtual Layer* GetLayer() MOZ_OVERRIDE;
 
-  virtual TiledLayerComposer* AsTiledLayerComposer() MOZ_OVERRIDE;
+  virtual TiledLayerComposer* GetTiledLayerComposer() MOZ_OVERRIDE;
 
   virtual void RenderLayer(const nsIntPoint& aOffset,
                            const nsIntRect& aClipRect) MOZ_OVERRIDE;
@@ -58,12 +53,25 @@ public:
 
   virtual LayerComposite* AsLayerComposite() MOZ_OVERRIDE { return this; }
 
-  virtual void EnsureBuffer(CompositableType aHostType) MOZ_OVERRIDE;
+  void EnsureTiled() { mRequiresTiledProperties = true; }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
-  virtual const char* Name() const MOZ_OVERRIDE { return "ThebesLayerComposite"; }
+  virtual void InvalidateRegion(const nsIntRegion& aRegion)
+  {
+    NS_RUNTIMEABORT("ThebesLayerComposites can't fill invalidated regions");
+  }
+
+  void SetValidRegion(const nsIntRegion& aRegion)
+  {
+    MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ValidRegion", this));
+    mValidRegion = aRegion;
+    Mutated();
+  }
+
+  MOZ_LAYER_DECL_NAME("ThebesLayerComposite", TYPE_SHADOW)
 
 protected:
+
+#ifdef MOZ_LAYERS_HAVE_LOG
   virtual nsACString& PrintInfo(nsACString& aTo, const char* aPrefix) MOZ_OVERRIDE;
 #endif
 

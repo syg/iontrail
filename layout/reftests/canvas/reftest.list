@@ -43,7 +43,7 @@ skip-if(B2G) asserts-if(cocoaWidget,0-2) == size-change-1.html size-change-1-ref
 != text-bidi-ltr-test.html text-bidi-ltr-notref.html # for bug 698185
 == text-bidi-rtl-test.html text-bidi-rtl-ref.html
 
-fails-if(B2G) != text-font-lang.html text-font-lang-notref.html
+!= text-font-lang.html text-font-lang-notref.html
 
 == text-measure.html text-measure-ref.html
 
@@ -96,6 +96,6 @@ fails-if(OSX==10.6) == 672646-alpha-radial-gradient.html 672646-alpha-radial-gra
 == 749467-1.html 749467-1-ref.html
 
 # You get a little bit of rounding fuzz on OSX from transforming the paths between user space and device space
-fuzzy-if(azureQuartz,2,113) fuzzy-if(d2d,12,17) == 784573-1.html 784573-1-ref.html
+fuzzy-if(azureQuartz,2,113) fuzzy-if(d2d,12,21) == 784573-1.html 784573-1-ref.html
 
 == 802658-1.html 802658-1-ref.html

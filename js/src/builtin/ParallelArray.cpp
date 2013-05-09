@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -27,7 +26,7 @@ using namespace js;
 
 FixedHeapPtr<PropertyName> ParallelArrayObject::ctorNames[NumCtors];
 
-JSFunctionSpec ParallelArrayObject::methods[] = {
+const JSFunctionSpec ParallelArrayObject::methods[] = {
     { "map",       JSOP_NULLWRAPPER, 2, 0, "ParallelArrayMap"       },
     { "reduce",    JSOP_NULLWRAPPER, 2, 0, "ParallelArrayReduce"    },
     { "scan",      JSOP_NULLWRAPPER, 2, 0, "ParallelArrayScan"      },
@@ -53,7 +52,7 @@ Class ParallelArrayObject::protoClass = {
     "ParallelArray",
     JSCLASS_HAS_CACHED_PROTO(JSProto_ParallelArray),
     JS_PropertyStub,         // addProperty
-    JS_PropertyStub,         // delProperty
+    JS_DeletePropertyStub,   // delProperty
     JS_PropertyStub,         // getProperty
     JS_StrictPropertyStub,   // setProperty
     JS_EnumerateStub,
@@ -65,7 +64,7 @@ Class ParallelArrayObject::class_ = {
     "ParallelArray",
     JSCLASS_HAS_CACHED_PROTO(JSProto_ParallelArray),
     JS_PropertyStub,         // addProperty
-    JS_PropertyStub,         // delProperty
+    JS_DeletePropertyStub,   // delProperty
     JS_PropertyStub,         // getProperty
     JS_StrictPropertyStub,   // setProperty
     JS_EnumerateStub,
@@ -155,7 +154,7 @@ ParallelArrayObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, 
                 types::TypeScript::InitObject(cx, script, pc, JSProto_ParallelArray);
             if (!paTypeObject)
                 return false;
-            if (paTypeObject->getPropertyCount() == 0) {
+            if (paTypeObject->getPropertyCount() == 0 && !paTypeObject->unknownProperties()) {
                 if (!paTypeObject->addDefiniteProperties(cx, result))
                     return false;
 

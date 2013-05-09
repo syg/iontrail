@@ -7,6 +7,7 @@
 #define nsRangeFrame_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Decimal.h"
 #include "nsContainerFrame.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsCOMPtr.h"
@@ -52,6 +53,10 @@ public:
 
   virtual bool IsLeaf() const MOZ_OVERRIDE { return true; }
 
+#ifdef ACCESSIBILITY
+  virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
+#endif
+
   // nsIAnonymousContentCreator
   virtual nsresult CreateAnonymousContent(nsTArray<ContentInfo>& aElements) MOZ_OVERRIDE;
   virtual void AppendAnonymousContentTo(nsBaseContentList& aElements,
@@ -93,12 +98,20 @@ public:
   double GetMax() const;
   double GetValue() const;
 
+  /** 
+   * Returns the input element's value as a fraction of the difference between
+   * the input's minimum and its maximum (i.e. returns 0.0 when the value is
+   * the same as the minimum, and returns 1.0 when the value is the same as the 
+   * maximum).
+   */  
+  double GetValueAsFractionOfRange();
+
   /**
    * Returns whether the frame and its child should use the native style.
    */
   bool ShouldUseNativeStyle() const;
 
-  double GetValueAtEventPoint(nsGUIEvent* aEvent);
+  mozilla::Decimal GetValueAtEventPoint(nsGUIEvent* aEvent);
 
   /**
    * Helper that's used when the value of the range changes to reposition the
@@ -125,14 +138,6 @@ private:
 
   void DoUpdateRangeProgressFrame(nsIFrame* aProgressFrame,
                                   const nsSize& aRangeSize);
-
-  /**
-   * Returns the input element's value as a fraction of the difference between
-   * the input's minimum and its maximum (i.e. returns 0.0 when the value is
-   * the same as the minimum, and returns 1.0 when the value is the same as the
-   * maximum).
-   */
-  double GetValueAsFractionOfRange();
 
   /**
    * The div used to show the ::-moz-range-track pseudo-element.

@@ -11,14 +11,15 @@
  * liability, trademark and document use rules apply.
  */
 
+[Constructor(DOMString type, optional TransitionEventInit eventInitDict)]
 interface TransitionEvent : Event {
   readonly attribute DOMString propertyName;
   readonly attribute float     elapsedTime;
+  readonly attribute DOMString pseudoElement;
+};
 
-  [Throws]
-  void initTransitionEvent(DOMString aType,
-                           boolean aCanBubble,
-                           boolean aCancelable,
-                           DOMString aPropertyName,
-                           float aElapsedTime);
+dictionary TransitionEventInit : EventInit {
+  DOMString propertyName = "";
+  float elapsedTime = 0;
+  DOMString pseudoElement = "";
 };

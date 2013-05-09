@@ -45,13 +45,12 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
 #include "mozilla/dom/BindingUtils.h"
-#include "mozilla/dom/ipc/ProcessPriorityManager.h"
+#include "mozilla/ProcessPriorityManager.h"
 
 #include "Layers.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
-using namespace mozilla::dom::ipc;
 using namespace mozilla::gfx;
 using namespace mozilla::gl;
 using namespace mozilla::layers;
@@ -66,7 +65,8 @@ WebGLMemoryPressureObserver::Observe(nsISupports* aSubject,
 
     bool wantToLoseContext = true;
 
-    if (!mContext->mCanLoseContextInForeground && CurrentProcessIsForeground())
+    if (!mContext->mCanLoseContextInForeground &&
+        ProcessPriorityManager::CurrentProcessIsForeground())
         wantToLoseContext = false;
     else if (!nsCRT::strcmp(aSomeData,
                             NS_LITERAL_STRING("heap-minimize").get()))
@@ -207,7 +207,7 @@ WebGLContext::~WebGLContext()
 }
 
 JSObject*
-WebGLContext::WrapObject(JSContext *cx, JSObject *scope)
+WebGLContext::WrapObject(JSContext *cx, JS::Handle<JSObject*> scope)
 {
     return dom::WebGLRenderingContextBinding::Wrap(cx, scope, this);
 }
@@ -837,8 +837,8 @@ WebGLContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
 
     if (!mResetLayer && aOldLayer &&
         aOldLayer->HasUserData(&gWebGLLayerUserData)) {
-        NS_ADDREF(aOldLayer);
-        return aOldLayer;
+        nsRefPtr<layers::CanvasLayer> ret = aOldLayer;
+        return ret.forget();
     }
 
     nsRefPtr<CanvasLayer> canvasLayer = aManager->CreateCanvasLayer();
@@ -880,7 +880,7 @@ WebGLContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
 
     mResetLayer = false;
 
-    return canvasLayer.forget().get();
+    return canvasLayer.forget();
 }
 
 void

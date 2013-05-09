@@ -12,11 +12,13 @@ EXPORTS_mozilla += \
   Assertions.h \
   Attributes.h \
   BloomFilter.h \
+  Casting.h \
   Char16.h \
   CheckedInt.h \
   Compiler.h \
   Constants.h \
   DebugOnly.h \
+  decimal/Decimal.h \
   Endian.h \
   EnumSet.h \
   FloatingPoint.h \
@@ -29,6 +31,7 @@ EXPORTS_mozilla += \
   MSStdInt.h \
   NullPtr.h \
   PodOperations.h \
+  Poison.h \
   Range.h \
   RangedPtr.h \
   RefPtr.h \

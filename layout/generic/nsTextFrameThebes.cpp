@@ -26,6 +26,7 @@
 #include "nsStyleContext.h"
 #include "nsStyleStruct.h"
 #include "nsStyleStructInlines.h"
+#include "nsSVGTextFrame2.h"
 #include "nsCoord.h"
 #include "nsRenderingContext.h"
 #include "nsIPresShell.h"
@@ -82,11 +83,9 @@
 #include "GeckoProfiler.h"
 
 #ifdef DEBUG
-#undef NOISY_BLINK
 #undef NOISY_REFLOW
 #undef NOISY_TRIM
 #else
-#undef NOISY_BLINK
 #undef NOISY_REFLOW
 #undef NOISY_TRIM
 #endif
@@ -197,17 +196,15 @@ NS_DECLARE_FRAME_PROPERTY(FontSizeInflationProperty, nullptr)
 
 #define TEXT_WHITESPACE_FLAGS      (TEXT_IS_ONLY_WHITESPACE | \
                                     TEXT_ISNOT_ONLY_WHITESPACE)
-// This bit is set while the frame is registered as a blinking frame.
-#define TEXT_BLINK_ON              NS_FRAME_STATE_BIT(29)
 
 // Set when this text frame is mentioned in the userdata for mTextRun
-#define TEXT_IN_TEXTRUN_USER_DATA  NS_FRAME_STATE_BIT(30)
+#define TEXT_IN_TEXTRUN_USER_DATA  NS_FRAME_STATE_BIT(29)
 
 // nsTextFrame.h has
-// #define TEXT_HAS_NONCOLLAPSED_CHARACTERS NS_FRAME_STATE_BIT(31)
+// #define TEXT_HAS_NONCOLLAPSED_CHARACTERS NS_FRAME_STATE_BIT(30)
 
 // nsTextFrame.h has
-// #define TEXT_FORCE_TRIM_WHITESPACE       NS_FRAME_STATE_BIT(32)
+// #define TEXT_FORCE_TRIM_WHITESPACE       NS_FRAME_STATE_BIT(31)
 
 // Set when this text frame is mentioned in the userdata for the
 // uninflated textrun property
@@ -1709,9 +1706,8 @@ GetReferenceRenderingContext(nsTextFrame* aTextFrame, nsRenderingContext* aRC)
       return nullptr;
   }
 
-  gfxContext* ctx = tmp->ThebesContext();
-  NS_ADDREF(ctx);
-  return ctx;
+  nsRefPtr<gfxContext> ctx = tmp->ThebesContext();
+  return ctx.forget();
 }
 
 /**
@@ -1886,6 +1882,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
           frag->Get2b() + contentStart, contentLength, bufStart,
           compression, &mNextRunContextInfo, &builder, &analysisFlags);
       aTextBuffer = bufEnd;
+      currentTransformedTextOffset = bufEnd - static_cast<const PRUnichar*>(textPtr);
     } else {
       if (mDoubleByteText) {
         // Need to expand the text. First transform it into a temporary buffer,
@@ -1901,18 +1898,18 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
             bufStart, compression, &mNextRunContextInfo, &builder, &analysisFlags);
         aTextBuffer = ExpandBuffer(static_cast<PRUnichar*>(aTextBuffer),
                                    tempBuf.Elements(), end - tempBuf.Elements());
+        currentTransformedTextOffset =
+          static_cast<PRUnichar*>(aTextBuffer) - static_cast<const PRUnichar*>(textPtr);
       } else {
         uint8_t* bufStart = static_cast<uint8_t*>(aTextBuffer);
         uint8_t* end = nsTextFrameUtils::TransformText(
             reinterpret_cast<const uint8_t*>(frag->Get1b()) + contentStart, contentLength,
             bufStart, compression, &mNextRunContextInfo, &builder, &analysisFlags);
         aTextBuffer = end;
+        currentTransformedTextOffset = end - static_cast<const uint8_t*>(textPtr);
       }
     }
     textFlags |= analysisFlags;
-
-    currentTransformedTextOffset =
-      (static_cast<const uint8_t*>(aTextBuffer) - static_cast<const uint8_t*>(textPtr)) >> mDoubleByteText;
   }
 
   // Check for out-of-memory in gfxSkipCharsBuilder
@@ -3252,178 +3249,6 @@ PropertyProvider::SetupJustificationSpacing()
 
 //----------------------------------------------------------------------
 
-// Helper class for managing blinking text
-
-class nsBlinkTimer : public nsITimerCallback
-{
-public:
-  nsBlinkTimer();
-  virtual ~nsBlinkTimer();
-
-  NS_DECL_ISUPPORTS
-
-  void AddFrame(nsPresContext* aPresContext, nsIFrame* aFrame);
-
-  bool RemoveFrame(nsIFrame* aFrame);
-
-  int32_t FrameCount();
-
-  void Start();
-
-  void Stop();
-
-  NS_DECL_NSITIMERCALLBACK
-
-  static void AddBlinkFrame(nsPresContext* aPresContext, nsIFrame* aFrame);
-  static void RemoveBlinkFrame(nsIFrame* aFrame);
-  
-  static bool     GetBlinkIsOff() { return sState == 3; }
-  
-protected:
-
-  struct FrameData {
-    nsPresContext* mPresContext;  // pres context associated with the frame
-    nsIFrame*       mFrame;
-
-
-    FrameData(nsPresContext* aPresContext,
-              nsIFrame*       aFrame)
-      : mPresContext(aPresContext), mFrame(aFrame) {}
-  };
-
-  class FrameDataComparator {
-    public:
-      bool Equals(const FrameData& aTimer, nsIFrame* const& aFrame) const {
-        return aTimer.mFrame == aFrame;
-      }
-  };
-
-  nsCOMPtr<nsITimer> mTimer;
-  nsTArray<FrameData> mFrames;
-  nsPresContext* mPresContext;
-
-protected:
-
-  static nsBlinkTimer* sTextBlinker;
-  static uint32_t      sState; // 0-2 == on; 3 == off
-  
-};
-
-nsBlinkTimer* nsBlinkTimer::sTextBlinker = nullptr;
-uint32_t      nsBlinkTimer::sState = 0;
-
-#ifdef NOISY_BLINK
-static PRTime gLastTick;
-#endif
-
-nsBlinkTimer::nsBlinkTimer()
-{
-}
-
-nsBlinkTimer::~nsBlinkTimer()
-{
-  Stop();
-  sTextBlinker = nullptr;
-}
-
-void nsBlinkTimer::Start()
-{
-  nsresult rv;
-  mTimer = do_CreateInstance("@mozilla.org/timer;1", &rv);
-  if (NS_OK == rv) {
-    mTimer->InitWithCallback(this, 250, nsITimer::TYPE_REPEATING_PRECISE_CAN_SKIP);
-  }
-}
-
-void nsBlinkTimer::Stop()
-{
-  if (nullptr != mTimer) {
-    mTimer->Cancel();
-    mTimer = nullptr;
-  }
-}
-
-NS_IMPL_ISUPPORTS1(nsBlinkTimer, nsITimerCallback)
-
-void nsBlinkTimer::AddFrame(nsPresContext* aPresContext, nsIFrame* aFrame) {
-  mFrames.AppendElement(FrameData(aPresContext, aFrame));
-  if (1 == mFrames.Length()) {
-    Start();
-  }
-}
-
-bool nsBlinkTimer::RemoveFrame(nsIFrame* aFrame) {
-  mFrames.RemoveElement(aFrame, FrameDataComparator());
-  
-  if (mFrames.IsEmpty()) {
-    Stop();
-  }
-  return true;
-}
-
-int32_t nsBlinkTimer::FrameCount() {
-  return int32_t(mFrames.Length());
-}
-
-NS_IMETHODIMP nsBlinkTimer::Notify(nsITimer *timer)
-{
-  // Toggle blink state bit so that text code knows whether or not to
-  // render. All text code shares the same flag so that they all blink
-  // in unison.
-  sState = (sState + 1) % 4;
-  if (sState == 1 || sState == 2)
-    // States 0, 1, and 2 are all the same.
-    return NS_OK;
-
-#ifdef NOISY_BLINK
-  PRTime now = PR_Now();
-  char buf[50];
-  PRTime delta;
-  delta = now - gLastTick;
-  gLastTick = now;
-  PR_snprintf(buf, sizeof(buf), "%lldusec", delta);
-  printf("%s\n", buf);
-#endif
-
-  uint32_t n = mFrames.Length();
-  for (uint32_t i = 0; i < n; i++) {
-    FrameData& frameData = mFrames.ElementAt(i);
-
-    // Determine damaged area and tell view manager to redraw it
-    // blink doesn't blink outline ... I hope
-    frameData.mFrame->InvalidateFrame();
-  }
-  return NS_OK;
-}
-
-
-// static
-void nsBlinkTimer::AddBlinkFrame(nsPresContext* aPresContext, nsIFrame* aFrame)
-{
-  if (!sTextBlinker)
-  {
-    sTextBlinker = new nsBlinkTimer;
-  }
-
-  NS_ADDREF(sTextBlinker);
-
-  sTextBlinker->AddFrame(aPresContext, aFrame);
-}
-
-
-// static
-void nsBlinkTimer::RemoveBlinkFrame(nsIFrame* aFrame)
-{
-  NS_ASSERTION(sTextBlinker, "Should have blink timer here");
-
-  nsBlinkTimer* blinkTimer = sTextBlinker;    // copy so we can call NS_RELEASE on it
-
-  blinkTimer->RemoveFrame(aFrame);  
-  NS_RELEASE(blinkTimer);
-}
-
-//----------------------------------------------------------------------
-
 static nscolor
 EnsureDifferentColors(nscolor colorA, nscolor colorB)
 {
@@ -4245,10 +4070,6 @@ NS_IMPL_FRAMEARENA_HELPERS(nsContinuingTextFrame)
 
 nsTextFrame::~nsTextFrame()
 {
-  if (0 != (mState & TEXT_BLINK_ON))
-  {
-    nsBlinkTimer::RemoveBlinkFrame(this);
-  }
 }
 
 NS_IMETHODIMP
@@ -4511,7 +4332,7 @@ public:
   nsDisplayTextGeometry(nsDisplayItem* aItem, nsDisplayListBuilder* aBuilder)
     : nsDisplayItemGenericGeometry(aItem, aBuilder)
   {
-    nsTextFrame* f = static_cast<nsTextFrame*>(aItem->GetUnderlyingFrame());
+    nsTextFrame* f = static_cast<nsTextFrame*>(aItem->Frame());
     f->GetTextDecorations(f->PresContext(), nsTextFrame::eResolvedColors, mDecorations);
   }
  
@@ -4618,10 +4439,6 @@ nsTextFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   
   DO_GLOBAL_REFLOW_COUNT_DSP("nsTextFrame");
 
-  if ((0 != (mState & TEXT_BLINK_ON)) && nsBlinkTimer::GetBlinkIsOff() &&
-      PresContext()->IsDynamic() && !aBuilder->IsForEventDelivery())
-    return;
-    
   aLists.Content()->AppendNewToTop(
     new (aBuilder) nsDisplayText(aBuilder, this));
 }
@@ -4830,6 +4647,21 @@ nsTextFrame::GetTextDecorations(
   }
 }
 
+static float
+GetInflationForTextDecorations(nsIFrame* aFrame, nscoord aInflationMinFontSize)
+{
+  if (aFrame->IsSVGText()) {
+    const nsIFrame* container = aFrame;
+    while (container->GetType() != nsGkAtoms::svgTextFrame2) {
+      container = container->GetParent();
+    }
+    NS_ASSERTION(container, "expected to find an ancestor nsSVGTextFrame2");
+    return
+      static_cast<const nsSVGTextFrame2*>(container)->GetFontSizeScaleFactor();
+  }
+  return nsLayoutUtils::FontSizeInflationInner(aFrame, aInflationMinFontSize);
+}
+
 void
 nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
                                      const nsHTMLReflowState& aBlockReflowState,
@@ -4909,8 +4741,8 @@ nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
           decorationStyle = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
         }
 
-        float inflation = nsLayoutUtils::FontSizeInflationInner(dec.mFrame,
-                            inflationMinFontSize);
+        float inflation =
+          GetInflationForTextDecorations(dec.mFrame, inflationMinFontSize);
         const gfxFont::Metrics metrics =
           GetFirstFontMetrics(GetFontGroupForFrame(dec.mFrame, inflation));
 
@@ -4934,8 +4766,8 @@ nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
           decorationStyle = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
         }
 
-        float inflation = nsLayoutUtils::FontSizeInflationInner(dec.mFrame,
-                            inflationMinFontSize);
+        float inflation =
+          GetInflationForTextDecorations(dec.mFrame, inflationMinFontSize);
         const gfxFont::Metrics metrics =
           GetFirstFontMetrics(GetFontGroupForFrame(dec.mFrame, inflation));
 
@@ -4959,8 +4791,8 @@ nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
           decorationStyle = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
         }
 
-        float inflation = nsLayoutUtils::FontSizeInflationInner(dec.mFrame,
-                            inflationMinFontSize);
+        float inflation =
+          GetInflationForTextDecorations(dec.mFrame, inflationMinFontSize);
         const gfxFont::Metrics metrics =
           GetFirstFontMetrics(GetFontGroupForFrame(dec.mFrame, inflation));
 
@@ -6050,8 +5882,8 @@ nsTextFrame::DrawTextRunAndDecorations(
         continue;
       }
 
-      float inflation = nsLayoutUtils::FontSizeInflationInner(dec.mFrame,
-                          inflationMinFontSize);
+      float inflation =
+        GetInflationForTextDecorations(dec.mFrame, inflationMinFontSize);
       const gfxFont::Metrics metrics =
         GetFirstFontMetrics(GetFontGroupForFrame(dec.mFrame, inflation));
 
@@ -6070,8 +5902,8 @@ nsTextFrame::DrawTextRunAndDecorations(
         continue;
       }
 
-      float inflation = nsLayoutUtils::FontSizeInflationInner(dec.mFrame,
-                          inflationMinFontSize);
+      float inflation =
+        GetInflationForTextDecorations(dec.mFrame, inflationMinFontSize);
       const gfxFont::Metrics metrics =
         GetFirstFontMetrics(GetFontGroupForFrame(dec.mFrame, inflation));
 
@@ -6096,8 +5928,8 @@ nsTextFrame::DrawTextRunAndDecorations(
         continue;
       }
 
-      float inflation = nsLayoutUtils::FontSizeInflationInner(dec.mFrame,
-                          inflationMinFontSize);
+      float inflation =
+        GetInflationForTextDecorations(dec.mFrame, inflationMinFontSize);
       const gfxFont::Metrics metrics =
         GetFirstFontMetrics(GetFontGroupForFrame(dec.mFrame, inflation));
 
@@ -6513,6 +6345,9 @@ nsTextFrame::GetChildFrameContainingOffset(int32_t   aContentOffset,
       if (aContentOffset == next->GetContentOffset()) {
         if (aHint) {
           f = next;
+          if (f->GetContentLength() == 0) {
+            continue; // use the last of the empty frames with this offset
+          }
         }
         break;
       }
@@ -6526,6 +6361,9 @@ nsTextFrame::GetChildFrameContainingOffset(int32_t   aContentOffset,
       if (aContentOffset == f->GetContentOffset()) {
         if (!aHint) {
           f = prev;
+          if (f->GetContentLength() == 0) {
+            continue; // use the first of the empty frames with this offset
+          }
         }
         break;
       }
@@ -7613,8 +7451,7 @@ nsTextFrame::Reflow(nsPresContext*           aPresContext,
   }
 
   ReflowText(*aReflowState.mLineLayout, aReflowState.availableWidth,
-             aReflowState.rendContext, aReflowState.mFlags.mBlinks,
-             aMetrics, aStatus);
+             aReflowState.rendContext, aMetrics, aStatus);
 
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aMetrics);
   return NS_OK;
@@ -7651,7 +7488,6 @@ private:
 void
 nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
                         nsRenderingContext* aRenderingContext,
-                        bool aShouldBlink,
                         nsHTMLReflowMetrics& aMetrics,
                         nsReflowStatus& aStatus)
 {
@@ -7671,9 +7507,9 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   // Set up flags and clear out state
   /////////////////////////////////////////////////////////////////////
 
-  // Clear out the reflow state flags in mState (without destroying
-  // the TEXT_BLINK_ON bit). We also clear the whitespace flags because this
-  // can change whether the frame maps whitespace-only text or not.
+  // Clear out the reflow state flags in mState. We also clear the whitespace
+  // flags because this can change whether the frame maps whitespace-only text
+  // or not.
   RemoveStateBits(TEXT_REFLOW_FLAGS | TEXT_WHITESPACE_FLAGS);
 
   // Temporarily map all possible content while we construct our new textrun.
@@ -7689,19 +7525,6 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
     return;
   }
 
-  if (aShouldBlink) {
-    if (0 == (mState & TEXT_BLINK_ON)) {
-      mState |= TEXT_BLINK_ON;
-      nsBlinkTimer::AddBlinkFrame(presContext, this);
-    }
-  }
-  else {
-    if (0 != (mState & TEXT_BLINK_ON)) {
-      mState &= ~TEXT_BLINK_ON;
-      nsBlinkTimer::RemoveBlinkFrame(this);
-    }
-  }
-
 #ifdef NOISY_BIDI
     printf("Reflowed textframe\n");
 #endif
@@ -7714,7 +7537,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   }
 
   uint32_t flowEndInTextRun;
-  nsIFrame* lineContainer = aLineLayout.GetLineContainerFrame();
+  nsIFrame* lineContainer = aLineLayout.LineContainerFrame();
   gfxContext* ctx = aRenderingContext->ThebesContext();
   const nsTextFragment* frag = mContent->GetText();
 
@@ -7840,8 +7663,8 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
     EnsureTextRun(nsTextFrame::eInflated, ctx,
                   lineContainer, aLineLayout.GetLine(), &flowEndInTextRun);
 
-  NS_ABORT_IF_FALSE(IsCurrentFontInflation(fontSizeInflation),
-                    "EnsureTextRun should have set font size inflation");
+  NS_ASSERTION(IsCurrentFontInflation(fontSizeInflation),
+               "EnsureTextRun should have set font size inflation");
 
   if (mTextRun && iter.GetOriginalEnd() < offset + length) {
     // The textrun does not map enough text for this frame. This can happen
@@ -8065,7 +7888,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   // When we have text decorations, we don't need to compute their overflow now
   // because we're guaranteed to do it later
   // (see nsLineLayout::RelativePositionFrames)
-  UnionAdditionalOverflow(presContext, *aLineLayout.GetLineContainerRS(),
+  UnionAdditionalOverflow(presContext, *aLineLayout.LineContainerRS(),
                           provider, &aMetrics.VisualOverflow(), false);
 
   /////////////////////////////////////////////////////////////////////
@@ -8507,61 +8330,22 @@ nsTextFrame::GetDebugStateBits() const
     ~(TEXT_WHITESPACE_FLAGS | TEXT_REFLOW_FLAGS);
 }
 
-NS_IMETHODIMP
+void
 nsTextFrame::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
 {
-  // Output the tag
-  IndentBy(out, aIndent);
-  ListTag(out);
-  if (HasView()) {
-    fprintf(out, " [view=%p]", static_cast<void*>(GetView()));
-  }
+  ListGeneric(out, aIndent, aFlags);
+
   fprintf(out, " [run=%p]", static_cast<void*>(mTextRun));
 
   // Output the first/last content offset and prev/next in flow info
   bool isComplete = uint32_t(GetContentEnd()) == GetContent()->TextLength();
-  fprintf(out, "[%d,%d,%c] ", 
-          GetContentOffset(), GetContentLength(),
+  fprintf(out, "[%d,%d,%c] ", GetContentOffset(), GetContentLength(),
           isComplete ? 'T':'F');
   
-  if (GetNextSibling()) {
-    fprintf(out, " next=%p", static_cast<void*>(GetNextSibling()));
-  }
-  nsIFrame* prevContinuation = GetPrevContinuation();
-  if (nullptr != prevContinuation) {
-    fprintf(out, " prev-continuation=%p", static_cast<void*>(prevContinuation));
-  }
-  if (nullptr != mNextContinuation) {
-    fprintf(out, " next-continuation=%p", static_cast<void*>(mNextContinuation));
-  }
-
-  // Output the rect and state
-  fprintf(out, " {%d,%d,%d,%d}", mRect.x, mRect.y, mRect.width, mRect.height);
-  fprintf(out, " [state=%016llx]", (unsigned long long)mState);
   if (IsSelected()) {
     fprintf(out, " SELECTED");
   }
-  fprintf(out, " [content=%p]", static_cast<void*>(mContent));
-  if (HasOverflowAreas()) {
-    nsRect overflowArea = GetVisualOverflowRect();
-    fprintf(out, " [vis-overflow=%d,%d,%d,%d]",
-            overflowArea.x, overflowArea.y,
-            overflowArea.width, overflowArea.height);
-    overflowArea = GetScrollableOverflowRect();
-    fprintf(out, " [scr-overflow=%d,%d,%d,%d]",
-            overflowArea.x, overflowArea.y,
-            overflowArea.width, overflowArea.height);
-  }
-  fprintf(out, " sc=%p", static_cast<void*>(mStyleContext));
-  nsIAtom* pseudoTag = mStyleContext->GetPseudo();
-  if (pseudoTag) {
-    nsAutoString atomString;
-    pseudoTag->ToString(atomString);
-    fprintf(out, " pst=%s",
-            NS_LossyConvertUTF16toASCII(atomString).get());
-  }
   fputs("\n", out);
-  return NS_OK;
 }
 #endif
 

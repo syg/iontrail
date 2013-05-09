@@ -64,8 +64,7 @@ public:
    * message will be sent to the compositor to create a corresponding content
    * host.
    */
-  static TemporaryRef<ContentClient> CreateContentClient(LayersBackend aBackendType,
-                                                         CompositableForwarder* aFwd);
+  static TemporaryRef<ContentClient> CreateContentClient(CompositableForwarder* aFwd);
 
   ContentClient(CompositableForwarder* aForwarder)
   : CompositableClient(aForwarder)
@@ -73,11 +72,6 @@ public:
   {}
   virtual ~ContentClient()
   {}
-
-  CompositableType GetType() const MOZ_OVERRIDE
-  {
-    return BUFFER_CONTENT;
-  }
 
   typedef ThebesLayerBuffer::PaintState PaintState;
   typedef ThebesLayerBuffer::ContentType ContentType;
@@ -120,14 +114,15 @@ public:
 
   virtual already_AddRefed<gfxASurface> CreateBuffer(ContentType aType,
                                                      const nsIntRect& aRect,
-                                                     uint32_t aFlags) MOZ_OVERRIDE;
+                                                     uint32_t aFlags,
+                                                     gfxASurface**) MOZ_OVERRIDE;
   virtual TemporaryRef<gfx::DrawTarget>
     CreateDTBuffer(ContentType aType, const nsIntRect& aRect, uint32_t aFlags);
 
-  virtual CompositableType GetType() const MOZ_OVERRIDE
+  virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
   {
-    MOZ_ASSERT(false, "Should not be called on non-remote ContentClient");
-    return BUFFER_UNKNOWN;
+    MOZ_NOT_REACHED("Should not be called on non-remote ContentClient");
+    return TextureInfo();
   }
 
 
@@ -191,7 +186,8 @@ public:
 
   virtual already_AddRefed<gfxASurface> CreateBuffer(ContentType aType,
                                                      const nsIntRect& aRect,
-                                                     uint32_t aFlags) MOZ_OVERRIDE;
+                                                     uint32_t aFlags,
+                                                     gfxASurface** aWhiteSurface) MOZ_OVERRIDE;
   virtual TemporaryRef<gfx::DrawTarget> CreateDTBuffer(ContentType aType,
                                                        const nsIntRect& aRect,
                                                        uint32_t aFlags) MOZ_OVERRIDE;
@@ -203,31 +199,36 @@ public:
 
   void DestroyBuffers();
 
-protected:
-  /**
-   * Swap out the old backing buffer for |aBuffer| and attributes.
-   */
-  void SetBackingBuffer(gfxASurface* aBuffer,
-                        const nsIntRect& aRect,
-                        const nsIntPoint& aRotation);
+  virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
+  {
+    return mTextureInfo;
+  }
 
+protected:
   virtual nsIntRegion GetUpdatedRegion(const nsIntRegion& aRegionToDraw,
                                        const nsIntRegion& aVisibleRegion,
                                        bool aDidSelfCopy);
 
+  // create and configure mTextureClient
+  void BuildTextureClients(ContentType aType,
+                           const nsIntRect& aRect,
+                           uint32_t aFlags);
+
   // Create the front buffer for the ContentClient/Host pair if necessary
   // and notify the compositor that we have created the buffer(s).
-  virtual void CreateFrontBufferAndNotify(const nsIntRect& aBufferRect, uint32_t aFlags) = 0;
+  virtual void CreateFrontBufferAndNotify(const nsIntRect& aBufferRect) = 0;
   virtual void DestroyFrontBuffer() {}
   // We're about to hand off to the compositor, if you've got a back buffer,
   // lock it now.
   virtual void LockFrontBuffer() {}
 
   RefPtr<TextureClient> mTextureClient;
+  RefPtr<TextureClient> mTextureClientOnWhite;
   // keep a record of texture clients we have created and need to keep
   // around, then unlock when we are done painting
-  nsTArray<RefPtr<TextureClient>> mOldTextures;
+  nsTArray<RefPtr<TextureClient> > mOldTextures;
 
+  TextureInfo mTextureInfo;
   bool mIsNewBuffer;
   bool mFrontAndBackBufferDiffer;
   gfx::IntSize mSize;
@@ -249,39 +250,27 @@ class ContentClientDoubleBuffered : public ContentClientRemote
 {
 public:
   ContentClientDoubleBuffered(CompositableForwarder* aFwd)
-  : ContentClientRemote(aFwd)
-  {}
-  ~ContentClientDoubleBuffered();
-
-  CompositableType GetType() const MOZ_OVERRIDE
+    : ContentClientRemote(aFwd)
   {
-    return BUFFER_CONTENT_DIRECT;
+    mTextureInfo.mCompositableType = BUFFER_CONTENT_DIRECT;
   }
+  ~ContentClientDoubleBuffered();
 
   virtual void SwapBuffers(const nsIntRegion& aFrontUpdatedRegion) MOZ_OVERRIDE;
 
   virtual void SyncFrontBufferToBackBuffer() MOZ_OVERRIDE;
 
 protected:
-  virtual void CreateFrontBufferAndNotify(const nsIntRect& aBufferRect, uint32_t aFlags) MOZ_OVERRIDE;
+  virtual void CreateFrontBufferAndNotify(const nsIntRect& aBufferRect) MOZ_OVERRIDE;
   virtual void DestroyFrontBuffer() MOZ_OVERRIDE;
   virtual void LockFrontBuffer() MOZ_OVERRIDE;
 
 private:
-  // The size policy doesn't really matter here; this constructor is
-  // intended to be used for creating temporaries
-  ContentClientDoubleBuffered(gfxASurface* aBuffer,
-                              const nsIntRect& aRect,
-                              const nsIntPoint& aRotation)
-    : ContentClientRemote(nullptr)
-  {
-    SetBuffer(aBuffer, aRect, aRotation);
-  }
-
   void UpdateDestinationFrom(const RotatedBuffer& aSource,
                              const nsIntRegion& aUpdateRegion);
 
   RefPtr<TextureClient> mFrontClient;
+  RefPtr<TextureClient> mFrontClientOnWhite;
   nsIntRegion mFrontUpdatedRegion;
   nsIntRect mFrontBufferRect;
   nsIntPoint mFrontBufferRotation;
@@ -300,18 +289,15 @@ class ContentClientSingleBuffered : public ContentClientRemote
 public:
   ContentClientSingleBuffered(CompositableForwarder* aFwd)
     : ContentClientRemote(aFwd)
-  {}
-  ~ContentClientSingleBuffered();
-
-  virtual CompositableType GetType() const MOZ_OVERRIDE
   {
-    return BUFFER_CONTENT;
+    mTextureInfo.mCompositableType = BUFFER_CONTENT;    
   }
+  ~ContentClientSingleBuffered();
 
   virtual void SyncFrontBufferToBackBuffer() MOZ_OVERRIDE;
 
 protected:
-  virtual void CreateFrontBufferAndNotify(const nsIntRect& aBufferRect, uint32_t aFlags) MOZ_OVERRIDE;
+  virtual void CreateFrontBufferAndNotify(const nsIntRect& aBufferRect) MOZ_OVERRIDE;
 };
 
 }

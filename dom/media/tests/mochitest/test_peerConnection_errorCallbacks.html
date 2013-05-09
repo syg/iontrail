@@ -24,7 +24,7 @@
 
   function successCallback(message) {
     return function () {
-      unexpectedCallbackAndFinish(message);
+      unexpectedCallbackAndFinish(new Error)(message);
     }
   };
 
@@ -68,7 +68,7 @@
 
   runTest(function () {
     testCreateAnswerError();
-  }, true);
+  });
 </script>
 </pre>
 </body>

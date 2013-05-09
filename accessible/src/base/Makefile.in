@@ -19,13 +19,13 @@ CPPSRCS = \
   AccGroupInfo.cpp \
   AccIterator.cpp \
   Filters.cpp \
+  ARIAMap.cpp \
   ARIAStateMap.cpp \
   DocManager.cpp \
   EventQueue.cpp \
   FocusManager.cpp \
   NotificationController.cpp \
   nsAccessNode.cpp \
-  nsARIAMap.cpp \
   nsCoreUtils.cpp \
   nsAccUtils.cpp \
   nsAccessibilityService.cpp \
@@ -43,30 +43,6 @@ CPPSRCS = \
 ifneq ($(A11Y_LOG),0)
 CPPSRCS += \
   Logging.cpp \
-  $(NULL)
-endif
-
-EXPORTS = \
-  AccEvent.h \
-  nsAccessibilityService.h \
-  nsAccessNode.h \
-  $(NULL)
-
-EXPORTS_NAMESPACES = mozilla/a11y
-
-EXPORTS_mozilla/a11y = \
-  DocManager.h \
-  FocusManager.h \
-  AccTypes.h \
-  Platform.h \
-  States.h \
-  SelectionManager.h \
-  Role.h \
-  $(NULL)
-
-ifdef MOZ_DEBUG
-EXPORTS_mozilla/a11y += \
-  Logging.h \
   $(NULL)
 endif
 

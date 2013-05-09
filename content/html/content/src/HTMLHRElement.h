@@ -9,7 +9,6 @@
 
 #include "nsGenericHTMLElement.h"
 #include "nsIDOMHTMLHRElement.h"
-#include "nsIDOMEventTarget.h"
 #include "nsMappedAttributes.h"
 #include "nsAttrValueInlines.h"
 #include "nsRuleData.h"
@@ -82,7 +81,8 @@ public:
   }
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 };
 
 } // namespace dom

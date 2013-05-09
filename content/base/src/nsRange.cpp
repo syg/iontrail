@@ -37,7 +37,7 @@
 using namespace mozilla;
 
 JSObject*
-nsRange::WrapObject(JSContext* aCx, JSObject* aScope)
+nsRange::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return dom::RangeBinding::Wrap(aCx, aScope, this);
 }
@@ -213,6 +213,22 @@ nsRange::~nsRange()
 
 /* static */
 nsresult
+nsRange::CreateRange(nsINode* aStartParent, int32_t aStartOffset,
+                     nsINode* aEndParent, int32_t aEndOffset,
+                     nsRange** aRange)
+{
+  nsCOMPtr<nsIDOMNode> startDomNode = do_QueryInterface(aStartParent);
+  nsCOMPtr<nsIDOMNode> endDomNode = do_QueryInterface(aEndParent);
+
+  nsresult rv = CreateRange(startDomNode, aStartOffset, endDomNode, aEndOffset,
+                            aRange);
+
+  return rv;
+
+}
+
+/* static */
+nsresult
 nsRange::CreateRange(nsIDOMNode* aStartParent, int32_t aStartOffset,
                      nsIDOMNode* aEndParent, int32_t aEndOffset,
                      nsRange** aRange)
@@ -255,15 +271,12 @@ nsRange::CreateRange(nsIDOMNode* aStartParent, int32_t aStartOffset,
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsRange)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsRange)
 
-DOMCI_DATA(Range, nsRange)
-
 // QueryInterface implementation for nsRange
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsRange)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
   NS_INTERFACE_MAP_ENTRY(nsIDOMRange)
   NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMRange)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Range)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsRange)
@@ -1520,22 +1533,17 @@ RangeSubtreeIterator::Init(nsIDOMRange *aRange)
 already_AddRefed<nsIDOMNode>
 RangeSubtreeIterator::GetCurrentNode()
 {
-  nsIDOMNode *node = nullptr;
+  nsCOMPtr<nsIDOMNode> node;
 
   if (mIterState == eUseStart && mStart) {
-    NS_ADDREF(node = mStart);
-  } else if (mIterState == eUseEnd && mEnd)
-    NS_ADDREF(node = mEnd);
-  else if (mIterState == eUseIterator && mIter)
-  {
-    nsINode* n = mIter->GetCurrentNode();
-
-    if (n) {
-      CallQueryInterface(n, &node);
-    }
+    node = mStart;
+  } else if (mIterState == eUseEnd && mEnd) {
+    node = mEnd;
+  } else if (mIterState == eUseIterator && mIter) {
+    node = do_QueryInterface(mIter->GetCurrentNode());
   }
 
-  return node;
+  return node.forget();
 }
 
 void

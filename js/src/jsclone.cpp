@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -27,18 +28,17 @@
  * array object.
  */
 
+#include "jsclone.h"
+
 #include "mozilla/FloatingPoint.h"
 
-#include "jsclone.h"
 #include "jsdate.h"
 #include "jstypedarray.h"
 
 #include "jstypedarrayinlines.h"
 
 #include "vm/BooleanObject-inl.h"
-#include "vm/NumberObject-inl.h"
 #include "vm/RegExpObject-inl.h"
-#include "vm/StringObject-inl.h"
 
 using namespace js;
 using mozilla::LittleEndian;
@@ -879,14 +879,14 @@ JSStructuredCloneReader::readTypedArray(uint32_t arrayType, uint32_t nelems, Val
         return false;
 
     // Read the ArrayBuffer object and its contents (but no properties)
-    Value v;
+    RootedValue v(context());
     uint32_t byteOffset;
     if (v1Read) {
-        if (!readV1ArrayBuffer(arrayType, nelems, &v))
+        if (!readV1ArrayBuffer(arrayType, nelems, v.address()))
             return false;
         byteOffset = 0;
     } else {
-        if (!startRead(&v))
+        if (!startRead(v.address()))
             return false;
         uint64_t n;
         if (!in.read(&n))

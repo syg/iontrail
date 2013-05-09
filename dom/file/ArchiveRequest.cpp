@@ -77,7 +77,7 @@ ArchiveRequest::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 }
 
 /* virtual */ JSObject*
-ArchiveRequest::WrapObject(JSContext* aCx, JSObject* aScope)
+ArchiveRequest::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return ArchiveRequestBinding::Wrap(aCx, aScope, this);
 }
@@ -139,7 +139,7 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
   AutoPushJSContext cx(sc->GetNativeContext());
   NS_ASSERTION(cx, "Failed to get a context!");
 
-  JSObject* global = sc->GetNativeGlobal();
+  JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
   NS_ASSERTION(global, "Failed to get global object!");
 
   JSAutoRequest ar(cx);
@@ -178,7 +178,7 @@ ArchiveRequest::GetFilenamesResult(JSContext* aCx,
                                    JS::Value* aValue,
                                    nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList)
 {
-  JSObject* array = JS_NewArrayObject(aCx, aFileList.Length(), nullptr);
+  JS::Rooted<JSObject*> array(aCx, JS_NewArrayObject(aCx, aFileList.Length(), nullptr));
   nsresult rv;
 
   if (!array) {
@@ -223,10 +223,9 @@ ArchiveRequest::GetFileResult(JSContext* aCx,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (filename == mFilename) {
-      nsresult rv = nsContentUtils::WrapNative(
-                      aCx, JS_GetGlobalForScopeChain(aCx),
-                      file, &NS_GET_IID(nsIDOMFile), aValue);
-      return rv;
+      JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
+      return nsContentUtils::WrapNative(aCx, global, file,
+                                        &NS_GET_IID(nsIDOMFile), aValue);
     }
   }
 
@@ -238,7 +237,7 @@ ArchiveRequest::GetFilesResult(JSContext* aCx,
                                JS::Value* aValue,
                                nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList)
 {
-  JSObject* array = JS_NewArrayObject(aCx, aFileList.Length(), nullptr);
+  JS::Rooted<JSObject*> array(aCx, JS_NewArrayObject(aCx, aFileList.Length(), nullptr));
   if (!array) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -246,10 +245,12 @@ ArchiveRequest::GetFilesResult(JSContext* aCx,
   for (uint32_t i = 0; i < aFileList.Length(); ++i) {
     nsCOMPtr<nsIDOMFile> file = aFileList[i];
 
-    JS::Value value;
-    nsresult rv = nsContentUtils::WrapNative(aCx, JS_GetGlobalForScopeChain(aCx),
-                                             file, &NS_GET_IID(nsIDOMFile), &value);
-    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, &value)) {
+    JS::Rooted<JS::Value> value(aCx);
+    JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
+    nsresult rv = nsContentUtils::WrapNative(aCx, global, file,
+                                             &NS_GET_IID(nsIDOMFile),
+                                             value.address());
+    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, value.address())) {
       return NS_ERROR_FAILURE;
     }
   }

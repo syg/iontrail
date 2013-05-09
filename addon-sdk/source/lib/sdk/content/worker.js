@@ -130,7 +130,7 @@ const WorkerSandbox = EventEmitter.compose({
 
     // Instantiate trusted code in another Sandbox in order to prevent content
     // script from messing with standard classes used by proxy and API code.
-    let apiSandbox = sandbox(window, { wantXrays: true });
+    let apiSandbox = sandbox(window, { wantXrays: true, sameZoneAs: window });
     apiSandbox.console = console;
 
     // Build content proxies only if the document has a non-system principal
@@ -148,7 +148,8 @@ const WorkerSandbox = EventEmitter.compose({
     // have access to all standard globals (window, document, ...)
     let content = this._sandbox = sandbox(window, {
       sandboxPrototype: proto,
-      wantXrays: true
+      wantXrays: true,
+      sameZoneAs: window
     });
     // We have to ensure that window.top and window.parent are the exact same
     // object than window object, i.e. the sandbox global object. But not
@@ -463,48 +464,55 @@ const Worker = EventEmitter.compose({
   constructor: function Worker(options) {
     options = options || {};
 
-    if ('window' in options)
-      this._window = options.window;
     if ('contentScriptFile' in options)
       this.contentScriptFile = options.contentScriptFile;
     if ('contentScriptOptions' in options)
       this.contentScriptOptions = options.contentScriptOptions;
     if ('contentScript' in options)
       this.contentScript = options.contentScript;
-    if ('onError' in options)
-      this.on('error', options.onError);
-    if ('onMessage' in options)
-      this.on('message', options.onMessage);
-    if ('onDetach' in options)
-      this.on('detach', options.onDetach);
+
+    this._setListeners(options);
 
     // Internal feature that is only used by SDK unit tests.
     // See `PRIVATE_KEY` definition for more information.
     if ('exposeUnlockKey' in options && options.exposeUnlockKey === PRIVATE_KEY)
       this._expose_key = true;
 
+    unload.ensure(this._public, "destroy");
+
+    // Ensure that worker._port is initialized for contentWorker to be able
+    // to send events during worker initialization.
+    this.port;
+
+    this._documentUnload = this._documentUnload.bind(this);
+    this._pageShow = this._pageShow.bind(this);
+    this._pageHide = this._pageHide.bind(this);
+
+    if ("window" in options) this._attach(options.window);
+  },
+
+  _setListeners: function(options) {
+    if ('onError' in options)
+      this.on('error', options.onError);
+    if ('onMessage' in options)
+      this.on('message', options.onMessage);
+    if ('onDetach' in options)
+      this.on('detach', options.onDetach);
+  },
+
+  _attach: function(window) {
+    this._window = window;
     // Track document unload to destroy this worker.
     // We can't watch for unload event on page's window object as it
     // prevents bfcache from working:
     // https://developer.mozilla.org/En/Working_with_BFCache
     this._windowID = getInnerId(this._window);
-    observers.add("inner-window-destroyed",
-                  this._documentUnload = this._documentUnload.bind(this));
+    observers.add("inner-window-destroyed", this._documentUnload);
 
     // Listen to pagehide event in order to freeze the content script
     // while the document is frozen in bfcache:
-    this._window.addEventListener("pageshow",
-                                  this._pageShow = this._pageShow.bind(this),
-                                  true);
-    this._window.addEventListener("pagehide",
-                                  this._pageHide = this._pageHide.bind(this),
-                                  true);
-
-    unload.ensure(this._public, "destroy");
-
-    // Ensure that worker._port is initialized for contentWorker to be able
-    // to send use event during WorkerSandbox(this)
-    this.port;
+    this._window.addEventListener("pageshow", this._pageShow, true);
+    this._window.addEventListener("pagehide", this._pageHide, true);
 
     // will set this._contentWorker pointing to the private API:
     this._contentWorker = WorkerSandbox(this);

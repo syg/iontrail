@@ -11,13 +11,9 @@
  * http://dev.w3.org/csswg/css3-transitions/#transition-events-
  */
 
-[scriptable, builtinclass, uuid(9013310a-e376-40bc-b141-9b9ae3085daa)]
+[scriptable, builtinclass, uuid(a37171e0-9f43-41ea-a25c-0b78a3329683)]
 interface nsIDOMTransitionEvent : nsIDOMEvent {
   readonly attribute DOMString           propertyName;
   readonly attribute float               elapsedTime;
-  void               initTransitionEvent(in DOMString typeArg, 
-                                         in boolean canBubbleArg, 
-                                         in boolean cancelableArg, 
-                                         in DOMString propertyNameArg,
-                                         in float elapsedTimeArg);
+  readonly attribute DOMString           pseudoElement;
 };

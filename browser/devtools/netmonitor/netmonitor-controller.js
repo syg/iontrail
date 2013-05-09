@@ -13,7 +13,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource:///modules/source-editor.jsm");
-Cu.import("resource:///modules/devtools/EventEmitter.jsm");
+Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 Cu.import("resource:///modules/devtools/SideMenuWidget.jsm");
 Cu.import("resource:///modules/devtools/VariablesView.jsm");
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
@@ -466,6 +466,43 @@ NetworkEventsHandler.prototype = {
       eventTimings: aResponse
     });
     window.emit("NetMonitor:NetworkEventUpdated:EventTimings");
+  },
+
+  /**
+   * Fetches the full text of a LongString.
+   *
+   * @param object | string aStringGrip
+   *        The long string grip containing the corresponding actor.
+   *        If you pass in a plain string (by accident or because you're lazy),
+   *        then a promise of the same string is simply returned.
+   * @return object Promise
+   *         A promise that is resolved when the full string contents
+   *         are available, or rejected if something goes wrong.
+   */
+  getString: function NEH_getString(aStringGrip) {
+    // Make sure this is a long string.
+    if (typeof aStringGrip != "object" || aStringGrip.type != "longString") {
+      return Promise.resolve(aStringGrip); // Go home string, you're drunk.
+    }
+    // Fetch the long string only once.
+    if (aStringGrip._fullText) {
+      return aStringGrip._fullText.promise;
+    }
+
+    let deferred = aStringGrip._fullText = Promise.defer();
+    let { actor, initial, length } = aStringGrip;
+    let longStringClient = this.webConsoleClient.longString(aStringGrip);
+
+    longStringClient.substring(initial.length, length, (aResponse) => {
+      if (aResponse.error) {
+        Cu.reportError(aResponse.error + ": " + aResponse.message);
+        deferred.reject(aResponse);
+        return;
+      }
+      deferred.resolve(initial + aResponse.substring);
+    });
+
+    return deferred.promise;
   }
 };
 
@@ -478,7 +515,8 @@ let L10N = new ViewHelpers.L10N(NET_STRINGS_URI);
  * Shortcuts for accessing various network monitor preferences.
  */
 let Prefs = new ViewHelpers.Prefs("devtools.netmonitor", {
-  networkDetailsWidth: ["Int", "panes-network-details-width"]
+  networkDetailsWidth: ["Int", "panes-network-details-width"],
+  networkDetailsHeight: ["Int", "panes-network-details-height"]
 });
 
 /**
@@ -497,7 +535,10 @@ NetMonitorController.NetworkEventsHandler = new NetworkEventsHandler();
  */
 Object.defineProperties(window, {
   "create": {
-    get: function() ViewHelpers.create,
+    get: function() ViewHelpers.create
+  },
+  "gNetwork": {
+    get: function() NetMonitorController.NetworkEventsHandler
   }
 });
 

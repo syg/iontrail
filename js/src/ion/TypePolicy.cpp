@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -179,13 +178,22 @@ ComparePolicy::adjustInputs(MInstruction *def)
         MInstruction *replace;
 
         // See BinaryArithPolicy::adjustInputs for an explanation of the following
-        if (in->type() == MIRType_Object || in->type() == MIRType_String)
+        if (in->type() == MIRType_Object || in->type() == MIRType_String ||
+            in->type() == MIRType_Undefined)
+        {
             in = boxAt(def, in);
+        }
 
         switch (type) {
-          case MIRType_Double:
-            replace = MToDouble::New(in);
+          case MIRType_Double: {
+            MToDouble::ConversionKind convert = MToDouble::NumbersOnly;
+            if (compare->compareType() == MCompare::Compare_DoubleMaybeCoerceLHS && i == 0)
+                convert = MToDouble::NonNullNonStringPrimitives;
+            else if (compare->compareType() == MCompare::Compare_DoubleMaybeCoerceRHS && i == 1)
+                convert = MToDouble::NonNullNonStringPrimitives;
+            replace = MToDouble::New(in, convert);
             break;
+          }
           case MIRType_Int32:
             replace = MToInt32::New(in);
             break;
@@ -397,6 +405,8 @@ ObjectPolicy<Op>::staticAdjustInputs(MInstruction *ins)
 
 template bool ObjectPolicy<0>::staticAdjustInputs(MInstruction *ins);
 template bool ObjectPolicy<1>::staticAdjustInputs(MInstruction *ins);
+template bool ObjectPolicy<2>::staticAdjustInputs(MInstruction *ins);
+template bool ObjectPolicy<3>::staticAdjustInputs(MInstruction *ins);
 
 bool
 CallPolicy::adjustInputs(MInstruction *ins)
@@ -542,6 +552,15 @@ StoreTypedArrayHolePolicy::adjustInputs(MInstruction *ins)
     JS_ASSERT(store->length()->type() == MIRType_Int32);
 
     return adjustValueInput(ins, store->arrayType(), store->value(), 3);
+}
+
+bool
+StoreTypedArrayElementStaticPolicy::adjustInputs(MInstruction *ins)
+{
+    MStoreTypedArrayElementStatic *store = ins->toStoreTypedArrayElementStatic();
+    JS_ASSERT(store->ptr()->type() == MIRType_Int32);
+
+    return adjustValueInput(ins, store->viewType(), store->value(), 1);
 }
 
 bool

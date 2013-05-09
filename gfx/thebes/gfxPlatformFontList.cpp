@@ -22,11 +22,6 @@
 
 using namespace mozilla;
 
-// font info loader constants
-static const uint32_t kDelayBeforeLoadingCmaps = 8 * 1000; // 8secs
-static const uint32_t kIntervalBetweenLoadingCmaps = 150; // 150ms
-static const uint32_t kNumFontsPerSlice = 10; // read in info 10 fonts at a time
-
 #ifdef PR_LOGGING
 
 #define LOG_FONTLIST(args) PR_LOG(gfxPlatform::GetLog(eGfxLog_fontlist), \
@@ -39,6 +34,10 @@ static const uint32_t kNumFontsPerSlice = 10; // read in info 10 fonts at a time
 
 gfxPlatformFontList *gfxPlatformFontList::sPlatformFontList = nullptr;
 
+// prefs for the font info loader
+#define FONT_LOADER_FAMILIES_PER_SLICE_PREF "gfx.font_loader.families_per_slice"
+#define FONT_LOADER_DELAY_PREF              "gfx.font_loader.delay"
+#define FONT_LOADER_INTERVAL_PREF           "gfx.font_loader.interval"
 
 static const char* kObservedPrefs[] = {
     "font.",
@@ -120,17 +119,9 @@ gfxPlatformFontList::MemoryReporter::CollectReports
     return NS_OK;
 }
 
-NS_IMETHODIMP
-gfxPlatformFontList::MemoryReporter::GetExplicitNonHeap(int64_t* aAmount)
-{
-    // This reporter only measures heap memory.
-    *aAmount = 0;
-    return NS_OK;
-}
-
 gfxPlatformFontList::gfxPlatformFontList(bool aNeedFullnamePostscriptNames)
     : mNeedFullnamePostscriptNames(aNeedFullnamePostscriptNames),
-      mStartIndex(0), mIncrement(kNumFontsPerSlice), mNumFamilies(0)
+      mStartIndex(0), mIncrement(1), mNumFamilies(0)
 {
     mFontFamilies.Init(100);
     mOtherFamilyNames.Init(30);
@@ -753,6 +744,20 @@ gfxPlatformFontList::FinishLoader()
 {
     mFontFamiliesToLoad.Clear();
     mNumFamilies = 0;
+}
+
+void
+gfxPlatformFontList::GetPrefsAndStartLoader()
+{
+    mIncrement =
+        std::max(1u, Preferences::GetUint(FONT_LOADER_FAMILIES_PER_SLICE_PREF));
+
+    uint32_t delay =
+        std::max(1u, Preferences::GetUint(FONT_LOADER_DELAY_PREF));
+    uint32_t interval =
+        std::max(1u, Preferences::GetUint(FONT_LOADER_INTERVAL_PREF));
+
+    StartLoader(delay, interval);
 }
 
 // Support for memory reporting

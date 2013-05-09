@@ -10,6 +10,5 @@ IPDLSRCS = \
   PGrallocBuffer.ipdl \
   PImageBridge.ipdl \
   PLayer.ipdl \
-  PLayers.ipdl \
-  PTexture.ipdl \
+  PLayerTransaction.ipdl \
   $(NULL)

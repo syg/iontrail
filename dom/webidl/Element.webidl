@@ -13,8 +13,6 @@
  * liability, trademark and document use rules apply.
  */
 
-interface MozNamedAttrMap;
-
 interface Element : Node {
 /*
   We haven't moved these from Node to Element like the spec wants.
@@ -69,18 +67,6 @@ interface Element : Node {
   readonly attribute Element? nextElementSibling;
   [Pure]
   readonly attribute unsigned long childElementCount;
-
-  // NEW
-/*
-  FIXME We haven't implemented these yet.
-
-  void prepend((Node or DOMString)... nodes);
-  void append((Node or DOMString)... nodes);
-  void before((Node or DOMString)... nodes);
-  void after((Node or DOMString)... nodes);
-  void replace((Node or DOMString)... nodes);
-  void remove();
-*/
 
   // Mozilla specific stuff
 
@@ -197,3 +183,5 @@ partial interface Element {
   [Throws]
   NodeList  querySelectorAll(DOMString selectors);
 };
+
+Element implements ChildNode;

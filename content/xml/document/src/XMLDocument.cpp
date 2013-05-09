@@ -42,7 +42,6 @@
 #include "nsCRT.h"
 #include "nsIAuthPrompt.h"
 #include "nsIScriptGlobalObjectOwner.h"
-#include "nsIJSContextStack.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentPolicyUtils.h"
 #include "nsIDOMUserDataHandler.h"
@@ -215,8 +214,6 @@ NS_NewXBLDocument(nsIDOMDocument** aInstancePtrResult,
   return NS_OK;
 }
 
-DOMCI_NODE_DATA(XMLDocument, XMLDocument)
-
 namespace mozilla {
 namespace dom {
 
@@ -242,7 +239,6 @@ NS_INTERFACE_TABLE_HEAD(XMLDocument)
     NS_INTERFACE_TABLE_ENTRY(XMLDocument, nsIDOMXMLDocument)
   NS_OFFSET_AND_INTERFACE_TABLE_END
   NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(XMLDocument)
 NS_INTERFACE_MAP_END_INHERITING(nsDocument)
 
 
@@ -323,8 +319,7 @@ XMLDocument::Load(const nsAString& aUrl, ErrorResult& aRv)
 
   ReportUseOfDeprecatedMethod(this, "UseOfDOM3LoadMethodWarning");
 
-  nsCOMPtr<nsIDocument> callingDoc =
-    do_QueryInterface(nsContentUtils::GetDocumentFromContext());
+  nsCOMPtr<nsIDocument> callingDoc = nsContentUtils::GetDocumentFromContext();
 
   nsIURI *baseURI = mDocumentURI;
   nsAutoCString charset;
@@ -632,13 +627,9 @@ XMLDocument::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const
 }
 
 JSObject*
-XMLDocument::WrapNode(JSContext *aCx, JSObject *aScope)
+XMLDocument::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
-  JSObject* obj = XMLDocumentBinding::Wrap(aCx, aScope, this);
-  if (obj && !PostCreateWrapper(aCx, obj)) {
-    return nullptr;
-  }
-  return obj;
+  return XMLDocumentBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

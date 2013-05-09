@@ -16,7 +16,6 @@ namespace layers {
 class CompositableChild;
 class CompositableClient;
 class TextureClient;
-class ShadowLayersChild;
 class ImageBridgeChild;
 class ShadowableLayer;
 class CompositableForwarder;
@@ -44,7 +43,7 @@ class CompositableChild;
  *
  * To do in-transaction texture transfer (the default), call
  * ShadowLayerForwarder::Attach(CompositableClient*, ShadowableLayer*). This
- * will let the ShadowLayer on the compositor side know which CompositableHost
+ * will let the LayerComposite on the compositor side know which CompositableHost
  * to use for compositing.
  *
  * To do async texture transfer (like async-video), the CompositableClient
@@ -71,17 +70,22 @@ public:
 
   virtual ~CompositableClient();
 
-  virtual CompositableType GetType() const
+  virtual TextureInfo GetTextureInfo() const
   {
-    NS_WARNING("This method should be overridden");
-    return BUFFER_UNKNOWN;
+    MOZ_NOT_REACHED("This method should be overridden");
+    return TextureInfo();
   }
 
   LayersBackend GetCompositorBackendType() const;
 
   TemporaryRef<TextureClient>
-  CreateTextureClient(TextureClientType aTextureClientType,
-                      TextureFlags aFlags);
+  CreateTextureClient(TextureClientType aTextureClientType);
+
+  virtual void SetDescriptorFromReply(TextureIdentifier aTextureId,
+                                      const SurfaceDescriptor& aDescriptor)
+  {
+    MOZ_NOT_REACHED("If you want to call this, you should have implemented it");
+  }
 
   /**
    * Establishes the connection with compositor side through IPDL
@@ -130,9 +134,6 @@ public:
   {
     MOZ_COUNT_DTOR(CompositableChild);
   }
-
-  virtual PTextureChild* AllocPTexture(const TextureInfo& aInfo) MOZ_OVERRIDE;
-  virtual bool DeallocPTexture(PTextureChild* aActor) MOZ_OVERRIDE;
 
   void Destroy();
 

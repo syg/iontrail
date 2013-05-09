@@ -8,7 +8,6 @@
 #include "nsStructuredCloneContainer.h"
 
 #include "nsCOMPtr.h"
-#include "nsIJSContextStack.h"
 #include "nsIScriptContext.h"
 #include "nsIVariant.h"
 #include "nsIXPConnect.h"
@@ -44,17 +43,16 @@ nsStructuredCloneContainer::InitFromVariant(nsIVariant *aData, JSContext *aCx)
   NS_ENSURE_ARG_POINTER(aData);
   NS_ENSURE_ARG_POINTER(aCx);
 
-  // First, try to extract a jsval from the variant |aData|.  This works only
+  // First, try to extract a JS::Value from the variant |aData|.  This works only
   // if the variant implements GetAsJSVal.
-  jsval jsData;
-  nsresult rv = aData->GetAsJSVal(&jsData);
+  JS::Rooted<JS::Value> jsData(aCx);
+  nsresult rv = aData->GetAsJSVal(jsData.address());
   NS_ENSURE_SUCCESS(rv, NS_ERROR_UNEXPECTED);
 
   // Make sure that we serialize in the right context.
   MOZ_ASSERT(aCx == nsContentUtils::GetCurrentJSContext());
   JSAutoRequest ar(aCx);
-  JSAutoCompartment ac(aCx, JS_GetGlobalObject(aCx));
-  JS_WrapValue(aCx, &jsData);
+  JS_WrapValue(aCx, jsData.address());
 
   uint64_t* jsBytes = nullptr;
   bool success = JS_WriteStructuredClone(aCx, jsData, &jsBytes, &mSize,
@@ -113,22 +111,22 @@ nsStructuredCloneContainer::DeserializeToVariant(JSContext *aCx,
   NS_ENSURE_ARG_POINTER(aData);
   *aData = nullptr;
 
-  // Deserialize to a jsval.
-  jsval jsStateObj;
+  // Deserialize to a JS::Value.
+  JS::Rooted<JS::Value> jsStateObj(aCx);
   JSBool hasTransferable = false;
   bool success = JS_ReadStructuredClone(aCx, mData, mSize, mVersion,
-                                          &jsStateObj, nullptr, nullptr) &&
+                                        jsStateObj.address(), nullptr, nullptr) &&
                  JS_StructuredCloneHasTransferables(mData, mSize,
                                                     &hasTransferable);
   // We want to be sure that mData doesn't contain transferable objects
   MOZ_ASSERT(!hasTransferable);
   NS_ENSURE_STATE(success && !hasTransferable);
 
-  // Now wrap the jsval as an nsIVariant.
+  // Now wrap the JS::Value as an nsIVariant.
   nsCOMPtr<nsIVariant> varStateObj;
   nsCOMPtr<nsIXPConnect> xpconnect = do_GetService(nsIXPConnect::GetCID());
   NS_ENSURE_STATE(xpconnect);
-  xpconnect->JSValToVariant(aCx, &jsStateObj, getter_AddRefs(varStateObj));
+  xpconnect->JSValToVariant(aCx, jsStateObj.address(), getter_AddRefs(varStateObj));
   NS_ENSURE_STATE(varStateObj);
 
   NS_IF_ADDREF(*aData = varStateObj);

@@ -68,13 +68,15 @@ let WebAppRT = {
         // If so, get the launchUrl from the manifest and we'll launch with that
         //let app = DOMApplicationRegistry.getAppByManifestURL(aUrl);
         if (app.manifestURL == aUrl) {
+          BrowserApp.manifest = app.manifest;
           BrowserApp.manifestUrl = aUrl;
           aCallback(manifest.fullLaunchPath());
           return;
         }
-    
+
         // Otherwise, see if the apps launch path is this url
         if (manifest.fullLaunchPath() == aUrl) {
+          BrowserApp.manifest = app.manifest;
           BrowserApp.manifestUrl = app.manifestURL;
           aCallback(aUrl);
           return;
@@ -133,14 +135,16 @@ let WebAppRT = {
   handleEvent: function(event) {
     let target = event.target;
   
-    if (!(target instanceof HTMLAnchorElement) ||
-        target.getAttribute("target") != "_blank") {
+    // walk up the tree to find the nearest link tag
+    while (target && !(target instanceof HTMLAnchorElement)) {
+      target = target.parentNode;
+    }
+
+    if (!target || target.getAttribute("target") != "_blank") {
       return;
     }
   
-    let uri = Services.io.newURI(target.href,
-                                 target.ownerDocument.characterSet,
-                                 null);
+    let uri = Services.io.newURI(target.href, target.ownerDocument.characterSet, null);
   
     // Direct the URL to the browser.
     Cc["@mozilla.org/uriloader/external-protocol-service;1"].

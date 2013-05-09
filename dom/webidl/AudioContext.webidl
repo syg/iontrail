@@ -14,7 +14,7 @@ callback DecodeSuccessCallback = void (AudioBuffer decodedData);
 callback DecodeErrorCallback = void ();
 
 [Constructor, PrefControlled]
-interface AudioContext {
+interface AudioContext : EventTarget {
 
     readonly attribute AudioDestinationNode destination;
     readonly attribute float sampleRate;
@@ -24,8 +24,8 @@ interface AudioContext {
     [Creator, Throws]
     AudioBuffer createBuffer(unsigned long numberOfChannels, unsigned long length, float sampleRate);
 
-    // [Creator, Throws]
-    // AudioBuffer createBuffer(ArrayBuffer buffer, boolean mixToMono);
+    [Creator, Throws]
+    AudioBuffer? createBuffer(ArrayBuffer buffer, boolean mixToMono);
 
     void decodeAudioData(ArrayBuffer audioData,
                          DecodeSuccessCallback successCallback,
@@ -34,6 +34,11 @@ interface AudioContext {
     // AudioNode creation 
     [Creator]
     AudioBufferSourceNode createBufferSource();
+
+    [Creator, Throws]
+    ScriptProcessorNode createScriptProcessor(optional unsigned long bufferSize = 0,
+                                              optional unsigned long numberOfInputChannels = 2,
+                                              optional unsigned long numberOfOutputChannels = 2);
 
     [Creator]
     AnalyserNode createAnalyser();
@@ -45,6 +50,11 @@ interface AudioContext {
     BiquadFilterNode createBiquadFilter();
     [Creator]
     PannerNode createPanner();
+
+    [Creator, Throws]
+    ChannelSplitterNode createChannelSplitter(optional unsigned long numberOfOutputs = 6);
+    [Creator, Throws]
+    ChannelMergerNode createChannelMerger(optional unsigned long numberOfInputs = 6);
 
     [Creator]
     DynamicsCompressorNode createDynamicsCompressor();
@@ -66,10 +76,10 @@ partial interface AudioContext {
     DelayNode createDelayNode(optional double maxDelayTime = 1);
 
     // Same as createScriptProcessor()
-    // [Creator]
-    // ScriptProcessorNode createJavaScriptNode(unsigned long bufferSize,
-    //                                          optional unsigned long numberOfInputChannels = 2,
-    //                                          optional unsigned long numberOfOutputChannels = 2);
+    [Creator, Throws]
+    ScriptProcessorNode createJavaScriptNode(optional unsigned long bufferSize = 0,
+                                             optional unsigned long numberOfInputChannels = 2,
+                                             optional unsigned long numberOfOutputChannels = 2);
 };
 
 

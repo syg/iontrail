@@ -62,12 +62,13 @@ var gPausedAfterEndedTests = gSmallTests.concat([
   { name:"small-shot.ogg", type:"video/ogg", duration:0.276 }
 ]);
 
-// Test the mozHasAudio property
-var gMozHasAudioTests = [
-  { name:"big.wav", type:"audio/x-wav", duration:9.278981, size:102444, hasAudio:undefined },
-  { name:"320x240.ogv", type:"video/ogg", width:320, height:240, duration:0.266, size:28942, hasAudio:false },
-  { name:"short-video.ogv", type:"video/ogg", duration:1.081, hasAudio:true },
-  { name:"seek.webm", type:"video/webm", duration:3.966, size:215529, hasAudio:false },
+// Test the mozHasAudio property, and APIs that detect different kinds of
+// tracks
+var gTrackTests = [
+  { name:"big.wav", type:"audio/x-wav", duration:9.278981, size:102444, hasAudio:true, hasVideo:false },
+  { name:"320x240.ogv", type:"video/ogg", width:320, height:240, duration:0.266, size:28942, hasAudio:false, hasVideo:true },
+  { name:"short-video.ogv", type:"video/ogg", duration:1.081, hasAudio:true, hasVideo:true },
+  { name:"seek.webm", type:"video/webm", duration:3.966, size:215529, hasAudio:false, hasVideo:true },
   { name:"bogus.duh", type:"bogus/duh" }
 ];
 
@@ -152,6 +153,16 @@ var gPlayTests = [
 
   // Opus data in an ogg container
   { name:"detodos.opus", type:"audio/ogg; codecs=opus", duration:2.9135 },
+
+  // Multichannel Opus in an ogg container
+  { name:"test-1-mono.opus", type:"audio/ogg; codecs=opus", duration:1.044 },
+  { name:"test-2-stereo.opus", type:"audio/ogg; codecs=opus", duration:2.925 },
+  { name:"test-3-LCR.opus", type:"audio/ogg; codecs=opus", duration:4.214 },
+  { name:"test-4-quad.opus", type:"audio/ogg; codecs=opus", duration:6.234 },
+  { name:"test-5-5.0.opus", type:"audio/ogg; codecs=opus", duration:7.558 },
+  { name:"test-6-5.1.opus", type:"audio/ogg; codecs=opus", duration:10.333 },
+  { name:"test-7-6.1.opus", type:"audio/ogg; codecs=opus", duration:11.690 },
+  { name:"test-8-7.1.opus", type:"audio/ogg; codecs=opus", duration:13.478 },
 
   { name:"gizmo.mp4", type:"video/mp4", duration:5.56 },
 

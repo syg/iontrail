@@ -3,7 +3,7 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<resources>
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
         Base application styles. This could be overridden in other res/values-XXX/themes.xml.
@@ -11,6 +11,8 @@
     <style name="Widget"/>
 
     <style name="Widget.BaseButton" parent="android:style/Widget.Button"/>
+
+    <style name="Widget.BaseDropDownItem" parent="android:style/Widget.DropDownItem"/>
 
     <style name="Widget.BaseEditText" parent="android:style/Widget.EditText"/>
 
@@ -26,11 +28,19 @@
         <item name="android:textAppearance">@style/TextAppearance.Widget.Button</item>
     </style>
 
+    <style name="Widget.DropDownItem" parent="Widget.BaseDropDownItem">
+        <item name="android:textAppearance">@style/TextAppearance.Widget.DropDownItem</item>
+    </style>
+
     <style name="Widget.EditText" parent="Widget.BaseEditText">
         <item name="android:textAppearance">@style/TextAppearance.Widget.EditText</item>
     </style>
 
     <style name="Widget.TextView" parent="Widget.BaseTextView">
+        <item name="android:textAppearance">@style/TextAppearance.Widget.TextView</item>
+    </style>
+
+    <style name="Widget.TextView.SpinnerItem">
         <item name="android:textAppearance">@style/TextAppearance.Widget.TextView</item>
     </style>
 
@@ -43,7 +53,10 @@
 
     <style name="Widget.ExpandableListView" parent="Widget.ListView">
         <item name="android:groupIndicator">@android:color/transparent</item>
-        <item name="android:childDivider">#D1D5DA</item>
+
+        <!-- Using a color for the childDivider is broken for Froyo and GB
+             phones (see bug 862761), so we use a drawable instead. -->
+        <item name="android:childDivider">@drawable/awesomebar_listview_divider</item>
     </style>
 
     <style name="Widget.ListItem">
@@ -132,6 +145,10 @@
         <item name="android:textColor">@color/primary_text</item>
     </style>
 
+    <style name="TextAppearance.Widget.DropDownItem">
+        <item name="android:textColor">@color/primary_text</item>
+    </style>
+
     <style name="TextAppearance.Widget.EditText">
         <item name="android:textColor">@color/primary_text</item>
     </style>
@@ -145,6 +162,13 @@
         <item name="android:layout_width">fill_parent</item>
         <item name="android:layout_height">@dimen/browser_toolbar_height</item>
         <item name="android:orientation">horizontal</item>
+    </style>
+
+    <style name="AddressBar.ImageButton.TabCount">
+        <item name="android:background">@drawable/tabs_count</item>
+        <item name="android:gravity">center_horizontal</item>
+        <item name="android:clipChildren">false</item>
+        <item name="android:clipToPadding">false</item>
     </style>
 
     <!-- Address bar -->
@@ -161,15 +185,6 @@
         <item name="android:background">@android:color/transparent</item>
     </style>
 
-    <style name="AddressBar.Button.Container">
-        <item name="android:layout_marginLeft">4dp</item>
-        <item name="android:layout_marginRight">4dp</item>
-        <item name="android:layout_toLeftOf">@id/menu_items</item>
-        <item name="android:layout_alignParentLeft">true</item>
-        <item name="android:layout_alignParentBottom">true</item>
-        <item name="android:layout_centerVertical">true</item>
-    </style>
-
     <!-- Address bar - Image Button -->
     <style name="AddressBar.ImageButton" parent="AddressBar.Button">
         <item name="android:scaleType">center</item>
@@ -182,6 +197,10 @@
         <item name="android:layout_width">0dip</item>
         <item name="android:layout_height">0dip</item>
         <item name="android:visibility">gone</item>
+    </style>
+
+    <style name="AddressBar.ImageButton.Back" parent="AddressBar.ImageButton.Unused">
+        <item name="android:contentDescription">@string/back</item>
     </style>
 
     <style name="AddressBar.ImageButton.Forward" parent="AddressBar.ImageButton.Unused">
@@ -405,5 +424,18 @@
     </style>
 
     <style name="GeckoDialogTitle.SubTitle" />
+
+    <style name="CrashReporter" />
+
+    <style name="CrashReporter.EditText">
+        <item name="android:background">@drawable/textbox_bg</item>
+        <item name="android:padding">10dp</item>
+        <item name="android:textAppearance">@style/TextAppearance</item>
+    </style>
+
+    <style name="PopupAnimation">
+        <item name="@android:windowEnterAnimation">@anim/popup_show</item>
+        <item name="@android:windowExitAnimation">@anim/popup_hide</item>
+    </style>   
 
 </resources>

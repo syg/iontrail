@@ -91,13 +91,15 @@ public:
 
   virtual void OnReadMetadataCompleted() MOZ_FINAL MOZ_OVERRIDE;
 
+  virtual MediaDecoderOwner* GetOwner() MOZ_FINAL MOZ_OVERRIDE;
+
 private:
   // This monitor object is not really used to synchronize access to anything.
   // It's just there in order for us to be able to override
   // GetReentrantMonitor correctly.
   ReentrantMonitor mReentrantMonitor;
   nsCOMPtr<nsIThread> mDecodeThread;
-  nsAutoPtr<MediaResource> mResource;
+  nsRefPtr<MediaResource> mResource;
 };
 
 NS_IMPL_THREADSAFE_ISUPPORTS0(BufferDecoder)
@@ -254,6 +256,13 @@ BufferDecoder::OnReadMetadataCompleted()
   // ignore
 }
 
+MediaDecoderOwner*
+BufferDecoder::GetOwner()
+{
+  // unknown
+  return nullptr;
+}
+
 class ReportResultTask : public nsRunnable
 {
 public:
@@ -337,6 +346,8 @@ private:
     }
   }
 
+  void RunNextPhase();
+
   void Decode();
   void AllocateBuffer();
   void CopyBuffer();
@@ -389,7 +400,7 @@ MediaDecodeTask::CreateReader()
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  BufferMediaResource* resource =
+  nsRefPtr<BufferMediaResource> resource =
     new BufferMediaResource(static_cast<uint8_t*> (mBuffer),
                             mLength, mPrincipal, mContentType);
 
@@ -414,13 +425,43 @@ MediaDecodeTask::CreateReader()
 }
 
 void
+MediaDecodeTask::RunNextPhase()
+{
+  // This takes care of handling the logic of where to run the next phase.
+  // If we were invoked synchronously, we do not have a thread pool and
+  // everything happens on the main thread. Just invoke Run() in that case.
+  // Otherwise, some things happen on the main thread and others are run
+  // in the thread pool.
+  if (!mThreadPool) {
+    Run();
+    return;
+  }
+
+  switch (mPhase) {
+  case PhaseEnum::AllocateBuffer:
+  case PhaseEnum::Done:
+    MOZ_ASSERT(!NS_IsMainThread());
+    NS_DispatchToMainThread(this);
+    break;
+  case PhaseEnum::CopyBuffer:
+    MOZ_ASSERT(NS_IsMainThread());
+    mThreadPool->Dispatch(this, nsIThreadPool::DISPATCH_NORMAL);
+    break;
+  case PhaseEnum::Decode:
+    MOZ_NOT_REACHED("Invalid phase Decode");
+    break;
+  }
+}
+
+void
 MediaDecodeTask::Decode()
 {
-  MOZ_ASSERT(!NS_IsMainThread());
-
-  mDecoderReader->OnDecodeThreadStart();
+  MOZ_ASSERT(!mThreadPool == NS_IsMainThread(),
+             "We should be on the main thread only if we don't have a thread pool");
 
   mBufferDecoder->BeginDecoding(NS_GetCurrentThread());
+
+  mDecoderReader->OnDecodeThreadStart();
 
   VideoInfo videoInfo;
   nsAutoPtr<MetadataTags> tags;
@@ -469,7 +510,7 @@ MediaDecodeTask::Decode()
   }
 
   mPhase = PhaseEnum::AllocateBuffer;
-  NS_DispatchToMainThread(this);
+  RunNextPhase();
 }
 
 void
@@ -483,13 +524,15 @@ MediaDecodeTask::AllocateBuffer()
   }
 
   mPhase = PhaseEnum::CopyBuffer;
-  mThreadPool->Dispatch(this, nsIThreadPool::DISPATCH_NORMAL);
+  RunNextPhase();
 }
 
 void
 MediaDecodeTask::CopyBuffer()
 {
-  MOZ_ASSERT(!NS_IsMainThread());
+  MOZ_ASSERT(!mThreadPool == NS_IsMainThread(),
+             "We should be on the main thread only if we don't have a thread pool");
+
   MOZ_ASSERT(mDecodeJob.mOutput);
   MOZ_ASSERT(mDecodeJob.mChannels);
   MOZ_ASSERT(mDecoderReader);
@@ -566,7 +609,7 @@ MediaDecodeTask::CopyBuffer()
   }
 
   mPhase = PhaseEnum::Done;
-  NS_DispatchToMainThread(this);
+  RunNextPhase();
 }
 
 void
@@ -591,30 +634,18 @@ WebAudioDecodeJob::FinalizeBufferData()
   MOZ_ASSERT(mOutput);
   MOZ_ASSERT(mChannels == mChannelBuffers.Length());
 
-  AutoPushJSContext cx(GetJSContext());
+  AutoPushJSContext cx(mContext->GetJSContext());
   if (!cx) {
     return false;
   }
 
   for (uint32_t i = 0; i < mChannels; ++i) {
-    mOutput->SetChannelDataFromArrayBufferContents(cx, i, mChannelBuffers[i].first);
+    if (!mOutput->SetChannelDataFromArrayBufferContents(cx, i, mChannelBuffers[i].first)) {
+      return false;
+    }
   }
 
   return true;
-}
-
-JSContext*
-WebAudioDecodeJob::GetJSContext() const
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  nsCOMPtr<nsIScriptGlobalObject> scriptGlobal =
-    do_QueryInterface(mContext->GetParentObject());
-  nsIScriptContext* scriptContext = scriptGlobal->GetContext();
-  if (!scriptContext) {
-    return nullptr;
-  }
-  return scriptContext->GetNativeContext();
 }
 
 bool
@@ -624,7 +655,7 @@ WebAudioDecodeJob::AllocateBuffer()
   MOZ_ASSERT(NS_IsMainThread());
 
   // First, get a JSContext
-  AutoPushJSContext cx(GetJSContext());
+  AutoPushJSContext cx(mContext->GetJSContext());
   if (!cx) {
     return false;
   }
@@ -639,8 +670,11 @@ WebAudioDecodeJob::AllocateBuffer()
     return false;
   }
   for (uint32_t i = 0; i < mChannels; ++i) {
-    JSObject* channelObj = mOutput->GetChannelData(i);
-    JSObject* arrayBuffer = JS_GetArrayBufferViewBuffer(channelObj);
+    JS::RootedObject channelObj(cx, mOutput->GetChannelData(i));
+    JS::RootedObject arrayBuffer(cx, JS_GetArrayBufferViewBuffer(channelObj));
+    if (!arrayBuffer) {
+      return false;
+    }
     void* contents;
     uint8_t* data;
     if (JS_FALSE == JS_StealArrayBufferContents(cx, arrayBuffer, &contents, &data)) {
@@ -695,6 +729,29 @@ MediaBufferDecoder::AsyncDecodeMedia(const char* aContentType, uint8_t* aBuffer,
 }
 
 bool
+MediaBufferDecoder::SyncDecodeMedia(const char* aContentType, uint8_t* aBuffer,
+                                    uint32_t aLength,
+                                    WebAudioDecodeJob& aDecodeJob)
+{
+  // Do not attempt to decode the media if we were not successful at sniffing
+  // the content type.
+  if (!*aContentType ||
+      strcmp(aContentType, APPLICATION_OCTET_STREAM) == 0) {
+    return false;
+  }
+
+  nsRefPtr<MediaDecodeTask> task =
+    new MediaDecodeTask(aContentType, aBuffer, aLength, aDecodeJob, nullptr);
+  if (!task->CreateReader()) {
+    return false;
+  }
+
+  task->Run();
+  return true;
+}
+
+
+bool
 MediaBufferDecoder::EnsureThreadPoolInitialized()
 {
   if (!mThreadPool) {
@@ -733,9 +790,12 @@ WebAudioDecodeJob::WebAudioDecodeJob(const nsACString& aContentType,
   , mFailureCallback(aFailureCallback)
 {
   MOZ_ASSERT(aContext);
-  MOZ_ASSERT(aSuccessCallback);
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_COUNT_CTOR(WebAudioDecodeJob);
+
+  MOZ_ASSERT(aSuccessCallback ||
+             (!aSuccessCallback && !aFailureCallback),
+             "If a success callback is not passed, no failure callback should be passed either");
 }
 
 WebAudioDecodeJob::~WebAudioDecodeJob()
@@ -752,8 +812,10 @@ WebAudioDecodeJob::OnSuccess(ErrorCode aErrorCode)
 
   // Ignore errors in calling the callback, since there is not much that we can
   // do about it here.
-  ErrorResult rv;
-  mSuccessCallback->Call(*mOutput, rv);
+  if (mSuccessCallback) {
+    ErrorResult rv;
+    mSuccessCallback->Call(*mOutput, rv);
+  }
 
   mContext->RemoveFromDecodeQueue(this);
 }

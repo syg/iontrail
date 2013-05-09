@@ -19,6 +19,7 @@ import android.os.SystemClock;
 import android.test.ActivityInstrumentationTestCase2;
 import android.util.DisplayMetrics;
 import android.view.View;
+import android.widget.ListAdapter;
 import android.widget.ListView;
 import java.io.File;
 import java.io.InputStream;
@@ -50,6 +51,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     protected String mRawBaseUrl;
     private String mLogFile;
     protected String mProfile;
+    public Device mDevice;
 
     protected void blockForGeckoReady() {
         try {
@@ -63,6 +65,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
             if (!ret.booleanValue()) {
                 geckoReadyExpector.blockForEvent();
             }
+            geckoReadyExpector.unregisterListener();
         } catch (Exception e) {
             mAsserter.dumpLog("Exception in blockForGeckoReady", e);
         }
@@ -117,6 +120,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         mSolo = new Solo(getInstrumentation(), mActivity);
         mDriver = new FennecNativeDriver(mActivity, mSolo, rootPath);
         mActions = new FennecNativeActions(mActivity, mSolo, getInstrumentation(), mAsserter);
+        mDevice = new Device();
     }
 
     @Override
@@ -188,7 +192,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
      */
     protected final Activity clickOnAwesomeBar() {
         Activity activity = null;
-        Element awesomebar = mDriver.findElement(mActivity, "awesome_bar");
+        Element awesomebar = mDriver.findElement(mActivity, "browser_toolbar");
         if (awesomebar != null) {
             activity = getActivityFromClick(awesomebar);
             if (activity == null) {
@@ -214,6 +218,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         mActions.sendSpecialKey(Actions.SpecialKey.ENTER);
         // wait for screen to load
         contentEventExpecter.blockForEvent();
+        contentEventExpecter.unregisterListener();
     }
 
     protected final void loadUrl(String url) {
@@ -358,6 +363,25 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         return rc;
     }
 
+    /** 
+     * Select <item> from Menu > "Settings" > <section>
+     */
+    public void selectSettingsItem(String section, String item) {
+        String itemName = "^" + item + "$";
+        selectMenuItem("Settings");
+        // On tablets, settings are arranged in a hierarchy; if the item is not 
+        // in the first ("General") section, the section must be selected first.
+        if (mDevice.type.equals("tablet") && 
+            section != null &&
+            !section.equals("General")) {
+            String sectionName = "^" + section + "$";
+            waitForText(sectionName);
+            mSolo.clickOnText(sectionName);
+        }
+        waitForText(itemName);
+        mSolo.clickOnText(itemName);
+    }
+
     public final void selectMenuItem(String menuItemName) {
         // build the item name ready to be used
         String itemName = "^" + menuItemName + "$";
@@ -404,7 +428,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
 
     public final void verifyTabCount(int expectedTabCount) {
         Activity activity = getActivity();
-        Element tabCount = mDriver.findElement(activity, "tabs_count");
+        Element tabCount = mDriver.findElement(activity, "tabs_counter");
         String tabCountText = tabCount.getText();
         int tabCountInt = Integer.parseInt(tabCountText);
         mAsserter.is(tabCountInt, expectedTabCount, "The correct number of tabs are opened");
@@ -425,7 +449,12 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
                 for (ListView view : views) {
                     if (view.getTag().equals(tagName)) {
                         tabView = view;
-                        childCount = view.getAdapter().getCount();
+                        ListAdapter adapter = view.getAdapter();
+                        if (adapter != null) {
+                            childCount = adapter.getCount();
+                        } else {
+                            childCount = 0;
+                        }
                         if (expectedChildCount < 0 || expectedChildCount == childCount) {
                             return view;
                         }
@@ -586,7 +615,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         mAsserter.ok(child != null, "edit item can be retrieved", child != null ? child.toString() : "null!");
         waitForText("about:home|Firefox");
         mSolo.clickLongOnView(child);
-        waitForText("Open in New Tab");
+        waitForText("Share");
         mSolo.clickOnText("Edit");
         waitForText("Edit Bookmark");
 
@@ -610,7 +639,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         mAsserter.ok(child != null, "check item can be retrieved", child != null ? child.toString() : "null!");
         waitForText("about:home|Firefox");
         mSolo.clickLongOnView(child);
-        waitForText("Open in New Tab");
+        waitForText("Share");
         mSolo.clickOnText("Edit");
         waitForText("Edit Bookmark");
 
@@ -634,24 +663,18 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     }
 
     class Device {
-        Build.VERSION mBuildVersion;
-        public String version; // 2.x or 3.x or 4.x
+        public final String version; // 2.x or 3.x or 4.x
         public String type; // "tablet" or "phone"
-        public int width;
-        public int height;
+        public final int width;
+        public final int height;
 
         public Device() {
-            detectDevice();
-        }
-
-        private void detectDevice() {
             // Determine device version
-            mBuildVersion = new Build.VERSION();
-            int mSDK = mBuildVersion.SDK_INT;
-            if (mSDK < Build.VERSION_CODES.HONEYCOMB) {
+            int sdk = Build.VERSION.SDK_INT;
+            if (sdk < Build.VERSION_CODES.HONEYCOMB) {
                 version = "2.x";
             } else {
-                if (mSDK > Build.VERSION_CODES.HONEYCOMB_MR2) {
+                if (sdk > Build.VERSION_CODES.HONEYCOMB_MR2) {
                     version = "4.x";
                 } else {
                     version = "3.x";

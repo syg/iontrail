@@ -10,7 +10,7 @@
 #include "mozilla/layers/PCompositableParent.h"
 #include "mozilla/layers/ISurfaceAllocator.h"
 #include "ThebesLayerBuffer.h"
-#include "BasicTiledThebesLayer.h" // for BasicTiledLayerBuffer
+#include "ClientTiledThebesLayer.h" // for BasicTiledLayerBuffer
 #include "mozilla/RefPtr.h"
 
 namespace mozilla {
@@ -48,8 +48,9 @@ class SurfaceDescriptor;
 class CompositableHost : public RefCounted<CompositableHost>
 {
 public:
-  CompositableHost(Compositor* aCompositor = nullptr)
-    : mCompositor(aCompositor)
+  CompositableHost(const TextureInfo& aTextureInfo)
+    : mTextureInfo(aTextureInfo)
+    , mCompositor(nullptr)
     , mLayer(nullptr)
   {
     MOZ_COUNT_CTOR(CompositableHost);
@@ -60,8 +61,7 @@ public:
     MOZ_COUNT_DTOR(CompositableHost);
   }
 
-  static TemporaryRef<CompositableHost> Create(CompositableType aType,
-                                               Compositor* aCompositor = nullptr);
+  static TemporaryRef<CompositableHost> Create(const TextureInfo& aTextureInfo);
 
   virtual CompositableType GetType() = 0;
 
@@ -88,11 +88,7 @@ public:
 
   /**
    * Update the content host.
-   * aTextureInfo identifies the texture host which should be updated.
-   * aNewBack is the new data
    * aUpdated is the region which should be updated
-   * aNewfront may point to the old data in this content host after the call
-   * aNewBackResult may point to the updated data in this content host
    * aUpdatedRegionBack is the region in aNewBackResult which has been updated
    */
   virtual void UpdateThebes(const ThebesBufferData& aData,
@@ -103,8 +99,26 @@ public:
     MOZ_ASSERT(false, "should be implemented or not used");
   }
 
-  virtual void AddTextureHost(TextureHost* aTextureHost,
-                              ISurfaceAllocator* aAllocator = nullptr) = 0;
+  /**
+   * Ensure that a suitable texture host exists in this compositable. The
+   * compositable host may or may not create a new texture host. If a texture
+   * host is replaced, then the compositable is responsible for enusring it is
+   * destroyed correctly (without leaking resources).
+   * aTextureId - identifies the texture within the compositable, how the
+   * compositable chooses to use this is between the compositable client and
+   * host and will vary between types of compositable.
+   * aSurface - the new or existing texture host should support surface
+   * descriptors of the same type and, if necessary, this specific surface
+   * descriptor. Whether it is necessary or not depends on the protocol between
+   * the compositable client and host.
+   * aAllocator - the allocator used to allocate and de-allocate resources.
+   * aTextureInfo - contains flags for the texture.
+   */
+  virtual void EnsureTextureHost(TextureIdentifier aTextureId,
+                                 const SurfaceDescriptor& aSurface,
+                                 ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo) = 0;
+
   virtual TextureHost* GetTextureHost() { return nullptr; }
 
   virtual LayerRenderState GetRenderState() = 0;
@@ -130,7 +144,9 @@ public:
   Layer* GetLayer() const { return mLayer; }
   void SetLayer(Layer* aLayer) { mLayer = aLayer; }
 
-  void Attach(Layer* aLayer, Compositor* aCompositor)
+  virtual TiledLayerComposer* AsTiledLayerComposer() { return nullptr; }
+
+  virtual void Attach(Layer* aLayer, Compositor* aCompositor)
   {
     SetCompositor(aCompositor);
     SetLayer(aLayer);
@@ -145,6 +161,7 @@ public:
 #endif
 
 protected:
+  TextureInfo mTextureInfo;
   Compositor* mCompositor;
   Layer* mLayer;
 };
@@ -155,10 +172,9 @@ class CompositableParent : public PCompositableParent
 {
 public:
   CompositableParent(CompositableParentManager* aMgr,
-                     CompositableType aType, uint64_t aID = 0);
+                     const TextureInfo& aTextureInfo,
+                     uint64_t aID = 0);
   ~CompositableParent();
-  PTextureParent* AllocPTexture(const TextureInfo& aInfo) MOZ_OVERRIDE;
-  bool DeallocPTexture(PTextureParent* aActor) MOZ_OVERRIDE;
 
   virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
@@ -217,12 +233,12 @@ private:
  * the layer.
  *
  * CompositableMap must be global because the image bridge doesn't have any
- * reference to whatever we have created with PLayers. So, the only way to
+ * reference to whatever we have created with PLayerTransaction. So, the only way to
  * actually connect these two worlds is to have something global that they can
  * both query (in the same  thread). The map is not allocated the map on the 
  * stack to avoid the badness of static initialization.
  *
- * Also, we have a compositor/PLayers protocol/etc. per layer manager, and the
+ * Also, we have a compositor/PLayerTransaction protocol/etc. per layer manager, and the
  * ImageBridge is used by all the existing compositors that have a video, so
  * there isn't an instance or "something" that lives outside the boudaries of a
  * given layer manager on the compositor thread except the image bridge and the

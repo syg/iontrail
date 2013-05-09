@@ -160,9 +160,6 @@ nsTableFrame::nsTableFrame(nsStyleContext* aContext)
   memset(&mBits, 0, sizeof(mBits));
 }
 
-NS_QUERYFRAME_HEAD(nsTableFrame)
-NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
-
 void
 nsTableFrame::Init(nsIContent*      aContent,
                    nsIFrame*        aParent,
@@ -1081,7 +1078,7 @@ nsDisplayTableBorderBackground::Paint(nsDisplayListBuilder* aBuilder,
 
 static int32_t GetTablePartRank(nsDisplayItem* aItem)
 {
-  nsIAtom* type = aItem->GetUnderlyingFrame()->GetType();
+  nsIAtom* type = aItem->Frame()->GetType();
   if (type == nsGkAtoms::tableFrame)
     return 0;
   if (type == nsGkAtoms::tableRowGroupFrame)
@@ -1536,10 +1533,7 @@ nsTableFrame::AncestorsHaveStyleHeight(const nsHTMLReflowState& aParentReflowSta
     }
     else if (nsGkAtoms::tableFrame == frameType) {
       // we reached the containing table, so always return
-      if (rs->mStylePosition->mHeight.GetUnit() != eStyleUnit_Auto) {
-        return true;
-      }
-      else return false;
+      return rs->mStylePosition->mHeight.GetUnit() != eStyleUnit_Auto;
     }
   }
   return false;
@@ -2804,7 +2798,7 @@ nsTableFrame::ReflowChildren(nsTableReflowState& aReflowState,
       // nonzero YMost, then we can't be at the top of the page.
       // We ignore a repeated head row group in this check to avoid causing
       // infinite loops in some circumstances - see bug 344883.
-      if (childX > ((thead && IsRepeatedFrame(thead)) ? 1 : 0) &&
+      if (childX > ((thead && IsRepeatedFrame(thead)) ? 1u : 0u) &&
           (rowGroups[childX - 1]->GetRect().YMost() > 0)) {
         kidReflowState.mFlags.mIsTopOfPage = false;
       }

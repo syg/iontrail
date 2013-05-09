@@ -373,7 +373,7 @@ void
 nsAttrValue::SetTo(const nsAString& aValue)
 {
   ResetIfSet();
-  nsStringBuffer* buf = GetStringBuffer(aValue);
+  nsStringBuffer* buf = GetStringBuffer(aValue).get();
   if (buf) {
     SetPtrValueAndType(buf, eStringBase);
   }
@@ -739,9 +739,8 @@ nsAttrValue::GetAsAtom() const
 
     case eAtom:
       {
-        nsIAtom* atom = GetAtomValue();
-        NS_ADDREF(atom);
-        return atom;
+        nsCOMPtr<nsIAtom> atom = GetAtomValue();
+        return atom.forget();
       }
 
     default:
@@ -1229,9 +1228,9 @@ nsAttrValue::ParseAtom(const nsAString& aValue)
 {
   ResetIfSet();
 
-  nsIAtom* atom = NS_NewAtom(aValue);
+  nsCOMPtr<nsIAtom> atom = NS_NewAtom(aValue);
   if (atom) {
-    SetPtrValueAndType(atom, eAtomBase);
+    SetPtrValueAndType(atom.forget().get(), eAtomBase);
   }
 }
 
@@ -1527,7 +1526,7 @@ nsAttrValue::ParsePositiveIntValue(const nsAString& aString)
 void
 nsAttrValue::SetColorValue(nscolor aColor, const nsAString& aString)
 {
-  nsStringBuffer* buf = GetStringBuffer(aString);
+  nsStringBuffer* buf = GetStringBuffer(aString).get();
   if (!buf) {
     return;
   }
@@ -1712,12 +1711,13 @@ nsAttrValue::SetMiscAtomOrString(const nsAString* aValue)
                  "Empty string?");
     MiscContainer* cont = GetMiscContainer();
     if (len <= NS_ATTRVALUE_MAX_STRINGLENGTH_ATOM) {
-      nsIAtom* atom = NS_NewAtom(*aValue);
+      nsCOMPtr<nsIAtom> atom = NS_NewAtom(*aValue);
       if (atom) {
-        cont->mStringBits = reinterpret_cast<uintptr_t>(atom) | eAtomBase;
+        cont->mStringBits =
+          reinterpret_cast<uintptr_t>(atom.forget().get()) | eAtomBase;
       }
     } else {
-      nsStringBuffer* buf = GetStringBuffer(*aValue);
+      nsStringBuffer* buf = GetStringBuffer(*aValue).get();
       if (buf) {
         cont->mStringBits = reinterpret_cast<uintptr_t>(buf) | eStringBase;
       }
@@ -1853,7 +1853,7 @@ nsAttrValue::EnsureEmptyAtomArray()
   return true;
 }
 
-nsStringBuffer*
+already_AddRefed<nsStringBuffer>
 nsAttrValue::GetStringBuffer(const nsAString& aValue) const
 {
   uint32_t len = aValue.Length();
@@ -1861,10 +1861,9 @@ nsAttrValue::GetStringBuffer(const nsAString& aValue) const
     return nullptr;
   }
 
-  nsStringBuffer* buf = nsStringBuffer::FromString(aValue);
+  nsRefPtr<nsStringBuffer> buf = nsStringBuffer::FromString(aValue);
   if (buf && (buf->StorageSize()/sizeof(PRUnichar) - 1) == len) {
-    buf->AddRef();
-    return buf;
+    return buf.forget();
   }
 
   buf = nsStringBuffer::Alloc((len + 1) * sizeof(PRUnichar));
@@ -1874,7 +1873,7 @@ nsAttrValue::GetStringBuffer(const nsAString& aValue) const
   PRUnichar *data = static_cast<PRUnichar*>(buf->Data());
   CopyUnicodeTo(aValue, 0, data, len);
   data[len] = PRUnichar(0);
-  return buf;
+  return buf.forget();
 }
 
 int32_t

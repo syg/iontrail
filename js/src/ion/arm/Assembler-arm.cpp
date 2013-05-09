@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1136,29 +1135,34 @@ ion::O2Reg(Register r) {
 O2RegImmShift
 ion::lsl(Register r, int amt)
 {
+    JS_ASSERT(0 <= amt && amt <= 31);
     return O2RegImmShift(r, LSL, amt);
 }
 
 O2RegImmShift
 ion::lsr(Register r, int amt)
 {
+    JS_ASSERT(1 <= amt && amt <= 32);
     return O2RegImmShift(r, LSR, amt);
 }
 
 O2RegImmShift
 ion::ror(Register r, int amt)
 {
+    JS_ASSERT(1 <= amt && amt <= 31);
     return O2RegImmShift(r, ROR, amt);
 }
 O2RegImmShift
 ion::rol(Register r, int amt)
 {
+    JS_ASSERT(1 <= amt && amt <= 31);
     return O2RegImmShift(r, ROR, 32 - amt);
 }
 
 O2RegImmShift
 ion::asr (Register r, int amt)
 {
+    JS_ASSERT(1 <= amt && amt <= 32);
     return O2RegImmShift(r, ASR, amt);
 }
 
@@ -1166,7 +1170,6 @@ ion::asr (Register r, int amt)
 O2RegRegShift
 ion::lsl(Register r, Register amt)
 {
-
     return O2RegRegShift(r, LSL, amt);
 }
 

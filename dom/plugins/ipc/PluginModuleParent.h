@@ -301,6 +301,11 @@ private:
     static int TimeoutChanged(const char* aPref, void* aModule);
     void NotifyPluginCrashed();
 
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    void InitPluginProfiling();
+    void ShutdownPluginProfiling();
+#endif
+
     PluginProcessParent* mSubprocess;
     // the plugin thread in mSubprocess
     NativeThreadId mPluginThread;
@@ -314,6 +319,7 @@ private:
     nsString mPluginDumpID;
     nsString mBrowserDumpID;
     nsString mHangID;
+    nsRefPtr<nsIObserver> mProfilerObserver;
 #ifdef XP_WIN
     InfallibleTArray<float> mPluginCpuUsageOnHang;
     PluginHangUIParent *mHangUIParent;

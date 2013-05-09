@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -111,8 +110,13 @@ class ValueNumberData : public TempObject {
     // Set the class of this to the given representative value.
     void setClass(MDefinition *thisDef, MDefinition *rep) {
         JS_ASSERT(thisDef->valueNumberData() == this);
-        // If this value should already be in the given set, don't do anything
-        if (number == rep->valueNumber())
+        // If we are attempting to insert ourself, then nothing needs to be done.
+        // However, if the definition to be inserted already has the correct value number,
+        // it still needs to be inserted, since the value number needs to be updated lazily.
+        // this updating tactic can leave the world in a state where thisDef is not in the
+        // equivalence class of rep, but it has the same value number. Defs in this state
+        // need to be re-processed.
+        if (this == rep->valueNumberData())
             return;
 
         if (classNext)

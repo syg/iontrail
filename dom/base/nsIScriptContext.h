@@ -29,24 +29,9 @@ class nsIURI;
 
 typedef void (*nsScriptTerminationFunc)(nsISupports* aRef);
 
-#define NS_ISCRIPTCONTEXTPRINCIPAL_IID \
-  { 0xd012cdb3, 0x8f1e, 0x4440, \
-    { 0x8c, 0xbd, 0x32, 0x7f, 0x98, 0x1d, 0x37, 0xb4 } }
-
-class nsIScriptContextPrincipal : public nsISupports
-{
-public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISCRIPTCONTEXTPRINCIPAL_IID)
-
-  virtual nsIScriptObjectPrincipal* GetObjectPrincipal() = 0;
-};
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIScriptContextPrincipal,
-                              NS_ISCRIPTCONTEXTPRINCIPAL_IID)
-
 #define NS_ISCRIPTCONTEXT_IID \
-{ 0x739d69c1, 0x5248, 0x4386, \
-  { 0x82, 0xa6, 0x60, 0x28, 0xf7, 0x7f, 0xb8, 0x9c } }
+{ 0x821c5be9, 0xbf9e, 0x4041, \
+  { 0x9f, 0xf2, 0x1f, 0xca, 0x39, 0xf7, 0x89, 0xf3 } }
 
 /* This MUST match JSVERSION_DEFAULT.  This version stuff if we don't
    know what language we have is a little silly... */
@@ -56,7 +41,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIScriptContextPrincipal,
  * It is used by the application to initialize a runtime and run scripts.
  * A script runtime would implement this interface.
  */
-class nsIScriptContext : public nsIScriptContextPrincipal
+class nsIScriptContext : public nsISupports
 {
 public:
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISCRIPTCONTEXT_IID)
@@ -122,22 +107,6 @@ public:
    */
   virtual nsresult ExecuteScript(JSScript* aScriptObject,
                                  JSObject* aScopeObject) = 0;
-
-  /**
-   * Call the function object with given args and return its boolean result,
-   * or true if the result isn't boolean.
-   *
-   * @param aTarget the event target
-   * @param aScript an object telling the scope in which to call the compiled
-   *        event handler function.
-   * @param aHandler function object (function and static scope) to invoke.
-   * @param argv array of arguments.  Note each element is assumed to
-   *        be an nsIVariant.
-   * @param rval out parameter returning result
-   **/
-  virtual nsresult CallEventHandler(nsISupports* aTarget,
-                                    JSObject* aScope, JSObject* aHandler,
-                                    nsIArray *argv, nsIVariant **rval) = 0;
 
   /**
    * Bind an already-compiled event handler function to the given

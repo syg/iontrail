@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,6 +7,8 @@
 /*
  * JS number type and wrapper class.
  */
+
+#include "jsnum.h"
 
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/PodOperations.h"
@@ -24,7 +26,6 @@
 #include <locale.h>
 #include <limits.h>
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "jstypes.h"
@@ -34,22 +35,14 @@
 #include "jscntxt.h"
 #include "jsversion.h"
 #include "jsdtoa.h"
-#include "jsgc.h"
-#include "jsinterp.h"
-#include "jsnum.h"
 #include "jsobj.h"
-#include "jsopcode.h"
-#include "jsprf.h"
 #include "jsstr.h"
-#include "jslibmath.h"
 
 #include "vm/GlobalObject.h"
 #include "vm/NumericConversions.h"
-#include "vm/Shape.h"
 #include "vm/StringBuffer.h"
 
 #include "jsatominlines.h"
-#include "jsinferinlines.h"
 #include "jsnuminlines.h"
 #include "jsobjinlines.h"
 
@@ -397,7 +390,7 @@ js::num_parseInt(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-static JSFunctionSpec number_functions[] = {
+static const JSFunctionSpec number_functions[] = {
     JS_FN(js_isNaN_str,         num_isNaN,           1,0),
     JS_FN(js_isFinite_str,      num_isFinite,        1,0),
     JS_FN(js_parseFloat_str,    num_parseFloat,      1,0),
@@ -409,7 +402,7 @@ Class js::NumberClass = {
     js_Number_str,
     JSCLASS_HAS_RESERVED_SLOTS(1) | JSCLASS_HAS_CACHED_PROTO(JSProto_Number),
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -891,7 +884,7 @@ num_toPrecision(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsNumber, num_toPrecision_impl>(cx, args);
 }
 
-static JSFunctionSpec number_methods[] = {
+static const JSFunctionSpec number_methods[] = {
 #if JS_HAS_TOSOURCE
     JS_FN(js_toSource_str,       num_toSource,          0, 0),
 #endif
@@ -969,7 +962,7 @@ Number_toInteger(JSContext *cx, unsigned argc, Value *vp)
 }
 
 
-static JSFunctionSpec number_static_methods[] = {
+static const JSFunctionSpec number_static_methods[] = {
     JS_FN("isFinite", Number_isFinite, 1, 0),
     JS_FN("isInteger", Number_isInteger, 1, 0),
     JS_FN("isNaN", Number_isNaN, 1, 0),

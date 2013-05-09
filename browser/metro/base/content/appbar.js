@@ -1,3 +1,8 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+"use strict";
+
 var Appbar = {
   get appbar()        { return document.getElementById('appbar'); },
   get consoleButton() { return document.getElementById('console-button'); },
@@ -13,11 +18,14 @@ var Appbar = {
 
   init: function Appbar_init() {
     window.addEventListener('MozAppbarShowing', this, false);
+    window.addEventListener('MozAppbarDismissing', this, false);
     window.addEventListener('MozPrecisePointer', this, false);
     window.addEventListener('MozImprecisePointer', this, false);
     window.addEventListener('MozContextActionsChange', this, false);
     Elements.browsers.addEventListener('URLChanged', this, true);
     Elements.tabList.addEventListener('TabSelect', this, true);
+    Elements.panelUI.addEventListener('ToolPanelShown', this, false);
+    Elements.panelUI.addEventListener('ToolPanelHidden', this, false);
 
     this._updateDebugButtons();
     this._updateZoomButtons();
@@ -30,11 +38,20 @@ var Appbar = {
     switch (aEvent.type) {
       case 'URLChanged':
       case 'TabSelect':
+      case 'ToolPanelShown':
+      case 'ToolPanelHidden':
         this.appbar.dismiss();
         break;
       case 'MozAppbarShowing':
         this._updatePinButton();
         this._updateStarButton();
+        break;
+      case 'MozAppbarDismissing':
+        if (this.activeTileset) {
+          this.activeTileset.clearSelection();
+        }
+        this.clearContextualActions();
+        this.activeTileset = null;
         break;
       case 'MozPrecisePointer':
       case 'MozImprecisePointer':
@@ -158,7 +175,8 @@ var Appbar = {
       }
     }
   },
-  showContextualActions: function(aVerbs){
+
+  showContextualActions: function(aVerbs) {
     let doc = document;
     // button element id to action verb lookup
     let buttonsMap = new Map();
@@ -191,6 +209,11 @@ var Appbar = {
       }
     });
   },
+
+  clearContextualActions: function() {
+    this.showContextualActions([]);
+  },
+
   _onTileSelectionChanged: function _onTileSelectionChanged(aEvent){
     let activeTileset = aEvent.target;
 

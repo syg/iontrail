@@ -194,7 +194,7 @@ HTMLBodyElement::~HTMLBodyElement()
 }
 
 JSObject*
-HTMLBodyElement::WrapNode(JSContext *aCx, JSObject *aScope)
+HTMLBodyElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLBodyElementBinding::Wrap(aCx, aScope, this);
 }
@@ -506,20 +506,11 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
   NS_IMETHODIMP                                                                \
   HTMLBodyElement::SetOn##name_(JSContext *cx, const JS::Value &v)             \
   {                                                                            \
-    JSObject *obj = GetWrapper();                                              \
-    if (!obj) {                                                                \
-      /* Just silently do nothing */                                           \
-      return NS_OK;                                                            \
-    }                                                                          \
     nsRefPtr<type_> handler;                                                   \
     JSObject *callable;                                                        \
     if (v.isObject() &&                                                        \
         JS_ObjectIsCallable(cx, callable = &v.toObject())) {                   \
-      bool ok;                                                                 \
-      handler = new type_(cx, obj, callable, &ok);                             \
-      if (!ok) {                                                               \
-        return NS_ERROR_OUT_OF_MEMORY;                                         \
-      }                                                                        \
+      handler = new type_(callable);                                           \
     }                                                                          \
     ErrorResult rv;                                                            \
     forwardto_::SetOn##name_(handler, rv);                                     \
@@ -536,7 +527,7 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
   HTMLBodyElement::GetOn##name_()                                              \
   {                                                                            \
     nsPIDOMWindow* win = OwnerDoc()->GetInnerWindow();                         \
-    if (win && win->IsInnerWindow()) {                                         \
+    if (win) {                                                                 \
       nsCOMPtr<nsISupports> supports = do_QueryInterface(win);                 \
       nsGlobalWindow* globalWin = nsGlobalWindow::FromSupports(supports);      \
       return globalWin->GetOn##name_();                                        \
@@ -547,7 +538,7 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
   HTMLBodyElement::SetOn##name_(type_* handler, ErrorResult& error)            \
   {                                                                            \
     nsPIDOMWindow* win = OwnerDoc()->GetInnerWindow();                         \
-    if (!win || !win->IsInnerWindow()) {                                       \
+    if (!win) {                                                                \
       return;                                                                  \
     }                                                                          \
                                                                                \

@@ -14,15 +14,20 @@ const Cu = Components.utils;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/DOMRequestHelper.jsm");
-Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 
 XPCOMUtils.defineLazyGetter(Services, "DOMRequest", function() {
   return Cc["@mozilla.org/dom/dom-request-service;1"].getService(Ci.nsIDOMRequestService);
 });
 
+XPCOMUtils.defineLazyServiceGetter(this, "pm",
+                                   "@mozilla.org/permissionmanager;1",
+                                   "nsIPermissionManager");
+
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                    "@mozilla.org/childprocessmessagemanager;1",
                                    "nsIMessageSender");
+
+const CONTACTS_SENDMORE_MINIMUM = 5;
 
 function stringOrBust(aObj) {
   if (typeof aObj != "string") {
@@ -63,16 +68,17 @@ ContactProperties.prototype = {
 //ContactAddress
 
 const CONTACTADDRESS_CONTRACTID = "@mozilla.org/contactAddress;1";
-const CONTACTADDRESS_CID        = Components.ID("{c5d6eb73-a079-4a9f-8cd5-618194f73b30}");
+const CONTACTADDRESS_CID        = Components.ID("{9cbfa81c-bcab-4ca9-b0d2-f4318f295e33}");
 const nsIContactAddress         = Components.interfaces.nsIContactAddress;
 
-function ContactAddress(aType, aStreetAddress, aLocality, aRegion, aPostalCode, aCountryName) {
+function ContactAddress(aType, aStreetAddress, aLocality, aRegion, aPostalCode, aCountryName, aPref) {
   this.type = sanitizeStringArray(aType);
   this.streetAddress = stringOrBust(aStreetAddress);
   this.locality = stringOrBust(aLocality);
   this.region = stringOrBust(aRegion);
   this.postalCode = stringOrBust(aPostalCode);
   this.countryName = stringOrBust(aCountryName);
+  this.pref = aPref;
 };
 
 ContactAddress.prototype = {
@@ -98,12 +104,13 @@ ContactAddress.prototype = {
 //ContactField
 
 const CONTACTFIELD_CONTRACTID = "@mozilla.org/contactField;1";
-const CONTACTFIELD_CID        = Components.ID("{474b8c6d-f984-431f-9636-e523ca3ec34d}");
+const CONTACTFIELD_CID        = Components.ID("{ad19a543-69e4-44f0-adfa-37c011556bc1}");
 const nsIContactField         = Components.interfaces.nsIContactField;
 
-function ContactField(aType, aValue) {
+function ContactField(aType, aValue, aPref) {
   this.type = sanitizeStringArray(aType);
   this.value = stringOrBust(aValue);
+  this.pref = aPref;
 };
 
 ContactField.prototype = {
@@ -128,10 +135,11 @@ const CONTACTTELFIELD_CONTRACTID = "@mozilla.org/contactTelField;1";
 const CONTACTTELFIELD_CID        = Components.ID("{4d42c5a9-ea5d-4102-80c3-40cc986367ca}");
 const nsIContactTelField         = Components.interfaces.nsIContactTelField;
 
-function ContactTelField(aType, aValue, aCarrier) {
+function ContactTelField(aType, aValue, aCarrier, aPref) {
   this.type = sanitizeStringArray(aType);
   this.value = stringOrBust(aValue);
   this.carrier = stringOrBust(aCarrier);
+  this.pref = aPref;
 };
 
 ContactTelField.prototype = {
@@ -262,7 +270,7 @@ Contact.prototype = {
       this.email = new Array();
       for (let email of aProp.email) {
         if (_isVanillaObj(email)) {
-          this.email.push(new ContactField(email.type, email.value));
+          this.email.push(new ContactField(email.type, email.value, email.pref));
         } else if (DEBUG) {
           debug("email field is not a ContactField and was ignored.");
         }
@@ -280,7 +288,8 @@ Contact.prototype = {
       for (let adr of aProp.adr) {
         if (_isVanillaObj(adr)) {
           this.adr.push(new ContactAddress(adr.type, adr.streetAddress, adr.locality,
-                                           adr.region, adr.postalCode, adr.countryName));
+                                           adr.region, adr.postalCode, adr.countryName,
+                                           adr.pref));
         } else if (DEBUG) {
           debug("adr field is not a ContactAddress and was ignored.");
         }
@@ -294,7 +303,8 @@ Contact.prototype = {
       this.tel = new Array();
       for (let tel of aProp.tel) {
         if (_isVanillaObj(tel)) {
-          this.tel.push(new ContactTelField(tel.type, tel.value, tel.carrier));
+          this.tel.push(new ContactTelField(tel.type, tel.value, tel.carrier,
+                                            tel.pref));
         } else if (DEBUG) {
           debug("tel field is not a ContactTelField and was ignored.");
         }
@@ -313,7 +323,7 @@ Contact.prototype = {
       this.impp = new Array();
       for (let impp of aProp.impp) {
         if (_isVanillaObj(impp)) {
-          this.impp.push(new ContactField(impp.type, impp.value));
+          this.impp.push(new ContactField(impp.type, impp.value, impp.pref));
         } else if (DEBUG) {
           debug("impp field is not a ContactField and was ignored.");
         }
@@ -327,7 +337,7 @@ Contact.prototype = {
       this.url = new Array();
       for (let url of aProp.url) {
         if (_isVanillaObj(url)) {
-          this.url.push(new ContactField(url.type, url.value));
+          this.url.push(new ContactField(url.type, url.value, url.pref));
         } else if (DEBUG) {
           debug("url field is not a ContactField and was ignored.");
         }
@@ -370,7 +380,7 @@ Contact.prototype = {
 // ContactManager
 
 const CONTACTMANAGER_CONTRACTID = "@mozilla.org/contactManager;1";
-const CONTACTMANAGER_CID        = Components.ID("{4efae3f8-dd69-4622-97c8-f16e4d38d95c}");
+const CONTACTMANAGER_CID        = Components.ID("{7bfb6481-f946-4254-afc5-d7fe9f5c45a3}");
 const nsIDOMContactManager      = Components.interfaces.nsIDOMContactManager;
 
 function ContactManager()
@@ -381,8 +391,6 @@ function ContactManager()
 ContactManager.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
   _oncontactchange: null,
-
-  _cursorData: {},
 
   set oncontactchange(aCallback) {
     if (DEBUG) debug("set oncontactchange");
@@ -452,7 +460,10 @@ ContactManager.prototype = {
         }
         break;
       case "Contacts:GetAll:Next":
-        let data = this._cursorData[msg.cursorId];
+        let data = this.getRequest(msg.cursorId);
+        if (!data) {
+          break;
+        }
         let result = contacts ? this._convertContacts(contacts) : [null];
         if (data.waitingForNext) {
           if (DEBUG) debug("cursor waiting for contact, sending");
@@ -460,37 +471,12 @@ ContactManager.prototype = {
           let contact = result.shift();
           this._pushArray(data.cachedContacts, result);
           this.nextTick(this._fireSuccessOrDone.bind(this, data.cursor, contact));
+          if (!contact) {
+            this.removeRequest(msg.cursorId);
+          }
         } else {
           if (DEBUG) debug("cursor not waiting, saving");
           this._pushArray(data.cachedContacts, result);
-        }
-        break;
-      case "Contacts:GetSimContacts:Return:OK":
-        req = this.getRequest(msg.requestID);
-        if (req) {
-          let result = contacts.map(function(c) {
-            let contact = new Contact();
-            let prop = {name: [c.alphaId], tel: [ { value: c.number } ]};
-
-            if (c.email) {
-              prop.email = [{value: c.email}];
-            }
-
-            // ANR - Additional Number
-            if (c.anr) {
-              for (let i = 0; i < c.anr.length; i++) {
-                prop.tel.push({value: c.anr[i]});
-              }
-            }
-
-            contact.init(prop);
-            return contact;
-          });
-          if (DEBUG) debug("result: " + JSON.stringify(result));
-          Services.DOMRequest.fireSuccess(req.request,
-                                          ObjectWrapper.wrap(result, this._window));
-        } else {
-          if (DEBUG) debug("no request stored!" + msg.requestID);
         }
         break;
       case "Contact:Save:Return:OK":
@@ -504,7 +490,6 @@ ContactManager.prototype = {
       case "Contact:Save:Return:KO":
       case "Contact:Remove:Return:KO":
       case "Contacts:Clear:Return:KO":
-      case "Contacts:GetSimContacts:Return:KO":
         req = this.getRequest(msg.requestID);
         if (req)
           Services.DOMRequest.fireError(req.request, msg.errorMsg);
@@ -533,6 +518,13 @@ ContactManager.prototype = {
           this._oncontactchange.handleEvent(event);
         }
         break;
+      case "Contacts:Revision":
+        if (DEBUG) debug("new revision: " + msg.revision);
+        req = this.getRequest(msg.requestID);
+        if (req) {
+          Services.DOMRequest.fireSuccess(req, msg.revision);
+        }
+        break;
       default:
         if (DEBUG) debug("Wrong message: " + aMessage.name);
     }
@@ -551,13 +543,22 @@ ContactManager.prototype = {
         access = "write";
         break;
       case "find":
-      case "getSimContacts":
       case "listen":
+      case "revision":
         access = "read";
         break;
       default:
         access = "unknown";
       }
+
+    // Shortcut for ALLOW_ACTION so we avoid a parent roundtrip
+    let type = "contacts-" + access;
+    let permValue =
+      pm.testExactPermissionFromPrincipal(this._window.document.nodePrincipal, type);
+    if (permValue == Ci.nsIPermissionManager.ALLOW_ACTION) {
+      aAllowCallback();
+      return;
+    }
 
     let requestID = this.getRequestId({
       request: aRequest,
@@ -648,7 +649,6 @@ ContactManager.prototype = {
   },
 
   createCursor: function CM_createCursor(aRequest) {
-    let id = this._getRandomId();
     let data = {
       cursor: Services.DOMRequest.createCursor(this._window, function() {
         this.handleContinue(id);
@@ -656,8 +656,8 @@ ContactManager.prototype = {
       cachedContacts: [],
       waitingForNext: true,
     };
+    let id = this.getRequestId(data);
     if (DEBUG) debug("saved cursor id: " + id);
-    this._cursorData[id] = data;
     return [id, data.cursor];
   },
 
@@ -678,11 +678,16 @@ ContactManager.prototype = {
 
   handleContinue: function CM_handleContinue(aCursorId) {
     if (DEBUG) debug("handleContinue: " + aCursorId);
-    let data = this._cursorData[aCursorId];
+    let data = this.getRequest(aCursorId);
     if (data.cachedContacts.length > 0) {
       if (DEBUG) debug("contact in cache");
       let contact = data.cachedContacts.shift();
       this.nextTick(this._fireSuccessOrDone.bind(this, data.cursor, contact));
+      if (!contact) {
+        this.removeRequest(aCursorId);
+      } else if (data.cachedContacts.length === CONTACTS_SENDMORE_MINIMUM) {
+        cpmm.sendAsyncMessage("Contacts:GetAll:SendNow", { cursorId: aCursorId });
+      }
     } else {
       if (DEBUG) debug("waiting for contact");
       data.waitingForNext = true;
@@ -712,22 +717,20 @@ ContactManager.prototype = {
     return request;
   },
 
-  getSimContacts: function(aContactType) {
-    let request;
-    request = this.createRequest();
-    let options = {contactType: aContactType};
+  getRevision: function() {
+    let request = this.createRequest();
 
     let allowCallback = function() {
-      if (DEBUG) debug("getSimContacts " + aContactType);
-      cpmm.sendAsyncMessage("Contacts:GetSimContacts",
-        {requestID: this.getRequestId({request: request, reason: "getSimContacts"}),
-         options: options});
+      cpmm.sendAsyncMessage("Contacts:GetRevision", {
+        requestID: this.getRequestId(request)
+      });
     }.bind(this);
 
     let cancelCallback = function() {
-      throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
-    }
-    this.askPermission("getSimContacts", request, allowCallback, cancelCallback);
+      Services.DOMRequest.fireError(request);
+    };
+
+    this.askPermission("revision", request, allowCallback, cancelCallback);
     return request;
   },
 
@@ -736,11 +739,10 @@ ContactManager.prototype = {
                               "Contacts:Clear:Return:OK", "Contacts:Clear:Return:KO",
                               "Contact:Save:Return:OK", "Contact:Save:Return:KO",
                               "Contact:Remove:Return:OK", "Contact:Remove:Return:KO",
-                              "Contacts:GetSimContacts:Return:OK",
-                              "Contacts:GetSimContacts:Return:KO",
                               "Contact:Changed",
                               "PermissionPromptHelper:AskPermission:OK",
-                              "Contacts:GetAll:Next"]);
+                              "Contacts:GetAll:Next",
+                              "Contacts:Revision"]);
   },
 
   // Called from DOMRequestIpcHelper

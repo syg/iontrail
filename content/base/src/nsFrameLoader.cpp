@@ -34,7 +34,6 @@
 #include "nsIBaseWindow.h"
 #include "nsContentUtils.h"
 #include "nsIXPConnect.h"
-#include "nsIJSContextStack.h"
 #include "nsUnicharUtils.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
@@ -285,6 +284,7 @@ nsFrameLoader::nsFrameLoader(Element* aOwner, bool aNetworkCreated)
   , mClampScrollPosition(true)
   , mRemoteBrowserInitialized(false)
   , mObservingOwnerContent(false)
+  , mVisible(true)
   , mCurrentRemoteFrame(nullptr)
   , mRemoteBrowser(nullptr)
   , mRenderMode(RENDER_MODE_DEFAULT)
@@ -819,6 +819,7 @@ nsFrameLoader::Show(int32_t marginWidth, int32_t marginHeight,
   // "Create"...
   baseWindow->Create();
   baseWindow->SetVisibility(true);
+  NS_ENSURE_TRUE(mDocShell, false);
 
   // Trigger editor re-initialization if midas is turned on in the
   // sub-document. This shouldn't be necessary, but given the way our
@@ -1094,10 +1095,8 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
                SameCOMIdentity(otherChromeEventHandler, otherContent),
                "How did that happen, exactly?");
 
-  nsCOMPtr<nsIDocument> ourChildDocument =
-    do_QueryInterface(ourWindow->GetExtantDocument());
-  nsCOMPtr<nsIDocument> otherChildDocument =
-    do_QueryInterface(otherWindow->GetExtantDocument());
+  nsCOMPtr<nsIDocument> ourChildDocument = ourWindow->GetExtantDoc();
+  nsCOMPtr<nsIDocument> otherChildDocument = otherWindow ->GetExtantDoc();
   if (!ourChildDocument || !otherChildDocument) {
     // This shouldn't be happening
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -2552,3 +2551,29 @@ nsFrameLoader::ResetPermissionManagerStatus()
   }
 }
 
+/* [infallible] */ NS_IMETHODIMP
+nsFrameLoader::SetVisible(bool aVisible)
+{
+  mVisible = aVisible;
+  nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+  if (os) {
+    os->NotifyObservers(NS_ISUPPORTS_CAST(nsIFrameLoader*, this),
+                        "frameloader-visible-changed", nullptr);
+  }
+  return NS_OK;
+}
+
+/* [infallible] */ NS_IMETHODIMP
+nsFrameLoader::GetVisible(bool* aVisible)
+{
+  *aVisible = mVisible;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFrameLoader::GetTabParent(nsITabParent** aTabParent)
+{
+  nsCOMPtr<nsITabParent> tp = mRemoteBrowser;
+  tp.forget(aTabParent);
+  return NS_OK;
+}

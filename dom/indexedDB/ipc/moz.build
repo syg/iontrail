@@ -6,3 +6,9 @@
 
 MODULE = 'dom'
 
+EXPORTS.mozilla.dom.indexedDB += [
+    'SerializationHelpers.h',
+]
+
+# Need to enable these tests sometime soon.
+#XPCSHELL_TESTS_MANIFESTS += ['unit/xpcshell.ini']

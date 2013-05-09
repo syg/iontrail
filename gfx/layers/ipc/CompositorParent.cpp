@@ -8,39 +8,23 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "base/basictypes.h"
-#include <algorithm>
-
-#if defined(MOZ_WIDGET_ANDROID)
-# include <android/log.h>
-# include "AndroidBridge.h"
-#endif
-
 #include "AsyncPanZoomController.h"
 #include "AutoOpenSurface.h"
-#include "BasicLayers.h"
 #include "CompositorParent.h"
 #include "mozilla/layers/CompositorOGL.h"
-#include "nsGkAtoms.h"
-#include "nsIWidget.h"
-#include "RenderTrace.h"
-#include "ShadowLayersParent.h"
-#include "BasicLayers.h"
+#include "mozilla/layers/BasicCompositor.h"
+#include "LayerTransactionParent.h"
 #include "nsIWidget.h"
 #include "nsGkAtoms.h"
 #include "RenderTrace.h"
-#include "nsStyleAnimation.h"
-#include "nsDisplayList.h"
-#include "AnimationCommon.h"
-#include "nsAnimationManager.h"
 #include "gfxPlatform.h"
-#include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/AutoRestore.h"
+#include "mozilla/layers/AsyncCompositionManager.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 
 using namespace base;
 using namespace mozilla;
 using namespace mozilla::ipc;
-using namespace mozilla::dom;
 using namespace std;
 
 namespace mozilla {
@@ -60,31 +44,6 @@ static MessageLoop* sMainLoop = nullptr;
 // existing thread.
 static PlatformThreadId sCompositorThreadID = 0;
 static MessageLoop* sCompositorLoop = nullptr;
-
-struct LayerTreeState {
-  nsRefPtr<Layer> mRoot;
-  nsRefPtr<AsyncPanZoomController> mController;
-  TargetConfig mTargetConfig;
-};
-
-static uint8_t sPanZoomUserDataKey;
-struct PanZoomUserData : public LayerUserData {
-  PanZoomUserData(AsyncPanZoomController* aController)
-    : mController(aController)
-  { }
-
-  // We don't keep a strong ref here because PanZoomUserData is only
-  // set transiently, and APZC is thread-safe refcounted so
-  // AddRef/Release is expensive.
-  AsyncPanZoomController* mController;
-};
-
-/**
- * Lookup the indirect shadow tree for |aId| and return it if it
- * exists.  Otherwise null is returned.  This must only be called on
- * the compositor thread.
- */
-static const LayerTreeState* GetIndirectShadowTree(uint64_t aId);
 
 static void DeferredDeleteCompositorParent(CompositorParent* aNowReadyToDie)
 {
@@ -168,16 +127,12 @@ MessageLoop* CompositorParent::CompositorLoop()
 }
 
 CompositorParent::CompositorParent(nsIWidget* aWidget,
-                                   bool aRenderToEGLSurface,
+                                   bool aUseExternalSurfaceSize,
                                    int aSurfaceWidth, int aSurfaceHeight)
   : mWidget(aWidget)
   , mCurrentCompositeTask(NULL)
   , mPaused(false)
-  , mXScale(1.0)
-  , mYScale(1.0)
-  , mIsFirstPaint(false)
-  , mLayersUpdated(false)
-  , mRenderToEGLSurface(aRenderToEGLSurface)
+  , mUseExternalSurfaceSize(aUseExternalSurfaceSize)
   , mEGLSurfaceSize(aSurfaceWidth, aSurfaceHeight)
   , mPauseCompositionMonitor("PauseCompositionMonitor")
   , mResumeCompositionMonitor("ResumeCompositionMonitor")
@@ -219,11 +174,18 @@ CompositorParent::~CompositorParent()
 void
 CompositorParent::Destroy()
 {
-  NS_ABORT_IF_FALSE(ManagedPLayersParent().Length() == 0,
-                    "CompositorParent destroyed before managed PLayersParent");
+  NS_ABORT_IF_FALSE(ManagedPLayerTransactionParent().Length() == 0,
+                    "CompositorParent destroyed before managed PLayerTransactionParent");
 
   // Ensure that the layer manager is destructed on the compositor thread.
-  mLayerManager = NULL;
+  mLayerManager = nullptr;
+  mCompositionManager = nullptr;
+}
+
+void
+CompositorParent::ForceIsFirstPaint()
+{
+  mCompositionManager->ForceIsFirstPaint();
 }
 
 bool
@@ -235,6 +197,8 @@ CompositorParent::RecvWillStop()
   // Ensure that the layer manager is destroyed before CompositorChild.
   if (mLayerManager) {
     mLayerManager->Destroy();
+    mLayerManager = nullptr;
+    mCompositionManager = nullptr;
   }
 
   return true;
@@ -289,6 +253,8 @@ CompositorParent::ActorDestroy(ActorDestroyReason why)
 
   if (mLayerManager) {
     mLayerManager->Destroy();
+    mLayerManager = nullptr;
+    mCompositionManager = nullptr;
   }
 }
 
@@ -355,7 +321,7 @@ CompositorParent::ForceComposition()
 void
 CompositorParent::SetEGLSurfaceSize(int width, int height)
 {
-  NS_ASSERTION(mRenderToEGLSurface, "Compositor created without RenderToEGLSurface provided");
+  NS_ASSERTION(mUseExternalSurfaceSize, "Compositor created without UseExternalSurfaceSize provided");
   mEGLSurfaceSize.SizeTo(width, height);
   if (mLayerManager) {
     mLayerManager->GetCompositor()->SetDestinationSurfaceSize(gfx::IntSize(mEGLSurfaceSize.width, mEGLSurfaceSize.height));
@@ -415,9 +381,9 @@ void
 CompositorParent::NotifyShadowTreeTransaction()
 {
   if (mLayerManager) {
-    ShadowLayerManager *shadow = mLayerManager->AsShadowManager();
-    if (shadow) {
-      shadow->NotifyShadowTreeTransaction();
+    LayerManagerComposite* managerComposite = mLayerManager->AsLayerManagerComposite();
+    if (managerComposite) {
+      managerComposite->NotifyShadowTreeTransaction();
     }
   }
   ScheduleComposition();
@@ -456,87 +422,8 @@ CompositorParent::ScheduleComposition()
 void
 CompositorParent::SetTransformation(float aScale, nsIntPoint aScrollOffset)
 {
-  mXScale = aScale;
-  mYScale = aScale;
-  mScrollOffset = aScrollOffset;
+  mCompositionManager->SetTransformation(aScale, aScrollOffset);
 }
-
-/**
- * DRAWING PHASE ONLY
- *
- * For reach RefLayer in |aRoot|, look up its referent and connect it
- * to the layer tree, if found.  On exiting scope, detaches all
- * resolved referents.
- */
-class MOZ_STACK_CLASS AutoResolveRefLayers {
-public:
-  /**
-   * |aRoot| must remain valid in the scope of this, which should be
-   * guaranteed by this helper only being used during the drawing
-   * phase.
-   */
-  AutoResolveRefLayers(Layer* aRoot, const TargetConfig& aConfig) : mRoot(aRoot), mTargetConfig(aConfig), mReadyForCompose(true)
-  { WalkTheTree<Resolve>(mRoot, nullptr); }
-
-  ~AutoResolveRefLayers()
-  { WalkTheTree<Detach>(mRoot, nullptr); }
-
-  bool IsReadyForCompose()
-  { return mReadyForCompose; }
-
-private:
-  enum Op { Resolve, Detach };
-  template<Op OP>
-  void WalkTheTree(Layer* aLayer, Layer* aParent)
-  {
-    if (RefLayer* ref = aLayer->AsRefLayer()) {
-      if (const LayerTreeState* state = GetIndirectShadowTree(ref->GetReferentId())) {
-        if (Layer* referent = state->mRoot) {
-          if (!ref->GetVisibleRegion().IsEmpty()) {
-            ScreenOrientation chromeOrientation = mTargetConfig.orientation();
-            ScreenOrientation contentOrientation = state->mTargetConfig.orientation();
-            if (!IsSameDimension(chromeOrientation, contentOrientation) &&
-                ContentMightReflowOnOrientationChange(mTargetConfig.clientBounds())) {
-              mReadyForCompose = false;
-            }
-          }
-
-          if (OP == Resolve) {
-            ref->ConnectReferentLayer(referent);
-            if (AsyncPanZoomController* apzc = state->mController) {
-              referent->SetUserData(&sPanZoomUserDataKey,
-                                    new PanZoomUserData(apzc));
-            }
-          } else {
-            ref->DetachReferentLayer(referent);
-            referent->RemoveUserData(&sPanZoomUserDataKey);
-          }
-        }
-      }
-    }
-    for (Layer* child = aLayer->GetFirstChild();
-         child; child = child->GetNextSibling()) {
-      WalkTheTree<OP>(child, aLayer);
-    }
-  }
-
-  bool IsSameDimension(ScreenOrientation o1, ScreenOrientation o2) {
-    bool isO1portrait = (o1 == eScreenOrientation_PortraitPrimary || o1 == eScreenOrientation_PortraitSecondary);
-    bool isO2portrait = (o2 == eScreenOrientation_PortraitPrimary || o2 == eScreenOrientation_PortraitSecondary);
-    return !(isO1portrait ^ isO2portrait);
-  }
-
-  bool ContentMightReflowOnOrientationChange(nsIntRect& rect) {
-    return rect.width != rect.height;
-  }
-
-  Layer* mRoot;
-  TargetConfig mTargetConfig;
-  bool mReadyForCompose;
-
-  AutoResolveRefLayers(const AutoResolveRefLayers&) MOZ_DELETE;
-  AutoResolveRefLayers& operator=(const AutoResolveRefLayers&) MOZ_DELETE;
-};
 
 void
 CompositorParent::Composite()
@@ -551,29 +438,25 @@ CompositorParent::Composite()
     return;
   }
 
-  Layer* layer = mLayerManager->GetRoot();
-  AutoResolveRefLayers resolve(layer, mTargetConfig);
+  AutoResolveRefLayers resolve(mCompositionManager);
   if (mForceCompositionTask && !mOverrideComposeReadiness) {
-    if (!resolve.IsReadyForCompose()) {
-      return;
-    } else {
+    if (mCompositionManager->ReadyForCompose()) {
       mForceCompositionTask->Cancel();
       mForceCompositionTask = nullptr;
+    } else {
+      return;
     }
   }
 
-  bool requestNextFrame = TransformShadowTree(mLastCompose);
+  bool requestNextFrame = mCompositionManager->TransformShadowTree(mLastCompose);
   if (requestNextFrame) {
     ScheduleComposition();
   }
 
-  RenderTraceLayers(layer, "0000");
+  RenderTraceLayers(mLayerManager->GetRoot(), "0000");
 
-  if (!mTargetConfig.naturalBounds().IsEmpty()) {
-    mLayerManager->SetWorldTransform(
-      ComputeTransformForRotation(mTargetConfig.naturalBounds(),
-                                  mTargetConfig.rotation()));
-  }
+  mCompositionManager->ComputeRotation();
+
 #ifdef MOZ_DUMP_PAINTING
   static bool gDumpCompositorTree = false;
   if (gDumpCompositorTree) {
@@ -612,95 +495,18 @@ CompositorParent::CanComposite()
   return !(mPaused || !mLayerManager || !mLayerManager->GetRoot());
 }
 
-// Do a breadth-first search to find the first layer in the tree that is
-// scrollable.
-static void
-Translate2D(gfx3DMatrix& aTransform, const gfxPoint& aOffset)
-{
-  aTransform._41 += aOffset.x;
-  aTransform._42 += aOffset.y;
-}
-
-void
-CompositorParent::TransformFixedLayers(Layer* aLayer,
-                                       const gfxPoint& aTranslation,
-                                       const gfxSize& aScaleDiff,
-                                       const gfx::Margin& aFixedLayerMargins)
-{
-  if (aLayer->GetIsFixedPosition() &&
-      !aLayer->GetParent()->GetIsFixedPosition()) {
-    // When a scale has been applied to a layer, it focuses around (0,0).
-    // The anchor position is used here as a scale focus point (assuming that
-    // aScaleDiff has already been applied) to re-focus the scale.
-    const gfxPoint& anchor = aLayer->GetFixedPositionAnchor();
-    gfxPoint translation(aTranslation - (anchor - anchor / aScaleDiff));
-
-    // Offset this translation by the fixed layer margins, depending on what
-    // side of the viewport the layer is anchored to, reconciling the
-    // difference between the current fixed layer margins and the Gecko-side
-    // fixed layer margins.
-    // aFixedLayerMargins are the margins we expect to be at at the current
-    // time, obtained via SyncViewportInfo, and fixedMargins are the margins
-    // that were used during layout.
-    const gfx::Margin& fixedMargins = aLayer->GetFixedPositionMargins();
-    if (anchor.x > 0) {
-      translation.x -= aFixedLayerMargins.right - fixedMargins.right;
-    } else {
-      translation.x += aFixedLayerMargins.left - fixedMargins.left;
-    }
-
-    if (anchor.y > 0) {
-      translation.y -= aFixedLayerMargins.bottom - fixedMargins.bottom;
-    } else {
-      translation.y += aFixedLayerMargins.top - fixedMargins.top;
-    }
-
-    // The transform already takes the resolution scale into account.  Since we
-    // will apply the resolution scale again when computing the effective
-    // transform, we must apply the inverse resolution scale here.
-    gfx3DMatrix layerTransform = aLayer->GetTransform();
-    Translate2D(layerTransform, translation);
-    if (ContainerLayer* c = aLayer->AsContainerLayer()) {
-      layerTransform.Scale(1.0f/c->GetPreXScale(),
-                           1.0f/c->GetPreYScale(),
-                           1);
-    }
-    layerTransform.ScalePost(1.0f/aLayer->GetPostXScale(),
-                             1.0f/aLayer->GetPostYScale(),
-                             1);
-    ShadowLayer* shadow = aLayer->AsShadowLayer();
-    shadow->SetShadowTransform(layerTransform);
-
-    const nsIntRect* clipRect = aLayer->GetClipRect();
-    if (clipRect) {
-      nsIntRect transformedClipRect(*clipRect);
-      transformedClipRect.MoveBy(translation.x, translation.y);
-      shadow->SetShadowClipRect(&transformedClipRect);
-    }
-
-    // The transform has now been applied, so there's no need to iterate over
-    // child layers.
-    return;
-  }
-
-  for (Layer* child = aLayer->GetFirstChild();
-       child; child = child->GetNextSibling()) {
-    TransformFixedLayers(child, aTranslation, aScaleDiff, aFixedLayerMargins);
-  }
-}
-
-// Go down shadow layer tree, setting properties to match their non-shadow
-// counterparts.
+// Go down the composite layer tree, setting properties to match their
+// content-side counterparts.
 static void
 SetShadowProperties(Layer* aLayer)
 {
-  // FIXME: Bug 717688 -- Do these updates in ShadowLayersParent::RecvUpdate.
-  ShadowLayer* shadow = aLayer->AsShadowLayer();
-  // Set the shadow's base transform to the layer's base transform.
-  shadow->SetShadowTransform(aLayer->GetBaseTransform());
-  shadow->SetShadowVisibleRegion(aLayer->GetVisibleRegion());
-  shadow->SetShadowClipRect(aLayer->GetClipRect());
-  shadow->SetShadowOpacity(aLayer->GetOpacity());
+  // FIXME: Bug 717688 -- Do these updates in LayerTransactionParent::RecvUpdate.
+  LayerComposite* layerComposite = aLayer->AsLayerComposite();
+  // Set the layerComposite's base transform to the layer's base transform.
+  layerComposite->SetShadowTransform(aLayer->GetBaseTransform());
+  layerComposite->SetShadowVisibleRegion(aLayer->GetVisibleRegion());
+  layerComposite->SetShadowClipRect(aLayer->GetClipRect());
+  layerComposite->SetShadowOpacity(aLayer->GetOpacity());
 
   for (Layer* child = aLayer->GetFirstChild();
       child; child = child->GetNextSibling()) {
@@ -708,355 +514,14 @@ SetShadowProperties(Layer* aLayer)
   }
 }
 
-static void
-SampleValue(float aPortion, Animation& aAnimation, nsStyleAnimation::Value& aStart,
-            nsStyleAnimation::Value& aEnd, Animatable* aValue)
-{
-  nsStyleAnimation::Value interpolatedValue;
-  NS_ASSERTION(aStart.GetUnit() == aEnd.GetUnit() ||
-               aStart.GetUnit() == nsStyleAnimation::eUnit_None ||
-               aEnd.GetUnit() == nsStyleAnimation::eUnit_None, "Must have same unit");
-  nsStyleAnimation::Interpolate(aAnimation.property(), aStart, aEnd,
-                                aPortion, interpolatedValue);
-  if (aAnimation.property() == eCSSProperty_opacity) {
-    *aValue = interpolatedValue.GetFloatValue();
-    return;
-  }
-
-  nsCSSValueList* interpolatedList = interpolatedValue.GetCSSValueListValue();
-
-  TransformData& data = aAnimation.data().get_TransformData();
-  nsPoint origin = data.origin();
-  // we expect all our transform data to arrive in css pixels, so here we must
-  // adjust to dev pixels.
-  double cssPerDev = double(nsDeviceContext::AppUnitsPerCSSPixel())
-                     / double(data.appUnitsPerDevPixel());
-  gfxPoint3D mozOrigin = data.mozOrigin();
-  mozOrigin.x = mozOrigin.x * cssPerDev;
-  mozOrigin.y = mozOrigin.y * cssPerDev;
-  gfxPoint3D perspectiveOrigin = data.perspectiveOrigin();
-  perspectiveOrigin.x = perspectiveOrigin.x * cssPerDev;
-  perspectiveOrigin.y = perspectiveOrigin.y * cssPerDev;
-  nsDisplayTransform::FrameTransformProperties props(interpolatedList,
-                                                     mozOrigin,
-                                                     perspectiveOrigin,
-                                                     data.perspective());
-  gfx3DMatrix transform =
-    nsDisplayTransform::GetResultingTransformMatrix(props, origin,
-                                                    data.appUnitsPerDevPixel(),
-                                                    &data.bounds());
-  gfxPoint3D scaledOrigin =
-    gfxPoint3D(NS_round(NSAppUnitsToFloatPixels(origin.x, data.appUnitsPerDevPixel())),
-               NS_round(NSAppUnitsToFloatPixels(origin.y, data.appUnitsPerDevPixel())),
-               0.0f);
-
-  transform.Translate(scaledOrigin);
-
-  InfallibleTArray<TransformFunction> functions;
-  functions.AppendElement(TransformMatrix(transform));
-  *aValue = functions;
-}
-
-static bool
-SampleAnimations(Layer* aLayer, TimeStamp aPoint)
-{
-  AnimationArray& animations = aLayer->GetAnimations();
-  InfallibleTArray<AnimData>& animationData = aLayer->GetAnimationData();
-
-  bool activeAnimations = false;
-
-  for (uint32_t i = animations.Length(); i-- !=0; ) {
-    Animation& animation = animations[i];
-    AnimData& animData = animationData[i];
-
-    double numIterations = animation.numIterations() != -1 ?
-      animation.numIterations() : NS_IEEEPositiveInfinity();
-    double positionInIteration =
-      ElementAnimations::GetPositionInIteration(aPoint - animation.startTime(),
-                                                animation.duration(),
-                                                numIterations,
-                                                animation.direction());
-
-    NS_ABORT_IF_FALSE(0.0 <= positionInIteration &&
-                      positionInIteration <= 1.0,
-                      "position should be in [0-1]");
-
-    int segmentIndex = 0;
-    AnimationSegment* segment = animation.segments().Elements();
-    while (segment->endPortion() < positionInIteration) {
-      ++segment;
-      ++segmentIndex;
-    }
-
-    double positionInSegment = (positionInIteration - segment->startPortion()) /
-                                 (segment->endPortion() - segment->startPortion());
-
-    double portion = animData.mFunctions[segmentIndex]->GetValue(positionInSegment);
-
-    activeAnimations = true;
-
-    // interpolate the property
-    Animatable interpolatedValue;
-    SampleValue(portion, animation, animData.mStartValues[segmentIndex],
-                animData.mEndValues[segmentIndex], &interpolatedValue);
-    ShadowLayer* shadow = aLayer->AsShadowLayer();
-    switch (animation.property()) {
-    case eCSSProperty_opacity:
-    {
-      shadow->SetShadowOpacity(interpolatedValue.get_float());
-      break;
-    }
-    case eCSSProperty_transform:
-    {
-      gfx3DMatrix matrix = interpolatedValue.get_ArrayOfTransformFunction()[0].get_TransformMatrix().value();
-      if (ContainerLayer* c = aLayer->AsContainerLayer()) {
-        matrix.ScalePost(c->GetInheritedXScale(),
-                         c->GetInheritedYScale(),
-                         1);
-      }
-      NS_ASSERTION(!aLayer->GetIsFixedPosition(), "Can't animate transforms on fixed-position layers");
-      shadow->SetShadowTransform(matrix);
-      break;
-    }
-    default:
-      NS_WARNING("Unhandled animated property");
-    }
-  }
-
-  for (Layer* child = aLayer->GetFirstChild(); child;
-       child = child->GetNextSibling()) {
-    activeAnimations |= SampleAnimations(child, aPoint);
-  }
-
-  return activeAnimations;
-}
-
-bool
-CompositorParent::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFrame,
-                                                   Layer *aLayer,
-                                                   bool* aWantNextFrame)
-{
-  bool appliedTransform = false;
-  for (Layer* child = aLayer->GetFirstChild();
-      child; child = child->GetNextSibling()) {
-    appliedTransform |=
-      ApplyAsyncContentTransformToTree(aCurrentFrame, child, aWantNextFrame);
-  }
-
-  ContainerLayer* container = aLayer->AsContainerLayer();
-  if (!container) {
-    return appliedTransform;
-  }
-
-  AsyncPanZoomController* controller = nullptr;
-  // Check if an AsyncPanZoomController is attached to this layer.
-  if (LayerUserData* data = aLayer->GetUserData(&sPanZoomUserDataKey)) {
-    controller = static_cast<PanZoomUserData*>(data)->mController;
-  } else {
-    // Check if a derived implementation provides a default AsyncPanZoomController.
-    controller = GetDefaultPanZoomController();
-  }
-
-  if (controller) {
-    ShadowLayer* shadow = aLayer->AsShadowLayer();
-
-    ViewTransform treeTransform;
-    *aWantNextFrame |=
-      controller->SampleContentTransformForFrame(aCurrentFrame,
-                                                 container,
-                                                 &treeTransform);
-
-    gfx3DMatrix transform(gfx3DMatrix(treeTransform) * aLayer->GetTransform());
-    // The transform already takes the resolution scale into account.  Since we
-    // will apply the resolution scale again when computing the effective
-    // transform, we must apply the inverse resolution scale here.
-    transform.Scale(1.0f/container->GetPreXScale(),
-                    1.0f/container->GetPreYScale(),
-                    1);
-    transform.ScalePost(1.0f/aLayer->GetPostXScale(),
-                        1.0f/aLayer->GetPostYScale(),
-                        1);
-    shadow->SetShadowTransform(transform);
-
-    gfx::Margin fixedLayerMargins(0, 0, 0, 0);
-    TransformFixedLayers(
-      aLayer,
-      -treeTransform.mTranslation / treeTransform.mScale,
-      treeTransform.mScale,
-      fixedLayerMargins);
-
-    appliedTransform = true;
-  }
-
-  return appliedTransform;
-}
-
 void
-CompositorParent::TransformScrollableLayer(Layer* aLayer, const gfx3DMatrix& aRootTransform)
-{
-  ShadowLayer* shadow = aLayer->AsShadowLayer();
-  ContainerLayer* container = aLayer->AsContainerLayer();
-
-  const FrameMetrics& metrics = container->GetFrameMetrics();
-  // We must apply the resolution scale before a pan/zoom transform, so we call
-  // GetTransform here.
-  const gfx3DMatrix& currentTransform = aLayer->GetTransform();
-
-  gfx3DMatrix treeTransform;
-
-  // Translate fixed position layers so that they stay in the correct position
-  // when mScrollOffset and metricsScrollOffset differ.
-  gfxPoint offset;
-  gfxSize scaleDiff;
-
-  float rootScaleX = aRootTransform.GetXScale(),
-        rootScaleY = aRootTransform.GetYScale();
-  // The ratio of layers pixels to device pixels.  The Java
-  // compositor wants to see values in units of device pixels, so we
-  // map our FrameMetrics values to that space.  This is not exposed
-  // as a FrameMetrics helper because it's a deprecated conversion.
-  float devPixelRatioX = 1 / rootScaleX, devPixelRatioY = 1 / rootScaleY;
-
-  gfxPoint scrollOffsetLayersPixels(metrics.GetScrollOffsetInLayerPixels());
-  nsIntPoint scrollOffsetDevPixels(
-    NS_lround(scrollOffsetLayersPixels.x * devPixelRatioX),
-    NS_lround(scrollOffsetLayersPixels.y * devPixelRatioY));
-
-  if (mIsFirstPaint) {
-    mContentRect = metrics.mContentRect;
-    SetFirstPaintViewport(scrollOffsetDevPixels,
-                          1/rootScaleX,
-                          mContentRect,
-                          metrics.mScrollableRect);
-    mIsFirstPaint = false;
-  } else if (!metrics.mContentRect.IsEqualEdges(mContentRect)) {
-    mContentRect = metrics.mContentRect;
-    SetPageRect(metrics.mScrollableRect);
-  }
-
-  // We synchronise the viewport information with Java after sending the above
-  // notifications, so that Java can take these into account in its response.
-  // Calculate the absolute display port to send to Java
-  gfx::Rect displayPortLayersPixels(metrics.mCriticalDisplayPort.IsEmpty() ?
-                                    metrics.mDisplayPort : metrics.mCriticalDisplayPort);
-  nsIntRect displayPortDevPixels(
-    NS_lround(displayPortLayersPixels.x * devPixelRatioX),
-    NS_lround(displayPortLayersPixels.y * devPixelRatioY),
-    NS_lround(displayPortLayersPixels.width * devPixelRatioX),
-    NS_lround(displayPortLayersPixels.height * devPixelRatioY));
-
-  displayPortDevPixels.x += scrollOffsetDevPixels.x;
-  displayPortDevPixels.y += scrollOffsetDevPixels.y;
-
-  gfx::Margin fixedLayerMargins(0, 0, 0, 0);
-  SyncViewportInfo(displayPortDevPixels, 1/rootScaleX, mLayersUpdated,
-                   mScrollOffset, mXScale, mYScale, fixedLayerMargins);
-  mLayersUpdated = false;
-
-  // Handle transformations for asynchronous panning and zooming. We determine the
-  // zoom used by Gecko from the transformation set on the root layer, and we
-  // determine the scroll offset used by Gecko from the frame metrics of the
-  // primary scrollable layer. We compare this to the desired zoom and scroll
-  // offset in the view transform we obtained from Java in order to compute the
-  // transformation we need to apply.
-  float tempScaleDiffX = rootScaleX * mXScale;
-  float tempScaleDiffY = rootScaleY * mYScale;
-
-  nsIntPoint metricsScrollOffset(0, 0);
-  if (metrics.IsScrollable()) {
-    metricsScrollOffset = scrollOffsetDevPixels;
-  }
-
-  nsIntPoint scrollCompensation(
-    (mScrollOffset.x / tempScaleDiffX - metricsScrollOffset.x) * mXScale,
-    (mScrollOffset.y / tempScaleDiffY - metricsScrollOffset.y) * mYScale);
-  treeTransform = gfx3DMatrix(ViewTransform(-scrollCompensation,
-                                            gfxSize(mXScale, mYScale)));
-
-  // If the contents can fit entirely within the widget area on a particular
-  // dimenson, we need to translate and scale so that the fixed layers remain
-  // within the page boundaries.
-  if (mContentRect.width * tempScaleDiffX < metrics.mCompositionBounds.width) {
-    offset.x = -metricsScrollOffset.x;
-    scaleDiff.width = std::min(1.0f, metrics.mCompositionBounds.width / (float)mContentRect.width);
-  } else {
-    offset.x = clamped(mScrollOffset.x / tempScaleDiffX, (float)mContentRect.x,
-                       mContentRect.XMost() - metrics.mCompositionBounds.width / tempScaleDiffX) -
-               metricsScrollOffset.x;
-    scaleDiff.width = tempScaleDiffX;
-  }
-
-  if (mContentRect.height * tempScaleDiffY < metrics.mCompositionBounds.height) {
-    offset.y = -metricsScrollOffset.y;
-    scaleDiff.height = std::min(1.0f, metrics.mCompositionBounds.height / (float)mContentRect.height);
-  } else {
-    offset.y = clamped(mScrollOffset.y / tempScaleDiffY, (float)mContentRect.y,
-                       mContentRect.YMost() - metrics.mCompositionBounds.height / tempScaleDiffY) -
-               metricsScrollOffset.y;
-    scaleDiff.height = tempScaleDiffY;
-  }
-
-  // The transform already takes the resolution scale into account.  Since we
-  // will apply the resolution scale again when computing the effective
-  // transform, we must apply the inverse resolution scale here.
-  gfx3DMatrix computedTransform = treeTransform * currentTransform;
-  computedTransform.Scale(1.0f/container->GetPreXScale(),
-                          1.0f/container->GetPreYScale(),
-                          1);
-  computedTransform.ScalePost(1.0f/container->GetPostXScale(),
-                              1.0f/container->GetPostYScale(),
-                              1);
-  shadow->SetShadowTransform(computedTransform);
-  TransformFixedLayers(aLayer, offset, scaleDiff, fixedLayerMargins);
-}
-
-bool
-CompositorParent::TransformShadowTree(TimeStamp aCurrentFrame)
-{
-  bool wantNextFrame = false;
-  Layer* root = mLayerManager->GetRoot();
-
-  // NB: we must sample animations *before* sampling pan/zoom
-  // transforms.
-  wantNextFrame |= SampleAnimations(root, aCurrentFrame);
-
-  const gfx3DMatrix& rootTransform = root->GetTransform();
-
-  // FIXME/bug 775437: unify this interface with the ~native-fennec
-  // derived code
-  //
-  // Attempt to apply an async content transform to any layer that has
-  // an async pan zoom controller (which means that it is rendered
-  // async using Gecko). If this fails, fall back to transforming the
-  // primary scrollable layer.  "Failing" here means that we don't
-  // find a frame that is async scrollable.  Note that the fallback
-  // code also includes Fennec which is rendered async.  Fennec uses
-  // its own platform-specific async rendering that is done partially
-  // in Gecko and partially in Java.
-  if (!ApplyAsyncContentTransformToTree(aCurrentFrame, root, &wantNextFrame)) {
-    nsAutoTArray<Layer*,1> scrollableLayers;
-#ifdef MOZ_WIDGET_ANDROID
-    scrollableLayers.AppendElement(mLayerManager->GetPrimaryScrollableLayer());
-#else
-    mLayerManager->GetScrollableLayers(scrollableLayers);
-#endif
-
-    for (uint32_t i = 0; i < scrollableLayers.Length(); i++) {
-      if (scrollableLayers[i]) {
-        TransformScrollableLayer(scrollableLayers[i], rootTransform);
-      }
-    }
-  }
-
-  return wantNextFrame;
-}
-
-void
-CompositorParent::ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
+CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                       const TargetConfig& aTargetConfig,
                                       bool isFirstPaint)
 {
-  if (!isFirstPaint && !mIsFirstPaint && mTargetConfig.orientation() != aTargetConfig.orientation()) {
+  if (!isFirstPaint &&
+      !mCompositionManager->IsFirstPaint() &&
+      mCompositionManager->RequiresReorientation(aTargetConfig.orientation())) {
     if (mForceCompositionTask != NULL) {
       mForceCompositionTask->Cancel();
     }
@@ -1069,60 +534,28 @@ CompositorParent::ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
   // race condition.
   mLayerManager->UpdateRenderBounds(aTargetConfig.clientBounds());
 
-  mTargetConfig = aTargetConfig;
-  mIsFirstPaint = mIsFirstPaint || isFirstPaint;
-  mLayersUpdated = true;
+  mCompositionManager->Updated(isFirstPaint, aTargetConfig);
   Layer* root = aLayerTree->GetRoot();
   mLayerManager->SetRoot(root);
   if (root) {
     SetShadowProperties(root);
   }
   ScheduleComposition();
-  ShadowLayerManager *shadow = mLayerManager->AsShadowManager();
-  if (shadow) {
-    shadow->NotifyShadowTreeTransaction();
+  LayerManagerComposite *layerComposite = mLayerManager->AsLayerManagerComposite();
+  if (layerComposite) {
+    layerComposite->NotifyShadowTreeTransaction();
   }
 }
 
-
-void
-CompositorParent::SetFirstPaintViewport(const nsIntPoint& aOffset, float aZoom,
-                                        const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect)
-{
-#ifdef MOZ_WIDGET_ANDROID
-  AndroidBridge::Bridge()->SetFirstPaintViewport(aOffset, aZoom, aPageRect, aCssPageRect);
-#endif
-}
-
-void
-CompositorParent::SetPageRect(const gfx::Rect& aCssPageRect)
-{
-#ifdef MOZ_WIDGET_ANDROID
-  AndroidBridge::Bridge()->SetPageRect(aCssPageRect);
-#endif
-}
-
-void
-CompositorParent::SyncViewportInfo(const nsIntRect& aDisplayPort,
-                                   float aDisplayResolution, bool aLayersUpdated,
-                                   nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY,
-                                   gfx::Margin& aFixedLayerMargins)
-{
-#ifdef MOZ_WIDGET_ANDROID
-  AndroidBridge::Bridge()->SyncViewportInfo(aDisplayPort, aDisplayResolution, aLayersUpdated,
-                                            aScrollOffset, aScaleX, aScaleY, aFixedLayerMargins);
-#endif
-}
-
-PLayersParent*
-CompositorParent::AllocPLayers(const LayersBackend& aBackendHint,
-                               const uint64_t& aId,
-                               TextureFactoryIdentifier* aTextureFactoryIdentifier)
+PLayerTransactionParent*
+CompositorParent::AllocPLayerTransaction(const LayersBackend& aBackendHint,
+                                         const uint64_t& aId,
+                                         TextureFactoryIdentifier* aTextureFactoryIdentifier)
 {
   MOZ_ASSERT(aId == 0);
 
   // mWidget doesn't belong to the compositor thread, so it should be set to
-  // NULL before returning from this method, to avoid accessing it elsewhere.
+  // nullptr before returning from this method, to avoid accessing it elsewhere.
   nsIntRect rect;
   mWidget->GetClientBounds(rect);
 
@@ -1131,36 +564,31 @@ CompositorParent::AllocPLayers(const LayersBackend& aBackendHint,
       new LayerManagerComposite(new CompositorOGL(mWidget,
                                                   mEGLSurfaceSize.width,
                                                   mEGLSurfaceSize.height,
-                                                  mRenderToEGLSurface));
-    mWidget = nullptr;
-    mLayerManager->SetCompositorID(mCompositorID);
-
-    if (!mLayerManager->Initialize()) {
-      NS_ERROR("Failed to init Compositor");
-      return NULL;
-    }
-
-    *aTextureFactoryIdentifier = mLayerManager->GetTextureFactoryIdentifier();
-    return new ShadowLayersParent(mLayerManager, this, 0);
-  // Basic layers compositor not yet implemented
-  /*} else if (aBackendHint == mozilla::layers::LAYERS_BASIC) {
-    nsRefPtr<LayerManager> layerManager = new BasicShadowLayerManager(mWidget);
-    mWidget = NULL;
-    mLayerManager = layerManager;
-    ShadowLayerManager* slm = layerManager->AsShadowManager();
-    if (!slm) {
-      return NULL;
-    }
-    *aTextureFactoryIdentifier = layerManager->GetTextureFactoryIdentifier();
-    return new ShadowLayersParent(slm, this, 0); */
+                                                  mUseExternalSurfaceSize));
+  } else if (aBackendHint == mozilla::layers::LAYERS_BASIC) {
+    mLayerManager =
+      new LayerManagerComposite(new BasicCompositor(mWidget));
   } else {
     NS_ERROR("Unsupported backend selected for Async Compositor");
-    return NULL;
+    return nullptr;
   }
+
+  mWidget = nullptr;
+  mLayerManager->SetCompositorID(mCompositorID);
+
+  if (!mLayerManager->Initialize()) {
+    NS_ERROR("Failed to init Compositor");
+    return nullptr;
+  }
+
+  mCompositionManager = new AsyncCompositionManager(mLayerManager);
+
+  *aTextureFactoryIdentifier = mLayerManager->GetTextureFactoryIdentifier();
+  return new LayerTransactionParent(mLayerManager, this, 0);
 }
 
 bool
-CompositorParent::DeallocPLayers(PLayersParent* actor)
+CompositorParent::DeallocPLayerTransaction(PLayerTransactionParent* actor)
 {
   delete actor;
   return true;
@@ -1213,7 +641,7 @@ CompositorParent* CompositorParent::RemoveCompositor(uint64_t id)
   return retval;
 }
 
-typedef map<uint64_t, LayerTreeState> LayerTreeMap;
+typedef map<uint64_t, CompositorParent::LayerTreeState> LayerTreeMap;
 static LayerTreeMap sIndirectLayerTrees;
 
 /*static*/ uint64_t
@@ -1295,12 +723,14 @@ public:
                                 SurfaceDescriptor* aOutSnapshot)
   { return true; }
 
-  virtual PLayersParent* AllocPLayers(const LayersBackend& aBackendType,
-                                      const uint64_t& aId,
-                                      TextureFactoryIdentifier* aTextureFactoryIdentifier) MOZ_OVERRIDE;
-  virtual bool DeallocPLayers(PLayersParent* aLayers) MOZ_OVERRIDE;
+  virtual PLayerTransactionParent*
+    AllocPLayerTransaction(const LayersBackend& aBackendType,
+                           const uint64_t& aId,
+                           TextureFactoryIdentifier* aTextureFactoryIdentifier) MOZ_OVERRIDE;
 
-  virtual void ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
+  virtual bool DeallocPLayerTransaction(PLayerTransactionParent* aLayers) MOZ_OVERRIDE;
+
+  virtual void ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                    const TargetConfig& aTargetConfig,
                                    bool isFirstPaint) MOZ_OVERRIDE;
 
@@ -1355,8 +785,8 @@ UpdateIndirectTree(uint64_t aId, Layer* aRoot, const TargetConfig& aTargetConfig
   }
 }
 
-static const LayerTreeState*
-GetIndirectShadowTree(uint64_t aId)
+/* static */ const CompositorParent::LayerTreeState*
+CompositorParent::GetIndirectShadowTree(uint64_t aId)
 {
   LayerTreeMap::const_iterator cit = sIndirectLayerTrees.find(aId);
   if (sIndirectLayerTrees.end() == cit) {
@@ -1379,22 +809,22 @@ CrossProcessCompositorParent::ActorDestroy(ActorDestroyReason aWhy)
     NewRunnableMethod(this, &CrossProcessCompositorParent::DeferredDestroy));
 }
 
-PLayersParent*
-CrossProcessCompositorParent::AllocPLayers(const LayersBackend& aBackendType,
-                                           const uint64_t& aId,
-                                           TextureFactoryIdentifier* aTextureFactoryIdentifier)
+PLayerTransactionParent*
+CrossProcessCompositorParent::AllocPLayerTransaction(const LayersBackend& aBackendType,
+                                                     const uint64_t& aId,
+                                                     TextureFactoryIdentifier* aTextureFactoryIdentifier)
 {
   MOZ_ASSERT(aId != 0);
 
   nsRefPtr<LayerManager> lm = sCurrentCompositor->GetLayerManager();
   *aTextureFactoryIdentifier = lm->GetTextureFactoryIdentifier();
-  return new ShadowLayersParent(lm->AsShadowManager(), this, aId);
+  return new LayerTransactionParent(lm->AsLayerManagerComposite(), this, aId);
 }
 
 bool
-CrossProcessCompositorParent::DeallocPLayers(PLayersParent* aLayers)
+CrossProcessCompositorParent::DeallocPLayerTransaction(PLayerTransactionParent* aLayers)
 {
-  ShadowLayersParent* slp = static_cast<ShadowLayersParent*>(aLayers);
+  LayerTransactionParent* slp = static_cast<LayerTransactionParent*>(aLayers);
   RemoveIndirectTree(slp->GetId());
   delete aLayers;
   return true;
@@ -1402,7 +832,7 @@ CrossProcessCompositorParent::DeallocPLayers(PLayersParent* aLayers)
 
 void
 CrossProcessCompositorParent::ShadowLayersUpdated(
-  ShadowLayersParent* aLayerTree,
+  LayerTransactionParent* aLayerTree,
   const TargetConfig& aTargetConfig,
   bool isFirstPaint)
 {

@@ -48,7 +48,7 @@ function test() {
           statusText: "OK",
           type: "json",
           fullMimeType: "application/json; charset=utf-8",
-          size: L10N.getFormatStr("networkMenu.sizeKB", 0.03),
+          size: L10N.getFormatStr("networkMenu.sizeKB", 0.02),
           time: true
         });
       verifyRequestItemTarget(RequestsMenu.getItemAtIndex(4),
@@ -66,7 +66,7 @@ function test() {
           statusText: "OK",
           type: "png",
           fullMimeType: "image/png",
-          size: L10N.getFormatStr("networkMenu.sizeKB", 0.76),
+          size: L10N.getFormatStr("networkMenu.sizeKB", 0.75),
           time: true
         });
 
@@ -166,7 +166,8 @@ function test() {
             let jsonScope = tabpanel.querySelectorAll(".variables-view-scope")[0];
 
             is(jsonScope.querySelector(".name").getAttribute("value"),
-              "JSON", "The json scope doesn't have the correct title.");
+              L10N.getStr("jsonScopeName"),
+              "The json scope doesn't have the correct title.");
 
             is(jsonScope.querySelectorAll(".variables-view-property .name")[0].getAttribute("value"),
               "greeting", "The first json property name was incorrect.");

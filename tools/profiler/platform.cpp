@@ -18,6 +18,11 @@
 #include "nsDirectoryServiceUtils.h"
 #include "nsDirectoryServiceDefs.h"
 #include "mozilla/Services.h"
+#include "nsThreadUtils.h"
+
+#if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
+  #include "AndroidBridge.h"
+#endif
 
 mozilla::ThreadLocal<PseudoStack *> tlsPseudoStack;
 mozilla::ThreadLocal<TableTicker *> tlsTicker;
@@ -27,21 +32,58 @@ mozilla::ThreadLocal<TableTicker *> tlsTicker;
 // it as the flag itself.
 bool stack_key_initialized;
 
-TimeStamp sLastTracerEvent; // is raced on
-int       sFrameNumber = 0;
-int       sLastFrameNumber = 0;
+TimeStamp   sLastTracerEvent; // is raced on
+TimeStamp   sStartTime;
+int         sFrameNumber = 0;
+int         sLastFrameNumber = 0;
+int         sInitCount = 0; // Each init must have a matched shutdown.
+static bool sIsProfiling = false; // is raced on
 
 /* used to keep track of the last event that we sampled during */
 unsigned int sLastSampledEventGeneration = 0;
 
 /* a counter that's incremented everytime we get responsiveness event
- * note: it might also be worth tracking everytime we go around
+ * note: it might also be worth trackplaing everytime we go around
  * the event loop */
 unsigned int sCurrentEventGeneration = 0;
 /* we don't need to worry about overflow because we only treat the
  * case of them being the same as special. i.e. we only run into
  * a problem if 2^32 events happen between samples that we need
  * to know are associated with different events */
+
+std::vector<ThreadInfo*>* Sampler::sRegisteredThreads = nullptr;
+mozilla::Mutex* Sampler::sRegisteredThreadsMutex = nullptr;
+
+TableTicker* Sampler::sActiveSampler;
+
+void Sampler::Startup() {
+  sRegisteredThreads = new std::vector<ThreadInfo*>();
+  sRegisteredThreadsMutex = new mozilla::Mutex("sRegisteredThreads mutex");
+}
+
+void Sampler::Shutdown() {
+  while (sRegisteredThreads->size() > 0) {
+    delete sRegisteredThreads->back();
+    sRegisteredThreads->pop_back();
+  }
+
+  delete sRegisteredThreadsMutex;
+  delete sRegisteredThreads;
+
+  // UnregisterThread can be called after shutdown in XPCShell. Thus
+  // we need to point to null to ignore such a call after shutdown.
+  sRegisteredThreadsMutex = nullptr;
+  sRegisteredThreads = nullptr;
+}
+
+ThreadInfo::~ThreadInfo() {
+  free(mName);
+
+  if (mProfile)
+    delete mProfile;
+
+  Sampler::FreePlatformData(mPlatformData);
+}
 
 bool sps_version2()
 {
@@ -212,6 +254,8 @@ void read_profiler_env_vars()
 
 void mozilla_sampler_init()
 {
+  sInitCount++;
+
   if (stack_key_initialized)
     return;
 
@@ -222,30 +266,17 @@ void mozilla_sampler_init()
   }
   stack_key_initialized = true;
 
+  Sampler::Startup();
+
   PseudoStack *stack = new PseudoStack();
   tlsPseudoStack.set(stack);
 
-  if (sps_version2()) {
-    // Read mode settings from MOZ_PROFILER_MODE and interval
-    // settings from MOZ_PROFILER_INTERVAL and stack-scan threshhold
-    // from MOZ_PROFILER_STACK_SCAN.
-    read_profiler_env_vars();
+  Sampler::RegisterCurrentThread("Gecko", stack, true);
 
-    // Create the unwinder thread.  ATM there is only one.
-    uwt__init();
-
-# if defined(SPS_PLAT_amd64_linux) || defined(SPS_PLAT_arm_android) \
-     || defined(SPS_PLAT_x86_linux) || defined(SPS_PLAT_x86_android) \
-     || defined(SPS_PLAT_x86_windows) || defined(SPS_PLAT_amd64_windows) /* no idea if windows is correct */
-    // On Linuxes, register this thread (temporarily) for profiling
-    int aLocal;
-    uwt__register_thread_for_profiling( &aLocal );
-# elif defined(SPS_PLAT_amd64_darwin) || defined(SPS_PLAT_x86_darwin)
-    // Registration is done in platform-macos.cc
-# else
-#   error "Unknown plat"
-# endif
-  }
+  // Read mode settings from MOZ_PROFILER_MODE and interval
+  // settings from MOZ_PROFILER_INTERVAL and stack-scan threshhold
+  // from MOZ_PROFILER_STACK_SCAN.
+  read_profiler_env_vars();
 
   // Allow the profiler to be started using signals
   OS::RegisterStartHandler();
@@ -271,6 +302,11 @@ void mozilla_sampler_init()
 
 void mozilla_sampler_shutdown()
 {
+  sInitCount--;
+
+  if (sInitCount > 0)
+    return;
+
   // Save the profile on shutdown if requested.
   TableTicker *t = tlsTicker.get();
   if (t) {
@@ -285,15 +321,10 @@ void mozilla_sampler_shutdown()
     }
   }
 
-  // Shut down and reap the unwinder thread.  We have to do this
-  // before stopping the sampler, so as to guarantee that the unwinder
-  // thread doesn't try to access memory that the subsequent call to
-  // mozilla_sampler_stop causes to be freed.
-  if (sps_version2()) {
-    uwt__deinit();
-  }
-
   profiler_stop();
+
+  Sampler::Shutdown();
+
   // We can't delete the Stack because we can be between a
   // sampler call_enter/call_exit point.
   // TODO Need to find a safe time to delete Stack
@@ -319,15 +350,10 @@ char* mozilla_sampler_get_profile()
     return NULL;
   }
 
-  std::stringstream profile;
-  t->SetPaused(true);
-  profile << *(t->GetPrimaryThreadProfile());
-  t->SetPaused(false);
-
-  std::string profileString = profile.str();
-  char *rtn = (char*)malloc( (profileString.length() + 1) * sizeof(char) );
-  strcpy(rtn, profileString.c_str());
-  return rtn;
+  std::stringstream stream;
+  t->ToStreamAsJSON(stream);
+  char* profile = strdup(stream.str().c_str());
+  return profile;
 }
 
 JSObject *mozilla_sampler_get_profile_data(JSContext *aCx)
@@ -345,13 +371,26 @@ const char** mozilla_sampler_get_features()
 {
   static const char* features[] = {
 #if defined(MOZ_PROFILING) && defined(HAVE_NATIVE_UNWIND)
+    // Walk the C++ stack.
     "stackwalk",
 #endif
 #if defined(ENABLE_SPS_LEAF_DATA)
+    // Include the C++ leaf node if not stackwalking. DevTools
+    // profiler doesn't want the native addresses.
     "leaf",
 #endif
+#if !defined(SPS_OS_windows)
+    // Use a seperate thread of walking the stack.
+    "unwinder",
+#endif
+    "java",
+    // Only record samples during periods of bad responsiveness
     "jank",
+    // Tell the JS engine to emmit pseudostack entries in the
+    // pro/epilogue.
     "js",
+    // Profile the registered secondary threads.
+    "threads",
     NULL
   };
 
@@ -380,19 +419,45 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
   profiler_stop();
 
   TableTicker* t;
-  if (sps_version2()) {
-    t = new BreakpadSampler(aInterval ? aInterval : PROFILE_DEFAULT_INTERVAL,
-                           aProfileEntries ? aProfileEntries : PROFILE_DEFAULT_ENTRY,
-                           stack, aFeatures, aFeatureCount);
-  } else {
-    t = new TableTicker(aInterval ? aInterval : PROFILE_DEFAULT_INTERVAL,
-                        aProfileEntries ? aProfileEntries : PROFILE_DEFAULT_ENTRY,
-                        stack, aFeatures, aFeatureCount);
+  t = new TableTicker(aInterval ? aInterval : PROFILE_DEFAULT_INTERVAL,
+                      aProfileEntries ? aProfileEntries : PROFILE_DEFAULT_ENTRY,
+                      aFeatures, aFeatureCount);
+  if (t->HasUnwinderThread()) {
+    int aLocal;
+    uwt__register_thread_for_profiling( &aLocal );
+
+    // Create the unwinder thread.  ATM there is only one.
+    uwt__init();
   }
+
   tlsTicker.set(t);
   t->Start();
-  if (t->ProfileJS())
-      stack->enableJSSampling();
+  if (t->ProfileJS()) {
+      mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
+      std::vector<ThreadInfo*> threads = t->GetRegisteredThreads();
+
+      for (uint32_t i = 0; i < threads.size(); i++) {
+        ThreadInfo* info = threads[i];
+        ThreadProfile* thread_profile = info->Profile();
+        if (!thread_profile) {
+          continue;
+        }
+        thread_profile->GetPseudoStack()->enableJSSampling();
+      }
+  }
+
+#if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
+  if (t->ProfileJava()) {
+    int javaInterval = aInterval;
+    // Java sampling doesn't accuratly keep up with 1ms sampling
+    if (javaInterval < 10) {
+      aInterval = 10;
+    }
+    mozilla::AndroidBridge::Bridge()->StartJavaProfiling(javaInterval, 1000);
+  }
+#endif
+
+  sIsProfiling = true;
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os)
@@ -410,6 +475,15 @@ void mozilla_sampler_stop()
   }
 
   bool disableJS = t->ProfileJS();
+  bool unwinderThreader = t->HasUnwinderThread();
+
+  // Shut down and reap the unwinder thread.  We have to do this
+  // before stopping the sampler, so as to guarantee that the unwinder
+  // thread doesn't try to access memory that the subsequent call to
+  // mozilla_sampler_stop causes to be freed.
+  if (unwinderThreader) {
+    uwt__stop();
+  }
 
   t->Stop();
   delete t;
@@ -420,6 +494,12 @@ void mozilla_sampler_stop()
   if (disableJS)
     stack->disableJSSampling();
 
+  if (unwinderThreader) {
+    uwt__deinit();
+  }
+
+  sIsProfiling = false;
+
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os)
     os->NotifyObservers(nullptr, "profiler-stopped", nullptr);
@@ -427,15 +507,7 @@ void mozilla_sampler_stop()
 
 bool mozilla_sampler_is_active()
 {
-  if (!stack_key_initialized)
-    profiler_init();
-
-  TableTicker *t = tlsTicker.get();
-  if (!t) {
-    return false;
-  }
-
-  return t->IsActive();
+  return sIsProfiling;
 }
 
 static double sResponsivenessTimes[100];
@@ -487,6 +559,26 @@ void mozilla_sampler_unlock()
     os->NotifyObservers(nullptr, "profiler-unlocked", nullptr);
 }
 
+bool mozilla_sampler_register_thread(const char* aName)
+{
+  PseudoStack* stack = new PseudoStack();
+  tlsPseudoStack.set(stack);
+
+  return Sampler::RegisterCurrentThread(aName, stack, false);
+}
+
+void mozilla_sampler_unregister_thread()
+{
+  Sampler::UnregisterCurrentThread();
+}
+
+double mozilla_sampler_time()
+{
+  TimeDuration delta = TimeStamp::Now() - sStartTime;
+  return delta.ToMilliseconds();
+}
+
 // END externally visible functions
 ////////////////////////////////////////////////////////////////////////
+
 

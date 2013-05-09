@@ -1,13 +1,45 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-MARIONETTE_TIMEOUT = 10000;
+MARIONETTE_TIMEOUT = 60000;
 
 SpecialPowers.addPermission("telephony", true, document);
 
 let telephony = window.navigator.mozTelephony;
 let outNumber = "5555551111";
 let outgoingCall;
+
+function getExistingCalls() {
+  runEmulatorCmd("gsm list", function(result) {
+    log("Initial call list: " + result);
+    if (result[0] == "OK") {
+      dial();
+    } else {
+      cancelExistingCalls(result);
+    };
+  });
+}
+
+function cancelExistingCalls(callList) {
+  if (callList.length && callList[0] != "OK") {
+    // Existing calls remain; get rid of the next one in the list
+    nextCall = callList.shift().split(' ')[2].trim();
+    log("Cancelling existing call '" + nextCall +"'");
+    runEmulatorCmd("gsm cancel " + nextCall, function(result) {
+      if (result[0] == "OK") {
+        cancelExistingCalls(callList);
+      } else {
+        log("Failed to cancel existing call");
+        cleanUp();
+      };
+    });
+  } else {
+    // No more calls in the list; give time for emulator to catch up
+    waitFor(dial, function() {
+      return (telephony.calls.length == 0);
+    });
+  };
+}
 
 function dial() {
   log("Make an outgoing call.");
@@ -41,4 +73,4 @@ function cleanUp(){
   finish();
 }
 
-dial();
+getExistingCalls();

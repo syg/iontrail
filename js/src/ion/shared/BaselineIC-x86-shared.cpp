@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -17,7 +16,7 @@ using namespace js::ion;
 bool
 ICCompare_Double::Compiler::generateStubCode(MacroAssembler &masm)
 {
-    Label failure, isNaN;
+    Label failure, notNaN;
     masm.ensureDouble(R0, FloatReg0, &failure);
     masm.ensureDouble(R1, FloatReg1, &failure);
 
@@ -28,17 +27,15 @@ ICCompare_Double::Compiler::generateStubCode(MacroAssembler &masm)
     masm.setCC(Assembler::ConditionFromDoubleCondition(cond), dest);
     masm.movzxbl(dest, dest);
 
-    // Check for NaN.
-    masm.j(Assembler::Parity, &isNaN);
+    // Check for NaN, if needed.
+    Assembler::NaNCond nanCond = Assembler::NaNCondFromDoubleCondition(cond);
+    if (nanCond != Assembler::NaN_HandledByCond) {
+      masm.j(Assembler::NoParity, &notNaN);
+      masm.mov(Imm32(nanCond == Assembler::NaN_IsTrue), dest);
+      masm.bind(&notNaN);
+    }
 
     masm.tagValue(JSVAL_TYPE_BOOLEAN, dest, R0);
-    EmitReturnFromIC(masm);
-
-    Assembler::NaNCond nanCond = Assembler::NaNCondFromDoubleCondition(cond);
-    JS_ASSERT(nanCond == Assembler::NaN_IsTrue || nanCond == Assembler::NaN_IsFalse);
-
-    masm.bind(&isNaN);
-    masm.moveValue(BooleanValue(nanCond == Assembler::NaN_IsTrue), R0);
     EmitReturnFromIC(masm);
 
     // Failure case - jump to next stub

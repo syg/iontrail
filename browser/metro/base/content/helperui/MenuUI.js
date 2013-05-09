@@ -15,10 +15,11 @@ var AutofillMenuUI = {
   get _commands() { return this._popup.childNodes[0]; },
 
   get _menuPopup() {
-    if (!this.__menuPopup)
+    if (!this.__menuPopup) {
       this.__menuPopup = new MenuPopup(this._panel, this._popup);
       this.__menuPopup._wantTypeBehind = true;
-
+      this.__menuPopup.controller = this;
+    }
     return this.__menuPopup;
   },
 
@@ -87,9 +88,10 @@ var ContextMenuUI = {
   get _commands() { return this._popup.childNodes[0]; },
 
   get _menuPopup() {
-    if (!this.__menuPopup)
+    if (!this.__menuPopup) {
       this.__menuPopup = new MenuPopup(this._panel, this._popup);
-
+      this.__menuPopup.controller = this;
+    }
     return this.__menuPopup;
   },
 
@@ -106,7 +108,7 @@ var ContextMenuUI = {
   },
 
   /*
-   * showContextMenu - display a context sensitive menu based 
+   * showContextMenu - display a context sensitive menu based
    * on the data provided in a json data structure.
    *
    * @param aMessage data structure containing information about
@@ -167,7 +169,7 @@ var ContextMenuUI = {
         continue;
 
       for (let i = 0; i < types.length; i++) {
-        // If one of the item's types has '!' before it, treat it as an exclusion rule. 
+        // If one of the item's types has '!' before it, treat it as an exclusion rule.
         if (types[i].charAt(0) == '!' && contentTypes.indexOf(types[i].substring(1)) != -1) {
           break;
         }
@@ -188,8 +190,13 @@ var ContextMenuUI = {
       return false;
     }
 
-    let coords =
-      aMessage.target.msgBrowserToClient(aMessage, true);
+    let coords = { x: aMessage.json.xPos, y: aMessage.json.yPos };
+
+    // chrome calls don't need to be translated and as such
+    // don't provide target.
+    if (aMessage.target) {
+      coords = aMessage.target.msgBrowserToClient(aMessage, true);
+    }
     this._menuPopup.show(Util.extend({}, this._defaultPositionOptions, {
       xPos: coords.x,
       yPos: coords.y,
@@ -217,9 +224,10 @@ var MenuControlUI = {
   get _commands() { return this._popup.childNodes[0]; },
 
   get _menuPopup() {
-    if (!this.__menuPopup)
+    if (!this.__menuPopup) {
       this.__menuPopup = new MenuPopup(this._panel, this._popup);
-
+      this.__menuPopup.controller = this;
+    }
     return this.__menuPopup;
   },
 
@@ -330,8 +338,9 @@ function MenuPopup(aPanel, aPopup) {
   this._panel = aPanel;
   this._popup = aPopup;
   this._wantTypeBehind = false;
-}
 
+  window.addEventListener('MozAppbarShowing', this, false);
+}
 MenuPopup.prototype = {
   get _visible() { return !this._panel.hidden; },
   get _commands() { return this._popup.childNodes[0]; },
@@ -377,14 +386,18 @@ MenuPopup.prototype = {
     let self = this;
     this._panel.addEventListener("transitionend", function () {
       self._panel.removeEventListener("transitionend", arguments.callee);
+      self._panel.removeAttribute("hiding");
       self._panel.hidden = true;
-      self._popupState = null;
+      self._popup.style.maxWidth = "none";
+      self._popup.style.maxHeight = "none";
+
       let event = document.createEvent("Events");
       event.initEvent("popuphidden", true, false);
       document.dispatchEvent(event);
     });
 
-    this._panel.removeAttribute("showing");
+    this._panel.setAttribute("hiding", "true");
+    setTimeout(()=>this._panel.removeAttribute("showing"), 0);
   },
 
   _position: function _position(aPositionOptions) {
@@ -403,7 +416,6 @@ MenuPopup.prototype = {
     let width = this._popup.boxObject.width;
     let height = this._popup.boxObject.height;
     let halfWidth = width / 2;
-    let halfHeight = height / 2;
     let screenWidth = ContentAreaObserver.width;
     let screenHeight = ContentAreaObserver.height;
 
@@ -422,29 +434,37 @@ MenuPopup.prototype = {
     if (aPositionOptions.centerHorizontally)
       aX -= halfWidth;
 
-    if (aX < 0) {
-      aX = 0;
+    // Always leave some padding.
+    if (aX < kPositionPadding) {
+      aX = kPositionPadding;
     } else if (aX + width + kPositionPadding > screenWidth){
-      aX = screenWidth - width - kPositionPadding;
+      // Don't let the popup overflow to the right.
+      aX = Math.max(screenWidth - width - kPositionPadding, kPositionPadding);
     }
 
-    if (aY < 0 && aPositionOptions.moveBelowToFit) {
+    if (aY < kPositionPadding  && aPositionOptions.moveBelowToFit) {
       // show context menu below when it doesn't fit.
       aY = aPositionOptions.yPos;
-    } else if (aY < 0) {
-      aY = 0;
+    }
+
+    if (aY < kPositionPadding) {
+      aY = kPositionPadding;
+    } else if (aY + height + kPositionPadding > screenHeight){
+      aY = Math.max(screenHeight - height - kPositionPadding, kPositionPadding);
     }
 
     this._panel.left = aX;
     this._panel.top = aY;
 
-    if (!aPositionOptions.maxWidth) {
-      let excessY = (aY + height + kPositionPadding - screenHeight);
-      this._popup.style.maxHeight = (excessY > 0) ? (height - excessY) + "px" : "none";
-    }
     if (!aPositionOptions.maxHeight) {
-      let excessX = (aX + width + kPositionPadding - screenWidth);
-      this._popup.style.maxWidth = (excessX > 0) ? (width - excessX) + "px" : "none";
+      // Make sure it fits in the window.
+      let popupHeight = Math.min(aY + height + kPositionPadding, screenHeight - aY - kPositionPadding);
+      this._popup.style.maxHeight = popupHeight + "px";
+    }
+
+    if (!aPositionOptions.maxWidth) {
+      let popupWidth = Math.min(aX + width + kPositionPadding, screenWidth - aX - kPositionPadding);
+      this._popup.style.maxWidth = popupWidth + "px";
     }
   },
 
@@ -467,6 +487,13 @@ MenuPopup.prototype = {
         break;
       case "PopupChanged":
         if (aEvent.detail) {
+          this.hide();
+        }
+        break;
+      case "MozAppbarShowing":
+        if (this.controller && this.controller.hide) {
+          this.controller.hide()
+        } else {
           this.hide();
         }
         break;

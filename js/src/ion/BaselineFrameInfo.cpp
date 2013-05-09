@@ -1,12 +1,12 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "BaselineFrameInfo.h"
 #include "IonSpewer.h"
+#include "shared/BaselineCompiler-shared.h"
 
 #include "jsanalyze.h"
 #include "jsinferinlines.h"
@@ -148,8 +148,8 @@ void
 FrameInfo::assertValidState(jsbytecode *pc)
 {
     // Check stack depth.
-    analyze::Bytecode *code = script->analysis()->maybeCode(pc);
-    JS_ASSERT_IF(code, stackDepth() == code->stackDepth);
+    BytecodeInfo *info = compiler.analysis().maybeInfo(pc);
+    JS_ASSERT_IF(info, stackDepth() == info->stackDepth);
 
     // Start at the bottom, find the first value that's not synced.
     uint32_t i = 0;

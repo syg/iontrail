@@ -200,9 +200,10 @@ BrowserRootActor.prototype = {
    * When a tab is closed, exit its tab actor.  The actor
    * will be dropped at the next listTabs request.
    */
-  onTabClosed: function BRA_onTabClosed(aEvent) {
+  onTabClosed:
+  makeInfallible(function BRA_onTabClosed(aEvent) {
     this.exitTabActor(aEvent.target.linkedBrowser);
-  },
+  }, "BrowserRootActor.prototype.onTabClosed"),
 
   /**
    * Exit the tab actor of the specified tab.
@@ -210,6 +211,7 @@ BrowserRootActor.prototype = {
   exitTabActor: function BRA_exitTabActor(aWindow) {
     let actor = this._tabActors.get(aWindow);
     if (actor) {
+      this._tabActors.delete(actor.browser);
       actor.exit();
     }
   },
@@ -272,15 +274,16 @@ BrowserRootActor.prototype = {
 
   onWindowTitleChange: function BRA_onWindowTitleChange(aWindow, aTitle) { },
   onOpenWindow: function BRA_onOpenWindow(aWindow) { },
-  onCloseWindow: function BRA_onCloseWindow(aWindow) {
+  onCloseWindow:
+  makeInfallible(function BRA_onCloseWindow(aWindow) {
     // An nsIWindowMediatorListener's onCloseWindow method gets passed all
     // sorts of windows; we only care about the tab containers. Those have
     // 'getBrowser' methods.
     if (aWindow.getBrowser) {
       this.unwatchWindow(aWindow);
     }
-  }
-}
+  }, "BrowserRootActor.prototype.onCloseWindow"),
+};
 
 /**
  * The request types this actor can handle.
@@ -582,7 +585,8 @@ BrowserTabActor.prototype = {
    * Handle location changes, by sending a tabNavigated notification to the
    * client.
    */
-  onWindowCreated: function BTA_onWindowCreated(evt) {
+  onWindowCreated:
+  makeInfallible(function BTA_onWindowCreated(evt) {
     if (evt.target === this.browser.contentDocument) {
       // pageshow events for non-persisted pages have already been handled by a
       // prior DOMWindowCreated event.
@@ -603,7 +607,7 @@ BrowserTabActor.prototype = {
         this.threadActor.findGlobals();
       }
     }
-  },
+  }, "BrowserTabActor.prototype.onWindowCreated"),
 
   /**
    * Tells if the window.console object is native or overwritten by script in
@@ -649,7 +653,7 @@ function DebuggerProgressListener(aBrowserTabActor) {
 
 DebuggerProgressListener.prototype = {
   onStateChange:
-  function DPL_onStateChange(aProgress, aRequest, aFlag, aStatus) {
+  makeInfallible(function DPL_onStateChange(aProgress, aRequest, aFlag, aStatus) {
     let isStart = aFlag & Ci.nsIWebProgressListener.STATE_START;
     let isStop = aFlag & Ci.nsIWebProgressListener.STATE_STOP;
     let isDocument = aFlag & Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
@@ -664,9 +668,6 @@ DebuggerProgressListener.prototype = {
     }
 
     if (isStart && aRequest instanceof Ci.nsIChannel) {
-      // If the request is about to happen in a new window, we are not concerned
-      // about the request.
-
       // Proceed normally only if the debuggee is not paused.
       if (this._tabActor.threadActor.state == "paused") {
         aRequest.suspend();
@@ -675,6 +676,7 @@ DebuggerProgressListener.prototype = {
         this._tabActor._pendingNavigation = aRequest;
       }
 
+      this._tabActor.threadActor.disableAllBreakpoints();
       this._tabActor.conn.send({
         from: this._tabActor.actorID,
         type: "tabNavigated",
@@ -697,7 +699,7 @@ DebuggerProgressListener.prototype = {
         state: "stop",
       });
     }
-  },
+  }, "DebuggerProgressListener.prototype.onStateChange"),
 
   /**
    * Destroy the progress listener instance.

@@ -57,7 +57,7 @@ NS_HTML_CONTENT_INTERFACE_MAP_END
 NS_IMPL_ELEMENT_CLONE(HTMLAnchorElement)
 
 JSObject*
-HTMLAnchorElement::WrapNode(JSContext *aCx, JSObject *aScope)
+HTMLAnchorElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLAnchorElementBinding::Wrap(aCx, aScope, this);
 }
@@ -339,10 +339,9 @@ HTMLAnchorElement::GetLinkState() const
 already_AddRefed<nsIURI>
 HTMLAnchorElement::GetHrefURI() const
 {
-  nsIURI* uri = Link::GetCachedURI();
+  nsCOMPtr<nsIURI> uri = Link::GetCachedURI();
   if (uri) {
-    NS_ADDREF(uri);
-    return uri;
+    return uri.forget();
   }
 
   return GetHrefURIForAnchors();

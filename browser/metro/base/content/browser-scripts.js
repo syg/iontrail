@@ -33,6 +33,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Promise",
 
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "CrossSlide",
+                                  "resource:///modules/CrossSlide.jsm");
 
 /*
  * Services
@@ -130,8 +132,9 @@ let ScriptContexts = {};
   ["Sanitizer", "chrome://browser/content/sanitize.js"],
   ["SanitizeUI", "chrome://browser/content/sanitizeUI.js"],
   ["SSLExceptions", "chrome://browser/content/exceptions.js"],
+  ["ItemPinHelper", "chrome://browser/content/helperui/ItemPinHelper.js"],
 #ifdef MOZ_SERVICES_SYNC
-  ["WeaveGlue", "chrome://browser/content/sync.js"],
+  ["Sync", "chrome://browser/content/sync.js"],
   ["SyncPairDevice", "chrome://browser/content/sync.js"],
   ["RemoteTabsView", "chrome://browser/content/RemoteTabs.js"],
   ["RemoteTabsPanelView", "chrome://browser/content/RemoteTabs.js"],

@@ -15,6 +15,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/JNI.jsm");
+Cu.import('resource://gre/modules/Payment.jsm');
 
 #ifdef ACCESSIBILITY
 Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
@@ -136,6 +137,14 @@ const kXLinkNamespace = "http://www.w3.org/1999/xlink";
 const kDefaultCSSViewportWidth = 980;
 const kDefaultCSSViewportHeight = 480;
 
+const kViewportRemeasureThrottle = 500;
+
+const kDoNotTrackPrefState = Object.freeze({
+  NO_PREF: "0",
+  DISALLOW_TRACKING: "1",
+  ALLOW_TRACKING: "2",
+});
+
 function dump(a) {
   Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService).logStringMessage(a);
 }
@@ -146,6 +155,28 @@ function getBridge() {
 
 function sendMessageToJava(aMessage) {
   return getBridge().handleGeckoMessage(JSON.stringify(aMessage));
+}
+
+function doChangeMaxLineBoxWidth(aWidth) {
+  gReflowPending = null;
+  let webNav = BrowserApp.selectedTab.window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebNavigation);
+  let docShell = webNav.QueryInterface(Ci.nsIDocShell);
+  let docViewer = docShell.contentViewer.QueryInterface(Ci.nsIMarkupDocumentViewer);
+
+  let range = null;
+  if (BrowserApp.selectedTab._mReflozPoint) {
+    range = BrowserApp.selectedTab._mReflozPoint.range;
+  }
+
+  docViewer.changeMaxLineBoxWidth(aWidth);
+
+  if (range) {
+    BrowserEventHandler._zoomInAndSnapToRange(range);
+  }
+}
+
+function fuzzyEquals(a, b) {
+  return (Math.abs(a - b) < 1e-6);
 }
 
 #ifdef MOZ_CRASHREPORTER
@@ -166,10 +197,10 @@ XPCOMUtils.defineLazyGetter(this, "Rect", function() {
 });
 
 function resolveGeckoURI(aURI) {
-  if (aURI.indexOf("chrome://") == 0) {
+  if (aURI.startsWith("chrome://")) {
     let registry = Cc['@mozilla.org/chrome/chrome-registry;1'].getService(Ci["nsIChromeRegistry"]);
     return registry.convertChromeURL(Services.io.newURI(aURI, null, null)).spec;
-  } else if (aURI.indexOf("resource://") == 0) {
+  } else if (aURI.startsWith("resource://")) {
     let handler = Services.io.getProtocolHandler("resource").QueryInterface(Ci.nsIResProtocolHandler);
     return handler.resolveURI(Services.io.newURI(aURI, null, null));
   }
@@ -177,7 +208,7 @@ function resolveGeckoURI(aURI) {
 }
 
 function shouldShowProgress(url) {
-  return (url != "about:home" && !/^about:reader/.test(url));
+  return (url != "about:home" && !url.startsWith("about:reader"));
 }
 
 /**
@@ -204,6 +235,12 @@ var BrowserApp = {
     let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
     delete this.isTablet;
     return this.isTablet = sysInfo.get("tablet");
+  },
+
+  get isOnLowMemoryPlatform() {
+    let memory = Cc["@mozilla.org/xpcom/memory-service;1"].getService(Ci.nsIMemory);
+    delete this.isOnLowMemoryPlatform;
+    return this.isOnLowMemoryPlatform = memory.isLowMemoryPlatform();
   },
 
   deck: null,
@@ -240,7 +277,6 @@ var BrowserApp = {
     Services.obs.addObserver(this, "Viewport:FixedMarginsChanged", false);
     Services.obs.addObserver(this, "Passwords:Init", false);
     Services.obs.addObserver(this, "FormHistory:Init", false);
-    Services.obs.addObserver(this, "ToggleProfiling", false);
     Services.obs.addObserver(this, "gather-telemetry", false);
     Services.obs.addObserver(this, "keyword-search", false);
 
@@ -379,6 +415,13 @@ var BrowserApp = {
         let newtabStrings = Strings.browser.GetStringFromName("newprivatetabpopup.opened");
         let label = PluralForm.get(1, newtabStrings).replace("#1", 1);
         NativeWindow.toast.show(label, "short");
+      });
+
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.addToReadingList"),
+      NativeWindow.contextmenus.linkOpenableContext,
+      function(aTarget) {
+        let url = NativeWindow.contextmenus._getLinkURL(aTarget);
+        Services.obs.notifyObservers(null, "Reader:Add", JSON.stringify({ url: url }));
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyLink"),
@@ -623,6 +666,8 @@ var BrowserApp = {
     aTab.setResolution(aTab._zoom, true);
     this.displayedDocumentChanged();
     this.deck.selectedPanel = aTab.browser;
+    // Focus the browser so that things like selection will be styled correctly.
+    aTab.browser.focus();
   },
 
   get selectedBrowser() {
@@ -904,92 +949,105 @@ var BrowserApp = {
   },
 
   getPreferences: function getPreferences(aPrefsRequest, aListen) {
-    try {
-      let prefs = [];
+    let prefs = [];
 
-      for each (let prefName in aPrefsRequest.preferences) {
-        let pref = {
-          name: prefName
-        };
+    for each (let prefName in aPrefsRequest.preferences) {
+      let pref = {
+        name: prefName,
+        type: "",
+        value: null
+      };
 
-        if (aListen) {
-          if (this._prefObservers[prefName])
-            this._prefObservers[prefName].push(aPrefsRequest.requestId);
-          else
-            this._prefObservers[prefName] = [ aPrefsRequest.requestId ];
-          Services.prefs.addObserver(prefName, this, false);
-        }
+      if (aListen) {
+        if (this._prefObservers[prefName])
+          this._prefObservers[prefName].push(aPrefsRequest.requestId);
+        else
+          this._prefObservers[prefName] = [ aPrefsRequest.requestId ];
+        Services.prefs.addObserver(prefName, this, false);
+      }
 
+      // These pref names are not "real" pref names.
+      // They are used in the setting menu,
+      // and these are passed when initializing the setting menu.
+      switch (prefName) {
         // The plugin pref is actually two separate prefs, so
         // we need to handle it differently
-        if (prefName == "plugin.enable") {
-          // Use a string type for java's ListPreference
-          pref.type = "string";
+        case "plugin.enable":
+          pref.type = "string";// Use a string type for java's ListPreference
           pref.value = PluginHelper.getPluginPreference();
           prefs.push(pref);
           continue;
-        } else if (prefName == "privacy.masterpassword.enabled") {
-          // Master password is not a "real" pref
+        // Handle master password
+        case "privacy.masterpassword.enabled":
           pref.type = "bool";
           pref.value = MasterPassword.enabled;
           prefs.push(pref);
           continue;
-        }
+        // Handle do-not-track preference
+        case "privacy.donottrackheader": {
+          pref.type = "string";
 
-        try {
-          switch (Services.prefs.getPrefType(prefName)) {
-            case Ci.nsIPrefBranch.PREF_BOOL:
-              pref.type = "bool";
-              pref.value = Services.prefs.getBoolPref(prefName);
-              break;
-            case Ci.nsIPrefBranch.PREF_INT:
-              pref.type = "int";
-              pref.value = Services.prefs.getIntPref(prefName);
-              break;
-            case Ci.nsIPrefBranch.PREF_STRING:
-            default:
-              pref.type = "string";
-              try {
-                // Try in case it's a localized string (will throw an exception if not)
-                pref.value = Services.prefs.getComplexValue(prefName, Ci.nsIPrefLocalizedString).data;
-              } catch (e) {
-                pref.value = Services.prefs.getCharPref(prefName);
-              }
-              break;
+          let enableDNT = Services.prefs.getBoolPref("privacy.donottrackheader.enabled");
+          if (!enableDNT) {
+            pref.value = kDoNotTrackPrefState.NO_PREF;
+          } else {
+            let dntState = Services.prefs.getIntPref("privacy.donottrackheader.value");
+            pref.value = (dntState === 0) ? kDoNotTrackPrefState.ALLOW_TRACKING :
+                                            kDoNotTrackPrefState.DISALLOW_TRACKING;
           }
-        } catch (e) {
-          dump("Error reading pref [" + prefName + "]: " + e);
-          // preference does not exist; do not send it
+
+          prefs.push(pref);
           continue;
         }
-
-        // some preferences use integers or strings instead of booleans for
-        // indicating enabled/disabled. since the java ui uses the type to
-        // determine which ui elements to show, we need to normalize these
-        // preferences to be actual booleans.
-        switch (prefName) {
-          case "network.cookie.cookieBehavior":
-            pref.type = "string";
-            pref.value = pref.value.toString();
-            break;
-          case "font.size.inflation.minTwips":
-            pref.type = "string";
-            pref.value = pref.value.toString();
-            break;
-        }
-
-        prefs.push(pref);
       }
 
-      sendMessageToJava({
-        type: "Preferences:Data",
-        requestId: aPrefsRequest.requestId,    // opaque request identifier, can be any string/int/whatever
-        preferences: prefs
-      });
+      try {
+        switch (Services.prefs.getPrefType(prefName)) {
+          case Ci.nsIPrefBranch.PREF_BOOL:
+            pref.type = "bool";
+            pref.value = Services.prefs.getBoolPref(prefName);
+            break;
+          case Ci.nsIPrefBranch.PREF_INT:
+            pref.type = "int";
+            pref.value = Services.prefs.getIntPref(prefName);
+            break;
+          case Ci.nsIPrefBranch.PREF_STRING:
+          default:
+            pref.type = "string";
+            try {
+              // Try in case it's a localized string (will throw an exception if not)
+              pref.value = Services.prefs.getComplexValue(prefName, Ci.nsIPrefLocalizedString).data;
+            } catch (e) {
+              pref.value = Services.prefs.getCharPref(prefName);
+            }
+            break;
+        }
+      } catch (e) {
+        dump("Error reading pref [" + prefName + "]: " + e);
+        // preference does not exist; do not send it
+        continue;
+      }
 
-    } catch (e) {
-      dump("Unhandled exception getting prefs: " + e);
+      // Some preferences use integers or strings instead of booleans for
+      // indicating enabled/disabled. Since the Java UI uses the type to
+      // determine which ui elements to show, we need to normalize these
+      // preferences to be actual booleans.
+      switch (prefName) {
+        case "network.cookie.cookieBehavior":
+        case "font.size.inflation.minTwips":
+          pref.type = "string";
+          pref.value = pref.value.toString();
+          break;
+      }
+
+      prefs.push(pref);
     }
+
+    sendMessageToJava({
+      type: "Preferences:Data",
+      requestId: aPrefsRequest.requestId,    // opaque request identifier, can be any string/int/whatever
+      preferences: prefs
+    });
   },
 
   removePreferenceObservers: function removePreferenceObservers(aRequestId) {
@@ -1015,46 +1073,70 @@ var BrowserApp = {
   setPreferences: function setPreferences(aPref) {
     let json = JSON.parse(aPref);
 
-    if (json.name == "plugin.enable") {
+    switch (json.name) {
       // The plugin pref is actually two separate prefs, so
       // we need to handle it differently
-      PluginHelper.setPluginPreference(json.value);
-      return;
-    } else if (json.name == "privacy.masterpassword.enabled") {
-      // MasterPassword pref is not real, we just need take action and leave
-      // MasterPassword pref is not real, we just need take action and leave
-      if (MasterPassword.enabled)
-        MasterPassword.removePassword(json.value);
-      else
-        MasterPassword.setPassword(json.value);
-      return;
-    } else if (json.name == SearchEngines.PREF_SUGGEST_ENABLED) {
-      // Enabling or disabling suggestions will prevent future prompts
-      Services.prefs.setBoolPref(SearchEngines.PREF_SUGGEST_PROMPTED, true);
-    }
+      case "plugin.enable":
+        PluginHelper.setPluginPreference(json.value);
+        return;
 
-    // when sending to java, we normalized special preferences that use
-    // integers and strings to represent booleans.  here, we convert them back
-    // to their actual types so we can store them.
-    switch (json.name) {
-      case "network.cookie.cookieBehavior":
-        json.type = "int";
-        json.value = parseInt(json.value);
+      // MasterPassword pref is not real, we just need take action and leave
+      case "privacy.masterpassword.enabled":
+        if (MasterPassword.enabled)
+          MasterPassword.removePassword(json.value);
+        else
+          MasterPassword.setPassword(json.value);
+        return;
+
+      // "privacy.donottrackheader" is not "real" pref name, it's used in the setting menu.
+      case "privacy.donottrackheader":
+        switch (json.value) {
+          // Don't tell anything about tracking me
+          case kDoNotTrackPrefState.NO_PREF:
+            Services.prefs.setBoolPref("privacy.donottrackheader.enabled", false);
+            Services.prefs.clearUserPref("privacy.donottrackheader.value");
+            break;
+          // Accept tracking me
+          case kDoNotTrackPrefState.ALLOW_TRACKING:
+            Services.prefs.setBoolPref("privacy.donottrackheader.enabled", true);
+            Services.prefs.setIntPref("privacy.donottrackheader.value", 0);
+            break;
+          // Not accept tracking me
+          case kDoNotTrackPrefState.DISALLOW_TRACKING:
+            Services.prefs.setBoolPref("privacy.donottrackheader.enabled", true);
+            Services.prefs.setIntPref("privacy.donottrackheader.value", 1);
+            break;
+        }
+        return;
+
+      // Enabling or disabling suggestions will prevent future prompts
+      case SearchEngines.PREF_SUGGEST_ENABLED:
+        Services.prefs.setBoolPref(SearchEngines.PREF_SUGGEST_PROMPTED, true);
         break;
+
+      // When sending to Java, we normalized special preferences that use
+      // integers and strings to represent booleans. Here, we convert them back
+      // to their actual types so we can store them.
+      case "network.cookie.cookieBehavior":
       case "font.size.inflation.minTwips":
         json.type = "int";
         json.value = parseInt(json.value);
         break;
     }
 
-    if (json.type == "bool") {
-      Services.prefs.setBoolPref(json.name, json.value);
-    } else if (json.type == "int") {
-      Services.prefs.setIntPref(json.name, json.value);
-    } else {
-      let pref = Cc["@mozilla.org/pref-localizedstring;1"].createInstance(Ci.nsIPrefLocalizedString);
-      pref.data = json.value;
-      Services.prefs.setComplexValue(json.name, Ci.nsISupportsString, pref);
+    switch (json.type) {
+      case "bool":
+        Services.prefs.setBoolPref(json.name, json.value);
+        break;
+      case "int":
+        Services.prefs.setIntPref(json.name, json.value);
+        break;
+      default: {
+        let pref = Cc["@mozilla.org/pref-localizedstring;1"].createInstance(Ci.nsIPrefLocalizedString);
+        pref.data = json.value;
+        Services.prefs.setComplexValue(json.name, Ci.nsISupportsString, pref);
+        break;
+      }
     }
   },
 
@@ -1284,8 +1366,6 @@ var BrowserApp = {
         let storage = Cc["@mozilla.org/login-manager/storage/mozStorage;1"].
                       getService(Ci.nsILoginManagerStorage);
         storage.init();
-
-        sendMessageToJava({ type: "Passwords:Init:Return" });
         Services.obs.removeObserver(this, "Passwords:Init");
         break;
       }
@@ -1294,7 +1374,6 @@ var BrowserApp = {
         let fh = Cc["@mozilla.org/satchel/form-history;1"].getService(Ci.nsIFormHistory2);
         // Force creation/upgrade of formhistory.sqlite
         let db = fh.DBConnection;
-        sendMessageToJava({ type: "FormHistory:Init:Return" });
         Services.obs.removeObserver(this, "FormHistory:Init");
         break;
       }
@@ -1302,17 +1381,6 @@ var BrowserApp = {
       case "sessionstore-state-purge-complete":
         sendMessageToJava({ type: "Session:StatePurged" });
         break;
-
-      case "ToggleProfiling": {
-        let profiler = Cc["@mozilla.org/tools/profiler;1"].
-                       getService(Ci.nsIProfiler);
-        if (profiler.IsActive()) {
-          profiler.StopProfiler();
-        } else {
-          profiler.StartProfiler(100000, 25, ["stackwalk"], 1);
-        }
-        break;
-      }
 
       case "gather-telemetry":
         sendMessageToJava({ type: "Telemetry:Gather" });
@@ -2101,7 +2169,7 @@ var LightWeightThemeWebInstaller = {
 
 var UserAgent = {
   DESKTOP_UA: null,
-  YOUTUBE_DOMAIN: /\.?youtube\.com$/,
+  YOUTUBE_DOMAIN: /(^|\.)youtube\.com$/,
 
   init: function ua_init() {
     Services.obs.addObserver(this, "DesktopMode:Change", false);
@@ -2139,15 +2207,18 @@ var UserAgent = {
   },
 
   getUserAgentForUriAndTab: function ua_getUserAgentForUriAndTab(aUri, aTab, defaultUA) {
-    if (this.YOUTUBE_DOMAIN.test(aUri.host)) {
-      // Send the phone UA to youtube if this is a tablet
-      if (defaultUA.indexOf("Android; Mobile;") === -1)
-        return defaultUA.replace("Android;", "Android; Mobile;");
-    }
-
-    // Send desktop UA if "Request Desktop Site" is enabled
+    // Send desktop UA if "Request Desktop Site" is enabled.
     if (aTab.desktopMode)
       return this.DESKTOP_UA;
+
+    // Not all schemes have a host member.
+    if (aUri.schemeIs("http") || aUri.schemeIs("https")) {
+      if (this.YOUTUBE_DOMAIN.test(aUri.host)) {
+        // Send the phone UA to Youtube if this is a tablet.
+        if (!defaultUA.contains("Android; Mobile;"))
+          return defaultUA.replace("Android;", "Android; Mobile;");
+      }
+    }
 
     return defaultUA;
   },
@@ -2292,6 +2363,7 @@ nsBrowserAccess.prototype = {
 // get created with the right size rather than being 1x1
 let gScreenWidth = 1;
 let gScreenHeight = 1;
+let gReflowPending = null;
 
 // The margins that should be applied to the viewport for fixed position
 // children. This is used to avoid browser chrome permanently obscuring
@@ -2313,7 +2385,8 @@ function Tab(aURL, aParams) {
   this.userScrollPos = { x: 0, y: 0 };
   this.viewportExcludesHorizontalMargins = true;
   this.viewportExcludesVerticalMargins = true;
-  this.updatingViewportForPageSizeChange = false;
+  this.viewportMeasureCallback = null;
+  this.lastPageSizeAfterViewportChange = { width: 0, height: 0 };
   this.contentDocumentIsDisplayed = true;
   this.pluginDoorhangerTimeout = null;
   this.shouldShowPluginDoorhanger = true;
@@ -2470,14 +2543,18 @@ Tab.prototype = {
   },
 
   performReflowOnZoom: function(aViewport) {
-      let webNav = this.window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebNavigation);
-      let docShell = webNav.QueryInterface(Ci.nsIDocShell);
-      let docViewer = docShell.contentViewer.QueryInterface(Ci.nsIMarkupDocumentViewer);
       let viewportWidth = gScreenWidth / aViewport.zoom;
+      let reflozTimeout = Services.prefs.getIntPref("browser.zoom.reflowZoom.reflowTimeout");
+
+      if (gReflowPending) {
+        clearTimeout(gReflowPending);
+      }
 
       // We add in a bit of fudge just so that the end characters don't accidentally
       // get clipped. 15px is an arbitrary choice.
-      docViewer.changeMaxLineBoxWidth(viewportWidth - 15);
+      gReflowPending = setTimeout(doChangeMaxLineBoxWidth,
+                                  reflozTimeout,
+                                  viewportWidth - 15);
   },
 
   /** 
@@ -2574,7 +2651,7 @@ Tab.prototype = {
   },
 
   getActive: function getActive() {
-      return this.browser.docShellIsActive;
+    return this.browser.docShellIsActive;
   },
 
   setDisplayPort: function(aDisplayPort) {
@@ -2607,7 +2684,7 @@ Tab.prototype = {
         this._drawZoom = resolution;
         cwu.setResolution(resolution, resolution);
       }
-    } else if (Math.abs(resolution - zoom) >= 1e-6) {
+    } else if (!fuzzyEquals(resolution, zoom)) {
       dump("Warning: setDisplayPort resolution did not match zoom for background tab! (" + resolution + " != " + zoom + ")");
     }
 
@@ -2629,12 +2706,11 @@ Tab.prototype = {
       height: (aDisplayPort.bottom - aDisplayPort.top) / resolution
     };
 
-    let epsilon = 0.001;
     if (this._oldDisplayPort == null ||
-        Math.abs(displayPort.x - this._oldDisplayPort.x) > epsilon ||
-        Math.abs(displayPort.y - this._oldDisplayPort.y) > epsilon ||
-        Math.abs(displayPort.width - this._oldDisplayPort.width) > epsilon ||
-        Math.abs(displayPort.height - this._oldDisplayPort.height) > epsilon) {
+        !fuzzyEquals(displayPort.x, this._oldDisplayPort.x) ||
+        !fuzzyEquals(displayPort.y, this._oldDisplayPort.y) ||
+        !fuzzyEquals(displayPort.width, this._oldDisplayPort.width) ||
+        !fuzzyEquals(displayPort.height, this._oldDisplayPort.height)) {
       if (BrowserApp.gUseLowPrecision) {
         // Set the display-port to be 4x the size of the critical display-port,
         // on each dimension, giving us a 0.25x lower precision buffer around the
@@ -2830,15 +2906,13 @@ Tab.prototype = {
 
     // Adjust the max line box width to be no more than the viewport width, but
     // only if the reflow-on-zoom preference is enabled.
-    if (BrowserEventHandler.mReflozPref && BrowserEventHandler._mLastPinchData) {
-      let webNav = window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebNavigation);
-      let docShell = webNav.QueryInterface(Ci.nsIDocShell);
-      let docViewer = docShell.contentViewer.QueryInterface(Ci.nsIMarkupDocumentViewer);
-      let viewportWidth = gScreenWidth / aViewport.zoom;
-      // We add in a bit of fudge just so that the end characters don't accidentally
-      // get clipped. 15px is an arbitrary choice.
-      docViewer.changeMaxLineBoxWidth(viewportWidth - 15);
-      BrowserEventHandler._mLastPinchData = null;
+    let isZooming = Math.abs(aViewport.zoom - this._zoom) >= 1e-6;
+    if (isZooming &&
+        BrowserEventHandler.mReflozPref &&
+        BrowserApp.selectedTab._mReflozPoint &&
+        BrowserApp.selectedTab.probablyNeedRefloz) {
+      BrowserApp.selectedTab.performReflowOnZoom(aViewport);
+      BrowserApp.selectedTab.probablyNeedRefloz = false;
     }
 
     let win = this.browser.contentWindow;
@@ -2869,7 +2943,7 @@ Tab.prototype = {
 
   setResolution: function(aZoom, aForce) {
     // Set zoom level
-    if (aForce || Math.abs(aZoom - this._zoom) >= 1e-6) {
+    if (aForce || !fuzzyEquals(aZoom, this._zoom)) {
       this._zoom = aZoom;
       if (BrowserApp.selectedTab == this) {
         let cwu = window.top.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
@@ -2952,30 +3026,48 @@ Tab.prototype = {
     return viewport;
   },
 
-  sendViewportUpdate: function(aPageSizeUpdate) {
+  sendViewportUpdate: function(aPageSizeUpdate, aAfterViewportSizeChange) {
     let viewport = this.getViewport();
     let displayPort = getBridge().getDisplayPort(aPageSizeUpdate, BrowserApp.isBrowserContentDocumentDisplayed(), this.id, viewport);
     if (displayPort != null)
       this.setDisplayPort(displayPort);
 
-    // If the page size has changed so that it might or might not fit on the
-    // screen with the margins included, run updateViewportSize to resize the
-    // browser accordingly.
-    // A page will receive the smaller viewport when its page size fits
-    // within the screen size, so remeasure when the page size remains within
-    // the threshold of screen + margins, in case it's sizing itself relative
-    // to the viewport.
-    if (!this.updatingViewportForPageSizeChange && aPageSizeUpdate) {
-      this.updatingViewportForPageSizeChange = true;
+    if (aAfterViewportSizeChange) {
+      // Store the page size that was used to calculate the viewport so that we
+      // can verify it's changed when we consider remeasuring.
+      this.lastPageSizeAfterViewportChange =
+        { width: viewport.pageRight - viewport.pageLeft,
+          height: viewport.pageBottom - viewport.pageTop };
+    } else if (aPageSizeUpdate &&
+               (gViewportMargins.top > 0 || gViewportMargins.right > 0
+                  || gViewportMargins.bottom > 0 || gViewportMargins.left > 0)) {
+      // If the page size has changed so that it might or might not fit on the
+      // screen with the margins included, run updateViewportSize to resize the
+      // browser accordingly.
+      // A page will receive the smaller viewport when its page size fits
+      // within the screen size, so remeasure when the page size remains within
+      // the threshold of screen + margins, in case it's sizing itself relative
+      // to the viewport.
       if (((Math.round(viewport.pageBottom - viewport.pageTop)
               <= gScreenHeight + gViewportMargins.top + gViewportMargins.bottom)
              != this.viewportExcludesVerticalMargins) ||
           ((Math.round(viewport.pageRight - viewport.pageLeft)
               <= gScreenWidth + gViewportMargins.left + gViewportMargins.right)
              != this.viewportExcludesHorizontalMargins)) {
-        this.updateViewportSize(gScreenWidth);
+        if (!this.viewportMeasureCallback) {
+          this.viewportMeasureCallback = setTimeout(function() {
+            this.viewportMeasureCallback = null;
+
+            let viewport = this.getViewport();
+            if (Math.abs((viewport.pageRight - viewport.pageLeft)
+                           - this.lastPageSizeAfterViewportChange.width) >= 0.5 ||
+                Math.abs((viewport.pageBottom - viewport.pageTop)
+                           - this.lastPageSizeAfterViewportChange.height) >= 0.5) {
+              this.updateViewportSize(gScreenWidth);
+            }
+          }.bind(this), kViewportRemeasureThrottle);
+        }
       }
-      this.updatingViewportForPageSizeChange = false;
     }
   },
 
@@ -3010,7 +3102,8 @@ Tab.prototype = {
         // pages and other similar page. This lets us fix bugs like 401575 which
         // require error page UI to do privileged things, without letting error
         // pages have any privilege themselves.
-        if (/^about:/.test(target.documentURI)) {
+        let docURI = target.documentURI;
+        if (docURI.startsWith("about:certerror") || docURI.startsWith("about:blocked")) {
           this.browser.addEventListener("click", ErrorPageEventHandler, true);
           let listener = function() {
             this.browser.removeEventListener("click", ErrorPageEventHandler, true);
@@ -3020,7 +3113,7 @@ Tab.prototype = {
           this.browser.addEventListener("pagehide", listener, true);
         }
 
-        if (/^about:reader/.test(target.documentURI))
+        if (docURI.startsWith("about:reader"))
           new AboutReader(this.browser.contentDocument, this.browser.contentWindow);
 
         break;
@@ -3185,9 +3278,7 @@ Tab.prototype = {
           tabID: this.id
         });
 
-        // For low-memory devices, don't allow reader mode since it takes up a lot of memory.
-        // See https://bugzilla.mozilla.org/show_bug.cgi?id=792603 for details.
-        if (Cc["@mozilla.org/xpcom/memory-service;1"].getService(Ci.nsIMemory).isLowMemoryPlatform())
+        if (!Reader.isEnabledForParseOnLoad)
           return;
 
         // Once document is fully loaded, parse it
@@ -3198,7 +3289,7 @@ Tab.prototype = {
           if (article == null || (article.url != tabURL)) {
             // Don't clear the article for about:reader pages since we want to
             // use the article from the previous page
-            if (!/^about:reader/i.test(tabURL))
+            if (!tabURL.startsWith("about:reader"))
               this.savedArticle = null;
 
             return;
@@ -3290,6 +3381,22 @@ Tab.prototype = {
     this.pluginDoorhangerTimeout = null;
     this.shouldShowPluginDoorhanger = true;
     this.clickToPlayPluginsActivated = false;
+    // Borrowed from desktop Firefox: http://mxr.mozilla.org/mozilla-central/source/browser/base/content/urlbarBindings.xml#174
+    let matchedURL = documentURI.match(/^((?:[a-z]+:\/\/)?(?:[^\/]+@)?)(.+?)(?::\d+)?(?:\/|$)/);
+    let baseDomain = "";
+    if (matchedURL) {
+      var domain = "";
+      [, , domain] = matchedURL;
+
+      try {
+        baseDomain = Services.eTLD.getBaseDomainFromHost(domain);
+        if (!domain.endsWith(baseDomain)) {
+          // getBaseDomainFromHost converts its resultant to ACE.
+          let IDNService = Cc["@mozilla.org/network/idn-service;1"].getService(Ci.nsIIDNService);
+          baseDomain = IDNService.convertACEtoUTF8(baseDomain);
+        }
+      } catch (e) {}
+    }
 
     let message = {
       type: "Content:LocationChange",
@@ -3297,6 +3404,7 @@ Tab.prototype = {
       uri: fixedURI.spec,
       userSearch: this.userSearch || "",
       documentURI: documentURI,
+      baseDomain: baseDomain,
       contentType: (contentType ? contentType : ""),
       sameDocument: sameDocument
     };
@@ -3413,6 +3521,8 @@ Tab.prototype = {
     if (aMetadata.maxZoom > 0)
       aMetadata.maxZoom *= scaleRatio;
 
+    aMetadata.isRTL = this.browser.contentDocument.documentElement.dir == "rtl";
+
     ViewportHandler.setMetadataForDocument(this.browser.contentDocument, aMetadata);
     this.updateViewportSize(gScreenWidth, aInitialLoad);
     this.sendViewportMetadata();
@@ -3425,6 +3535,11 @@ Tab.prototype = {
     // Ensure that when making changes to this function that code path
     // is not accidentally removed (the call to sendViewportUpdate() is
     // at the very end).
+
+    if (this.viewportMeasureCallback) {
+      clearTimeout(this.viewportMeasureCallback);
+      this.viewportMeasureCallback = null;
+    }
 
     let browser = this.browser;
     if (!browser)
@@ -3486,19 +3601,19 @@ Tab.prototype = {
       // has not yet loaded, so need to guard against a null document.
       let [pageWidth, pageHeight] = this.getPageSize(this.browser.contentDocument, viewportW, viewportH);
 
-      minScale = screenW / pageWidth;
-
       // In the situation the page size equals or exceeds the screen size,
       // lengthen the viewport on the corresponding axis to include the margins.
-      // The -1 is to account for rounding errors.
-      if (pageWidth * this._zoom > gScreenWidth - 1) {
+      // The '- 0.5' is to account for rounding errors.
+      if (pageWidth * this._zoom > gScreenWidth - 0.5) {
         screenW = gScreenWidth;
         this.viewportExcludesHorizontalMargins = false;
       }
-      if (pageHeight * this._zoom > gScreenHeight - 1) {
+      if (pageHeight * this._zoom > gScreenHeight - 0.5) {
         screenH = gScreenHeight;
         this.viewportExcludesVerticalMargins = false;
       }
+
+      minScale = screenW / pageWidth;
     }
     minScale = this.clampZoom(minScale);
     viewportH = Math.max(viewportH, screenH / minScale);
@@ -3525,7 +3640,7 @@ Tab.prototype = {
     let zoom = (aInitialLoad && metadata.defaultZoom) ? metadata.defaultZoom : this.clampZoom(this._zoom * zoomScale);
     this.setResolution(zoom, false);
     this.setScrollClampingSize(zoom);
-    this.sendViewportUpdate();
+    this.sendViewportUpdate(false, true);
   },
 
   sendViewportMetadata: function sendViewportMetadata() {
@@ -3536,12 +3651,18 @@ Tab.prototype = {
       defaultZoom: metadata.defaultZoom || metadata.scaleRatio,
       minZoom: metadata.minZoom || 0,
       maxZoom: metadata.maxZoom || 0,
+      isRTL: metadata.isRTL,
       tabID: this.id
     });
   },
 
   setBrowserSize: function(aWidth, aHeight) {
+    if (fuzzyEquals(this.browserWidth, aWidth) && fuzzyEquals(this.browserHeight, aHeight)) {
+      return;
+    }
+
     this.browserWidth = aWidth;
+    this.browserHeight = aHeight;
 
     if (!this.browser.contentWindow)
       return;
@@ -3855,10 +3976,6 @@ var BrowserEventHandler = {
         this.onPinch(aData);
         break;
 
-      case "MozMagnifyGesture":
-        this.onPinchFinish(aData, this._mLastPinchPoint.x, this._mLastPinchPoint.y);
-        break;
-
       default:
         dump('BrowserEventHandler.handleUserEvent: unexpected topic "' + aTopic + '"');
         break;
@@ -3889,7 +4006,7 @@ var BrowserEventHandler = {
     let dw = (aRect.width - vRect.width);
     let dx = (aRect.x - vRect.x);
 
-    if (Math.abs(aViewport.zoom - maxZoomAllowed) < 1e-6 && overlap.width / aRect.width > 0.9) {
+    if (fuzzyEquals(aViewport.zoom, maxZoomAllowed) && overlap.width / aRect.width > 0.9) {
       // we're already at the max zoom and the block is not spilling off the side of the screen so that even
       // if the block isn't taking up most of the viewport we can't pan/zoom in any more. return true so that we zoom out
       return true;
@@ -3967,40 +4084,55 @@ var BrowserEventHandler = {
     sendMessageToJava(rect);
   },
 
-  _zoomInAndSnapToElement: function(aX, aY, aElement) {
-    let viewport = BrowserApp.selectedTab.getViewport();
-    if (viewport.zoom < 1.0) {
-      // We don't want to do this on zoom out.
+  _zoomInAndSnapToRange: function(aRange) {
+    if (!aRange) {
+      Cu.reportError("aRange is null in zoomInAndSnapToRange. Unable to maintain position.");
       return;
     }
 
+    let viewport = BrowserApp.selectedTab.getViewport();
     let fudge = 15; // Add a bit of fudge.
-    let win = BrowserApp.selectedBrowser.contentWindow;
+    let boundingElement = aRange.offsetNode;
+    while (!boundingElement.getBoundingClientRect && boundingElement.parentNode) {
+      boundingElement = boundingElement.parentNode;
+    }
 
-    let rect = ElementTouchHelper.getBoundingContentRect(aElement);
+    let rect = ElementTouchHelper.getBoundingContentRect(boundingElement);
+    let drRect = aRange.getClientRect();
+    let scrollTop =
+      BrowserApp.selectedBrowser.contentDocument.documentElement.scrollTop ||
+      BrowserApp.selectedBrowser.contentDocument.body.scrollTop;
+
+    // We subtract half the height of the viewport so that we can (ideally)
+    // center the area of interest on the screen.
+    let topPos = scrollTop + drRect.top - (viewport.cssHeight / 2.0);
+
+    // Factor in the border and padding
+    let boundingStyle = window.getComputedStyle(boundingElement);
+    let leftAdjustment = parseInt(boundingStyle.paddingLeft) +
+                         parseInt(boundingStyle.borderLeftWidth);
 
     rect.type = "Browser:ZoomToRect";
-    rect.x = Math.max(viewport.cssPageLeft, rect.x  - fudge);
-    rect.y = viewport.cssY;
+    rect.x = Math.max(viewport.cssPageLeft, rect.x  - fudge + leftAdjustment);
+    rect.y = Math.max(topPos, viewport.cssPageTop);
     rect.w = viewport.cssWidth;
     rect.h = viewport.cssHeight;
 
     sendMessageToJava(rect);
+    BrowserApp.selectedTab._mReflozPoint = null;
    },
 
    onPinch: function(aData) {
-     let data = JSON.parse(aData);
-     this._mLastPinchPoint = {x: data.x, y: data.y};
-   },
-
-   onPinchFinish: function(aData, aX, aY) {
-     if (this.mReflozPref) {
+     // We only want to do this if reflow-on-zoom is enabled.
+     if (BrowserEventHandler.mReflozPref &&
+         !BrowserApp.selectedTab._mReflozPoint) {
        let data = JSON.parse(aData);
-       let pinchElement = ElementTouchHelper.anyElementFromPoint(aX, aY);
-       data.element = pinchElement;
-       BrowserApp.selectedTab._mLastPinchElement = pinchElement;
-       this._mLastPinchData = data;
-       this._zoomInAndSnapToElement(data.x, data.y, data.element);
+       let zoomPointX = data.x;
+       let zoomPointY = data.y;
+
+       BrowserApp.selectedTab._mReflozPoint = { x: zoomPointX, y: zoomPointY,
+         range: BrowserApp.selectedBrowser.contentDocument.caretPositionFromPoint(zoomPointX, zoomPointY) };
+         BrowserApp.selectedTab.probablyNeedRefloz = true;
      }
    },
 
@@ -4020,8 +4152,6 @@ var BrowserEventHandler = {
   _scrollableElement: null,
 
   _highlightElement: null,
-
-  _mLastPinchData: null,
 
   _doTapHighlight: function _doTapHighlight(aElement) {
     DOMUtils.setContentState(aElement, kStateActive);
@@ -4396,7 +4526,7 @@ var ErrorPageEventHandler = {
 
         // If the event came from an ssl error page, it is probably either the "Add
         // Exception…" or "Get me out of here!" button
-        if (/^about:certerror\?e=nssBadCert/.test(errorDoc.documentURI)) {
+        if (errorDoc.documentURI.startsWith("about:certerror?e=nssBadCert")) {
           let perm = errorDoc.getElementById("permanentExceptionButton");
           let temp = errorDoc.getElementById("temporaryExceptionButton");
           if (target == temp || target == perm) {
@@ -4417,11 +4547,11 @@ var ErrorPageEventHandler = {
           } else if (target == errorDoc.getElementById("getMeOutOfHereButton")) {
             errorDoc.location = "about:home";
           }
-        } else if (/^about:blocked/.test(errorDoc.documentURI)) {
+        } else if (errorDoc.documentURI.startsWith("about:blocked")) {
           // The event came from a button on a malware/phishing block page
           // First check whether it's malware or phishing, so that we can
           // use the right strings/links
-          let isMalware = /e=malwareBlocked/.test(errorDoc.documentURI);
+          let isMalware = errorDoc.documentURI.contains("e=malwareBlocked");
           let bucketName = isMalware ? "WARNING_MALWARE_PAGE_" : "WARNING_PHISHING_PAGE_";
           let nsISecTel = Ci.nsISecurityUITelemetry;
           let isIframe = (aOwnerDoc.defaultView.parent === aOwnerDoc.defaultView);
@@ -4687,7 +4817,7 @@ var FormAssistant = {
       else if (item.text)
         label = item.text;
 
-      if (filter && label.toLowerCase().indexOf(lowerFieldValue) == -1)
+      if (filter && !(label.toLowerCase().contains(lowerFieldValue)) )
         continue;
       suggestions.push({ label: label, value: item.value });
     }
@@ -5043,6 +5173,8 @@ var ViewportHandler = {
                   (!widthStr && (heightStr == "device-height" || scale == 1.0)));
     }
 
+    let isRTL = aWindow.document.documentElement.dir == "rtl";
+
     return new ViewportMetadata({
       defaultZoom: scale,
       minZoom: minScale,
@@ -5051,7 +5183,8 @@ var ViewportHandler = {
       height: height,
       autoSize: autoSize,
       allowZoom: allowZoom,
-      isSpecified: hasMetaViewport
+      isSpecified: hasMetaViewport,
+      isRTL: isRTL
     });
   },
 
@@ -5123,6 +5256,7 @@ function ViewportMetadata(aMetadata = {}) {
   this.allowZoom = ("allowZoom" in aMetadata) ? aMetadata.allowZoom : true;
   this.isSpecified = ("isSpecified" in aMetadata) ? aMetadata.isSpecified : false;
   this.scaleRatio = ViewportHandler.getScaleRatio();
+  this.isRTL = ("isRTL" in aMetadata) ? aMetadata.isRTL : false;
   Object.seal(this);
 }
 
@@ -5136,6 +5270,7 @@ ViewportMetadata.prototype = {
   allowZoom: null,
   isSpecified: null,
   scaleRatio: null,
+  isRTL: null,
 };
 
 
@@ -5224,7 +5359,8 @@ var PopupBlockerObserver = {
         let popupName = pageReport[i].popupWindowName;
 
         let parent = BrowserApp.selectedTab;
-        BrowserApp.addTab(popupURIspec, { parentId: parent.id });
+        let isPrivate = PrivateBrowsingUtils.isWindowPrivate(parent.browser.contentWindow);
+        BrowserApp.addTab(popupURIspec, { parentId: parent.id, isPrivate: isPrivate });
       }
     }
   }
@@ -6455,45 +6591,91 @@ let Reader = {
 
   DEBUG: 0,
 
+  READER_ADD_SUCCESS: 0,
+  READER_ADD_FAILED: 1,
+  READER_ADD_DUPLICATE: 2,
+
   // Don't try to parse the page if it has too many elements (for memory and
   // performance reasons)
   MAX_ELEMS_TO_PARSE: 3000,
+
+  isEnabledForParseOnLoad: false,
 
   init: function Reader_init() {
     this.log("Init()");
     this._requests = {};
 
+    this.isEnabledForParseOnLoad = this.getStateForParseOnLoad();
+
     Services.obs.addObserver(this, "Reader:Add", false);
     Services.obs.addObserver(this, "Reader:Remove", false);
+
+    Services.prefs.addObserver("reader.parse-on-load.", this, false);
   },
 
   observe: function(aMessage, aTopic, aData) {
     switch(aTopic) {
       case "Reader:Add": {
-        let tab = BrowserApp.getTabForId(aData);
-        let currentURI = tab.browser.currentURI;
-        let url = currentURI.spec;
+        let args = JSON.parse(aData);
+        if ('fromAboutReader' in args) {
+          // Ignore adds initiated from aboutReader menu banner
+          break;
+        }
 
-        let sendResult = function(success, title) {
-          this.log("Reader:Add success=" + success + ", url=" + url + ", title=" + title);
+        let tabID = null;
+        let url, urlWithoutRef;
+
+        if ('tabID' in args) {
+          tabID = args.tabID;
+
+          let tab = BrowserApp.getTabForId(tabID);
+          let currentURI = tab.browser.currentURI;
+
+          url = currentURI.spec;
+          urlWithoutRef = currentURI.specIgnoringRef;
+        } else if ('url' in args) {
+          let uri = Services.io.newURI(args.url, null, null);
+          url = uri.spec;
+          urlWithoutRef = uri.specIgnoringRef;
+        } else {
+          throw new Error("Reader:Add requires a tabID or an URL as argument");
+        }
+
+        let sendResult = function(result, title) {
+          this.log("Reader:Add success=" + result + ", url=" + url + ", title=" + title);
 
           sendMessageToJava({
             type: "Reader:Added",
-            success: success,
+            result: result,
             title: title,
             url: url,
           });
         }.bind(this);
 
-        this.getArticleForTab(aData, currentURI.specIgnoringRef, function (article) {
+        let handleArticle = function(article) {
           if (!article) {
-            sendResult(false, "");
+            sendResult(this.READER_ADD_FAILED, "");
             return;
           }
 
           this.storeArticleInCache(article, function(success) {
-            sendResult(success, article.title);
-          });
+            let result = (success ? this.READER_ADD_SUCCESS : this.READER_ADD_FAILED);
+            sendResult(result, article.title);
+          }.bind(this));
+        }.bind(this);
+
+        this.getArticleFromCache(urlWithoutRef, function (article) {
+          // If the article is already in reading list, bail
+          if (article) {
+            sendResult(this.READER_ADD_DUPLICATE, "");
+            return;
+          }
+
+          if (tabID != null) {
+            this.getArticleForTab(tabID, urlWithoutRef, handleArticle);
+          } else {
+            this.parseDocumentFromURL(urlWithoutRef, handleArticle);
+          }
         }.bind(this));
         break;
       }
@@ -6504,7 +6686,22 @@ let Reader = {
         }.bind(this));
         break;
       }
+
+      case "nsPref:changed": {
+        if (aData.startsWith("reader.parse-on-load.")) {
+          this.isEnabledForParseOnLoad = this.getStateForParseOnLoad();
+        }
+        break;
+      }
     }
+  },
+
+  getStateForParseOnLoad: function Reader_getStateForParseOnLoad() {
+    let isEnabled = Services.prefs.getBoolPref("reader.parse-on-load.enabled");
+    let isForceEnabled = Services.prefs.getBoolPref("reader.parse-on-load.force-enabled");
+    // For low-memory devices, don't allow reader mode since it takes up a lot of memory.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=792603 for details.
+    return isForceEnabled || (isEnabled && !BrowserApp.isOnLowMemoryPlatform);
   },
 
   parseDocumentFromURL: function Reader_parseDocumentFromURL(url, callback) {
@@ -6668,6 +6865,8 @@ let Reader = {
   },
 
   uninit: function Reader_uninit() {
+    Services.prefs.removeObserver("reader.parse-on-load.", this);
+
     Services.obs.removeObserver(this, "Reader:Add");
     Services.obs.removeObserver(this, "Reader:Remove");
 
@@ -7102,7 +7301,7 @@ var Tabs = {
   init: function() {
     // on low-memory platforms, always allow tab expiration. on high-mem
     // platforms, allow it to be turned on once we hit a low-mem situation
-    if (Cc["@mozilla.org/xpcom/memory-service;1"].getService(Ci.nsIMemory).isLowMemoryPlatform()) {
+    if (BrowserApp.isOnLowMemoryPlatform) {
       this._enableTabExpiration = true;
     } else {
       Services.obs.addObserver(this, "memory-pressure", false);

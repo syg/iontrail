@@ -115,6 +115,8 @@ class Configuration:
                 getter = lambda x: x.interface.isExternal()
             elif key == 'isJSImplemented':
                 getter = lambda x: x.interface.isJSImplemented()
+            elif key == 'isNavigatorProperty':
+                getter = lambda x: x.interface.getNavigatorProperty() != None
             else:
                 getter = lambda x: getattr(x, key)
             curr = filter(lambda x: getter(x) == val, curr)
@@ -226,6 +228,8 @@ class Descriptor(DescriptorProvider):
         else:
             if self.workers:
                 headerDefault = "mozilla/dom/workers/bindings/%s.h" % ifaceName
+            elif not self.interface.isExternal() and self.interface.getExtendedAttribute("HeaderFile"):
+                headerDefault = self.interface.getExtendedAttribute("HeaderFile")[0]
             else:
                 headerDefault = self.nativeType
                 headerDefault = headerDefault.replace("::", "/") + ".h"
@@ -473,6 +477,7 @@ def getTypesFromDescriptor(descriptor):
     members = [m for m in descriptor.interface.members]
     if descriptor.interface.ctor():
         members.append(descriptor.interface.ctor())
+    members.extend(descriptor.interface.namedConstructors)
     signatures = [s for m in members if m.isMethod() for s in m.signatures()]
     types = []
     for s in signatures:

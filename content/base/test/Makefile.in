@@ -18,12 +18,12 @@ CPP_UNIT_TESTS = \
                  $(NULL)
 
 
-XPCSHELL_TESTS = \
+DISABLED_XPCSHELL_TESTS = \
                unit \
                $(NULL)
 # FIXME/bug 575918: out-of-process xpcshell is broken on OS X
 ifneq ($(OS_ARCH),Darwin)
-XPCSHELL_TESTS += unit_ipc
+DISABLED_XPCSHELL_TESTS += unit_ipc
 endif
 
 
@@ -257,6 +257,7 @@ MOCHITEST_FILES_A = \
 		test_bug811701.html \
 		test_bug811701.xhtml \
 		test_bug820909.html \
+		test_bug704063.html \
 		$(NULL)
 
 MOCHITEST_FILES_B = \
@@ -598,6 +599,7 @@ MOCHITEST_FILES_C= \
 		file_mixed_content_main_bug803225.html \
 		file_mixed_content_main_bug803225_websocket_wsh.py \
 		bug803225_test_mailto.html \
+		test_mixed_content_blocker_frameNavigation.html \
 		file_mixed_content_frameNavigation.html \
 		file_mixed_content_frameNavigation_innermost.html \
 		file_mixed_content_frameNavigation_grandchild.html \
@@ -662,9 +664,6 @@ MOCHITEST_FILES_PARTS = $(foreach s,A B C,MOCHITEST_FILES_$(s))
 #		test_XHR_timeout.html \
 #		test_XHR_timeout.js \
 #		file_XHR_timeout.sjs \
-
-# Disabled for frequent failures (bug 855730).
-#		test_mixed_content_blocker_frameNavigation.html \
 
 MOCHITEST_BROWSER_FILES = \
 		browser_bug593387.js \

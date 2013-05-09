@@ -6,3 +6,8 @@
 
 MODULE = 'view'
 
+EXPORTS += [
+    'nsView.h',
+    'nsViewManager.h',
+]
+

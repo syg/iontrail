@@ -584,6 +584,10 @@ DataChannelConnection::CompleteConnect(TransportFlow *flow, TransportLayer::Stat
 void
 DataChannelConnection::ProcessQueuedOpens()
 {
+  // The nsDeque holds channels with an AddRef applied.  Another reference
+  // (may) be held by the DOMDataChannel, unless it's been GC'd.  No other
+  // references should exist.
+
   // Can't copy nsDeque's.  Move into temp array since any that fail will
   // go back to mPending
   nsDeque temp;
@@ -593,11 +597,15 @@ DataChannelConnection::ProcessQueuedOpens()
   }
 
   nsRefPtr<DataChannel> channel;
+  // All these entries have an AddRef(); make that explicit now via the dont_AddRef()
   while (nullptr != (channel = dont_AddRef(static_cast<DataChannel *>(temp.PopFront())))) {
     if (channel->mFlags & DATA_CHANNEL_FLAGS_FINISH_OPEN) {
       LOG(("Processing queued open for %p (%u)", channel.get(), channel->mStream));
       channel->mFlags &= ~DATA_CHANNEL_FLAGS_FINISH_OPEN;
-      OpenFinish(channel.forget()); // may reset the flag and re-push
+      // OpenFinish returns a reference itself, so we need to take it can Release it
+      channel = OpenFinish(channel.forget()); // may reset the flag and re-push
+    } else {
+      NS_ASSERTION(false, "How did a DataChannel get queued without the FINISH_OPEN flag?");
     }
   }
 
@@ -821,7 +829,7 @@ DataChannelConnection::FindChannelByStream(uint16_t streamOut)
 uint16_t
 DataChannelConnection::FindFreeStream()
 {
-  uint32_t i, limit;
+  uint32_t i, j, limit;
 
   limit = mStreams.Length();
   if (limit > MAX_NUM_STREAMS)
@@ -830,15 +838,16 @@ DataChannelConnection::FindFreeStream()
   for (i = (mAllocateEven ? 0 : 1); i < limit; i += 2) {
     if (!mStreams[i]) {
       // Verify it's not still in the process of closing
-      for (uint32_t j = 0; j < mStreamsResetting.Length(); ++j) {
+      for (j = 0; j < mStreamsResetting.Length(); ++j) {
         if (mStreamsResetting[j] == i) {
-          continue;
+          break;
         }
       }
-      break;
+      if (j == mStreamsResetting.Length())
+        break;
     }
   }
-  if (i == limit) {
+  if (i >= limit) {
     return INVALID_STREAM;
   }
   return i;
@@ -1210,37 +1219,56 @@ DataChannelConnection::HandleDataMessage(uint32_t ppid,
 
   {
     nsAutoCString recvData(buffer, length);
+    bool is_binary = true;
+
+    if (ppid == DATA_CHANNEL_PPID_DOMSTRING ||
+        ppid == DATA_CHANNEL_PPID_DOMSTRING_LAST) {
+      is_binary = false;
+    }
+    if (is_binary != channel->mIsRecvBinary && !channel->mRecvBuffer.IsEmpty()) {
+      NS_WARNING("DataChannel message aborted by fragment type change!");
+      channel->mRecvBuffer.Truncate(0);
+    }
+    channel->mIsRecvBinary = is_binary;
 
     switch (ppid) {
       case DATA_CHANNEL_PPID_DOMSTRING:
-        LOG(("DataChannel: String message received of length %lu on channel %u: %.*s",
-             length, channel->mStream, (int)PR_MIN(length, 80), buffer));
+      case DATA_CHANNEL_PPID_BINARY:
+        channel->mRecvBuffer += recvData;
+        LOG(("DataChannel: Partial %s message of length %lu (total %u) on channel id %u",
+             is_binary ? "binary" : "string", length, channel->mRecvBuffer.Length(),
+             channel->mStream));
+        return; // Not ready to notify application
+
+      case DATA_CHANNEL_PPID_DOMSTRING_LAST:
+        LOG(("DataChannel: String message received of length %lu on channel %u",
+             length, channel->mStream));
+        if (!channel->mRecvBuffer.IsEmpty()) {
+          channel->mRecvBuffer += recvData;
+          LOG(("%s: sending ON_DATA (string fragmented) for %p", __FUNCTION__, channel));
+          channel->SendOrQueue(new DataChannelOnMessageAvailable(
+                                 DataChannelOnMessageAvailable::ON_DATA, this,
+                                 channel, channel->mRecvBuffer, -1));
+          channel->mRecvBuffer.Truncate(0);
+          return;
+        }
+        // else send using recvData normally
         length = -1; // Flag for DOMString
 
         // WebSockets checks IsUTF8() here; we can try to deliver it
-
-        NS_WARN_IF_FALSE(channel->mBinaryBuffer.IsEmpty(), "Binary message aborted by text message!");
-        if (!channel->mBinaryBuffer.IsEmpty())
-          channel->mBinaryBuffer.Truncate(0);
         break;
-
-      case DATA_CHANNEL_PPID_BINARY:
-        channel->mBinaryBuffer += recvData;
-        LOG(("DataChannel: Received binary message of length %lu (total %u) on channel id %u",
-             length, channel->mBinaryBuffer.Length(), channel->mStream));
-        return; // Not ready to notify application
 
       case DATA_CHANNEL_PPID_BINARY_LAST:
         LOG(("DataChannel: Received binary message of length %lu on channel id %u",
              length, channel->mStream));
-        if (!channel->mBinaryBuffer.IsEmpty()) {
-          channel->mBinaryBuffer += recvData;
+        if (!channel->mRecvBuffer.IsEmpty()) {
+          channel->mRecvBuffer += recvData;
           LOG(("%s: sending ON_DATA (binary fragmented) for %p", __FUNCTION__, channel));
           channel->SendOrQueue(new DataChannelOnMessageAvailable(
                                  DataChannelOnMessageAvailable::ON_DATA, this,
-                                 channel, channel->mBinaryBuffer,
-                                 channel->mBinaryBuffer.Length()));
-          channel->mBinaryBuffer.Truncate(0);
+                                 channel, channel->mRecvBuffer,
+                                 channel->mRecvBuffer.Length()));
+          channel->mRecvBuffer.Truncate(0);
           return;
         }
         // else send using recvData normally
@@ -1268,7 +1296,8 @@ DataChannelConnection::HandleMessage(const void *buffer, size_t length, uint32_t
 
   switch (ppid) {
     case DATA_CHANNEL_PPID_CONTROL:
-      NS_ENSURE_TRUE_VOID(length >= sizeof(*req));
+      // structure includes a possibly-unused char label[1] (in a packed structure)
+      NS_ENSURE_TRUE_VOID(length >= sizeof(*req) - 1);
 
       req = static_cast<const struct rtcweb_datachannel_open_request *>(buffer);
       switch (req->msg_type) {
@@ -1284,6 +1313,7 @@ DataChannelConnection::HandleMessage(const void *buffer, size_t length, uint32_t
       }
       break;
     case DATA_CHANNEL_PPID_DOMSTRING:
+    case DATA_CHANNEL_PPID_DOMSTRING_LAST:
     case DATA_CHANNEL_PPID_BINARY:
     case DATA_CHANNEL_PPID_BINARY_LAST:
       HandleDataMessage(ppid, buffer, length, stream);
@@ -1812,7 +1842,8 @@ DataChannelConnection::Open(const nsACString& label, const nsACString& protocol,
     return nullptr;
   }
 
-  if (aStream != INVALID_STREAM && mStreams[aStream]) {
+  // Don't look past currently-negotiated streams
+  if (aStream != INVALID_STREAM && aStream < mStreams.Length() && mStreams[aStream]) {
     LOG(("ERROR: external negotiation of already-open channel %u", aStream));
     // XXX How do we indicate this up to the application?  Probably the
     // caller's job, but we may need to return an error code.
@@ -1839,62 +1870,106 @@ DataChannelConnection::Open(const nsACString& label, const nsACString& protocol,
 already_AddRefed<DataChannel>
 DataChannelConnection::OpenFinish(already_AddRefed<DataChannel> aChannel)
 {
-  nsRefPtr<DataChannel> channel(aChannel);
+  nsRefPtr<DataChannel> channel(aChannel); // takes the reference passed in
+  // Normally 1 reference if called from ::Open(), or 2 if called from
+  // ProcessQueuedOpens() unless the DOMDataChannel was gc'd
   uint16_t stream = channel->mStream;
+  bool queue = false;
 
   mLock.AssertCurrentThreadOwns();
 
-  if (stream == INVALID_STREAM || mState != OPEN) {
-    if (mState == OPEN) { // implies INVALID_STREAM
-      // Don't try to find a stream if not open - mAllocateEven isn't set yet
+  // Cases we care about:
+  // Pre-negotiated:
+  //    Not Open:
+  //      Doesn't fit:
+  //         -> change initial ask or renegotiate after open
+  //      -> queue open
+  //    Open:
+  //      Doesn't fit:
+  //         -> RequestMoreStreams && queue
+  //      Does fit:
+  //         -> open
+  // Not negotiated:
+  //    Not Open:
+  //      -> queue open
+  //    Open:
+  //      -> Try to get a stream
+  //      Doesn't fit:
+  //         -> RequestMoreStreams && queue
+  //      Does fit:
+  //         -> open
+  // So the Open cases are basically the same
+  // Not Open cases are simply queue for non-negotiated, and
+  // either change the initial ask or possibly renegotiate after open.
+
+  if (mState == OPEN) {
+    if (stream == INVALID_STREAM) {
       stream = FindFreeStream(); // may be INVALID_STREAM if we need more
-      if (stream == INVALID_STREAM) {
-        if (!RequestMoreStreams()) {
-          channel->mState = CLOSED;
-          if (channel->mFlags & DATA_CHANNEL_FLAGS_FINISH_OPEN) {
-            // We already returned the channel to the app.
-            NS_ERROR("Failed to request more streams");
-            NS_DispatchToMainThread(new DataChannelOnMessageAvailable(
-                                      DataChannelOnMessageAvailable::ON_CHANNEL_CLOSED, this,
-                                      channel));
-            return channel.forget();
-          }
-          // we'll be destroying the channel, but it never really got set up
-          // Alternative would be to RUN_ON_THREAD(channel.forget(),::Destroy,...) and
-          // Dispatch it to ourselves
-          return nullptr;
-        }
+    }
+    if (stream == INVALID_STREAM || stream >= mStreams.Length()) {
+      // RequestMoreStreams() limits to MAX_NUM_STREAMS -- allocate extra streams 
+      // to avoid going back immediately for more if the ask to N, N+1, etc
+      int32_t more_needed = (stream == INVALID_STREAM) ? 16 :
+                            (stream-((int32_t)mStreams.Length())) + 16;
+      if (!RequestMoreStreams(more_needed)) {
+        // Something bad happened... we're done
+        goto request_error_cleanup;
       }
-      // if INVALID here, we need to queue
+      queue = true;
     }
-    if (stream != INVALID_STREAM) {
-      // just allocated (& OPEN), or externally negotiated
-      mStreams[stream] = channel;
-      channel->mStream = stream;
-    }
-
-    LOG(("Finishing open: channel %p, stream = %u", channel.get(), stream));
-
-    if (stream == INVALID_STREAM || mState != OPEN) {
-      // we're going to queue
-
-      LOG(("Queuing channel %p (%u) to finish open", channel.get(), stream));
-      // Also serves to mark we told the app
-      channel->mFlags |= DATA_CHANNEL_FLAGS_FINISH_OPEN;
-      channel->AddRef(); // we need a ref for the nsDeQue and one to return
-      mPending.Push(channel);
-      return channel.forget();
-    } // else OPEN and we selected a stream
   } else {
-    // OPEN and externally negotiated stream
-    mStreams[stream] = channel;
+    // not OPEN
+    if (stream != INVALID_STREAM && stream >= mStreams.Length() &&
+        mState == CLOSED) {
+      // Update number of streams for init message
+      struct sctp_initmsg initmsg;
+      socklen_t len = sizeof(initmsg);
+      int32_t total_needed = stream+16;
+
+      memset(&initmsg, 0, sizeof(initmsg));
+      if (usrsctp_getsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg, &len) < 0) {
+        LOG(("*** failed getsockopt SCTP_INITMSG"));
+        goto request_error_cleanup;
+      }
+      LOG(("Setting number of SCTP streams to %u, was %u/%u", total_needed,
+           initmsg.sinit_num_ostreams, initmsg.sinit_max_instreams));
+      initmsg.sinit_num_ostreams  = total_needed;
+      initmsg.sinit_max_instreams = MAX_NUM_STREAMS;
+      if (usrsctp_setsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg,
+                             (socklen_t)sizeof(initmsg)) < 0) {
+        LOG(("*** failed setsockopt SCTP_INITMSG, errno %d", errno));
+        goto request_error_cleanup;
+      }
+
+      int32_t old_len = mStreams.Length();
+      mStreams.AppendElements(total_needed - old_len);
+      for (int32_t i = old_len; i < total_needed; ++i) {
+        mStreams[i] = nullptr;
+      }
+    }
+    // else if state is CONNECTING, we'll just re-negotiate when OpenFinish
+    // is called, if needed
+    queue = true;
   }
+  if (queue) {
+    LOG(("Queuing channel %p (%u) to finish open", channel.get(), stream));
+    // Also serves to mark we told the app
+    channel->mFlags |= DATA_CHANNEL_FLAGS_FINISH_OPEN;
+    channel->AddRef(); // we need a ref for the nsDeQue and one to return
+    mPending.Push(channel);
+    return channel.forget();
+  }
+
+  MOZ_ASSERT(stream != INVALID_STREAM);
+  // just allocated (& OPEN), or externally negotiated
+  mStreams[stream] = channel; // holds a reference
+  channel->mStream = stream;
 
 #ifdef TEST_QUEUED_DATA
   // It's painful to write a test for this...
   channel->mState = OPEN;
   channel->mReady = true;
-  SendMsgInternal(channel, "Help me!", 8, DATA_CHANNEL_PPID_DOMSTRING);
+  SendMsgInternal(channel, "Help me!", 8, DATA_CHANNEL_PPID_DOMSTRING_LAST);
 #endif
 
   if (!(channel->mFlags & DATA_CHANNEL_FLAGS_EXTERNAL_NEGOTIATED)) {
@@ -1937,6 +2012,21 @@ DataChannelConnection::OpenFinish(already_AddRefed<DataChannel> aChannel)
                             channel));
 
   return channel.forget();
+
+request_error_cleanup:
+  channel->mState = CLOSED;
+  if (channel->mFlags & DATA_CHANNEL_FLAGS_FINISH_OPEN) {
+    // We already returned the channel to the app.
+    NS_ERROR("Failed to request more streams");
+    NS_DispatchToMainThread(new DataChannelOnMessageAvailable(
+                              DataChannelOnMessageAvailable::ON_CHANNEL_CLOSED, this,
+                              channel));
+    return channel.forget();
+  }
+  // we'll be destroying the channel, but it never really got set up
+  // Alternative would be to RUN_ON_THREAD(channel.forget(),::Destroy,...) and
+  // Dispatch it to ourselves
+  return nullptr;
 }
 
 int32_t
@@ -2007,7 +2097,8 @@ DataChannelConnection::SendMsgInternal(DataChannel *channel, const char *data,
 // Handles fragmenting binary messages
 int32_t
 DataChannelConnection::SendBinary(DataChannel *channel, const char *data,
-                                  uint32_t len)
+                                  uint32_t len,
+                                  uint32_t ppid_partial, uint32_t ppid_final)
 {
   // Since there's a limit on network buffer size and no limits on message
   // size, and we don't want to use EOR mode (multiple writes for a
@@ -2034,7 +2125,7 @@ DataChannelConnection::SendBinary(DataChannel *channel, const char *data,
       uint32_t sendlen = PR_MIN(len, DATA_CHANNEL_MAX_BINARY_FRAGMENT);
       uint32_t ppid;
       len -= sendlen;
-      ppid = len > 0 ? DATA_CHANNEL_PPID_BINARY : DATA_CHANNEL_PPID_BINARY_LAST;
+      ppid = len > 0 ? ppid_partial : ppid_final;
       LOG(("Send chunk of %u bytes, ppid %u", sendlen, ppid));
       // Note that these might end up being deferred and queued.
       sent += SendMsgInternal(channel, data, sendlen, ppid);
@@ -2049,8 +2140,8 @@ DataChannelConnection::SendBinary(DataChannel *channel, const char *data,
   NS_WARN_IF_FALSE(len <= DATA_CHANNEL_MAX_BINARY_FRAGMENT,
                    "Sending too-large data on unreliable channel!");
 
-  // This will fail if the message is too large
-  return SendMsgInternal(channel, data, len, DATA_CHANNEL_PPID_BINARY_LAST);
+  // This will fail if the message is too large (default 256K)
+  return SendMsgInternal(channel, data, len, ppid_final);
 }
 
 int32_t
@@ -2091,7 +2182,8 @@ DataChannelConnection::SendBlob(uint16_t stream, nsIInputStream *aBlob)
   const char *data = temp.get()->BeginReading();
   len              = temp.get()->Length();
 
-  return SendBinary(channel, data, len);
+  return SendBinary(channel, data, len,
+                    DATA_CHANNEL_PPID_BINARY, DATA_CHANNEL_PPID_BINARY_LAST);
 }
 
 int32_t
@@ -2113,8 +2205,10 @@ DataChannelConnection::SendMsgCommon(uint16_t stream, const nsACString &aMsg,
   NS_ENSURE_TRUE(channel, 0);
 
   if (isBinary)
-    return SendBinary(channel, data, len);
-  return SendMsgInternal(channel, data, len, DATA_CHANNEL_PPID_DOMSTRING);
+    return SendBinary(channel, data, len,
+                      DATA_CHANNEL_PPID_BINARY, DATA_CHANNEL_PPID_BINARY_LAST);
+  return SendBinary(channel, data, len,
+                    DATA_CHANNEL_PPID_DOMSTRING, DATA_CHANNEL_PPID_DOMSTRING_LAST);
 }
 
 void

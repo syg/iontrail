@@ -75,6 +75,7 @@ public:
   void HandleCallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
                               const nsAString& aNumber, bool aSend);
   bool IsConnected();
+  void GetAddress(nsAString& aDeviceAddress);
 
 private:
   class GetVolumeTask;
@@ -109,17 +110,28 @@ private:
   bool mCLIP;
   bool mCMEE;
   bool mCMER;
+  bool mFirstCKPD;
   int mNetworkSelectionMode;
   bool mReceiveVgsFlag;
   nsString mDevicePath;
   nsString mMsisdn;
   nsString mOperatorName;
-  SocketConnectionStatus mPrevSocketStatus;
 
   nsTArray<Call> mCurrentCallArray;
   nsAutoPtr<BluetoothTelephonyListener> mListener;
   nsRefPtr<BluetoothReplyRunnable> mRunnable;
+
+  // If a connection has been established, mSocket will be the socket
+  // communicating with the remote socket. We maintain the invariant that if
+  // mSocket is non-null, mHandsfreeSocket and mHeadsetSocket must be null (and
+  // vice versa).
   nsRefPtr<BluetoothSocket> mSocket;
+
+  // Server sockets. Once an inbound connection is established, it will hand
+  // over the ownership to mSocket, and get a new server socket while Listen()
+  // is called.
+  nsRefPtr<BluetoothSocket> mHandsfreeSocket;
+  nsRefPtr<BluetoothSocket> mHeadsetSocket;
 };
 
 END_BLUETOOTH_NAMESPACE

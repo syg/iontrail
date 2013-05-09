@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -419,16 +418,11 @@ MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output)
 }
 
 void
-MacroAssembler::newGCThing(const Register &result,
-                           JSObject *templateObject, Label *fail)
+MacroAssembler::newGCThing(const Register &result, gc::AllocKind allocKind, Label *fail)
 {
     // Inlined equivalent of js::gc::NewGCThing() without failure case handling.
 
-    gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
-    JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
-    int thingSize = (int)gc::Arena::thingSize(allocKind);
-
-    JS_ASSERT(!templateObject->hasDynamicElements());
+    int thingSize = int(gc::Arena::thingSize(allocKind));
 
     Zone *zone = GetIonContext()->compartment->zone();
 
@@ -451,6 +445,28 @@ MacroAssembler::newGCThing(const Register &result,
     addPtr(Imm32(thingSize), result);
     storePtr(result, AbsoluteAddress(&list->first));
     subPtr(Imm32(thingSize), result);
+}
+
+void
+MacroAssembler::newGCThing(const Register &result, JSObject *templateObject, Label *fail)
+{
+    gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
+    JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
+    JS_ASSERT(!templateObject->hasDynamicElements());
+
+    newGCThing(result, allocKind, fail);
+}
+
+void
+MacroAssembler::newGCString(const Register &result, Label *fail)
+{
+    newGCThing(result, js::gc::FINALIZE_STRING, fail);
+}
+
+void
+MacroAssembler::newGCShortString(const Register &result, Label *fail)
+{
+    newGCThing(result, js::gc::FINALIZE_SHORT_STRING, fail);
 }
 
 void
@@ -837,7 +853,8 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
         load32(Address(temp, BaselineFrame::reverseOffsetOfFrameSize()), temp);
         makeFrameDescriptor(temp, IonFrame_BaselineJS);
         push(temp);
-        push(Imm32(0)); // Fake return address.
+        loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)), temp);
+        push(temp);
         enterFakeExitFrame();
 
         // If monitorStub is non-null, handle resumeAddr appropriately.
@@ -930,47 +947,52 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
 }
 
 void
-MacroAssembler::loadBaselineOrIonCode(Register script, Register scratch, Label *failure)
+MacroAssembler::loadBaselineOrIonRaw(Register script, Register dest, ExecutionMode mode,
+                                     Label *failure)
 {
-    bool baselineEnabled = ion::IsBaselineEnabled(GetIonContext()->cx);
+    if (mode == SequentialExecution) {
+        loadPtr(Address(script, JSScript::offsetOfBaselineOrIonRaw()), dest);
+        if (failure)
+            branchTestPtr(Assembler::Zero, dest, dest, failure);
+    } else {
+        loadPtr(Address(script, JSScript::offsetOfParallelIonScript()), dest);
+        if (failure)
+            branchPtr(Assembler::BelowOrEqual, dest, ImmWord(ION_COMPILING_SCRIPT), failure);
+        loadPtr(Address(dest, IonScript::offsetOfMethod()), dest);
+        loadPtr(Address(dest, IonCode::offsetOfCode()), dest);
+    }
+}
 
-    Label noIonScript, done;
-    Address scriptIon(script, JSScript::offsetOfIonScript());
-    branchPtr(Assembler::BelowOrEqual, scriptIon, ImmWord(ION_COMPILING_SCRIPT),
-              &noIonScript);
-    {
-        // Load IonScript method.
-        loadPtr(scriptIon, scratch);
-
-        // Check bailoutExpected flag
-        if (baselineEnabled || failure) {
-            Address bailoutExpected(scratch, IonScript::offsetOfBailoutExpected());
-            branch32(Assembler::NotEqual, bailoutExpected, Imm32(0), &noIonScript);
+void
+MacroAssembler::loadBaselineOrIonNoArgCheck(Register script, Register dest, ExecutionMode mode,
+                                            Label *failure)
+{
+    if (mode == SequentialExecution) {
+        loadPtr(Address(script, JSScript::offsetOfBaselineOrIonSkipArgCheck()), dest);
+        if (failure)
+            branchTestPtr(Assembler::Zero, dest, dest, failure);
+    } else {
+        // Find second register to get the offset to skip argument check
+        Register offset = script;
+        if (script == dest) {
+            GeneralRegisterSet regs(GeneralRegisterSet::All());
+            regs.take(dest);
+            offset = regs.takeAny();
         }
 
-        loadPtr(Address(scratch, IonScript::offsetOfMethod()), script);
-        jump(&done);
-    }
-    bind(&noIonScript);
-    {
-        // The script does not have an IonScript. If |failure| is NULL,
-        // assume the script has a baseline script.
-        if (baselineEnabled) {
-            loadPtr(Address(script, JSScript::offsetOfBaselineScript()), script);
-            if (failure)
-                branchPtr(Assembler::BelowOrEqual, script, ImmWord(BASELINE_DISABLED_SCRIPT), failure);
-            loadPtr(Address(script, BaselineScript::offsetOfMethod()), script);
-        } else if (failure) {
-            jump(failure);
-        } else {
-#ifdef DEBUG
-            breakpoint();
-            breakpoint();
-#endif
-        }
-    }
+        loadPtr(Address(script, JSScript::offsetOfParallelIonScript()), dest);
+        if (failure)
+            branchPtr(Assembler::BelowOrEqual, dest, ImmWord(ION_COMPILING_SCRIPT), failure);
 
-    bind(&done);
+        Push(offset);
+        load32(Address(script, IonScript::offsetOfSkipArgCheckEntryOffset()), offset);
+
+        loadPtr(Address(dest, IonScript::offsetOfMethod()), dest);
+        loadPtr(Address(dest, IonCode::offsetOfCode()), dest);
+        addPtr(offset, dest);
+
+        Pop(offset);
+    }
 }
 
 void

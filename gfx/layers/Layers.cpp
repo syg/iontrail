@@ -7,8 +7,8 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "mozilla/layers/PLayers.h"
-#include "mozilla/layers/ShadowLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/Telemetry.h"
 
 #include "ImageLayers.h"
@@ -398,6 +398,38 @@ Layer::SetAnimations(const AnimationArray& aAnimations)
   Mutated();
 }
 
+static uint8_t sPanZoomUserDataKey;
+struct PanZoomUserData : public LayerUserData {
+  PanZoomUserData(AsyncPanZoomController* aController)
+    : mController(aController)
+  { }
+
+  // We don't keep a strong ref here because PanZoomUserData is only
+  // set transiently, and APZC is thread-safe refcounted so
+  // AddRef/Release is expensive.
+  AsyncPanZoomController* mController;
+};
+
+void
+Layer::SetAsyncPanZoomController(AsyncPanZoomController *controller)
+{
+  if (controller) {
+    SetUserData(&sPanZoomUserDataKey, new PanZoomUserData(controller));
+  } else {
+    RemoveUserData(&sPanZoomUserDataKey);
+  }
+}
+
+AsyncPanZoomController*
+Layer::GetAsyncPanZoomController()
+{
+  LayerUserData* data = GetUserData(&sPanZoomUserDataKey);
+  if (!data) {
+    return nullptr;
+  }
+  return static_cast<PanZoomUserData*>(data)->mController;
+}
+
 void
 Layer::ApplyPendingUpdatesToSubtree()
 {
@@ -428,7 +460,7 @@ Layer::CanUseOpaqueSurface()
 const nsIntRect*
 Layer::GetEffectiveClipRect()
 {
-  if (ShadowLayer* shadow = AsShadowLayer()) {
+  if (LayerComposite* shadow = AsLayerComposite()) {
     return shadow->GetShadowClipRect();
   }
   return GetClipRect();
@@ -437,7 +469,7 @@ Layer::GetEffectiveClipRect()
 const nsIntRegion&
 Layer::GetEffectiveVisibleRegion()
 {
-  if (ShadowLayer* shadow = AsShadowLayer()) {
+  if (LayerComposite* shadow = AsLayerComposite()) {
     return shadow->GetShadowVisibleRegion();
   }
   return GetVisibleRegion();
@@ -453,7 +485,8 @@ Layer::SnapTransformTranslation(const gfx3DMatrix& aTransform,
 
   gfxMatrix matrix2D;
   gfx3DMatrix result;
-  if (mManager->IsSnappingEffectiveTransforms() &&
+  if (!(mContentFlags & CONTENT_DISABLE_TRANSFORM_SNAPPING) &&
+      mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
       !matrix2D.HasNonTranslation() &&
       matrix2D.HasNonIntegerTranslation()) {
@@ -485,7 +518,8 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
 
   gfxMatrix matrix2D;
   gfx3DMatrix result;
-  if (mManager->IsSnappingEffectiveTransforms() &&
+  if (!(mContentFlags & CONTENT_DISABLE_TRANSFORM_SNAPPING) &&
+      mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
       gfxSize(1.0, 1.0) <= aSnapRect.Size() &&
       matrix2D.PreservesAxisAlignedRectangles()) {
@@ -606,7 +640,7 @@ const gfx3DMatrix
 Layer::GetLocalTransform()
 {
   gfx3DMatrix transform;
-  if (ShadowLayer* shadow = AsShadowLayer())
+  if (LayerComposite* shadow = AsLayerComposite())
     transform = shadow->GetShadowTransform();
   else
     transform = mTransform;
@@ -631,7 +665,7 @@ Layer::ApplyPendingUpdatesForThisTransaction()
 const float
 Layer::GetLocalOpacity()
 {
-   if (ShadowLayer* shadow = AsShadowLayer())
+   if (LayerComposite* shadow = AsLayerComposite())
     return shadow->GetShadowOpacity();
   return mOpacity;
 }
@@ -941,7 +975,7 @@ LayerManager::BeginTabSwitch()
 
 #ifdef MOZ_LAYERS_HAVE_LOG
 
-static nsACString& PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer);
+static nsACString& PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite);
 
 #ifdef MOZ_DUMP_PAINTING
 template <typename T>
@@ -1067,7 +1101,7 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
   aTo += aPrefix;
   aTo += nsPrintfCString("%s%s (0x%p)", mManager->Name(), Name(), this);
 
-  ::PrintInfo(aTo, AsShadowLayer());
+  ::PrintInfo(aTo, AsLayerComposite());
 
   if (mUseClipRect) {
     AppendToString(aTo, mClipRect, " [clip=", "]");
@@ -1278,19 +1312,19 @@ LayerManager::IsLogEnabled()
 }
 
 static nsACString&
-PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer)
+PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite)
 {
-  if (!aShadowLayer) {
+  if (!aLayerComposite) {
     return aTo;
   }
-  if (const nsIntRect* clipRect = aShadowLayer->GetShadowClipRect()) {
+  if (const nsIntRect* clipRect = aLayerComposite->GetShadowClipRect()) {
     AppendToString(aTo, *clipRect, " [shadow-clip=", "]");
   }
-  if (!aShadowLayer->GetShadowTransform().IsIdentity()) {
-    AppendToString(aTo, aShadowLayer->GetShadowTransform(), " [shadow-transform=", "]");
+  if (!aLayerComposite->GetShadowTransform().IsIdentity()) {
+    AppendToString(aTo, aLayerComposite->GetShadowTransform(), " [shadow-transform=", "]");
   }
-  if (!aShadowLayer->GetShadowVisibleRegion().IsEmpty()) {
-    AppendToString(aTo, aShadowLayer->GetShadowVisibleRegion(), " [shadow-visible=", "]");
+  if (!aLayerComposite->GetShadowVisibleRegion().IsEmpty()) {
+    AppendToString(aTo, aLayerComposite->GetShadowVisibleRegion(), " [shadow-visible=", "]");
   }
   return aTo;
 }

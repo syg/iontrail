@@ -170,13 +170,12 @@ NS_IMETHODIMP
 nsDOMMultipartFile::Initialize(nsISupports* aOwner,
                                JSContext* aCx,
                                JSObject* aObj,
-                               uint32_t aArgc,
-                               JS::Value* aArgv)
+                               const JS::CallArgs& aArgs)
 {
   if (!mIsFile) {
-    return InitBlob(aCx, aArgc, aArgv, GetXPConnectNative);
+    return InitBlob(aCx, aArgs.length(), aArgs.array(), GetXPConnectNative);
   }
-  return InitFile(aCx, aArgc, aArgv);
+  return InitFile(aCx, aArgs.length(), aArgs.array());
 }
 
 nsresult
@@ -189,18 +188,18 @@ nsDOMMultipartFile::InitBlob(JSContext* aCx,
   if (aArgc > 1) {
     if (NS_IsMainThread()) {
       BlobPropertyBag d;
-      if (!d.Init(aCx, nullptr, aArgv[1])) {
+      if (!d.Init(aCx, JS::Handle<JS::Value>::fromMarkedLocation(&aArgv[1]))) {
         return NS_ERROR_TYPE_ERR;
       }
       mContentType = d.mType;
-      nativeEOL = d.mEndings == EndingTypesValues::Native;
+      nativeEOL = d.mEndings == EndingTypes::Native;
     } else {
       BlobPropertyBagWorkers d;
-      if (!d.Init(aCx, nullptr, aArgv[1])) {
+      if (!d.Init(aCx, JS::Handle<JS::Value>::fromMarkedLocation(&aArgv[1]))) {
         return NS_ERROR_TYPE_ERR;
       }
       mContentType = d.mType;
-      nativeEOL = d.mEndings == EndingTypesValues::Native;
+      nativeEOL = d.mEndings == EndingTypes::Native;
     }
   }
 
@@ -209,23 +208,23 @@ nsDOMMultipartFile::InitBlob(JSContext* aCx,
       return NS_ERROR_TYPE_ERR; // We're not interested
     }
 
-    JSObject& obj = aArgv[0].toObject();
-    if (!JS_IsArrayObject(aCx, &obj)) {
+    JS::Rooted<JSObject*> obj(aCx, &aArgv[0].toObject());
+    if (!JS_IsArrayObject(aCx, obj)) {
       return NS_ERROR_TYPE_ERR; // We're not interested
     }
 
     BlobSet blobSet;
 
     uint32_t length;
-    JS_ALWAYS_TRUE(JS_GetArrayLength(aCx, &obj, &length));
+    JS_ALWAYS_TRUE(JS_GetArrayLength(aCx, obj, &length));
     for (uint32_t i = 0; i < length; ++i) {
-      JS::Value element;
-      if (!JS_GetElement(aCx, &obj, i, &element))
+      JS::Rooted<JS::Value> element(aCx);
+      if (!JS_GetElement(aCx, obj, i, element.address()))
         return NS_ERROR_TYPE_ERR;
 
       if (element.isObject()) {
-        JSObject& obj = element.toObject();
-        nsCOMPtr<nsIDOMBlob> blob = aUnwrapFunc(aCx, &obj);
+        JS::Rooted<JSObject*> obj(aCx, &element.toObject());
+        nsCOMPtr<nsIDOMBlob> blob = aUnwrapFunc(aCx, obj);
         if (blob) {
           // Flatten so that multipart blobs will never nest
           nsDOMFileBase* file = static_cast<nsDOMFileBase*>(
@@ -239,13 +238,13 @@ nsDOMMultipartFile::InitBlob(JSContext* aCx,
           }
           continue;
         }
-        if (JS_IsArrayBufferViewObject(&obj)) {
-          blobSet.AppendVoidPtr(JS_GetArrayBufferViewData(&obj),
-                                JS_GetArrayBufferViewByteLength(&obj));
+        if (JS_IsArrayBufferViewObject(obj)) {
+          blobSet.AppendVoidPtr(JS_GetArrayBufferViewData(obj),
+                                JS_GetArrayBufferViewByteLength(obj));
           continue;
         }
-        if (JS_IsArrayBufferObject(&obj)) {
-          blobSet.AppendArrayBuffer(&obj);
+        if (JS_IsArrayBufferObject(obj)) {
+          blobSet.AppendArrayBuffer(obj);
           continue;
         }
         // neither Blob nor ArrayBuffer(View)
@@ -283,7 +282,7 @@ nsDOMMultipartFile::InitFile(JSContext* aCx,
 
   if (aArgc > 1) {
     FilePropertyBag d;
-    if (!d.Init(aCx, nullptr, aArgv[1])) {
+    if (!d.Init(aCx, JS::Handle<JS::Value>::fromMarkedLocation(&aArgv[1]))) {
       return NS_ERROR_TYPE_ERR;
     }
     mName = d.mName;

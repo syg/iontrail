@@ -38,7 +38,7 @@ if (this.Components) {
        }
        // If |outExecutionDuration| option was supplied, start measuring the
        // duration of the operation.
-       if (typeof options === "object" && "outExecutionDuration" in options) {
+       if (options && typeof options === "object" && "outExecutionDuration" in options) {
          start = Date.now();
        }
 
@@ -162,10 +162,13 @@ if (this.Components) {
       * the file exists, it executes |f| within the |this| set
       * to the corresponding file. Otherwise, it throws an error.
       */
-     let withFile = function withFile(id, f) {
+     let withFile = function withFile(id, f, ignoreAbsent) {
        let file = OpenedFiles.get(id);
        if (file == null) {
-         throw new Error("Could not find File");
+         if (!ignoreAbsent) {
+           throw OS.File.Error.closed("accessing file");
+         }
+         return undefined;
        }
        return f.call(file);
      };
@@ -175,9 +178,9 @@ if (this.Components) {
        let file = OpenedDirectoryIterators.get(fd);
        if (file == null) {
          if (!ignoreAbsent) {
-           throw new Error("Could not find Directory");
+           throw OS.File.Error.closed("accessing directory");
          }
-         return;
+         return undefined;
        }
        if (!(file instanceof File.DirectoryIterator)) {
          throw new Error("file is not a directory iterator " + file.__proto__.toSource());

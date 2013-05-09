@@ -32,7 +32,6 @@
 #include "nsIServiceManager.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsError.h"
-#include "nsIJSContextStack.h"
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
 #include "nsMutationEvent.h"
@@ -54,6 +53,7 @@
 #include "nsSandboxFlags.h"
 #include "mozilla/dom/time/TimeChangeObserver.h"
 
+using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::hal;
 
@@ -159,7 +159,8 @@ ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
                             const char* aName,
                             unsigned aFlags)
 {
-  CycleCollectionNoteChild(aCallback, aField.mListener.get(), aName, aFlags);
+  CycleCollectionNoteChild(aCallback, aField.mListener.GetISupports(), aName,
+                           aFlags);
 }
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEventListenerManager)
@@ -199,7 +200,7 @@ nsEventListenerManager::GetTargetAsInnerWindow() const
 
 void
 nsEventListenerManager::AddEventListenerInternal(
-                          nsIDOMEventListener* aListener,
+                          const EventListenerHolder& aListener,
                           uint32_t aType,
                           nsIAtom* aTypeAtom,
                           const EventListenerFlags& aFlags,
@@ -212,7 +213,9 @@ nsEventListenerManager::AddEventListenerInternal(
     return;
   }
 
-  nsRefPtr<nsIDOMEventListener> kungFuDeathGrip = aListener;
+  // Since there is no public API to call us with an EventListenerHolder, we
+  // know that there's an EventListenerHolder on the stack holding a strong ref
+  // to the listener.
 
   nsListenerStruct* ls;
   uint32_t count = mListeners.Length();
@@ -241,8 +244,11 @@ nsEventListenerManager::AddEventListenerInternal(
   // Detect the type of event listener.
   nsCOMPtr<nsIXPConnectWrappedJS> wjs;
   if (aFlags.mListenerIsJSListener) {
+    MOZ_ASSERT(!aListener.HasWebIDLCallback());
     ls->mListenerType = eJSEventListener;
-  } else if ((wjs = do_QueryInterface(aListener))) {
+  } else if (aListener.HasWebIDLCallback()) {
+    ls->mListenerType = eWebIDLListener;
+  } else if ((wjs = do_QueryInterface(aListener.GetXPCOMCallback()))) {
     ls->mListenerType = eWrappedJSListener;
   } else {
     ls->mListenerType = eNativeListener;
@@ -275,7 +281,7 @@ nsEventListenerManager::AddEventListenerInternal(
     // Go from our target to the nearest enclosing DOM window.
     nsPIDOMWindow* window = GetInnerWindowForTarget();
     if (window) {
-      nsCOMPtr<nsIDocument> doc = do_QueryInterface(window->GetExtantDocument());
+      nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
       if (doc) {
         doc->WarnOnceAbout(nsIDocument::eMutationEvent);
       }
@@ -329,7 +335,7 @@ nsEventListenerManager::AddEventListenerInternal(
     nsPIDOMWindow* window = GetInnerWindowForTarget();
     if (window) {
 #ifdef DEBUG
-      nsCOMPtr<nsIDocument> d = do_QueryInterface(window->GetExtantDocument());
+      nsCOMPtr<nsIDocument> d = window->GetExtantDoc();
       NS_WARN_IF_FALSE(!nsContentUtils::IsChromeDoc(d),
                        "Please do not use mouseenter/leave events in chrome. "
                        "They are slower than mouseover/out!");
@@ -425,7 +431,7 @@ nsEventListenerManager::DisableDevice(uint32_t aType)
 
 void
 nsEventListenerManager::RemoveEventListenerInternal(
-                          nsIDOMEventListener* aListener, 
+                          const EventListenerHolder& aListener, 
                           uint32_t aType,
                           nsIAtom* aUserType,
                           const EventListenerFlags& aFlags,
@@ -499,7 +505,7 @@ ListenerCanHandle(nsListenerStruct* aLs, nsEvent* aEvent)
 }
 
 void
-nsEventListenerManager::AddEventListenerByType(nsIDOMEventListener *aListener, 
+nsEventListenerManager::AddEventListenerByType(const EventListenerHolder& aListener, 
                                                const nsAString& aType,
                                                const EventListenerFlags& aFlags)
 {
@@ -510,7 +516,7 @@ nsEventListenerManager::AddEventListenerByType(nsIDOMEventListener *aListener,
 
 void
 nsEventListenerManager::RemoveEventListenerByType(
-                          nsIDOMEventListener* aListener,
+                          const EventListenerHolder& aListener,
                           const nsAString& aType,
                           const EventListenerFlags& aFlags)
 {
@@ -539,7 +545,7 @@ nsEventListenerManager::FindEventHandler(uint32_t aEventType,
 
 nsresult
 nsEventListenerManager::SetEventHandlerInternal(nsIScriptContext *aContext,
-                                                JSObject* aScopeObject,
+                                                JS::Handle<JSObject*> aScopeObject,
                                                 nsIAtom* aName,
                                                 const nsEventHandler& aHandler,
                                                 bool aPermitUntrustedEvents,
@@ -563,7 +569,8 @@ nsEventListenerManager::SetEventHandlerInternal(nsIScriptContext *aContext,
                                aHandler, getter_AddRefs(scriptListener));
 
     if (NS_SUCCEEDED(rv)) {
-      AddEventListenerInternal(scriptListener, eventType, aName, flags, true);
+      EventListenerHolder holder(scriptListener);
+      AddEventListenerInternal(holder, eventType, aName, flags, true);
 
       ls = FindEventHandler(eventType, aName);
     }
@@ -711,7 +718,8 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
   nsIScriptContext* context = global->GetScriptContext();
   NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
 
-  JSObject* scope = global->GetGlobalJSObject();
+  JS::Rooted<JSObject*> scope(context->GetNativeContext(),
+                              global->GetGlobalJSObject());
 
   nsListenerStruct *ls;
   rv = SetEventHandlerInternal(context, scope, aName, nsEventHandler(),
@@ -820,7 +828,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
     } else {
       win = do_QueryInterface(mTarget);
       if (win) {
-        doc = do_QueryInterface(win->GetExtantDocument());
+        doc = win->GetExtantDoc();
       }
     }
 
@@ -866,37 +874,16 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
     context->BindCompiledEventHandler(mTarget, listener->GetEventScope(),
                                       handler, &boundHandler);
     if (listener->EventName() == nsGkAtoms::onerror && win) {
-      bool ok;
-      JSAutoRequest ar(cx);
       nsRefPtr<OnErrorEventHandlerNonNull> handlerCallback =
-        new OnErrorEventHandlerNonNull(cx, listener->GetEventScope(),
-                                       boundHandler, &ok);
-      if (!ok) {
-        // JS_WrapObject failed, which means OOM allocating the JSObject.
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
+        new OnErrorEventHandlerNonNull(boundHandler);
       listener->SetHandler(handlerCallback);
     } else if (listener->EventName() == nsGkAtoms::onbeforeunload && win) {
-      bool ok;
-      JSAutoRequest ar(cx);
       nsRefPtr<BeforeUnloadEventHandlerNonNull> handlerCallback =
-        new BeforeUnloadEventHandlerNonNull(cx, listener->GetEventScope(),
-                                            boundHandler, &ok);
-      if (!ok) {
-        // JS_WrapObject failed, which means OOM allocating the JSObject.
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
+        new BeforeUnloadEventHandlerNonNull(boundHandler);
       listener->SetHandler(handlerCallback);
     } else {
-      bool ok;
-      JSAutoRequest ar(cx);
       nsRefPtr<EventHandlerNonNull> handlerCallback =
-        new EventHandlerNonNull(cx, listener->GetEventScope(),
-                                boundHandler, &ok);
-      if (!ok) {
-        // JS_WrapObject failed, which means OOM allocating the JSObject.
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
+        new EventHandlerNonNull(boundHandler);
       listener->SetHandler(handlerCallback);
     }
   }
@@ -906,7 +893,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
 
 nsresult
 nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
-                                           nsIDOMEventListener* aListener,
+                                           const EventListenerHolder& aListener,
                                            nsIDOMEvent* aDOMEvent,
                                            EventTarget* aCurrentTarget,
                                            nsCxPusher* aPusher)
@@ -927,7 +914,14 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
   if (NS_SUCCEEDED(result)) {
     nsAutoMicroTask mt;
     // nsIDOMEvent::currentTarget is set in nsEventDispatcher.
-    result = aListener->HandleEvent(aDOMEvent);
+    if (aListener.HasWebIDLCallback()) {
+      ErrorResult rv;
+      aListener.GetWebIDLCallback()->
+        HandleEvent(aCurrentTarget, *(aDOMEvent->InternalDOMEvent()), rv);
+      result = rv.ErrorCode();
+    } else {
+      result = aListener.GetXPCOMCallback()->HandleEvent(aDOMEvent);
+    }
   }
 
   return result;
@@ -996,7 +990,7 @@ nsEventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
             continue;
           }
 
-          nsRefPtr<nsIDOMEventListener> kungFuDeathGrip = ls->mListener;
+          EventListenerHolder kungFuDeathGrip(ls->mListener);
           if (NS_FAILED(HandleEventSubType(ls, ls->mListener, *aDOMEvent,
                                            aCurrentTarget, aPusher))) {
             aEvent->mFlags.mExceptionHasBeenRisen = true;
@@ -1027,7 +1021,7 @@ nsEventListenerManager::Disconnect()
 
 void
 nsEventListenerManager::AddEventListener(const nsAString& aType,
-                                         nsIDOMEventListener* aListener,
+                                         const EventListenerHolder& aListener,
                                          bool aUseCapture,
                                          bool aWantsUntrusted)
 {
@@ -1039,7 +1033,7 @@ nsEventListenerManager::AddEventListener(const nsAString& aType,
 
 void
 nsEventListenerManager::RemoveEventListener(const nsAString& aType, 
-                                            nsIDOMEventListener* aListener, 
+                                            const EventListenerHolder& aListener, 
                                             bool aUseCapture)
 {
   EventListenerFlags flags;
@@ -1057,7 +1051,8 @@ nsEventListenerManager::AddListenerForAllEvents(nsIDOMEventListener* aListener,
   flags.mCapture = aUseCapture;
   flags.mAllowUntrustedEvents = aWantsUntrusted;
   flags.mInSystemGroup = aSystemEventGroup;
-  AddEventListenerInternal(aListener, NS_EVENT_TYPE_ALL, nullptr, flags,
+  EventListenerHolder holder(aListener);
+  AddEventListenerInternal(holder, NS_EVENT_TYPE_ALL, nullptr, flags,
                            false, true);
 }
 
@@ -1069,7 +1064,8 @@ nsEventListenerManager::RemoveListenerForAllEvents(nsIDOMEventListener* aListene
   EventListenerFlags flags;
   flags.mCapture = aUseCapture;
   flags.mInSystemGroup = aSystemEventGroup;
-  RemoveEventListenerInternal(aListener, NS_EVENT_TYPE_ALL, nullptr, flags,
+  EventListenerHolder holder(aListener);
+  RemoveEventListenerInternal(holder, NS_EVENT_TYPE_ALL, nullptr, flags,
                               true);
 }
 
@@ -1159,8 +1155,11 @@ nsEventListenerManager::GetListenerInfo(nsCOMArray<nsIEventListenerInfo>* aList)
     }
     const nsDependentSubstring& eventType =
       Substring(nsDependentAtomString(ls.mTypeAtom), 2);
+    // EventListenerInfo is defined in XPCOM, so we have to go ahead
+    // and convert to an XPCOM callback here...
     nsRefPtr<nsEventListenerInfo> info =
-      new nsEventListenerInfo(eventType, ls.mListener, ls.mFlags.mCapture,
+      new nsEventListenerInfo(eventType, ls.mListener.ToXPCOMCallback(),
+                              ls.mFlags.mCapture,
                               ls.mFlags.mAllowUntrustedEvents,
                               ls.mFlags.mInSystemGroup);
     NS_ENSURE_TRUE(info, NS_ERROR_OUT_OF_MEMORY);
@@ -1195,7 +1194,7 @@ nsEventListenerManager::SetEventHandler(nsIAtom* aEventName,
   // Untrusted events are always permitted for non-chrome script
   // handlers.
   nsListenerStruct *ignored;
-  return SetEventHandlerInternal(nullptr, nullptr, aEventName,
+  return SetEventHandlerInternal(nullptr, JS::NullPtr(), aEventName,
                                  nsEventHandler(aHandler),
                                  !nsContentUtils::IsCallerChrome(), &ignored);
 }
@@ -1211,7 +1210,7 @@ nsEventListenerManager::SetEventHandler(OnErrorEventHandlerNonNull* aHandler)
   // Untrusted events are always permitted for non-chrome script
   // handlers.
   nsListenerStruct *ignored;
-  return SetEventHandlerInternal(nullptr, nullptr, nsGkAtoms::onerror,
+  return SetEventHandlerInternal(nullptr, JS::NullPtr(), nsGkAtoms::onerror,
                                  nsEventHandler(aHandler),
                                  !nsContentUtils::IsCallerChrome(), &ignored);
 }
@@ -1227,7 +1226,7 @@ nsEventListenerManager::SetEventHandler(BeforeUnloadEventHandlerNonNull* aHandle
   // Untrusted events are always permitted for non-chrome script
   // handlers.
   nsListenerStruct *ignored;
-  return SetEventHandlerInternal(nullptr, nullptr, nsGkAtoms::onbeforeunload,
+  return SetEventHandlerInternal(nullptr, JS::NullPtr(), nsGkAtoms::onbeforeunload,
                                  nsEventHandler(aHandler),
                                  !nsContentUtils::IsCallerChrome(), &ignored);
 }
@@ -1285,7 +1284,10 @@ nsEventListenerManager::MarkForCC()
       }
       xpc_UnmarkGrayObject(jsl->GetEventScope());
     } else if (ls.mListenerType == eWrappedJSListener) {
-      xpc_TryUnmarkWrappedGrayObject(ls.mListener);
+      xpc_TryUnmarkWrappedGrayObject(ls.mListener.GetXPCOMCallback());
+    } else if (ls.mListenerType == eWebIDLListener) {
+      // Callback() unmarks gray
+      ls.mListener.GetWebIDLCallback()->Callback();
     }
   }
   if (mRefCnt.IsPurple()) {

@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -283,9 +282,10 @@ IonRuntime::generateInvalidator(JSContext *cx)
     masm.addq(Imm32(sizeof(uintptr_t)), rsp);
 
     // Push registers such that we can access them from [base + code].
-    masm.reserveStack(Registers::Total * sizeof(void *));
-    for (uint32_t i = 0; i < Registers::Total; i++)
-        masm.movq(Register::FromCode(i), Operand(rsp, i * sizeof(void *)));
+    for (uint32_t i = Registers::Total; i > 0; ) {
+        i--;
+        masm.Push(Register::FromCode(i));
+    }
 
     // Push xmm registers, such that we can access them from [base + code].
     masm.reserveStack(FloatRegisters::Total * sizeof(double));
@@ -389,13 +389,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
     // Call the target function.
     // Note that this code assumes the function is JITted.
     masm.movq(Operand(rax, offsetof(JSFunction, u.i.script_)), rax);
-    if (mode == SequentialExecution) {
-        masm.loadBaselineOrIonCode(rax, r9, NULL);
-    } else {
-        masm.movq(Operand(rax, OffsetOfIonInJSScript(mode)), rax);
-        masm.movq(Operand(rax, IonScript::offsetOfMethod()), rax);
-    }
-    masm.movq(Operand(rax, IonCode::offsetOfCode()), rax);
+    masm.loadBaselineOrIonRaw(rax, rax, mode, NULL);
     masm.call(rax);
     uint32_t returnOffset = masm.currentOffset();
 
@@ -422,9 +416,10 @@ static void
 GenerateBailoutThunk(JSContext *cx, MacroAssembler &masm, uint32_t frameClass)
 {
     // Push registers such that we can access them from [base + code].
-    masm.reserveStack(Registers::Total * sizeof(void *));
-    for (uint32_t i = 0; i < Registers::Total; i++)
-        masm.movq(Register::FromCode(i), Operand(rsp, i * sizeof(void *)));
+    for (uint32_t i = Registers::Total; i > 0; ) {
+        i--;
+        masm.Push(Register::FromCode(i));
+    }
 
     // Push xmm registers, such that we can access them from [base + code].
     masm.reserveStack(FloatRegisters::Total * sizeof(double));
@@ -646,7 +641,7 @@ IonRuntime::generatePreBarrier(JSContext *cx, MIRType type)
     masm.PushRegsInMask(regs);
 
     JS_ASSERT(PreBarrierReg == rdx);
-    masm.movq(ImmWord(cx->runtime), rcx);
+    masm.mov(ImmWord(cx->runtime), rcx);
 
     masm.setupUnalignedABICall(2, rax);
     masm.passABIArg(rcx);

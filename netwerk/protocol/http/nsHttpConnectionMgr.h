@@ -29,6 +29,12 @@ class nsHttpPipeline;
 
 class nsIHttpUpgradeListener;
 
+namespace mozilla {
+namespace net {
+class EventTokenBucket;
+}
+}
+
 //-----------------------------------------------------------------------------
 
 class nsHttpConnectionMgr : public nsIObserver
@@ -92,8 +98,9 @@ public:
     nsresult PruneDeadConnections();
 
     // Close all idle persistent connections and prevent any active connections
-    // from being reused.
-    nsresult ClosePersistentConnections();
+    // from being reused. Optional connection info resets CI specific
+    // information such as Happy Eyeballs history.
+    nsresult DoShiftReloadConnectionCleanup(nsHttpConnectionInfo *);
 
     // called to get a reference to the socket transport service.  the socket
     // transport service is not available when the connection manager is down.
@@ -123,6 +130,10 @@ public:
     // called to update a parameter after the connection manager has already
     // been initialized.
     nsresult UpdateParam(nsParamName name, uint16_t value);
+
+    // called from main thread to post a new request token bucket
+    // to the socket thread
+    nsresult UpdateRequestTokenBucket(mozilla::net::EventTokenBucket *aBucket);
 
     // Lookup/Cancel HTTP->SPDY redirections
     bool GetSpdyAlternateProtocol(nsACString &key);
@@ -230,7 +241,7 @@ public:
 
     bool GetConnectionData(nsTArray<mozilla::net::HttpRetParams> *);
 
-    void ResetIPFamillyPreference(nsHttpConnectionInfo *);
+    void ResetIPFamilyPreference(nsHttpConnectionInfo *);
 
 private:
     virtual ~nsHttpConnectionMgr();
@@ -517,6 +528,7 @@ private:
     nsresult CreateTransport(nsConnectionEntry *, nsAHttpTransaction *,
                              uint32_t, bool);
     void     AddActiveConn(nsHttpConnection *, nsConnectionEntry *);
+    void     DecrementActiveConnCount(nsHttpConnection *);
     void     StartedConnect();
     void     RecvdConnect();
 
@@ -602,9 +614,10 @@ private:
     void OnMsgReclaimConnection    (int32_t, void *);
     void OnMsgCompleteUpgrade      (int32_t, void *);
     void OnMsgUpdateParam          (int32_t, void *);
-    void OnMsgClosePersistentConnections (int32_t, void *);
+    void OnMsgDoShiftReloadConnectionCleanup (int32_t, void *);
     void OnMsgProcessFeedback      (int32_t, void *);
     void OnMsgProcessAllSpdyPendingQ (int32_t, void *);
+    void OnMsgUpdateRequestTokenBucket (int32_t, void *);
 
     // Total number of active connections in all of the ConnectionEntry objects
     // that are accessed from mCT connection table.
@@ -612,6 +625,8 @@ private:
     // Total number of idle connections in all of the ConnectionEntry objects
     // that are accessed from mCT connection table.
     uint16_t mNumIdleConns;
+    // Total number of spdy connections which are a subset of the active conns
+    uint16_t mNumSpdyActiveConns;
     // Total number of connections in mHalfOpens ConnectionEntry objects
     // that are accessed from mCT connection table
     uint32_t mNumHalfOpenConns;
@@ -631,7 +646,8 @@ private:
     // the connection table
     //
     // this table is indexed by connection key.  each entry is a
-    // nsConnectionEntry object.
+    // nsConnectionEntry object. It is unlocked and therefore must only
+    // be accessed from the socket thread.
     //
     nsClassHashtable<nsCStringHashKey, nsConnectionEntry> mCT;
 

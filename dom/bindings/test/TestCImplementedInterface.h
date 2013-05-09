@@ -9,13 +9,16 @@
 
 #include "../TestJSImplGenBinding.h"
 
+class nsPIDOMWindow;
+
 namespace mozilla {
 namespace dom {
 
 class TestCImplementedInterface : public TestJSImplInterface
 {
 public:
-  TestCImplementedInterface(JSObject* aJSImpl, nsISupports* aParent)
+  TestCImplementedInterface(JS::Handle<JSObject*> aJSImpl,
+                            nsPIDOMWindow* aParent)
     : TestJSImplInterface(aJSImpl, aParent)
   {}
 };
@@ -24,6 +27,8 @@ class TestCImplementedInterface2 : public nsISupports,
                                    public nsWrapperCache
 {
 public:
+  TestCImplementedInterface2(nsPIDOMWindow* aParent)
+  {}
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TestCImplementedInterface2)
 

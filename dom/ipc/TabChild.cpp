@@ -21,7 +21,7 @@
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/layers/AsyncPanZoomController.h"
 #include "mozilla/layers/CompositorChild.h"
-#include "mozilla/layers/PLayersChild.h"
+#include "mozilla/layers/PLayerTransactionChild.h"
 #include "mozilla/layout/RenderFrameChild.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/unused.h"
@@ -49,7 +49,6 @@
 #include "nsIDocShell.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIJSContextStack.h"
 #include "nsIJSRuntimeService.h"
 #include "nsISSLStatusProvider.h"
 #include "nsIScriptContext.h"
@@ -689,6 +688,14 @@ TabChild::Init()
 
   nsCOMPtr<nsIDocShell> docShell = do_GetInterface(mWebNav);
   MOZ_ASSERT(docShell);
+
+  docShell->SetAffectPrivateSessionLifetime(
+      mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_LIFETIME);
+  nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(mWebNav);
+  MOZ_ASSERT(loadContext);
+  loadContext->SetPrivateBrowsing(
+      mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW);
+
   nsCOMPtr<nsIWebProgress> webProgress = do_GetInterface(docShell);
   NS_ENSURE_TRUE(webProgress, NS_ERROR_FAILURE);
   webProgress->AddProgressListener(this, nsIWebProgress::NOTIFY_LOCATION);
@@ -1290,9 +1297,19 @@ TabChild::GetCachedFileDescriptor(const nsAString& aPath,
 
     MOZ_ASSERT(info);
     MOZ_ASSERT(info->mPath == aPath);
-    MOZ_ASSERT(!info->mCallback);
-    MOZ_ASSERT(!info->mCanceled);
 
+    // If we got a previous request for this file descriptor that was then
+    // canceled, insert the new request ahead of the old in the queue so that
+    // it will be serviced first.
+    if (info->mCanceled) {
+        // This insertion will change the array and invalidate |info|, so
+        // be careful not to touch |info| after this.
+        mCachedFileDescriptorInfos.InsertElementAt(index,
+            new CachedFileDescriptorInfo(aPath, aCallback));
+        return false;
+    }
+
+    MOZ_ASSERT(!info->mCallback);
     info->mCallback = aCallback;
 
     nsRefPtr<CachedFileDescriptorCallbackRunnable> runnable =
@@ -1401,13 +1418,13 @@ TabChild::DispatchMessageManagerMessage(const nsAString& aMessageName,
                                         const nsACString& aJSONData)
 {
     JSAutoRequest ar(mCx);
-    JS::Value json = JSVAL_NULL;
+    JS::Rooted<JS::Value> json(mCx, JSVAL_NULL);
     StructuredCloneData cloneData;
     JSAutoStructuredCloneBuffer buffer;
     if (JS_ParseJSON(mCx,
                       static_cast<const jschar*>(NS_ConvertUTF8toUTF16(aJSONData).get()),
                       aJSONData.Length(),
-                      &json)) {
+                      json.address())) {
         WriteStructuredClone(mCx, json, buffer, cloneData.mClosure);
         cloneData.mData = buffer.data();
         cloneData.mDataLength = buffer.nbytes();
@@ -1418,7 +1435,7 @@ TabChild::DispatchMessageManagerMessage(const nsAString& aMessageName,
     // content manipulate the frame state.
     nsRefPtr<nsFrameMessageManager> mm =
       static_cast<nsFrameMessageManager*>(mTabChildGlobal->mMessageManager.get());
-    mm->ReceiveMessage(static_cast<nsIDOMEventTarget*>(mTabChildGlobal),
+    mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal),
                        aMessageName, false, &cloneData, nullptr, nullptr);
 }
 
@@ -1910,11 +1927,10 @@ TabChild::RecvActivateFrameEvent(const nsString& aType, const bool& capture)
 {
   nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(mWebNav);
   NS_ENSURE_TRUE(window, true);
-  nsCOMPtr<nsIDOMEventTarget> chromeHandler =
+  nsCOMPtr<EventTarget> chromeHandler =
     do_QueryInterface(window->GetChromeEventHandler());
   NS_ENSURE_TRUE(chromeHandler, true);
   nsRefPtr<ContentListener> listener = new ContentListener(this);
-  NS_ENSURE_TRUE(listener, true);
   chromeHandler->AddEventListener(aType, listener, capture);
   return true;
 }
@@ -1957,7 +1973,7 @@ TabChild::RecvAsyncMessage(const nsString& aMessage,
     StructuredCloneData cloneData = UnpackClonedMessageDataForChild(aData);
     nsRefPtr<nsFrameMessageManager> mm =
       static_cast<nsFrameMessageManager*>(mTabChildGlobal->mMessageManager.get());
-    mm->ReceiveMessage(static_cast<nsIDOMEventTarget*>(mTabChildGlobal),
+    mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal),
                        aMessage, false, &cloneData, nullptr, nullptr);
   }
   return true;
@@ -2019,14 +2035,6 @@ TabChild::RecvDestroy()
   return Send__delete__(this);
 }
 
-/* virtual */ bool
-TabChild::RecvSetAppType(const nsString& aAppType)
-{
-  MOZ_ASSERT_IF(!aAppType.IsEmpty(), HasOwnApp());
-  mAppType = aAppType;
-  return true;
-}
-
 PRenderFrameChild*
 TabChild::AllocPRenderFrame(ScrollingBehavior* aScrolling,
                             TextureFactoryIdentifier* aTextureFactoryIdentifier,
@@ -2048,16 +2056,14 @@ TabChild::InitTabChildGlobal(FrameScriptLoading aScriptLoading)
   if (!mCx && !mTabChildGlobal) {
     nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(mWebNav);
     NS_ENSURE_TRUE(window, false);
-    nsCOMPtr<nsIDOMEventTarget> chromeHandler =
+    nsCOMPtr<EventTarget> chromeHandler =
       do_QueryInterface(window->GetChromeEventHandler());
     NS_ENSURE_TRUE(chromeHandler, false);
 
     nsRefPtr<TabChildGlobal> scope = new TabChildGlobal(this);
-    NS_ENSURE_TRUE(scope, false);
-
     mTabChildGlobal = scope;
 
-    nsISupports* scopeSupports = NS_ISUPPORTS_CAST(nsIDOMEventTarget*, scope);
+    nsISupports* scopeSupports = NS_ISUPPORTS_CAST(EventTarget*, scope);
 
     NS_NAMED_LITERAL_CSTRING(globalId, "outOfProcessTabChildGlobal");
     NS_ENSURE_TRUE(InitTabChildGlobalInternal(scopeSupports, globalId), false);
@@ -2089,16 +2095,15 @@ TabChild::InitRenderingState()
     static_cast<PuppetWidget*>(mWidget.get())->InitIMEState();
 
     uint64_t id;
-    TextureFactoryIdentifier textureFactoryIdentifier;
     RenderFrameChild* remoteFrame =
         static_cast<RenderFrameChild*>(SendPRenderFrameConstructor(
-                                         &mScrolling, &textureFactoryIdentifier, &id));
+                                         &mScrolling, &mTextureFactoryIdentifier, &id));
     if (!remoteFrame) {
       NS_WARNING("failed to construct RenderFrame");
       return false;
     }
 
-    PLayersChild* shadowManager = nullptr;
+    PLayerTransactionChild* shadowManager = nullptr;
     if (id != 0) {
         // Pushing layers transactions directly to a separate
         // compositor context.
@@ -2108,11 +2113,11 @@ TabChild::InitRenderingState()
           return false;
         }
         shadowManager =
-            compositorChild->SendPLayersConstructor(textureFactoryIdentifier.mParentBackend,
-                                                    id, &textureFactoryIdentifier);
+            compositorChild->SendPLayerTransactionConstructor(mTextureFactoryIdentifier.mParentBackend,
+                                                              id, &mTextureFactoryIdentifier);
     } else {
         // Pushing transactions to the parent content.
-        shadowManager = remoteFrame->SendPLayersConstructor();
+        shadowManager = remoteFrame->SendPLayerTransactionConstructor();
     }
 
     if (!shadowManager) {
@@ -2123,11 +2128,11 @@ TabChild::InitRenderingState()
     }
 
     ShadowLayerForwarder* lf =
-        mWidget->GetLayerManager(shadowManager, textureFactoryIdentifier.mParentBackend)
+        mWidget->GetLayerManager(shadowManager, mTextureFactoryIdentifier.mParentBackend)
                ->AsShadowForwarder();
     NS_ABORT_IF_FALSE(lf && lf->HasShadowManager(),
                       "PuppetWidget should have shadow manager");
-    lf->IdentifyTextureHost(textureFactoryIdentifier);
+    lf->IdentifyTextureHost(mTextureFactoryIdentifier);
 
     mRemoteFrame = remoteFrame;
 
@@ -2173,9 +2178,24 @@ TabChild::GetDPI(float* aDPI)
 }
 
 void
+TabChild::GetDefaultScale(double* aScale)
+{
+    *aScale = -1.0;
+    if (!mRemoteFrame) {
+        return;
+    }
+
+    SendGetDefaultScale(aScale);
+}
+
+void
 TabChild::NotifyPainted()
 {
-    if (UseDirectCompositor() && !mNotified) {
+    // Normally we only need to notify the content process once, but with BasicCompositor
+    // we need to notify content every change so that it can compute an invalidation
+    // region and send that to the widget.
+    if (UseDirectCompositor() &&
+        (!mNotified || mTextureFactoryIdentifier.mParentBackend == LAYERS_BASIC)) {
         mRemoteFrame->SendNotifyCompositorTransaction();
         mNotified = true;
     }
@@ -2284,7 +2304,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(TabChildGlobal)
   NS_INTERFACE_MAP_ENTRY(nsIMessageSender)
   NS_INTERFACE_MAP_ENTRY(nsISyncMessageSender)
   NS_INTERFACE_MAP_ENTRY(nsIContentFrameMessageManager)
-  NS_INTERFACE_MAP_ENTRY(nsIScriptContextPrincipal)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(ContentFrameMessageManager)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)

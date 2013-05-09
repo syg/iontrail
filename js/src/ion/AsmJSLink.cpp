@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,6 +14,10 @@
 #include "frontend/BytecodeCompiler.h"
 
 #include "Ion.h"
+
+#ifdef MOZ_VTUNE
+# include "jitprofiling.h"
+#endif
 
 using namespace js;
 using namespace js::ion;
@@ -262,7 +265,7 @@ AsmJSActivation::AsmJSActivation(JSContext *cx, const AsmJSModule &module)
 
     prev_ = cx_->runtime->mainThread.asmJSActivationStack_;
 
-    PerThreadData::AsmJSActivationStackLock lock(cx_->runtime->mainThread);
+    JSRuntime::AutoLockForOperationCallback lock(cx_->runtime);
     cx_->runtime->mainThread.asmJSActivationStack_ = this;
 
     (void) errorRejoinSP_;  // squelch GCC warning
@@ -275,15 +278,15 @@ AsmJSActivation::~AsmJSActivation()
 
     JS_ASSERT(cx_->runtime->mainThread.asmJSActivationStack_ == this);
 
-    PerThreadData::AsmJSActivationStackLock lock(cx_->runtime->mainThread);
+    JSRuntime::AutoLockForOperationCallback lock(cx_->runtime);
     cx_->runtime->mainThread.asmJSActivationStack_ = prev_;
 }
 
 static const unsigned ASM_MODULE_SLOT = 0;
 static const unsigned ASM_EXPORT_INDEX_SLOT = 1;
 
-static JSBool
-CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
+extern JSBool
+js::CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs callArgs = CallArgsFromVp(argc, vp);
     RootedFunction callee(cx, callArgs.callee().toFunction());
@@ -424,6 +427,46 @@ HandleDynamicLinkFailure(JSContext *cx, CallArgs args, AsmJSModule &module, Hand
     return true;
 }
 
+#ifdef MOZ_VTUNE
+static bool
+SendFunctionsToVTune(JSContext *cx, AsmJSModule &module)
+{
+    uint8_t *base = module.functionCode();
+
+    for (unsigned i = 0; i < module.numProfiledFunctions(); i++) {
+        const AsmJSModule::ProfiledFunction &func = module.profiledFunction(i);
+
+        uint8_t *start = base + func.startCodeOffset;
+        uint8_t *end   = base + func.endCodeOffset;
+        JS_ASSERT(end >= start);
+
+        unsigned method_id = iJIT_GetNewMethodID();
+        if (method_id == 0)
+            return false;
+
+        JSAutoByteString bytes;
+        const char *method_name = js_AtomToPrintableString(cx, func.name, &bytes);
+        if (!method_name)
+            return false;
+
+        iJIT_Method_Load method;
+        method.method_id = method_id;
+        method.method_name = const_cast<char *>(method_name);
+        method.method_load_address = (void *)start;
+        method.method_size = unsigned(end - start);
+        method.line_number_size = 0;
+        method.line_number_table = NULL;
+        method.class_id = 0;
+        method.class_file_name = NULL;
+        method.source_file_name = NULL;
+
+        iJIT_NotifyEvent(iJVM_EVENT_TYPE_METHOD_LOAD_FINISHED, (void *)&method);
+    }
+
+    return true;
+}
+#endif
+
 JSBool
 js::LinkAsmJS(JSContext *cx, unsigned argc, JS::Value *vp)
 {
@@ -438,6 +481,11 @@ js::LinkAsmJS(JSContext *cx, unsigned argc, JS::Value *vp)
         RootedPropertyName name(cx, fun->name());
         return HandleDynamicLinkFailure(cx, args, module, name);
     }
+
+#if defined(MOZ_VTUNE)
+    if (!SendFunctionsToVTune(cx, module))
+        return false;
+#endif
 
     if (module.numExportedFunctions() == 1) {
         const AsmJSModule::ExportedFunction &func = module.exportedFunction(0);

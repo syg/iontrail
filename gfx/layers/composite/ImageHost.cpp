@@ -25,11 +25,38 @@ ImageHostSingle::SetCompositor(Compositor* aCompositor) {
 }
 
 void
-ImageHostSingle::AddTextureHost(TextureHost* aHost, ISurfaceAllocator* aAllocator)
+ImageHostSingle::EnsureTextureHost(TextureIdentifier aTextureId,
+                                   const SurfaceDescriptor& aSurface,
+                                   ISurfaceAllocator* aAllocator,
+                                   const TextureInfo& aTextureInfo)
 {
-  mTextureHost = aHost;
-  if (mCompositor) {
-    mTextureHost->SetCompositor(mCompositor);
+  if (mTextureHost &&
+      mTextureHost->GetBuffer() &&
+      mTextureHost->GetBuffer()->type() == aSurface.type()) {
+    return;
+  }
+
+  MakeTextureHost(aTextureId,
+                  aSurface,
+                  aAllocator,
+                  aTextureInfo);
+}
+
+void
+ImageHostSingle::MakeTextureHost(TextureIdentifier aTextureId,
+                                 const SurfaceDescriptor& aSurface,
+                                 ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo)
+{
+  mTextureHost = TextureHost::CreateTextureHost(aSurface.type(),
+                                                mTextureInfo.mTextureHostFlags,
+                                                mTextureInfo.mTextureFlags);
+
+  NS_ASSERTION(mTextureHost, "Failed to create texture host");
+
+  Compositor* compositor = GetCompositor();
+  if (compositor && mTextureHost) {
+    mTextureHost->SetCompositor(compositor);
   }
 }
 
@@ -76,6 +103,8 @@ ImageHostSingle::Composite(EffectChain& aEffectChain,
       gfx::Rect rect(tileRect.x, tileRect.y, tileRect.width, tileRect.height);
       GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain,
                                 aOpacity, aTransform, aOffset);
+      GetCompositor()->DrawDiagnostics(gfx::Color(0.5,0.0,0.0,1.0),
+                                       rect, aClipRect, aTransform, aOffset);
     } while (it->NextTile());
     it->EndTileIteration();
   } else {
@@ -100,6 +129,8 @@ ImageHostSingle::Composite(EffectChain& aEffectChain,
 
     GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain,
                               aOpacity, aTransform, aOffset);
+    GetCompositor()->DrawDiagnostics(gfx::Color(1.0,0.1,0.1,1.0),
+                                     rect, aClipRect, aTransform, aOffset);
   }
 
   mTextureHost->Unlock();
@@ -135,17 +166,18 @@ ImageHostBuffered::Update(const SurfaceDescriptor& aImage,
 }
 
 void
-ImageHostBuffered::AddTextureHost(TextureHost* aHost,
-                                  ISurfaceAllocator* aAllocator)
+ImageHostBuffered::MakeTextureHost(TextureIdentifier aTextureId,
+                                   const SurfaceDescriptor& aSurface,
+                                   ISurfaceAllocator* aAllocator,
+                                   const TextureInfo& aTextureInfo)
 {
-  MOZ_ASSERT(aAllocator);
-  mTextureHost = aHost;
-  if (mCompositor) {
-    mTextureHost->SetCompositor(mCompositor);
+  ImageHostSingle::MakeTextureHost(aTextureId,
+                                   aSurface,
+                                   aAllocator,
+                                   aTextureInfo);
+  if (mTextureHost) {
+    mTextureHost->SetBuffer(new SurfaceDescriptor(null_t()), aAllocator);
   }
-  mTextureHost->SetBuffer(new SurfaceDescriptor(null_t()),
-                          aAllocator);
-  mPictureRect = nsIntRect(0, 0, -1, -1);
 }
 
 }

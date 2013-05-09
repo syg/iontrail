@@ -350,7 +350,7 @@ HTMLSharedObjectElement::CopyInnerTo(Element* aDest)
 }
 
 JSObject*
-HTMLSharedObjectElement::WrapNode(JSContext* aCx, JSObject* aScope)
+HTMLSharedObjectElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   JSObject* obj;
   if (mNodeInfo->Equals(nsGkAtoms::applet)) {
@@ -362,8 +362,9 @@ HTMLSharedObjectElement::WrapNode(JSContext* aCx, JSObject* aScope)
   if (!obj) {
     return nullptr;
   }
-  SetupProtoChain(aCx, obj);
-  return obj;
+  JS::Rooted<JSObject*> rootedObj(aCx, obj);
+  SetupProtoChain(aCx, rootedObj);
+  return rootedObj;
 }
 
 } // namespace dom

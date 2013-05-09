@@ -6,6 +6,7 @@
 
 #include "base/basictypes.h"
 
+#include "mozilla/Poison.h"
 #include "mozilla/XPCOM.h"
 #include "nsXULAppAPI.h"
 
@@ -15,6 +16,7 @@
 #include "nsStaticComponents.h"
 #include "prlink.h"
 
+#include "nsCycleCollector.h"
 #include "nsObserverList.h"
 #include "nsObserverService.h"
 #include "nsProperties.h"
@@ -48,6 +50,7 @@
 #include "xptinfo.h"
 #include "nsIInterfaceInfoManager.h"
 #include "xptiprivate.h"
+#include "mozilla/XPTInterfaceInfoManager.h"
 
 #include "nsTimerImpl.h"
 #include "TimerThread.h"
@@ -126,6 +129,7 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 
 #include "GeckoProfiler.h"
 
+using namespace mozilla;
 using base::AtExitManager;
 using mozilla::ipc::BrowserProcessSubThread;
 #ifdef MOZ_VISUAL_EVENT_TRACER
@@ -228,7 +232,7 @@ nsXPTIInterfaceInfoManagerGetSingleton(nsISupports* outer,
     NS_ENSURE_TRUE(!outer, NS_ERROR_NO_AGGREGATION);
 
     nsCOMPtr<nsIInterfaceInfoManager> iim
-        (xptiInterfaceInfoManager::GetSingleton());
+        (XPTInterfaceInfoManager::GetSingleton());
     if (!iim)
         return NS_ERROR_FAILURE;
 
@@ -255,16 +259,16 @@ static already_AddRefed<nsIFactory>
 CreateINIParserFactory(const mozilla::Module& module,
                        const mozilla::Module::CIDEntry& entry)
 {
-    nsIFactory* f = new nsINIParserFactory();
-    f->AddRef();
-    return f;
+    nsCOMPtr<nsIFactory> f = new nsINIParserFactory();
+    return f.forget();
 }
 
 static already_AddRefed<nsIFactory>
 CreateUnicharStreamFactory(const mozilla::Module& module,
                            const mozilla::Module::CIDEntry& entry)
 {
-    return nsSimpleUnicharStreamFactory::GetInstance();
+    return already_AddRefed<nsIFactory>(
+            nsSimpleUnicharStreamFactory::GetInstance());
 }
 
 #define COMPONENT(NAME, Ctor) static NS_DEFINE_CID(kNS_##NAME##_CID, NS_##NAME##_CID);
@@ -326,6 +330,8 @@ NS_InitXPCOM2(nsIServiceManager* *result,
               nsIFile* binDirectory,
               nsIDirectoryServiceProvider* appFileLocationProvider)
 {
+    mozPoisonValueInit();
+
     profiler_init();
     nsresult rv = NS_OK;
 
@@ -470,12 +476,16 @@ NS_InitXPCOM2(nsIServiceManager* *result,
 
     // The iimanager constructor searches and registers XPT files.
     // (We trigger the singleton's lazy construction here to make that happen.)
-    (void) xptiInterfaceInfoManager::GetSingleton();
+    (void) XPTInterfaceInfoManager::GetSingleton();
 
     // After autoreg, but before we actually instantiate any components,
     // add any services listed in the "xpcom-directory-providers" category
     // to the directory service.
     nsDirectoryService::gService->RegisterCategoryProviders();
+
+    // Force layout to spin up so that nsContentUtils is available for cx stack
+    // munging.
+    nsCOMPtr<nsISupports> componentLoader = do_GetService("@mozilla.org/moz/jsloader;1");
 
     mozilla::scache::StartupCache::GetSingleton();
     mozilla::AvailableMemoryTracker::Activate();
@@ -688,7 +698,7 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
     // Do this _after_ shutting down the component manager, because the
     // JS component loader will use XPConnect to call nsIModule::canUnload,
     // and that will spin up the InterfaceInfoManager again -- bad mojo
-    xptiInterfaceInfoManager::FreeInterfaceInfoManager();
+    XPTInterfaceInfoManager::FreeInterfaceInfoManager();
 
     // Finally, release the component manager last because it unloads the
     // libraries:
@@ -728,6 +738,8 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
 #ifdef MOZ_VISUAL_EVENT_TRACER
     eventtracer::Shutdown();
 #endif
+
+    profiler_shutdown();
 
     NS_LogTerm();
 

@@ -34,7 +34,7 @@ public:
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIDOMSCREEN
-  NS_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper::)
+  NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper)
 
   nsPIDOMWindow* GetParentObject() const
   {
@@ -114,7 +114,8 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsScreen,
                                            nsDOMEventTargetHelper)
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   void Notify(const mozilla::hal::ScreenConfiguration& aConfiguration);
 

@@ -277,7 +277,7 @@ PeerConnectionImpl::PeerConnectionImpl()
   , mWindow(NULL)
   , mIdentity(NULL)
   , mSTSThread(NULL)
-  , mMedia(new PeerConnectionMedia(this))
+  , mMedia(NULL)
   , mNumAudioStreams(0)
   , mNumVideoStreams(0)
   , mHaveDataStream(false) {
@@ -364,23 +364,6 @@ PeerConnectionImpl::CreateRemoteSourceStreamInfo(nsRefPtr<RemoteSourceStreamInfo
   return NS_OK;
 }
 
-#ifdef MOZILLA_INTERNAL_API
-static void
-Warn(JSContext* aCx, const nsCString& aMsg) {
-  CSFLogError(logTag, "Warning: %s", aMsg.get());
-  nsIScriptContext* sc = GetScriptContextFromJSContext(aCx);
-  if (sc) {
-    nsCOMPtr<nsIDocument> doc;
-    doc = nsContentUtils::GetDocumentFromScriptContext(sc);
-    if (doc) {
-      // Passing in line-# 1 hides peerconnection.js (shows document instead)
-      nsContentUtils::ReportToConsoleNonLocalized(NS_ConvertUTF8toUTF16 (aMsg),
-          nsIScriptError::warningFlag, logTag, doc, nullptr, EmptyString(), 1);
-    }
-  }
-}
-#endif
-
 /**
  * In JS, an RTCConfiguration looks like this:
  *
@@ -401,7 +384,8 @@ PeerConnectionImpl::ConvertRTCConfiguration(const JS::Value& aSrc,
   }
   JSAutoCompartment ac(aCx, &aSrc.toObject());
   RTCConfiguration config;
-  if (!(config.Init(aCx, nullptr, aSrc) && config.mIceServers.WasPassed())) {
+  JS::Rooted<JS::Value> src(aCx, aSrc);
+  if (!(config.Init(aCx, src) && config.mIceServers.WasPassed())) {
     return NS_ERROR_FAILURE;
   }
   for (uint32_t i = 0; i < config.mIceServers.Value().Length(); i++) {
@@ -525,6 +509,8 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
     CSFLogError(logTag, "%s: Couldn't Create Call Object", __FUNCTION__);
     return NS_ERROR_FAILURE;
   }
+
+  mMedia = new PeerConnectionMedia(this);
 
   // Connect ICE slots.
   mMedia->SignalIceGatheringCompleted.connect(this, &PeerConnectionImpl::IceGatheringCompleted);
@@ -697,6 +683,8 @@ PeerConnectionImpl::InitializeDataChannel(int track_id,
         return NS_OK;
       }
     }
+    // If we inited the DataConnection, call Destroy() before releasing it
+    mDataConnection->Destroy();
   }
   mDataConnection = nullptr;
 #endif
@@ -753,7 +741,7 @@ PeerConnectionImpl::NotifyConnection()
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
-  CSFLogDebug(logTag, __FUNCTION__);
+  CSFLogDebug(logTag, "%s", __FUNCTION__);
 
 #ifdef MOZILLA_INTERNAL_API
   nsCOMPtr<IPeerConnectionObserver> pco = do_QueryReferent(mPCObserver);
@@ -772,7 +760,7 @@ PeerConnectionImpl::NotifyClosedConnection()
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
-  CSFLogDebug(logTag, __FUNCTION__);
+  CSFLogDebug(logTag, "%s", __FUNCTION__);
 
 #ifdef MOZILLA_INTERNAL_API
   nsCOMPtr<IPeerConnectionObserver> pco = do_QueryReferent(mPCObserver);
@@ -840,11 +828,11 @@ nsresult
 PeerConnectionImpl::ConvertConstraints(
   const JS::Value& aConstraints, MediaConstraints* aObj, JSContext* aCx)
 {
-  JS::Value mandatory, optional;
-  JSObject& constraints = aConstraints.toObject();
+  JS::Rooted<JS::Value> mandatory(aCx), optional(aCx);
+  JS::Rooted<JSObject*> constraints(aCx, &aConstraints.toObject());
 
   // Mandatory constraints.  Note that we only care if the constraint array exists
-  if (!JS_GetProperty(aCx, &constraints, "mandatory", &mandatory)) {
+  if (!JS_GetProperty(aCx, constraints, "mandatory", mandatory.address())) {
     return NS_ERROR_FAILURE;
   }
   if (!mandatory.isNullOrUndefined()) {
@@ -852,14 +840,14 @@ PeerConnectionImpl::ConvertConstraints(
       return NS_ERROR_FAILURE;
     }
 
-    JSObject* opts = &mandatory.toObject();
+    JS::Rooted<JSObject*> opts(aCx, &mandatory.toObject());
     JS::AutoIdArray mandatoryOpts(aCx, JS_Enumerate(aCx, opts));
 
     // Iterate over each property.
     for (size_t i = 0; i < mandatoryOpts.length(); i++) {
-      JS::Value option, optionName;
-      if (!JS_GetPropertyById(aCx, opts, mandatoryOpts[i], &option) ||
-          !JS_IdToValue(aCx, mandatoryOpts[i], &optionName) ||
+      JS::Rooted<JS::Value> option(aCx), optionName(aCx);
+      if (!JS_GetPropertyById(aCx, opts, mandatoryOpts[i], option.address()) ||
+          !JS_IdToValue(aCx, mandatoryOpts[i], optionName.address()) ||
           // We only support boolean constraints for now.
           !option.isBoolean()) {
         return NS_ERROR_FAILURE;
@@ -874,7 +862,7 @@ PeerConnectionImpl::ConvertConstraints(
   }
 
   // Optional constraints.
-  if (!JS_GetProperty(aCx, &constraints, "optional", &optional)) {
+  if (!JS_GetProperty(aCx, constraints, "optional", optional.address())) {
     return NS_ERROR_FAILURE;
   }
   if (!optional.isNullOrUndefined()) {
@@ -882,26 +870,26 @@ PeerConnectionImpl::ConvertConstraints(
       return NS_ERROR_FAILURE;
     }
 
-    JSObject* array = &optional.toObject();
+    JS::Rooted<JSObject*> array(aCx, &optional.toObject());
     uint32_t length;
     if (!JS_GetArrayLength(aCx, array, &length)) {
       return NS_ERROR_FAILURE;
     }
     for (uint32_t i = 0; i < length; i++) {
-      JS::Value element;
-      if (!JS_GetElement(aCx, array, i, &element) ||
+      JS::Rooted<JS::Value> element(aCx);
+      if (!JS_GetElement(aCx, array, i, element.address()) ||
           !element.isObject()) {
         return NS_ERROR_FAILURE;
       }
-      JSObject* opts = &element.toObject();
+      JS::Rooted<JSObject*> opts(aCx, &element.toObject());
       JS::AutoIdArray optionalOpts(aCx, JS_Enumerate(aCx, opts));
       // Expect one property per entry.
       if (optionalOpts.length() != 1) {
         return NS_ERROR_FAILURE;
       }
-      JS::Value option, optionName;
-      if (!JS_GetPropertyById(aCx, opts, optionalOpts[0], &option) ||
-          !JS_IdToValue(aCx, optionalOpts[0], &optionName)) {
+      JS::Rooted<JS::Value> option(aCx), optionName(aCx);
+      if (!JS_GetPropertyById(aCx, opts, optionalOpts[0], option.address()) ||
+          !JS_IdToValue(aCx, optionalOpts[0], optionName.address())) {
         return NS_ERROR_FAILURE;
       }
       // Ignore constraints other than boolean, as that's all we support.
@@ -1216,7 +1204,7 @@ PeerConnectionImpl::CheckApiState(bool assert_ice_ready) const
 NS_IMETHODIMP
 PeerConnectionImpl::Close(bool aIsSynchronous)
 {
-  CSFLogDebug(logTag, __FUNCTION__);
+  CSFLogDebug(logTag, "%s", __FUNCTION__);
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
   return CloseInt(aIsSynchronous);
@@ -1411,7 +1399,7 @@ PeerConnectionImpl::IceStateChange_m(IceState aState)
 {
   PC_AUTO_ENTER_API_CALL(false);
 
-  CSFLogDebug(logTag, __FUNCTION__);
+  CSFLogDebug(logTag, "%s", __FUNCTION__);
 
   mIceState = aState;
 
@@ -1464,11 +1452,11 @@ GetStreams(JSContext* cx, PeerConnectionImpl* peerConnection,
 {
   nsAutoPtr<MediaStreamList> list(new MediaStreamList(peerConnection, type));
 
-  ErrorResult rv;
-  JSObject* obj = list->WrapObject(cx, rv);
-  if (rv.Failed()) {
+  bool tookOwnership = false;
+  JSObject* obj = list->WrapObject(cx, &tookOwnership);
+  if (!tookOwnership) {
     streams->setNull();
-    return rv.ErrorCode();
+    return NS_ERROR_FAILURE;
   }
 
   // Transfer ownership to the binding.

@@ -54,13 +54,6 @@ using namespace mozilla;
 
 #endif // PR_LOGGING
 
-// font info loader constants
-
-// avoid doing this during startup even on slow machines but try to start
-// it soon enough so that system fallback doesn't happen first
-static const uint32_t kDelayBeforeLoadingFonts = 120 * 1000; // 2 minutes after init
-static const uint32_t kIntervalBetweenLoadingFonts = 2000;   // every 2 seconds until complete
-
 static __inline void
 BuildKeyNameFromFontName(nsAString &aName)
 {
@@ -281,10 +274,12 @@ GDIFontEntry::GetFontTable(uint32_t aTableTag,
     AutoSelectFont font(dc.GetDC(), &mLogFont);
     if (font.IsValid()) {
         uint32_t tableSize =
-            ::GetFontData(dc.GetDC(), NS_SWAP32(aTableTag), 0, NULL, 0);
+            ::GetFontData(dc.GetDC(),
+                          NativeEndian::swapToBigEndian(aTableTag), 0, NULL, 0);
         if (tableSize != GDI_ERROR) {
             if (aBuffer.SetLength(tableSize)) {
-                ::GetFontData(dc.GetDC(), NS_SWAP32(aTableTag), 0,
+                ::GetFontData(dc.GetDC(),
+                              NativeEndian::swapToBigEndian(aTableTag), 0,
                               aBuffer.Elements(), tableSize);
                 return NS_OK;
             }
@@ -709,7 +704,7 @@ gfxGDIFontList::InitFontList()
 
     GetFontSubstitutes();
 
-    StartLoader(kDelayBeforeLoadingFonts, kIntervalBetweenLoadingFonts);
+    GetPrefsAndStartLoader();
 
     return NS_OK;
 }

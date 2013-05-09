@@ -126,23 +126,50 @@ let ActiveProviders = {
 function migrateSettings() {
   let activeProviders;
   try {
-    // we don't care what the value is, if it is set, we've already migrated
     activeProviders = Services.prefs.getCharPref("social.activeProviders");
   } catch(e) {
-    // do nothing
+    // not set, we'll check if we need to migrate older prefs
   }
   if (activeProviders) {
     // migration from fx21 to fx22 or later
     // ensure any *builtin* provider in activeproviders is in user level prefs
     for (let origin in ActiveProviders._providers) {
-      let prefname = getPrefnameFromOrigin(origin);
-      if (!Services.prefs.prefHasUserValue(prefname)) {
-        // if we've got an active *builtin* provider, ensure that the pref
-        // is set at a user-level as that will signify *installed* status.
-        let manifest = JSON.parse(Services.prefs.getComplexValue(prefname, Ci.nsISupportsString).data);
-        // our default manifests have been updated with the builtin flags as of
-        // fx22, delete it so we can set the user-pref
+      let prefname;
+      let manifest;
+      let defaultManifest;
+      try {
+        prefname = getPrefnameFromOrigin(origin);
+        manifest = JSON.parse(Services.prefs.getComplexValue(prefname, Ci.nsISupportsString).data);
+      } catch(e) {
+        // Our preference is missing or bad, remove from ActiveProviders and
+        // continue. This is primarily an error-case and should only be
+        // reached by either messing with preferences or hitting the one or
+        // two days of nightly that ran into it, so we'll flush right away.
+        ActiveProviders.delete(origin);
+        ActiveProviders.flush();
+        continue;
+      }
+      let needsUpdate = !manifest.updateDate;
+      // fx23 may have built-ins with shareURL
+      try {
+        defaultManifest = Services.prefs.getDefaultBranch(null)
+                        .getComplexValue(prefname, Ci.nsISupportsString).data;
+        defaultManifest = JSON.parse(defaultManifest);
+        if (defaultManifest.shareURL && !manifest.shareURL) {
+          manifest.shareURL = defaultManifest.shareURL;
+          needsUpdate = true;
+        }
+      } catch(e) {
+        // not a built-in, continue
+      }
+      if (needsUpdate) {
+        // the provider was installed with an older build, so we will update the
+        // timestamp and ensure the manifest is in user prefs
         delete manifest.builtin;
+        // we're potentially updating for share, so always mark the updateDate
+        manifest.updateDate = Date.now();
+        if (!manifest.installDate)
+          manifest.installDate = 0; // we don't know when it was installed
 
         let string = Cc["@mozilla.org/supports-string;1"].
                      createInstance(Ci.nsISupportsString);
@@ -167,11 +194,21 @@ function migrateSettings() {
   let prefs = manifestPrefs.getChildList("", []);
   for (let pref of prefs) {
     try {
-      let manifest = JSON.parse(manifestPrefs.getComplexValue(pref, Ci.nsISupportsString).data);
+      let manifest;
+      try {
+        manifest = JSON.parse(manifestPrefs.getComplexValue(pref, Ci.nsISupportsString).data);
+      } catch(e) {
+        // bad or missing preference, we wont update this one.
+        continue;
+      }
       if (manifest && typeof(manifest) == "object" && manifest.origin) {
         // our default manifests have been updated with the builtin flags as of
         // fx22, delete it so we can set the user-pref
         delete manifest.builtin;
+        if (!manifest.updateDate) {
+          manifest.updateDate = Date.now();
+          manifest.installDate = 0; // we don't know when it was installed
+        }
 
         let string = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
         string.data = JSON.stringify(manifest);
@@ -196,7 +233,14 @@ function initService() {
     Services.obs.removeObserver(xpcomShutdown, "xpcom-shutdown");
   }, "xpcom-shutdown", false);
 
-  migrateSettings();
+  try {
+    migrateSettings();
+  } catch(e) {
+    // no matter what, if migration fails we do not want to render social
+    // unusable. Worst case scenario is that, when upgrading Firefox, previously
+    // enabled providers are not migrated.
+    Cu.reportError("Error migrating social settings: " + e);
+  }
   // Initialize the MozSocialAPI
   if (SocialServiceInternal.enabled)
     MozSocialAPI.enabled = true;
@@ -374,7 +418,7 @@ this.SocialService = {
   },
 
   _manifestFromData: function(type, data, principal) {
-    let sameOriginRequired = ['workerURL', 'sidebarURL'];
+    let sameOriginRequired = ['workerURL', 'sidebarURL', 'shareURL'];
 
     if (type == 'directory') {
       // directory provided manifests must have origin in manifest, use that
@@ -392,7 +436,7 @@ this.SocialService = {
     // iconURL and name are required
     // iconURL may be a different origin (CDN or data url support) if this is
     // a whitelisted or directory listed provider
-    if (!data['workerURL'] || !data['sidebarURL']) {
+    if (!data['workerURL'] && !data['sidebarURL'] && !data['shareURL']) {
       Cu.reportError("SocialService.manifestFromData manifest missing required workerURL or sidebarURL.");
       return null;
     }
@@ -548,6 +592,7 @@ function SocialProvider(input) {
   this.icon64URL = input.icon64URL;
   this.workerURL = input.workerURL;
   this.sidebarURL = input.sidebarURL;
+  this.shareURL = input.shareURL;
   this.origin = input.origin;
   let originUri = Services.io.newURI(input.origin, null, null);
   this.principal = Services.scriptSecurityManager.getNoAppCodebasePrincipal(originUri);
@@ -596,25 +641,24 @@ SocialProvider.prototype = {
   // values aren't to be used as the user is logged out'.
   profile: undefined,
 
-  // Contains the information necessary to support our "recommend" feature.
+  // Contains the information necessary to support our page mark feature.
   // null means no info yet provided (which includes the case of the provider
   // not supporting the feature) or the provided data is invalid.  Updated via
-  // the 'recommendInfo' setter and returned via the getter.
-  _recommendInfo: null,
-  get recommendInfo() {
-    return this._recommendInfo;
+  // the 'pageMarkInfo' setter and returned via the getter.
+  _pageMarkInfo: null,
+  get pageMarkInfo() {
+    return this._pageMarkInfo;
   },
-  set recommendInfo(data) {
-    // Accept *and validate* the user-recommend-prompt-response message from
-    // the provider.
+  set pageMarkInfo(data) {
+    // Accept *and validate* the page-mark-config message from the provider.
     let promptImages = {};
     let promptMessages = {};
     function reportError(reason) {
-      Cu.reportError("Invalid recommend data from provider: " + reason + ": sharing is disabled for this provider");
-      // and we explicitly reset the recommend data to null to avoid stale
+      Cu.reportError("Invalid page-mark data from provider: " + reason + ": marking is disabled for this provider");
+      // and we explicitly reset the page-mark data to null to avoid stale
       // data being used and notify our observers.
-      this._recommendInfo = null;
-      Services.obs.notifyObservers(null, "social:recommend-info-changed", this.origin);
+      this._pageMarkInfo = null;
+      Services.obs.notifyObservers(null, "social:page-mark-config", this.origin);
     }
     if (!data ||
         !data.images || typeof data.images != "object" ||
@@ -622,10 +666,10 @@ SocialProvider.prototype = {
       reportError("data is missing valid 'images' or 'messages' elements");
       return;
     }
-    for (let sub of ["share", "unshare"]) {
+    for (let sub of ["marked", "unmarked"]) {
       let url = data.images[sub];
       if (!url || typeof url != "string" || url.length == 0) {
-        reportError('images["' + sub + '"] is missing or not a non-empty string');
+        reportError('images["' + sub + '"] is not a valid string');
         return;
       }
       // resolve potentially relative URLs but there is no same-origin check
@@ -639,19 +683,15 @@ SocialProvider.prototype = {
       }
       promptImages[sub] = imgUri.spec;
     }
-    for (let sub of ["shareTooltip", "unshareTooltip",
-                     "sharedLabel", "unsharedLabel", "unshareLabel",
-                     "portraitLabel",
-                     "unshareConfirmLabel", "unshareConfirmAccessKey",
-                     "unshareCancelLabel", "unshareCancelAccessKey"]) {
+    for (let sub of ["markedTooltip", "unmarkedTooltip", "markedLabel", "unmarkedLabel"]) {
       if (typeof data.messages[sub] != "string" || data.messages[sub].length == 0) {
         reportError('messages["' + sub + '"] is not a valid string');
         return;
       }
       promptMessages[sub] = data.messages[sub];
     }
-    this._recommendInfo = {images: promptImages, messages: promptMessages};
-    Services.obs.notifyObservers(null, "social:recommend-info-changed", this.origin);
+    this._pageMarkInfo = {images: promptImages, messages: promptMessages};
+    Services.obs.notifyObservers(null, "social:page-mark-config", this.origin);
   },
 
   // Map of objects describing the provider's notification icons, whose
@@ -805,6 +845,14 @@ function getPrefnameFromOrigin(origin) {
 }
 
 function AddonInstaller(sourceURI, aManifest, installCallback) {
+  aManifest.updateDate = Date.now();
+  // get the existing manifest for installDate
+  let manifest = SocialServiceInternal.getManifestByOrigin(aManifest.origin);
+  if (manifest && manifest.installDate)
+    aManifest.installDate = manifest.installDate;
+  else
+    aManifest.installDate = aManifest.updateDate;
+
   this.sourceURI = sourceURI;
   this.install = function() {
     let addon = this.addon;

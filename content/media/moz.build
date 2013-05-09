@@ -32,7 +32,7 @@ if CONFIG['MOZ_WMF']:
 
 PARALLEL_DIRS += ['webrtc']
 
-if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
+if CONFIG['MOZ_OMX_DECODER']:
     PARALLEL_DIRS += ['omx']
 
 if CONFIG['MOZ_WEBSPEECH']:
@@ -41,4 +41,42 @@ if CONFIG['MOZ_WEBSPEECH']:
 TEST_DIRS += ['test']
 
 MODULE = 'content'
+
+EXPORTS += [
+    'AbstractMediaDecoder.h',
+    'AudioAvailableEventManager.h',
+    'AudioChannelFormat.h',
+    'AudioEventTimeline.h',
+    'AudioNodeEngine.h',
+    'AudioNodeStream.h',
+    'AudioSampleFormat.h',
+    'AudioSegment.h',
+    'AudioStream.h',
+    'BufferMediaResource.h',
+    'DOMMediaStream.h',
+    'DecoderTraits.h',
+    'FileBlockCache.h',
+    'MediaCache.h',
+    'MediaDecoder.h',
+    'MediaDecoderOwner.h',
+    'MediaDecoderReader.h',
+    'MediaDecoderStateMachine.h',
+    'MediaMetadataManager.h',
+    'MediaResource.h',
+    'MediaSegment.h',
+    'MediaStreamGraph.h',
+    'SharedBuffer.h',
+    'StreamBuffer.h',
+    'TimeVarying.h',
+    'VideoFrameContainer.h',
+    'VideoSegment.h',
+    'VideoUtils.h',
+    'VorbisUtils.h',
+]
+
+EXPORTS.mozilla.dom += [
+    'AudioStreamTrack.h',
+    'MediaStreamTrack.h',
+    'VideoStreamTrack.h',
+]
 

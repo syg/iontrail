@@ -13,7 +13,6 @@
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
 #include "nsJSUtils.h"
-#include "nsIJSContextStack.h"
 #include "nsGUIEvent.h"
 #include "nsEventDispatcher.h"
 #include "nsIJSEventListener.h"
@@ -23,6 +22,7 @@
 #include "nsDOMClassInfoID.h"
 
 using namespace mozilla::dom;
+using mozilla::AutoSafeJSContext;
 
 NS_IMPL_CYCLE_COLLECTION_1(nsEventListenerInfo, mListener)
 
@@ -84,8 +84,8 @@ nsEventListenerInfo::GetJSVal(JSContext* aCx,
   *aJSVal = JSVAL_NULL;
   nsCOMPtr<nsIXPConnectWrappedJS> wrappedJS = do_QueryInterface(mListener);
   if (wrappedJS) {
-    JSObject* object = nullptr;
-    if (NS_FAILED(wrappedJS->GetJSObject(&object))) {
+    JS::Rooted<JSObject*> object(aCx, nullptr);
+    if (NS_FAILED(wrappedJS->GetJSObject(object.address()))) {
       return false;
     }
     aAc.construct(aCx, object);
@@ -110,30 +110,22 @@ nsEventListenerInfo::ToSource(nsAString& aResult)
 {
   aResult.SetIsVoid(true);
 
-  nsCOMPtr<nsIThreadJSContextStack> stack =
-    nsContentUtils::ThreadJSContextStack();
-  if (stack) {
-    JSContext* cx = stack->GetSafeJSContext();
-    if (cx && NS_SUCCEEDED(stack->Push(cx))) {
-      {
-        // Extra block to finish the auto request before calling pop
-        JSAutoRequest ar(cx);
-        mozilla::Maybe<JSAutoCompartment> ac;
-        JS::Value v = JSVAL_NULL;
-        if (GetJSVal(cx, ac, &v)) {
-          JSString* str = JS_ValueToSource(cx, v);
-          if (str) {
-            nsDependentJSString depStr;
-            if (depStr.init(cx, str)) {
-              aResult.Assign(depStr);
-            }
-          }
+  AutoSafeJSContext cx;
+  {
+    // Extra block to finish the auto request before calling pop
+    JSAutoRequest ar(cx);
+    mozilla::Maybe<JSAutoCompartment> ac;
+    JS::Rooted<JS::Value> v(cx, JSVAL_NULL);
+    if (GetJSVal(cx, ac, v.address())) {
+      JSString* str = JS_ValueToSource(cx, v);
+      if (str) {
+        nsDependentJSString depStr;
+        if (depStr.init(cx, str)) {
+          aResult.Assign(depStr);
         }
       }
-      stack->Pop(&cx);
     }
   }
-  
   return NS_OK;
 }
 
@@ -147,29 +139,22 @@ nsEventListenerInfo::GetDebugObject(nsISupports** aRetVal)
   nsCOMPtr<jsdIDebuggerService> jsd =
     do_GetService("@mozilla.org/js/jsd/debugger-service;1", &rv);
   NS_ENSURE_SUCCESS(rv, NS_OK);
-  
+
   bool isOn = false;
   jsd->GetIsOn(&isOn);
   NS_ENSURE_TRUE(isOn, NS_OK);
 
-  nsCOMPtr<nsIThreadJSContextStack> stack =
-    nsContentUtils::ThreadJSContextStack();
-  if (stack) {
-    JSContext* cx = stack->GetSafeJSContext();
-    if (cx && NS_SUCCEEDED(stack->Push(cx))) {
-      {
-        // Extra block to finish the auto request before calling pop
-        JSAutoRequest ar(cx);
-        mozilla::Maybe<JSAutoCompartment> ac;
-        JS::Value v = JSVAL_NULL;
-        if (GetJSVal(cx, ac, &v)) {
-          nsCOMPtr<jsdIValue> jsdValue;
-          rv = jsd->WrapValue(v, getter_AddRefs(jsdValue));
-          NS_ENSURE_SUCCESS(rv, rv);
-          jsdValue.forget(aRetVal);
-        }
-      }
-      stack->Pop(&cx);
+  AutoSafeJSContext cx;
+  {
+    // Extra block to finish the auto request before calling pop
+    JSAutoRequest ar(cx);
+    mozilla::Maybe<JSAutoCompartment> ac;
+    JS::Rooted<JS::Value> v(cx, JSVAL_NULL);
+    if (GetJSVal(cx, ac, v.address())) {
+      nsCOMPtr<jsdIValue> jsdValue;
+      rv = jsd->WrapValue(v, getter_AddRefs(jsdValue));
+      NS_ENSURE_SUCCESS(rv, rv);
+      jsdValue.forget(aRetVal);
     }
   }
 #endif

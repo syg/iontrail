@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -30,9 +30,9 @@
 
 /* XXX DOM dependency */
 #include "nsIScriptContext.h"
-#include "nsIJSContextStack.h"
 #include "SandboxPrivate.h"
 #include "nsJSPrincipals.h"
+#include "nsContentUtils.h"
 
 /*
  * defining CAUTIOUS_SCRIPTHOOK makes jsds disable GC while calling out to the
@@ -44,8 +44,8 @@
 #ifdef DEBUG_verbose
 #   define DEBUG_COUNT(name, count)                                             \
         { if ((count % 10) == 0) printf (name ": %i\n", count); }
-#   define DEBUG_CREATE(name, count) {count++; DEBUG_COUNT ("+++++ "name,count)}
-#   define DEBUG_DESTROY(name, count) {count--; DEBUG_COUNT ("----- "name,count)}
+#   define DEBUG_CREATE(name, count) {count++; DEBUG_COUNT ("+++++ " name,count)}
+#   define DEBUG_DESTROY(name, count) {count--; DEBUG_COUNT ("----- " name,count)}
 #else
 #   define DEBUG_CREATE(name, count) 
 #   define DEBUG_DESTROY(name, count)
@@ -151,8 +151,8 @@ jsds_FindEphemeral (LiveEphemeral **listHead, void *key)
     {
         if (lv_record->key == key)
         {
-            NS_IF_ADDREF(lv_record->value);
-            return lv_record->value;
+            nsCOMPtr<jsdIEphemeral> ret = lv_record->value;
+            return ret.forget();
         }
         lv_record = reinterpret_cast<LiveEphemeral *>
                                     (PR_NEXT_LINK(&lv_record->links));
@@ -1289,8 +1289,13 @@ jsdScript::GetFunctionObject(jsdIValue **_rval)
     JSFunction *fun = JSD_GetJSFunction(mCx, mScript);
     if (!fun)
         return NS_ERROR_NOT_AVAILABLE;
-    
-    JSObject *obj = JS_GetFunctionObject(fun);
+
+    JSContext *jsContext = JSD_GetDefaultJSContext (mCx);
+    if (!jsContext) {
+        return NS_ERROR_FAILURE;
+    }
+
+    JS::RootedObject obj(jsContext, JS_GetFunctionObject(fun));
     if (!obj)
         return NS_ERROR_FAILURE;
 
@@ -1320,7 +1325,7 @@ jsdScript::GetFunctionSource(nsAString & aFunctionSource)
         NS_WARNING("No default context !?");
         return NS_ERROR_FAILURE;
     }
-    JSFunction *fun = JSD_GetJSFunction (mCx, mScript);
+    JS::RootedFunction fun(cx, JSD_GetJSFunction (mCx, mScript));
 
     JSAutoRequest ar(cx);
 
@@ -1330,7 +1335,7 @@ jsdScript::GetFunctionSource(nsAString & aFunctionSource)
         ac.construct(cx, JS_GetFunctionObject(fun));
         jsstr = JS_DecompileFunction (cx, fun, 4);
     } else {
-        JSScript *script = JSD_GetJSScript (mCx, mScript);
+        JS::RootedScript script(cx, JSD_GetJSScript (mCx, mScript));
         ac.construct(cx, script);
         jsstr = JS_DecompileScript (cx, script, "ppscript", 4);
     }
@@ -2037,14 +2042,8 @@ jsdStackFrame::Eval (const nsAString &bytes, const nsACString &fileName,
     estate = JS_SaveExceptionState (cx);
     JS_ClearPendingException (cx);
 
-    nsresult rv;
-    nsCOMPtr<nsIJSContextStack> stack = do_GetService("@mozilla.org/js/xpc/ContextStack;1", &rv);
-    if (NS_SUCCEEDED(rv))
-        rv = stack->Push(cx);
-    if (NS_FAILED(rv)) {
-        JS_RestoreExceptionState (cx, estate);
-        return rv;
-    }
+    nsCxPusher pusher;
+    pusher.Push(cx);
 
     *_rval = JSD_AttemptUCScriptInStackFrame (mCx, mThreadState,
                                               mStackFrameInfo,
@@ -2059,14 +2058,6 @@ jsdStackFrame::Eval (const nsAString &bytes, const nsACString &fileName,
     }
 
     JS_RestoreExceptionState (cx, estate);
-
-#ifdef DEBUG
-    JSContext* poppedCX;
-    rv = stack->Pop(&poppedCX);
-    NS_ASSERTION(NS_SUCCEEDED(rv) && poppedCX == cx, "bad pop");
-#else
-    (void) stack->Pop(nullptr);
-#endif
 
     JSDValue *jsdv = JSD_NewValue (mCx, jv);
     if (!jsdv)
@@ -2518,7 +2509,7 @@ jsdService::DeactivateDebugger ()
     JSD_ClearDebugBreakHook (mCx);
     JSD_ClearTopLevelHook (mCx);
     JSD_ClearFunctionHook (mCx);
-    
+
     JSD_DebuggerOff (mCx);
 
     mCx = nullptr;
@@ -2546,7 +2537,7 @@ jsdService::ActivateDebugger (JSRuntime *rt)
         return NS_ERROR_FAILURE;
 
     JSContext *cx   = JSD_GetDefaultJSContext (mCx);
-    JSObject  *glob = JS_GetGlobalObject (cx);
+    JS::RootedObject glob(cx, JS_GetGlobalObject (cx));
 
     /* init xpconnect on the debugger's context in case xpconnect tries to
      * use it for stuff. */
@@ -2554,7 +2545,7 @@ jsdService::ActivateDebugger (JSRuntime *rt)
     nsCOMPtr<nsIXPConnect> xpc = do_GetService(nsIXPConnect::GetCID(), &rv);
     if (NS_FAILED(rv))
         return rv;
-    
+
     xpc->InitClasses (cx, glob);
 
     /* Start watching for script creation/destruction and manage jsdScript
@@ -3021,35 +3012,23 @@ jsdService::EnterNestedEventLoop (jsdINestCallback *callback, uint32_t *_rval)
 {
     // Nesting event queues is a thing of the past.  Now, we just spin the
     // current event loop.
- 
-    nsresult rv;
-    nsCOMPtr<nsIJSContextStack> 
-        stack(do_GetService("@mozilla.org/js/xpc/ContextStack;1", &rv));
-    if (NS_FAILED(rv))
-        return rv;
+    nsresult rv = NS_OK;
+    nsCxPusher pusher;
+    pusher.PushNull();
     uint32_t nestLevel = ++mNestedLoopLevel;
-    
     nsCOMPtr<nsIThread> thread = do_GetCurrentThread();
 
-    if (NS_SUCCEEDED(stack->Push(nullptr))) {
-        if (callback) {
-            DoPause(nullptr, true);
-            rv = callback->OnNest();
-            DoUnPause(nullptr, true);
-        }
-        
-        while (NS_SUCCEEDED(rv) && mNestedLoopLevel >= nestLevel) {
-            if (!NS_ProcessNextEvent(thread))
-                rv = NS_ERROR_UNEXPECTED;
-        }
-
-        JSContext* cx;
-        stack->Pop(&cx);
-        NS_ASSERTION(cx == nullptr, "JSContextStack mismatch");
+    if (callback) {
+        DoPause(nullptr, true);
+        rv = callback->OnNest();
+        DoUnPause(nullptr, true);
     }
-    else
-        rv = NS_ERROR_FAILURE;
-    
+
+    while (NS_SUCCEEDED(rv) && mNestedLoopLevel >= nestLevel) {
+        if (!NS_ProcessNextEvent(thread))
+            rv = NS_ERROR_UNEXPECTED;
+    }
+
     NS_ASSERTION (mNestedLoopLevel <= nestLevel,
                   "nested event didn't unwind properly");
     if (mNestedLoopLevel == nestLevel)

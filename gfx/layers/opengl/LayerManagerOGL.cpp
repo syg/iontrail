@@ -5,10 +5,10 @@
 
 #include "LayerManagerOGL.h"
 
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
 #include <algorithm>
 
-/* This must occur *after* layers/PLayers.h to avoid typedefs conflicts. */
+/* This must occur *after* layers/PLayerTransaction.h to avoid typedefs conflicts. */
 #include "mozilla/Util.h"
 
 #include "Composer2D.h"
@@ -167,6 +167,8 @@ LayerManagerOGL::Destroy()
     RootLayer()->Destroy();
     mRoot = nullptr;
   }
+
+  mWidget->CleanupWindowEffects();
 
   if (!mGLContext)
     return;
@@ -849,6 +851,7 @@ LayerManagerOGL::Render()
 #endif
 
   // Allow widget to render a custom background.
+  mWidget->PrepareWindowEffects();
   mWidget->DrawWindowUnderlay(this, rect);
 
   // Reset some state that might of been clobbered by the underlay.

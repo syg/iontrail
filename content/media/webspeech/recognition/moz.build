@@ -8,9 +8,21 @@ MODULE = 'content'
 XPIDL_MODULE = 'dom_webspeechrecognition'
 
 XPIDL_SOURCES = [
-  'nsIDOMSpeechRecognitionEvent.idl',
   'nsIDOMSpeechRecognitionError.idl',
+  'nsIDOMSpeechRecognitionEvent.idl',
   'nsISpeechRecognitionService.idl'
 ]
 
 TEST_DIRS += ['test']
+
+EXPORTS.mozilla.dom += [
+    'FakeSpeechRecognitionService.h',
+    'SpeechGrammar.h',
+    'SpeechGrammarList.h',
+    'SpeechRecognition.h',
+    'SpeechRecognitionAlternative.h',
+    'SpeechRecognitionResult.h',
+    'SpeechRecognitionResultList.h',
+    'SpeechStreamListener.h',
+]
+

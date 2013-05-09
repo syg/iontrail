@@ -135,7 +135,7 @@ MarkMessageManagers()
         static_cast<nsFrameMessageManager*>(tabMM)->GetCallback();
       if (cb) {
         nsFrameLoader* fl = static_cast<nsFrameLoader*>(cb);
-        nsIDOMEventTarget* et = fl->GetTabChildGlobalAsEventTarget();
+        EventTarget* et = fl->GetTabChildGlobalAsEventTarget();
         if (!et) {
           continue;
         }
@@ -419,9 +419,7 @@ TraceActiveWindowGlobal(const uint64_t& aId, nsGlobalWindow*& aWindow, void* aCl
 {
   if (aWindow->GetDocShell() && aWindow->IsOuterWindow()) {
     TraceClosure* closure = static_cast<TraceClosure*>(aClosure);
-    if (JSObject* global = aWindow->FastGetGlobalJSObject()) {
-      JS_CallObjectTracer(closure->mTrc, global, "active window global");
-    }
+    aWindow->TraceGlobalJSObject(closure->mTrc);
 #ifdef MOZ_XUL
     nsIDocument* doc = aWindow->GetExtantDoc();
     if (doc && doc->IsXUL()) {

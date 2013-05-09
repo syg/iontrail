@@ -101,6 +101,28 @@ function Format(dial, currentRegion, nationalNumber, region, nationalFormat, int
   }
 }
 
+function TestProperties(dial, currentRegion) {
+  var result = PhoneNumber.Parse(dial, currentRegion);
+  if (result) {
+    ok(true, "found it");
+    ok(true, "InternationalFormat: " + result.internationalFormat);
+    ok(true, "InternationalNumber: " + result.internationalNumber);
+    ok(true, "NationalNumber: " + result.nationalNumber);
+    ok(true, "NationalFormat: " + result.nationalFormat);
+  } else {
+    ok(true, "not found");
+  }
+}
+
+TestProperties("+0988782456");
+TestProperties("+33442020", "ES");
+TestProperties("+43987614", "ES");
+TestProperties("+0988782456");
+TestProperties("+34556657");
+TestProperties("+66554433");
+TestProperties("+43442075");
+TestProperties("+13442074");
+
 // Test whether could a string be a phone number.
 IsPlain(null, false);
 IsPlain("", false);
@@ -288,6 +310,9 @@ Format("5712234567", "CO", "12234567", "CO", "(1) 2234567", "+57 1 2234567");
 
 // Dialing 911 in the US. This is not a national number.
 CantParse("911", "US");
+
+// China mobile number with a 0 in it
+Format("15955042864", "CN", "15955042864", "CN", "0159 5504 2864", "+86 159 5504 2864");
 
 // Test normalizing numbers. Only 0-9,#* are valid in a phone number.
 Normalize("+ABC # * , 9 _ 1 _0", "+222#*,910");

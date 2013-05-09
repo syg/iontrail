@@ -7,7 +7,7 @@
 #ifndef AudioContext_h_
 #define AudioContext_h_
 
-#include "nsWrapperCache.h"
+#include "nsDOMEventTargetHelper.h"
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/Attributes.h"
 #include "nsCOMPtr.h"
@@ -19,7 +19,7 @@
 #include "MediaBufferDecoder.h"
 #include "StreamBuffer.h"
 #include "MediaStreamGraph.h"
-#include "nsIDOMWindow.h"
+#include "nsTHashtable.h"
 
 // X11 has a #define for CurrentTime. Unbelievable :-(.
 // See content/media/DOMMediaStream.h for more fun!
@@ -29,7 +29,7 @@
 
 struct JSContext;
 class JSObject;
-class nsIDOMWindow;
+class nsPIDOMWindow;
 
 namespace mozilla {
 
@@ -44,37 +44,37 @@ class AudioBufferSourceNode;
 class AudioDestinationNode;
 class AudioListener;
 class BiquadFilterNode;
+class ChannelMergerNode;
+class ChannelSplitterNode;
 class DelayNode;
 class DynamicsCompressorNode;
 class GainNode;
 class GlobalObject;
 class PannerNode;
+class ScriptProcessorNode;
 
-class AudioContext MOZ_FINAL : public nsWrapperCache,
+class AudioContext MOZ_FINAL : public nsDOMEventTargetHelper,
                                public EnableWebAudioCheck
 {
-  explicit AudioContext(nsIDOMWindow* aParentWindow);
+  explicit AudioContext(nsPIDOMWindow* aParentWindow);
   ~AudioContext();
 
 public:
-  NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(AudioContext)
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(AudioContext)
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(AudioContext,
+                                           nsDOMEventTargetHelper)
 
-  nsIDOMWindow* GetParentObject() const
+  nsPIDOMWindow* GetParentObject() const
   {
-    return mWindow;
+    return GetOwner();
   }
 
-  void Shutdown()
-  {
-    Suspend();
-    mDecoder.Shutdown();
-  }
-
+  void Shutdown();
   void Suspend();
   void Resume();
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   static already_AddRefed<AudioContext>
   Constructor(const GlobalObject& aGlobal, ErrorResult& aRv);
@@ -100,6 +100,26 @@ public:
                uint32_t aLength, float aSampleRate,
                ErrorResult& aRv);
 
+  already_AddRefed<AudioBuffer>
+  CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
+               bool aMixToMono, ErrorResult& aRv);
+
+  already_AddRefed<ScriptProcessorNode>
+  CreateScriptProcessor(uint32_t aBufferSize,
+                        uint32_t aNumberOfInputChannels,
+                        uint32_t aNumberOfOutputChannels,
+                        ErrorResult& aRv);
+
+  already_AddRefed<ScriptProcessorNode>
+  CreateJavaScriptNode(uint32_t aBufferSize,
+                       uint32_t aNumberOfInputChannels,
+                       uint32_t aNumberOfOutputChannels,
+                       ErrorResult& aRv)
+  {
+    return CreateScriptProcessor(aBufferSize, aNumberOfInputChannels,
+                                 aNumberOfOutputChannels, aRv);
+  }
+
   already_AddRefed<AnalyserNode>
   CreateAnalyser();
 
@@ -124,6 +144,12 @@ public:
   already_AddRefed<PannerNode>
   CreatePanner();
 
+  already_AddRefed<ChannelSplitterNode>
+  CreateChannelSplitter(uint32_t aNumberOfOutputs, ErrorResult& aRv);
+
+  already_AddRefed<ChannelMergerNode>
+  CreateChannelMerger(uint32_t aNumberOfInputs, ErrorResult& aRv);
+
   already_AddRefed<DynamicsCompressorNode>
   CreateDynamicsCompressor();
 
@@ -138,6 +164,12 @@ public:
 
   MediaStreamGraph* Graph() const;
   MediaStream* DestinationStream() const;
+  void UnregisterAudioBufferSourceNode(AudioBufferSourceNode* aNode);
+  void UnregisterPannerNode(PannerNode* aNode);
+  void UnregisterScriptProcessorNode(ScriptProcessorNode* aNode);
+  void UpdatePannerSource();
+
+  JSContext* GetJSContext() const;
 
 private:
   void RemoveFromDecodeQueue(WebAudioDecodeJob* aDecodeJob);
@@ -145,11 +177,18 @@ private:
   friend struct ::mozilla::WebAudioDecodeJob;
 
 private:
-  nsCOMPtr<nsIDOMWindow> mWindow;
   nsRefPtr<AudioDestinationNode> mDestination;
   nsRefPtr<AudioListener> mListener;
   MediaBufferDecoder mDecoder;
   nsTArray<nsAutoPtr<WebAudioDecodeJob> > mDecodeJobs;
+  // Two hashsets containing all the PannerNodes and AudioBufferSourceNodes,
+  // to compute the doppler shift, and also to stop AudioBufferSourceNodes.
+  // These are all weak pointers.
+  nsTHashtable<nsPtrHashKey<PannerNode> > mPannerNodes;
+  nsTHashtable<nsPtrHashKey<AudioBufferSourceNode> > mAudioBufferSourceNodes;
+  // Hashset containing all ScriptProcessorNodes in order to stop them.
+  // These are all weak pointers.
+  nsTHashtable<nsPtrHashKey<ScriptProcessorNode> > mScriptProcessorNodes;
 };
 
 }

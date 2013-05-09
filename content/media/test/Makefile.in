@@ -134,9 +134,11 @@ MOCHITEST_FILES = \
 		contentType.sjs \
 		test_streams_srcObject.html \
 		test_reset_src.html \
-		test_streams_gc.html \
 		test_streams_autoplay.html \
+		test_streams_gc.html \
+		test_streams_tracks.html \
 		$(filter disabled-for-intermittent-failures--bug-608634, test_error_in_video_document.html) \
+		test_timeupdate_small_files.html \
 		$(NULL)
 
 # Disabled on Windows for frequent intermittent failures
@@ -145,12 +147,10 @@ MOCHITEST_FILES += \
 		test_streams_element_capture.html \
 		test_streams_element_capture_reset.html \
 		test_streams_element_capture_createObjectURL.html \
-		test_timeupdate_small_files.html \
 		$(NULL)
 else
 $(filter disabled-on-windows-for-timeouts--bug-752796, test_streams_element_capture.html)
 $(filter disabled-on-windows-for-timeouts--bug-752796, test_streams_element_capture_reset.html)
-$(filter disabled-on-windows-for-timeouts--bug-786539, test_timeupdate_small_files.html)
 endif
 
 ifneq ($(MOZ_WIDGET_TOOLKIT),gtk2)
@@ -242,6 +242,14 @@ MOCHITEST_FILES += \
 		small-shot.mp3 \
 		sound.ogg \
 		spacestorm-1000Hz-100ms.ogg \
+		test-1-mono.opus \
+		test-2-stereo.opus \
+		test-3-LCR.opus \
+		test-4-quad.opus \
+		test-5-5.0.opus \
+		test-6-5.1.opus \
+		test-7-6.1.opus \
+		test-8-7.1.opus \
 		video-overhang.ogg \
 		file_a4_tone.ogg \
 		detodos.opus \

@@ -141,15 +141,14 @@ interface TestJSImplInterface {
   [Creator]
   TestNonWrapperCacheInterface? receiveNullableNonWrapperCacheInterface();
 
-  // Can't return sequences of interfaces from callback interface methods.  See bug 843264.
-  //[Creator]
-  //sequence<TestNonWrapperCacheInterface> receiveNonWrapperCacheInterfaceSequence();
-  //[Creator]
-  //sequence<TestNonWrapperCacheInterface?> receiveNullableNonWrapperCacheInterfaceSequence();
-  //[Creator]
-  //sequence<TestNonWrapperCacheInterface>? receiveNonWrapperCacheInterfaceNullableSequence();
-  //[Creator]
-  //sequence<TestNonWrapperCacheInterface?>? receiveNullableNonWrapperCacheInterfaceNullableSequence();
+  [Creator]
+  sequence<TestNonWrapperCacheInterface> receiveNonWrapperCacheInterfaceSequence();
+  [Creator]
+  sequence<TestNonWrapperCacheInterface?> receiveNullableNonWrapperCacheInterfaceSequence();
+  [Creator]
+  sequence<TestNonWrapperCacheInterface>? receiveNonWrapperCacheInterfaceNullableSequence();
+  [Creator]
+  sequence<TestNonWrapperCacheInterface?>? receiveNullableNonWrapperCacheInterfaceNullableSequence();
 
   // Non-castable interface types
   IndirectlyImplementedInterface receiveOther();
@@ -220,18 +219,16 @@ interface TestJSImplInterface {
   void passSequenceOfNullableInts(sequence<long?> arg);
   void passOptionalSequenceOfNullableInts(optional sequence<long?> arg);
   void passOptionalNullableSequenceOfNullableInts(optional sequence<long?>? arg);
-  // Can't return sequences of interfaces from callback interface methods.  See bug 843264.
-  //sequence<TestJSImplInterface> receiveCastableObjectSequence();
-  //sequence<TestCallbackInterface> receiveCallbackObjectSequence();
-  //sequence<TestJSImplInterface?> receiveNullableCastableObjectSequence();
-  //sequence<TestCallbackInterface?> receiveNullableCallbackObjectSequence();
-  //sequence<TestJSImplInterface>? receiveCastableObjectNullableSequence();
-  //sequence<TestJSImplInterface?>? receiveNullableCastableObjectNullableSequence();
-  // Callback interface ignores 'resultNotAddRefed'. See bug 843272.
-  //sequence<TestJSImplInterface> receiveWeakCastableObjectSequence();
-  //sequence<TestJSImplInterface?> receiveWeakNullableCastableObjectSequence();
-  //sequence<TestJSImplInterface>? receiveWeakCastableObjectNullableSequence();
-  //sequence<TestJSImplInterface?>? receiveWeakNullableCastableObjectNullableSequence();
+  sequence<TestJSImplInterface> receiveCastableObjectSequence();
+  sequence<TestCallbackInterface> receiveCallbackObjectSequence();
+  sequence<TestJSImplInterface?> receiveNullableCastableObjectSequence();
+  sequence<TestCallbackInterface?> receiveNullableCallbackObjectSequence();
+  sequence<TestJSImplInterface>? receiveCastableObjectNullableSequence();
+  sequence<TestJSImplInterface?>? receiveNullableCastableObjectNullableSequence();
+  sequence<TestJSImplInterface> receiveWeakCastableObjectSequence();
+  sequence<TestJSImplInterface?> receiveWeakNullableCastableObjectSequence();
+  sequence<TestJSImplInterface>? receiveWeakCastableObjectNullableSequence();
+  sequence<TestJSImplInterface?>? receiveWeakNullableCastableObjectNullableSequence();
   void passCastableObjectSequence(sequence<TestJSImplInterface> arg);
   void passNullableCastableObjectSequence(sequence<TestJSImplInterface?> arg);
   void passCastableObjectNullableSequence(sequence<TestJSImplInterface>? arg);
@@ -243,8 +240,7 @@ interface TestJSImplInterface {
   void passExternalInterfaceSequence(sequence<TestExternalInterface> arg);
   void passNullableExternalInterfaceSequence(sequence<TestExternalInterface?> arg);
 
-  // Can't return sequences of interfaces from callback interface methods.  See bug 843264.
-  //sequence<DOMString> receiveStringSequence();
+  sequence<DOMString> receiveStringSequence();
   // Callback interface problem.  See bug 843261.
   //void passStringSequence(sequence<DOMString> arg);
   // "Can't handle sequence member 'any'; need to sort out rooting issues"
@@ -287,14 +283,14 @@ interface TestJSImplInterface {
 
   // Enumerated types
   void passEnum(MyTestEnum arg);
-  // No support for nullable enums yet
-  // void passNullableEnum(MyTestEnum? arg);
-  // Optional enum arg doesn't work with callback interfaces. See bug 843355.
-  //void passOptionalEnum(optional MyTestEnum arg);
+  void passNullableEnum(MyTestEnum? arg);
+  void passOptionalEnum(optional MyTestEnum arg);
   void passEnumWithDefault(optional MyTestEnum arg = "a");
-  // void passOptionalNullableEnum(optional MyTestEnum? arg);
-  // void passOptionalNullableEnumWithDefaultValue(optional MyTestEnum? arg = null);
+  void passOptionalNullableEnum(optional MyTestEnum? arg);
+  void passOptionalNullableEnumWithDefaultValue(optional MyTestEnum? arg = null);
+  void passOptionalNullableEnumWithDefaultValue2(optional MyTestEnum? arg = "a");
   MyTestEnum receiveEnum();
+  MyTestEnum? receiveNullableEnum();
   attribute MyTestEnum enumAttribute;
   readonly attribute MyTestEnum readonlyEnumAttribute;
 
@@ -328,14 +324,15 @@ interface TestJSImplInterface {
   object receiveObject();
   object? receiveNullableObject();
 
-/* The rest of these are untested.
   // Union types
   void passUnion((object or long) arg);
   void passUnionWithNullable((object? or long) arg);
-  void passNullableUnion((object or long)? arg);
+  // FIXME: Bug 863948 Nullable unions not supported yet
+  //   void passNullableUnion((object or long)? arg);
   void passOptionalUnion(optional (object or long) arg);
-  void passOptionalNullableUnion(optional (object or long)? arg);
-  void passOptionalNullableUnionWithDefaultValue(optional (object or long)? arg = null);
+  // FIXME: Bug 863948 Nullable unions not supported yet
+  //  void passOptionalNullableUnion(optional (object or long)? arg);
+  //  void passOptionalNullableUnionWithDefaultValue(optional (object or long)? arg = null);
   //void passUnionWithInterfaces((TestJSImplInterface or TestExternalInterface) arg);
   //void passUnionWithInterfacesAndNullable((TestJSImplInterface? or TestExternalInterface) arg);
   //void passUnionWithSequence((sequence<object> or long) arg);
@@ -348,6 +345,17 @@ interface TestJSImplInterface {
   void passUnionWithObject((object or long) arg);
   //void passUnionWithDict((Dict or long) arg);
 
+  // Date types
+  void passDate(Date arg);
+  void passNullableDate(Date? arg);
+  void passOptionalDate(optional Date arg);
+  void passOptionalNullableDate(optional Date? arg);
+  void passOptionalNullableDateWithDefaultValue(optional Date? arg = null);
+  void passDateSequence(sequence<Date> arg);
+  void passNullableDateSequence(sequence<Date?> arg);
+  Date receiveDate();
+  Date? receiveNullableDate();
+
   // binaryNames tests
   void methodRenamedFrom();
   void methodRenamedFrom(byte argument);
@@ -355,7 +363,8 @@ interface TestJSImplInterface {
   attribute byte attributeRenamedFrom;
 
   void passDictionary(optional Dict x);
-  //UNSUPPORTED  Dict receiveDictionary();
+  // FIXME: Bug 863949 no dictionary return values
+  //   Dict receiveDictionary();
   void passOtherDictionary(optional GrandparentDict x);
   void passSequenceOfDictionaries(sequence<Dict> x);
   void passDictionaryOrLong(optional Dict x);
@@ -363,7 +372,8 @@ interface TestJSImplInterface {
 
   void passDictContainingDict(optional DictContainingDict arg);
   void passDictContainingSequence(optional DictContainingSequence arg);
-  //UNSUPPORTED DictContainingSequence receiveDictContainingSequence();
+  // FIXME: Bug 863949 no dictionary return values
+  //   DictContainingSequence receiveDictContainingSequence();
 
   // EnforceRange/Clamp tests
   void dontEnforceRangeOrClamp(byte arg);
@@ -372,15 +382,17 @@ interface TestJSImplInterface {
 
   // Typedefs
   const myLong myLongConstant = 5;
-  // ???? What 
   void exerciseTypedefInterfaces1(AnotherNameForTestJSImplInterface arg);
   AnotherNameForTestJSImplInterface exerciseTypedefInterfaces2(NullableTestJSImplInterface arg);
   void exerciseTypedefInterfaces3(YetAnotherNameForTestJSImplInterface arg);
 
   // Static methods and attributes
+  // FIXME: Bug 863952 Static things are not supported yet
+  /*
   static attribute boolean staticAttribute;
   static void staticMethod(boolean arg);
   static void staticMethodWithContext(any arg);
+  */
 
   // Overload resolution tests
   //void overload1(DOMString... strs);
@@ -389,6 +401,7 @@ interface TestJSImplInterface {
   void overload2(TestJSImplInterface arg);
   void overload2(optional Dict arg);
   void overload2(DOMString arg);
+  void overload2(Date arg);
   void overload3(TestJSImplInterface arg);
   void overload3(MyTestCallback arg);
   void overload3(DOMString arg);
@@ -401,9 +414,13 @@ interface TestJSImplInterface {
 
   // Miscellania
   [LenientThis] attribute long attrWithLenientThis;
-  [Unforgeable] readonly attribute long unforgeableAttr;
-  [Unforgeable, ChromeOnly] readonly attribute long unforgeableAttr2;
-  stringifier;
+  // FIXME: Bug 863954 Unforgeable things get all confused when
+  // non-JS-implemented interfaces inherit from JS-implemented ones or vice
+  // versa.
+  //   [Unforgeable] readonly attribute long unforgeableAttr;
+  //   [Unforgeable, ChromeOnly] readonly attribute long unforgeableAttr2;
+  // FIXME: Bug 863955 No stringifiers yet
+  //   stringifier;
   void passRenamedInterface(TestRenamedInterface arg);
   [PutForwards=writableByte] readonly attribute TestJSImplInterface putForwardsAttr;
   [PutForwards=writableByte, LenientThis] readonly attribute TestJSImplInterface putForwardsAttr2;
@@ -412,8 +429,16 @@ interface TestJSImplInterface {
   [Throws] attribute boolean throwingAttr;
   [GetterThrows] attribute boolean throwingGetterAttr;
   [SetterThrows] attribute boolean throwingSetterAttr;
-*/
+
   // If you add things here, add them to TestCodeGen as well
+};
+
+[NavigatorProperty="TestNavigator", JSImplementation="@mozilla.org/test;1"]
+interface TestNavigator {
+};
+
+[Constructor, NavigatorProperty="TestNavigatorWithConstructor", JSImplementation="@mozilla.org/test;1"]
+interface TestNavigatorWithConstructor {
 };
 
 interface TestCImplementedInterface : TestJSImplInterface {

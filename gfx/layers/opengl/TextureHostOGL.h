@@ -547,6 +547,7 @@ class GrallocTextureHostOGL
 public:
   GrallocTextureHostOGL()
     : mGL(nullptr)
+    , mTextureTarget(0)
     , mGLTexture(0)
     , mEGLImage(0)
   {
@@ -575,9 +576,11 @@ public:
 
   gl::ShaderProgramType GetShaderProgram() const MOZ_OVERRIDE
   {
-    return mFormat == gfx::FORMAT_B8G8R8A8 || mFormat == gfx::FORMAT_B8G8R8X8
-           ? gl::BGRALayerProgramType
-           : gl::RGBALayerProgramType;
+    if (mTextureTarget == LOCAL_GL_TEXTURE_EXTERNAL) {
+      return gl::RGBAExternalLayerProgramType;
+    }
+    MOZ_ASSERT(mTextureTarget == LOCAL_GL_TEXTURE_2D);
+    return GetProgramTypeForTexture(this);
   }
 
   GLenum GetWrapMode() const MOZ_OVERRIDE
@@ -600,11 +603,32 @@ public:
     return this;
   }
 
+  // only overridden for hacky fix in gecko 23 for bug 862324
+  // see bug 865908 about fixing this.
+  virtual void SetBuffer(SurfaceDescriptor* aBuffer, ISurfaceAllocator* aAllocator) MOZ_OVERRIDE;
+
+  // used only for hacky fix in gecko 23 for bug 862324
+  virtual void ForgetBuffer()
+  {
+    if (mBuffer) {
+      // Intentionally don't destroy the actor held by mBuffer here.
+      // The point is that this is only called from GrallocBufferActor::ActorDestroy
+      // where we know that the actor is already being deleted.
+      // See bug 862324 comment 39.
+      delete mBuffer;
+      mBuffer = nullptr;
+    }
+
+    mGraphicBuffer = nullptr;
+    DeleteTextures();
+  }
+
 private:
   void DeleteTextures();
 
   RefPtr<gl::GLContext> mGL;
   android::sp<android::GraphicBuffer> mGraphicBuffer;
+  GLenum mTextureTarget;
   GLuint mGLTexture;
   EGLImage mEGLImage;
 };

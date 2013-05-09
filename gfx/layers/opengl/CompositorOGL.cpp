@@ -224,12 +224,12 @@ int ShaderProgramOGL::sCurrentProgramKey = 0;
 #endif
 
 CompositorOGL::CompositorOGL(nsIWidget *aWidget, int aSurfaceWidth,
-                             int aSurfaceHeight, bool aIsRenderingToEGLSurface)
+                             int aSurfaceHeight, bool aUseExternalSurfaceSize)
   : mWidget(aWidget)
   , mWidgetSize(-1, -1)
   , mSurfaceSize(aSurfaceWidth, aSurfaceHeight)
   , mHasBGRA(0)
-  , mIsRenderingToEGLSurface(aIsRenderingToEGLSurface)
+  , mUseExternalSurfaceSize(aUseExternalSurfaceSize)
   , mFrameInProgress(false)
   , mDestroyed(false)
 {
@@ -309,6 +309,16 @@ CompositorOGL::CleanupResources()
   }
 
   mGLContext = nullptr;
+}
+
+// Impl of a a helper-runnable's "Run" method, used in Initialize()
+NS_IMETHODIMP
+CompositorOGL::ReadDrawFPSPref::Run()
+{
+  // NOTE: This must match the code in Initialize()'s NS_IsMainThread check.
+  Preferences::AddBoolVarCache(&sDrawFPS, "layers.acceleration.draw-fps");
+  Preferences::AddBoolVarCache(&sFrameCounter, "layers.acceleration.frame-counter");
+  return NS_OK;
 }
 
 bool
@@ -481,19 +491,11 @@ CompositorOGL::Initialize()
   }
 
   if (NS_IsMainThread()) {
+    // NOTE: This must match the code in ReadDrawFPSPref::Run().
     Preferences::AddBoolVarCache(&sDrawFPS, "layers.acceleration.draw-fps");
     Preferences::AddBoolVarCache(&sFrameCounter, "layers.acceleration.frame-counter");
   } else {
     // We have to dispatch an event to the main thread to read the pref.
-    class ReadDrawFPSPref : public nsRunnable {
-    public:
-      NS_IMETHOD Run()
-      {
-        Preferences::AddBoolVarCache(&sDrawFPS, "layers.acceleration.draw-fps");
-        Preferences::AddBoolVarCache(&sFrameCounter, "layers.acceleration.frame-counter");
-        return NS_OK;
-      }
-    };
     NS_DispatchToMainThread(new ReadDrawFPSPref());
   }
 
@@ -619,6 +621,9 @@ CompositorOGL::PrepareViewport(const gfx::IntSize& aSize,
   viewMatrix.Translate(-gfxPoint(1.0, -1.0));
   viewMatrix.Scale(2.0f / float(aSize.width), 2.0f / float(aSize.height));
   viewMatrix.Scale(1.0f, -1.0f);
+  if (!mTarget) {
+    viewMatrix.Translate(gfxPoint(mRenderOffset.x, mRenderOffset.y));
+  }
 
   viewMatrix = aWorldTransform * viewMatrix;
 
@@ -638,13 +643,6 @@ CompositorOGL::SetLayerProgramProjectionMatrix(const gfx3DMatrix& aMatrix)
       }
     }
   }
-}
-
-void
-CompositorOGL::FallbackTextureInfo(TextureInfo& aId)
-{
-  // Try again without direct texturing enabled
-  aId.mTextureHostFlags &= ~TEXTURE_HOST_DIRECT;
 }
 
 TemporaryRef<CompositingRenderTarget>
@@ -766,7 +764,7 @@ CompositorOGL::BeginFrame(const Rect *aClipRectIn, const gfxMatrix& aTransform,
 
   mFrameInProgress = true;
   gfxRect rect;
-  if (mIsRenderingToEGLSurface) {
+  if (mUseExternalSurfaceSize) {
     rect = gfxRect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
   } else {
     rect = gfxRect(aRenderBounds.x, aRenderBounds.y, aRenderBounds.width, aRenderBounds.height);
@@ -1211,7 +1209,7 @@ CompositorOGL::EndFrame()
 #ifdef MOZ_DUMP_PAINTING
   if (gfxUtils::sDumpPainting) {
     nsIntRect rect;
-    if (mIsRenderingToEGLSurface) {
+    if (mUseExternalSurfaceSize) {
       rect = nsIntRect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
     } else {
       mWidget->GetBounds(rect);
@@ -1289,7 +1287,7 @@ void
 CompositorOGL::CopyToTarget(gfxContext *aTarget, const gfxMatrix& aTransform)
 {
   nsIntRect rect;
-  if (mIsRenderingToEGLSurface) {
+  if (mUseExternalSurfaceSize) {
     rect = nsIntRect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
   } else {
     rect = nsIntRect(0, 0, mWidgetSize.width, mWidgetSize.height);

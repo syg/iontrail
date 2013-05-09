@@ -20,17 +20,11 @@ function debugClipFlavors(aClip)
   }
 }
 
-// XXX won't work with out of process content
-function emptyClipboard() {
-  Cc["@mozilla.org/widget/clipboard;1"].getService(Ci.nsIClipboard)
-                                       .emptyClipboard(Ci.nsIClipboard.kGlobalClipboard);
-}
-
 function checkContextMenuPositionRange(aElement, aMinLeft, aMaxLeft, aMinTop, aMaxTop) {
   ok(aElement.left > aMinLeft && aElement.left < aMaxLeft,
     "Left position is " + aElement.left + ", expected between " + aMinLeft + " and " + aMaxLeft);
 
-  ok(aElement.top > aMinTop && aElement.top < aMaxTop, 
+  ok(aElement.top > aMinTop && aElement.top < aMaxTop,
     "Top position is " + aElement.top + ", expected between " + aMinTop + " and " + aMaxTop);
 }
 
@@ -303,7 +297,7 @@ gTests.push({
     // the test above will invoke the app bar
     yield hideContextUI();
 
-    Browser.closeTab(Browser.selectedTab);
+    Browser.closeTab(Browser.selectedTab, { forceClose: true });
     purgeEventQueue();
   }
 });
@@ -347,9 +341,11 @@ gTests.push({
 
     checkContextMenuPositionRange(ContextMenuUI._panel, 65, 80, notificationHeight +  155, notificationHeight + 180);
 
-    ContextMenuUI._menuPopup.hide();
+    promise = waitForEvent(document, "popuphidden");
+    ContextMenuUI.hide();
+    yield promise;
 
-    Browser.closeTab(Browser.selectedTab);
+    Browser.closeTab(Browser.selectedTab, { forceClose: true });
   }
 });
 
@@ -496,7 +492,7 @@ gTests.push({
     let imagetab = Browser.getTabFromChrome(event.originalTarget);
     ok(imagetab != null, "tab created");
 
-    Browser.closeTab(imagetab);
+    Browser.closeTab(imagetab, { forceClose: true });
   }
 });
 
@@ -511,7 +507,7 @@ gTests.push({
     // Sometimes the context ui is visible, sometimes it isn't.
     try {
       yield waitForCondition(function () {
-        return ContextUI.isVisible;  
+        return ContextUI.isVisible;
       }, 500, 50);
     } catch (ex) {}
 

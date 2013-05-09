@@ -18,15 +18,18 @@ namespace layers {
 
 struct FPSState;
 class CompositingRenderTargetOGL;
+class GLManagerCompositor;
 
 class CompositorOGL : public Compositor
 {
   typedef mozilla::gl::GLContext GLContext;
   typedef mozilla::gl::ShaderProgramType ProgramType;
+  
+  friend class GLManagerCompositor;
 
 public:
   CompositorOGL(nsIWidget *aWidget, int aSurfaceWidth = -1, int aSurfaceHeight = -1,
-                bool aIsRenderingToEGLSurface = false);
+                bool aUseExternalSurfaceSize = false);
 
   virtual ~CompositorOGL();
 
@@ -38,8 +41,6 @@ public:
   {
     return TextureFactoryIdentifier(LAYERS_OPENGL, GetMaxTextureSize());
   }
-
-  virtual void FallbackTextureInfo(TextureInfo& aId) MOZ_OVERRIDE;
 
   virtual TemporaryRef<CompositingRenderTarget> 
   CreateRenderTarget(const gfx::IntRect &aRect, SurfaceInitMode aInit) MOZ_OVERRIDE;
@@ -88,6 +89,10 @@ public:
    * an EGL surface.
    */
   virtual void SetDestinationSurfaceSize(const gfx::IntSize& aSize) MOZ_OVERRIDE;
+
+  virtual void SetScreenRenderOffset(const gfx::Point& aOffset) MOZ_OVERRIDE {
+    mRenderOffset = aOffset;
+  }
 
   virtual void MakeCurrent(MakeCurrentFlags aFlags = 0) MOZ_OVERRIDE {
     if (mDestroyed) {
@@ -140,6 +145,14 @@ private:
   /** The size of the surface we are rendering to */
   nsIntSize mSurfaceSize;
 
+  gfx::Point mRenderOffset;
+
+  /** Helper-class used by Initialize **/
+  class ReadDrawFPSPref MOZ_FINAL : public nsRunnable {
+  public:
+    NS_IMETHOD Run() MOZ_OVERRIDE;
+  };
+
   already_AddRefed<mozilla::gl::GLContext> CreateContext();
 
   /** Shader Programs */
@@ -172,11 +185,11 @@ private:
   bool mHasBGRA;
 
   /**
-   * When rendering to an EGL surface (e.g. on Android), we rely on being told
+   * When rendering to some EGL surfaces (e.g. on Android), we rely on being told
    * about size changes (via SetSurfaceSize) rather than pulling this information
    * from the widget.
    */
-  bool mIsRenderingToEGLSurface;
+  bool mUseExternalSurfaceSize;
 
   /**
    * Have we had DrawQuad calls since the last frame was rendered?

@@ -13,7 +13,6 @@
 #define FragmentOrElement_h___
 
 #include "nsAttrAndChildArray.h"          // member
-#include "nsCOMPtr.h"                     // member
 #include "nsCycleCollectionParticipant.h" // NS_DECL_CYCLE_*
 #include "nsIContent.h"                   // base class
 #include "nsIDOMTouchEvent.h"             // base class (nsITouchEventReceiver)
@@ -54,7 +53,8 @@ public:
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(nsChildContentList)
 
   // nsWrapperCache
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext *cx,
+                               JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
 
   // nsIDOMNodeList interface
   NS_DECL_NSIDOMNODELIST

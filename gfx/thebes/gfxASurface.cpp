@@ -126,14 +126,13 @@ gfxASurface::SetSurfaceWrapper(cairo_surface_t *csurf, gfxASurface *asurf)
 already_AddRefed<gfxASurface>
 gfxASurface::Wrap (cairo_surface_t *csurf)
 {
-    gfxASurface *result;
+    nsRefPtr<gfxASurface> result;
 
     /* Do we already have a wrapper for this surface? */
     result = GetSurfaceWrapper(csurf);
     if (result) {
         // fprintf(stderr, "Existing wrapper for %p -> %p\n", csurf, result);
-        NS_ADDREF(result);
-        return result;
+        return result.forget();
     }
 
     /* No wrapper; figure out the surface type and create it */
@@ -177,8 +176,7 @@ gfxASurface::Wrap (cairo_surface_t *csurf)
 
     // fprintf(stderr, "New wrapper for %p -> %p\n", csurf, result);
 
-    NS_ADDREF(result);
-    return result;
+    return result.forget();
 }
 
 void
@@ -632,12 +630,6 @@ public:
             }
         }
 
-        return NS_OK;
-    }
-
-    NS_IMETHOD GetExplicitNonHeap(int64_t *n)
-    {
-        *n = 0; // this reporter makes neither "explicit" non NONHEAP reports
         return NS_OK;
     }
 };

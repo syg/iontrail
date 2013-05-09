@@ -12,7 +12,7 @@ var gDebuggee = null;
 
 function test() {
   // Windows XP test slaves are terribly slow at this test.
-  requestLongerTimeout(2);
+  requestLongerTimeout(4);
 
   debug_chrome(STACK_URL, aOnClosing, function(aTab, aDebuggee, aProcess) {
     gTab = aTab;
@@ -48,8 +48,8 @@ function testSimpleCall() {
     ok(gProcess._dbgProfile.name,
       "The remote debugger profile doesn't have a name...");
 
-    info("profile localDir: " + gProcess._dbgProfile.localDir);
-    info("profile rootDir: " + gProcess._dbgProfile.rootDir);
+    info("profile localDir: " + gProcess._dbgProfile.localDir.path);
+    info("profile rootDir: " + gProcess._dbgProfile.rootDir.path);
     info("profile name: " + gProcess._dbgProfile.name);
 
     let profileService = Cc["@mozilla.org/toolkit/profile-service;1"]
@@ -64,7 +64,8 @@ function testSimpleCall() {
     is(profile.rootDir.path, gProcess._dbgProfile.rootDir.path,
       "The remote debugger profile doesn't have the correct rootDir!");
 
-    DebuggerUI.toggleChromeDebugger();
+    let chromeDebug = DebuggerUI.toggleChromeDebugger();
+    info("toggleChromeDebugger() returned " + chromeDebug);
   }}, 0);
 }
 

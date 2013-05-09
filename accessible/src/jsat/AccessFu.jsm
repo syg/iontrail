@@ -39,12 +39,9 @@ this.AccessFu = {
       Services.obs.addObserver(this, 'Accessibility:Settings', false);
     } catch (x) {
       // Not on Android
-      aWindow.addEventListener(
-        'ContentStart',
-        (function(event) {
-           let content = aWindow.shell.contentBrowser.contentWindow;
-           content.addEventListener('mozContentEvent', this, false, true);
-         }).bind(this), false);
+      if (Utils.MozBuildApp === 'b2g') {
+        aWindow.addEventListener('ContentStart', this, false);
+      }
     }
 
     try {
@@ -53,9 +50,34 @@ this.AccessFu = {
       this._activatePref = ACCESSFU_DISABLE;
     }
 
-    Input.quickNavMode.updateModes(this.prefsBranch);
+    try {
+      this._notifyOutput = this.prefsBranch.getBoolPref('notify_output');
+    } catch (x) {
+      this._notifyOutput = false;
+    }
+
+    this.Input.quickNavMode.updateModes(this.prefsBranch);
 
     this._enableOrDisable();
+  },
+
+  /**
+   * Shut down chrome-layer accessibility functionality from the outside.
+   */
+  detach: function detach() {
+    // Avoid disabling twice.
+    if (this._enabled) {
+      this._disable();
+    }
+    if (Utils.MozBuildApp === 'mobile/android') {
+      Services.obs.removeObserver(this, 'Accessibility:Settings');
+    } else if (Utils.MozBuildApp === 'b2g') {
+      Utils.win.shell.contentBrowser.contentWindow.removeEventListener(
+        'mozContentEvent', this);
+      Utils.win.removeEventListener('ContentStart', this);
+    }
+    this.prefsBranch.removeObserver('activate', this);
+    Utils.uninit();
   },
 
   /**
@@ -73,8 +95,10 @@ this.AccessFu = {
 
     Logger.info('enable');
 
-    for each (let mm in Utils.AllMessageManagers)
+    for each (let mm in Utils.AllMessageManagers) {
+      this._addMessageListeners(mm);
       this._loadFrameScript(mm);
+    }
 
     // Add stylesheet
     let stylesheetURL = 'chrome://global/content/accessibility/AccessFu.css';
@@ -83,7 +107,7 @@ this.AccessFu = {
     Utils.win.document.insertBefore(stylesheet, Utils.win.document.firstChild);
     this.stylesheet = Cu.getWeakReference(stylesheet);
 
-    Input.start();
+    this.Input.start();
     Output.start();
     TouchAdapter.start();
 
@@ -93,6 +117,11 @@ this.AccessFu = {
     Services.obs.addObserver(this, 'Accessibility:Focus', false);
     Utils.win.addEventListener('TabOpen', this);
     Utils.win.addEventListener('TabSelect', this);
+
+    if (this.readyCallback) {
+      this.readyCallback();
+      delete this.readyCallback;
+    }
   },
 
   /**
@@ -108,10 +137,12 @@ this.AccessFu = {
 
     Utils.win.document.removeChild(this.stylesheet.get());
 
-    for each (let mm in Utils.AllMessageManagers)
+    for each (let mm in Utils.AllMessageManagers) {
       mm.sendAsyncMessage('AccessFu:Stop');
+      this._removeMessageListeners(mm);
+    }
 
-    Input.stop();
+    this.Input.stop();
     Output.stop();
     TouchAdapter.stop();
 
@@ -122,6 +153,11 @@ this.AccessFu = {
     Services.obs.removeObserver(this, 'Accessibility:NextObject');
     Services.obs.removeObserver(this, 'Accessibility:PreviousObject');
     Services.obs.removeObserver(this, 'Accessibility:Focus');
+
+    if (this.doneCallback) {
+      this.doneCallback();
+      delete this.doneCallback;
+    }
   },
 
   _enableOrDisable: function _enableOrDisable() {
@@ -143,38 +179,68 @@ this.AccessFu = {
     switch (aMessage.name) {
       case 'AccessFu:Ready':
         let mm = Utils.getMessageManager(aMessage.target);
-        mm.sendAsyncMessage('AccessFu:Start',
-                            {method: 'start', buildApp: Utils.MozBuildApp});
+        if (this._enabled) {
+          mm.sendAsyncMessage('AccessFu:Start',
+                              {method: 'start', buildApp: Utils.MozBuildApp});
+        }
         break;
       case 'AccessFu:Present':
         this._output(aMessage.json, aMessage.target);
         break;
       case 'AccessFu:Input':
-        Input.setEditState(aMessage.json);
+        this.Input.setEditState(aMessage.json);
         break;
     }
   },
 
   _output: function _output(aPresentationData, aBrowser) {
-      try {
-        for each (let presenter in aPresentationData) {
-          if (!presenter)
-            continue;
+    for each (let presenter in aPresentationData) {
+      if (!presenter)
+        continue;
 
-          Output[presenter.type](presenter.details, aBrowser);
-        }
+      try {
+        Output[presenter.type](presenter.details, aBrowser);
       } catch (x) {
         Logger.logException(x);
       }
+    }
+
+    if (this._notifyOutput) {
+      Services.obs.notifyObservers(null, 'accessfu-output',
+                                   JSON.stringify(aPresentationData));
+    }
   },
 
   _loadFrameScript: function _loadFrameScript(aMessageManager) {
+    if (this._processedMessageManagers.indexOf(aMessageManager) < 0) {
+      aMessageManager.loadFrameScript(
+        'chrome://global/content/accessibility/content-script.js', true);
+      this._processedMessageManagers.push(aMessageManager);
+    } else if (this._enabled) {
+      // If the content-script is already loaded and AccessFu is enabled,
+      // send an AccessFu:Start message.
+      aMessageManager.sendAsyncMessage('AccessFu:Start',
+        {method: 'start', buildApp: Utils.MozBuildApp});
+    }
+  },
+
+  _addMessageListeners: function _addMessageListeners(aMessageManager) {
     aMessageManager.addMessageListener('AccessFu:Present', this);
     aMessageManager.addMessageListener('AccessFu:Input', this);
     aMessageManager.addMessageListener('AccessFu:Ready', this);
-    aMessageManager.
-      loadFrameScript(
-        'chrome://global/content/accessibility/content-script.js', true);
+  },
+
+  _removeMessageListeners: function _removeMessageListeners(aMessageManager) {
+    aMessageManager.removeMessageListener('AccessFu:Present', this);
+    aMessageManager.removeMessageListener('AccessFu:Input', this);
+    aMessageManager.removeMessageListener('AccessFu:Ready', this);
+  },
+
+  _handleMessageManager: function _handleMessageManager(aMessageManager) {
+    if (this._enabled) {
+      this._addMessageListeners(aMessageManager);
+    }
+    this._loadFrameScript(aMessageManager);
   },
 
   observe: function observe(aSubject, aTopic, aData) {
@@ -184,10 +250,10 @@ this.AccessFu = {
         this._enableOrDisable();
         break;
       case 'Accessibility:NextObject':
-        Input.moveCursor('moveNext', 'Simple', 'gesture');
+        this.Input.moveCursor('moveNext', 'Simple', 'gesture');
         break;
       case 'Accessibility:PreviousObject':
-        Input.moveCursor('movePrevious', 'Simple', 'gesture');
+        this.Input.moveCursor('movePrevious', 'Simple', 'gesture');
         break;
       case 'Accessibility:Focus':
         this._focused = JSON.parse(aData);
@@ -198,17 +264,25 @@ this.AccessFu = {
         }
         break;
       case 'nsPref:changed':
-        if (aData == 'activate') {
-          this._activatePref = this.prefsBranch.getIntPref('activate');
-          this._enableOrDisable();
-        } else if (aData == 'quicknav_modes') {
-          Input.quickNavMode.updateModes(this.prefsBranch);
+        switch (aData) {
+          case 'activate':
+            this._activatePref = this.prefsBranch.getIntPref('activate');
+            this._enableOrDisable();
+            break;
+          case 'quicknav_modes':
+            this.Input.quickNavMode.updateModes(this.prefsBranch);
+            break;
+          case 'notify_output':
+            this._notifyOutput = this.prefsBranch.getBoolPref('notify_output');
+            break;
+          default:
+            break;
         }
         break;
       case 'remote-browser-frame-shown':
       {
-        this._loadFrameScript(
-          aSubject.QueryInterface(Ci.nsIFrameLoader).messageManager);
+        let mm = aSubject.QueryInterface(Ci.nsIFrameLoader).messageManager;
+        this._handleMessageManager(mm);
         break;
       }
     }
@@ -216,6 +290,12 @@ this.AccessFu = {
 
   handleEvent: function handleEvent(aEvent) {
     switch (aEvent.type) {
+      case 'ContentStart':
+      {
+        Utils.win.shell.contentBrowser.contentWindow.addEventListener(
+          'mozContentEvent', this, false, true);
+        break;
+      }
       case 'mozContentEvent':
       {
         if (aEvent.detail.type == 'accessibility-screenreader') {
@@ -226,7 +306,8 @@ this.AccessFu = {
       }
       case 'TabOpen':
       {
-        this._loadFrameScript(Utils.getMessageManager(aEvent.target));
+        let mm = Utils.getMessageManager(aEvent.target);
+        this._handleMessageManager(mm);
         break;
       }
       case 'TabSelect':
@@ -255,7 +336,11 @@ this.AccessFu = {
   _enabled: false,
 
   // Layerview is focused
-  _focused: false
+  _focused: false,
+
+  // Keep track of message managers tha already have a 'content-script.js'
+  // injected.
+  _processedMessageManagers: []
 };
 
 var Output = {
@@ -390,12 +475,18 @@ var Input = {
   editState: {},
 
   start: function start() {
-    Utils.win.document.addEventListener('keypress', this, true);
+    // XXX: This is too disruptive on desktop for now.
+    // Might need to add special modifiers.
+    if (Utils.MozBuildApp != 'browser') {
+      Utils.win.document.addEventListener('keypress', this, true);
+    }
     Utils.win.addEventListener('mozAccessFuGesture', this, true);
   },
 
   stop: function stop() {
-    Utils.win.document.removeEventListener('keypress', this, true);
+    if (Utils.MozBuildApp != 'browser') {
+      Utils.win.document.removeEventListener('keypress', this, true);
+    }
     Utils.win.removeEventListener('mozAccessFuGesture', this, true);
   },
 
@@ -628,3 +719,4 @@ var Input = {
     _currentIndex: -1
   }
 };
+AccessFu.Input = Input;

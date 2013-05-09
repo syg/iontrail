@@ -18,6 +18,7 @@ namespace mozilla {
 namespace dom {
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(CallbackObject)
+  NS_INTERFACE_MAP_ENTRY(mozilla::dom::CallbackObject)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
@@ -34,7 +35,7 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(CallbackObject)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mCallback)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
-CallbackObject::CallSetup::CallSetup(JSObject* const aCallback,
+CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
                                      ErrorResult& aRv,
                                      ExceptionHandling aExceptionHandling)
   : mCx(nullptr)
@@ -97,7 +98,7 @@ CallbackObject::CallSetup::CallSetup(JSObject* const aCallback,
   // After this point we guarantee calling ScriptEvaluated() if we
   // have an nsIScriptContext.
   // XXXbz Why, if, say CheckFunctionAccess fails?  I know that's how
-  // nsJSContext::CallEventHandler works, but is it required?
+  // nsJSContext::CallEventHandler used to work, but is it required?
   // FIXME: Bug 807369.
   mCtx = ctx;
 
@@ -184,15 +185,16 @@ CallbackObject::CallSetup::~CallSetup()
 
 already_AddRefed<nsISupports>
 CallbackObjectHolderBase::ToXPCOMCallback(CallbackObject* aCallback,
-                                          const nsIID& aIID)
+                                          const nsIID& aIID) const
 {
   if (!aCallback) {
     return nullptr;
   }
 
-  JSObject* callback = aCallback->Callback();
+  AutoSafeJSContext cx;
 
-  SafeAutoJSContext cx;
+  JS::Rooted<JSObject*> callback(cx, aCallback->Callback());
+
   JSAutoCompartment ac(cx, callback);
   XPCCallContext ccx(NATIVE_CALLER, cx);
   if (!ccx.IsValid()) {

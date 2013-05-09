@@ -21,27 +21,15 @@ XPCOMUtils.defineLazyServiceGetter(this, "ppmm",
                                    "@mozilla.org/parentprocessmessagemanager;1",
                                    "nsIMessageListenerManager");
 
-XPCOMUtils.defineLazyGetter(this, "mRIL", function () {
-  let telephony = Cc["@mozilla.org/ril;1"];
-  if (!telephony) {
-    // Return a mock RIL because B2G Desktop build does not support telephony.
-    return {
-      getICCContacts: function(aContactType, aCallback) {
-        aCallback("!telephony", null, null);
-      }
-    };
-  }
-  return telephony.getService(Ci.nsIRadioInterfaceLayer);
-});
-
 let myGlobal = this;
 
 let ContactService = {
   init: function() {
     if (DEBUG) debug("Init");
-    this._messages = ["Contacts:Find", "Contacts:GetAll", "Contacts:Clear", "Contact:Save",
-                      "Contact:Remove", "Contacts:GetSimContacts",
-                      "Contacts:RegisterForMessages", "child-process-shutdown"];
+    this._messages = ["Contacts:Find", "Contacts:GetAll", "Contacts:GetAll:SendNow",
+                      "Contacts:Clear", "Contact:Save",
+                      "Contact:Remove", "Contacts:RegisterForMessages",
+                      "child-process-shutdown", "Contacts:GetRevision"];
     this._children = [];
     this._messages.forEach(function(msgName) {
       ppmm.addMessageListener(msgName, this);
@@ -112,10 +100,20 @@ let ContactService = {
         }
         this._db.getAll(
           function(aContacts) {
-            mm.sendAsyncMessage("Contacts:GetAll:Next", {cursorId: msg.cursorId, contacts: aContacts});
+            try {
+              mm.sendAsyncMessage("Contacts:GetAll:Next", {cursorId: msg.cursorId, contacts: aContacts});
+            } catch (e) {
+              if (DEBUG) debug("Child is dead, DB should stop sending contacts");
+              throw e;
+            }
           },
           function(aErrorMsg) { mm.sendAsyncMessage("Contacts:Find:Return:KO", { errorMsg: aErrorMsg }); },
-          msg.findOptions);
+          msg.findOptions, msg.cursorId);
+        break;
+      case "Contacts:GetAll:SendNow":
+        // sendNow is a no op if there isn't an existing cursor in the DB, so we
+        // don't need to assert the permission again.
+        this._db.sendNow(msg.cursorId);
         break;
       case "Contact:Save":
         if (msg.options.reason === "create") {
@@ -161,23 +159,18 @@ let ContactService = {
           function(aErrorMsg) { mm.sendAsyncMessage("Contacts:Clear:Return:KO", { requestID: msg.requestID, errorMsg: aErrorMsg }); }.bind(this)
         );
         break;
-      case "Contacts:GetSimContacts":
+      case "Contacts:GetRevision":
         if (!this.assertPermission(aMessage, "contacts-read")) {
           return null;
         }
-        mRIL.getICCContacts(
-          msg.options.contactType,
-          function (aErrorMsg, aType, aContacts) {
-            if (aErrorMsg !== 'undefined') {
-              mm.sendAsyncMessage("Contacts:GetSimContacts:Return:KO",
-                                  {requestID: msg.requestID,
-                                   errorMsg: aErrorMsg});
-            } else {
-              mm.sendAsyncMessage("Contacts:GetSimContacts:Return:OK",
-                                  {requestID: msg.requestID,
-                                   contacts: aContacts});
-            }
-          }.bind(this));
+        this._db.getRevision(
+          function(revision) {
+            mm.sendAsyncMessage("Contacts:Revision", {
+              requestID: msg.requestID,
+              revision: revision
+            });
+          }
+        );
         break;
       case "Contacts:RegisterForMessages":
         if (!aMessage.target.assertPermission("contacts-read")) {

@@ -83,6 +83,7 @@ nsMenuPopupFrame::nsMenuPopupFrame(nsIPresShell* aShell, nsStyleContext* aContex
   mPopupState(ePopupClosed),
   mPopupAlignment(POPUPALIGNMENT_NONE),
   mPopupAnchor(POPUPALIGNMENT_NONE),
+  mPosition(POPUPPOSITION_UNKNOWN),
   mConsumeRollupEvent(nsIPopupBoxObject::ROLLUP_DEFAULT),
   mFlipBoth(false),
   mIsOpenChanged(false),
@@ -531,6 +532,8 @@ nsMenuPopupFrame::InitPositionFromAnchorAlign(const nsAString& aAnchor,
     mPopupAlignment = POPUPALIGNMENT_BOTTOMRIGHT;
   else
     mPopupAlignment = POPUPALIGNMENT_NONE;
+
+  mPosition = POPUPPOSITION_UNKNOWN;
 }
 
 void
@@ -548,6 +551,8 @@ nsMenuPopupFrame::InitializePopup(nsIContent* aAnchorContent,
   mXPos = aXPos;
   mYPos = aYPos;
   mAdjustOffsetForContextMenu = false;
+  mVFlip = false;
+  mHFlip = false;
 
   // if aAttributesOverride is true, then the popupanchor, popupalign and
   // position attributes on the <popup> override those values passed in.
@@ -583,42 +588,52 @@ nsMenuPopupFrame::InitializePopup(nsIContent* aAnchorContent,
     else if (position.EqualsLiteral("before_start")) {
       mPopupAnchor = POPUPALIGNMENT_TOPLEFT;
       mPopupAlignment = POPUPALIGNMENT_BOTTOMLEFT;
+      mPosition = POPUPPOSITION_BEFORESTART;
     }
     else if (position.EqualsLiteral("before_end")) {
       mPopupAnchor = POPUPALIGNMENT_TOPRIGHT;
       mPopupAlignment = POPUPALIGNMENT_BOTTOMRIGHT;
+      mPosition = POPUPPOSITION_BEFOREEND;
     }
     else if (position.EqualsLiteral("after_start")) {
       mPopupAnchor = POPUPALIGNMENT_BOTTOMLEFT;
       mPopupAlignment = POPUPALIGNMENT_TOPLEFT;
+      mPosition = POPUPPOSITION_AFTERSTART;
     }
     else if (position.EqualsLiteral("after_end")) {
       mPopupAnchor = POPUPALIGNMENT_BOTTOMRIGHT;
       mPopupAlignment = POPUPALIGNMENT_TOPRIGHT;
+      mPosition = POPUPPOSITION_AFTEREND;
     }
     else if (position.EqualsLiteral("start_before")) {
       mPopupAnchor = POPUPALIGNMENT_TOPLEFT;
       mPopupAlignment = POPUPALIGNMENT_TOPRIGHT;
+      mPosition = POPUPPOSITION_STARTBEFORE;
     }
     else if (position.EqualsLiteral("start_after")) {
       mPopupAnchor = POPUPALIGNMENT_BOTTOMLEFT;
       mPopupAlignment = POPUPALIGNMENT_BOTTOMRIGHT;
+      mPosition = POPUPPOSITION_STARTAFTER;
     }
     else if (position.EqualsLiteral("end_before")) {
       mPopupAnchor = POPUPALIGNMENT_TOPRIGHT;
       mPopupAlignment = POPUPALIGNMENT_TOPLEFT;
+      mPosition = POPUPPOSITION_ENDBEFORE;
     }
     else if (position.EqualsLiteral("end_after")) {
       mPopupAnchor = POPUPALIGNMENT_BOTTOMRIGHT;
       mPopupAlignment = POPUPALIGNMENT_BOTTOMLEFT;
+      mPosition = POPUPPOSITION_ENDAFTER;
     }
     else if (position.EqualsLiteral("overlap")) {
       mPopupAnchor = POPUPALIGNMENT_TOPLEFT;
       mPopupAlignment = POPUPALIGNMENT_TOPLEFT;
+      mPosition = POPUPPOSITION_OVERLAP;
     }
     else if (position.EqualsLiteral("after_pointer")) {
       mPopupAnchor = POPUPALIGNMENT_TOPLEFT;
       mPopupAlignment = POPUPALIGNMENT_TOPLEFT;
+      mPosition = POPUPPOSITION_AFTERPOINTER;
       // XXXndeakin this is supposed to anchor vertically after, but with the
       // horizontal position as the mouse pointer.
       mYPos += 21;
@@ -997,14 +1012,19 @@ nsMenuPopupFrame::FlipOrResize(nscoord& aScreenPoint, nscoord aSize,
         popupSize = startpos - aScreenPoint - aMarginEnd;
       }
       else {
-        // flip such that the popup is to the right or bottom of the anchor
-        // point instead. However, when flipping use the same margin size.
-        *aFlipSide = true;
-        aScreenPoint = endpos + aMarginEnd;
-        // check if the new position is still off the right or bottom edge of
-        // the screen. If so, resize the popup.
-        if (aScreenPoint + aSize > aScreenEnd) {
-          popupSize = aScreenEnd - aScreenPoint;
+        // If the newly calculated position is different than the existing
+        // position, flip such that the popup is to the right or bottom of the
+        // anchor point instead . However, when flipping use the same margin
+        // size.
+        nscoord newScreenPoint = endpos + aMarginEnd;
+        if (newScreenPoint != aScreenPoint) {
+          *aFlipSide = true;
+          aScreenPoint = newScreenPoint;
+          // check if the new position is still off the right or bottom edge of
+          // the screen. If so, resize the popup.
+          if (aScreenPoint + aSize > aScreenEnd) {
+            popupSize = aScreenEnd - aScreenPoint;
+          }
         }
       }
     }
@@ -1032,17 +1052,21 @@ nsMenuPopupFrame::FlipOrResize(nscoord& aScreenPoint, nscoord aSize,
         }
       }
       else {
-        // flip such that the popup is to the left or top of the anchor point
-        // instead.
-        *aFlipSide = true;
-        aScreenPoint = startpos - aSize - aMarginBegin - aOffsetForContextMenu;
+        // if the newly calculated position is different than the existing
+        // position, we flip such that the popup is to the left or top of the
+        // anchor point instead.
+        nscoord newScreenPoint = startpos - aSize - aMarginBegin - aOffsetForContextMenu;
+        if (newScreenPoint != aScreenPoint) {
+          *aFlipSide = true;
+          aScreenPoint = newScreenPoint;
 
-        // check if the new position is still off the left or top edge of the
-        // screen. If so, resize the popup.
-        if (aScreenPoint < aScreenBegin) {
-          aScreenPoint = aScreenBegin;
-          if (!mIsContextMenu) {
-            popupSize = startpos - aScreenPoint - aMarginBegin;
+          // check if the new position is still off the left or top edge of the
+          // screen. If so, resize the popup.
+          if (aScreenPoint < aScreenBegin) {
+            aScreenPoint = aScreenBegin;
+            if (!mIsContextMenu) {
+              popupSize = startpos - aScreenPoint - aMarginBegin;
+            }
           }
         }
       }
@@ -1168,12 +1192,19 @@ nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame, bool aIsMove)
     }
 
     // mXPos and mYPos specify an additonal offset passed to OpenPopup that
-    // should be added to the position
-    if (IsDirectionRTL())
-      screenPoint.x -= presContext->CSSPixelsToAppUnits(mXPos);
-    else
-      screenPoint.x += presContext->CSSPixelsToAppUnits(mXPos);
-    screenPoint.y += presContext->CSSPixelsToAppUnits(mYPos);
+    // should be added to the position.  We also add the offset to the anchor
+    // pos so a later flip/resize takes the offset into account.
+    nscoord anchorXOffset = presContext->CSSPixelsToAppUnits(mXPos);
+    if (IsDirectionRTL()) {
+      screenPoint.x -= anchorXOffset;
+      anchorRect.x -= anchorXOffset;
+    } else {
+      screenPoint.x += anchorXOffset;
+      anchorRect.x += anchorXOffset;
+    }
+    nscoord anchorYOffset = presContext->CSSPixelsToAppUnits(mYPos);
+    screenPoint.y += anchorYOffset;
+    anchorRect.y += anchorYOffset;
 
     // If this is a noautohide popup, set the screen coordinates of the popup.
     // This way, the popup stays at the location where it was opened even when
@@ -1905,6 +1936,51 @@ void
 nsMenuPopupFrame::SetConsumeRollupEvent(uint32_t aConsumeMode)
 {
   mConsumeRollupEvent = aConsumeMode;
+}
+
+int8_t
+nsMenuPopupFrame::GetAlignmentPosition() const
+{
+  // The code below handles most cases of alignment, anchor and position values. Those that are
+  // not handled just return POPUPPOSITION_UNKNOWN.
+
+  if (mPosition == POPUPPOSITION_OVERLAP || mPosition == POPUPPOSITION_AFTERPOINTER)
+    return mPosition;
+
+  int8_t position = mPosition;
+
+  if (position == POPUPPOSITION_UNKNOWN) {
+    switch (mPopupAnchor) {
+      case POPUPALIGNMENT_BOTTOMCENTER:
+        position = mPopupAlignment == POPUPALIGNMENT_TOPRIGHT ?
+                     POPUPPOSITION_AFTEREND : POPUPPOSITION_AFTERSTART;
+        break;
+      case POPUPALIGNMENT_TOPCENTER:
+        position = mPopupAlignment == POPUPALIGNMENT_BOTTOMRIGHT ?
+                     POPUPPOSITION_BEFOREEND : POPUPPOSITION_BEFORESTART;
+        break;
+      case POPUPALIGNMENT_LEFTCENTER:
+        position = mPopupAlignment == POPUPALIGNMENT_BOTTOMRIGHT ?
+                     POPUPPOSITION_STARTAFTER : POPUPPOSITION_STARTBEFORE;
+        break;
+      case POPUPALIGNMENT_RIGHTCENTER:
+        position = mPopupAlignment == POPUPALIGNMENT_BOTTOMLEFT ?
+                     POPUPPOSITION_ENDAFTER : POPUPPOSITION_ENDBEFORE;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (mHFlip) {
+    position = POPUPPOSITION_HFLIP(position);
+  }
+
+  if (mVFlip) {
+    position = POPUPPOSITION_VFLIP(position);
+  }
+
+  return position;
 }
 
 /**

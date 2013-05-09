@@ -11,8 +11,6 @@
 #include "nsISupportsImpl.h"
 #include "nsWrapperCache.h"
 
-class nsIThreadJSContextStack;
-
 BEGIN_WORKERS_NAMESPACE
 
 #define BINDING_ENSURE_TRUE(_cond, _result, _retval) \
@@ -31,7 +29,6 @@ class DOMBindingBase : public nsWrapperCache,
                        public nsISupports
 {
   JSContext* mJSContext;
-  mutable nsCOMPtr<nsIThreadJSContextStack> mContextStack;
 
 protected:
   DOMBindingBase(JSContext* aCx);
@@ -43,16 +40,17 @@ protected:
   virtual void
   _finalize(JSFreeOp* aFop);
 
-  JSContext*
-  GetJSContextFromContextStack() const;
-
 public:
   NS_DECL_ISUPPORTS
 
   JSContext*
-  GetJSContext() const
+  GetJSContext() const;
+
+  void
+  TraceJSObject(JSTracer* aTrc, const char* aName)
   {
-    return mJSContext ? mJSContext : GetJSContextFromContextStack();
+      if (GetJSObject())
+          TraceJSObjectFromBits(aTrc, aName);
   }
 
 #ifdef DEBUG

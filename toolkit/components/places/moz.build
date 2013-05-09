@@ -13,11 +13,11 @@ XPIDL_SOURCES += [
 
 if CONFIG['MOZ_PLACES']:
     XPIDL_SOURCES += [
-        'mozIAsyncHistory.idl',
         'mozIAsyncFavicons.idl',
+        'mozIAsyncHistory.idl',
         'mozIAsyncLivemarks.idl',
-        'mozIPlacesAutoComplete.idl',
         'mozIColorAnalyzer.idl',
+        'mozIPlacesAutoComplete.idl',
         'nsIAnnotationService.idl',
         'nsIBrowserHistory.idl',
         'nsIFaviconService.idl',
@@ -25,6 +25,11 @@ if CONFIG['MOZ_PLACES']:
         'nsITaggingService.idl ',
         'nsPIPlacesDatabase.idl',
         'nsPIPlacesHistoryListenersNotifier.idl',
+    ]
+
+    EXPORTS.mozilla.places = [
+        'History.h',
+        'Database.h',
     ]
 
 MODULE = 'places'

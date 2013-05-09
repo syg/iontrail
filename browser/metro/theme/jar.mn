@@ -9,6 +9,7 @@ chrome.jar:
   skin/aboutPage.css                        (aboutPage.css)
   skin/about.css                            (about.css)
 * skin/flyoutpanel.css                      (flyoutpanel.css)
+* skin/cssthrobber.css                      (cssthrobber.css)
 * skin/browser.css                          (browser.css)
 * skin/content.css                          (content.css)
   skin/config.css                           (config.css)
@@ -82,5 +83,8 @@ chrome.jar:
   skin/images/scrubber-hdpi.png             (images/scrubber-hdpi.png)
   skin/images/selection-monocle.png         (images/selection-monocle.png)
   skin/images/appbar-icons.png              (images/appbar-icons.png)
+  skin/images/pinned-hdpi.png               (images/pinned-hdpi.png)
+  skin/images/tile-selected-check-hdpi.png  (images/tile-selected-check-hdpi.png)
+
   skin/images/overlay-back.png              (images/overlay-back.png)
   skin/images/overlay-plus.png              (images/overlay-plus.png)

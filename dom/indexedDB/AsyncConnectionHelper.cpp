@@ -19,6 +19,7 @@
 #include "IDBEvents.h"
 #include "IDBTransaction.h"
 #include "IndexedDatabaseManager.h"
+#include "ProfilerHelpers.h"
 #include "TransactionThreadPool.h"
 
 #include "ipc/IndexedDBChild.h"
@@ -55,7 +56,7 @@ ConvertCloneReadInfosToArrayInternal(
                                 nsTArray<StructuredCloneReadInfo>& aReadInfos,
                                 jsval* aResult)
 {
-  JSObject* array = JS_NewArrayObject(aCx, 0, nullptr);
+  JS::Rooted<JSObject*> array(aCx, JS_NewArrayObject(aCx, 0, nullptr));
   if (!array) {
     NS_WARNING("Failed to make array!");
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
@@ -71,13 +72,13 @@ ConvertCloneReadInfosToArrayInternal(
          index++) {
       StructuredCloneReadInfo& readInfo = aReadInfos[index];
 
-      jsval val;
-      if (!IDBObjectStore::DeserializeValue(aCx, readInfo, &val)) {
+      JS::Rooted<JS::Value> val(aCx);
+      if (!IDBObjectStore::DeserializeValue(aCx, readInfo, val.address())) {
         NS_WARNING("Failed to decode!");
         return NS_ERROR_DOM_DATA_CLONE_ERR;
       }
 
-      if (!JS_SetElement(aCx, array, index, &val)) {
+      if (!JS_SetElement(aCx, array, index, val.address())) {
         NS_WARNING("Failed to set array element!");
         return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
       }
@@ -102,7 +103,7 @@ HelperBase::~HelperBase()
       NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
 
       if (mainThread) {
-        NS_ProxyRelease(mainThread, static_cast<nsIDOMEventTarget*>(request));
+        NS_ProxyRelease(mainThread, static_cast<EventTarget*>(request));
       }
     }
   }
@@ -118,7 +119,7 @@ HelperBase::WrapNative(JSContext* aCx,
   NS_ASSERTION(aResult, "Null pointer!");
   NS_ASSERTION(mRequest, "Null request!");
 
-  JSObject* global = mRequest->GetParentObject();
+  JS::Rooted<JSObject*> global(aCx, mRequest->GetParentObject());
   NS_ASSERTION(global, "This should never be null!");
 
   nsresult rv =
@@ -191,6 +192,8 @@ NS_IMETHODIMP
 AsyncConnectionHelper::Run()
 {
   if (NS_IsMainThread()) {
+    PROFILER_MAIN_THREAD_LABEL("IndexedDB", "AsyncConnectionHelper::Run");
+
     if (mTransaction &&
         mTransaction->IsAborted()) {
       // Always fire a "error" event with ABORT_ERR if the transaction was
@@ -220,6 +223,11 @@ AsyncConnectionHelper::Run()
           if (NS_SUCCEEDED(mResultCode) && NS_FAILED(rv)) {
             mResultCode = rv;
           }
+
+          IDB_PROFILER_MARK("IndexedDB Request %llu: Running main thread "
+                            "response (rv = %lu)",
+                            "IDBRequest[%llu] MT Done",
+                            mRequest->GetSerialNumber(), mResultCode);
         }
 
         // Call OnError if the database had an error or if the OnSuccess
@@ -265,6 +273,13 @@ AsyncConnectionHelper::Run()
   }
 
   NS_ASSERTION(IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
+
+  PROFILER_LABEL("IndexedDB", "AsyncConnectionHelper::Run");
+
+  IDB_PROFILER_MARK_IF(mRequest,
+                       "IndexedDB Request %llu: Beginning database work",
+                       "IDBRequest[%llu] DT Start",
+                       mRequest->GetSerialNumber());
 
   nsresult rv = NS_OK;
   nsCOMPtr<mozIStorageConnection> connection;
@@ -340,6 +355,12 @@ AsyncConnectionHelper::Run()
     }
 #endif
   }
+
+  IDB_PROFILER_MARK_IF(mRequest,
+                       "IndexedDB Request %llu: Finished database work "
+                       "(rv = %lu)",
+                       "IDBRequest[%llu] DT Done", mRequest->GetSerialNumber(),
+                       mResultCode);
 
   return NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL);
 }
@@ -433,6 +454,8 @@ AsyncConnectionHelper::OnSuccess()
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   NS_ASSERTION(mRequest, "Null request!");
 
+  PROFILER_MAIN_THREAD_LABEL("IndexedDB", "AsyncConnectionHelper::OnSuccess");
+
   nsRefPtr<nsIDOMEvent> event = CreateSuccessEvent(mRequest);
   if (!event) {
     NS_ERROR("Failed to create event!");
@@ -466,6 +489,8 @@ AsyncConnectionHelper::OnError()
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   NS_ASSERTION(mRequest, "Null request!");
+
+  PROFILER_MAIN_THREAD_LABEL("IndexedDB", "AsyncConnectionHelper::OnError");
 
   // Make an error event and fire it at the target.
   nsRefPtr<nsIDOMEvent> event =
@@ -555,6 +580,11 @@ AsyncConnectionHelper::MaybeSendResponseToChildProcess(nsresult aResultCode)
   if (!actor) {
     return Success_NotSent;
   }
+
+  IDB_PROFILER_MARK("IndexedDB Request %llu: Sending response to child "
+                    "process (rv = %lu)",
+                    "IDBRequest[%llu] MT Done",
+                    mRequest->GetSerialNumber(), aResultCode);
 
   return SendResponseToChildProcess(aResultCode);
 }

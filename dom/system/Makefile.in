@@ -37,8 +37,6 @@ ifneq (Android,$(OS_TARGET))
 EXTRA_COMPONENTS = \
   NetworkGeolocationProvider.js \
   NetworkGeolocationProvider.manifest \
-  GPSDGeolocationProvider.js \
-  GPSDGeolocationProvider.manifest \
   $(NULL)
 endif
 
@@ -49,26 +47,10 @@ EXTRA_COMPONENTS = \
   $(NULL)
 endif
 
-EXPORTS_NAMESPACES = mozilla
-
-EXPORTS     = \
-  nsDeviceSensors.h \
-  $(NULL)
-
-EXPORTS_mozilla = \
-  OSFileConstants.h \
-  $(NULL)
-
 LOCAL_INCLUDES += \
   -I$(topsrcdir)/content/events/src \
   -I$(topsrcdir)/js/xpconnect/loader \
   $(NULL)
-ifdef MOZ_GAMEPAD
-EXPORTS_NAMESPACES += mozilla/dom
-EXPORTS_mozilla/dom = \
-  GamepadService.h \
-  $(NULL)
-endif
 
 include $(topsrcdir)/config/config.mk
 

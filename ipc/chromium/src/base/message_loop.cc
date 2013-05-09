@@ -86,8 +86,11 @@ MessageLoop* MessageLoop::current() {
   return lazy_tls_ptr.Pointer()->Get();
 }
 
+PRInt32 message_loop_id_seq = 0;
+
 MessageLoop::MessageLoop(Type type)
     : type_(type),
+      id_(PR_ATOMIC_INCREMENT(&message_loop_id_seq)),
       nestable_tasks_allowed_(true),
       exception_restoration_(false),
       state_(NULL),

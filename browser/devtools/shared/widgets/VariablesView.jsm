@@ -51,7 +51,7 @@ const STR = Services.strings.createBundle(DBG_STRINGS_URI);
  *        e.g. { lazyEmpty: true, searchEnabled: true ... }
  */
 this.VariablesView = function VariablesView(aParentNode, aFlags = {}) {
-  this._store = new Map();
+  this._store = [];
   this._itemsByElement = new WeakMap();
   this._prevHierarchy = new Map();
   this._currHierarchy = new Map();
@@ -102,9 +102,9 @@ VariablesView.prototype = {
     this._toggleSearchVisibility(true);
 
     let scope = new Scope(this, aName);
-    this._store.set(scope.id, scope);
-    this._currHierarchy.set(aName, scope);
+    this._store.push(scope);
     this._itemsByElement.set(scope._target, scope);
+    this._currHierarchy.set(aName, scope);
     scope.header = !!aName;
     return scope;
   },
@@ -118,7 +118,7 @@ VariablesView.prototype = {
    */
   empty: function VV_empty(aTimeout = this.lazyEmptyDelay) {
     // If there are no items in this container, emptying is useless.
-    if (!this._store.size) {
+    if (!this._store.length) {
       return;
     }
     // Check if this empty operation may be executed lazily.
@@ -134,7 +134,7 @@ VariablesView.prototype = {
       list.removeChild(firstChild);
     }
 
-    this._store.clear();
+    this._store.length = 0;
     this._itemsByElement.clear();
 
     this._appendEmptyNotice();
@@ -160,7 +160,7 @@ VariablesView.prototype = {
     let prevList = this._list;
     let currList = this._list = this.document.createElement("scrollbox");
 
-    this._store.clear();
+    this._store.length = 0;
     this._itemsByElement.clear();
 
     this._emptyTimeout = this.window.setTimeout(function() {
@@ -174,7 +174,7 @@ VariablesView.prototype = {
       this._parent.appendChild(currList);
       this._boxObject = currList.boxObject.QueryInterface(Ci.nsIScrollBoxObject);
 
-      if (!this._store.size) {
+      if (!this._store.length) {
         this._appendEmptyNotice();
         this._toggleSearchVisibility(false);
       }
@@ -301,7 +301,7 @@ VariablesView.prototype = {
   set enumVisible(aFlag) {
     this._enumVisible = aFlag;
 
-    for (let [, scope] of this._store) {
+    for (let scope of this._store) {
       scope._enumVisible = aFlag;
     }
   },
@@ -314,7 +314,7 @@ VariablesView.prototype = {
   set nonEnumVisible(aFlag) {
     this._nonEnumVisible = aFlag;
 
-    for (let [, scope] of this._store) {
+    for (let scope of this._store) {
       scope._nonEnumVisible = aFlag;
     }
   },
@@ -380,7 +380,7 @@ VariablesView.prototype = {
 
     // Hide the variables searchbox container if there are no variables or
     // properties to display.
-    container.hidden = !this._store.size;
+    container.hidden = !this._store.length;
 
     let searchbox = this._searchboxNode = document.createElement("textbox");
     searchbox.className = "variables-view-searchinput devtools-searchinput";
@@ -404,8 +404,8 @@ VariablesView.prototype = {
       return;
     }
     this._searchboxContainer.parentNode.removeChild(this._searchboxContainer);
-    this._searchboxNode.addEventListener("input", this._onSearchboxInput, false);
-    this._searchboxNode.addEventListener("keypress", this._onSearchboxKeyPress, false);
+    this._searchboxNode.removeEventListener("input", this._onSearchboxInput, false);
+    this._searchboxNode.removeEventListener("keypress", this._onSearchboxKeyPress, false);
 
     this._searchboxContainer = null;
     this._searchboxNode = null;
@@ -500,7 +500,7 @@ VariablesView.prototype = {
    *        The variable or property to search for.
    */
   _startSearch: function VV__startSearch(aQuery) {
-    for (let [, scope] of this._store) {
+    for (let scope of this._store) {
       switch (aQuery) {
         case "":
           scope.expand();
@@ -520,7 +520,7 @@ VariablesView.prototype = {
    * Expands the first search results in this container.
    */
   expandFirstSearchResults: function VV_expandFirstSearchResults() {
-    for (let [, scope] of this._store) {
+    for (let scope of this._store) {
       let match = scope._firstMatch;
       if (match) {
         match.expand();
@@ -529,64 +529,73 @@ VariablesView.prototype = {
   },
 
   /**
-   * Focuses the first visible variable or property in this container.
+   * Find the first item in the tree of visible items in this container that
+   * matches the predicate. Searches in visual order (the order seen by the
+   * user). Descends into each scope to check the scope and its children.
+   *
+   * @param function aPredicate
+   *        A function that returns true when a match is found.
+   * @return Scope | Variable | Property
+   *         The first visible scope, variable or property, or null if nothing
+   *         is found.
    */
-  focusFirstVisibleNode: function VV_focusFirstVisibleNode() {
-    let property, variable, scope;
-
-    for (let [, item] of this._currHierarchy) {
-      if (!item.focusable) {
-        continue;
-      }
-      if (item instanceof Property) {
-        property = item;
-        break;
-      } else if (item instanceof Variable) {
-        variable = item;
-        break;
-      } else if (item instanceof Scope) {
-        scope = item;
-        break;
+  _findInVisibleItems: function VV__findInVisibleItems(aPredicate) {
+    for (let scope of this._store) {
+      let result = scope._findInVisibleItems(aPredicate);
+      if (result) {
+        return result;
       }
     }
-    if (scope) {
-      this._focusItem(scope);
-    } else if (variable) {
-      this._focusItem(variable);
-    } else if (property) {
-      this._focusItem(property);
+    return null;
+  },
+
+  /**
+   * Find the last item in the tree of visible items in this container that
+   * matches the predicate. Searches in reverse visual order (opposite of the
+   * order seen by the user). Descends into each scope to check the scope and
+   * its children.
+   *
+   * @param function aPredicate
+   *        A function that returns true when a match is found.
+   * @return Scope | Variable | Property
+   *         The last visible scope, variable or property, or null if nothing
+   *         is found.
+   */
+  _findInVisibleItemsReverse: function VV__findInVisibleItemsReverse(aPredicate) {
+    for (let i = this._store.length - 1; i >= 0; i--) {
+      let scope = this._store[i];
+      let result = scope._findInVisibleItemsReverse(aPredicate);
+      if (result) {
+        return result;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Focuses the first visible scope, variable, or property in this container.
+   */
+  focusFirstVisibleNode: function VV_focusFirstVisibleNode() {
+    let focusableItem = this._findInVisibleItems(item => item.focusable);
+
+    if (focusableItem) {
+      this._focusItem(focusableItem);
     }
     this._parent.scrollTop = 0;
     this._parent.scrollLeft = 0;
   },
 
   /**
-   * Focuses the last visible variable or property in this container.
+   * Focuses the last visible scope, variable, or property in this container.
    */
   focusLastVisibleNode: function VV_focusLastVisibleNode() {
-    let property, variable, scope;
+    let focusableItem = this._findInVisibleItemsReverse(item => item.focusable);
 
-    for (let [, item] of this._currHierarchy) {
-      if (!item.focusable) {
-        continue;
-      }
-      if (item instanceof Property) {
-        property = item;
-      } else if (item instanceof Variable) {
-        variable = item;
-      } else if (item instanceof Scope) {
-        scope = item;
-      }
+    if (focusableItem) {
+      this._focusItem(focusableItem);
     }
-    if (property && (!variable || property.isDescendantOf(variable))) {
-      this._focusItem(property);
-    } else if (variable && (!scope || variable.isDescendantOf(scope))) {
-      this._focusItem(variable);
-    } else if (scope) {
-      this._focusItem(scope);
-      this._parent.scrollTop = this._parent.scrollHeight;
-      this._parent.scrollLeft = 0;
-    }
+    this._parent.scrollTop = this._parent.scrollHeight;
+    this._parent.scrollLeft = 0;
   },
 
   /**
@@ -1082,6 +1091,8 @@ function Scope(aView, aName, aFlags = {}) {
   this.separatorStr = aView.separatorStr;
 
   this._store = new Map();
+  this._enumItems = [];
+  this._nonEnumItems = [];
   this._init(aName.trim(), aFlags);
 }
 
@@ -1115,8 +1126,8 @@ Scope.prototype = {
 
     let variable = new Variable(this, aName, aDescriptor);
     this._store.set(aName, variable);
-    this._variablesView._currHierarchy.set(variable._absoluteName, variable);
     this._variablesView._itemsByElement.set(variable._target, variable);
+    this._variablesView._currHierarchy.set(variable._absoluteName, variable);
     variable.header = !!aName;
     return variable;
   },
@@ -1226,7 +1237,8 @@ Scope.prototype = {
     // even if they were already displayed before. In this case, show a throbber
     // to suggest that this scope is expanding.
     if (!this._isExpanding &&
-         this._variablesView.lazyAppend && this._store.size > LAZY_APPEND_BATCH) {
+         this._variablesView.lazyAppend &&
+         this._store.size > LAZY_APPEND_BATCH) {
       this._isExpanding = true;
 
       // Start spinning a throbber in this scope's title and allow a few
@@ -1543,7 +1555,9 @@ Scope.prototype = {
    * The click listener for this scope's title.
    */
   _onClick: function S__onClick(e) {
-    if (e.target == this._inputNode) {
+    if (e.target == this._inputNode ||
+        e.target == this._editNode ||
+        e.target == this._deleteNode) {
       return;
     }
     this.toggle();
@@ -1784,6 +1798,89 @@ Scope.prototype = {
   },
 
   /**
+   * Find the first item in the tree of visible items in this item that matches
+   * the predicate. Searches in visual order (the order seen by the user).
+   * Tests itself, then descends into first the enumerable children and then
+   * the non-enumerable children (since they are presented in separate groups).
+   *
+   * @param function aPredicate
+   *        A function that returns true when a match is found.
+   * @return Scope | Variable | Property
+   *         The first visible scope, variable or property, or null if nothing
+   *         is found.
+   */
+  _findInVisibleItems: function S__findInVisibleItems(aPredicate) {
+    if (aPredicate(this)) {
+      return this;
+    }
+
+    if (this._isExpanded) {
+      if (this._variablesView._enumVisible) {
+        for (let item of this._enumItems) {
+          let result = item._findInVisibleItems(aPredicate);
+          if (result) {
+            return result;
+          }
+        }
+      }
+
+      if (this._variablesView._nonEnumVisible) {
+        for (let item of this._nonEnumItems) {
+          let result = item._findInVisibleItems(aPredicate);
+          if (result) {
+            return result;
+          }
+        }
+      }
+    }
+
+    return null;
+  },
+
+  /**
+   * Find the last item in the tree of visible items in this item that matches
+   * the predicate. Searches in reverse visual order (opposite of the order
+   * seen by the user). Descends into first the non-enumerable children, then
+   * the enumerable children (since they are presented in separate groups), and
+   * finally tests itself.
+   *
+   * @param function aPredicate
+   *        A function that returns true when a match is found.
+   * @return Scope | Variable | Property
+   *         The last visible scope, variable or property, or null if nothing
+   *         is found.
+   */
+  _findInVisibleItemsReverse: function S__findInVisibleItemsReverse(aPredicate) {
+    if (this._isExpanded) {
+      if (this._variablesView._nonEnumVisible) {
+        for (let i = this._nonEnumItems.length - 1; i >= 0; i--) {
+          let item = this._nonEnumItems[i];
+          let result = item._findInVisibleItemsReverse(aPredicate);
+          if (result) {
+            return result;
+          }
+        }
+      }
+
+      if (this._variablesView._enumVisible) {
+        for (let i = this._enumItems.length - 1; i >= 0; i--) {
+          let item = this._enumItems[i];
+          let result = item._findInVisibleItemsReverse(aPredicate);
+          if (result) {
+            return result;
+          }
+        }
+      }
+    }
+
+    if (aPredicate(this)) {
+      return this;
+    }
+
+    return null;
+  },
+
+  /**
    * Gets top level variables view instance.
    * @return VariablesView
    */
@@ -1832,6 +1929,8 @@ Scope.prototype = {
   separatorStr: "",
 
   _store: null,
+  _enumItems: null,
+  _nonEnumItems: null,
   _fetched: false,
   _retrieved: false,
   _committed: false,
@@ -1908,8 +2007,8 @@ ViewHelpers.create({ constructor: Variable, proto: Scope.prototype }, {
 
     let property = new Property(this, aName, aDescriptor);
     this._store.set(aName, property);
-    this._variablesView._currHierarchy.set(property._absoluteName, property);
     this._variablesView._itemsByElement.set(property._target, property);
+    this._variablesView._currHierarchy.set(property._absoluteName, property);
     property.header = !!aName;
     return property;
   },
@@ -2165,8 +2264,10 @@ ViewHelpers.create({ constructor: Variable, proto: Scope.prototype }, {
         this._nameString == "this" ||
         this._nameString == "<exception>") {
       this.ownerView._lazyAppend(aImmediateFlag, true, this._target);
+      this.ownerView._enumItems.push(this);
     } else {
       this.ownerView._lazyAppend(aImmediateFlag, false, this._target);
+      this.ownerView._nonEnumItems.push(this);
     }
   },
 
@@ -2672,8 +2773,10 @@ ViewHelpers.create({ constructor: Property, proto: Variable.prototype }, {
   _onInit: function P__onInit(aImmediateFlag) {
     if (this._initialDescriptor.enumerable) {
       this.ownerView._lazyAppend(aImmediateFlag, true, this._target);
+      this.ownerView._enumItems.push(this);
     } else {
       this.ownerView._lazyAppend(aImmediateFlag, false, this._target);
+      this.ownerView._nonEnumItems.push(this);
     }
   }
 });

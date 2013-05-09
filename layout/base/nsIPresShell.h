@@ -177,12 +177,6 @@ protected:
   typedef uint8_t RenderFlags; // for storing the above flags
 
 public:
-  virtual NS_HIDDEN_(nsresult) Init(nsIDocument* aDocument,
-                                   nsPresContext* aPresContext,
-                                   nsViewManager* aViewManager,
-                                   nsStyleSet* aStyleSet,
-                                   nsCompatibility aCompatMode) = 0;
-
   /**
    * All callers are responsible for calling |Destroy| after calling
    * |EndObservingDocument|.  It needs to be separate only because form
@@ -228,7 +222,7 @@ public:
 #ifdef DEBUG
     mPresArenaAllocCount--;
 #endif
-    if (PRESARENA_MUST_FREE_DURING_DESTROY || !mIsDestroying)
+    if (!mIsDestroying)
       mFrameArena.FreeByFrameID(aID, aPtr);
   }
 
@@ -253,7 +247,7 @@ public:
 #ifdef DEBUG
     mPresArenaAllocCount--;
 #endif
-    if (PRESARENA_MUST_FREE_DURING_DESTROY || !mIsDestroying)
+    if (!mIsDestroying)
       mFrameArena.FreeByObjectID(aID, aPtr);
   }
 
@@ -279,7 +273,7 @@ public:
 #ifdef DEBUG
     mPresArenaAllocCount--;
 #endif
-    if (PRESARENA_MUST_FREE_DURING_DESTROY || !mIsDestroying)
+    if (!mIsDestroying)
       mFrameArena.FreeBySize(aSize, aPtr);
   }
 

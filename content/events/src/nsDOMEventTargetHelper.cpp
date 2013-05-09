@@ -8,7 +8,6 @@
 #include "nsEventDispatcher.h"
 #include "nsGUIEvent.h"
 #include "nsIDocument.h"
-#include "nsIJSContextStack.h"
 #include "nsDOMJSUtils.h"
 #include "prprf.h"
 #include "nsGlobalWindow.h"
@@ -26,8 +25,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDOMEventTargetHelper)
   if (MOZ_UNLIKELY(cb.WantDebugInfo())) {
     char name[512];
     nsAutoString uri;
-    if (tmp->mOwnerWindow && tmp->mOwnerWindow->GetExtantDocument()) {
-      tmp->mOwnerWindow->GetExtantDocument()->GetDocumentURI(uri);
+    if (tmp->mOwnerWindow && tmp->mOwnerWindow->GetExtantDoc()) {
+      tmp->mOwnerWindow->GetExtantDoc()->GetDocumentURI(uri);
     }
     PR_snprintf(name, sizeof(name), "nsDOMEventTargetHelper %s",
                 NS_ConvertUTF16toUTF8(uri).get());
@@ -192,6 +191,36 @@ nsDOMEventTargetHelper::AddEventListener(const nsAString& aType,
   return NS_OK;
 }
 
+void
+nsDOMEventTargetHelper::AddEventListener(const nsAString& aType,
+                                         nsIDOMEventListener* aListener,
+                                         bool aUseCapture,
+                                         const Nullable<bool>& aWantsUntrusted,
+                                         ErrorResult& aRv)
+{
+  bool wantsUntrusted;
+  if (aWantsUntrusted.IsNull()) {
+    nsresult rv;
+    nsIScriptContext* context = GetContextForEventHandlers(&rv);
+    if (NS_FAILED(rv)) {
+      aRv.Throw(rv);
+      return;
+    }
+    nsCOMPtr<nsIDocument> doc =
+      nsContentUtils::GetDocumentFromScriptContext(context);
+    wantsUntrusted = doc && !nsContentUtils::IsChromeDoc(doc);
+  } else {
+    wantsUntrusted = aWantsUntrusted.Value();
+  }
+
+  nsEventListenerManager* elm = GetListenerManager(true);
+  if (!elm) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+  elm->AddEventListener(aType, aListener, aUseCapture, wantsUntrusted);
+}
+
 NS_IMETHODIMP
 nsDOMEventTargetHelper::AddSystemEventListener(const nsAString& aType,
                                                nsIDOMEventListener *aListener,
@@ -253,20 +282,11 @@ nsDOMEventTargetHelper::SetEventHandler(nsIAtom* aType,
                                         JSContext* aCx,
                                         const JS::Value& aValue)
 {
-  JSObject* obj = GetWrapper();
-  if (!obj) {
-    return NS_OK;
-  }
-
   nsRefPtr<EventHandlerNonNull> handler;
   JSObject* callable;
   if (aValue.isObject() &&
       JS_ObjectIsCallable(aCx, callable = &aValue.toObject())) {
-    bool ok;
-    handler = new EventHandlerNonNull(aCx, obj, callable, &ok);
-    if (!ok) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
+    handler = new EventHandlerNonNull(callable);
   }
   ErrorResult rv;
   SetEventHandler(aType, handler, rv);
@@ -333,27 +353,3 @@ nsDOMEventTargetHelper::GetContextForEventHandlers(nsresult* aRv)
                : nullptr;
 }
 
-void
-nsDOMEventTargetHelper::Init(JSContext* aCx)
-{
-  JSContext* cx = aCx;
-  if (!cx) {
-    nsIJSContextStack* stack = nsContentUtils::ThreadJSContextStack();
-
-    if (!stack)
-      return;
-
-    if (NS_FAILED(stack->Peek(&cx)) || !cx)
-      return;
-  }
-
-  NS_ASSERTION(cx, "Should have returned earlier ...");
-  nsIScriptContext* context = GetScriptContextFromJSContext(cx);
-  if (context) {
-    nsCOMPtr<nsPIDOMWindow> window =
-      do_QueryInterface(context->GetGlobalObject());
-    if (window) {
-      BindToOwner(window->GetCurrentInnerWindow());
-    }
-  }
-}

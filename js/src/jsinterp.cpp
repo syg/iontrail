@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,30 +8,25 @@
  * JavaScript bytecode interpreter.
  */
 
+#include "jsinterp.h"
+
 #include "mozilla/DebugOnly.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/PodOperations.h"
 
 #include <stdio.h>
 #include <string.h>
-#include <math.h>
 #include "jstypes.h"
-#include "jsutil.h"
 #include "jsprf.h"
 #include "jsapi.h"
 #include "jsarray.h"
 #include "jsatom.h"
-#include "jsbool.h"
 #include "jscntxt.h"
-#include "jsdate.h"
 #include "jsversion.h"
 #include "jsdbgapi.h"
 #include "jsfun.h"
 #include "jsgc.h"
-#include "jsinterp.h"
 #include "jsiter.h"
-#include "jslibmath.h"
-#include "jslock.h"
 #include "jsnum.h"
 #include "jsobj.h"
 #include "jsopcode.h"
@@ -41,8 +35,6 @@
 #include "jsstr.h"
 
 #include "builtin/Eval.h"
-#include "gc/Marking.h"
-#include "ion/AsmJS.h"
 #include "vm/Debugger.h"
 #include "vm/Shape.h"
 
@@ -64,20 +56,12 @@
 #include "jsobjinlines.h"
 #include "jsopcodeinlines.h"
 #include "jsprobes.h"
-#include "jspropertycacheinlines.h"
 #include "jsscriptinlines.h"
-#include "jstypedarrayinlines.h"
 
 #include "builtin/Iterator-inl.h"
-#include "vm/Shape-inl.h"
 #include "vm/Stack-inl.h"
-#include "vm/String-inl.h"
 
 #include "jsautooplen.h"
-
-#if defined(JS_METHODJIT) && defined(JS_MONOIC)
-#include "methodjit/MonoIC.h"
-#endif
 
 #if JS_TRACE_LOGGING
 #include "TraceLogging.h"
@@ -99,6 +83,42 @@ CallThisObjectHook(JSContext *cx, HandleObject obj, Value *argv)
         return NULL;
     argv[-1].setObject(*thisp);
     return thisp;
+}
+
+/*
+ * Note: when Clang 3.2 (32-bit) inlines the two functions below in Interpret,
+ * the conservative stack scanner leaks a ton of memory and this negatively
+ * influences performance. The JS_NEVER_INLINE is a temporary workaround until
+ * we can remove the conservative scanner. See bug 849526 for more info.
+ */
+#if defined(__clang__) && defined(JS_CPU_X86)
+static JS_NEVER_INLINE bool
+#else
+static bool
+#endif
+ToBooleanOp(JSContext *cx)
+{
+    return ToBoolean(cx->regs().sp[-1]);
+}
+
+template <bool Eq>
+#if defined(__clang__) && defined(JS_CPU_X86)
+static JS_NEVER_INLINE bool
+#else
+static bool
+#endif
+LooseEqualityOp(JSContext *cx)
+{
+    FrameRegs &regs = cx->regs();
+    Value rval = regs.sp[-1];
+    Value lval = regs.sp[-2];
+    bool cond;
+    if (!LooselyEqual(cx, lval, rval, &cond))
+        return false;
+    cond = (cond == Eq);
+    regs.sp--;
+    regs.sp[-1].setBoolean(cond);
+    return true;
 }
 
 bool
@@ -177,7 +197,7 @@ const uint32_t JSSLOT_SAVED_ID        = 1;
 Class js_NoSuchMethodClass = {
     "NoSuchMethod",
     JSCLASS_HAS_RESERVED_SLOTS(2) | JSCLASS_IS_ANONYMOUS,
-    JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub,
 };
 
@@ -200,10 +220,10 @@ js::OnUnknownMethod(JSContext *cx, HandleObject obj, Value idval_, MutableHandle
 {
     RootedValue idval(cx, idval_);
 
-    RootedId id(cx, NameToId(cx->names().noSuchMethod));
     RootedValue value(cx);
-    if (!GetMethod(cx, obj, id, 0, &value))
+    if (!JSObject::getProperty(cx, obj, obj, cx->names().noSuchMethod, &value))
         return false;
+
     TypeScript::MonitorUnknown(cx);
 
     if (value.get().isPrimitive()) {
@@ -292,7 +312,7 @@ js::RunScript(JSContext *cx, StackFrame *fp)
         if (!iter.done()) {
             ++iter;
             if (iter.isScript()) {
-                RawScript script = iter.script();
+                JSScript *script = iter.script();
                 jsbytecode *pc = iter.pc();
                 if (UseNewType(cx, script, pc))
                     fp->setUseNewType();
@@ -545,7 +565,7 @@ js::ExecuteKernel(JSContext *cx, HandleScript script, JSObject &scopeChainArg, c
     if (!cx->stack.pushExecuteFrame(cx, script, thisv, scopeChain, type, evalInFrame, &efg))
         return false;
 
-    if (!script->ensureRanAnalysis(cx))
+    if (!script->ensureHasTypes(cx))
         return false;
     TypeScript::SetThis(cx, script, efg.fp()->thisValue());
 
@@ -570,7 +590,7 @@ js::Execute(JSContext *cx, HandleScript script, JSObject &scopeChainArg, Value *
 
     /* Ensure the scope chain is all same-compartment and terminates in a global. */
 #ifdef DEBUG
-    RawObject s = scopeChain;
+    JSObject *s = scopeChain;
     do {
         assertSameCompartment(cx, s);
         JS_ASSERT_IF(!s->enclosingScope(), s->isGlobal());
@@ -902,7 +922,7 @@ TryNoteIter::settle()
 #define FETCH_OBJECT(cx, n, obj)                                              \
     JS_BEGIN_MACRO                                                            \
         HandleValue val = HandleValue::fromMarkedLocation(&regs.sp[n]);       \
-        obj = ToObject(cx, (val));                                            \
+        obj = ToObjectFromStack(cx, (val));                                   \
         if (!obj)                                                             \
             goto error;                                                       \
     JS_END_MACRO
@@ -1011,19 +1031,6 @@ js::IteratorNext(JSContext *cx, HandleObject iterobj, MutableHandleValue rval)
         }
     }
     return js_IteratorNext(cx, iterobj, rval);
-}
-
-/*
- * For bytecodes which push values and then fall through, make sure the
- * types of the pushed values are consistent with type inference information.
- */
-static inline void
-TypeCheckNextBytecode(JSContext *cx, HandleScript script, unsigned n, const FrameRegs &regs)
-{
-#ifdef DEBUG
-    if (cx->typeInferenceEnabled() && n == GetBytecodeLength(regs.pc))
-        TypeScript::CheckBytecode(cx, script, regs.pc, regs.sp);
-#endif
 }
 
 JS_NEVER_INLINE InterpretStatus
@@ -1139,11 +1146,6 @@ js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode, bool
     RootedScript script(cx);
     SET_SCRIPT(regs.fp()->script());
 
-#ifdef JS_METHODJIT
-    /* Reset the loop count on the script we're entering. */
-    script->resetLoopCount();
-#endif
-
 #if JS_TRACE_LOGGING
     AutoTraceLog logger(TraceLogging::defaultLogger(),
                         TraceLogging::INTERPRETER_START,
@@ -1248,7 +1250,6 @@ js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode, bool
         JS_ASSERT(js_CodeSpec[op].length == 1);
         len = 1;
       advance_pc:
-        TypeCheckNextBytecode(cx, script, len, regs);
         js::gc::MaybeVerifyBarriers(cx);
         regs.pc += len;
         op = (JSOp) *regs.pc;
@@ -1377,10 +1378,6 @@ ADD_EMPTY_CASE(JSOP_TRY)
 END_EMPTY_CASES
 
 BEGIN_CASE(JSOP_LOOPHEAD)
-
-#ifdef JS_METHODJIT
-    script->incrLoopCount();
-#endif
 END_CASE(JSOP_LOOPHEAD)
 
 BEGIN_CASE(JSOP_LABEL)
@@ -1608,7 +1605,7 @@ END_CASE(JSOP_GOTO)
 
 BEGIN_CASE(JSOP_IFEQ)
 {
-    bool cond = ToBoolean(regs.sp[-1]);
+    bool cond = ToBooleanOp(cx);
     regs.sp--;
     if (cond == false) {
         len = GET_JUMP_OFFSET(regs.pc);
@@ -1619,7 +1616,7 @@ END_CASE(JSOP_IFEQ)
 
 BEGIN_CASE(JSOP_IFNE)
 {
-    bool cond = ToBoolean(regs.sp[-1]);
+    bool cond = ToBooleanOp(cx);
     regs.sp--;
     if (cond != false) {
         len = GET_JUMP_OFFSET(regs.pc);
@@ -1630,7 +1627,7 @@ END_CASE(JSOP_IFNE)
 
 BEGIN_CASE(JSOP_OR)
 {
-    bool cond = ToBoolean(regs.sp[-1]);
+    bool cond = ToBooleanOp(cx);
     if (cond == true) {
         len = GET_JUMP_OFFSET(regs.pc);
         DO_NEXT_OP(len);
@@ -1640,7 +1637,7 @@ END_CASE(JSOP_OR)
 
 BEGIN_CASE(JSOP_AND)
 {
-    bool cond = ToBoolean(regs.sp[-1]);
+    bool cond = ToBooleanOp(cx);
     if (cond == false) {
         len = GET_JUMP_OFFSET(regs.pc);
         DO_NEXT_OP(len);
@@ -1866,28 +1863,15 @@ END_CASE(JSOP_BITAND)
 
 #undef BITWISE_OP
 
-#define EQUALITY_OP(OP)                                                       \
-    JS_BEGIN_MACRO                                                            \
-        Value rval = regs.sp[-1];                                             \
-        Value lval = regs.sp[-2];                                             \
-        bool cond;                                                            \
-        if (!LooselyEqual(cx, lval, rval, &cond))                             \
-            goto error;                                                       \
-        cond = cond OP JS_TRUE;                                               \
-        TRY_BRANCH_AFTER_COND(cond, 2);                                       \
-        regs.sp--;                                                            \
-        regs.sp[-1].setBoolean(cond);                                         \
-    JS_END_MACRO
-
 BEGIN_CASE(JSOP_EQ)
-    EQUALITY_OP(==);
+    if (!LooseEqualityOp<true>(cx))
+        goto error;
 END_CASE(JSOP_EQ)
 
 BEGIN_CASE(JSOP_NE)
-    EQUALITY_OP(!=);
+    if (!LooseEqualityOp<false>(cx))
+        goto error;
 END_CASE(JSOP_NE)
-
-#undef EQUALITY_OP
 
 #define STRICT_EQUALITY_OP(OP, COND)                                          \
     JS_BEGIN_MACRO                                                            \
@@ -2070,7 +2054,7 @@ END_CASE(JSOP_MOD)
 
 BEGIN_CASE(JSOP_NOT)
 {
-    bool cond = ToBoolean(regs.sp[-1]);
+    bool cond = ToBooleanOp(cx);
     regs.sp--;
     PUSH_BOOLEAN(!cond);
 }
@@ -2129,9 +2113,15 @@ BEGIN_CASE(JSOP_DELPROP)
     RootedObject &obj = rootObject0;
     FETCH_OBJECT(cx, -1, obj);
 
-    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
-    if (!JSObject::deleteProperty(cx, obj, name, res, script->strict))
+    JSBool succeeded;
+    if (!JSObject::deleteProperty(cx, obj, name, &succeeded))
         goto error;
+    if (!succeeded && script->strict) {
+        obj->reportNotConfigurable(cx, NameToId(name));
+        goto error;
+    }
+    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
+    res.setBoolean(succeeded);
 }
 END_CASE(JSOP_DELPROP)
 
@@ -2144,10 +2134,22 @@ BEGIN_CASE(JSOP_DELELEM)
     RootedValue &propval = rootValue0;
     propval = regs.sp[-1];
 
-    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
-    if (!JSObject::deleteByValue(cx, obj, propval, res, script->strict))
+    JSBool succeeded;
+    if (!JSObject::deleteByValue(cx, obj, propval, &succeeded))
         goto error;
+    if (!succeeded && script->strict) {
+        // XXX This observably calls ToString(propval).  We should convert to
+        //     PropertyKey and use that to delete, and to report an error if
+        //     necessary!
+        RootedId id(cx);
+        if (!ValueToId<CanGC>(cx, propval, &id))
+            goto error;
+        obj->reportNotConfigurable(cx, id);
+        goto error;
+    }
 
+    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
+    res.setBoolean(succeeded);
     regs.sp--;
 }
 END_CASE(JSOP_DELELEM)
@@ -2413,9 +2415,6 @@ BEGIN_CASE(JSOP_FUNCALL)
         regs.fp()->setUseNewType();
 
     SET_SCRIPT(regs.fp()->script());
-#ifdef JS_METHODJIT
-    script->resetLoopCount();
-#endif
 
 #ifdef JS_ION
     if (!newType && ion::IsEnabled(cx)) {
@@ -3355,7 +3354,11 @@ END_CASE(JSOP_ARRAYPUSH)
                 regs.sp -= 1;
                 if (!ok)
                     goto error;
+                break;
               }
+
+              case JSTRY_LOOP:
+                break;
            }
         }
 
@@ -3613,22 +3616,17 @@ template <bool strict>
 bool
 js::DeleteProperty(JSContext *cx, HandleValue v, HandlePropertyName name, JSBool *bp)
 {
-    // default op result is false (failure)
-    *bp = true;
-
     // convert value to JSObject pointer
     RootedObject obj(cx, ToObjectFromStack(cx, v));
     if (!obj)
         return false;
 
-    // Call deleteProperty on obj
-    RootedValue result(cx, NullValue());
-    bool delprop_ok = JSObject::deleteProperty(cx, obj, name, &result, strict);
-    if (!delprop_ok)
+    if (!JSObject::deleteProperty(cx, obj, name, bp))
         return false;
-
-    // convert result into *bp and return
-    *bp = result.toBoolean();
+    if (strict && !*bp) {
+        obj->reportNotConfigurable(cx, NameToId(name));
+        return false;
+    }
     return true;
 }
 
@@ -3643,16 +3641,23 @@ js::DeleteElement(JSContext *cx, HandleValue val, HandleValue index, JSBool *bp)
     if (!obj)
         return false;
 
-    RootedValue result(cx);
-    if (!JSObject::deleteByValue(cx, obj, index, &result, strict))
+    if (!JSObject::deleteByValue(cx, obj, index, bp))
         return false;
-
-    *bp = result.toBoolean();
+    if (strict && !*bp) {
+        // XXX This observably calls ToString(propval).  We should convert to
+        //     PropertyKey and use that to delete, and to report an error if
+        //     necessary!
+        RootedId id(cx);
+        if (!ValueToId<CanGC>(cx, index, &id))
+            return false;
+        obj->reportNotConfigurable(cx, id);
+        return false;
+    }
     return true;
 }
 
-template bool js::DeleteElement<true> (JSContext *, HandleValue, HandleValue, JSBool *);
-template bool js::DeleteElement<false>(JSContext *, HandleValue, HandleValue, JSBool *);
+template bool js::DeleteElement<true> (JSContext *, HandleValue, HandleValue, JSBool *succeeded);
+template bool js::DeleteElement<false>(JSContext *, HandleValue, HandleValue, JSBool *succeeded);
 
 bool
 js::GetElement(JSContext *cx, MutableHandleValue lref, HandleValue rref, MutableHandleValue vp)
@@ -3696,6 +3701,12 @@ js::SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleV
     if (!ValueToId<CanGC>(cx, index, &id))
         return false;
     return SetObjectElementOperation(cx, obj, id, value, strict, script, pc);
+}
+
+bool
+js::InitElementArray(JSContext *cx, jsbytecode *pc, HandleObject obj, uint32_t index, HandleValue value)
+{
+    return InitArrayElemOperation(cx, pc, obj, index, value);
 }
 
 bool
@@ -3755,10 +3766,16 @@ js::DeleteNameOperation(JSContext *cx, HandlePropertyName name, HandleObject sco
     if (!LookupName(cx, name, scopeObj, &scope, &pobj, &shape))
         return false;
 
-    /* ECMA says to return true if name is undefined or inherited. */
-    res.setBoolean(true);
-    if (shape)
-        return JSObject::deleteProperty(cx, scope, name, res, false);
+    if (!scope) {
+        // Return true for non-existent names.
+        res.setBoolean(true);
+        return true;
+    }
+
+    JSBool succeeded;
+    if (!JSObject::deleteProperty(cx, scope, name, &succeeded))
+        return false;
+    res.setBoolean(succeeded);
     return true;
 }
 

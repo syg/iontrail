@@ -25,6 +25,7 @@ MOCHITEST_FILES = \
 		test_bug631440.html \
 		test_bug653364.html \
 		test_bug629535.html \
+		test_bug861217.html \
 		test_clientRects.html \
 		test_consoleAPI.html \
 		test_domWindowUtils.html \
@@ -50,6 +51,8 @@ MOCHITEST_FILES = \
 		test_interfaces.html \
 		test_idleapi_permissions.html \
 		test_stylesheetPI.html \
+		test_showModalDialog.html \
+		file_showModalDialog.html \
 		$(NULL)
 
 # Disable this test until bug 795711 is fixed.

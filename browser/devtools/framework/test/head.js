@@ -2,13 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+let TargetFactory = gDevTools.TargetFactory;
+
 let tempScope = {};
-Components.utils.import("resource:///modules/devtools/Target.jsm", tempScope);
-let TargetFactory = tempScope.TargetFactory;
 Components.utils.import("resource://gre/modules/devtools/Console.jsm", tempScope);
 let console = tempScope.console;
 Components.utils.import("resource://gre/modules/commonjs/sdk/core/promise.js", tempScope);
 let Promise = tempScope.Promise;
+
+let {devtools} = Components.utils.import("resource:///modules/devtools/gDevTools.jsm", {});
+let TargetFactory = devtools.TargetFactory;
 
 /**
  * Open a new tab at a URL and call a callback on load
@@ -47,3 +50,29 @@ registerCleanupFunction(function tearDown() {
     gBrowser.removeCurrentTab();
   }
 });
+
+function synthesizeKeyFromKeyTag(aKeyId, document) {
+  let key = document.getElementById(aKeyId);
+  isnot(key, null, "Successfully retrieved the <key> node");
+
+  let modifiersAttr = key.getAttribute("modifiers");
+
+  let name = null;
+
+  if (key.getAttribute("keycode"))
+    name = key.getAttribute("keycode");
+  else if (key.getAttribute("key"))
+    name = key.getAttribute("key");
+
+  isnot(name, null, "Successfully retrieved keycode/key");
+
+  let modifiers = {
+    shiftKey: modifiersAttr.match("shift"),
+    ctrlKey: modifiersAttr.match("ctrl"),
+    altKey: modifiersAttr.match("alt"),
+    metaKey: modifiersAttr.match("meta"),
+    accelKey: modifiersAttr.match("accel")
+  }
+
+  EventUtils.synthesizeKey(name, modifiers);
+}

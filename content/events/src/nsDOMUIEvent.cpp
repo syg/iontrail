@@ -253,7 +253,9 @@ nsDOMUIEvent::GetPageY(int32_t* aPageY)
 NS_IMETHODIMP
 nsDOMUIEvent::GetWhich(uint32_t* aWhich)
 {
-  return Which(aWhich);
+  NS_ENSURE_ARG_POINTER(aWhich);
+  *aWhich = Which();
+  return NS_OK;
 }
 
 already_AddRefed<nsINode>
@@ -274,7 +276,7 @@ nsDOMUIEvent::GetRangeParent()
           !nsContentUtils::CanAccessNativeAnon()) {
         return nullptr;
       }
-      return parent.forget().get();
+      return parent.forget();
     }
   }
 

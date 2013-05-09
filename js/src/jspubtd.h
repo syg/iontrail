@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,7 +13,6 @@
 
 #include "jsprototypes.h"
 #include "jstypes.h"
-
 
 namespace JS {
 
@@ -69,9 +68,9 @@ typedef uint16_t  jschar;
 #endif
 
 /*
- * Run-time version enumeration.  See jsversion.h for compile-time counterparts
- * to these values that may be selected by the JS_VERSION macro, and tested by
- * #if expressions.
+ * Run-time version enumeration.  For compile-time version checking, please use
+ * the JS_HAS_* macros in jsversion.h, or use MOZJS_MAJOR_VERSION,
+ * MOZJS_MINOR_VERSION, MOZJS_PATCH_VERSION, and MOZJS_ALPHA definitions.
  */
 typedef enum JSVersion {
     JSVERSION_ECMA_3  = 148,
@@ -244,6 +243,7 @@ enum ThingRootKind
     THING_ROOT_VALUE,
     THING_ROOT_TYPE,
     THING_ROOT_BINDINGS,
+    THING_ROOT_PROPERTY_DESCRIPTOR,
     THING_ROOT_LIMIT
 };
 
@@ -262,6 +262,7 @@ struct SpecificRootKind
 };
 
 template <> struct RootKind<JSObject *> : SpecificRootKind<JSObject *, THING_ROOT_OBJECT> {};
+template <> struct RootKind<JSFlatString *> : SpecificRootKind<JSFlatString *, THING_ROOT_STRING> {};
 template <> struct RootKind<JSFunction *> : SpecificRootKind<JSFunction *, THING_ROOT_OBJECT> {};
 template <> struct RootKind<JSString *> : SpecificRootKind<JSString *, THING_ROOT_STRING> {};
 template <> struct RootKind<JSScript *> : SpecificRootKind<JSScript *, THING_ROOT_SCRIPT> {};

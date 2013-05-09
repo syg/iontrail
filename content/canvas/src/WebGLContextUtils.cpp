@@ -9,14 +9,12 @@
 
 #include "prprf.h"
 
-#include "nsIJSContextStack.h"
 #include "jsapi.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIVariant.h"
 
 #include "nsIDOMEvent.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMDataContainerEvent.h"
 
 #include "mozilla/Preferences.h"
@@ -47,15 +45,12 @@ WebGLContext::GenerateWarning(const char *fmt, va_list ap)
 
     // no need to print to stderr, as JS_ReportWarning takes care of this for us.
 
-    nsCOMPtr<nsIJSContextStack> stack = do_GetService("@mozilla.org/js/xpc/ContextStack;1");
-    JSContext* ccx = nullptr;
-    if (stack && NS_SUCCEEDED(stack->Peek(&ccx)) && ccx) {
-        JS_ReportWarning(ccx, "WebGL: %s", buf);
-        if (!ShouldGenerateWarnings()) {
-            JS_ReportWarning(ccx,
-                "WebGL: No further warnings will be reported for this WebGL context "
-                "(already reported %d warnings)", mAlreadyGeneratedWarnings);
-        }
+    AutoJSContext cx;
+    JS_ReportWarning(cx, "WebGL: %s", buf);
+    if (!ShouldGenerateWarnings()) {
+        JS_ReportWarning(cx,
+            "WebGL: No further warnings will be reported for this WebGL context "
+            "(already reported %d warnings)", mAlreadyGeneratedWarnings);
     }
 }
 

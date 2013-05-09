@@ -6,6 +6,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoJarReader;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
@@ -18,7 +19,6 @@ import org.apache.http.entity.BufferedHttpEntity;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.http.AndroidHttpClient;
 import android.os.Handler;
 import android.support.v4.util.LruCache;
@@ -50,6 +50,7 @@ public class Favicons {
     private long mNextFaviconLoadId;
     private LruCache<String, Bitmap> mFaviconsCache;
     private LruCache<String, Long> mFailedCache;
+    private LruCache<String, Integer> mColorCache;
     private static final String USER_AGENT = GeckoApp.mAppContext.getDefaultUAString();
     private AndroidHttpClient mHttpClient;
 
@@ -73,6 +74,9 @@ public class Favicons {
 
         // Create a failed favicon memory cache that has up to 64 entries
         mFailedCache = new LruCache<String, Long>(64);
+
+        // Create a cache to store favicon dominant colors
+        mColorCache = new LruCache<String, Integer>(256);
     }
 
     private synchronized AndroidHttpClient getHttpClient() {
@@ -217,6 +221,17 @@ public class Favicons {
         return image;
     }
 
+    public int getFaviconColor(Bitmap image, String key) {
+        Integer color = mColorCache.get(key);
+        if (color != null) {
+            return color;
+        }
+
+        color = BitmapUtils.getDominantColor(image);
+        mColorCache.put(key, color);
+        return color;
+    }
+
     public void attachToContext(Context context) {
         mContext = context;
         if (sFaviconSmallSize < 0) {
@@ -313,7 +328,8 @@ public class Favicons {
 
                 BufferedHttpEntity bufferedEntity = new BufferedHttpEntity(entity);
                 InputStream contentStream = bufferedEntity.getContent();
-                image = BitmapFactory.decodeStream(contentStream);
+                image = BitmapUtils.decodeStream(contentStream);
+                contentStream.close();
             } catch (Exception e) {
                 Log.e(LOGTAG, "Error reading favicon", e);
             }

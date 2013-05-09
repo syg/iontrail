@@ -77,6 +77,7 @@ var BrowserUI = {
   get _back() { return document.getElementById("cmd_back"); },
   get _forward() { return document.getElementById("cmd_forward"); },
 
+  lastKnownGoodURL: "", //used when the user wants to escape unfinished url entry
   init: function() {
     // listen content messages
     messageManager.addMessageListener("DOMTitleChanged", this);
@@ -147,7 +148,7 @@ var BrowserUI = {
         FindHelperUI.init();
         PdfJs.init();
 #ifdef MOZ_SERVICES_SYNC
-        WeaveGlue.init();
+        Sync.init();
 #endif
       } catch(ex) {
         Util.dumpLn("Exception in delay load module:", ex.message);
@@ -393,29 +394,15 @@ var BrowserUI = {
   },
 
   closeTab: function closeTab(aTab) {
-    // If we only have one tab, open a new one
-    if (Browser.tabs.length === 1 && !StartUI.isStartURI())
-      Browser.addTab(Browser.getHomePage());
-
-    // We only have the start tab
-    if (Browser.tabs.length === 1)
-      return;
-
     // If no tab is passed in, assume the current tab
     let tab = aTab || Browser.selectedTab;
-    let tabToClose = tab instanceof XULElement ? Browser.getTabFromChrome(tab) : tab;
+    Browser.closeTab(tab);
+  },
 
+  animateClosingTab: function animateClosingTab(tabToClose) {
     if (this.isTabsOnly) {
-      Browser.closeTab(tabToClose);
+      Browser.closeTab(tabToClose, { forceClose: true } );
     } else {
-      let nextTab = Browser.getNextTab(tabToClose);
-
-      if (!nextTab)
-        return;
-
-      if (nextTab)
-        Browser.selectedTab = nextTab;
-
       // Trigger closing animation
       tabToClose.chromeTab.setAttribute("closing", "true");
 
@@ -425,7 +412,7 @@ var BrowserUI = {
       }
 
       this.setOnTabAnimationEnd(function() {
-        Browser.closeTab(tabToClose);
+	Browser.closeTab(tabToClose, { forceClose: true } );
         if (wasCollapsed)
           ContextUI.dismissWithDelay(kNewTabAnimationDelayMsec);
       });
@@ -569,11 +556,16 @@ var BrowserUI = {
         break;
       case "metro_viewstate_changed":
         this._adjustDOMforViewState();
+        let autocomplete = document.getElementById("start-autocomplete");
         if (aData == "snapped") {
           FlyoutPanelsUI.hide();
           // Order matters (need grids to get dimensions, etc), now
           // let snapped grid know to refresh/redraw
           Services.obs.notifyObservers(null, "metro_viewstate_dom_snapped", null);
+          autocomplete.setAttribute("orient", "vertical");
+        }
+        else {
+          autocomplete.setAttribute("orient", "horizontal");
         }
         break;
     }
@@ -651,6 +643,7 @@ var BrowserUI = {
 
   _setURI: function _setURI(aURL) {
     this._edit.value = aURL;
+    this.lastKnownGoodURL = aURL;
   },
 
   _urlbarClicked: function _urlbarClicked() {
@@ -736,6 +729,7 @@ var BrowserUI = {
     aEvent.preventDefault();
 
     if (this._edit.popupOpen) {
+      this._edit.value = this.lastKnownGoodURL;
       this._edit.closePopup();
       StartUI.hide();
       ContextUI.dismiss();
@@ -756,8 +750,9 @@ var BrowserUI = {
     }
 
     // Check open modal elements
-    if (DialogUI.modals.length > 0)
+    if (DialogUI.modals.length > 0) {
       return;
+    }
 
     // Check open panel
     if (PanelUI.isVisible) {
@@ -884,6 +879,13 @@ var BrowserUI = {
       return false;
     }
 
+    // Don't capture pages in snapped mode, this produces 2/3 black
+    // thumbs or stretched out ones
+    //   Ci.nsIWinMetroUtils.snapped is inaccessible on
+    //   desktop/nonwindows systems
+    if(Elements.windowState.getAttribute("viewstate") == "snapped") {
+      return false;
+    }
     // There's no point in taking screenshot of loading pages.
     if (aBrowser.docShell.busyFlags != Ci.nsIDocShell.BUSY_FLAGS_NONE) {
       return false;
@@ -1043,7 +1045,7 @@ var BrowserUI = {
         break;
       case "cmd_remoteTabs":
         if (Weave.Status.checkSetup() == Weave.CLIENT_NOT_CONFIGURED) {
-          WeaveGlue.open();
+          Sync.open();
         } else {
           PanelUI.show("remotetabs-container");
         }
@@ -1480,7 +1482,7 @@ var SyncPanelUI = {
     Elements.syncFlyout.addEventListener("PopupChanged", function onShow(aEvent) {
       if (aEvent.detail && aEvent.target === Elements.syncFlyout) {
         Elements.syncFlyout.removeEventListener("PopupChanged", onShow, false);
-        WeaveGlue.init();
+        Sync.init();
       }
     }, false);
   }

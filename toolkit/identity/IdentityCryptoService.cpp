@@ -11,6 +11,7 @@
 #include "nsIThread.h"
 #include "nsThreadUtils.h"
 #include "nsCOMPtr.h"
+#include "nsProxyRelease.h"
 #include "nsStringGlue.h"
 #include "mozilla/Base64.h"
 #include "mozilla/Util.h" // ArrayLength
@@ -137,7 +138,7 @@ private:
   }
 
   const KeyType mKeyType; // in
-  nsCOMPtr<nsIIdentityKeyGenCallback> mCallback; // in
+  nsMainThreadPtrHandle<nsIIdentityKeyGenCallback> mCallback; // in
   nsresult mRv; // out
   nsCOMPtr<KeyPair> mKeyPair; // out
 
@@ -177,7 +178,7 @@ private:
 
   const nsCString mTextToSign; // in
   SECKEYPrivateKey* mPrivateKey; // in
-  const nsCOMPtr<nsIIdentitySignCallback> mCallback; // in
+  nsMainThreadPtrHandle<nsIIdentitySignCallback> mCallback; // in
   nsresult mRv; // out
   nsCString mSignature; // out
 
@@ -334,7 +335,7 @@ KeyPair::Sign(const nsACString & textToSign,
 KeyGenRunnable::KeyGenRunnable(KeyType keyType,
                                nsIIdentityKeyGenCallback * callback)
   : mKeyType(keyType)
-  , mCallback(callback)
+  , mCallback(new nsMainThreadPtrHolder<nsIIdentityKeyGenCallback>(callback))
   , mRv(NS_ERROR_NOT_INITIALIZED)
 {
 }
@@ -495,7 +496,7 @@ SignRunnable::SignRunnable(const nsACString & aText,
                            nsIIdentitySignCallback * aCallback)
   : mTextToSign(aText)
   , mPrivateKey(SECKEY_CopyPrivateKey(privateKey))
-  , mCallback(aCallback)
+  , mCallback(new nsMainThreadPtrHolder<nsIIdentitySignCallback>(aCallback))
   , mRv(NS_ERROR_NOT_INITIALIZED)
 {
 }

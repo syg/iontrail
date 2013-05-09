@@ -71,10 +71,10 @@ FileReaderSync::Constructor(const WorkerGlobalObject& aGlobal, ErrorResult& aRv)
 }
 
 JSObject*
-FileReaderSync::ReadAsArrayBuffer(JSContext* aCx, JSObject* aBlob,
+FileReaderSync::ReadAsArrayBuffer(JSContext* aCx, JSObject& aBlob,
                                   ErrorResult& aRv)
 {
-  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(aBlob);
+  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(&aBlob);
   if (!blob) {
     aRv.Throw(NS_ERROR_INVALID_ARG);
     return nullptr;
@@ -87,7 +87,7 @@ FileReaderSync::ReadAsArrayBuffer(JSContext* aCx, JSObject* aBlob,
     return nullptr;
   }
 
-  JSObject* jsArrayBuffer = JS_NewArrayBuffer(aCx, blobSize);
+  JS::Rooted<JSObject*> jsArrayBuffer(aCx, JS_NewArrayBuffer(aCx, blobSize));
   if (!jsArrayBuffer) {
     // XXXkhuey we need a way to indicate to the bindings that the call failed
     // but there's already a pending exception that we should not clobber.
@@ -117,10 +117,10 @@ FileReaderSync::ReadAsArrayBuffer(JSContext* aCx, JSObject* aBlob,
 }
 
 void
-FileReaderSync::ReadAsBinaryString(JSObject* aBlob, nsAString& aResult,
+FileReaderSync::ReadAsBinaryString(JSObject& aBlob, nsAString& aResult,
                                    ErrorResult& aRv)
 {
-  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(aBlob);
+  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(&aBlob);
   if (!blob) {
     aRv.Throw(NS_ERROR_INVALID_ARG);
     return;
@@ -152,12 +152,12 @@ FileReaderSync::ReadAsBinaryString(JSObject* aBlob, nsAString& aResult,
 }
 
 void
-FileReaderSync::ReadAsText(JSObject* aBlob,
+FileReaderSync::ReadAsText(JSObject& aBlob,
                            const Optional<nsAString>& aEncoding,
                            nsAString& aResult,
                            ErrorResult& aRv)
 {
-  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(aBlob);
+  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(&aBlob);
   if (!blob) {
     aRv.Throw(NS_ERROR_INVALID_ARG);
     return;
@@ -208,10 +208,10 @@ FileReaderSync::ReadAsText(JSObject* aBlob,
 }
 
 void
-FileReaderSync::ReadAsDataURL(JSObject* aBlob, nsAString& aResult,
+FileReaderSync::ReadAsDataURL(JSObject& aBlob, nsAString& aResult,
                               ErrorResult& aRv)
 {
-  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(aBlob);
+  nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(&aBlob);
   if (!blob) {
     aRv.Throw(NS_ERROR_INVALID_ARG);
     return;
@@ -343,21 +343,9 @@ FileReaderSync::GuessCharset(nsIInputStream *aStream, nsACString &aCharset)
                        sizeof(sniffBuf), &numRead);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    if (numRead >= 4 &&
-        sniffBuf[0] == 0x00 &&
-        sniffBuf[1] == 0x00 &&
-        sniffBuf[2] == 0xfe &&
-        sniffBuf[3] == 0xff) {
-      mCharset = "UTF-32BE";
-    } else if (numRead >= 4 &&
-               sniffBuf[0] == 0xff &&
-               sniffBuf[1] == 0xfe &&
-               sniffBuf[2] == 0x00 &&
-               sniffBuf[3] == 0x00) {
-      mCharset = "UTF-32LE";
-    } else if (numRead >= 2 &&
-               sniffBuf[0] == 0xfe &&
-               sniffBuf[1] == 0xff) {
+    if (numRead >= 2 &&
+        sniffBuf[0] == 0xfe &&
+        sniffBuf[1] == 0xff) {
       mCharset = "UTF-16BE";
     } else if (numRead >= 2 &&
                sniffBuf[0] == 0xff &&

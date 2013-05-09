@@ -32,6 +32,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "BookmarkHTMLUtils",
                                   "resource://gre/modules/BookmarkHTMLUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "BookmarkJSONUtils",
+                                  "resource://gre/modules/BookmarkJSONUtils.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "webappsUI",
                                   "resource:///modules/webappsUI.jsm");
 
@@ -58,6 +61,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "RecentWindow",
 
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
+                                  "resource://gre/modules/PlacesBackups.jsm");
+
 
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
@@ -928,10 +935,10 @@ BrowserGlue.prototype = {
       // from bookmarks.html, we will try to restore from JSON
       if (importBookmarks && !restoreDefaultBookmarks && !importBookmarksHTML) {
         // get latest JSON backup
-        var bookmarksBackupFile = PlacesUtils.backups.getMostRecent("json");
+        var bookmarksBackupFile = PlacesBackups.getMostRecent("json");
         if (bookmarksBackupFile) {
           // restore from JSON backup
-          PlacesUtils.restoreBookmarksFromJSONFile(bookmarksBackupFile);
+          yield BookmarkJSONUtils.importFromFile(bookmarksBackupFile, true);
           importBookmarks = false;
         }
         else {
@@ -1031,6 +1038,8 @@ BrowserGlue.prototype = {
         this._idleService.addIdleObserver(this, BOOKMARKS_BACKUP_IDLE_TIME);
         this._isIdleObserver = true;
       }
+
+      Services.obs.notifyObservers(null, "places-browser-init-complete", "");
     }.bind(this));
   },
 
@@ -1097,12 +1106,12 @@ BrowserGlue.prototype = {
    * @return true if bookmarks should be backed up, false if not.
    */
   _shouldBackupBookmarks: function BG__shouldBackupBookmarks() {
-    let lastBackupFile = PlacesUtils.backups.getMostRecent();
+    let lastBackupFile = PlacesBackups.getMostRecent();
 
     // Should backup bookmarks if there are no backups or the maximum interval between
     // backups elapsed.
     return (!lastBackupFile ||
-            new Date() - PlacesUtils.backups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL);
+            new Date() - PlacesBackups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL);
   },
 
   /**
@@ -1118,7 +1127,7 @@ BrowserGlue.prototype = {
       }
       catch(ex) { /* Use default. */ }
 
-      yield PlacesUtils.backups.create(maxBackups); // Don't force creation.
+      yield PlacesBackups.create(maxBackups); // Don't force creation.
     });
   },
 
@@ -1161,7 +1170,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 11;
+    const UI_VERSION = 13;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
     let currentUIVersion = 0;
     try {
@@ -1325,6 +1334,41 @@ BrowserGlue.prototype = {
       Services.prefs.clearUserPref("dom.event.contextmenu.enabled");
       Services.prefs.clearUserPref("javascript.enabled");
       Services.prefs.clearUserPref("permissions.default.image");
+    }
+
+    if (currentUIVersion < 12) {
+      // Remove bookmarks-menu-button-container, then place
+      // bookmarks-menu-button into its position.
+      let currentsetResource = this._rdf.GetResource("currentset");
+      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
+      let currentset = this._getPersist(toolbarResource, currentsetResource);
+      // Need to migrate only if toolbar is customized.
+      if (currentset) {
+        if (currentset.contains("bookmarks-menu-button-container"))
+          currentset = currentset.replace(/(^|,)bookmarks-menu-button-container($|,)/,"$2");
+
+        // Now insert the new button.
+        if (currentset.contains("downloads-button")) {
+          currentset = currentset.replace(/(^|,)downloads-button($|,)/,
+                                          "$1bookmarks-menu-button,downloads-button$2");
+        } else if (currentset.contains("home-button")) {
+          currentset = currentset.replace(/(^|,)home-button($|,)/,
+                                          "$1bookmarks-menu-button,home-button$2");
+        } else {
+          // Just append.
+          currentset = currentset.replace(/(^|,)window-controls($|,)/,
+                                          "$1bookmarks-menu-button,window-controls$2")
+        }
+        this._setPersist(toolbarResource, currentsetResource, currentset);
+      }
+    }
+
+    if (currentUIVersion < 13) {
+      try {
+        if (Services.prefs.getBoolPref("plugins.hide_infobar_for_missing_plugin"))
+          Services.prefs.setBoolPref("plugins.notifyMissingFlash", false);
+      }
+      catch (ex) {}
     }
 
     if (this._dirty)

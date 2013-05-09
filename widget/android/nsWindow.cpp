@@ -28,7 +28,6 @@ using mozilla::unused;
 
 #include "nsRenderingContext.h"
 #include "nsIDOMSimpleGestureEvent.h"
-#include "mozilla/dom/Touch.h"
 
 #include "nsGkAtoms.h"
 #include "nsWidgetsCID.h"
@@ -40,7 +39,8 @@ using mozilla::unused;
 #include "Layers.h"
 #include "BasicLayers.h"
 #include "LayerManagerOGL.h"
-#include "LayerManagerComposite.h"
+#include "mozilla/layers/LayerManagerComposite.h"
+#include "mozilla/layers/AsyncCompositionManager.h"
 #include "GLContext.h"
 #include "GLContextProvider.h"
 
@@ -56,6 +56,7 @@ using mozilla::unused;
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::widget;
+using namespace mozilla::layers;
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 
@@ -63,8 +64,10 @@ NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 static gfxIntSize gAndroidBounds = gfxIntSize(0, 0);
 static gfxIntSize gAndroidScreenBounds;
 
+#include "mozilla/layers/AsyncPanZoomController.h"
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/LayerTransactionParent.h"
 #include "mozilla/Mutex.h"
 #include "nsThreadUtils.h"
 
@@ -515,7 +518,7 @@ nsWindow::IsEnabled() const
 NS_IMETHODIMP
 nsWindow::Invalidate(const nsIntRect &aRect)
 {
-    AndroidGeckoEvent *event = new AndroidGeckoEvent(AndroidGeckoEvent::DRAW, aRect);
+    AndroidGeckoEvent *event = AndroidGeckoEvent::MakeDrawEvent(aRect);
     nsAppShell::gAppShell->PostEvent(event);
     return NS_OK;
 }
@@ -682,7 +685,7 @@ nsWindow::SetWindowClass(const nsAString& xulWinType)
 }
 
 mozilla::layers::LayerManager*
-nsWindow::GetLayerManager(PLayersChild*, LayersBackend, LayerManagerPersistence, 
+nsWindow::GetLayerManager(PLayerTransactionChild*, LayersBackend, LayerManagerPersistence,
                           bool* aAllowRetaining)
 {
     if (aAllowRetaining) {
@@ -1129,7 +1132,7 @@ void
 nsWindow::OnMouseEvent(AndroidGeckoEvent *ae)
 {
     uint32_t msg;
-    switch (ae->Action() & AndroidMotionEvent::ACTION_MASK) {
+    switch (ae->Action()) {
 #ifndef MOZ_ONLY_TOUCH_EVENTS
         case AndroidMotionEvent::ACTION_DOWN:
             msg = NS_MOUSE_BUTTON_DOWN;
@@ -1202,31 +1205,18 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
 
     bool preventDefaultActions = false;
     bool isDownEvent = false;
-    switch (ae->Action() & AndroidMotionEvent::ACTION_MASK) {
-        case AndroidMotionEvent::ACTION_DOWN:
-        case AndroidMotionEvent::ACTION_POINTER_DOWN: {
-            nsTouchEvent event(true, NS_TOUCH_START, this);
-            preventDefaultActions = DispatchMultitouchEvent(event, ae);
-            isDownEvent = true;
-            break;
-        }
-        case AndroidMotionEvent::ACTION_MOVE: {
-            nsTouchEvent event(true, NS_TOUCH_MOVE, this);
-            preventDefaultActions = DispatchMultitouchEvent(event, ae);
-            break;
-        }
-        case AndroidMotionEvent::ACTION_UP:
-        case AndroidMotionEvent::ACTION_POINTER_UP: {
-            nsTouchEvent event(true, NS_TOUCH_END, this);
-            preventDefaultActions = DispatchMultitouchEvent(event, ae);
-            break;
-        }
-        case AndroidMotionEvent::ACTION_OUTSIDE:
-        case AndroidMotionEvent::ACTION_CANCEL: {
-            nsTouchEvent event(true, NS_TOUCH_CANCEL, this);
-            preventDefaultActions = DispatchMultitouchEvent(event, ae);
-            break;
-        }
+
+    nsTouchEvent event = ae->MakeTouchEvent(this);
+    if (event.message != NS_EVENT_NULL) {
+        nsEventStatus status;
+        DispatchEvent(&event, status);
+        // We check mMultipleActionsPrevented because that's what <input type=range>
+        // sets when someone starts dragging the thumb. It doesn't set the status
+        // because it doesn't want to prevent the code that gives the input focus
+        // from running.
+        preventDefaultActions = (status == nsEventStatus_eConsumeNoDefault ||
+                                event.mFlags.mMultipleActionsPrevented);
+        isDownEvent = (event.message == NS_TOUCH_START);
     }
 
     // if the last event we got was a down event, then by now we know for sure whether
@@ -1256,52 +1246,6 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
     return preventDefaultActions;
 }
 
-bool
-nsWindow::DispatchMultitouchEvent(nsTouchEvent &event, AndroidGeckoEvent *ae)
-{
-    nsIntPoint offset = WidgetToScreenOffset();
-
-    event.modifiers = 0;
-    event.time = ae->Time();
-    event.InitBasicModifiers(ae->IsCtrlPressed(),
-                             ae->IsAltPressed(),
-                             ae->IsShiftPressed(),
-                             ae->IsMetaPressed());
-
-    int action = ae->Action() & AndroidMotionEvent::ACTION_MASK;
-    if (action == AndroidMotionEvent::ACTION_UP ||
-        action == AndroidMotionEvent::ACTION_POINTER_UP) {
-        event.touches.SetCapacity(1);
-        int pointerIndex = ae->PointerIndex();
-        nsCOMPtr<nsIDOMTouch> t(new Touch(ae->PointIndicies()[pointerIndex],
-                                          ae->Points()[pointerIndex] - offset,
-                                          ae->PointRadii()[pointerIndex],
-                                          ae->Orientations()[pointerIndex],
-                                          ae->Pressures()[pointerIndex]));
-        event.touches.AppendElement(t);
-    } else {
-        int count = ae->Count();
-        event.touches.SetCapacity(count);
-        for (int i = 0; i < count; i++) {
-            nsCOMPtr<nsIDOMTouch> t(new Touch(ae->PointIndicies()[i],
-                                              ae->Points()[i] - offset,
-                                              ae->PointRadii()[i],
-                                              ae->Orientations()[i],
-                                              ae->Pressures()[i]));
-            event.touches.AppendElement(t);
-        }
-    }
-
-    nsEventStatus status;
-    DispatchEvent(&event, status);
-    // We check mMultipleActionsPrevented because that's what <input type=range>
-    // sets when someone starts dragging the thumb. It doesn't set the status
-    // because it doesn't want to prevent the code that gives the input focus
-    // from running.
-    return (status == nsEventStatus_eConsumeNoDefault ||
-            event.mFlags.mMultipleActionsPrevented);
-}
-
 void
 nsWindow::OnNativeGestureEvent(AndroidGeckoEvent *ae)
 {
@@ -1310,7 +1254,7 @@ nsWindow::OnNativeGestureEvent(AndroidGeckoEvent *ae)
   double delta = ae->X();
   int msg = 0;
 
-  switch (ae->Action() & AndroidMotionEvent::ACTION_MASK) {
+  switch (ae->Action()) {
       case AndroidMotionEvent::ACTION_MAGNIFY_START:
           msg = NS_SIMPLE_GESTURE_MAGNIFY_START;
           mStartDist = delta;
@@ -1366,103 +1310,252 @@ nsWindow::DispatchMotionEvent(nsInputEvent &event, AndroidGeckoEvent *ae,
 static unsigned int ConvertAndroidKeyCodeToDOMKeyCode(int androidKeyCode)
 {
     // Special-case alphanumeric keycodes because they are most common.
-    if (androidKeyCode >= AndroidKeyEvent::KEYCODE_A &&
-        androidKeyCode <= AndroidKeyEvent::KEYCODE_Z) {
-        return androidKeyCode - AndroidKeyEvent::KEYCODE_A + NS_VK_A;
+    if (androidKeyCode >= AKEYCODE_A &&
+        androidKeyCode <= AKEYCODE_Z) {
+        return androidKeyCode - AKEYCODE_A + NS_VK_A;
     }
 
-    if (androidKeyCode >= AndroidKeyEvent::KEYCODE_0 &&
-        androidKeyCode <= AndroidKeyEvent::KEYCODE_9) {
-        return androidKeyCode - AndroidKeyEvent::KEYCODE_0 + NS_VK_0;
+    if (androidKeyCode >= AKEYCODE_0 &&
+        androidKeyCode <= AKEYCODE_9) {
+        return androidKeyCode - AKEYCODE_0 + NS_VK_0;
     }
 
     switch (androidKeyCode) {
         // KEYCODE_UNKNOWN (0) ... KEYCODE_HOME (3)
-        case AndroidKeyEvent::KEYCODE_BACK:               return NS_VK_ESCAPE;
+        case AKEYCODE_BACK:               return NS_VK_ESCAPE;
         // KEYCODE_CALL (5) ... KEYCODE_POUND (18)
-        case AndroidKeyEvent::KEYCODE_DPAD_UP:            return NS_VK_UP;
-        case AndroidKeyEvent::KEYCODE_DPAD_DOWN:          return NS_VK_DOWN;
-        case AndroidKeyEvent::KEYCODE_DPAD_LEFT:          return NS_VK_LEFT;
-        case AndroidKeyEvent::KEYCODE_DPAD_RIGHT:         return NS_VK_RIGHT;
-        case AndroidKeyEvent::KEYCODE_DPAD_CENTER:        return NS_VK_RETURN;
-        case AndroidKeyEvent::KEYCODE_VOLUME_UP:          return NS_VK_VOLUME_UP;
-        case AndroidKeyEvent::KEYCODE_VOLUME_DOWN:        return NS_VK_VOLUME_DOWN;
+        case AKEYCODE_DPAD_UP:            return NS_VK_UP;
+        case AKEYCODE_DPAD_DOWN:          return NS_VK_DOWN;
+        case AKEYCODE_DPAD_LEFT:          return NS_VK_LEFT;
+        case AKEYCODE_DPAD_RIGHT:         return NS_VK_RIGHT;
+        case AKEYCODE_DPAD_CENTER:        return NS_VK_RETURN;
+        case AKEYCODE_VOLUME_UP:          return NS_VK_VOLUME_UP;
+        case AKEYCODE_VOLUME_DOWN:        return NS_VK_VOLUME_DOWN;
         // KEYCODE_VOLUME_POWER (26) ... KEYCODE_Z (54)
-        case AndroidKeyEvent::KEYCODE_COMMA:              return NS_VK_COMMA;
-        case AndroidKeyEvent::KEYCODE_PERIOD:             return NS_VK_PERIOD;
-        case AndroidKeyEvent::KEYCODE_ALT_LEFT:           return NS_VK_ALT;
-        case AndroidKeyEvent::KEYCODE_ALT_RIGHT:          return NS_VK_ALT;
-        case AndroidKeyEvent::KEYCODE_SHIFT_LEFT:         return NS_VK_SHIFT;
-        case AndroidKeyEvent::KEYCODE_SHIFT_RIGHT:        return NS_VK_SHIFT;
-        case AndroidKeyEvent::KEYCODE_TAB:                return NS_VK_TAB;
-        case AndroidKeyEvent::KEYCODE_SPACE:              return NS_VK_SPACE;
+        case AKEYCODE_COMMA:              return NS_VK_COMMA;
+        case AKEYCODE_PERIOD:             return NS_VK_PERIOD;
+        case AKEYCODE_ALT_LEFT:           return NS_VK_ALT;
+        case AKEYCODE_ALT_RIGHT:          return NS_VK_ALT;
+        case AKEYCODE_SHIFT_LEFT:         return NS_VK_SHIFT;
+        case AKEYCODE_SHIFT_RIGHT:        return NS_VK_SHIFT;
+        case AKEYCODE_TAB:                return NS_VK_TAB;
+        case AKEYCODE_SPACE:              return NS_VK_SPACE;
         // KEYCODE_SYM (63) ... KEYCODE_ENVELOPE (65)
-        case AndroidKeyEvent::KEYCODE_ENTER:              return NS_VK_RETURN;
-        case AndroidKeyEvent::KEYCODE_DEL:                return NS_VK_BACK; // Backspace
-        case AndroidKeyEvent::KEYCODE_GRAVE:              return NS_VK_BACK_QUOTE;
+        case AKEYCODE_ENTER:              return NS_VK_RETURN;
+        case AKEYCODE_DEL:                return NS_VK_BACK; // Backspace
+        case AKEYCODE_GRAVE:              return NS_VK_BACK_QUOTE;
         // KEYCODE_MINUS (69)
-        case AndroidKeyEvent::KEYCODE_EQUALS:             return NS_VK_EQUALS;
-        case AndroidKeyEvent::KEYCODE_LEFT_BRACKET:       return NS_VK_OPEN_BRACKET;
-        case AndroidKeyEvent::KEYCODE_RIGHT_BRACKET:      return NS_VK_CLOSE_BRACKET;
-        case AndroidKeyEvent::KEYCODE_BACKSLASH:          return NS_VK_BACK_SLASH;
-        case AndroidKeyEvent::KEYCODE_SEMICOLON:          return NS_VK_SEMICOLON;
+        case AKEYCODE_EQUALS:             return NS_VK_EQUALS;
+        case AKEYCODE_LEFT_BRACKET:       return NS_VK_OPEN_BRACKET;
+        case AKEYCODE_RIGHT_BRACKET:      return NS_VK_CLOSE_BRACKET;
+        case AKEYCODE_BACKSLASH:          return NS_VK_BACK_SLASH;
+        case AKEYCODE_SEMICOLON:          return NS_VK_SEMICOLON;
         // KEYCODE_APOSTROPHE (75)
-        case AndroidKeyEvent::KEYCODE_SLASH:              return NS_VK_SLASH;
+        case AKEYCODE_SLASH:              return NS_VK_SLASH;
         // KEYCODE_AT (77) ... KEYCODE_MEDIA_FAST_FORWARD (90)
-        case AndroidKeyEvent::KEYCODE_MUTE:               return NS_VK_VOLUME_MUTE;
-        case AndroidKeyEvent::KEYCODE_PAGE_UP:            return NS_VK_PAGE_UP;
-        case AndroidKeyEvent::KEYCODE_PAGE_DOWN:          return NS_VK_PAGE_DOWN;
+        case AKEYCODE_MUTE:               return NS_VK_VOLUME_MUTE;
+        case AKEYCODE_PAGE_UP:            return NS_VK_PAGE_UP;
+        case AKEYCODE_PAGE_DOWN:          return NS_VK_PAGE_DOWN;
         // KEYCODE_PICTSYMBOLS (94) ... KEYCODE_BUTTON_MODE (110)
-        case AndroidKeyEvent::KEYCODE_ESCAPE:             return NS_VK_ESCAPE;
-        case AndroidKeyEvent::KEYCODE_FORWARD_DEL:        return NS_VK_DELETE;
-        case AndroidKeyEvent::KEYCODE_CTRL_LEFT:          return NS_VK_CONTROL;
-        case AndroidKeyEvent::KEYCODE_CTRL_RIGHT:         return NS_VK_CONTROL;
-        case AndroidKeyEvent::KEYCODE_CAPS_LOCK:          return NS_VK_CAPS_LOCK;
-        case AndroidKeyEvent::KEYCODE_SCROLL_LOCK:        return NS_VK_SCROLL_LOCK;
+        case AKEYCODE_ESCAPE:             return NS_VK_ESCAPE;
+        case AKEYCODE_FORWARD_DEL:        return NS_VK_DELETE;
+        case AKEYCODE_CTRL_LEFT:          return NS_VK_CONTROL;
+        case AKEYCODE_CTRL_RIGHT:         return NS_VK_CONTROL;
+        case AKEYCODE_CAPS_LOCK:          return NS_VK_CAPS_LOCK;
+        case AKEYCODE_SCROLL_LOCK:        return NS_VK_SCROLL_LOCK;
         // KEYCODE_META_LEFT (117) ... KEYCODE_FUNCTION (119)
-        case AndroidKeyEvent::KEYCODE_SYSRQ:              return NS_VK_PRINTSCREEN;
-        case AndroidKeyEvent::KEYCODE_BREAK:              return NS_VK_PAUSE;
-        case AndroidKeyEvent::KEYCODE_MOVE_HOME:          return NS_VK_HOME;
-        case AndroidKeyEvent::KEYCODE_MOVE_END:           return NS_VK_END;
-        case AndroidKeyEvent::KEYCODE_INSERT:             return NS_VK_INSERT;
+        case AKEYCODE_SYSRQ:              return NS_VK_PRINTSCREEN;
+        case AKEYCODE_BREAK:              return NS_VK_PAUSE;
+        case AKEYCODE_MOVE_HOME:          return NS_VK_HOME;
+        case AKEYCODE_MOVE_END:           return NS_VK_END;
+        case AKEYCODE_INSERT:             return NS_VK_INSERT;
         // KEYCODE_FORWARD (125) ... KEYCODE_MEDIA_RECORD (130)
-        case AndroidKeyEvent::KEYCODE_F1:                 return NS_VK_F1;
-        case AndroidKeyEvent::KEYCODE_F2:                 return NS_VK_F2;
-        case AndroidKeyEvent::KEYCODE_F3:                 return NS_VK_F3;
-        case AndroidKeyEvent::KEYCODE_F4:                 return NS_VK_F4;
-        case AndroidKeyEvent::KEYCODE_F5:                 return NS_VK_F5;
-        case AndroidKeyEvent::KEYCODE_F6:                 return NS_VK_F6;
-        case AndroidKeyEvent::KEYCODE_F7:                 return NS_VK_F7;
-        case AndroidKeyEvent::KEYCODE_F8:                 return NS_VK_F8;
-        case AndroidKeyEvent::KEYCODE_F9:                 return NS_VK_F9;
-        case AndroidKeyEvent::KEYCODE_F10:                return NS_VK_F10;
-        case AndroidKeyEvent::KEYCODE_F11:                return NS_VK_F11;
-        case AndroidKeyEvent::KEYCODE_F12:                return NS_VK_F12;
-        case AndroidKeyEvent::KEYCODE_NUM_LOCK:           return NS_VK_NUM_LOCK;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_0:           return NS_VK_NUMPAD0;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_1:           return NS_VK_NUMPAD1;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_2:           return NS_VK_NUMPAD2;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_3:           return NS_VK_NUMPAD3;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_4:           return NS_VK_NUMPAD4;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_5:           return NS_VK_NUMPAD5;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_6:           return NS_VK_NUMPAD6;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_7:           return NS_VK_NUMPAD7;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_8:           return NS_VK_NUMPAD8;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_9:           return NS_VK_NUMPAD9;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_DIVIDE:      return NS_VK_DIVIDE;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_MULTIPLY:    return NS_VK_MULTIPLY;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_SUBTRACT:    return NS_VK_SUBTRACT;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_ADD:         return NS_VK_ADD;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_DOT:         return NS_VK_DECIMAL;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_COMMA:       return NS_VK_SEPARATOR;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_ENTER:       return NS_VK_RETURN;
-        case AndroidKeyEvent::KEYCODE_NUMPAD_EQUALS:      return NS_VK_EQUALS;
+        case AKEYCODE_F1:                 return NS_VK_F1;
+        case AKEYCODE_F2:                 return NS_VK_F2;
+        case AKEYCODE_F3:                 return NS_VK_F3;
+        case AKEYCODE_F4:                 return NS_VK_F4;
+        case AKEYCODE_F5:                 return NS_VK_F5;
+        case AKEYCODE_F6:                 return NS_VK_F6;
+        case AKEYCODE_F7:                 return NS_VK_F7;
+        case AKEYCODE_F8:                 return NS_VK_F8;
+        case AKEYCODE_F9:                 return NS_VK_F9;
+        case AKEYCODE_F10:                return NS_VK_F10;
+        case AKEYCODE_F11:                return NS_VK_F11;
+        case AKEYCODE_F12:                return NS_VK_F12;
+        case AKEYCODE_NUM_LOCK:           return NS_VK_NUM_LOCK;
+        case AKEYCODE_NUMPAD_0:           return NS_VK_NUMPAD0;
+        case AKEYCODE_NUMPAD_1:           return NS_VK_NUMPAD1;
+        case AKEYCODE_NUMPAD_2:           return NS_VK_NUMPAD2;
+        case AKEYCODE_NUMPAD_3:           return NS_VK_NUMPAD3;
+        case AKEYCODE_NUMPAD_4:           return NS_VK_NUMPAD4;
+        case AKEYCODE_NUMPAD_5:           return NS_VK_NUMPAD5;
+        case AKEYCODE_NUMPAD_6:           return NS_VK_NUMPAD6;
+        case AKEYCODE_NUMPAD_7:           return NS_VK_NUMPAD7;
+        case AKEYCODE_NUMPAD_8:           return NS_VK_NUMPAD8;
+        case AKEYCODE_NUMPAD_9:           return NS_VK_NUMPAD9;
+        case AKEYCODE_NUMPAD_DIVIDE:      return NS_VK_DIVIDE;
+        case AKEYCODE_NUMPAD_MULTIPLY:    return NS_VK_MULTIPLY;
+        case AKEYCODE_NUMPAD_SUBTRACT:    return NS_VK_SUBTRACT;
+        case AKEYCODE_NUMPAD_ADD:         return NS_VK_ADD;
+        case AKEYCODE_NUMPAD_DOT:         return NS_VK_DECIMAL;
+        case AKEYCODE_NUMPAD_COMMA:       return NS_VK_SEPARATOR;
+        case AKEYCODE_NUMPAD_ENTER:       return NS_VK_RETURN;
+        case AKEYCODE_NUMPAD_EQUALS:      return NS_VK_EQUALS;
         // KEYCODE_NUMPAD_LEFT_PAREN (162) ... KEYCODE_CALCULATOR (210)
+
+        // Needs to confirm the behavior.  If the key switches the open state
+        // of Japanese IME (or switches input character between Hiragana and
+        // Roman numeric characters), then, it might be better to use
+        // NS_VK_KANJI which is used for Alt+Zenkaku/Hankaku key on Windows.
+        case AKEYCODE_ZENKAKU_HANKAKU:    return 0;
+        case AKEYCODE_EISU:               return NS_VK_EISU;
+        case AKEYCODE_MUHENKAN:           return NS_VK_NONCONVERT;
+        case AKEYCODE_HENKAN:             return NS_VK_CONVERT;
+        case AKEYCODE_KATAKANA_HIRAGANA:  return 0;
+        case AKEYCODE_YEN:                return NS_VK_BACK_SLASH; // Same as other platforms.
+        case AKEYCODE_RO:                 return NS_VK_BACK_SLASH; // Same as other platforms.
+        case AKEYCODE_KANA:               return NS_VK_KANA;
+        case AKEYCODE_ASSIST:             return NS_VK_HELP;
 
         default:
             ALOG("ConvertAndroidKeyCodeToDOMKeyCode: "
                  "No DOM keycode for Android keycode %d", androidKeyCode);
         return 0;
+    }
+}
+
+static KeyNameIndex ConvertAndroidKeyCodeToKeyNameIndex(int aAndroidKeyCode)
+{
+    // Special-case alphanumeric keycodes because they are most common.
+    if (aAndroidKeyCode >= AKEYCODE_A && aAndroidKeyCode <= AKEYCODE_Z) {
+        return KEY_NAME_INDEX_PrintableKey;
+    }
+
+    if (aAndroidKeyCode >= AKEYCODE_0 && aAndroidKeyCode <= AKEYCODE_9) {
+        return KEY_NAME_INDEX_PrintableKey;
+    }
+
+    switch (aAndroidKeyCode) {
+
+#define NS_NATIVE_KEY_TO_DOM_KEY_NAME_INDEX(aNativeKey, aKeyNameIndex) \
+        case aNativeKey: return aKeyNameIndex;
+
+#include "NativeKeyToDOMKeyName.h"
+
+#undef NS_NATIVE_KEY_TO_DOM_KEY_NAME_INDEX
+
+        // KEYCODE_0 (7) ... KEYCODE_9 (16)
+        case AKEYCODE_STAR:               // '*' key
+        case AKEYCODE_POUND:              // '#' key
+
+        // KEYCODE_A (29) ... KEYCODE_Z (54)
+
+        case AKEYCODE_COMMA:              // ',' key
+        case AKEYCODE_PERIOD:             // '.' key
+        case AKEYCODE_GRAVE:              // '`' key
+        case AKEYCODE_MINUS:              // '-' key
+        case AKEYCODE_EQUALS:             // '=' key
+        case AKEYCODE_LEFT_BRACKET:       // '[' key
+        case AKEYCODE_RIGHT_BRACKET:      // ']' key
+        case AKEYCODE_BACKSLASH:          // '\' key
+        case AKEYCODE_SEMICOLON:          // ';' key
+        case AKEYCODE_APOSTROPHE:         // ''' key
+        case AKEYCODE_SLASH:              // '/' key
+        case AKEYCODE_AT:                 // '@' key
+        case AKEYCODE_PLUS:               // '+' key
+
+        case AKEYCODE_UNKNOWN:
+        case AKEYCODE_NUMPAD_0:
+        case AKEYCODE_NUMPAD_1:
+        case AKEYCODE_NUMPAD_2:
+        case AKEYCODE_NUMPAD_3:
+        case AKEYCODE_NUMPAD_4:
+        case AKEYCODE_NUMPAD_5:
+        case AKEYCODE_NUMPAD_6:
+        case AKEYCODE_NUMPAD_7:
+        case AKEYCODE_NUMPAD_8:
+        case AKEYCODE_NUMPAD_9:
+
+        case AKEYCODE_NUMPAD_LEFT_PAREN:
+        case AKEYCODE_NUMPAD_RIGHT_PAREN:
+
+        case AKEYCODE_YEN:                // yen sign key
+        case AKEYCODE_RO:                 // Japanese Ro key
+            return KEY_NAME_INDEX_PrintableKey;
+
+        case AKEYCODE_SOFT_LEFT:
+        case AKEYCODE_SOFT_RIGHT:
+        case AKEYCODE_CALL:
+        case AKEYCODE_ENDCALL:
+        case AKEYCODE_SYM:                // Symbol modifier
+        case AKEYCODE_NUM:                // XXX Not sure
+        case AKEYCODE_HEADSETHOOK:
+        case AKEYCODE_FOCUS:
+        case AKEYCODE_NOTIFICATION:       // XXX Not sure
+        case AKEYCODE_PICTSYMBOLS:
+
+        case AKEYCODE_BUTTON_A:
+        case AKEYCODE_BUTTON_B:
+        case AKEYCODE_BUTTON_C:
+        case AKEYCODE_BUTTON_X:
+        case AKEYCODE_BUTTON_Y:
+        case AKEYCODE_BUTTON_Z:
+        case AKEYCODE_BUTTON_L1:
+        case AKEYCODE_BUTTON_R1:
+        case AKEYCODE_BUTTON_L2:
+        case AKEYCODE_BUTTON_R2:
+        case AKEYCODE_BUTTON_THUMBL:
+        case AKEYCODE_BUTTON_THUMBR:
+        case AKEYCODE_BUTTON_START:
+        case AKEYCODE_BUTTON_SELECT:
+        case AKEYCODE_BUTTON_MODE:
+
+        case AKEYCODE_MUTE: // mutes the microphone
+        case AKEYCODE_MEDIA_CLOSE:
+
+        case AKEYCODE_ZOOM_IN:
+        case AKEYCODE_ZOOM_OUT:
+        case AKEYCODE_DVR:
+        case AKEYCODE_TV_POWER:
+        case AKEYCODE_TV_INPUT:
+        case AKEYCODE_STB_POWER:
+        case AKEYCODE_STB_INPUT:
+        case AKEYCODE_AVR_POWER:
+        case AKEYCODE_AVR_INPUT:
+
+        case AKEYCODE_BUTTON_1:
+        case AKEYCODE_BUTTON_2:
+        case AKEYCODE_BUTTON_3:
+        case AKEYCODE_BUTTON_4:
+        case AKEYCODE_BUTTON_5:
+        case AKEYCODE_BUTTON_6:
+        case AKEYCODE_BUTTON_7:
+        case AKEYCODE_BUTTON_8:
+        case AKEYCODE_BUTTON_9:
+        case AKEYCODE_BUTTON_10:
+        case AKEYCODE_BUTTON_11:
+        case AKEYCODE_BUTTON_12:
+        case AKEYCODE_BUTTON_13:
+        case AKEYCODE_BUTTON_14:
+        case AKEYCODE_BUTTON_15:
+        case AKEYCODE_BUTTON_16:
+
+        case AKEYCODE_LANGUAGE_SWITCH:
+        case AKEYCODE_MANNER_MODE:
+        case AKEYCODE_3D_MODE:
+        case AKEYCODE_CONTACTS:
+        case AKEYCODE_CALENDAR:
+        case AKEYCODE_MUSIC:
+        case AKEYCODE_CALCULATOR:
+
+        case AKEYCODE_ZENKAKU_HANKAKU:
+        case AKEYCODE_KATAKANA_HIRAGANA:
+            return KEY_NAME_INDEX_Unidentified;
+
+        default:
+            ALOG("ConvertAndroidKeyCodeToKeyNameIndex: "
+                 "No DOM key name index for Android keycode %d", aAndroidKeyCode);
+            return KEY_NAME_INDEX_Unidentified;
     }
 }
 
@@ -1493,6 +1586,7 @@ nsWindow::InitKeyEvent(nsKeyEvent& event, AndroidGeckoEvent& key,
                        ANPEvent* pluginEvent)
 {
     int androidKeyCode = key.KeyCode();
+    event.mKeyNameIndex = ConvertAndroidKeyCodeToKeyNameIndex(androidKeyCode);
     uint32_t domKeyCode = ConvertAndroidKeyCodeToDOMKeyCode(androidKeyCode);
 
     if (event.message == NS_KEY_PRESS) {
@@ -1547,41 +1641,41 @@ nsWindow::HandleSpecialKey(AndroidGeckoEvent *ae)
 {
     nsRefPtr<nsWindow> kungFuDeathGrip(this);
     nsCOMPtr<nsIAtom> command;
-    bool isDown = ae->Action() == AndroidKeyEvent::ACTION_DOWN;
-    bool isLongPress = !!(ae->Flags() & AndroidKeyEvent::FLAG_LONG_PRESS);
+    bool isDown = ae->Action() == AKEY_EVENT_ACTION_DOWN;
+    bool isLongPress = !!(ae->Flags() & AKEY_EVENT_FLAG_LONG_PRESS);
     bool doCommand = false;
     uint32_t keyCode = ae->KeyCode();
 
     if (isDown) {
         switch (keyCode) {
-            case AndroidKeyEvent::KEYCODE_BACK:
+            case AKEYCODE_BACK:
                 if (isLongPress) {
                     command = nsGkAtoms::Clear;
                     doCommand = true;
                 }
                 break;
-            case AndroidKeyEvent::KEYCODE_MENU:
+            case AKEYCODE_MENU:
                 gMenu = true;
                 gMenuConsumed = isLongPress;
                 break;
         }
     } else {
         switch (keyCode) {
-            case AndroidKeyEvent::KEYCODE_BACK: {
+            case AKEYCODE_BACK: {
                 nsKeyEvent pressEvent(true, NS_KEY_PRESS, this);
                 ANPEvent pluginEvent;
                 InitKeyEvent(pressEvent, *ae, &pluginEvent);
                 DispatchEvent(&pressEvent);
                 return;
             }
-            case AndroidKeyEvent::KEYCODE_MENU:
+            case AKEYCODE_MENU:
                 gMenu = false;
                 if (!gMenuConsumed) {
                     command = nsGkAtoms::Menu;
                     doCommand = true;
                 }
                 break;
-            case AndroidKeyEvent::KEYCODE_SEARCH:
+            case AKEYCODE_SEARCH:
                 command = nsGkAtoms::Search;
                 doCommand = true;
                 break;
@@ -1604,13 +1698,13 @@ nsWindow::OnKeyEvent(AndroidGeckoEvent *ae)
     RemoveIMEComposition();
     uint32_t msg;
     switch (ae->Action()) {
-    case AndroidKeyEvent::ACTION_DOWN:
+    case AKEY_EVENT_ACTION_DOWN:
         msg = NS_KEY_DOWN;
         break;
-    case AndroidKeyEvent::ACTION_UP:
+    case AKEY_EVENT_ACTION_UP:
         msg = NS_KEY_UP;
         break;
-    case AndroidKeyEvent::ACTION_MULTIPLE:
+    case AKEY_EVENT_ACTION_MULTIPLE:
         {
             nsTextEvent event(true, NS_TEXT_TEXT, this);
             event.theText.Assign(ae->Characters());
@@ -1622,19 +1716,19 @@ nsWindow::OnKeyEvent(AndroidGeckoEvent *ae)
         return;
     }
 
-    bool firePress = ae->Action() == AndroidKeyEvent::ACTION_DOWN;
+    bool firePress = ae->Action() == AKEY_EVENT_ACTION_DOWN;
     switch (ae->KeyCode()) {
-    case AndroidKeyEvent::KEYCODE_SHIFT_LEFT:
-    case AndroidKeyEvent::KEYCODE_SHIFT_RIGHT:
-    case AndroidKeyEvent::KEYCODE_ALT_LEFT:
-    case AndroidKeyEvent::KEYCODE_ALT_RIGHT:
-    case AndroidKeyEvent::KEYCODE_CTRL_LEFT:
-    case AndroidKeyEvent::KEYCODE_CTRL_RIGHT:
+    case AKEYCODE_SHIFT_LEFT:
+    case AKEYCODE_SHIFT_RIGHT:
+    case AKEYCODE_ALT_LEFT:
+    case AKEYCODE_ALT_RIGHT:
+    case AKEYCODE_CTRL_LEFT:
+    case AKEYCODE_CTRL_RIGHT:
         firePress = false;
         break;
-    case AndroidKeyEvent::KEYCODE_BACK:
-    case AndroidKeyEvent::KEYCODE_MENU:
-    case AndroidKeyEvent::KEYCODE_SEARCH:
+    case AKEYCODE_BACK:
+    case AKEYCODE_MENU:
+    case AKEYCODE_SEARCH:
         HandleSpecialKey(ae);
         return;
     }
@@ -2098,8 +2192,7 @@ nsWindow::SetInputContext(const InputContext& aContext,
     if (mIMEUpdatingContext) {
         return;
     }
-    AndroidGeckoEvent *event = new AndroidGeckoEvent(
-            AndroidGeckoEvent::IME_EVENT,
+    AndroidGeckoEvent *event = AndroidGeckoEvent::MakeIMEEvent(
             AndroidGeckoEvent::IME_UPDATE_CONTEXT);
     nsAppShell::gAppShell->PostEvent(event);
     mIMEUpdatingContext = true;
@@ -2128,8 +2221,8 @@ nsWindow::PostFlushIMEChanges()
         // Already posted
         return;
     }
-    AndroidGeckoEvent *event = new AndroidGeckoEvent(
-            AndroidGeckoEvent::IME_EVENT, AndroidGeckoEvent::IME_FLUSH_CHANGES);
+    AndroidGeckoEvent *event = AndroidGeckoEvent::MakeIMEEvent(
+            AndroidGeckoEvent::IME_FLUSH_CHANGES);
     nsAppShell::gAppShell->PostEvent(event);
 }
 
@@ -2302,6 +2395,7 @@ nsRefPtr<mozilla::layers::LayerManager> nsWindow::sLayerManager = 0;
 nsRefPtr<mozilla::layers::CompositorParent> nsWindow::sCompositorParent = 0;
 nsRefPtr<mozilla::layers::CompositorChild> nsWindow::sCompositorChild = 0;
 bool nsWindow::sCompositorPaused = true;
+nsRefPtr<mozilla::layers::AsyncPanZoomController> nsWindow::sApzc = 0;
 
 void
 nsWindow::SetCompositor(mozilla::layers::LayerManager* aLayerManager,
@@ -2376,4 +2470,52 @@ nsWindow::NeedsPaint()
   return nsIWidget::NeedsPaint();
 }
 
+class AndroidCompositorParent : public CompositorParent {
+public:
+    AndroidCompositorParent(nsIWidget* aWidget, bool aRenderToEGLSurface,
+                            int aSurfaceWidth, int aSurfaceHeight)
+        : CompositorParent(aWidget, aRenderToEGLSurface, aSurfaceHeight, aSurfaceHeight)
+    {
+        if (nsWindow::GetPanZoomController()) {
+            nsWindow::GetPanZoomController()->SetCompositorParent(this);
+        }
+    }
+
+    virtual void ShadowLayersUpdated(LayerTransactionParent* aLayerTree, const TargetConfig& aTargetConfig,
+                                     bool isFirstPaint) MOZ_OVERRIDE
+    {
+        CompositorParent::ShadowLayersUpdated(aLayerTree, aTargetConfig, isFirstPaint);
+        Layer* targetLayer = GetLayerManager()->GetPrimaryScrollableLayer();
+        AsyncPanZoomController* controller = nsWindow::GetPanZoomController();
+        if (targetLayer && targetLayer->AsContainerLayer() && controller) {
+            targetLayer->SetAsyncPanZoomController(controller);
+            controller->NotifyLayersUpdated(targetLayer->AsContainerLayer()->GetFrameMetrics(), isFirstPaint);
+        }
+    }
+};
+
+CompositorParent*
+nsWindow::NewCompositorParent(int aSurfaceWidth, int aSurfaceHeight)
+{
+    return new AndroidCompositorParent(this, true, aSurfaceWidth, aSurfaceHeight);
+}
+
+void
+nsWindow::SetPanZoomController(AsyncPanZoomController* apzc)
+{
+    if (sApzc) {
+        sApzc->SetCompositorParent(nullptr);
+        sApzc = nullptr;
+    }
+    if (apzc) {
+        sApzc = apzc;
+        sApzc->SetCompositorParent(sCompositorParent);
+    }
+}
+
+AsyncPanZoomController*
+nsWindow::GetPanZoomController()
+{
+    return sApzc;
+}
 

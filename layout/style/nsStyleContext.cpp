@@ -110,17 +110,20 @@ void nsStyleContext::AddChild(nsStyleContext* aChild)
                aChild->mNextSibling == aChild,
                "child already in a child list");
 
-  nsStyleContext **list = aChild->mRuleNode->IsRoot() ? &mEmptyChild : &mChild;
+  nsStyleContext **listPtr = aChild->mRuleNode->IsRoot() ? &mEmptyChild : &mChild;
+  // Explicitly dereference listPtr so that compiler doesn't have to know that mNextSibling
+  // etc. don't alias with what ever listPtr points at.
+  nsStyleContext *list = *listPtr;
 
   // Insert at the beginning of the list.  See also FindChildWithRules.
-  if (*list) {
+  if (list) {
     // Link into existing elements, if there are any.
-    aChild->mNextSibling = (*list);
-    aChild->mPrevSibling = (*list)->mPrevSibling;
-    (*list)->mPrevSibling->mNextSibling = aChild;
-    (*list)->mPrevSibling = aChild;
+    aChild->mNextSibling = list;
+    aChild->mPrevSibling = list->mPrevSibling;
+    list->mPrevSibling->mNextSibling = aChild;
+    list->mPrevSibling = aChild;
   }
-  (*list) = aChild;
+  (*listPtr) = aChild;
 }
 
 void nsStyleContext::RemoveChild(nsStyleContext* aChild)
@@ -156,7 +159,7 @@ nsStyleContext::FindChildWithRules(const nsIAtom* aPseudoTag,
   uint32_t threshold = 10; // The # of siblings we're willing to examine
                            // before just giving this whole thing up.
 
-  nsStyleContext* result = nullptr;
+  nsRefPtr<nsStyleContext> result;
   nsStyleContext *list = aRuleNode->IsRoot() ? mEmptyChild : mChild;
 
   if (list) {
@@ -191,12 +194,9 @@ nsStyleContext::FindChildWithRules(const nsIAtom* aPseudoTag,
       RemoveChild(result);
       AddChild(result);
     }
-
-    // Add reference for the caller.
-    result->AddRef();
   }
 
-  return result;
+  return result.forget();
 }
 
 const void* nsStyleContext::GetCachedStyleData(nsStyleStructID aSID)
@@ -720,12 +720,11 @@ NS_NewStyleContext(nsStyleContext* aParentContext,
                    nsRuleNode* aRuleNode,
                    bool aSkipFlexItemStyleFixup)
 {
-  nsStyleContext* context =
+  nsRefPtr<nsStyleContext> context =
     new (aRuleNode->PresContext())
     nsStyleContext(aParentContext, aPseudoTag, aPseudoType, aRuleNode,
                    aSkipFlexItemStyleFixup);
-  context->AddRef();
-  return context;
+  return context.forget();
 }
 
 static inline void

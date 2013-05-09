@@ -260,8 +260,7 @@ nsDOMFileBase::MozSlice(int64_t aStart, int64_t aEnd,
   if (sgo) {
     nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(sgo);
     if (window) {
-      nsCOMPtr<nsIDocument> document =
-        do_QueryInterface(window->GetExtantDocument());
+      nsCOMPtr<nsIDocument> document = window->GetExtantDoc();
       if (document) {
         document->WarnOnceAbout(nsIDocument::eMozSlice);
       }
@@ -276,7 +275,7 @@ nsDOMFileBase::GetInternalStream(nsIInputStream **aStream)
 {
   // Must be overridden
   NS_NOTREACHED("Must override GetInternalStream");
-  
+
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -631,13 +630,6 @@ class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
     return NS_OK;
   }
 
-  NS_IMETHOD GetExplicitNonHeap(int64_t *aResult)
-  {
-    // All of this reporter's memory is on the heap.
-    *aResult = 0;
-    return NS_OK;
-  }
-
   NS_IMETHOD CollectReports(nsIMemoryMultiReporterCallback *aCallback,
                             nsISupports *aClosure)
   {
@@ -741,7 +733,7 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDOMFileList)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsDOMFileList)
 
 JSObject*
-nsDOMFileList::WrapObject(JSContext *cx, JSObject *scope)
+nsDOMFileList::WrapObject(JSContext *cx, JS::Handle<JSObject*> scope)
 {
   return FileListBinding::Wrap(cx, scope, this);
 }

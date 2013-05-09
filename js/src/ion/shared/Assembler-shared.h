@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -151,8 +150,8 @@ struct Address
     Address() { mozilla::PodZero(this); }
 };
 
-// Specifies an address computed in the form of a register base and a constant,
-// 32-bit offset.
+// Specifies an address computed in the form of a register base, a register
+// index with a scale, and a constant, 32-bit offset.
 struct BaseIndex
 {
     Register base;
@@ -262,7 +261,7 @@ class Label : public LabelBase
         // Note: the condition is a hack to silence this assert when OOM testing,
         // see bug 756614.
         if (!js_IonOptions.parallelCompilation)
-            JS_ASSERT_IF(!GetIonContext()->runtime->hadOutOfMemory, !used());
+            JS_ASSERT_IF(MaybeGetIonContext() && !GetIonContext()->runtime->hadOutOfMemory, !used());
 #endif
     }
 };

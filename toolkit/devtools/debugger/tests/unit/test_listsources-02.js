@@ -28,7 +28,7 @@ function run_test()
   // the test.
   gc();
   gClient.connect(function () {
-    attachTestGlobalClientAndResume(gClient, "test-stack", function (aResponse, aThreadClient) {
+    attachTestTabAndResume(gClient, "test-stack", function (aResponse, aTabClient, aThreadClient) {
       gThreadClient = aThreadClient;
       test_listing_zero_sources();
     });
@@ -47,6 +47,6 @@ function test_listing_zero_sources()
                   "Should only send one sources request at most, even though we"
                   + " might have had to send one to determine feature support.");
 
-   finishClient(gClient);
+    finishClient(gClient);
   });
 }

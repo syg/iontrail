@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -90,6 +89,18 @@ class CodeGeneratorShared : public LInstructionVisitor
     }
     inline size_t getOsrEntryOffset() const {
         return osrEntryOffset_;
+    }
+
+    // The offset of the first instruction of the body.
+    // This skips the arguments type checks.
+    size_t skipArgCheckEntryOffset_;
+
+    inline void setSkipArgCheckEntryOffset(size_t offset) {
+        JS_ASSERT(skipArgCheckEntryOffset_ == 0);
+        skipArgCheckEntryOffset_ = offset;
+    }
+    inline size_t getSkipArgCheckEntryOffset() const {
+        return skipArgCheckEntryOffset_;
     }
 
     typedef js::Vector<SafepointIndex, 8, SystemAllocPolicy> SafepointIndices;
@@ -390,14 +401,14 @@ class OutOfLineCode : public TempObject
     uint32_t framePushed() const {
         return framePushed_;
     }
-    void setSource(RawScript script, jsbytecode *pc) {
+    void setSource(JSScript *script, jsbytecode *pc) {
         script_ = script;
         pc_ = pc;
     }
     jsbytecode *pc() {
         return pc_;
     }
-    RawScript script() {
+    JSScript *script() {
         return script_;
     }
 };

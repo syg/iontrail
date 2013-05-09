@@ -105,10 +105,15 @@ private:
   class PostEnumerationSuccessEvent : public CancelableRunnable
   {
     public:
-      PostEnumerationSuccessEvent(DeviceStorageRequestParent* aParent, InfallibleTArray<DeviceStorageFileValue>& aPaths);
+      PostEnumerationSuccessEvent(DeviceStorageRequestParent* aParent,
+                                  const nsAString& aStorageType,
+                                  const nsAString& aRelPath,
+                                  InfallibleTArray<DeviceStorageFileValue>& aPaths);
       virtual ~PostEnumerationSuccessEvent();
       virtual nsresult CancelableRun();
     private:
+      const nsString mStorageType;
+      const nsString mRelPath;
       InfallibleTArray<DeviceStorageFileValue> mPaths;
   };
 
@@ -190,32 +195,34 @@ private:
  {
     public:
       PostFreeSpaceResultEvent(DeviceStorageRequestParent* aParent,
-                               int64_t aFreeSpace);
+                               uint64_t aFreeSpace);
       virtual ~PostFreeSpaceResultEvent();
       virtual nsresult CancelableRun();
     private:
-      int64_t mFreeSpace;
+      uint64_t mFreeSpace;
  };
 
  class PostUsedSpaceResultEvent : public CancelableRunnable
  {
     public:
       PostUsedSpaceResultEvent(DeviceStorageRequestParent* aParent,
-                               int64_t aUsedSpace);
+                               const nsAString& aType,
+                               uint64_t aUsedSpace);
       virtual ~PostUsedSpaceResultEvent();
       virtual nsresult CancelableRun();
     private:
-      int64_t mUsedSpace;
+      nsString mType;
+      uint64_t mUsedSpace;
  };
 
  class PostAvailableResultEvent : public CancelableRunnable
  {
     public:
-      PostAvailableResultEvent(DeviceStorageRequestParent* aParent, const nsAString& aPath);
+      PostAvailableResultEvent(DeviceStorageRequestParent* aParent, DeviceStorageFile* aFile);
       virtual ~PostAvailableResultEvent();
       virtual nsresult CancelableRun();
     private:
-      nsString mPath;
+      nsRefPtr<DeviceStorageFile> mFile;
  };
 
 protected:

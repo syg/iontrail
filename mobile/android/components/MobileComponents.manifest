@@ -78,10 +78,6 @@ component {93c8824c-9b87-45ae-bc90-5b82a1e4d877} AddonUpdateService.js
 contract @mozilla.org/browser/addon-update-service;1 {93c8824c-9b87-45ae-bc90-5b82a1e4d877}
 category update-timer AddonUpdateService @mozilla.org/browser/addon-update-service;1,getService,auto-addon-background-update-timer,extensions.autoupdate.interval,86400
 
-# FormAutoComplete.js
-component {cccd414c-3ec2-4cc5-9dc4-36c87cc3c4fe} FormAutoComplete.js
-contract @mozilla.org/satchel/form-autocomplete;1 {cccd414c-3ec2-4cc5-9dc4-36c87cc3c4fe}
-
 # LoginManagerPrompter.js
 component {97d12931-abe2-11df-94e2-0800200c9a66} LoginManagerPrompter.js
 contract @mozilla.org/login-manager/prompter;1 {97d12931-abe2-11df-94e2-0800200c9a66}
@@ -98,3 +94,8 @@ contract @mozilla.org/nsClientAuthDialogs;1 {cbc08081-49b6-4561-9c18-a7707a50bda
 # SiteSpecificUserAgent.js
 component {d5234c9d-0ee2-4b3c-9da3-18be9e5cf7e6} SiteSpecificUserAgent.js
 contract @mozilla.org/dom/site-specific-user-agent;1 {d5234c9d-0ee2-4b3c-9da3-18be9e5cf7e6}
+
+# PaymentsUI.js
+component {3c6c9575-f57e-427b-a8aa-57bc3cbff48f} PaymentsUI.js
+contract @mozilla.org/payment/ui-glue;1 {3c6c9575-f57e-427b-a8aa-57bc3cbff48f}
+

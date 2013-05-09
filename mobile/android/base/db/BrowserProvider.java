@@ -5,47 +5,36 @@
 
 package org.mozilla.gecko.db;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.lang.Class;
-import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
-
 import org.mozilla.gecko.Distribution;
 import org.mozilla.gecko.GeckoProfile;
+import org.mozilla.gecko.ProfileMigrator;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserContract.CommonColumns;
 import org.mozilla.gecko.db.BrowserContract.Control;
-import org.mozilla.gecko.db.BrowserContract.Favicons;
 import org.mozilla.gecko.db.BrowserContract.FaviconColumns;
+import org.mozilla.gecko.db.BrowserContract.Favicons;
 import org.mozilla.gecko.db.BrowserContract.History;
 import org.mozilla.gecko.db.BrowserContract.Schema;
 import org.mozilla.gecko.db.BrowserContract.SyncColumns;
 import org.mozilla.gecko.db.BrowserContract.Thumbnails;
 import org.mozilla.gecko.db.BrowserContract.URLColumns;
-import org.mozilla.gecko.db.BrowserContract;
-import org.mozilla.gecko.db.DBUtils;
 import org.mozilla.gecko.gfx.BitmapUtils;
-import org.mozilla.gecko.ProfileMigrator;
 import org.mozilla.gecko.sync.Utils;
 import org.mozilla.gecko.util.GeckoJarReader;
 import org.mozilla.gecko.util.ThreadUtils;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import android.app.SearchManager;
 import android.content.ContentProvider;
+import android.content.ContentProviderOperation;
+import android.content.ContentProviderResult;
 import android.content.ContentUris;
 import android.content.ContentValues;
-import android.content.ContentProviderResult;
-import android.content.ContentProviderOperation;
 import android.content.Context;
 import android.content.OperationApplicationException;
 import android.content.UriMatcher;
@@ -56,16 +45,23 @@ import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteQueryBuilder;
-import android.graphics.BitmapFactory;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.text.TextUtils;
 import android.util.Log;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class BrowserProvider extends ContentProvider {
     private static final String LOGTAG = "GeckoBrowserProvider";
@@ -73,7 +69,7 @@ public class BrowserProvider extends ContentProvider {
 
     static final String DATABASE_NAME = "browser.db";
 
-    static final int DATABASE_VERSION = 14;
+    static final int DATABASE_VERSION = 16;
 
     // Maximum age of deleted records to be cleaned up (20 days in ms)
     static final long MAX_AGE_OF_DELETED_RECORDS = 86400000 * 20;
@@ -956,6 +952,84 @@ public class BrowserProvider extends ContentProvider {
                         " ON " + Combined.FAVICON_ID + " = " + qualifyColumn(TABLE_FAVICONS, Favicons._ID));
         }
 
+        private void createCombinedViewOn16(SQLiteDatabase db) {
+            debug("Creating " + VIEW_COMBINED + " view");
+
+            db.execSQL("CREATE VIEW IF NOT EXISTS " + VIEW_COMBINED + " AS" +
+                    " SELECT " + Combined.BOOKMARK_ID + ", " +
+                                 Combined.HISTORY_ID + ", " +
+                                 // We need to return an _id column because CursorAdapter requires it for its
+                                 // default implementation for the getItemId() method. However, since
+                                 // we're not using this feature in the parts of the UI using this view,
+                                 // we can just use 0 for all rows.
+                                 "0 AS " + Combined._ID + ", " +
+                                 Combined.URL + ", " +
+                                 Combined.TITLE + ", " +
+                                 Combined.VISITS + ", " +
+                                 Combined.DISPLAY + ", " +
+                                 Combined.DATE_LAST_VISITED + ", " +
+                                 Combined.FAVICON_ID +
+                    " FROM (" +
+                        // Bookmarks without history.
+                        " SELECT " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks._ID) + " AS " + Combined.BOOKMARK_ID + ", " +
+                                     qualifyColumn(TABLE_BOOKMARKS, Bookmarks.URL) + " AS " + Combined.URL + ", " +
+                                     qualifyColumn(TABLE_BOOKMARKS, Bookmarks.TITLE) + " AS " + Combined.TITLE + ", " +
+                                     "CASE " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.PARENT) + " WHEN " +
+                                        Bookmarks.FIXED_READING_LIST_ID + " THEN " + Combined.DISPLAY_READER + " ELSE " +
+                                        Combined.DISPLAY_NORMAL + " END AS " + Combined.DISPLAY + ", " +
+                                     "-1 AS " + Combined.HISTORY_ID + ", " +
+                                     "-1 AS " + Combined.VISITS + ", " +
+                                     "-1 AS " + Combined.DATE_LAST_VISITED + ", " +
+                                     qualifyColumn(TABLE_BOOKMARKS, Bookmarks.FAVICON_ID) + " AS " + Combined.FAVICON_ID +
+                        " FROM " + TABLE_BOOKMARKS +
+                        " WHERE " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.TYPE)  + " = " + Bookmarks.TYPE_BOOKMARK + " AND " +
+                                    // Ignore pinned bookmarks.
+                                    qualifyColumn(TABLE_BOOKMARKS, Bookmarks.PARENT)  + " <> " + Bookmarks.FIXED_PINNED_LIST_ID + " AND " +
+                                    qualifyColumn(TABLE_BOOKMARKS, Bookmarks.IS_DELETED)  + " = 0 AND " +
+                                    qualifyColumn(TABLE_BOOKMARKS, Bookmarks.URL) +
+                                        " NOT IN (SELECT " + History.URL + " FROM " + TABLE_HISTORY + ")" +
+                        " UNION ALL" +
+                        // History with and without bookmark.
+                        " SELECT " + "CASE " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.IS_DELETED) + " WHEN 0 THEN " +
+                                        // Give pinned bookmarks a NULL ID so that they're not treated as bookmarks. We can't
+                                        // completely ignore them here because they're joined with history entries we care about.
+                                        "CASE " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.PARENT) + " WHEN " +
+                                        Bookmarks.FIXED_PINNED_LIST_ID + " THEN NULL ELSE " +
+                                        qualifyColumn(TABLE_BOOKMARKS, Bookmarks._ID) + " END " +
+                                     "ELSE NULL END AS " + Combined.BOOKMARK_ID + ", " +
+                                     qualifyColumn(TABLE_HISTORY, History.URL) + " AS " + Combined.URL + ", " +
+                                     // Prioritize bookmark titles over history titles, since the user may have
+                                     // customized the title for a bookmark.
+                                     "COALESCE(" + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.TITLE) + ", " +
+                                                   qualifyColumn(TABLE_HISTORY, History.TITLE) +")" + " AS " + Combined.TITLE + ", " +
+                                     // Only use DISPLAY_READER if the matching bookmark entry inside reading
+                                     // list folder is not marked as deleted.
+                                     "CASE " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.IS_DELETED) + " WHEN 0 THEN CASE " +
+                                        qualifyColumn(TABLE_BOOKMARKS, Bookmarks.PARENT) + " WHEN " + Bookmarks.FIXED_READING_LIST_ID +
+                                        " THEN " + Combined.DISPLAY_READER + " ELSE " + Combined.DISPLAY_NORMAL + " END ELSE " +
+                                        Combined.DISPLAY_NORMAL + " END AS " + Combined.DISPLAY + ", " +
+                                     qualifyColumn(TABLE_HISTORY, History._ID) + " AS " + Combined.HISTORY_ID + ", " +
+                                     qualifyColumn(TABLE_HISTORY, History.VISITS) + " AS " + Combined.VISITS + ", " +
+                                     qualifyColumn(TABLE_HISTORY, History.DATE_LAST_VISITED) + " AS " + Combined.DATE_LAST_VISITED + ", " +
+                                     qualifyColumn(TABLE_HISTORY, History.FAVICON_ID) + " AS " + Combined.FAVICON_ID +
+                        " FROM " + TABLE_HISTORY + " LEFT OUTER JOIN " + TABLE_BOOKMARKS +
+                            " ON " + qualifyColumn(TABLE_BOOKMARKS, Bookmarks.URL) + " = " + qualifyColumn(TABLE_HISTORY, History.URL) +
+                        " WHERE " + qualifyColumn(TABLE_HISTORY, History.URL) + " IS NOT NULL AND " +
+                                    qualifyColumn(TABLE_HISTORY, History.IS_DELETED)  + " = 0 AND (" +
+                                        qualifyColumn(TABLE_BOOKMARKS, Bookmarks.TYPE) + " IS NULL OR " +
+                                        qualifyColumn(TABLE_BOOKMARKS, Bookmarks.TYPE)  + " = " + Bookmarks.TYPE_BOOKMARK + ") " +
+                    ")");
+
+            debug("Creating " + VIEW_COMBINED_WITH_FAVICONS + " view");
+
+            db.execSQL("CREATE VIEW IF NOT EXISTS " + VIEW_COMBINED_WITH_FAVICONS + " AS" +
+                    " SELECT " + qualifyColumn(VIEW_COMBINED, "*") + ", " +
+                        qualifyColumn(TABLE_FAVICONS, Favicons.URL) + " AS " + Combined.FAVICON_URL + ", " +
+                        qualifyColumn(TABLE_FAVICONS, Favicons.DATA) + " AS " + Combined.FAVICON +
+                    " FROM " + VIEW_COMBINED + " LEFT OUTER JOIN " + TABLE_FAVICONS +
+                        " ON " + Combined.FAVICON_ID + " = " + qualifyColumn(TABLE_FAVICONS, Favicons._ID));
+        }
+
         @Override
         public void onCreate(SQLiteDatabase db) {
             debug("Creating browser.db: " + db.getPath());
@@ -967,7 +1041,7 @@ public class BrowserProvider extends ContentProvider {
 
             createBookmarksWithFaviconsView(db);
             createHistoryWithFaviconsView(db);
-            createCombinedViewOn13(db);
+            createCombinedViewOn16(db);
 
             createOrUpdateSpecialFolder(db, Bookmarks.PLACES_FOLDER_GUID,
                 R.string.bookmarks_folder_places, 0);
@@ -1174,7 +1248,7 @@ public class BrowserProvider extends ContentProvider {
                     return null;
                 }
                 int faviconId = faviconField.getInt(null);
-                return BitmapFactory.decodeResource(mContext.getResources(), faviconId);
+                return BitmapUtils.decodeResource(mContext, faviconId);
             } catch (java.lang.IllegalAccessException ex) {
                 Log.e(LOGTAG, "[Drawable] Can't create favicon " + name, ex);
             } catch (java.lang.NoSuchFieldException ex) {
@@ -1676,6 +1750,44 @@ public class BrowserProvider extends ContentProvider {
                 R.string.bookmarks_folder_pinned, 6);
         }
 
+        private void upgradeDatabaseFrom14to15(SQLiteDatabase db) {
+            Cursor c = null;
+            try {
+                // Get all the pinned bookmarks
+                c = db.query(TABLE_BOOKMARKS,
+                             new String[] { Bookmarks._ID, Bookmarks.URL },
+                             Bookmarks.PARENT + " = ?",
+                             new String[] { Integer.toString(Bookmarks.FIXED_PINNED_LIST_ID) },
+                             null, null, null);
+
+                while (c.moveToNext()) {
+                    // Check if this URL can be parsed as a URI with a valid scheme.
+                    String url = c.getString(c.getColumnIndexOrThrow(Bookmarks.URL));
+                    if (Uri.parse(url).getScheme() != null) {
+                        continue;
+                    }
+
+                    // If it can't, update the URL to be an encoded "user-entered" value.
+                    ContentValues values = new ContentValues(1);
+                    String newUrl = Uri.fromParts("user-entered", url, null).toString();
+                    values.put(Bookmarks.URL, newUrl);
+                    db.update(TABLE_BOOKMARKS, values, Bookmarks._ID + " = ?",
+                              new String[] { Integer.toString(c.getInt(c.getColumnIndexOrThrow(Bookmarks._ID))) });
+                }
+            } finally {
+                if (c != null) {
+                    c.close();
+                }
+            }
+        }
+
+        private void upgradeDatabaseFrom15to16(SQLiteDatabase db) {
+            db.execSQL("DROP VIEW IF EXISTS " + VIEW_COMBINED);
+            db.execSQL("DROP VIEW IF EXISTS " + VIEW_COMBINED_WITH_FAVICONS);
+
+            createCombinedViewOn16(db);
+        }
+
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
             debug("Upgrading browser.db: " + db.getPath() + " from " +
@@ -1735,6 +1847,14 @@ public class BrowserProvider extends ContentProvider {
 
                     case 14:
                         upgradeDatabaseFrom13to14(db);
+                        break;
+
+                    case 15:
+                        upgradeDatabaseFrom14to15(db);
+                        break;
+
+                    case 16:
+                        upgradeDatabaseFrom15to16(db);
                         break;
                 }
             }

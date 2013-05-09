@@ -9,7 +9,7 @@ const Cu = Components.utils;
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource:///modules/devtools/ProfilerController.jsm");
 Cu.import("resource:///modules/devtools/ProfilerHelpers.jsm");
-Cu.import("resource:///modules/devtools/EventEmitter.jsm");
+Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 this.EXPORTED_SYMBOLS = ["ProfilerPanel"];
@@ -61,7 +61,7 @@ function ProfileUI(uid, name, panel) {
   this.iframe = doc.createElement("iframe");
   this.iframe.setAttribute("flex", "1");
   this.iframe.setAttribute("id", "profiler-cleo-" + uid);
-  this.iframe.setAttribute("src", "devtools/cleopatra.html?" + uid);
+  this.iframe.setAttribute("src", "cleopatra.html?" + uid);
   this.iframe.setAttribute("hidden", "true");
 
   // Append our iframe and subscribe to postMessage events.

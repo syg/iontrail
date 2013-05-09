@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -17,7 +16,6 @@
 #endif
 #include "ion/IonCompartment.h"
 #include "ion/IonInstrumentation.h"
-#include "ion/TypeOracle.h"
 #include "ion/ParallelFunctions.h"
 
 #include "vm/ForkJoin.h"
@@ -165,6 +163,31 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
     void branchTestObjShape(Condition cond, Register obj, Register shape, Label *label) {
         branchPtr(cond, Address(obj, JSObject::offsetOfShape()), shape, label);
+    }
+
+    template <typename Value>
+    Condition testMIRType(Condition cond, const Value &val, MIRType type) {
+        JS_ASSERT(type == MIRType_Null    || type == MIRType_Undefined  ||
+                  type == MIRType_Boolean || type == MIRType_Int32      ||
+                  type == MIRType_String  || type == MIRType_Object     ||
+                  type == MIRType_Double);
+        switch (type) {
+          case MIRType_Null:        return testNull(cond, val);
+          case MIRType_Undefined:   return testUndefined(cond, val);
+          case MIRType_Boolean:     return testBoolean(cond, val);
+          case MIRType_Int32:       return testInt32(cond, val);
+          case MIRType_String:      return testString(cond, val);
+          case MIRType_Object:      return testObject(cond, val);
+          case MIRType_Double:      return testDouble(cond, val);
+          default:
+            JS_NOT_REACHED("Bad MIRType");
+        }
+    }
+
+    template <typename Value>
+    void branchTestMIRType(Condition cond, const Value &val, MIRType type, Label *label) {
+        cond = testMIRType(cond, val, type);
+        j(cond, label);
     }
 
     // Branches to |label| if |reg| is false. |reg| should be a C++ bool.
@@ -554,7 +577,11 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
     // Inline allocation.
+    void newGCThing(const Register &result, gc::AllocKind allocKind, Label *fail);
     void newGCThing(const Register &result, JSObject *templateObject, Label *fail);
+    void newGCString(const Register &result, Label *fail);
+    void newGCShortString(const Register &result, Label *fail);
+
     void parNewGCThing(const Register &result,
                        const Register &threadContextReg,
                        const Register &tempReg1,
@@ -741,6 +768,38 @@ class MacroAssembler : public MacroAssemblerSpecific
         addPtr(ImmWord(p->stack()), temp);
     }
 
+    // The safe version of the above method refrains from assuming that the fields
+    // of the SPSProfiler class are going to stay the same across different runs of
+    // the jitcode.  Ion can use the more efficient unsafe version because ion jitcode
+    // will not survive changes to to the profiler settings.  Baseline jitcode, however,
+    // can span these changes, so any hardcoded field values will be incorrect afterwards.
+    // All the sps-related methods used by baseline call |spsProfileEntryAddressSafe|.
+    void spsProfileEntryAddressSafe(SPSProfiler *p, int offset, Register temp,
+                                    Label *full)
+    {
+        movePtr(ImmWord(p->addressOfSizePointer()), temp);
+
+        // Load size pointer
+        loadPtr(Address(temp, 0), temp);
+
+        // Load size
+        load32(Address(temp, 0), temp);
+        if (offset != 0)
+            add32(Imm32(offset), temp);
+
+        // Test against max size.
+        branch32(Assembler::LessThanOrEqual, AbsoluteAddress(p->addressOfMaxSize()), temp, full);
+
+        // 4 * sizeof(void*) * idx = idx << (2 + log(sizeof(void*)))
+        JS_STATIC_ASSERT(sizeof(ProfileEntry) == 4 * sizeof(void*));
+        lshiftPtr(Imm32(2 + (sizeof(void*) == 4 ? 2 : 3)), temp);
+        push(temp);
+        movePtr(ImmWord(p->addressOfStack()), temp);
+        loadPtr(Address(temp, 0), temp);
+        addPtr(Address(StackPointer, 0), temp);
+        addPtr(Imm32(sizeof(size_t)), StackPointer);
+    }
+
   public:
 
     // These functions are needed by the IonInstrumentation interface defined in
@@ -756,12 +815,12 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void spsUpdatePCIdx(SPSProfiler *p, Register idx, Register temp) {
         Label stackFull;
-        spsProfileEntryAddress(p, -1, temp, &stackFull);
+        spsProfileEntryAddressSafe(p, -1, temp, &stackFull);
         store32(idx, Address(temp, ProfileEntry::offsetOfPCIdx()));
         bind(&stackFull);
     }
 
-    void spsPushFrame(SPSProfiler *p, const char *str, RawScript s, Register temp) {
+    void spsPushFrame(SPSProfiler *p, const char *str, JSScript *s, Register temp) {
         Label stackFull;
         spsProfileEntryAddress(p, 0, temp, &stackFull);
 
@@ -780,7 +839,7 @@ class MacroAssembler : public MacroAssemblerSpecific
                       Register temp, Register temp2)
     {
         Label stackFull;
-        spsProfileEntryAddress(p, 0, temp, &stackFull);
+        spsProfileEntryAddressSafe(p, 0, temp, &stackFull);
 
         loadPtr(str, temp2);
         storePtr(temp2, Address(temp, ProfileEntry::offsetOfString()));
@@ -797,7 +856,8 @@ class MacroAssembler : public MacroAssemblerSpecific
 
         /* Always increment the stack size, whether or not we actually pushed. */
         bind(&stackFull);
-        movePtr(ImmWord(p->sizePointer()), temp);
+        movePtr(ImmWord(p->addressOfSizePointer()), temp);
+        loadPtr(Address(temp, 0), temp);
         add32(Imm32(1), Address(temp, 0));
     }
 
@@ -806,7 +866,15 @@ class MacroAssembler : public MacroAssemblerSpecific
         add32(Imm32(-1), Address(temp, 0));
     }
 
-    void loadBaselineOrIonCode(Register script, Register scratch, Label *failure);
+    // spsPropFrameSafe does not assume |profiler->sizePointer()| will stay constant.
+    void spsPopFrameSafe(SPSProfiler *p, Register temp) {
+        movePtr(ImmWord(p->addressOfSizePointer()), temp);
+        loadPtr(Address(temp, 0), temp);
+        add32(Imm32(-1), Address(temp, 0));
+    }
+
+    void loadBaselineOrIonRaw(Register script, Register dest, ExecutionMode mode, Label *failure);
+    void loadBaselineOrIonNoArgCheck(Register callee, Register dest, ExecutionMode mode, Label *failure);
 
     void loadBaselineFramePtr(Register framePtr, Register dest);
 

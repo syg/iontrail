@@ -33,7 +33,7 @@ MmsAttachmentDataToJSObject(JSContext* aContext,
 {
   JSAutoRequest ar(aContext);
 
-  JSObject* obj = JS_NewObject(aContext, nullptr, nullptr, nullptr);
+  JS::Rooted<JSObject*> obj(aContext, JS_NewObject(aContext, nullptr, nullptr, nullptr));
   NS_ENSURE_TRUE(obj, nullptr);
 
   JSString* idStr = JS_NewUCStringCopyN(aContext,
@@ -56,8 +56,9 @@ MmsAttachmentDataToJSObject(JSContext* aContext,
 
   nsCOMPtr<nsIDOMBlob> blob = static_cast<BlobParent*>(aAttachment.contentParent())->GetBlob();
   JS::Value content;
+  JS::Rooted<JSObject*> global (aContext, JS_GetGlobalForScopeChain(aContext));
   nsresult rv = nsContentUtils::WrapNative(aContext,
-                                           JS_GetGlobalForScopeChain(aContext),
+                                           global,
                                            blob,
                                            &NS_GET_IID(nsIDOMBlob),
                                            &content);
@@ -77,7 +78,7 @@ GetParamsFromSendMmsMessageRequest(JSContext* aCx,
 {
   JSAutoRequest ar(aCx);
 
-  JSObject* paramsObj = JS_NewObject(aCx, nullptr, nullptr, nullptr);
+  JS::Rooted<JSObject*> paramsObj(aCx, JS_NewObject(aCx, nullptr, nullptr, nullptr));
   NS_ENSURE_TRUE(paramsObj, false);
 
   // smil
@@ -101,10 +102,10 @@ GetParamsFromSendMmsMessageRequest(JSContext* aCx,
   }
 
   // receivers
-  JSObject* receiverArray;
+  JS::Rooted<JSObject*> receiverArray(aCx);
   if (NS_FAILED(nsTArrayToJSArray(aCx,
                                   aRequest.receivers(),
-                                  &receiverArray))) {
+                                  receiverArray.address()))) {
     return false;
   }
   if (!JS_DefineProperty(aCx, paramsObj, "receivers",
@@ -113,15 +114,15 @@ GetParamsFromSendMmsMessageRequest(JSContext* aCx,
   }
 
   // attachments
-  JSObject* attachmentArray = JS_NewArrayObject(aCx,
-                                                aRequest.attachments().Length(),
-                                                nullptr);
+  JS::Rooted<JSObject*> attachmentArray(aCx, JS_NewArrayObject(aCx,
+                                                               aRequest.attachments().Length(),
+                                                               nullptr));
   for (uint32_t i = 0; i < aRequest.attachments().Length(); i++) {
-    JSObject *obj = MmsAttachmentDataToJSObject(aCx,
-                                                aRequest.attachments().ElementAt(i));
+    JS::Rooted<JSObject*> obj(aCx,
+      MmsAttachmentDataToJSObject(aCx, aRequest.attachments().ElementAt(i)));
     NS_ENSURE_TRUE(obj, false);
-    jsval val = JS::ObjectValue(*obj);
-    if (!JS_SetElement(aCx, attachmentArray, i, &val)) {
+    JS::Rooted<JS::Value> val(aCx, JS::ObjectValue(*obj));
+    if (!JS_SetElement(aCx, attachmentArray, i, val.address())) {
       return false;
     }
   }
@@ -419,12 +420,12 @@ SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
       nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
       NS_ENSURE_TRUE(mmsService, true);
 
-      JS::Value params;
       AutoJSContext cx;
+      JS::Rooted<JS::Value> params(cx);
       if (!GetParamsFromSendMmsMessageRequest(
               cx,
               aRequest.get_SendMmsMessageRequest(),
-              &params)) {
+              params.address())) {
         NS_WARNING("SmsRequestParent: Fail to build MMS params.");
         return true;
       }
@@ -534,13 +535,13 @@ SmsRequestParent::NotifyMessageSent(nsISupports *aMessage)
     if (!msg->GetData(parent, data)) {
       return NS_ERROR_FAILURE;
     }
-    return SendReply(MessageReply(ReplyMessageSend(MobileMessageData(data))));
+    return SendReply(ReplyMessageSend(MobileMessageData(data)));
   }
 
   nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMessage);
   if (sms) {
     SmsMessage* msg = static_cast<SmsMessage*>(sms.get());
-    return SendReply(MessageReply(ReplyMessageSend(MobileMessageData(msg->GetData()))));
+    return SendReply(ReplyMessageSend(MobileMessageData(msg->GetData())));
   }
 
   return NS_ERROR_FAILURE;
@@ -563,13 +564,13 @@ SmsRequestParent::NotifyMessageGot(nsISupports *aMessage)
     if (!msg->GetData(parent, data)) {
       return NS_ERROR_FAILURE;
     }
-    return SendReply(MessageReply(ReplyGetMessage(MobileMessageData(data))));
+    return SendReply(ReplyGetMessage(MobileMessageData(data)));
   }
 
   nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMessage);
   if (sms) {
     SmsMessage* msg = static_cast<SmsMessage*>(sms.get());
-    return SendReply(MessageReply(ReplyGetMessage(MobileMessageData(msg->GetData()))));
+    return SendReply(ReplyGetMessage(MobileMessageData(msg->GetData())));
   }
 
   return NS_ERROR_FAILURE;
@@ -698,10 +699,22 @@ MobileMessageCursorParent::NotifyCursorResult(nsISupports* aResult)
   // error here to avoid sending a message to the dead process.
   NS_ENSURE_TRUE(mContinueCallback, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDOMMozSmsMessage> iMessage = do_QueryInterface(aResult);
-  if (iMessage) {
+  nsCOMPtr<nsIDOMMozSmsMessage> iSms = do_QueryInterface(aResult);
+  if (iSms) {
     SmsMessage* message = static_cast<SmsMessage*>(aResult);
     return SendNotifyResult(MobileMessageCursorData(message->GetData()))
+      ? NS_OK : NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMMozMmsMessage> iMms = do_QueryInterface(aResult);
+  if (iMms) {
+    MmsMessage* message = static_cast<MmsMessage*>(aResult);
+    ContentParent* parent = static_cast<ContentParent*>(Manager()->Manager());
+    MmsMessageData data;
+    if (!message->GetData(parent, data)) {
+      return NS_ERROR_FAILURE;
+    }
+    return SendNotifyResult(MobileMessageCursorData(data))
       ? NS_OK : NS_ERROR_FAILURE;
   }
 

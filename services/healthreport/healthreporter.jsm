@@ -19,10 +19,10 @@ Cu.import("resource://services-common/bagheeraclient.js");
 #endif
 
 Cu.import("resource://services-common/log4moz.js");
-Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-common/utils.js");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource://gre/modules/osfile.jsm");
+Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/TelemetryStopwatch.jsm");
@@ -47,7 +47,6 @@ const TELEMETRY_GENERATE_PAYLOAD = "HEALTHREPORT_GENERATE_JSON_PAYLOAD_MS";
 const TELEMETRY_JSON_PAYLOAD_SERIALIZE = "HEALTHREPORT_JSON_PAYLOAD_SERIALIZE_MS";
 const TELEMETRY_PAYLOAD_SIZE_UNCOMPRESSED = "HEALTHREPORT_PAYLOAD_UNCOMPRESSED_BYTES";
 const TELEMETRY_PAYLOAD_SIZE_COMPRESSED = "HEALTHREPORT_PAYLOAD_COMPRESSED_BYTES";
-const TELEMETRY_SAVE_LAST_PAYLOAD = "HEALTHREPORT_SAVE_LAST_PAYLOAD_MS";
 const TELEMETRY_UPLOAD = "HEALTHREPORT_UPLOAD_MS";
 const TELEMETRY_SHUTDOWN_DELAY = "HEALTHREPORT_SHUTDOWN_DELAY_MS";
 const TELEMETRY_COLLECT_CONSTANT = "HEALTHREPORT_COLLECT_CONSTANT_DATA_MS";
@@ -103,9 +102,15 @@ function AbstractHealthReporter(branch, policy, sessionRecorder) {
 
   TelemetryStopwatch.start(this._initHistogram, this);
 
-  this._ensureDirectoryExists(this._stateDir)
-      .then(this._onStateDirCreated.bind(this),
-            this._onInitError.bind(this));
+  // As soon as we could have storage, we need to register cleanup or
+  // else bad things (like hangs) happen on shutdown.
+  Services.obs.addObserver(this, "quit-application", false);
+  Services.obs.addObserver(this, "profile-before-change", false);
+
+  this._storageInProgress = true;
+  TelemetryStopwatch.start(this._dbOpenHistogram, this);
+  Metrics.Storage(this._dbName).then(this._onStorageCreated.bind(this),
+                                     this._onInitError.bind(this));
 }
 
 AbstractHealthReporter.prototype = Object.freeze({
@@ -139,18 +144,6 @@ AbstractHealthReporter.prototype = Object.freeze({
 
     // FUTURE consider poisoning prototype's functions so calls fail with a
     // useful error message.
-  },
-
-  _onStateDirCreated: function () {
-    // As soon as we have could storage, we need to register cleanup or
-    // else bad things happen on shutdown.
-    Services.obs.addObserver(this, "quit-application", false);
-    Services.obs.addObserver(this, "profile-before-change", false);
-
-    this._storageInProgress = true;
-    TelemetryStopwatch.start(this._dbOpenHistogram, this);
-    Metrics.Storage(this._dbName).then(this._onStorageCreated.bind(this),
-                                       this._onInitError.bind(this));
   },
 
   // Called when storage has been opened.
@@ -429,6 +422,10 @@ AbstractHealthReporter.prototype = Object.freeze({
    * will likely not return anything.
    */
   getProvider: function (name) {
+    if (!this._providerManager) {
+      return null;
+    }
+
     return this._providerManager.getProvider(name);
   },
 
@@ -504,6 +501,8 @@ AbstractHealthReporter.prototype = Object.freeze({
     }
 
     return Task.spawn(function doCollection() {
+      yield this._providerManager.ensurePullOnlyProvidersRegistered();
+
       try {
         TelemetryStopwatch.start(TELEMETRY_COLLECT_CONSTANT, this);
         yield this._providerManager.collectConstantData();
@@ -534,6 +533,8 @@ AbstractHealthReporter.prototype = Object.freeze({
                          CommonUtils.exceptionStr(ex));
         }
       }
+
+      yield this._providerManager.ensurePullOnlyProvidersUnregistered();
 
       // Flush gathered data to disk. This will incur an fsync. But, if
       // there is ever a time we want to persist data to disk, it's
@@ -569,6 +570,7 @@ AbstractHealthReporter.prototype = Object.freeze({
     }
 
     return Task.spawn(function collectAndObtain() {
+      yield this._storage.setAutoCheckpoint(0);
       yield this._providerManager.ensurePullOnlyProvidersRegistered();
 
       let payload;
@@ -583,6 +585,7 @@ AbstractHealthReporter.prototype = Object.freeze({
                                ex);
       } finally {
         yield this._providerManager.ensurePullOnlyProvidersUnregistered();
+        yield this._storage.setAutoCheckpoint(1);
 
         if (error) {
           throw error;
@@ -631,6 +634,11 @@ AbstractHealthReporter.prototype = Object.freeze({
   _getJSONPayload: function (now, asObject=false) {
     let pingDateString = this._formatDate(now);
     this._log.info("Producing JSON payload for " + pingDateString);
+
+    // May not be present if we are generating as a result of init error.
+    if (this._providerManager) {
+      yield this._providerManager.ensurePullOnlyProvidersRegistered();
+    }
 
     let o = {
       version: 2,
@@ -760,6 +768,10 @@ AbstractHealthReporter.prototype = Object.freeze({
       TelemetryStopwatch.finish(TELEMETRY_JSON_PAYLOAD_SERIALIZE, this);
     }
 
+    if (this._providerManager) {
+      yield this._providerManager.ensurePullOnlyProvidersUnregistered();
+    }
+
     throw new Task.Result(o);
   },
 
@@ -793,49 +805,6 @@ AbstractHealthReporter.prototype = Object.freeze({
     );
 
     return deferred.promise;
-  },
-
-  get _lastPayloadPath() {
-    return OS.Path.join(this._stateDir, "lastpayload.json");
-  },
-
-  _saveLastPayload: function (payload) {
-    let path = this._lastPayloadPath;
-    let pathTmp = path + ".tmp";
-
-    let encoder = new TextEncoder();
-    let buffer = encoder.encode(payload);
-
-    return OS.File.writeAtomic(path, buffer, {tmpPath: pathTmp});
-  },
-
-  /**
-   * Obtain the last uploaded payload.
-   *
-   * The promise is resolved to a JSON-decoded object on success. The promise
-   * is rejected if the last uploaded payload could not be found or there was
-   * an error reading or parsing it.
-   *
-   * This reads the last payload from disk. If you are looking for a
-   * current snapshot of the data, see `getJSONPayload` and
-   * `collectAndObtainJSONPayload`.
-   *
-   * @return Promise<object>
-   */
-  getLastPayload: function () {
-    let path = this._lastPayloadPath;
-
-    return OS.File.read(path).then(
-      function onData(buffer) {
-        let decoder = new TextDecoder();
-        let json = JSON.parse(decoder.decode(buffer));
-
-        return CommonUtils.laterTickResolvingPromise(json);
-      },
-      function onError(error) {
-        return Promise.reject(error);
-      }
-    );
   },
 
   _now: function _now() {
@@ -1138,33 +1107,46 @@ HealthReporter.prototype = Object.freeze({
     return result;
   },
 
-  _onBagheeraResult: function (request, isDelete, result) {
+  _onBagheeraResult: function (request, isDelete, date, result) {
     this._log.debug("Received Bagheera result.");
 
     let promise = CommonUtils.laterTickResolvingPromise(null);
+    let hrProvider = this.getProvider("org.mozilla.healthreport");
 
     if (!result.transportSuccess) {
+      // The built-in provider may not be initialized if this instance failed
+      // to initialize fully.
+      if (hrProvider && !isDelete) {
+        hrProvider.recordEvent("uploadTransportFailure", date);
+      }
+
       request.onSubmissionFailureSoft("Network transport error.");
       return promise;
     }
 
     if (!result.serverSuccess) {
+      if (hrProvider && !isDelete) {
+        hrProvider.recordEvent("uploadServerFailure", date);
+      }
+
       request.onSubmissionFailureHard("Server failure.");
       return promise;
     }
 
-    let now = this._now();
+    if (hrProvider && !isDelete) {
+      hrProvider.recordEvent("uploadSuccess", date);
+    }
 
     if (isDelete) {
       this.lastSubmitID = null;
     } else {
       this.lastSubmitID = result.id;
-      this.lastPingDate = now;
+      this.lastPingDate = date;
     }
 
-    request.onSubmissionSuccess(now);
+    request.onSubmissionSuccess(this._now());
 
-#ifdef PRERELEASE_BUILD
+#ifndef RELEASE_BUILD
     // Intended to be temporary until we a) assess the impact b) bug 846133
     // deploys more robust storage for state.
     try {
@@ -1193,6 +1175,7 @@ HealthReporter.prototype = Object.freeze({
     this._log.info("Uploading data to server: " + this.serverURI + " " +
                    this.serverNamespace + ":" + id);
     let client = new BagheeraClient(this.serverURI);
+    let now = this._now();
 
     return Task.spawn(function doUpload() {
       let payload = yield this.getJSONPayload();
@@ -1200,13 +1183,11 @@ HealthReporter.prototype = Object.freeze({
       let histogram = Services.telemetry.getHistogramById(TELEMETRY_PAYLOAD_SIZE_UNCOMPRESSED);
       histogram.add(payload.length);
 
-      TelemetryStopwatch.start(TELEMETRY_SAVE_LAST_PAYLOAD, this);
-      try {
-        yield this._saveLastPayload(payload);
-        TelemetryStopwatch.finish(TELEMETRY_SAVE_LAST_PAYLOAD, this);
-      } catch (ex) {
-        TelemetryStopwatch.cancel(TELEMETRY_SAVE_LAST_PAYLOAD, this);
-        throw ex;
+      let hrProvider = this.getProvider("org.mozilla.healthreport");
+      if (hrProvider) {
+        let event = this.lastSubmitID ? "continuationUploadAttempt"
+                                      : "firstDocumentUploadAttempt";
+        hrProvider.recordEvent(event, now);
       }
 
       TelemetryStopwatch.start(TELEMETRY_UPLOAD, this);
@@ -1221,10 +1202,13 @@ HealthReporter.prototype = Object.freeze({
         TelemetryStopwatch.finish(TELEMETRY_UPLOAD, this);
       } catch (ex) {
         TelemetryStopwatch.cancel(TELEMETRY_UPLOAD, this);
+        if (hrProvider) {
+          hrProvider.recordEvent("uploadClientFailure", now);
+        }
         throw ex;
       }
 
-      yield this._onBagheeraResult(request, false, result);
+      yield this._onBagheeraResult(request, false, now, result);
     }.bind(this));
   },
 
@@ -1245,7 +1229,7 @@ HealthReporter.prototype = Object.freeze({
     let client = new BagheeraClient(this.serverURI);
 
     return client.deleteDocument(this.serverNamespace, this.lastSubmitID)
-                 .then(this._onBagheeraResult.bind(this, request, true),
+                 .then(this._onBagheeraResult.bind(this, request, true, this._now()),
                        this._onSubmitDataRequestFailure.bind(this));
   },
 });

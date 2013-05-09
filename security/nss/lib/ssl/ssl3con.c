@@ -5,7 +5,6 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/* $Id$ */
 
 /* TODO(ekr): Implement HelloVerifyRequest on server side. OK for now. */
 
@@ -8446,10 +8445,7 @@ static SECStatus
 ssl3_SendCertificateStatus(sslSocket *ss)
 {
     SECStatus            rv;
-    CERTCertificateList *certChain;
     int                  len 		= 0;
-    int                  i;
-    SSL3KEAType          certIndex;
 
     SSL_TRC(3, ("%d: SSL3[%d]: send certificate status handshake",
 		SSL_GETPID(), ss->fd));
@@ -10469,7 +10465,7 @@ ssl3_InitState(sslSocket *ss)
 
     ss->ssl3.hs.ws = (ss->sec.isServer) ? wait_client_hello : wait_server_hello;
 #ifdef NSS_ENABLE_ECC
-    ss->ssl3.hs.negotiatedECCurves = SSL3_SUPPORTED_CURVES_MASK;
+    ss->ssl3.hs.negotiatedECCurves = ssl3_GetSupportedECCCurveMask(ss);
 #endif
     ssl_ReleaseSpecWriteLock(ss);
 

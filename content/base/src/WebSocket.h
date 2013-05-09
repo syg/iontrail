@@ -77,16 +77,26 @@ public:
                               bool aUseCapture,
                               bool aWantsUntrusted,
                               uint8_t optional_argc);
+  virtual void AddEventListener(const nsAString& aType,
+                                nsIDOMEventListener* aListener,
+                                bool aCapture,
+                                const Nullable<bool>& aWantsUntrusted,
+                                ErrorResult& aRv) MOZ_OVERRIDE;
   NS_IMETHOD RemoveEventListener(const nsAString& aType,
                                  nsIDOMEventListener* aListener,
                                  bool aUseCapture);
+  virtual void RemoveEventListener(const nsAString& aType,
+                                   nsIDOMEventListener* aListener,
+                                   bool aUseCapture,
+                                   ErrorResult& aRv) MOZ_OVERRIDE;
 
   virtual void DisconnectFromOwner();
 
   // nsWrapperCache
   nsPIDOMWindow* GetParentObject() { return GetOwner(); }
 
-  JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext *cx,
+                               JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
 
 public: // static helpers:
 

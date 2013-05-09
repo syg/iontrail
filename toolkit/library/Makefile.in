@@ -129,6 +129,13 @@ endif
 ifeq (Linux,$(OS_ARCH))
 ifneq (Android,$(OS_TARGET))
 OS_LIBS += -lrt
+EXTRA_DSO_LDOPTS += -Wl,-version-script,symverscript
+
+symverscript: symverscript.in
+	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
+		-DVERSION="$(LIBRARY_NAME)$(MOZILLA_VERSION)" $< > $@
+
+EXTRA_DEPS += symverscript
 endif
 endif
 
@@ -297,7 +304,7 @@ endif
 STATIC_LIBS += thebes gl ycbcr
 
 ifdef MOZ_ENABLE_GTEST
-COMPONENT_LIBS += gtest
+COMPONENT_LIBS += gtest xpcom_glue_gtest
 endif
 
 ifdef MOZ_ENABLE_PROFILER_SPS
@@ -463,7 +470,7 @@ OS_LIBS += \
 endif
 
 ifdef MOZ_WMF
-OS_LIBS += $(call EXPAND_LIBNAME,mfuuid wmcodecdspuuid)
+OS_LIBS += $(call EXPAND_LIBNAME,mfuuid wmcodecdspuuid strmiids)
 endif
 
 EXTRA_DEPS += \
@@ -677,11 +684,6 @@ DEFINES += \
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 OS_LIBS += $(call EXPAND_LIBNAME,usp10 oleaut32)
-endif
-
-ifeq ($(OS_ARCH),OpenBSD)
-# Needed by nsAuthGSSAPI
-EXTRA_DSO_LDOPTS += -lkrb5 -lcrypto
 endif
 
 ifdef MOZ_DEBUG

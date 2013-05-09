@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -236,15 +235,7 @@ class BaselineFrame
         return flags_ & HAS_CALL_OBJ;
     }
 
-    CallObject &callObj() const {
-        JS_ASSERT(hasCallObj());
-        JS_ASSERT(fun()->isHeavyweight());
-
-        JSObject *obj = scopeChain();
-        while (!obj->isCall())
-            obj = obj->enclosingScope();
-        return obj->asCall();
-    }
+    inline CallObject &callObj() const;
 
     void setFlags(uint32_t flags) {
         flags_ = flags;
@@ -260,10 +251,13 @@ class BaselineFrame
     bool heavyweightFunPrologue(JSContext *cx);
     bool initFunctionScopeObjects(JSContext *cx);
 
-    void initArgsObj(ArgumentsObject &argsobj) {
-        JS_ASSERT(script()->needsArgsObj());
+    void initArgsObjUnchecked(ArgumentsObject &argsobj) {
         flags_ |= HAS_ARGS_OBJ;
         argsObj_ = &argsobj;
+    }
+    void initArgsObj(ArgumentsObject &argsobj) {
+        JS_ASSERT(script()->needsArgsObj());
+        initArgsObjUnchecked(argsobj);
     }
     bool hasArgsObj() const {
         return flags_ & HAS_ARGS_OBJ;

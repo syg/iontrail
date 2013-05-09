@@ -20,6 +20,7 @@
 #include "nsICacheVisitor.h"
 #include "nsDiskCacheDevice.h"
 #include "nsDiskCacheDeviceSQL.h"
+#include "nsCacheUtils.h"
 
 #include "nsIObserverService.h"
 #include "nsIPrefService.h"
@@ -1254,7 +1255,7 @@ nsCacheService::Shutdown()
     }
 
     if (cacheIOThread)
-        cacheIOThread->Shutdown();
+        nsShutdownThread::BlockingShutdown(cacheIOThread);
 
     if (shouldSanitize) {
         nsresult rv = parentDir->AppendNative(NS_LITERAL_CSTRING("Cache"));
@@ -1609,7 +1610,9 @@ public:
             return rv;
         }
 
-        nsCacheService::SetDiskSmartSize();
+        // It is safe to call SetDiskSmartSize_Locked() without holding the lock
+        // when we are on main thread and nsCacheService is initialized.
+        nsCacheService::gService->SetDiskSmartSize_Locked();
 
         if (nsCacheService::gService->mObserver->PermittedToSmartSize(branch, false)) {
             rv = branch->SetIntPref(DISK_CACHE_CAPACITY_PREF, MAX_CACHE_SIZE);

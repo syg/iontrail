@@ -8,19 +8,16 @@
 
 #include "AudioSegment.h"
 #include "mozilla/dom/AudioParam.h"
+#include "mozilla/Mutex.h"
 
 namespace mozilla {
 
 namespace dom {
+class AudioNode;
 struct ThreeDPoint;
 }
 
 class AudioNodeStream;
-
-// We ensure that the graph advances in steps that are multiples of the Web
-// Audio block size
-const uint32_t WEBAUDIO_BLOCK_SIZE_BITS = 7;
-const uint32_t WEBAUDIO_BLOCK_SIZE = 1 << WEBAUDIO_BLOCK_SIZE_BITS;
 
 /**
  * This class holds onto a set of immutable channel buffers. The storage
@@ -99,10 +96,12 @@ void AudioBlockAddChannelWithScale(const float aInput[WEBAUDIO_BLOCK_SIZE],
 
 /**
  * Pointwise copy-scaled operation. aScale == 1.0f should be optimized.
+ *
+ * Buffer size is implicitly assumed to be WEBAUDIO_BLOCK_SIZE.
  */
-void AudioBlockCopyChannelWithScale(const float aInput[WEBAUDIO_BLOCK_SIZE],
+void AudioBlockCopyChannelWithScale(const float* aInput,
                                     float aScale,
-                                    float aOutput[WEBAUDIO_BLOCK_SIZE]);
+                                    float* aOutput);
 
 /**
  * Vector copy-scaled operation.
@@ -146,12 +145,20 @@ AudioBlockPanStereoToStereo(const float aInputL[WEBAUDIO_BLOCK_SIZE],
  */
 class AudioNodeEngine {
 public:
-  AudioNodeEngine()
+  // This should be compatible with AudioNodeStream::OutputChunks.
+  typedef nsAutoTArray<AudioChunk, 1> OutputChunks;
+
+  explicit AudioNodeEngine(dom::AudioNode* aNode)
+    : mNode(aNode)
+    , mNodeMutex("AudioNodeEngine::mNodeMutex")
+    , mInputCount(aNode ? aNode->NumberOfInputs() : 1)
+    , mOutputCount(aNode ? aNode->NumberOfOutputs() : 0)
   {
     MOZ_COUNT_CTOR(AudioNodeEngine);
   }
   virtual ~AudioNodeEngine()
   {
+    MOZ_ASSERT(!mNode, "The node reference must be already cleared");
     MOZ_COUNT_DTOR(AudioNodeEngine);
   }
 
@@ -185,7 +192,6 @@ public:
   /**
    * Produce the next block of audio samples, given input samples aInput
    * (the mixed data for input 0).
-   * By default, simply returns the mixed input.
    * aInput is guaranteed to have float sample format (if it has samples at all)
    * and to have been resampled to IdealAudioRate(), and to have exactly
    * WEBAUDIO_BLOCK_SIZE samples.
@@ -197,8 +203,70 @@ public:
                                  AudioChunk* aOutput,
                                  bool* aFinished)
   {
+    MOZ_ASSERT(mInputCount <= 1 && mOutputCount <= 1);
     *aOutput = aInput;
   }
+
+  /**
+   * Produce the next block of audio samples, given input samples in the aInput
+   * array.  There is one input sample per active port in aInput, in order.
+   * This is the multi-input/output version of ProduceAudioBlock.  Only one kind
+   * of ProduceAudioBlock is called on each node, depending on whether the
+   * number of inputs and outputs are both 1 or not.
+   *
+   * aInput is always guaranteed to not contain more input AudioChunks than the
+   * maximum number of inputs for the node.  It is the responsibility of the
+   * overrides of this function to make sure they will only add a maximum number
+   * of AudioChunks to aOutput as advertized by the AudioNode implementation.
+   * An engine may choose to produce fewer inputs than advertizes by the
+   * corresponding AudioNode, in which case it will be interpreted as a channel
+   * of silence.
+   */
+  virtual void ProduceAudioBlocksOnPorts(AudioNodeStream* aStream,
+                                         const OutputChunks& aInput,
+                                         OutputChunks& aOutput,
+                                         bool* aFinished)
+  {
+    MOZ_ASSERT(mInputCount > 1 || mOutputCount > 1);
+    // Only produce one output port, and drop all other input ports.
+    aOutput[0] = aInput[0];
+  }
+
+  Mutex& NodeMutex() { return mNodeMutex;}
+
+  bool HasNode() const
+  {
+    return !!mNode;
+  }
+
+  dom::AudioNode* Node() const
+  {
+    mNodeMutex.AssertCurrentThreadOwns();
+    return mNode;
+  }
+
+  dom::AudioNode* NodeMainThread() const
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+    return mNode;
+  }
+
+  void ClearNode()
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(mNode != nullptr);
+    mNodeMutex.AssertCurrentThreadOwns();
+    mNode = nullptr;
+  }
+
+  uint16_t InputCount() const { return mInputCount; }
+  uint16_t OutputCount() const { return mOutputCount; }
+
+private:
+  dom::AudioNode* mNode;
+  Mutex mNodeMutex;
+  const uint16_t mInputCount;
+  const uint16_t mOutputCount;
 };
 
 }

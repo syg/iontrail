@@ -13,12 +13,7 @@ var WebrtcUI = {
   handleRequest: function handleRequest(aSubject, aTopic, aData) {
     let { windowID: windowID, callID: callID } = JSON.parse(aData);
 
-    let someWindow = Services.wm.getMostRecentWindow("navigator:browser");
-    if (someWindow != window)
-      return;
-
-    let contentWindow = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-          .getInterface(Ci.nsIDOMWindowUtils).getOuterWindowWithId(windowID);
+    let contentWindow = Services.wm.getOuterWindowWithId(windowID);
     let browser = BrowserApp.getBrowserForWindow(contentWindow);
     let params = aSubject.QueryInterface(Ci.nsIMediaStreamOptions);
 
@@ -84,8 +79,9 @@ var WebrtcUI = {
       return;
 
     let host = aBrowser.contentDocument.documentURIObject.asciiHost;
+    let requestor = BrowserApp.manifest ? "'" + BrowserApp.manifest.name  + "'" : host;
     let stringBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
-    let message = stringBundle.formatStringFromName("getUserMedia.share" + requestType + ".message", [ host ], 1);
+    let message = stringBundle.formatStringFromName("getUserMedia.share" + requestType + ".message", [ requestor ], 1);
 
     if (audioDevices.length) {
       let buttons = this.getDeviceButtons(audioDevices, aCallID, stringBundle);

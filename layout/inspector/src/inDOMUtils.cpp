@@ -132,14 +132,7 @@ inDOMUtils::GetChildrenForNode(nsIDOMNode* aNode,
   if (aShowingAnonymousContent) {
     nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
     if (content) {
-      nsRefPtr<nsBindingManager> bindingManager =
-        inLayoutUtils::GetBindingManagerFor(aNode);
-      if (bindingManager) {
-        bindingManager->GetAnonymousNodesFor(content, getter_AddRefs(kids));
-        if (!kids) {
-          bindingManager->GetContentListFor(content, getter_AddRefs(kids));
-        }
-      }
+      kids = content->GetChildren(nsIContent::eAllChildren);
     }
   }
 
@@ -441,7 +434,7 @@ inDOMUtils::ColorNameToRGB(const nsAString& aColorName, JSContext* aCx,
   triple.mG = NS_GET_G(color);
   triple.mB = NS_GET_B(color);
 
-  if (!triple.ToObject(aCx, nullptr, aValue)) {
+  if (!triple.ToObject(aCx, JS::NullPtr(), aValue)) {
     return NS_ERROR_FAILURE;
   }
 

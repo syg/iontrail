@@ -28,6 +28,9 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=741267
     function doTest() {
       var win = $("t").contentWindow;
       var sandbox = Components.utils.Sandbox(win, { sandboxPrototype: win });
+
+      is(sandbox._content, undefined, "_content does nothing over Xray");
+
       try {
         var css = Components.utils.evalInSandbox("CSSStyleDeclaration", sandbox);
         is(css.prototype, "[object CSSStyleDeclarationPrototype]", "'CSSStyleDeclaration.prototype' in a sandbox should return the CSSStyleDeclaration interface prototype object");
@@ -231,6 +234,14 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=741267
            "Should have Xrays for callback interface objects");
       } catch (e) {
         ok(false, "Should be able to return NodeFilter from a sandbox " + e);
+      }
+
+      try {
+        var eventCtor = Components.utils.evalInSandbox("Event", sandbox);
+        var e = new eventCtor("test", { bubbles: true });
+        is(e.bubbles, true, "Dictionary argument should work");
+      } catch (e) {
+        ok(false, "Should be able to construct my event " + e);
       }
 
       SimpleTest.finish();

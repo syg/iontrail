@@ -69,6 +69,7 @@ MobileMessageService::CreateMmsMessage(int32_t               aId,
                                        const nsAString&      aSubject,
                                        const nsAString&      aSmil,
                                        const JS::Value&      aAttachments,
+                                       const JS::Value&      aExpiryDate,
                                        JSContext*            aCx,
                                        nsIDOMMozMmsMessage** aMessage)
 {
@@ -83,6 +84,7 @@ MobileMessageService::CreateMmsMessage(int32_t               aId,
                             aSubject,
                             aSmil,
                             aAttachments,
+                            aExpiryDate,
                             aCx,
                             aMessage);
 }
@@ -105,6 +107,7 @@ MobileMessageService::CreateThread(uint64_t aId,
                                    const JS::Value& aTimestamp,
                                    const nsAString& aBody,
                                    uint64_t aUnreadCount,
+                                   const nsAString& aLastMessageType,
                                    JSContext* aCx,
                                    nsIDOMMozMobileMessageThread** aThread)
 {
@@ -113,6 +116,7 @@ MobileMessageService::CreateThread(uint64_t aId,
                                      aTimestamp,
                                      aBody,
                                      aUnreadCount,
+                                     aLastMessageType,
                                      aCx,
                                      aThread);
 }

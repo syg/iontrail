@@ -19,8 +19,6 @@ struct JSContext;
 class JSObject;
 struct JSPrincipals;
 
-class nsIJSContextStack;
-
 namespace mozilla {
 namespace ipc {
 
@@ -73,15 +71,6 @@ public:
         return mCompileOnly;
     }
 
-    class AutoContextPusher
-    {
-    public:
-        AutoContextPusher(XPCShellEnvironment* aEnv);
-        ~AutoContextPusher();
-    private:
-        XPCShellEnvironment* mEnv;
-    };
-
 protected:
     XPCShellEnvironment();
     bool Init();
@@ -89,7 +78,6 @@ protected:
 private:
     JSContext* mCx;
     nsAutoJSValHolder mGlobalHolder;
-    nsCOMPtr<nsIJSContextStack> mCxStack;
     JSPrincipals* mJSPrincipals;
 
     int mExitCode;

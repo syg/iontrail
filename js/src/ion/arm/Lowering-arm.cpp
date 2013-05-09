@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -231,6 +230,25 @@ LIRGeneratorARM::lowerForShift(LInstructionHelper<1, 2, 0> *ins, MDefinition *mi
 bool
 LIRGeneratorARM::lowerDivI(MDiv *div)
 {
+    // Division instructions are slow. Division by constant denominators can be
+    // rewritten to use other instructions.
+    if (div->rhs()->isConstant()) {
+        int32_t rhs = div->rhs()->toConstant()->value().toInt32();
+        // Check for division by a positive power of two, which is an easy and
+        // important case to optimize. Note that other optimizations are also
+        // possible; division by negative powers of two can be optimized in a
+        // similar manner as positive powers of two, and division by other
+        // constants can be optimized by a reciprocal multiplication technique.
+        int32_t shift;
+        JS_FLOOR_LOG2(shift, rhs);
+        if (rhs > 0 && 1 << shift == rhs) {
+            LDivPowTwoI *lir = new LDivPowTwoI(useRegisterAtStart(div->lhs()), shift);
+            if (div->fallible() && !assignSnapshot(lir))
+                return false;
+            return define(lir, div);
+        }
+    }
+
     LDivI *lir = new LDivI(useFixed(div->lhs(), r0), use(div->rhs(), r1),
                            tempFixed(r2), tempFixed(r3));
     if (div->fallible() && !assignSnapshot(lir))
@@ -310,6 +328,20 @@ LIRGeneratorARM::visitGuardShape(MGuardShape *ins)
     LDefinition tempObj = temp(LDefinition::OBJECT);
     LGuardShape *guard = new LGuardShape(useRegister(ins->obj()), tempObj);
     if (!assignSnapshot(guard, ins->bailoutKind()))
+        return false;
+    if (!add(guard, ins))
+        return false;
+    return redefine(ins, ins->obj());
+}
+
+bool
+LIRGeneratorARM::visitGuardObjectType(MGuardObjectType *ins)
+{
+    JS_ASSERT(ins->obj()->type() == MIRType_Object);
+
+    LDefinition tempObj = temp(LDefinition::OBJECT);
+    LGuardObjectType *guard = new LGuardObjectType(useRegister(ins->obj()), tempObj);
+    if (!assignSnapshot(guard))
         return false;
     if (!add(guard, ins))
         return false;
@@ -437,6 +469,22 @@ bool
 LIRGeneratorARM::visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr *ins)
 {
     return define(new LAsmJSLoadFuncPtr(useRegister(ins->index()), temp()), ins);
+}
+
+bool
+LIRGeneratorARM::lowerTruncateDToInt32(MTruncateToInt32 *ins)
+{
+    MDefinition *opd = ins->input();
+    JS_ASSERT(opd->type() == MIRType_Double);
+
+    return define(new LTruncateDToInt32(useRegister(opd), LDefinition::BogusTemp()), ins);
+}
+
+bool
+LIRGeneratorARM::visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic *ins)
+{
+    JS_NOT_REACHED("NYI");
+    return true;
 }
 
 //__aeabi_uidiv

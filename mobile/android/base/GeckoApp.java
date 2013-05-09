@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.background.announcements.AnnouncementsBroadcastService;
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PanZoomController;
@@ -766,10 +767,12 @@ abstract public class GeckoApp
                 if (tab == null)
                     return;
                 tab.setZoomConstraints(new ZoomConstraints(message));
+                tab.setIsRTL(message.getBoolean("isRTL"));
                 // Sync up the layer view and the tab if the tab is currently displayed.
                 LayerView layerView = mLayerView;
                 if (layerView != null && Tabs.getInstance().isSelectedTab(tab)) {
                     layerView.setZoomConstraints(tab.getZoomConstraints());
+                    layerView.setIsRTL(tab.getIsRTL());
                 }
             } else if (event.equals("Session:StatePurged")) {
                 onStatePurged();
@@ -791,7 +794,7 @@ abstract public class GeckoApp
             } else if (event.equals("Accessibility:Event")) {
                 GeckoAccessibility.sendAccessibilityEvent(message);
             } else if (event.equals("Accessibility:Ready")) {
-                GeckoAccessibility.updateAccessibilitySettings();
+                GeckoAccessibility.updateAccessibilitySettings(this);
             } else if (event.equals("Shortcut:Remove")) {
                 final String url = message.getString("url");
                 final String origin = message.getString("origin");
@@ -1156,10 +1159,10 @@ abstract public class GeckoApp
                     if (isDataURI) {
                         int dataStart = aSrc.indexOf(',');
                         byte[] buf = Base64.decode(aSrc.substring(dataStart+1), Base64.DEFAULT);
-                        BitmapFactory.decodeByteArray(buf, 0, buf.length, options);
+                        BitmapUtils.decodeByteArray(buf, options);
                         options.inSampleSize = getBitmapSampleSize(options, idealWidth, idealHeight);
                         options.inJustDecodeBounds = false;
-                        image = BitmapFactory.decodeByteArray(buf, 0, buf.length, options);
+                        image = BitmapUtils.decodeByteArray(buf, options);
                     } else {
                         int byteRead;
                         byte[] buf = new byte[4192];
@@ -1174,10 +1177,10 @@ abstract public class GeckoApp
                             os.write(buf, 0, byteRead);
                         }
                         byte[] imgBuffer = os.toByteArray();
-                        BitmapFactory.decodeByteArray(imgBuffer, 0, imgBuffer.length, options);
+                        BitmapUtils.decodeByteArray(imgBuffer, options);
                         options.inSampleSize = getBitmapSampleSize(options, idealWidth, idealHeight);
                         options.inJustDecodeBounds = false;
-                        image = BitmapFactory.decodeByteArray(imgBuffer, 0, imgBuffer.length, options);
+                        image = BitmapUtils.decodeByteArray(imgBuffer, options);
                     }
                     if(image != null) {
                         mgr.setBitmap(image);
@@ -1186,7 +1189,7 @@ abstract public class GeckoApp
                         return false;
                     }
                 } catch(OutOfMemoryError ome) {
-                    Log.e(LOGTAG, "Out of Memmory when coverting to byte array", ome);
+                    Log.e(LOGTAG, "Out of Memory when converting to byte array", ome);
                     return false;
                 } catch(IOException ioe) {
                     Log.e(LOGTAG, "I/O Exception while setting wallpaper", ioe);
@@ -1318,6 +1321,37 @@ abstract public class GeckoApp
         mJavaUiStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_JAVAUI");
         mGeckoReadyStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_GECKOREADY");
 
+        String args = getIntent().getStringExtra("args");
+
+        String profileName = null;
+        String profilePath = null;
+        if (args != null) {
+            if (args.contains("-P")) {
+                Pattern p = Pattern.compile("(?:-P\\s*)(\\w*)(\\s*)");
+                Matcher m = p.matcher(args);
+                if (m.find()) {
+                    profileName = m.group(1);
+                }
+            }
+            if (args.contains("-profile")) {
+                Pattern p = Pattern.compile("(?:-profile\\s*)(\\S*)(\\s*)");
+                Matcher m = p.matcher(args);
+                if (m.find()) {
+                    profilePath =  m.group(1);
+                }
+                if (profileName == null) {
+                    profileName = getDefaultProfileName();
+                    if (profileName == null)
+                        profileName = "default";
+                }
+                GeckoApp.sIsUsingCustomProfile = true;
+            }
+            if (profileName != null || profilePath != null) {
+                mProfile = GeckoProfile.get(this, profileName, profilePath);
+            }
+        }
+
+        BrowserDB.initialize(getProfile().getName());
         ((GeckoApplication)getApplication()).initialize();
 
         mAppContext = this;
@@ -1327,7 +1361,7 @@ abstract public class GeckoApp
         Favicons.getInstance().attachToContext(this);
 
         // Check to see if the activity is restarted after configuration change.
-        if (getLastNonConfigurationInstance() != null) {
+        if (getLastCustomNonConfigurationInstance() != null) {
             // Restart the application as a safe way to handle the configuration change.
             doRestart();
             System.exit(0);
@@ -1356,7 +1390,7 @@ abstract public class GeckoApp
             }
         }
 
-        LayoutInflater.from(this).setFactory(GeckoViewsFactory.getInstance());
+        LayoutInflater.from(this).setFactory(this);
 
         super.onCreate(savedInstanceState);
 
@@ -1374,9 +1408,8 @@ abstract public class GeckoApp
         // check if the last run was exited due to a normal kill while
         // we were in the background, or a more harsh kill while we were
         // active
-        if (savedInstanceState != null) {
-            mRestoreMode = RESTORE_OOM;
-
+        mRestoreMode = getSessionRestoreState(savedInstanceState);
+        if (mRestoreMode == RESTORE_OOM) {
             boolean wasInBackground =
                 savedInstanceState.getBoolean(SAVED_STATE_IN_BACKGROUND, false);
 
@@ -1439,46 +1472,11 @@ abstract public class GeckoApp
 
         Intent intent = getIntent();
         String action = intent.getAction();
-        String args = intent.getStringExtra("args");
-
-        String profileName = null;
-        String profilePath = null;
-        if (args != null) {
-            if (args.contains("-P")) {
-                Pattern p = Pattern.compile("(?:-P\\s*)(\\w*)(\\s*)");
-                Matcher m = p.matcher(args);
-                if (m.find()) {
-                    profileName = m.group(1);
-                }
-            }
-            if (args.contains("-profile")) {
-                Pattern p = Pattern.compile("(?:-profile\\s*)(\\S*)(\\s*)");
-                Matcher m = p.matcher(args);
-                if (m.find()) {
-                    profilePath =  m.group(1);
-                }
-                if (profileName == null) {
-                    profileName = getDefaultProfileName();
-                    if (profileName == null)
-                        profileName = "default";
-                }
-                GeckoApp.sIsUsingCustomProfile = true;
-            }
-            if (profileName != null || profilePath != null) {
-                mProfile = GeckoProfile.get(this, profileName, profilePath);
-            }
-        }
-
-        BrowserDB.initialize(getProfile().getName());
 
         String passedUri = null;
         String uri = getURIFromIntent(intent);
         if (uri != null && uri.length() > 0) {
             passedUri = uri;
-        }
-
-        if (mRestoreMode == RESTORE_NONE && shouldRestoreSession()) {
-            mRestoreMode = RESTORE_CRASH;
         }
 
         final boolean isExternalURL = passedUri != null && !passedUri.equals("about:home");
@@ -1714,20 +1712,32 @@ abstract public class GeckoApp
         return mProfile;
     }
 
-    protected boolean shouldRestoreSession() {
-        SharedPreferences prefs = GeckoApp.mAppContext.getSharedPreferences(PREFS_NAME, 0);
+    protected int getSessionRestoreState(Bundle savedInstanceState) {
+        if (savedInstanceState != null) {
+            return RESTORE_OOM;
+        }
+
+        final SharedPreferences prefs = GeckoApp.mAppContext.getSharedPreferences(PREFS_NAME, 0);
 
         // We record crashes in the crash reporter. If sessionstore.js
         // exists, but we didn't flag a crash in the crash reporter, we
         // were probably just force killed by the user, so we shouldn't do
         // a restore.
         if (prefs.getBoolean(PREFS_CRASHED, false)) {
-            prefs.edit().putBoolean(GeckoApp.PREFS_CRASHED, false).commit();
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
+                public void run() {
+                    prefs.edit()
+                         .putBoolean(GeckoApp.PREFS_CRASHED, false)
+                         .commit();
+                }
+            });
+
             if (getProfile().shouldRestoreSession()) {
-                return true;
+                return RESTORE_CRASH;
             }
         }
-        return false;
+        return RESTORE_NONE;
     }
 
     /**
@@ -1903,7 +1913,7 @@ abstract public class GeckoApp
         GeckoScreenOrientationListener.getInstance().start();
 
         // User may have enabled/disabled accessibility.
-        GeckoAccessibility.updateAccessibilitySettings();
+        GeckoAccessibility.updateAccessibilitySettings(this);
 
         ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
@@ -2062,12 +2072,6 @@ abstract public class GeckoApp
     }
 
     @Override
-    public void onContentChanged() {
-        super.onContentChanged();
-    }
-
-
-    @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
@@ -2081,7 +2085,7 @@ abstract public class GeckoApp
     }
 
     @Override
-    public Object onRetainNonConfigurationInstance() {
+    public Object onRetainCustomNonConfigurationInstance() {
         // Send a non-null value so that we can restart the application, 
         // when activity restarts due to configuration change.
         return Boolean.TRUE;
@@ -2089,6 +2093,21 @@ abstract public class GeckoApp
 
     public String getContentProcessName() {
         return AppConstants.MOZ_CHILD_PROCESS_NAME;
+    }
+
+    /*
+     * Only one factory can be set on the inflater; however, we want to use two
+     * factories (GeckoViewsFactory and the FragmentActivity factory).
+     * Overriding onCreateView() here allows us to dispatch view creation to
+     * both factories.
+     */
+    @Override
+    public View onCreateView(String name, Context context, AttributeSet attrs) {
+        View view = GeckoViewsFactory.getInstance().onCreateView(name, context, attrs);
+        if (view == null) {
+            view = super.onCreateView(name, context, attrs);
+        }
+        return view;
     }
 
     public void addEnvToIntent(Intent intent) {
@@ -2388,7 +2407,10 @@ abstract public class GeckoApp
     protected void connectGeckoLayerClient() {
         mLayerView.getLayerClient().notifyGeckoReady();
 
-        mLayerView.setTouchIntercepter(this);
+        mLayerView.addTouchInterceptor(this);
+    }
+
+    public void setAccessibilityEnabled(boolean enabled) {
     }
 
     @Override
@@ -2418,7 +2440,7 @@ abstract public class GeckoApp
             }
         }
 
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createMotionEvent(event));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createMotionEvent(event, false));
         return true;
     }
 

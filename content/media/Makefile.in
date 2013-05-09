@@ -15,57 +15,28 @@ ifndef _MSC_VER
 FAIL_ON_WARNINGS := 1
 endif # !_MSC_VER
 
-EXPORTS = \
-  AbstractMediaDecoder.h \
-  AudioChannelFormat.h \
-  AudioEventTimeline.h \
-  AudioNodeEngine.h \
-  AudioNodeStream.h \
-  AudioSampleFormat.h \
-  AudioSegment.h \
-  AudioStream.h \
-  BufferMediaResource.h \
-  DecoderTraits.h \
-  DOMMediaStream.h \
-  FileBlockCache.h \
-  MediaDecoderOwner.h \
-  MediaResource.h \
-  MediaSegment.h \
-  MediaStreamGraph.h \
-  AudioAvailableEventManager.h \
-  MediaDecoder.h \
-  MediaDecoderStateMachine.h \
-  MediaDecoderReader.h \
-  MediaCache.h \
-  SharedBuffer.h \
-  StreamBuffer.h \
-  TimeVarying.h \
-  VideoFrameContainer.h \
-  VideoUtils.h \
-  VideoSegment.h \
-  VorbisUtils.h \
-  MediaMetadataManager.h \
-  $(NULL)
-
 CPPSRCS = \
+  AudioAvailableEventManager.cpp \
   AudioChannelFormat.cpp \
   AudioNodeEngine.cpp \
   AudioNodeStream.cpp \
   AudioSegment.cpp \
   AudioStream.cpp \
+  AudioStreamTrack.cpp \
   DecoderTraits.cpp \
   DOMMediaStream.cpp \
   FileBlockCache.cpp \
-  MediaResource.cpp \
-  MediaStreamGraph.cpp \
-  AudioAvailableEventManager.cpp \
+  MediaCache.cpp \
   MediaDecoder.cpp \
   MediaDecoderStateMachine.cpp \
   MediaDecoderReader.cpp \
-  MediaCache.cpp \
+  MediaResource.cpp \
+  MediaStreamGraph.cpp \
+  MediaStreamTrack.cpp \
   StreamBuffer.cpp \
   VideoFrameContainer.cpp \
   VideoSegment.cpp \
+  VideoStreamTrack.cpp \
   VideoUtils.cpp \
   $(NULL)
 

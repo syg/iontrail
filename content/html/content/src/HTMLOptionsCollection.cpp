@@ -21,7 +21,6 @@
 #include "nsGUIEvent.h"
 #include "nsIComboboxControlFrame.h"
 #include "nsIDocument.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMHTMLOptGroupElement.h"
 #include "nsIFormControlFrame.h"
 #include "nsIForm.h"
@@ -115,7 +114,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(HTMLOptionsCollection)
 
 
 JSObject*
-HTMLOptionsCollection::WrapObject(JSContext* aCx, JSObject* aScope)
+HTMLOptionsCollection::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLOptionsCollectionBinding::Wrap(aCx, aScope, this);
 }
@@ -290,10 +289,11 @@ HTMLOptionsCollection::NamedItem(JSContext* cx, const nsAString& name,
   if (!item) {
     return nullptr;
   }
-  JSObject* wrapper = nsWrapperCache::GetWrapper();
+  JS::Rooted<JSObject*> wrapper(cx, nsWrapperCache::GetWrapper());
   JSAutoCompartment ac(cx, wrapper);
-  JS::Value v;
-  if (!mozilla::dom::WrapObject(cx, wrapper, item, item, nullptr, &v)) {
+  JS::Rooted<JS::Value> v(cx);
+  if (!mozilla::dom::WrapObject(cx, wrapper, item, item, nullptr,
+                                v.address())) {
     error.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
@@ -358,18 +358,7 @@ HTMLOptionsCollection::Add(const HTMLOptionOrOptGroupElement& aElement,
                            const Nullable<HTMLElementOrLong>& aBefore,
                            ErrorResult& aError)
 {
-  nsGenericHTMLElement& element =
-    aElement.IsHTMLOptionElement() ?
-    static_cast<nsGenericHTMLElement&>(aElement.GetAsHTMLOptionElement()) :
-    static_cast<nsGenericHTMLElement&>(aElement.GetAsHTMLOptGroupElement());
-
-  if (aBefore.IsNull()) {
-    mSelect->Add(element, (nsGenericHTMLElement*)nullptr, aError);
-  } else if (aBefore.Value().IsHTMLElement()) {
-    mSelect->Add(element, &aBefore.Value().GetAsHTMLElement(), aError);
-  } else {
-    mSelect->Add(element, aBefore.Value().GetAsLong(), aError);
-  }
+  mSelect->Add(aElement, aBefore, aError);
 }
 
 void

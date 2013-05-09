@@ -696,11 +696,6 @@ GLContext::CanUploadSubTextures()
     if (!mWorkAroundDriverBugs)
         return true;
 
-    // Lock surface feature allows to mmap texture memory and modify it directly
-    // this feature allow us modify texture partially without full upload
-    if (HasLockSurface())
-        return true;
-
     // There are certain GPUs that we don't want to use glTexSubImage2D on
     // because that function can be very slow and/or buggy
     if (Renderer() == RendererAdreno200 || Renderer() == RendererAdreno205)
@@ -874,9 +869,12 @@ GLContext::UpdatePixelFormat()
     PixelBufferFormat format = QueryPixelFormat();
 #ifdef DEBUG
     const SurfaceCaps& caps = Caps();
+    MOZ_ASSERT(!caps.any, "Did you forget to DetermineCaps()?");
+
     MOZ_ASSERT(caps.color == !!format.red);
     MOZ_ASSERT(caps.color == !!format.green);
     MOZ_ASSERT(caps.color == !!format.blue);
+
     MOZ_ASSERT(caps.alpha == !!format.alpha);
     MOZ_ASSERT(caps.depth == !!format.depth);
     MOZ_ASSERT(caps.stencil == !!format.stencil);
@@ -2833,8 +2831,10 @@ GLContext::ReportOutstandingNames()
 void
 GLContext::GuaranteeResolve()
 {
-   mScreen->AssureBlitted();
-   fFinish();
+    if (mScreen) {
+        mScreen->AssureBlitted();
+    }
+    fFinish();
 }
 
 const gfxIntSize&

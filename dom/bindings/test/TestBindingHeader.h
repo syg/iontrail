@@ -12,9 +12,18 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/TypedArray.h"
 #include "nsCOMPtr.h"
+#include "mozilla/dom/UnionTypes.h"
+
+// Forward declare this before we include TestCodeGenBinding.h, because that header relies on including
+// this one for it, for ParentDict. Hopefully it won't begin to rely on it in more fundamental ways.
+namespace mozilla {
+namespace dom {
+class TestExternalInterface;
+} // namespace dom
+} // namespace mozilla
+
 // We don't export TestCodeGenBinding.h, but it's right in our parent dir.
 #include "../TestCodeGenBinding.h"
-#include "mozilla/dom/UnionTypes.h"
 
 extern bool TestFuncControlledMember(JSContext*, JSObject*);
 
@@ -73,7 +82,7 @@ class TestNonWrapperCacheInterface : public nsISupports
 public:
   NS_DECL_ISUPPORTS
 
-  virtual JSObject* WrapObject(JSContext* cx, JSObject* scope);
+  virtual JSObject* WrapObject(JSContext* cx, JS::Handle<JSObject*> scope);
 };
 
 class OnlyForUseInConstructor : public nsISupports,
@@ -123,6 +132,18 @@ public:
   static
   already_AddRefed<TestInterface> Test(const GlobalObject&, const nsAString&,
                                        ErrorResult&);
+  static
+  already_AddRefed<TestInterface> Test2(const GlobalObject&,
+                                        JSContext*,
+                                        const DictForConstructor&,
+                                        JS::Value,
+                                        JSObject&,
+                                        JSObject*,
+                                        const Sequence<Dict>&,
+                                        const Optional<LazyRootedValue>&,
+                                        const Optional<NonNullLazyRootedObject>&,
+                                        const Optional<LazyRootedObject>&,
+                                        ErrorResult&);
 
   // Integer types
   int8_t ReadonlyByte();
@@ -228,6 +249,15 @@ public:
   void SetLenientFloatAttr(float);
   double LenientDoubleAttr() const;
   void SetLenientDoubleAttr(double);
+
+  void PassUnrestricted(float arg1,
+                        float arg2,
+                        float arg3,
+                        float arg4,
+                        double arg5,
+                        double arg6,
+                        double arg7,
+                        double arg8);
 
   // Interface types
   already_AddRefed<TestInterface> ReceiveSelf();
@@ -369,9 +399,14 @@ public:
 
   // Enumerated types
   void PassEnum(TestEnum);
+  void PassNullableEnum(const Nullable<TestEnum>&);
   void PassOptionalEnum(const Optional<TestEnum>&);
   void PassEnumWithDefault(TestEnum);
+  void PassOptionalNullableEnum(const Optional<Nullable<TestEnum> >&);
+  void PassOptionalNullableEnumWithDefaultValue(const Nullable<TestEnum>&);
+  void PassOptionalNullableEnumWithDefaultValue2(const Nullable<TestEnum>&);
   TestEnum ReceiveEnum();
+  Nullable<TestEnum> ReceiveNullableEnum();
   TestEnum EnumAttribute();
   TestEnum ReadonlyEnumAttribute();
   void SetEnumAttribute(TestEnum);
@@ -394,15 +429,15 @@ public:
 
   // Any types
   void PassAny(JSContext*, JS::Value);
-  void PassOptionalAny(JSContext*, const Optional<JS::Value>&);
+  void PassOptionalAny(JSContext*, const Optional<LazyRootedValue>&);
   void PassAnyDefaultNull(JSContext*, JS::Value);
   JS::Value ReceiveAny(JSContext*);
 
   // object types
   void PassObject(JSContext*, JSObject&);
   void PassNullableObject(JSContext*, JSObject*);
-  void PassOptionalObject(JSContext*, const Optional<NonNull<JSObject> >&);
-  void PassOptionalNullableObject(JSContext*, const Optional<JSObject*>&);
+  void PassOptionalObject(JSContext*, const Optional<NonNullLazyRootedObject>&);
+  void PassOptionalNullableObject(JSContext*, const Optional<LazyRootedObject>&);
   void PassOptionalNullableObjectWithDefaultValue(JSContext*, JSObject*);
   JSObject* ReceiveObject(JSContext*);
   JSObject* ReceiveNullableObject(JSContext*);
@@ -434,6 +469,17 @@ public:
   //void PassUnionWithCallback(JSContext*, const TestCallbackOrLong&);
   void PassUnionWithObject(JSContext*, const ObjectOrLong&);
 
+  // Date types
+  void PassDate(Date);
+  void PassNullableDate(const Nullable<Date>&);
+  void PassOptionalDate(const Optional<Date>&);
+  void PassOptionalNullableDate(const Optional<Nullable<Date> >&);
+  void PassOptionalNullableDateWithDefaultValue(const Nullable<Date>&);
+  void PassDateSequence(const Sequence<Date>&);
+  void PassNullableDateSequence(const Sequence<Nullable<Date> >&);
+  Date ReceiveDate();
+  Nullable<Date> ReceiveNullableDate();
+
   // binaryNames tests
   void MethodRenamedTo();
   void MethodRenamedTo(int8_t);
@@ -442,13 +488,13 @@ public:
   void SetAttributeRenamedTo(int8_t);
 
   // Dictionary tests
-  void PassDictionary(const Dict&);
-  void ReceiveDictionary(Dict&);
+  void PassDictionary(JSContext*, const Dict&);
+  void ReceiveDictionary(JSContext*, Dict&);
   void PassOtherDictionary(const GrandparentDict&);
-  void PassSequenceOfDictionaries(const Sequence<Dict>&);
-  void PassDictionaryOrLong(const Dict&);
+  void PassSequenceOfDictionaries(JSContext*, const Sequence<Dict>&);
+  void PassDictionaryOrLong(JSContext*, const Dict&);
   void PassDictionaryOrLong(int32_t);
-  void PassDictContainingDict(const DictContainingDict&);
+  void PassDictContainingDict(JSContext*, const DictContainingDict&);
   void PassDictContainingSequence(const DictContainingSequence&);
   void ReceiveDictContainingSequence(DictContainingSequence&);
 
@@ -468,8 +514,9 @@ public:
   bool Overload1(TestInterface&);
   TestInterface* Overload1(const nsAString&, TestInterface&);
   void Overload2(TestInterface&);
-  void Overload2(const Dict&);
+  void Overload2(JSContext*, const Dict&);
   void Overload2(const nsAString&);
+  void Overload2(Date);
   void Overload3(TestInterface&);
   void Overload3(const TestCallback&);
   void Overload3(const nsAString&);
@@ -663,6 +710,33 @@ private:
   void PassOptionalNullableString(Optional<nsAString>&) MOZ_DELETE;
   void PassOptionalNullableStringWithDefaultValue(nsAString&) MOZ_DELETE;
   void PassVariadicString(Sequence<nsString>&) MOZ_DELETE;
+
+  // Make sure dictionary arguments are always const
+  void PassDictionary(JSContext*, Dict&) MOZ_DELETE;
+  void PassOtherDictionary(GrandparentDict&) MOZ_DELETE;
+  void PassSequenceOfDictionaries(JSContext*, Sequence<Dict>&) MOZ_DELETE;
+  void PassDictionaryOrLong(JSContext*, Dict&) MOZ_DELETE;
+  void PassDictContainingDict(JSContext*, DictContainingDict&) MOZ_DELETE;
+  void PassDictContainingSequence(DictContainingSequence&) MOZ_DELETE;
+
+  // Make sure various nullable things are always const
+  void PassNullableEnum(Nullable<TestEnum>&) MOZ_DELETE;
+
+  // Make sure unions are always const
+  void PassUnion(JSContext*, ObjectOrLong& arg) MOZ_DELETE;
+  void PassUnionWithNullable(JSContext*, ObjectOrNullOrLong& arg) MOZ_DELETE;
+  void PassNullableUnion(JSContext*, Nullable<ObjectOrLong>&) MOZ_DELETE;
+  void PassOptionalUnion(JSContext*, Optional<ObjectOrLong>&) MOZ_DELETE;
+  void PassOptionalNullableUnion(JSContext*, Optional<Nullable<ObjectOrLong> >&) MOZ_DELETE;
+  void PassOptionalNullableUnionWithDefaultValue(JSContext*, Nullable<ObjectOrLong>&) MOZ_DELETE;
+
+  // Make sure various date stuff is const as needed
+  void PassNullableDate(Nullable<Date>&) MOZ_DELETE;
+  void PassOptionalDate(Optional<Date>&) MOZ_DELETE;
+  void PassOptionalNullableDate(Optional<Nullable<Date> >&) MOZ_DELETE;
+  void PassOptionalNullableDateWithDefaultValue(Nullable<Date>&) MOZ_DELETE;
+  void PassDateSequence(Sequence<Date>&) MOZ_DELETE;
+  void PassNullableDateSequence(Sequence<Nullable<Date> >&) MOZ_DELETE;
 };
 
 class TestIndexedGetterInterface : public nsISupports,

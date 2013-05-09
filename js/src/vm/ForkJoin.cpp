@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -107,6 +106,18 @@ ForkJoinSlice::check()
 {
     JS_NOT_REACHED("Not THREADSAFE build");
     return true;
+}
+
+void
+ForkJoinSlice::requestGC(JS::gcreason::Reason reason)
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
+}
+
+void
+ForkJoinSlice::requestZoneGC(JS::Zone *zone, JS::gcreason::Reason reason)
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
 }
 #endif // !JS_THREADSAFE || !JS_ION
 
@@ -549,7 +560,7 @@ js::ParallelDo::compileForParallelExecution()
     if (status != Method_Compiled)
         return status;
 
-    // it can happen that during transitive compilation, our
+    // It can happen that during transitive compilation, our
     // callee's parallel ion script is invalidated or GC'd. So
     // before we declare success, double check that it's still
     // compiled!
@@ -985,6 +996,9 @@ void
 ForkJoinShared::executePortion(PerThreadData *perThread,
                                uint32_t threadId)
 {
+    // WARNING: This code runs ON THE PARALLEL WORKER THREAD.
+    // Therefore, it should NOT access `cx_` in any way!
+
     Allocator *allocator = allocators_[threadId];
     ForkJoinSlice slice(perThread, threadId, numSlices_, allocator,
                         this, &records_[threadId]);

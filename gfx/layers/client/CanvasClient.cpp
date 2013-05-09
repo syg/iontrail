@@ -5,7 +5,7 @@
 
 #include "mozilla/layers/CanvasClient.h"
 #include "mozilla/layers/TextureClient.h"
-#include "BasicCanvasLayer.h"
+#include "ClientCanvasLayer.h"
 #include "mozilla/layers/ShadowLayers.h"
 #include "SharedTextureImage.h"
 #include "nsXULAppAPI.h"
@@ -18,8 +18,7 @@ namespace mozilla {
 namespace layers {
 
 /* static */ TemporaryRef<CanvasClient>
-CanvasClient::CreateCanvasClient(LayersBackend aParentBackend,
-                                 CompositableType aCompositableHostType,
+CanvasClient::CreateCanvasClient(CompositableType aCompositableHostType,
                                  CompositableForwarder* aForwarder,
                                  TextureFlags aFlags)
 {
@@ -27,7 +26,7 @@ CanvasClient::CreateCanvasClient(LayersBackend aParentBackend,
     return new CanvasClient2D(aForwarder, aFlags);
   }
   if (aCompositableHostType == BUFFER_IMAGE_BUFFERED) {
-    if (aParentBackend == LAYERS_OPENGL) {
+    if (aForwarder->GetCompositorBackendType() == LAYERS_OPENGL) {
       return new CanvasClientWebGL(aForwarder, aFlags);
     }
     return new CanvasClient2D(aForwarder, aFlags);
@@ -36,23 +35,25 @@ CanvasClient::CreateCanvasClient(LayersBackend aParentBackend,
 }
 
 void
-CanvasClient::SetBuffer(const TextureIdentifier& aTextureIdentifier,
-                        const SurfaceDescriptor& aBuffer)
+CanvasClient::Updated()
 {
-  mTextureClient->SetDescriptor(aBuffer);
+  mForwarder->UpdateTexture(this, 1, mTextureClient->GetDescriptor());
 }
+
 
 CanvasClient2D::CanvasClient2D(CompositableForwarder* aFwd,
                                TextureFlags aFlags)
 : CanvasClient(aFwd, aFlags)
 {
+  mTextureInfo.mCompositableType = BUFFER_IMAGE_SINGLE;
 }
 
 void
-CanvasClient2D::Update(gfx::IntSize aSize, BasicCanvasLayer* aLayer)
+CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   if (!mTextureClient) {
-    mTextureClient = CreateTextureClient(TEXTURE_SHMEM, mFlags);
+    mTextureClient = CreateTextureClient(TEXTURE_SHMEM);
+    MOZ_ASSERT(mTextureClient, "Failed to create texture client");
   }
 
   bool isOpaque = (aLayer->GetContentFlags() & Layer::CONTENT_OPAQUE);
@@ -62,21 +63,30 @@ CanvasClient2D::Update(gfx::IntSize aSize, BasicCanvasLayer* aLayer)
   mTextureClient->EnsureAllocated(aSize, contentType);
 
   gfxASurface* surface = mTextureClient->LockSurface();
-  static_cast<BasicCanvasLayer*>(aLayer)->UpdateSurface(surface, nullptr);
+  aLayer->UpdateSurface(surface);
   mTextureClient->Unlock();
 }
+
+void
+CanvasClient2D::Updated()
+{
+  mForwarder->UpdateTextureNoSwap(this, 1, mTextureClient->GetDescriptor());
+}
+
 
 CanvasClientWebGL::CanvasClientWebGL(CompositableForwarder* aFwd,
                                      TextureFlags aFlags)
 : CanvasClient(aFwd, aFlags)
 {
+  mTextureInfo.mCompositableType = BUFFER_IMAGE_BUFFERED;
 }
 
 void
-CanvasClientWebGL::Update(gfx::IntSize aSize, BasicCanvasLayer* aLayer)
+CanvasClientWebGL::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   if (!mTextureClient) {
-    mTextureClient = CreateTextureClient(TEXTURE_STREAM_GL, mFlags);
+    mTextureClient = CreateTextureClient(TEXTURE_STREAM_GL);
+    MOZ_ASSERT(mTextureClient, "Failed to create texture client");
   }
 
   NS_ASSERTION(aLayer->mGLContext, "CanvasClientWebGL should only be used with GL canvases");

@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -179,9 +178,22 @@ ICBinaryArith_Int32::Compiler::generateStubCode(MacroAssembler &masm)
         masm.ma_and(Imm32(0x1F), R1.payloadReg(), scratchReg);
         masm.ma_lsr(scratchReg, R0.payloadReg(), scratchReg);
         masm.ma_cmp(scratchReg, Imm32(0));
-        masm.j(Assembler::LessThan, &failure);
-        // Move result for return.
-        masm.mov(scratchReg, R0.payloadReg());
+        if (allowDouble_) {
+            Label toUint;
+            masm.j(Assembler::LessThan, &toUint);
+
+            // Move result and box for return.
+            masm.mov(scratchReg, R0.payloadReg());
+            EmitReturnFromIC(masm);
+
+            masm.bind(&toUint);
+            masm.convertUInt32ToDouble(scratchReg, ScratchFloatReg);
+            masm.boxDouble(ScratchFloatReg, R0);
+        } else {
+            masm.j(Assembler::LessThan, &failure);
+            // Move result for return.
+            masm.mov(scratchReg, R0.payloadReg());
+        }
         break;
       default:
         JS_NOT_REACHED("Unhandled op for BinaryArith_Int32.");

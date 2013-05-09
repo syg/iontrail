@@ -39,8 +39,8 @@ public:
 #endif
 
 protected:
-  ContentHost(Compositor* aCompositor)
-  : CompositableHost(aCompositor)
+  ContentHost(const TextureInfo& aTextureInfo)
+    : CompositableHost(aTextureInfo)
   {}
 };
 
@@ -61,7 +61,7 @@ public:
   typedef ThebesLayerBuffer::ContentType ContentType;
   typedef ThebesLayerBuffer::PaintState PaintState;
 
-  ContentHostBase(Compositor* aCompositor);
+  ContentHostBase(const TextureInfo& aTextureInfo);
   ~ContentHostBase();
 
   virtual void Composite(EffectChain& aEffectChain,
@@ -97,14 +97,6 @@ public:
   }
 #endif
 
-  // Set one or both texture hosts. We do not use AddTextureHost because for
-  // double buffering, we need to add two hosts and know which is which.
-  virtual void SetTextureHosts(TextureHost* aNewFront,
-                               TextureHost* aNewBack = nullptr) = 0;
-  // For double buffered ContentHosts we want to set both TextureHosts at
-  // once so we ignore this call.
-  virtual void AddTextureHost(TextureHost* aTextureHost,
-                              ISurfaceAllocator* aAllocator = nullptr) MOZ_OVERRIDE {}
   virtual TextureHost* GetTextureHost() MOZ_OVERRIDE;
 
   void SetPaintWillResample(bool aResample) { mPaintWillResample = aResample; }
@@ -133,6 +125,7 @@ protected:
   // the old one which might still be used for compositing. So we store it
   // here and move it to mTextureHost once we do the first buffer swap.
   RefPtr<TextureHost> mNewFrontHost;
+  RefPtr<TextureHost> mNewFrontHostOnWhite;
   bool mPaintWillResample;
   bool mInitialised;
 };
@@ -143,8 +136,8 @@ protected:
 class ContentHostDoubleBuffered : public ContentHostBase
 {
 public:
-  ContentHostDoubleBuffered(Compositor* aCompositor)
-    : ContentHostBase(aCompositor)
+  ContentHostDoubleBuffered(const TextureInfo& aTextureInfo)
+    : ContentHostBase(aTextureInfo)
   {}
 
   ~ContentHostDoubleBuffered();
@@ -156,9 +149,10 @@ public:
                             const nsIntRegion& aOldValidRegionBack,
                             nsIntRegion* aUpdatedRegionBack);
 
-  // We expect both TextureHosts.
-  virtual void SetTextureHosts(TextureHost* aNewFront,
-                               TextureHost* aNewBack = nullptr) MOZ_OVERRIDE;
+  virtual void EnsureTextureHost(TextureIdentifier aTextureId,
+                                 const SurfaceDescriptor& aSurface,
+                                 ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo) MOZ_OVERRIDE;
   virtual void DestroyTextures() MOZ_OVERRIDE;
 
 #ifdef MOZ_LAYERS_HAVE_LOG
@@ -170,6 +164,7 @@ protected:
   // only swap it with the front buffer (mTextureHost) when we are told by the
   // content thread.
   RefPtr<TextureHost> mBackHost;
+  RefPtr<TextureHost> mBackHostOnWhite;
 };
 
 /**
@@ -179,8 +174,8 @@ protected:
 class ContentHostSingleBuffered : public ContentHostBase
 {
 public:
-  ContentHostSingleBuffered(Compositor* aCompositor)
-    : ContentHostBase(aCompositor)
+  ContentHostSingleBuffered(const TextureInfo& aTextureInfo)
+    : ContentHostBase(aTextureInfo)
   {}
   virtual ~ContentHostSingleBuffered();
 
@@ -191,9 +186,10 @@ public:
                             const nsIntRegion& aOldValidRegionBack,
                             nsIntRegion* aUpdatedRegionBack);
 
-  // We expect only one TextureHost.
-  virtual void SetTextureHosts(TextureHost* aNewFront,
-                               TextureHost* aNewBack = nullptr) MOZ_OVERRIDE;
+  virtual void EnsureTextureHost(TextureIdentifier aTextureId,
+                                 const SurfaceDescriptor& aSurface,
+                                 ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo) MOZ_OVERRIDE;
   virtual void DestroyTextures() MOZ_OVERRIDE;
 
 #ifdef MOZ_LAYERS_HAVE_LOG

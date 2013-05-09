@@ -13,8 +13,7 @@ namespace mozilla {
 
 namespace layers {
 
-class BasicCanvasLayer;
-class TextureIdentifier;
+class ClientCanvasLayer;
 
 /**
  * Compositable client for 2d and webgl canvas.
@@ -27,28 +26,30 @@ public:
    * message will be sent to the compositor to create a corresponding image
    * host.
    */
-  static TemporaryRef<CanvasClient> CreateCanvasClient(LayersBackend aBackendType,
-                                                       CompositableType aImageHostType,
+  static TemporaryRef<CanvasClient> CreateCanvasClient(CompositableType aImageHostType,
                                                        CompositableForwarder* aFwd,
                                                        TextureFlags aFlags);
 
   CanvasClient(CompositableForwarder* aFwd, TextureFlags aFlags)
-  : CompositableClient(aFwd), mFlags(aFlags)
-  {}
+    : CompositableClient(aFwd)
+  {
+    mTextureInfo.mTextureFlags = aFlags;
+  }
 
   virtual ~CanvasClient() {}
 
-  virtual void Update(gfx::IntSize aSize, BasicCanvasLayer* aLayer) = 0;
+  virtual void Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer) = 0;
 
-  virtual void SetBuffer(const TextureIdentifier& aTextureIdentifier,
-                         const SurfaceDescriptor& aBuffer);
-  virtual void Updated()
+  virtual void Updated();
+
+  virtual void SetDescriptorFromReply(TextureIdentifier aTextureId,
+                                      const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE
   {
-    mTextureClient->Updated();
+    mTextureClient->SetDescriptorFromReply(aDescriptor);
   }
 protected:
   RefPtr<TextureClient> mTextureClient;
-  TextureFlags mFlags;
+  TextureInfo mTextureInfo;
 };
 
 // Used for 2D canvases and WebGL canvas on non-GL systems where readback is requried.
@@ -58,12 +59,14 @@ public:
   CanvasClient2D(CompositableForwarder* aLayerForwarder,
                  TextureFlags aFlags);
 
-  CompositableType GetType() const MOZ_OVERRIDE
+  TextureInfo GetTextureInfo() const MOZ_OVERRIDE
   {
-    return BUFFER_IMAGE_SINGLE;
+    return mTextureInfo;
   }
 
-  virtual void Update(gfx::IntSize aSize, BasicCanvasLayer* aLayer);
+  virtual void Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer);
+
+  virtual void Updated() MOZ_OVERRIDE;
 };
 
 // Used for GL canvases where we don't need to do any readback, i.e., with a
@@ -74,12 +77,12 @@ public:
   CanvasClientWebGL(CompositableForwarder* aFwd,
                     TextureFlags aFlags);
 
-  CompositableType GetType() const MOZ_OVERRIDE
+  TextureInfo GetTextureInfo() const MOZ_OVERRIDE
   {
-    return BUFFER_IMAGE_BUFFERED;
+    return mTextureInfo;
   }
 
-  virtual void Update(gfx::IntSize aSize, BasicCanvasLayer* aLayer);
+  virtual void Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer);
 };
 
 }

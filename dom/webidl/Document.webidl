@@ -17,7 +17,6 @@
 
 interface Comment;
 interface StyleSheetList;
-interface Touch;
 interface TouchList;
 interface WindowProxy;
 interface nsISupports;
@@ -101,7 +100,6 @@ partial interface Document {
   //(Not proxy yet)getter object (DOMString name);
            [SetterThrows]
            attribute DOMString title;
-           [SetterThrows]
            attribute DOMString dir;
   //(HTML only)         attribute HTMLElement? body;
   //(HTML only)readonly attribute HTMLHeadElement? head;
@@ -292,11 +290,7 @@ partial interface Document {
   // from our xpidl for now.
   [Creator, Func="nsGenericHTMLElement::TouchEventsEnabled"]
   Touch createTouch(optional Window? view = null,
-                    // Nasty hack, because we can't do EventTarget arguments yet
-                    // (they would need to be non-castable, but trying to do
-                    // XPConnect unwrapping with nsDOMEventTargetHelper fails).
-                    // optional EventTarget? target = null,
-                    optional nsISupports? target = null,
+                    optional EventTarget? target = null,
                     optional long identifier = 0,
                     optional long pageX = 0,
                     optional long pageY = 0,

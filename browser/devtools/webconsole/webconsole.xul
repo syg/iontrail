@@ -62,12 +62,12 @@
       <menuitem id="menu_copyURL" label="&copyURLCmd.label;"
                 accesskey="&copyURLCmd.accesskey;" command="consoleCmd_copyURL"
                 selection="network" selectionType="single"/>
-      <menuitem id="menu_copy"/>
-      <menuitem id="menu_selectAll"/>
+      <menuitem id="cMenu_copy"/>
+      <menuitem id="cMenu_selectAll"/>
     </menupopup>
   </popupset>
 
-  <hbox class="hud-outer-wrapper" flex="1">
+  <box class="hud-outer-wrapper devtools-responsive-container" flex="1">
     <vbox class="hud-console-wrapper" flex="1">
       <toolbar class="hud-console-filter-toolbar devtools-toolbar" mode="full">
         <toolbarbutton label="&btnPageNet.label;" type="menu-button"
@@ -101,6 +101,16 @@
                       autocheck="false" prefKey="exception"/>
             <menuitem label="&btnConsoleWarnings;" type="checkbox"
                       autocheck="false" prefKey="jswarn"/>
+          </menupopup>
+        </toolbarbutton>
+        <toolbarbutton label="&btnPageSecurity.label;" type="menu-button"
+                       category="security" class="devtools-toolbarbutton webconsole-filter-button"
+                       tooltiptext="&btnPageSecurity.tooltip;">
+          <menupopup>
+            <menuitem label="&btnConsoleErrors;" type="checkbox"
+                      autocheck="false" prefKey="secerror"/>
+            <menuitem label="&btnConsoleWarnings;" type="checkbox"
+                      autocheck="false" prefKey="secwarn"/>
           </menupopup>
         </toolbarbutton>
         <toolbarbutton label="&btnPageLogging.label;" type="menu-button"
@@ -139,11 +149,11 @@
       </hbox>
     </vbox>
 
-    <splitter class="devtools-side-splitter" collapse="after" state="collapsed" />
+    <splitter class="devtools-side-splitter"/>
 
     <tabbox id="webconsole-sidebar" class="devtools-sidebar-tabs" hidden="true" width="300">
       <tabs/>
       <tabpanels flex="1"/>
     </tabbox>
-  </hbox>
+  </box>
 </window>

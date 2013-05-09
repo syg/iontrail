@@ -663,9 +663,8 @@ SheetLoadData::OnDetermineCharset(nsIUnicharStreamLoader* aLoader,
   if (nsContentUtils::CheckForBOM((const unsigned char*)aSegment.BeginReading(),
                                   aSegment.Length(),
                                   aCharset)) {
-    // aCharset is now either "UTF-16" or "UTF-8".
-    // The UTF-16 decoder will re-sniff and swallow the BOM.
-    // The UTF-8 decoder will swallow the BOM.
+    // aCharset is now either "UTF-16BE", "UTF-16BE" or "UTF-8"
+    // which will swallow the BOM.
     mCharset.Assign(aCharset);
 #ifdef PR_LOGGING
     LOG(("  Setting from BOM to: %s", PromiseFlatCString(aCharset).get()));
@@ -1084,12 +1083,15 @@ Loader::CreateSheet(nsIURI* aURI,
     }
 #endif
 
+    bool fromCompleteSheets = false;
     if (!sheet) {
       // Then our per-document complete sheets.
       URIPrincipalAndCORSModeHashKey key(aURI, aLoaderPrincipal, aCORSMode);
 
       mCompleteSheets.Get(&key, getter_AddRefs(sheet));
       LOG(("  From completed: %p", sheet.get()));
+
+      fromCompleteSheets = !!sheet;
     }
 
     if (sheet) {
@@ -1157,6 +1159,15 @@ Loader::CreateSheet(nsIURI* aURI,
                    "Sheet thinks it's not complete while we think it is");
 
       *aSheet = sheet->Clone(nullptr, nullptr, nullptr, nullptr).get();
+      if (*aSheet && fromCompleteSheets &&
+          !sheet->GetOwnerNode() && !sheet->GetParentSheet()) {
+        // The sheet we're cloning isn't actually referenced by
+        // anyone.  Replace it in the cache, so that if our CSSOM is
+        // later modified we don't end up with two copies of our inner
+        // hanging around.
+        URIPrincipalAndCORSModeHashKey key(aURI, aLoaderPrincipal, aCORSMode);
+        mCompleteSheets.Put(&key, *aSheet);
+      }
     }
   }
 
@@ -1760,13 +1771,26 @@ Loader::DoSheetComplete(SheetLoadData* aLoadData, nsresult aStatus,
   // adjust the PostLoadEvent code that thinks anything already
   // complete must have loaded succesfully.
   if (NS_SUCCEEDED(aStatus) && aLoadData->mURI) {
+    // Pick our sheet to cache carefully.  Ideally, we want to cache
+    // one of the sheets that will be kept alive by a document or
+    // parent sheet anyway, so that if someone then accesses it via
+    // CSSOM we won't have extra clones of the inner lying around.
+    data = aLoadData;
+    nsCSSStyleSheet* sheet = aLoadData->mSheet;
+    while (data) {
+      if (data->mSheet->GetParentSheet() || data->mSheet->GetOwnerNode()) {
+        sheet = data->mSheet;
+        break;
+      }
+      data = data->mNext;
+    }
 #ifdef MOZ_XUL
     if (IsChromeURI(aLoadData->mURI)) {
       nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
       if (cache && cache->IsEnabled()) {
         if (!cache->GetStyleSheet(aLoadData->mURI)) {
           LOG(("  Putting sheet in XUL prototype cache"));
-          cache->PutStyleSheet(aLoadData->mSheet);
+          cache->PutStyleSheet(sheet);
         }
       }
     }
@@ -1775,7 +1799,7 @@ Loader::DoSheetComplete(SheetLoadData* aLoadData, nsresult aStatus,
       URIPrincipalAndCORSModeHashKey key(aLoadData->mURI,
                                          aLoadData->mLoaderPrincipal,
                                          aLoadData->mSheet->GetCORSMode());
-      mCompleteSheets.Put(&key, aLoadData->mSheet);
+      mCompleteSheets.Put(&key, sheet);
 #ifdef MOZ_XUL
     }
 #endif

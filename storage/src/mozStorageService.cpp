@@ -163,13 +163,6 @@ public:
     return NS_OK;
   }
 
-  NS_IMETHOD GetExplicitNonHeap(int64_t *aAmount)
-  {
-    // This reporter doesn't do any non-heap measurements.
-    *aAmount = 0;
-    return NS_OK;
-  }
-
 private:
   /**
    * Passes a single SQLite memory statistic to a memory multi-reporter
@@ -253,8 +246,8 @@ Service::getSingleton()
     nsCOMPtr<nsIPromptService> ps(do_GetService(NS_PROMPTSERVICE_CONTRACTID));
     if (ps) {
       nsAutoString title, message;
-      title.AppendASCII("SQLite Version Error");
-      message.AppendASCII("The application has been updated, but your version "
+      title.AppendLiteral("SQLite Version Error");
+      message.AppendLiteral("The application has been updated, but your version "
                           "of SQLite is too old and the application cannot "
                           "run.");
       (void)ps->Alert(nullptr, title.get(), message.get());

@@ -22,6 +22,7 @@
     locale/browser/browser.dtd                     (%chrome/browser/browser.dtd)
     locale/browser/baseMenuOverlay.dtd             (%chrome/browser/baseMenuOverlay.dtd)
     locale/browser/browser.properties              (%chrome/browser/browser.properties)
+    locale/browser/devtools/appcacheutils.properties  (%chrome/browser/devtools/appcacheutils.properties)
     locale/browser/devtools/debugger.dtd              (%chrome/browser/devtools/debugger.dtd)
     locale/browser/devtools/debugger.properties       (%chrome/browser/devtools/debugger.properties)
     locale/browser/devtools/netmonitor.dtd            (%chrome/browser/devtools/netmonitor.dtd)
@@ -126,15 +127,6 @@
 % override chrome://global/locale/netError.dtd chrome://browser/locale/netError.dtd
 % override chrome://global/locale/appstrings.properties chrome://browser/locale/appstrings.properties
 % override chrome://mozapps/locale/downloads/settingsChange.dtd chrome://browser/locale/downloads/settingsChange.dtd
-% locale testpilot @AB_CD@ %locale/feedback/
-    locale/feedback/main.dtd                       (%feedback/main.dtd)
-    locale/feedback/main.properties                (%feedback/main.properties)
 % locale pdf.js @AB_CD@ %locale/pdfviewer/
     locale/pdfviewer/viewer.properties             (%pdfviewer/viewer.properties)
     locale/pdfviewer/chrome.properties             (%pdfviewer/chrome.properties)
-#ifdef MOZ_WEBAPP_RUNTIME
-../../webapprt/chrome/@AB_CD@.jar:
-% locale webapprt @AB_CD@ %locale/webapprt/
-    locale/webapprt/webapp.dtd                     (%webapprt/webapp.dtd)
-    locale/webapprt/webapp.properties              (%webapprt/webapp.properties)
-#endif

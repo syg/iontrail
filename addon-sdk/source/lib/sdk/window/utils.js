@@ -113,6 +113,19 @@ function getBaseWindow(window) {
 }
 exports.getBaseWindow = getBaseWindow;
 
+/**
+ * Returns the `nsIDOMWindow` toplevel window for any child/inner window
+ */
+function getToplevelWindow(window) {
+  return window.QueryInterface(Ci.nsIInterfaceRequestor)
+               .getInterface(Ci.nsIWebNavigation)
+               .QueryInterface(Ci.nsIDocShellTreeItem)
+               .rootTreeItem
+               .QueryInterface(Ci.nsIInterfaceRequestor)
+               .getInterface(Ci.nsIDOMWindow);
+}
+exports.getToplevelWindow = getToplevelWindow;
+
 function getWindowDocShell(window) window.gBrowser.docShell;
 exports.getWindowDocShell = getWindowDocShell;
 
@@ -340,3 +353,27 @@ function getFrames(window) {
   }, [])
 }
 exports.getFrames = getFrames;
+
+function getScreenPixelsPerCSSPixel(window) {
+  return window.QueryInterface(Ci.nsIInterfaceRequestor).
+                getInterface(Ci.nsIDOMWindowUtils).screenPixelsPerCSSPixel;
+}
+exports.getScreenPixelsPerCSSPixel = getScreenPixelsPerCSSPixel;
+
+function getOwnerBrowserWindow(node) {
+  /**
+  Takes DOM node and returns browser window that contains it.
+  **/
+
+  let window = node.ownerDocument.defaultView.top;
+  // If anchored window is browser then it's target browser window.
+  if (isBrowser(window)) return window;
+  // Otherwise iterate over each browser window and find a one that
+  // contains browser for the anchored window document.
+  let document = window.document;
+  let browsers = windows("navigator:browser", { includePrivate: true });
+  return array.find(browsers, function isTargetBrowser(window) {
+    return !!window.gBrowser.getBrowserForDocument(document);
+  });
+}
+exports.getOwnerBrowserWindow = getOwnerBrowserWindow;

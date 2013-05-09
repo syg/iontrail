@@ -93,8 +93,9 @@ public:
     NS_IMETHOD MakeFullScreen(bool aFullScreen) /*MOZ_OVERRIDE*/;
 
     virtual float GetDPI();
+    virtual double GetDefaultScaleInternal();
     virtual mozilla::layers::LayerManager*
-        GetLayerManager(PLayersChild* aShadowManager = nullptr,
+        GetLayerManager(PLayerTransactionChild* aShadowManager = nullptr,
                         LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
                         LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                         bool* aAllowRetaining = nullptr);

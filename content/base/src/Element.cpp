@@ -73,7 +73,6 @@
 #include "nsLayoutUtils.h"
 #include "nsGkAtoms.h"
 #include "nsContentUtils.h"
-#include "nsIJSContextStack.h"
 
 #include "nsIDOMEventListener.h"
 #include "nsIWebNavigation.h"
@@ -117,7 +116,6 @@
 #include "nsDOMMutationObserver.h"
 #include "nsSVGFeatures.h"
 #include "nsWrapperCacheInlines.h"
-#include "nsCycleCollector.h"
 #include "xpcpublic.h"
 #include "nsIScriptError.h"
 #include "nsLayoutStatics.h"
@@ -341,7 +339,7 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
 }
 
 JSObject*
-Element::WrapObject(JSContext *aCx, JSObject *aScope)
+Element::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   JSObject* obj = nsINode::WrapObject(aCx, aScope);
   if (!obj) {
@@ -591,9 +589,17 @@ static nsSize GetScrollRectSizeForOverflowVisibleFrame(nsIFrame* aFrame)
 
   nsRect paddingRect = aFrame->GetPaddingRectRelativeToSelf();
   nsOverflowAreas overflowAreas(paddingRect, paddingRect);
+  // Add the scrollable overflow areas of children (if any) to the paddingRect.
+  // It's important to start with the paddingRect, otherwise if there are no
+  // children the overflow rect will be 0,0,0,0 which will force the point 0,0
+  // to be included in the final rect.
   nsLayoutUtils::UnionChildOverflow(aFrame, overflowAreas);
+  // Make sure that an empty padding-rect's edges are included, by adding
+  // the padding-rect in again with UnionEdges.
+  nsRect overflowRect =
+    overflowAreas.ScrollableOverflow().UnionEdges(paddingRect);
   return nsLayoutUtils::GetScrolledRect(aFrame,
-      overflowAreas.ScrollableOverflow(), paddingRect.Size(),
+      overflowRect, paddingRect.Size(),
       aFrame->StyleVisibility()->mDirection).Size();
 }
 
@@ -782,14 +788,7 @@ Element::SetAttributeNode(Attr& aNewAttr, ErrorResult& aError)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eSetAttributeNode);
 
-  nsCOMPtr<nsIDOMAttr> attr;
-  aError = Attributes()->SetNamedItem(&aNewAttr, getter_AddRefs(attr));
-  if (aError.Failed()) {
-    return nullptr;
-  }
-
-  nsRefPtr<Attr> returnAttr = static_cast<Attr*>(attr.get());
-  return returnAttr.forget();
+  return Attributes()->SetNamedItem(aNewAttr, aError);
 }
 
 already_AddRefed<Attr>
@@ -797,22 +796,7 @@ Element::RemoveAttributeNode(Attr& aAttribute,
                              ErrorResult& aError)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eRemoveAttributeNode);
-
-  nsAutoString name;
-
-  aError = aAttribute.GetName(name);
-  if (aError.Failed()) {
-    return nullptr;
-  }
-
-  nsCOMPtr<nsIDOMAttr> attr;
-  aError = Attributes()->RemoveNamedItem(name, getter_AddRefs(attr));
-  if (aError.Failed()) {
-    return nullptr;
-  }
-
-  nsRefPtr<Attr> returnAttr = static_cast<Attr*>(attr.get());
-  return returnAttr.forget();
+  return Attributes()->RemoveNamedItem(aAttribute.NodeName(), aError);
 }
 
 void
@@ -896,7 +880,7 @@ Element::SetAttributeNodeNS(Attr& aNewAttr,
                             ErrorResult& aError)
 {
   OwnerDoc()->WarnOnceAbout(nsIDocument::eSetAttributeNodeNS);
-  return Attributes()->SetNamedItemNS(&aNewAttr, aError);
+  return Attributes()->SetNamedItemNS(aNewAttr, aError);
 }
 
 already_AddRefed<nsIHTMLCollection>
@@ -1457,17 +1441,17 @@ Element::GetExistingAttrNameFromQName(const nsAString& aStr) const
     return nullptr;
   }
 
-  nsINodeInfo* nodeInfo;
+  nsCOMPtr<nsINodeInfo> nodeInfo;
   if (name->IsAtom()) {
     nodeInfo = mNodeInfo->NodeInfoManager()->
       GetNodeInfo(name->Atom(), nullptr, kNameSpaceID_None,
-                  nsIDOMNode::ATTRIBUTE_NODE).get();
+                  nsIDOMNode::ATTRIBUTE_NODE);
   }
   else {
-    NS_ADDREF(nodeInfo = name->NodeInfo());
+    nodeInfo = name->NodeInfo();
   }
 
-  return nodeInfo;
+  return nodeInfo.forget();
 }
 
 // static

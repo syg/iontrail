@@ -3,12 +3,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
 
-/* This must occur *after* layers/PLayers.h to avoid typedefs conflicts. */
+// This must occur *after* layers/PLayerTransaction.h to avoid
+// typedefs conflicts.
 #include "mozilla/Util.h"
 
-#include "LayerManagerComposite.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 #include "ThebesLayerComposite.h"
 #include "ContainerLayerComposite.h"
 #include "ImageLayerComposite.h"
@@ -20,6 +21,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/layers/ImageHost.h"
 #include "mozilla/layers/ContentHost.h"
+#include "mozilla/layers/Compositor.h"
 
 #include "gfxContext.h"
 #include "gfxUtils.h"
@@ -46,6 +48,7 @@ namespace mozilla {
 namespace layers {
 
 using namespace mozilla::gfx;
+using namespace mozilla::gl;
 
 static LayerComposite*
 ToLayerComposite(Layer* aLayer)
@@ -77,15 +80,19 @@ LayerManagerComposite::ClearCachedResources(Layer* aSubtree)
   // Do we need that?
 }
 
-
-
 /**
  * LayerManagerComposite
  */
 LayerManagerComposite::LayerManagerComposite(Compositor* aCompositor)
+: mCompositor(aCompositor)
 {
-  mCompositor = aCompositor;
 }
+
+LayerManagerComposite::~LayerManagerComposite()
+{
+  Destroy();
+}
+
 
 bool
 LayerManagerComposite::Initialize()
@@ -98,6 +105,7 @@ void
 LayerManagerComposite::Destroy()
 {
   if (!mDestroyed) {
+    mCompositor->GetWidget()->CleanupWindowEffects();
     if (mRoot) {
       RootLayer()->Destroy();
     }
@@ -277,6 +285,10 @@ LayerManagerComposite::Render()
     clipRect = nsIntRect(rect.x, rect.y, rect.width, rect.height);
   }
 
+  if (actualBounds.IsEmpty()) {
+    return;
+  }
+
   // Allow widget to render a custom background.
   mCompositor->GetWidget()->DrawWindowUnderlay(this, nsIntRect(actualBounds.x,
                                                                actualBounds.y,
@@ -389,7 +401,7 @@ LayerManagerComposite::ComputeRenderIntegrityInternal(Layer* aLayer,
     TiledLayerComposer* composer = nullptr;
     LayerComposite* shadow = aLayer->AsLayerComposite();
     if (shadow) {
-      composer = shadow->AsTiledLayerComposer();
+      composer = shadow->GetTiledLayerComposer();
       if (composer) {
         incompleteRegion.Sub(incompleteRegion, composer->GetValidLowPrecisionRegion());
         if (!incompleteRegion.IsEmpty()) {
@@ -541,38 +553,38 @@ LayerManagerComposite::ComputeRenderIntegrity()
   return 1.f;
 }
 
-already_AddRefed<ShadowThebesLayer>
-LayerManagerComposite::CreateShadowThebesLayer()
+already_AddRefed<ThebesLayerComposite>
+LayerManagerComposite::CreateThebesLayerComposite()
 {
-  if (LayerManagerComposite::mDestroyed) {
+  if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return nullptr;
   }
   return nsRefPtr<ThebesLayerComposite>(new ThebesLayerComposite(this)).forget();
 }
 
-already_AddRefed<ShadowContainerLayer>
-LayerManagerComposite::CreateShadowContainerLayer()
+already_AddRefed<ContainerLayerComposite>
+LayerManagerComposite::CreateContainerLayerComposite()
 {
-  if (LayerManagerComposite::mDestroyed) {
+  if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return nullptr;
   }
   return nsRefPtr<ContainerLayerComposite>(new ContainerLayerComposite(this)).forget();
 }
 
-already_AddRefed<ShadowImageLayer>
-LayerManagerComposite::CreateShadowImageLayer()
+already_AddRefed<ImageLayerComposite>
+LayerManagerComposite::CreateImageLayerComposite()
 {
-  if (LayerManagerComposite::mDestroyed) {
+  if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return nullptr;
   }
   return nsRefPtr<ImageLayerComposite>(new ImageLayerComposite(this)).forget();
 }
 
-already_AddRefed<ShadowColorLayer>
-LayerManagerComposite::CreateShadowColorLayer()
+already_AddRefed<ColorLayerComposite>
+LayerManagerComposite::CreateColorLayerComposite()
 {
   if (LayerManagerComposite::mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
@@ -581,8 +593,8 @@ LayerManagerComposite::CreateShadowColorLayer()
   return nsRefPtr<ColorLayerComposite>(new ColorLayerComposite(this)).forget();
 }
 
-already_AddRefed<ShadowCanvasLayer>
-LayerManagerComposite::CreateShadowCanvasLayer()
+already_AddRefed<CanvasLayerComposite>
+LayerManagerComposite::CreateCanvasLayerComposite()
 {
   if (LayerManagerComposite::mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
@@ -591,8 +603,8 @@ LayerManagerComposite::CreateShadowCanvasLayer()
   return nsRefPtr<CanvasLayerComposite>(new CanvasLayerComposite(this)).forget();
 }
 
-already_AddRefed<ShadowRefLayer>
-LayerManagerComposite::CreateShadowRefLayer()
+already_AddRefed<RefLayerComposite>
+LayerManagerComposite::CreateRefLayerComposite()
 {
   if (LayerManagerComposite::mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
@@ -608,6 +620,11 @@ LayerManagerComposite::AddMaskEffect(Layer* aMaskLayer, EffectChain& aEffects, b
     return false;
   }
   LayerComposite* maskLayerComposite = static_cast<LayerComposite*>(aMaskLayer->ImplData());
+  if (!maskLayerComposite->GetCompositableHost()) {
+    NS_WARNING("Mask layer with no compositable host");
+    return false;
+  }
+
   gfx::Matrix4x4 transform;
   ToMatrix4x4(aMaskLayer->GetEffectiveTransform(), transform);
   return maskLayerComposite->GetCompositableHost()->AddMaskEffect(aEffects, transform, aIs3D);
@@ -633,6 +650,18 @@ LayerManagerComposite::CreateDrawTarget(const IntSize &aSize,
   return LayerManager::CreateDrawTarget(aSize, aFormat);
 }
 
+LayerComposite::LayerComposite(LayerManagerComposite *aManager)
+  : mCompositeManager(aManager)
+  , mCompositor(aManager->GetCompositor())
+  , mShadowOpacity(1.0)
+  , mUseShadowClipRect(false)
+  , mDestroyed(false)
+{ }
+
+LayerComposite::~LayerComposite()
+{
+}
+
 void
 LayerComposite::Destroy()
 {
@@ -641,6 +670,66 @@ LayerComposite::Destroy()
     CleanupResources();
   }
 }
+
+const nsIntSize&
+LayerManagerComposite::GetWidgetSize()
+{
+  return mCompositor->GetWidgetSize();
+}
+
+void
+LayerManagerComposite::SetCompositorID(uint32_t aID)
+{
+  NS_ASSERTION(mCompositor, "No compositor");
+  mCompositor->SetCompositorID(aID);
+}
+
+void
+LayerManagerComposite::NotifyShadowTreeTransaction()
+{
+  mCompositor->NotifyLayersTransaction();
+}
+
+bool
+LayerManagerComposite::CanUseCanvasLayerForSize(const gfxIntSize &aSize)
+{
+  return mCompositor->CanUseCanvasLayerForSize(aSize);
+}
+
+TextureFactoryIdentifier
+LayerManagerComposite::GetTextureFactoryIdentifier()
+{
+  return mCompositor->GetTextureFactoryIdentifier();
+}
+
+int32_t
+LayerManagerComposite::GetMaxTextureSize() const
+{
+  return mCompositor->GetMaxTextureSize();
+}
+
+#ifndef MOZ_HAVE_PLATFORM_SPECIFIC_LAYER_BUFFERS
+
+/*static*/ already_AddRefed<TextureImage>
+LayerManagerComposite::OpenDescriptorForDirectTexturing(GLContext*,
+                                                        const SurfaceDescriptor&,
+                                                        GLenum)
+{
+  return nullptr;
+}
+
+/*static*/ bool
+LayerManagerComposite::SupportsDirectTexturing()
+{
+  return false;
+}
+
+/*static*/ void
+LayerManagerComposite::PlatformSyncBeforeReplyUpdate()
+{
+}
+
+#endif  // !defined(MOZ_HAVE_PLATFORM_SPECIFIC_LAYER_BUFFERS)
 
 } /* layers */
 } /* mozilla */

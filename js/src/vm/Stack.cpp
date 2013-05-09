@@ -1,6 +1,5 @@
-/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=79 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -54,7 +53,7 @@ using mozilla::PodCopy;
 /*****************************************************************************/
 
 void
-StackFrame::initExecuteFrame(RawScript script, StackFrame *prevLink, AbstractFramePtr prev,
+StackFrame::initExecuteFrame(JSScript *script, StackFrame *prevLink, AbstractFramePtr prev,
                              FrameRegs *regs, const Value &thisv, JSObject &scopeChain,
                              ExecuteType type)
 {
@@ -88,7 +87,7 @@ StackFrame::initExecuteFrame(RawScript script, StackFrame *prevLink, AbstractFra
         dstvp[0] = NullValue();
         exec.script = script;
 #ifdef DEBUG
-        u.evalScript = (RawScript)0xbad;
+        u.evalScript = (JSScript *)0xbad;
 #endif
     }
 
@@ -407,8 +406,7 @@ StackFrame::epilogue(JSContext *cx)
     if (cx->compartment->debugMode())
         DebugScopes::onPopCall(this, cx);
 
-
-    if (isConstructing() && returnValue().isPrimitive())
+    if (isConstructing() && thisValue().isObject() && returnValue().isPrimitive())
         setReturnValue(ObjectValue(constructorThis()));
 }
 
@@ -1134,7 +1132,7 @@ ContextStack::pushBailoutArgs(JSContext *cx, const ion::IonBailoutIterator &it, 
     CopyTo dst(iag->array());
     Value *src = it.actualArgs();
     Value thisv = iag->thisv();
-    s.readFrameArgs(dst, src, NULL, &thisv, 0, fun->nargs, argc);
+    s.readFrameArgs(dst, src, NULL, &thisv, 0, fun->nargs, argc, it.script());
     return true;
 }
 
@@ -1210,7 +1208,6 @@ ContextStack::popGeneratorFrame(const GeneratorFrameGuard &gfg)
 {
     JSGenerator *gen = gfg.gen_;
     HeapValue *genvp = gen->stackSnapshot;
-    JS_ASSERT(genvp == HeapValueify(gen->fp->generatorArgsSnapshotBegin()));
 
     const FrameRegs &stackRegs = gfg.regs_;
     StackFrame *stackfp = stackRegs.fp();
@@ -1315,7 +1312,7 @@ StackIter::startOnSegment(StackSegment *seg)
  * "settle" the iterator on a new StackIter::State value. The goal is to
  * present the client a simple linear sequence of native/scripted calls while
  * covering up unpleasant stack implementation details:
- *  - The frame change can be "saved" and "restored" (see JS_SaveFrameChain).
+ *  - The frame chain can be "saved" and "restored" (see JS_SaveFrameChain).
  *    This artificially cuts the call chain and the StackIter client may want
  *    to continue through this cut to the previous frame by passing
  *    GO_THROUGH_SAVED.
@@ -1735,6 +1732,8 @@ StackIter::isGlobalFrame() const
             return data_.ionFrames_.baselineFrame()->isGlobalFrame();
         JS_ASSERT(!script()->isForEval());
         return !script()->function();
+#else
+        break;
 #endif
       case NATIVE:
         return false;
@@ -1757,6 +1756,8 @@ StackIter::isEvalFrame() const
             return data_.ionFrames_.baselineFrame()->isEvalFrame();
         JS_ASSERT(!script()->isForEval());
         return false;
+#else
+        break;
 #endif
       case NATIVE:
         return false;
@@ -1969,6 +1970,8 @@ StackIter::unaliasedActual(unsigned i, MaybeCheckAliasing checkAliasing) const
 #ifdef JS_ION
         JS_ASSERT(data_.ionFrames_.isBaselineJS());
         return data_.ionFrames_.baselineFrame()->unaliasedActual(i, checkAliasing);
+#else
+        break;
 #endif
       case NATIVE:
         break;
@@ -2023,6 +2026,8 @@ StackIter::hasArgsObj() const
 #ifdef JS_ION
         JS_ASSERT(data_.ionFrames_.isBaselineJS());
         return data_.ionFrames_.baselineFrame()->hasArgsObj();
+#else
+        break;
 #endif
       case NATIVE:
         break;

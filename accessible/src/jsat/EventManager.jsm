@@ -38,6 +38,10 @@ this.EventManager = {
   },
 
   stop: function stop() {
+    if (!this._started) {
+      return;
+    }
+    Logger.info('EventManager.stop', Utils.MozBuildApp);
     Services.obs.removeObserver(this, 'accessible-event');
     this._started = false;
   },
@@ -100,6 +104,13 @@ this.EventManager = {
     if (Logger.logLevel >= Logger.DEBUG)
       Logger.debug('A11yEvent', Logger.eventToString(aEvent),
                    Logger.accessibleToString(aEvent.accessible));
+
+    // Don't bother with non-content events in firefox.
+    if (Utils.MozBuildApp == 'browser' &&
+        aEvent.eventType != Ci.nsIAccessibleEvent.EVENT_VIRTUALCURSOR_CHANGED &&
+        aEvent.accessibleDocument != Utils.CurrentContentDoc) {
+      return;
+    }
 
     switch (aEvent.eventType) {
       case Ci.nsIAccessibleEvent.EVENT_VIRTUALCURSOR_CHANGED:

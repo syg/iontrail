@@ -26,6 +26,10 @@
 
 #include <algorithm>
 
+#ifdef ACCESSIBILITY
+#include "nsAccessibilityService.h"
+#endif
+
 #define LONG_SIDE_TO_SHORT_SIDE_RATIO 10
 
 using namespace mozilla;
@@ -349,6 +353,14 @@ nsRangeFrame::ReflowAnonymousContent(nsPresContext*           aPresContext,
   return NS_OK;
 }
 
+#ifdef ACCESSIBILITY
+a11y::AccType
+nsRangeFrame::AccessibleType()
+{
+  return a11y::eHTMLRangeType;
+}
+#endif
+
 double
 nsRangeFrame::GetValueAsFractionOfRange()
 {
@@ -357,13 +369,11 @@ nsRangeFrame::GetValueAsFractionOfRange()
 
   MOZ_ASSERT(input->GetType() == NS_FORM_INPUT_RANGE);
 
-  double value = input->GetValueAsDouble();
-  double minimum = input->GetMinimum();
-  double maximum = input->GetMaximum();
+  Decimal value = input->GetValueAsDecimal();
+  Decimal minimum = input->GetMinimum();
+  Decimal maximum = input->GetMaximum();
 
-  MOZ_ASSERT(MOZ_DOUBLE_IS_FINITE(value) &&
-             MOZ_DOUBLE_IS_FINITE(minimum) &&
-             MOZ_DOUBLE_IS_FINITE(maximum),
+  MOZ_ASSERT(value.isFinite() && minimum.isFinite() && maximum.isFinite(),
              "type=range should have a default maximum/minimum");
   
   if (maximum <= minimum) {
@@ -373,10 +383,10 @@ nsRangeFrame::GetValueAsFractionOfRange()
   
   MOZ_ASSERT(value >= minimum && value <= maximum, "Unsanitized value");
   
-  return (value - minimum) / (maximum - minimum);
+  return ((value - minimum) / (maximum - minimum)).toDouble();
 }
 
-double
+Decimal
 nsRangeFrame::GetValueAtEventPoint(nsGUIEvent* aEvent)
 {
   MOZ_ASSERT(aEvent->eventStructType == NS_MOUSE_EVENT ||
@@ -388,15 +398,14 @@ nsRangeFrame::GetValueAtEventPoint(nsGUIEvent* aEvent)
 
   MOZ_ASSERT(input->GetType() == NS_FORM_INPUT_RANGE);
 
-  double minimum = input->GetMinimum();
-  double maximum = input->GetMaximum();
-  MOZ_ASSERT(MOZ_DOUBLE_IS_FINITE(minimum) &&
-             MOZ_DOUBLE_IS_FINITE(maximum),
+  Decimal minimum = input->GetMinimum();
+  Decimal maximum = input->GetMaximum();
+  MOZ_ASSERT(minimum.isFinite() && maximum.isFinite(),
              "type=range should have a default maximum/minimum");
   if (maximum <= minimum) {
     return minimum;
   }
-  double range = maximum - minimum;
+  Decimal range = maximum - minimum;
 
   nsIntPoint absPoint;
   if (aEvent->eventStructType == NS_TOUCH_EVENT) {
@@ -408,6 +417,11 @@ nsRangeFrame::GetValueAtEventPoint(nsGUIEvent* aEvent)
   }
   nsPoint point =
     nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, absPoint, this);
+
+  if (point == nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE)) {
+    // We don't want to change the current value for this error state.
+    return static_cast<dom::HTMLInputElement*>(mContent)->GetValueAsDecimal();
+  }
 
   nsRect rangeContentRect = GetContentRectRelativeToSelf();
   nsSize thumbSize;
@@ -432,7 +446,7 @@ nsRangeFrame::GetValueAtEventPoint(nsGUIEvent* aEvent)
     }
   }
 
-  double fraction;
+  Decimal fraction;
   if (IsHorizontal()) {
     nscoord traversableDistance = rangeContentRect.width - thumbSize.width;
     if (traversableDistance <= 0) {
@@ -441,9 +455,9 @@ nsRangeFrame::GetValueAtEventPoint(nsGUIEvent* aEvent)
     nscoord posAtStart = rangeContentRect.x + thumbSize.width/2;
     nscoord posAtEnd = posAtStart + traversableDistance;
     nscoord posOfPoint = mozilla::clamped(point.x, posAtStart, posAtEnd);
-    fraction = (posOfPoint - posAtStart) / double(traversableDistance);
+    fraction = Decimal(posOfPoint - posAtStart) / traversableDistance;
     if (StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
-      fraction = 1.0 - fraction;
+      fraction = Decimal(1) - fraction;
     }
   } else {
     nscoord traversableDistance = rangeContentRect.height - thumbSize.height;
@@ -455,10 +469,10 @@ nsRangeFrame::GetValueAtEventPoint(nsGUIEvent* aEvent)
     nscoord posOfPoint = mozilla::clamped(point.y, posAtStart, posAtEnd);
     // For a vertical range, the top (posAtStart) is the highest value, so we
     // subtract the fraction from 1.0 to get that polarity correct.
-    fraction = 1.0 - (posOfPoint - posAtStart) / double(traversableDistance);
+    fraction = Decimal(1) - Decimal(posOfPoint - posAtStart) / traversableDistance;
   }
 
-  MOZ_ASSERT(fraction >= 0.0 && fraction <= 1.0);
+  MOZ_ASSERT(fraction >= 0 && fraction <= 1);
   return minimum + fraction * range;
 }
 
@@ -484,6 +498,14 @@ nsRangeFrame::UpdateForValueChange()
     // theming is applied, so we just repaint the entire range.
     InvalidateFrame();
   }
+
+#ifdef ACCESSIBILITY
+  nsAccessibilityService* accService = nsIPresShell::AccService();
+  if (accService) {
+    accService->RangeValueChanged(PresContext()->PresShell(), mContent);
+  }
+#endif
+
   SchedulePaint();
 }
 
@@ -698,19 +720,19 @@ nsRangeFrame::IsHorizontal(const nsSize *aFrameSizeOverride) const
 double
 nsRangeFrame::GetMin() const
 {
-  return static_cast<dom::HTMLInputElement*>(mContent)->GetMinimum();
+  return static_cast<dom::HTMLInputElement*>(mContent)->GetMinimum().toDouble();
 }
 
 double
 nsRangeFrame::GetMax() const
 {
-  return static_cast<dom::HTMLInputElement*>(mContent)->GetMaximum();
+  return static_cast<dom::HTMLInputElement*>(mContent)->GetMaximum().toDouble();
 }
 
 double
 nsRangeFrame::GetValue() const
 {
-  return static_cast<dom::HTMLInputElement*>(mContent)->GetValueAsDouble();
+  return static_cast<dom::HTMLInputElement*>(mContent)->GetValueAsDecimal().toDouble();
 }
 
 nsIAtom*
@@ -729,7 +751,8 @@ nsRangeFrame::ShouldUseNativeStyle() const
 {
   return (StyleDisplay()->mAppearance == NS_THEME_RANGE) &&
          !PresContext()->HasAuthorSpecifiedRules(const_cast<nsRangeFrame*>(this),
-                                                 STYLES_DISABLING_NATIVE_THEMING) &&
+                                                 (NS_AUTHOR_SPECIFIED_BORDER |
+                                                  NS_AUTHOR_SPECIFIED_BACKGROUND)) &&
          !PresContext()->HasAuthorSpecifiedRules(mTrackDiv->GetPrimaryFrame(),
                                                  STYLES_DISABLING_NATIVE_THEMING) &&
          !PresContext()->HasAuthorSpecifiedRules(mProgressDiv->GetPrimaryFrame(),

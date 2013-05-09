@@ -24,7 +24,8 @@ let require = (Cu.import("resource://gre/modules/devtools/Require.jsm", {})).req
 Components.utils.import("resource:///modules/devtools/gcli.jsm", {});
 
 let console = (Cu.import("resource://gre/modules/devtools/Console.jsm", {})).console;
-let TargetFactory = (Cu.import("resource:///modules/devtools/Target.jsm", {})).TargetFactory;
+let devtools = (Cu.import("resource:///modules/devtools/gDevTools.jsm", {})).devtools;
+let TargetFactory = devtools.TargetFactory;
 
 let Promise = (Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {})).Promise;
 let assert = { ok: ok, is: is, log: info };
@@ -732,10 +733,13 @@ helpers._exec = function(options, name, expected) {
       var actualOutput = div.textContent.trim();
 
       var doTest = function(match, against) {
-        if (!match.test(against)) {
-          assert.ok(false, 'html output for ' + name + ' against ' + match.source);
-          log('Actual textContent');
-          log(against);
+        if (match.test(against)) {
+          assert.ok(true, 'html output for ' + name + ' should match ' +
+                          match.source);
+        } else {
+          assert.ok(false, 'html output for ' + name + ' should match ' +
+                           match.source +
+                           '. Actual textContent: "' + against + '"');
         }
       };
 
@@ -753,7 +757,7 @@ helpers._exec = function(options, name, expected) {
         doTest(expected.output, actualOutput);
       }
 
-      deferred.resolve();
+      deferred.resolve(actualOutput);
     });
   };
 
@@ -791,9 +795,9 @@ helpers._setup = function(options, name, action) {
 /**
  * Helper to shutdown the test
  */
-helpers._post = function(name, action) {
+helpers._post = function(name, action, output) {
   if (typeof action === 'function') {
-    return Promise.resolve(action());
+    return Promise.resolve(action(output));
   }
   return Promise.resolve(action);
 };
@@ -950,8 +954,8 @@ helpers.audit = function(options, audits) {
       var checkDone = helpers._check(options, name, audit.check);
       return checkDone.then(function() {
         var execDone = helpers._exec(options, name, audit.exec);
-        return execDone.then(function() {
-          return helpers._post(name, audit.post).then(function() {
+        return execDone.then(function(output) {
+          return helpers._post(name, audit.post, output).then(function() {
             if (assert.testLogging) {
               log('- END \'' + name + '\' in ' + assert.currentTest);
             }

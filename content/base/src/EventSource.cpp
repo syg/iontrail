@@ -12,7 +12,6 @@
 #include "nsNetUtil.h"
 #include "nsMimeTypes.h"
 #include "nsDOMMessageEvent.h"
-#include "nsIJSContextStack.h"
 #include "nsIPromptFactory.h"
 #include "nsIWindowWatcher.h"
 #include "nsPresContext.h"
@@ -201,10 +200,8 @@ EventSource::Init(nsISupports* aOwner,
   mWithCredentials = aWithCredentials;
   BindToOwner(ownerWindow);
 
-  nsCOMPtr<nsIJSContextStack> stack =
-    do_GetService("@mozilla.org/js/xpc/ContextStack;1");
-  JSContext* cx = nullptr;
-  if (stack && NS_SUCCEEDED(stack->Peek(&cx)) && cx) {
+  // The conditional here is historical and not necessarily sane.
+  if (JSContext *cx = nsContentUtils::GetCurrentJSContext()) {
     const char *filename;
     if (nsJSUtils::GetCallingLocation(cx, &filename, &mScriptLine)) {
       mScriptFile.AssignASCII(filename);
@@ -278,7 +275,7 @@ EventSource::Init(nsISupports* aOwner,
 }
 
 /* virtual */ JSObject*
-EventSource::WrapObject(JSContext* aCx, JSObject* aScope)
+EventSource::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return EventSourceBinding::Wrap(aCx, aScope, this);
 }
@@ -1235,7 +1232,7 @@ EventSource::DispatchAllMessageEvents()
       message(static_cast<Message*>(mMessagesToDispatch.PopFront()));
 
     // Now we can turn our string into a jsval
-    JS::Value jsData;
+    JS::Rooted<JS::Value> jsData(cx);
     {
       JSString* jsString;
       JSAutoRequest ar(cx);

@@ -11,82 +11,12 @@ include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	= gkstyle_s
 LIBXUL_LIBRARY	= 1
-ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
-endif # !_MSC_VER
 
 ifdef GNU_CC
 OS_CFLAGS := $(OS_CFLAGS) -Wshadow
 OS_CXXFLAGS := $(OS_CXXFLAGS) -Wshadow
 endif
-
-EXPORTS_NAMESPACES = mozilla/css mozilla/dom
-
-EXPORTS		= \
-		AnimationCommon.h \
-		nsAnimationManager.h \
-		nsCSSAnonBoxList.h \
-		nsCSSAnonBoxes.h \
-		nsCSSFontDescList.h \
-		nsCSSKeywordList.h \
-		nsCSSKeywords.h \
-		nsCSSParser.h \
-		nsCSSPropAliasList.h \
-		nsCSSPropList.h \
-		nsCSSProperty.h \
-		nsCSSProps.h \
-		nsCSSPseudoClassList.h \
-		nsCSSPseudoClasses.h \
-		nsCSSPseudoElementList.h \
-		nsCSSPseudoElements.h \
-		nsCSSRuleProcessor.h \
-		nsCSSStyleSheet.h \
-		nsCSSValue.h \
-		nsDOMCSSAttrDeclaration.h \
-		nsDOMCSSDeclaration.h \
-		nsDOMCSSRGBColor.h \
-		nsDOMMediaQueryList.h \
-		nsICSSDeclaration.h \
-		nsICSSLoaderObserver.h \
-		nsICSSPseudoComparator.h \
-		nsICSSRuleList.h \
-		nsICSSStyleRuleDOMWrapper.h \
-		nsIStyleRule.h \
-		nsIStyleRuleProcessor.h \
-		nsIStyleSheet.h \
-		nsLayoutStylesheetCache.h \
-		nsRuleData.h \
-		nsRuleNode.h \
-		nsRuleProcessorData.h \
-		nsRuleWalker.h \
-		nsStyleAnimation.h \
-		nsStyleContext.h \
-		nsStyleCoord.h \
-		nsStyleSet.h \
-		nsStyleStruct.h \
-		nsStyleStructFwd.h \
-		nsStyleStructInlines.h \
-		nsStyleStructList.h \
-		nsStyleTransformMatrix.h \
-		nsStyleUtil.h \
-		$(NULL)
-
-EXPORTS_mozilla/css = \
-		Declaration.h \
-		ErrorReporter.h \
-		GroupRule.h \
-		ImageLoader.h \
-		ImportRule.h \
-		Loader.h \
-		NameSpaceRule.h \
-		Rule.h \
-		StyleRule.h \
-		$(NULL)
-
-EXPORTS_mozilla/dom = \
-		CSS.h \
-		CSSValue.h \
-		$(NULL)
 
 CPPSRCS		= \
 		AnimationCommon.cpp \
@@ -155,6 +85,7 @@ LOCAL_INCLUDES	+= \
 _FILES	= \
 	contenteditable.css \
 	designmode.css \
+	ImageDocument.css \
 	TopLevelImageDocument.css \
 	TopLevelVideoDocument.css \
 	$(NULL)

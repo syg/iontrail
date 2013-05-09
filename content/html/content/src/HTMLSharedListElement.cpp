@@ -8,7 +8,6 @@
 #include "mozilla/dom/HTMLOListElementBinding.h"
 #include "mozilla/dom/HTMLUListElementBinding.h"
 
-#include "nsIDOMEventTarget.h"
 #include "nsGenericHTMLElement.h"
 #include "nsAttrValueInlines.h"
 #include "nsGkAtoms.h"
@@ -150,7 +149,7 @@ HTMLSharedListElement::GetAttributeMappingFunction() const
 }
 
 JSObject*
-HTMLSharedListElement::WrapNode(JSContext *aCx, JSObject *aScope)
+HTMLSharedListElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   if (mNodeInfo->Equals(nsGkAtoms::ol)) {
     return HTMLOListElementBinding::Wrap(aCx, aScope, this);

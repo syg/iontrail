@@ -52,14 +52,14 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(DOMSVGTranslatePoint, nsISVGPoint)
 
-  virtual nsISVGPoint* Clone();
+  virtual nsISVGPoint* Clone() MOZ_OVERRIDE;
 
   // WebIDL
-  virtual float X() { return mPt.GetX(); }
-  virtual float Y() { return mPt.GetY(); }
-  virtual void SetX(float aValue, ErrorResult& rv);
-  virtual void SetY(float aValue, ErrorResult& rv);
-  virtual already_AddRefed<nsISVGPoint> MatrixTransform(SVGMatrix& matrix);
+  virtual float X() MOZ_OVERRIDE { return mPt.GetX(); }
+  virtual float Y() MOZ_OVERRIDE { return mPt.GetY(); }
+  virtual void SetX(float aValue, ErrorResult& rv) MOZ_OVERRIDE;
+  virtual void SetY(float aValue, ErrorResult& rv) MOZ_OVERRIDE;
+  virtual already_AddRefed<nsISVGPoint> MatrixTransform(SVGMatrix& matrix) MOZ_OVERRIDE;
 
   virtual nsISupports* GetParentObject() MOZ_OVERRIDE;
 
@@ -90,7 +90,8 @@ class SVGSVGElement MOZ_FINAL : public SVGSVGElementBase
 
   SVGSVGElement(already_AddRefed<nsINodeInfo> aNodeInfo,
                 FromParser aFromParser);
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   friend nsresult (::NS_NewSVGSVGElement(nsIContent **aResult,
                                          already_AddRefed<nsINodeInfo> aNodeInfo,
@@ -124,15 +125,15 @@ public:
   nsSMILTimeContainer* GetTimedDocumentRoot();
 
   // nsIContent interface
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
+  NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const MOZ_OVERRIDE;
+  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
 
   virtual bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
 
   // nsSVGElement specializations:
   virtual gfxMatrix PrependLocalTransformsTo(const gfxMatrix &aMatrix,
-                      TransformTypes aWhich = eAllTransforms) const;
-  virtual bool HasValidDimensions() const;
+                      TransformTypes aWhich = eAllTransforms) const MOZ_OVERRIDE;
+  virtual bool HasValidDimensions() const MOZ_OVERRIDE;
 
   // SVGSVGElement methods:
   float GetLength(uint8_t mCtxType);
@@ -195,7 +196,7 @@ public:
   // SVG-as-an-image documents.)
   virtual void FlushImageTransformInvalidation();
 
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
   // Returns true IFF our attributes are currently overridden by a <view>
   // element and that element's ID matches the passed-in string.
@@ -254,8 +255,8 @@ private:
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
-                              bool aCompileEventHandlers);
-  virtual void UnbindFromTree(bool aDeep, bool aNullParent);
+                              bool aCompileEventHandlers) MOZ_OVERRIDE;
+  virtual void UnbindFromTree(bool aDeep, bool aNullParent) MOZ_OVERRIDE;
 
   // implementation helpers:
 
@@ -277,6 +278,9 @@ private:
   bool SetZoomAndPanProperty(uint16_t aValue);
   uint16_t GetZoomAndPanProperty() const;
   bool ClearZoomAndPanProperty();
+  bool SetTransformProperty(const SVGTransformList& aValue);
+  const SVGTransformList* GetTransformProperty() const;
+  bool ClearTransformProperty();
 
   bool IsRoot() const {
     NS_ASSERTION((IsInDoc() && !GetParent()) ==
@@ -328,26 +332,25 @@ private:
    */
   SVGPreserveAspectRatio GetPreserveAspectRatioWithOverride() const;
 
-  virtual LengthAttributesInfo GetLengthInfo();
+  virtual LengthAttributesInfo GetLengthInfo() MOZ_OVERRIDE;
 
   enum { ATTR_X, ATTR_Y, ATTR_WIDTH, ATTR_HEIGHT };
   nsSVGLength2 mLengthAttributes[4];
   static LengthInfo sLengthInfo[4];
 
-  virtual EnumAttributesInfo GetEnumInfo();
+  virtual EnumAttributesInfo GetEnumInfo() MOZ_OVERRIDE;
 
   enum { ZOOMANDPAN };
   nsSVGEnum mEnumAttributes[1];
   static nsSVGEnumMapping sZoomAndPanMap[];
   static EnumInfo sEnumInfo[1];
 
-  virtual nsSVGViewBox *GetViewBox();
-  virtual SVGAnimatedPreserveAspectRatio *GetPreserveAspectRatio();
+  virtual nsSVGViewBox *GetViewBox() MOZ_OVERRIDE;
+  virtual SVGAnimatedPreserveAspectRatio *GetPreserveAspectRatio() MOZ_OVERRIDE;
 
   nsSVGViewBox                   mViewBox;
   SVGAnimatedPreserveAspectRatio mPreserveAspectRatio;
 
-  nsAutoPtr<gfxMatrix>           mFragmentIdentifierTransform;
   nsAutoPtr<nsString>            mCurrentViewID;
 
   // The size of the rectangular SVG viewport into which we render. This is

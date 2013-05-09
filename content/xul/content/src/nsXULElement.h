@@ -19,7 +19,6 @@
 #include "nsINodeInfo.h"
 #include "nsIControllers.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMXULElement.h"
 #include "nsIDOMXULMultSelectCntrlEl.h"
 #include "nsEventListenerManager.h"
@@ -240,6 +239,13 @@ public:
     JSScript *GetScriptObject()
     {
         return mScriptObject;
+    }
+
+    void TraceScriptObject(JSTracer* aTrc)
+    {
+        if (mScriptObject) {
+            JS_CallScriptTracer(aTrc, &mScriptObject, "active window XUL prototype script");
+        }
     }
 
     nsCOMPtr<nsIURI>         mSrcURI;
@@ -690,7 +696,8 @@ protected:
             !HasAttr(kNameSpaceID_None, nsGkAtoms::readonly);
     }
 
-    virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
+    virtual JSObject* WrapNode(JSContext *aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
     void MaybeUpdatePrivateLifetime();
 };

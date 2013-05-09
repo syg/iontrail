@@ -22,6 +22,11 @@ const kDefaultInterval = 50;
   Metro ui helpers
 =============================================================================*/
 
+function isLandscapeMode()
+{
+  return (MetroUtils.snappedState == Ci.nsIWinMetroUtils.fullScreenLandscape);
+}
+
 function checkContextUIMenuItemCount(aCount)
 {
   let visibleCount = 0;
@@ -48,6 +53,24 @@ function checkContextUIMenuItemVisibility(aVisibleList)
     }
   }
   is(errors, 0, "context menu item list visibility");
+}
+
+function checkMonoclePositionRange(aMonocle, aMinX, aMaxX, aMinY, aMaxY)
+{
+  let monocle = null;
+  if (aMonocle == "start")
+    monocle = SelectionHelperUI._startMark;
+  else if (aMonocle == "end")
+    monocle = SelectionHelperUI._endMark;
+  else if (aMonocle == "caret")
+    monocle = SelectionHelperUI._caretMark;
+  else
+    ok(false, "bad monocle id");
+
+  ok(monocle.xPos > aMinX && monocle.xPos < aMaxX,
+    "X position is " + monocle.xPos + ", expected between " + aMinX + " and " + aMaxX);
+  ok(monocle.yPos > aMinY && monocle.yPos < aMaxY,
+    "Y position is " + monocle.yPos + ", expected between " + aMinY + " and " + aMaxY);
 }
 
 /*
@@ -92,6 +115,40 @@ function showNotification()
   });
 }
 
+function getSelection(aElement) {
+  if (!aElement)
+    return null;
+  // editable element
+  if (aElement instanceof Ci.nsIDOMNSEditableElement) {
+    return aElement.QueryInterface(Ci.nsIDOMNSEditableElement)
+                 .editor.selection;
+  }
+  // document or window
+  if (aElement instanceof HTMLDocument || aElement instanceof Window) {
+    return aElement.getSelection();
+  }
+  // browser
+  return aElement.contentWindow.getSelection();
+};
+
+function getTrimmedSelection(aElement) {
+  let sel = getSelection(aElement);
+  if (!sel)
+    return "";
+  return sel.toString().trim();
+}
+
+/*
+ * clearSelection(aTarget) - clears the current selection in
+ * aTarget, shuts down the selection manager and purges all
+ * message manager events to insure a reset state for the ui.
+ */
+function clearSelection(aTarget) {
+  SelectionHelperUI.closeEditSession(true);
+  getSelection(aTarget).removeAllRanges();
+  purgeEventQueue();
+}
+
 /*=============================================================================
   Asynchronous Metro ui helpers
 =============================================================================*/
@@ -100,16 +157,40 @@ function hideContextUI()
 {
   purgeEventQueue();
   if (ContextUI.isVisible) {
-    info("is visible, waiting...");
-    let promise = waitForEvent(Elements.tray, "transitionend");
-    ContextUI.dismiss();
+    let promise = waitForEvent(Elements.tray, "transitionend", null, Elements.tray);
+    if (ContextUI.dismiss())
+    {
+      info("ContextUI dismissed, waiting...");
+      return promise;
+    }
+    return true;
+  }
+}
+
+function showNavBar()
+{
+  let promise = waitForEvent(Elements.tray, "transitionend");
+  if (!ContextUI.isVisible) {
+    ContextUI.displayNavbar();
     return promise;
   }
+}
+
+function fireAppBarDisplayEvent()
+{
+  let promise = waitForEvent(Elements.tray, "transitionend");
+  let event = document.createEvent("Events");
+  event.initEvent("MozEdgeUIGesture", true, false);
+  gWindow.dispatchEvent(event);
+  purgeEventQueue();
+  return promise;
 }
 
 /*=============================================================================
   Asynchronous test helpers
 =============================================================================*/
+let gOpenedTabs = [];
+
 /**
  *  Loads a URL in a new tab asynchronously.
  *
@@ -126,12 +207,27 @@ function addTab(aUrl) {
   return Task.spawn(function() {
     info("Opening "+aUrl+" in a new tab");
     let tab = Browser.addTab(aUrl, true);
-    yield waitForEvent(tab.browser, "pageshow");
+    yield tab.pageShowPromise;
 
     is(tab.browser.currentURI.spec, aUrl, aUrl + " is loaded");
-    registerCleanupFunction(function() Browser.closeTab(tab));
+
+    yield hideContextUI();
+
+    gOpenedTabs.push(tab);
+
     throw new Task.Result(tab);
   });
+}
+
+/**
+ * Cleans up tabs left open by addTab().
+ * This is being called at runTests() after the test loop.
+ */
+function cleanUpOpenedTabs() {
+  let tab;
+  while(tab = gOpenedTabs.shift()) {
+    Browser.closeTab(Browser.getTabFromChrome(tab.chromeTab), { forceClose: true })
+  }
 }
 
 /**
@@ -154,8 +250,7 @@ function addTab(aUrl) {
  * @param aTimeoutMs the number of miliseconds to wait before giving up
  * @returns a Promise that resolves to the received event, or to an Error
  */
-function waitForEvent(aSubject, aEventName, aTimeoutMs) {
-  info("waitForEvent: on " + aSubject + " event: " + aEventName);
+function waitForEvent(aSubject, aEventName, aTimeoutMs, aTarget) {
   let eventDeferred = Promise.defer();
   let timeoutMs = aTimeoutMs || kDefaultWait;
   let timerID = setTimeout(function wfe_canceller() {
@@ -164,6 +259,9 @@ function waitForEvent(aSubject, aEventName, aTimeoutMs) {
   }, timeoutMs);
 
   function onEvent(aEvent) {
+    if (aTarget && aTarget !== aEvent.target)
+        return;
+
     // stop the timeout clock and resume
     clearTimeout(timerID);
     eventDeferred.resolve(aEvent);
@@ -448,9 +546,106 @@ function sendContextMenuClickToElement(aWindow, aElement, aX, aY) {
                                 1, Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH);
 }
 
+/*
+ * sendDoubleTap - simulates a double click or double tap.
+ */
+function sendDoubleTap(aWindow, aX, aY) {
+  EventUtils.synthesizeMouseAtPoint(aX, aY, {
+      clickCount: 1,
+      inputSource: Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH
+    }, aWindow);
+
+  EventUtils.synthesizeMouseAtPoint(aX, aY, {
+      clickCount: 2,
+      inputSource: Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH
+    }, aWindow);
+}
+
+function sendTap(aWindow, aX, aY) {
+  EventUtils.synthesizeMouseAtPoint(aX, aY, {
+      clickCount: 1,
+      inputSource: Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH
+    }, aWindow);
+}
+
+/*
+ * sendTouchDrag - sends a touch series composed of a touchstart,
+ * touchmove, and touchend w3c event.
+ */
+function sendTouchDrag(aWindow, aStartX, aStartY, aEndX, aEndY) {
+  EventUtils.synthesizeTouchAtPoint(aStartX, aStartY, { type: "touchstart" }, aWindow);
+  EventUtils.synthesizeTouchAtPoint(aEndX, aEndY, { type: "touchmove" }, aWindow);
+  EventUtils.synthesizeTouchAtPoint(aEndX, aEndY, { type: "touchend" }, aWindow);
+}
+
+/*
+ * TouchDragAndHold - simulates a drag and hold sequence of events.
+ */
+function TouchDragAndHold() {
+}
+
+TouchDragAndHold.prototype = {
+  _timeoutStep: 2,
+  _numSteps: 50,
+  _debug: false,
+  _win: null,
+
+  callback: function callback() {
+    if (this._win == null)
+      return;
+    if (++this._step.steps >= this._numSteps) {
+      EventUtils.synthesizeTouchAtPoint(this._endPoint.xPos, this._endPoint.yPos,
+                                        { type: "touchmove" }, this._win);
+      this._defer.resolve();
+      return;
+    }
+    this._currentPoint.xPos += this._step.x;
+    this._currentPoint.yPos += this._step.y;
+    if (this._debug) {
+      info("[" + this._step.steps + "] touchmove " + this._currentPoint.xPos + " x " + this._currentPoint.yPos);
+    }
+    EventUtils.synthesizeTouchAtPoint(this._currentPoint.xPos, this._currentPoint.yPos,
+                                      { type: "touchmove" }, this._win);
+    let self = this;
+    setTimeout(function () { self.callback(); }, this._timeoutStep);
+  },
+
+  start: function start(aWindow, aStartX, aStartY, aEndX, aEndY) {
+    this._defer = Promise.defer();
+    this._win = aWindow;
+    this._endPoint = { xPos: aEndX, yPos: aEndY };
+    this._currentPoint = { xPos: aStartX, yPos: aStartY };
+    this._step = { steps: 0, x: (aEndX - aStartX) / this._numSteps, y: (aEndY - aStartY) / this._numSteps };
+    if (this._debug) {
+      info("[0] touchstart " + aStartX + " x " + aStartY);
+    }
+    EventUtils.synthesizeTouchAtPoint(aStartX, aStartY, { type: "touchstart" }, aWindow);
+    let self = this;
+    setTimeout(function () { self.callback(); }, this._timeoutStep);
+    return this._defer.promise;
+  },
+
+  end: function start() {
+    if (this._debug) {
+      info("[" + this._step.steps + "] touchend " + this._endPoint.xPos + " x " + this._endPoint.yPos);
+    }
+    EventUtils.synthesizeTouchAtPoint(this._endPoint.xPos, this._endPoint.yPos,
+                                      { type: "touchend" }, this._win);
+    this._win = null;
+  },
+};
+
 /*=============================================================================
   System utilities
 =============================================================================*/
+
+ /*
+ * emptyClipboard - clear the windows clipbaord.
+ */
+function emptyClipboard() {
+  Cc["@mozilla.org/widget/clipboard;1"].getService(Ci.nsIClipboard)
+                                       .emptyClipboard(Ci.nsIClipboard.kGlobalClipboard);
+}
 
 /*
  * purgeEventQueue - purges the event queue on the calling thread.
@@ -472,23 +667,49 @@ let gTests = [];
 
 function runTests() {
   waitForExplicitFinish();
+
   Task.spawn(function() {
     while((gCurrentTest = gTests.shift())){
-      info(gCurrentTest.desc);
       try {
         if ('function' == typeof gCurrentTest.setUp) {
+          info("SETUP " + gCurrentTest.desc);
           yield Task.spawn(gCurrentTest.setUp.bind(gCurrentTest));
         }
-        yield Task.spawn(gCurrentTest.run.bind(gCurrentTest));
-        if ('function' == typeof gCurrentTest.tearDown) {
-          yield Task.spawn(gCurrentTest.tearDown.bind(gCurrentTest));
+        try {
+          info("RUN " + gCurrentTest.desc);
+          yield Task.spawn(gCurrentTest.run.bind(gCurrentTest));
+        } finally {
+          if ('function' == typeof gCurrentTest.tearDown) {
+            info("TEARDOWN " + gCurrentTest.desc);
+            yield Task.spawn(gCurrentTest.tearDown.bind(gCurrentTest));
+          }
         }
       } catch (ex) {
-        ok(false, "runTests: Task failed - " + ex);
+        ok(false, "runTests: Task failed - " + ex + ' at ' + ex.stack);
       } finally {
-        info("END "+gCurrentTest.desc);
+        info("END " + gCurrentTest.desc);
       }
     }
+
+    try {
+      cleanUpOpenedTabs();
+
+      let badTabs = [];
+      Browser.tabs.forEach(function(item, index, array) {
+        let location = item.browser.currentURI.spec;
+        if (index == 0 && location == "about:blank")
+          return;
+        ok(false, "Left over tab after test: '" + location + "'");
+        badTabs.push(item);
+      });
+
+      badTabs.forEach(function(item, index, array) {
+        Browser.closeTab(item, { forceClose: true });
+      });
+    } catch (ex) {
+      ok(false, "Cleanup tabs failed - " + ex);
+    }
+
     finish();
   });
 }

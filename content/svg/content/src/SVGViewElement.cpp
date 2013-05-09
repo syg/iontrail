@@ -13,7 +13,7 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGViewElement::WrapNode(JSContext *aCx, JSObject *aScope)
+SVGViewElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGViewElementBinding::Wrap(aCx, aScope, this);
 }
@@ -82,7 +82,7 @@ SVGViewElement::PreserveAspectRatio()
 
 //----------------------------------------------------------------------
 
-already_AddRefed<nsIDOMSVGStringList>
+already_AddRefed<DOMSVGStringList>
 SVGViewElement::ViewTarget()
 {
   return DOMSVGStringList::GetDOMWrapper(

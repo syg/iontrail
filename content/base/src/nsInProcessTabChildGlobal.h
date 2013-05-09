@@ -25,7 +25,6 @@
 class nsInProcessTabChildGlobal : public nsDOMEventTargetHelper,
                                   public nsFrameScriptExecutor,
                                   public nsIInProcessContentFrameMessageManager,
-                                  public nsIScriptContextPrincipal,
                                   public nsIGlobalObject,
                                   public nsSupportsWeakReference,
                                   public mozilla::dom::ipc::MessageManagerCallback
@@ -91,8 +90,8 @@ public:
                                                     aWantsUntrusted,
                                                     optional_argc);
   }
+  using nsDOMEventTargetHelper::AddEventListener;
 
-  virtual nsIScriptObjectPrincipal* GetObjectPrincipal() { return this; }
   virtual JSContext* GetJSContextForEventHandlers() { return mCx; }
   virtual nsIPrincipal* GetPrincipal() { return mPrincipal; }
   void LoadFrameScript(const nsAString& aURL);

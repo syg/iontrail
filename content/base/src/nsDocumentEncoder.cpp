@@ -549,7 +549,7 @@ ConvertAndWrite(const nsAString& aString,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString charXferString;
-  if (!EnsureStringLength(charXferString, charLength))
+  if (!charXferString.SetLength(charLength, fallible_t()))
     return NS_ERROR_OUT_OF_MEMORY;
 
   char* charXferBuf = charXferString.BeginWriting();
@@ -1008,7 +1008,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
   nsString output;
   static const size_t bufferSize = 2048;
   if (!mCachedBuffer) {
-    mCachedBuffer = nsStringBuffer::Alloc(bufferSize);
+    mCachedBuffer = nsStringBuffer::Alloc(bufferSize).get();
   }
   NS_ASSERTION(!mCachedBuffer->IsReadonly(),
                "DocumentEncoder shouldn't keep reference to non-readonly buffer!");

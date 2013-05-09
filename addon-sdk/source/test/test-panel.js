@@ -15,6 +15,7 @@ const { defer } = require('sdk/core/promise');
 const { getMostRecentBrowserWindow } = require('sdk/window/utils');
 const { getWindow } = require('sdk/panel/window');
 const { pb } = require('./private-browsing/helper');
+const { URL } = require('sdk/url');
 
 const SVG_URL = self.data.url('mofo_logo.SVG');
 
@@ -119,18 +120,21 @@ exports["test Document Reload"] = function(assert, done) {
 
   let content =
     "<script>" +
-    "setTimeout(function () {" +
-    "  window.location = 'about:blank';" +
-    "}, 250);" +
+    "window.onload = function() {" +
+    "  setTimeout(function () {" +
+    "    window.location = 'about:blank';" +
+    "  }, 0);" +
+    "}" +
     "</script>";
   let messageCount = 0;
   let panel = Panel({
-    contentURL: "data:text/html;charset=utf-8," + encodeURIComponent(content),
+    // using URL here is intentional, see bug 859009
+    contentURL: URL("data:text/html;charset=utf-8," + encodeURIComponent(content)),
     contentScript: "self.postMessage(window.location.href)",
     onMessage: function (message) {
       messageCount++;
       if (messageCount == 1) {
-        assert.ok(/data:text\/html/.test(message), "First document had a content script");
+        assert.ok(/data:text\/html/.test(message), "First document had a content script " + message);
       }
       else if (messageCount == 2) {
         assert.equal(message, "about:blank", "Second document too");
@@ -139,6 +143,7 @@ exports["test Document Reload"] = function(assert, done) {
       }
     }
   });
+  assert.pass('Panel was created');
 };
 
 exports["test Parent Resize Hack"] = function(assert, done) {
@@ -316,7 +321,7 @@ exports["test Anchor And Arrow"] = function(assert, done) {
       return;
     }
     let { panel, anchor } = queue.shift();
-    panel.show(anchor);
+    panel.show(null, anchor);
   }
 
   let tabs= require("sdk/tabs");
@@ -460,6 +465,7 @@ exports["test Change Content URL"] = function(assert, done) {
     contentURL: "about:blank",
     contentScript: "self.port.emit('ready', document.location.href);"
   });
+
   let count = 0;
   panel.port.on("ready", function (location) {
     count++;
@@ -516,19 +522,10 @@ exports["test Automatic Destroy"] = function(assert) {
   assert.pass("check automatic destroy");
 };
 
-exports["test Wait For Init Then Show Then Destroy"] = makeEventOrderTest({
-  test: function(assert, done, expect, panel) {
-    expect('inited', function() { panel.show(); }).
-      then('show', function() { panel.destroy(); }).
-      then('hide', function() { done(); });
-  }
-});
-
-exports["test Show Then Wait For Init Then Destroy"] = makeEventOrderTest({
+exports["test Show Then Destroy"] = makeEventOrderTest({
   test: function(assert, done, expect, panel) {
     panel.show();
-    expect('inited').
-      then('show', function() { panel.destroy(); }).
+    expect('show', function() { panel.destroy(); }).
       then('hide', function() { done(); });
   }
 });
@@ -658,7 +655,7 @@ if (isWindowPBSupported) {
         showTries++;
         panel.show();
         showTries++;
-        panel.show(browserWindow.gBrowser);
+        panel.show(null, browserWindow.gBrowser);
 
         return promise;
       }).
@@ -710,9 +707,9 @@ if (isWindowPBSupported) {
           }
         });
         showTries++;
-        panel.show(window.gBrowser);
+        panel.show(null, window.gBrowser);
         showTries++;
-        panel.show(browserWindow.gBrowser);
+        panel.show(null, browserWindow.gBrowser);
 
         return promise;
       }).
@@ -760,7 +757,7 @@ exports['test Style Applied Only Once'] = function (assert, done) {
       'self.port.on("check",function() { self.port.emit("count", document.getElementsByTagName("style").length); });' +
       'self.port.on("ping", function (count) { self.port.emit("pong", count); });'
   });
-  
+
   panel.port.on('count', function (styleCount) {
     assert.equal(styleCount, 1, 'should only have one style');
     done();
@@ -843,7 +840,7 @@ else if (isGlobalPBSupported) {
         assert.ok(isPrivate(window), 'window is private');
         assert.equal(getWindow(window.gBrowser), window, 'private window elements returns window');
         assert.equal(getWindow(activeWindow.gBrowser), activeWindow, 'active window elements returns window');
-        
+
         pb.once('stop', done);
         pb.deactivate();
       })

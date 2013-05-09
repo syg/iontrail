@@ -7,7 +7,7 @@
 #define MOZILLA_GFX_IMAGEHOST_H
 
 #include "CompositableHost.h"
-#include "LayerManagerComposite.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 
 namespace mozilla {
 namespace layers {
@@ -24,8 +24,8 @@ public:
   TextureHost* GetTextureHost() MOZ_OVERRIDE { return nullptr; }
 
 protected:
-  ImageHost(Compositor* aCompositor)
-  : CompositableHost(aCompositor)
+  ImageHost(const TextureInfo& aTextureInfo)
+  : CompositableHost(aTextureInfo)
   {
     MOZ_COUNT_CTOR(ImageHost);
   }
@@ -40,17 +40,18 @@ protected:
 class ImageHostSingle : public ImageHost
 {
 public:
-  ImageHostSingle(Compositor* aCompositor, CompositableType aType)
-    : ImageHost(aCompositor)
+  ImageHostSingle(const TextureInfo& aTextureInfo)
+    : ImageHost(aTextureInfo)
     , mTextureHost(nullptr)
-    , mType(aType)
     , mHasPictureRect(false)
   {}
 
-  virtual CompositableType GetType() { return mType; }
+  virtual CompositableType GetType() { return mTextureInfo.mCompositableType; }
 
-  virtual void AddTextureHost(TextureHost* aTextureHost,
-                              ISurfaceAllocator* aAllocator = nullptr) MOZ_OVERRIDE;
+  virtual void EnsureTextureHost(TextureIdentifier aTextureId,
+                                 const SurfaceDescriptor& aSurface,
+                                 ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo) MOZ_OVERRIDE;
 
   TextureHost* GetTextureHost() MOZ_OVERRIDE { return mTextureHost; }
 
@@ -87,9 +88,13 @@ public:
 #endif
 
 protected:
+  virtual void MakeTextureHost(TextureIdentifier aTextureId,
+                               const SurfaceDescriptor& aSurface,
+                               ISurfaceAllocator* aAllocator,
+                               const TextureInfo& aTextureInfo);
+
   RefPtr<TextureHost> mTextureHost;
   nsIntRect mPictureRect;
-  CompositableType mType;
   bool mHasPictureRect;
 };
 
@@ -99,15 +104,18 @@ protected:
 class ImageHostBuffered : public ImageHostSingle
 {
 public:
-  ImageHostBuffered(Compositor* aCompositor, CompositableType aType)
-    : ImageHostSingle(aCompositor, aType)
+  ImageHostBuffered(const TextureInfo& aTextureInfo)
+    : ImageHostSingle(aTextureInfo)
   {}
 
   virtual bool Update(const SurfaceDescriptor& aImage,
                       SurfaceDescriptor* aResult = nullptr) MOZ_OVERRIDE;
 
-  virtual void AddTextureHost(TextureHost* aTextureHost,
-                              ISurfaceAllocator* aAllocator = nullptr) MOZ_OVERRIDE;
+protected:
+  virtual void MakeTextureHost(TextureIdentifier aTextureId,
+                               const SurfaceDescriptor& aSurface,
+                               ISurfaceAllocator* aAllocator,
+                               const TextureInfo& aTextureInfo) MOZ_OVERRIDE;
 };
 
 }

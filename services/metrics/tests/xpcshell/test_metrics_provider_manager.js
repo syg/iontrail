@@ -5,10 +5,22 @@
 
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource://gre/modules/Metrics.jsm");
 Cu.import("resource://testing-common/services/metrics/mocks.jsm");
 
+const PULL_ONLY_TESTING_CATEGORY = "testing-only-pull-only-providers";
+
 function run_test() {
+  let cm = Cc["@mozilla.org/categorymanager;1"]
+             .getService(Ci.nsICategoryManager);
+  cm.addCategoryEntry(PULL_ONLY_TESTING_CATEGORY, "DummyProvider",
+                      "resource://testing-common/services/metrics/mocks.jsm",
+                      false, true);
+  cm.addCategoryEntry(PULL_ONLY_TESTING_CATEGORY, "DummyConstantProvider",
+                      "resource://testing-common/services/metrics/mocks.jsm",
+                      false, true);
+
   run_next_test();
 };
 
@@ -175,3 +187,170 @@ add_task(function test_collect_daily() {
   yield storage.close();
 });
 
+add_task(function test_pull_only_not_initialized() {
+  let storage = yield Metrics.Storage("pull_only_not_initialized");
+  let manager = new Metrics.ProviderManager(storage);
+  yield manager.registerProvidersFromCategoryManager(PULL_ONLY_TESTING_CATEGORY);
+  do_check_eq(manager.providers.length, 1);
+  do_check_eq(manager.providers[0].name, "DummyProvider");
+  yield storage.close();
+});
+
+add_task(function test_pull_only_registration() {
+  let storage = yield Metrics.Storage("pull_only_registration");
+  let manager = new Metrics.ProviderManager(storage);
+  yield manager.registerProvidersFromCategoryManager(PULL_ONLY_TESTING_CATEGORY);
+  do_check_eq(manager.providers.length, 1);
+
+  // Simple registration and unregistration.
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(manager.providers.length, 2);
+  do_check_neq(manager.getProvider("DummyConstantProvider"), null);
+  yield manager.ensurePullOnlyProvidersUnregistered();
+  do_check_eq(manager.providers.length, 1);
+  do_check_null(manager.getProvider("DummyConstantProvider"));
+
+  // Multiple calls to register work.
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(manager.providers.length, 2);
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(manager.providers.length, 2);
+
+  // Unregister with 2 requests for registration should not unregister.
+  yield manager.ensurePullOnlyProvidersUnregistered();
+  do_check_eq(manager.providers.length, 2);
+
+  // But the 2nd one will.
+  yield manager.ensurePullOnlyProvidersUnregistered();
+  do_check_eq(manager.providers.length, 1);
+
+  yield storage.close();
+});
+
+add_task(function test_pull_only_register_while_registering() {
+  let storage = yield Metrics.Storage("pull_only_register_will_registering");
+  let manager = new Metrics.ProviderManager(storage);
+  yield manager.registerProvidersFromCategoryManager(PULL_ONLY_TESTING_CATEGORY);
+
+  manager.ensurePullOnlyProvidersRegistered();
+  manager.ensurePullOnlyProvidersRegistered();
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(manager.providers.length, 2);
+
+  manager.ensurePullOnlyProvidersUnregistered();
+  manager.ensurePullOnlyProvidersUnregistered();
+  yield manager.ensurePullOnlyProvidersUnregistered();
+  do_check_eq(manager.providers.length, 1);
+
+  yield storage.close();
+});
+
+add_task(function test_pull_only_unregister_while_registering() {
+  let storage = yield Metrics.Storage("pull_only_unregister_while_registering");
+  let manager = new Metrics.ProviderManager(storage);
+  yield manager.registerProvidersFromCategoryManager(PULL_ONLY_TESTING_CATEGORY);
+
+  manager.ensurePullOnlyProvidersRegistered();
+  yield manager.ensurePullOnlyProvidersUnregistered();
+  do_check_eq(manager.providers.length, 1);
+
+  yield storage.close();
+});
+
+add_task(function test_pull_only_register_while_unregistering() {
+  let storage = yield Metrics.Storage("pull_only_register_while_unregistering");
+  let manager = new Metrics.ProviderManager(storage);
+  yield manager.registerProvidersFromCategoryManager(PULL_ONLY_TESTING_CATEGORY);
+
+  yield manager.ensurePullOnlyProvidersRegistered();
+  manager.ensurePullOnlyProvidersUnregistered();
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(manager.providers.length, 2);
+
+  yield storage.close();
+});
+
+// Re-use database for perf reasons.
+const REGISTRATION_ERRORS_DB = "registration_errors";
+
+add_task(function test_category_manager_registration_error() {
+  let storage = yield Metrics.Storage(REGISTRATION_ERRORS_DB);
+  let manager = new Metrics.ProviderManager(storage);
+
+  let cm = Cc["@mozilla.org/categorymanager;1"]
+             .getService(Ci.nsICategoryManager);
+  cm.addCategoryEntry("registration-errors", "DummyThrowOnInitProvider",
+                      "resource://testing-common/services/metrics/mocks.jsm",
+                      false, true);
+
+  let deferred = Promise.defer();
+  let errorCount = 0;
+
+  manager.onProviderError = function (msg) {
+    errorCount++;
+    deferred.resolve(msg);
+  };
+
+  yield manager.registerProvidersFromCategoryManager("registration-errors");
+  do_check_eq(manager.providers.length, 0);
+  do_check_eq(errorCount, 1);
+
+  let msg = yield deferred.promise;
+  do_check_true(msg.contains("Provider error: DummyThrowOnInitProvider: " +
+                             "Error registering provider from category manager: Dummy Error"));
+
+  yield storage.close();
+});
+
+add_task(function test_pull_only_registration_error() {
+  let storage = yield Metrics.Storage(REGISTRATION_ERRORS_DB);
+  let manager = new Metrics.ProviderManager(storage);
+
+  let deferred = Promise.defer();
+  let errorCount = 0;
+
+  manager.onProviderError = function (msg) {
+    errorCount++;
+    deferred.resolve(msg);
+  };
+
+  yield manager.registerProviderFromType(DummyPullOnlyThrowsOnInitProvider);
+  do_check_eq(errorCount, 0);
+
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(errorCount, 1);
+
+  let msg = yield deferred.promise;
+  do_check_true(msg.contains("Provider error: DummyPullOnlyThrowsOnInitProvider: " +
+                             "Error registering pull-only provider: Dummy Error"));
+
+  yield storage.close();
+});
+
+add_task(function test_error_during_shutdown() {
+  let storage = yield Metrics.Storage(REGISTRATION_ERRORS_DB);
+  let manager = new Metrics.ProviderManager(storage);
+
+  let deferred = Promise.defer();
+  let errorCount = 0;
+
+  manager.onProviderError = function (msg) {
+    errorCount++;
+    deferred.resolve(msg);
+  };
+
+  yield manager.registerProviderFromType(DummyThrowOnShutdownProvider);
+  yield manager.registerProviderFromType(DummyProvider);
+  do_check_eq(errorCount, 0);
+  do_check_eq(manager.providers.length, 1);
+
+  yield manager.ensurePullOnlyProvidersRegistered();
+  do_check_eq(errorCount, 0);
+  yield manager.ensurePullOnlyProvidersUnregistered();
+  do_check_eq(errorCount, 1);
+  let msg = yield deferred.promise;
+  do_check_true(msg.contains("Provider error: DummyThrowOnShutdownProvider: " +
+                             "Error when shutting down provider: Dummy shutdown error"));
+
+  yield storage.close();
+});

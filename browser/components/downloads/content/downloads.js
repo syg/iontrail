@@ -71,6 +71,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "DownloadUtils",
                                   "resource://gre/modules/DownloadUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadsCommon",
                                   "resource:///modules/DownloadsCommon.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "OS",
+                                  "resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
                                   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
@@ -322,9 +324,9 @@ const DownloadsPanel = {
     // Since at most one popup is open at any given time, we can set globally.
     DownloadsCommon.getIndicatorData(window).attentionSuppressed = true;
 
-    // Ensure that an item is selected when the panel is focused.
+    // Ensure that the first item is selected when the panel is focused.
     if (DownloadsView.richListBox.itemCount > 0 &&
-        !DownloadsView.richListBox.selectedItem) {
+        DownloadsView.richListBox.selectedIndex == -1) {
       DownloadsView.richListBox.selectedIndex = 0;
     }
 
@@ -417,6 +419,10 @@ const DownloadsPanel = {
         aEvent.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_DOWN) &&
         !this.keyFocusing) {
       this.keyFocusing = true;
+      // Ensure there's a selection, we will show the focus ring around it and
+      // prevent the richlistbox from changing the selection.
+      if (DownloadsView.richListBox.selectedIndex == -1)
+        DownloadsView.richListBox.selectedIndex = 0;
       aEvent.preventDefault();
       return;
     }
@@ -547,6 +553,14 @@ const DownloadsPanel = {
         DownloadsButton.releaseAnchor();
         this._state = this.kStateHidden;
         return;
+      }
+
+      // When the panel is opened, we check if the target files of visible items
+      // still exist, and update the allowed items interactions accordingly.  We
+      // do these checks on a background thread, and don't prevent the panel to
+      // be displayed while these checks are being performed.
+      for each (let viewItem in DownloadsView._viewItems) {
+        viewItem.verifyTargetExists();
       }
 
       if (aAnchor) {
@@ -904,8 +918,10 @@ const DownloadsView = {
     let element = this.getViewItem(aDataItem)._element;
     let previousSelectedIndex = this.richListBox.selectedIndex;
     this.richListBox.removeChild(element);
-    this.richListBox.selectedIndex = Math.min(previousSelectedIndex,
-                                              this.richListBox.itemCount - 1);
+    if (previousSelectedIndex != -1) {
+      this.richListBox.selectedIndex = Math.min(previousSelectedIndex,
+                                                this.richListBox.itemCount - 1);
+    }
     delete this._viewItems[aDataItem.downloadGuid];
   },
 
@@ -960,6 +976,29 @@ const DownloadsView = {
     if (aEvent.keyCode == KeyEvent.DOM_VK_ENTER ||
         aEvent.keyCode == KeyEvent.DOM_VK_RETURN) {
       goDoCommand("downloadsCmd_doDefault");
+    }
+  },
+
+
+  /**
+   * Mouse listeners to handle selection on hover.
+   */
+  onDownloadMouseOver: function DV_onDownloadMouseOver(aEvent)
+  {
+    if (aEvent.originalTarget.parentNode == this.richListBox)
+      this.richListBox.selectedItem = aEvent.originalTarget;
+  },
+  onDownloadMouseOut: function DV_onDownloadMouseOut(aEvent)
+  {
+    if (aEvent.originalTarget.parentNode == this.richListBox) {
+      // If the destination element is outside of the richlistitem, clear the
+      // selection.
+      let element = aEvent.relatedTarget;
+      while (element && element != aEvent.originalTarget) {
+        element = element.parentNode;
+      }
+      if (!element)
+        this.richListBox.selectedIndex = -1;
     }
   },
 
@@ -1045,6 +1084,7 @@ function DownloadsViewItem(aDataItem, aElement)
   // Initialize more complex attributes.
   this._updateProgress();
   this._updateStatusLine();
+  this.verifyTargetExists();
 }
 
 DownloadsViewItem.prototype = {
@@ -1082,6 +1122,12 @@ DownloadsViewItem.prototype = {
     if (aOldState != Ci.nsIDownloadManager.DOWNLOAD_FINISHED &&
         aOldState != this.dataItem.state) {
       this._element.setAttribute("image", this.image + "&state=normal");
+
+      // We assume the existence of the target of a download that just completed
+      // successfully, without checking the condition in the background.  If the
+      // panel is already open, this will take effect immediately.  If the panel
+      // is opened later, a new background existence check will be performed.
+      this._element.setAttribute("exists", "true");
     }
 
     // Update the user interface after switching states.
@@ -1223,7 +1269,33 @@ DownloadsViewItem.prototype = {
     }
     let [size, unit] = DownloadUtils.convertByteUnits(fileSize);
     return DownloadsCommon.strings.sizeWithUnits(size, unit);
-  }
+  },
+
+  //////////////////////////////////////////////////////////////////////////////
+  //// Functions called by the panel
+
+  /**
+   * Starts checking whether the target file of a finished download is still
+   * available on disk, and sets an attribute that controls how the item is
+   * presented visually.
+   *
+   * The existence check is executed on a background thread.
+   */
+  verifyTargetExists: function DVI_verifyTargetExists() {
+    // We don't need to check if the download is not finished successfully.
+    if (!this.dataItem.openable) {
+      return;
+    }
+
+    OS.File.exists(this.dataItem.localFile.path).then(
+      function DVI_RTE_onSuccess(aExists) {
+        if (aExists) {
+          this._element.setAttribute("exists", "true");
+        } else {
+          this._element.removeAttribute("exists");
+        }
+      }.bind(this), Cu.reportError);
+  },
 };
 
 ////////////////////////////////////////////////////////////////////////////////

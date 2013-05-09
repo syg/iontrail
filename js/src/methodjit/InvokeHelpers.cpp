@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -116,7 +115,11 @@ FindExceptionHandler(JSContext *cx)
                   cx->regs().sp -= 1;
                   if (!ok)
                       goto error;
+                  break;
                 }
+
+                case JSTRY_LOOP:
+                  break;
             }
         }
     } else {
@@ -880,7 +883,7 @@ js_InternalInterpret(void *returnData, void *returnType, void *returnReg, js::VM
       }
 
       case REJOIN_PUSH_BOOLEAN:
-        nextsp[-1].setBoolean(returnReg != NULL);
+        nextsp[-1].setBoolean((JSBool)(uintptr_t)returnReg);
         f.regs.pc = nextpc;
         break;
 
@@ -1071,10 +1074,10 @@ js_InternalInterpret(void *returnData, void *returnType, void *returnReg, js::VM
         bool takeBranch = false;
         switch (JSOp(*nextpc)) {
           case JSOP_IFNE:
-            takeBranch = returnReg != NULL;
+            takeBranch = (JSBool)(uintptr_t)returnReg;
             break;
           case JSOP_IFEQ:
-            takeBranch = returnReg == NULL;
+            takeBranch = !(JSBool)(uintptr_t)returnReg;
             break;
           default:
             JS_NOT_REACHED("Bad branch op");

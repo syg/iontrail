@@ -1299,6 +1299,13 @@ NS_METHOD nsWindow::Move(double aX, double aY)
       mWindowType == eWindowType_dialog) {
     SetSizeMode(nsSizeMode_Normal);
   }
+
+  // for top-level windows only, convert coordinates from global display pixels
+  // (the "parent" coordinate space) to the window's device pixel space
+  double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
+  int32_t x = NSToIntRound(aX * scale);
+  int32_t y = NSToIntRound(aY * scale);
+
   // Check to see if window needs to be moved first
   // to avoid a costly call to SetWindowPos. This check
   // can not be moved to the calling code in nsView, because
@@ -1307,18 +1314,11 @@ NS_METHOD nsWindow::Move(double aX, double aY)
   // Only perform this check for non-popup windows, since the positioning can
   // in fact change even when the x/y do not.  We always need to perform the
   // check. See bug #97805 for details.
-  if (mWindowType != eWindowType_popup && (mBounds.x == aX) && (mBounds.y == aY))
+  if (mWindowType != eWindowType_popup && (mBounds.x == x) && (mBounds.y == y))
   {
     // Nothing to do, since it is already positioned correctly.
     return NS_OK;
   }
-
-  // for top-level windows only, convert coordinates from global display pixels
-  // (the "parent" coordinate space) to the window's device pixel space
-  double scale =
-    (mWindowType <= eWindowType_popup) ? GetDefaultScale() : 1.0;
-  int32_t x = NSToIntRound(aX * scale);
-  int32_t y = NSToIntRound(aY * scale);
 
   mBounds.x = x;
   mBounds.y = y;
@@ -1369,8 +1369,7 @@ NS_METHOD nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 {
   // for top-level windows only, convert coordinates from global display pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  double scale =
-    (mWindowType <= eWindowType_popup) ? GetDefaultScale() : 1.0;
+  double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
   int32_t width = NSToIntRound(aWidth * scale);
   int32_t height = NSToIntRound(aHeight * scale);
 
@@ -1420,8 +1419,7 @@ NS_METHOD nsWindow::Resize(double aX, double aY, double aWidth, double aHeight, 
 {
   // for top-level windows only, convert coordinates from global display pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  double scale =
-    (mWindowType <= eWindowType_popup) ? GetDefaultScale() : 1.0;
+  double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
   int32_t x = NSToIntRound(aX * scale);
   int32_t y = NSToIntRound(aY * scale);
   int32_t width = NSToIntRound(aWidth * scale);
@@ -1846,7 +1844,6 @@ NS_METHOD nsWindow::GetBounds(nsIntRect &aRect)
   } else {
     aRect = mBounds;
   }
-
   return NS_OK;
 }
 
@@ -3213,7 +3210,7 @@ nsWindow::ShouldUseOffMainThreadCompositing()
 }
 
 LayerManager*
-nsWindow::GetLayerManager(PLayersChild* aShadowManager,
+nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
                           LayersBackend aBackendHint,
                           LayerManagerPersistence aPersistence,
                           bool* aAllowRetaining)
@@ -3625,6 +3622,7 @@ void nsWindow::InitKeyEvent(nsKeyEvent& aKeyEvent,
 {
   nsIntPoint point(0, 0);
   InitEvent(aKeyEvent, &point);
+  aKeyEvent.mKeyNameIndex = aNativeKey.GetKeyNameIndex();
   aKeyEvent.location = aNativeKey.GetKeyLocation();
   aModKeyState.InitInputEvent(aKeyEvent);
 }
@@ -5657,6 +5655,7 @@ LRESULT nsWindow::ProcessCharMessage(const MSG &aMsg, bool *aEventDispatched)
   // if a child window didn't handle it (for example Alt+Space in a content window)
   ModifierKeyState modKeyState;
   NativeKey nativeKey(gKbdLayout, this, aMsg);
+  gKbdLayout.InitNativeKey(nativeKey, modKeyState);
   return OnChar(aMsg, nativeKey, modKeyState, aEventDispatched);
 }
 
@@ -6464,12 +6463,9 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
                             nsFakeCharMessage* aFakeCharMessage)
 {
   NativeKey nativeKey(gKbdLayout, this, aMsg);
-  UINT virtualKeyCode = nativeKey.GetOriginalVirtualKeyCode();
+  gKbdLayout.InitNativeKey(nativeKey, aModKeyState);
   UniCharsAndModifiers inputtingChars =
-    gKbdLayout.OnKeyDown(virtualKeyCode, aModKeyState);
-
-  // Use only DOMKeyCode for XP processing.
-  // Use virtualKeyCode for gKbdLayout and native processing.
+    nativeKey.GetCommittedCharsAndModifiers();
   uint32_t DOMKeyCode = nativeKey.GetDOMKeyCode();
 
 #ifdef DEBUG
@@ -6557,6 +6553,7 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
       return noDefault;
   }
 
+  UINT virtualKeyCode = nativeKey.GetOriginalVirtualKeyCode();
   bool isDeadKey = gKbdLayout.IsDeadKey(virtualKeyCode, aModKeyState);
   EventFlags extraFlags;
   extraFlags.mDefaultPrevented = noDefault;
@@ -6833,6 +6830,7 @@ LRESULT nsWindow::OnKeyUp(const MSG &aMsg,
     *aEventDispatched = true;
   nsKeyEvent keyupEvent(true, NS_KEY_UP, this);
   NativeKey nativeKey(gKbdLayout, this, aMsg);
+  gKbdLayout.InitNativeKey(nativeKey, aModKeyState);
   keyupEvent.keyCode = nativeKey.GetDOMKeyCode();
   InitKeyEvent(keyupEvent, nativeKey, aModKeyState);
   // Set defaultPrevented of the key event if the VK_MENU is not a system key

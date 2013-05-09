@@ -26,6 +26,7 @@ chrome.jar:
   content/bindings/appbar.xml                  (content/bindings/appbar.xml)
   content/bindings/flyoutpanel.xml             (content/bindings/flyoutpanel.xml)
   content/bindings/selectionoverlay.xml        (content/bindings/selectionoverlay.xml)
+  content/bindings/cssthrobber.xml             (content/bindings/cssthrobber.xml)
 
   content/prompt/alert.xul                     (content/prompt/alert.xul)
   content/prompt/confirm.xul                   (content/prompt/confirm.xul)
@@ -42,6 +43,7 @@ chrome.jar:
   content/helperui/SelectionHelperUI.js        (content/helperui/SelectionHelperUI.js)
   content/helperui/FormHelperUI.js             (content/helperui/FormHelperUI.js)
   content/helperui/FindHelperUI.js             (content/helperui/FindHelperUI.js)
+  content/helperui/ItemPinHelper.js            (content/helperui/ItemPinHelper.js)
 
   content/contenthandlers/ContextMenuHandler.js (content/contenthandlers/ContextMenuHandler.js)
   content/contenthandlers/PluginCTPHandler.js  (content/contenthandlers/PluginCTPHandler.js)

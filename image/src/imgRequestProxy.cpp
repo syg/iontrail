@@ -55,7 +55,12 @@ class RequestBehaviour : public ProxyBehaviour
 
   virtual void SetOwner(imgRequest* aOwner) MOZ_OVERRIDE {
     mOwner = aOwner;
-    mOwnerHasImage = !!aOwner->GetStatusTracker().GetImage();
+
+    if (mOwner) {
+      mOwnerHasImage = !!aOwner->GetStatusTracker().GetImage();
+    } else {
+      mOwnerHasImage = false;
+    }
   }
 
  private:
@@ -1014,7 +1019,7 @@ public:
   }
 
   virtual void SetOwner(imgRequest* aOwner) MOZ_OVERRIDE {
-    MOZ_ASSERT_IF(aOwner, "We shouldn't be giving static requests a non-null owner.");
+    MOZ_ASSERT(!aOwner, "We shouldn't be giving static requests a non-null owner.");
   }
 
 private:

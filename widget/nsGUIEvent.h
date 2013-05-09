@@ -399,6 +399,9 @@ enum nsEventStructType {
 #define NS_SMIL_END                  (NS_SMIL_TIME_EVENT_START + 1)
 #define NS_SMIL_REPEAT               (NS_SMIL_TIME_EVENT_START + 2)
 
+#define NS_WEBAUDIO_EVENT_START      4350
+#define NS_AUDIO_PROCESS             (NS_WEBAUDIO_EVENT_START)
+
 // script notification events
 #define NS_NOTIFYSCRIPT_START        4500
 #define NS_BEFORE_SCRIPT_EXECUTE     (NS_NOTIFYSCRIPT_START)
@@ -1062,7 +1065,8 @@ public:
   nsKeyEvent(bool isTrusted, uint32_t msg, nsIWidget *w)
     : nsInputEvent(isTrusted, msg, w, NS_KEY_EVENT),
       keyCode(0), charCode(0),
-      location(nsIDOMKeyEvent::DOM_KEY_LOCATION_STANDARD), isChar(0)
+      location(nsIDOMKeyEvent::DOM_KEY_LOCATION_STANDARD), isChar(0),
+      mKeyNameIndex(mozilla::widget::KEY_NAME_INDEX_Unidentified)
   {
   }
 
@@ -1077,6 +1081,28 @@ public:
   nsTArray<nsAlternativeCharCode> alternativeCharCodes;
   // indicates whether the event signifies a printable character
   bool            isChar;
+  // DOM KeyboardEvent.key
+  mozilla::widget::KeyNameIndex mKeyNameIndex;
+
+  void GetDOMKeyName(nsAString& aKeyName)
+  {
+    GetDOMKeyName(mKeyNameIndex, aKeyName);
+  }
+
+  static void GetDOMKeyName(mozilla::widget::KeyNameIndex aKeyNameIndex,
+                            nsAString& aKeyName)
+  {
+#define NS_DEFINE_KEYNAME(aCPPName, aDOMKeyName) \
+      case mozilla::widget::KEY_NAME_INDEX_##aCPPName: \
+        aKeyName.Assign(NS_LITERAL_STRING(aDOMKeyName)); return;
+    switch (aKeyNameIndex) {
+#include "nsDOMKeyNameList.h"
+      default:
+        aKeyName.Truncate();
+        return;
+    }
+#undef NS_DEFINE_KEYNAME
+  }
 };
 
 /**
@@ -1306,7 +1332,8 @@ public:
     deltaMode(nsIDOMWheelEvent::DOM_DELTA_PIXEL),
     customizedByUserPrefs(false), isMomentum(false), isPixelOnlyDevice(false),
     lineOrPageDeltaX(0), lineOrPageDeltaY(0), scrollType(SCROLL_DEFAULT),
-    overflowDeltaX(0.0), overflowDeltaY(0.0)
+    overflowDeltaX(0.0), overflowDeltaY(0.0),
+    viewPortIsScrollTargetParent(false)
   {
   }
 
@@ -1385,6 +1412,11 @@ public:
   //       it would need to check the deltaX and deltaY.
   double overflowDeltaX;
   double overflowDeltaY;
+
+  // Whether or not the parent of the currently scrolled frame is the ViewPort.
+  // This is false in situations when an element on the page is being scrolled
+  // (such as a text field), but true when the 'page' is being scrolled.
+  bool viewPortIsScrollTargetParent;
 };
 
 } // namespace widget
@@ -1726,28 +1758,34 @@ class nsTransitionEvent : public nsEvent
 {
 public:
   nsTransitionEvent(bool isTrusted, uint32_t msg,
-                    const nsString &propertyNameArg, float elapsedTimeArg)
+                    const nsAString& propertyNameArg, float elapsedTimeArg,
+                    const nsAString& pseudoElementArg)
     : nsEvent(isTrusted, msg, NS_TRANSITION_EVENT),
-      propertyName(propertyNameArg), elapsedTime(elapsedTimeArg)
+      propertyName(propertyNameArg), elapsedTime(elapsedTimeArg),
+      pseudoElement(pseudoElementArg)
   {
   }
 
   nsString propertyName;
   float elapsedTime;
+  nsString pseudoElement;
 };
 
 class nsAnimationEvent : public nsEvent
 {
 public:
   nsAnimationEvent(bool isTrusted, uint32_t msg,
-                   const nsString &animationNameArg, float elapsedTimeArg)
+                   const nsAString &animationNameArg, float elapsedTimeArg,
+                   const nsAString &pseudoElementArg)
     : nsEvent(isTrusted, msg, NS_ANIMATION_EVENT),
-      animationName(animationNameArg), elapsedTime(elapsedTimeArg)
+      animationName(animationNameArg), elapsedTime(elapsedTimeArg),
+      pseudoElement(pseudoElementArg)
   {
   }
 
   nsString animationName;
   float elapsedTime;
+  nsString pseudoElement;
 };
 
 /**

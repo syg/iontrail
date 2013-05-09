@@ -5,6 +5,7 @@
 #include "sdp_os_defs.h"
 #include "sdp.h"
 #include "sdp_private.h"
+#include "vcm.h"
 #include "CSFLog.h"
 
 static const char* logTag = "sdp_main";
@@ -949,7 +950,7 @@ sdp_result_e sdp_parse (sdp_t *sdp_p, char **bufp, u16 len)
 	  (sdp_p->debug_flag[SDP_DEBUG_TRACE])) {
 	    SDP_PRINT("%s ", sdp_p->debug_str);
 
-	    SDP_PRINT("%*s", line_end - ptr, ptr);
+            SDP_PRINT("%*s", (int)(line_end - ptr), ptr);
 
         }
 
@@ -974,7 +975,7 @@ sdp_result_e sdp_parse (sdp_t *sdp_p, char **bufp, u16 len)
                      */
                 if (!sdp_p->debug_flag[SDP_DEBUG_TRACE]) {
                     SDP_PRINT("%s ", sdp_p->debug_str);
-                    SDP_PRINT("%*s", line_end - ptr, ptr);
+                    SDP_PRINT("%*s", (int)(line_end - ptr), ptr);
                 }
                 sdp_p->conf_p->num_not_sdp_desc++;
                 return (SDP_NOT_SDP_DESCRIPTION);

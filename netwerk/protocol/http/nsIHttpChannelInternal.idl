@@ -34,7 +34,7 @@ interface nsIHttpUpgradeListener : nsISupports
  * using any feature exposed by this interface, be aware that this interface
  * will change and you will be broken.  You have been warned.
  */
-[scriptable, uuid(74d13d41-85cd-490f-9942-300d0c01c726)]
+[scriptable, uuid(2cd7f6a6-63f3-4bd6-a0f5-6e3d6dcff81b)]
 interface nsIHttpChannelInternal : nsISupports
 {
     /**
@@ -171,4 +171,5 @@ interface nsIHttpChannelInternal : nsISupports
      * exclusivity. Default false.
      */
     attribute boolean loadUnblocked;
+
 };

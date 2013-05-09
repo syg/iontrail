@@ -31,9 +31,14 @@
 
 class nsPluginArray;
 class nsMimeTypeArray;
-class nsGeolocation;
 class nsPIDOMWindow;
 class nsIDOMMozConnection;
+
+namespace mozilla {
+namespace dom {
+class Geolocation;
+}
+}
 
 #ifdef MOZ_MEDIA_NAVIGATOR
 #include "nsIDOMNavigatorUserMedia.h"
@@ -181,10 +186,9 @@ public:
    */
   void OnNavigation();
 
-#ifdef MOZ_SYS_MSG
   // Helper to initialize mMessagesManager.
   nsresult EnsureMessagesManager();
-#endif
+
   NS_DECL_NSIDOMNAVIGATORCAMERA
 
 private:
@@ -192,7 +196,7 @@ private:
 
   nsRefPtr<nsMimeTypeArray> mMimeTypes;
   nsRefPtr<nsPluginArray> mPlugins;
-  nsRefPtr<nsGeolocation> mGeolocation;
+  nsRefPtr<Geolocation> mGeolocation;
   nsRefPtr<DesktopNotificationCenter> mNotification;
   nsRefPtr<battery::BatteryManager> mBatteryManager;
   nsRefPtr<power::PowerManager> mPowerManager;

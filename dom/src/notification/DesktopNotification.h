@@ -8,11 +8,7 @@
 #include "PCOMContentPermissionRequestChild.h"
 
 #include "nsIPrincipal.h"
-#include "nsIJSContextStack.h"
-
 #include "nsIAlertsService.h"
-
-#include "nsIDOMEventTarget.h"
 #include "nsIContentPermissionPrompt.h"
 
 #include "nsIObserver.h"
@@ -71,7 +67,8 @@ public:
     return mOwner;
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   already_AddRefed<DesktopNotification>
   CreateNotification(const nsAString& title,
@@ -122,7 +119,8 @@ public:
     return GetOwner();
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   void Show(ErrorResult& aRv);
 

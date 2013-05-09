@@ -26,7 +26,6 @@
 #include "nsIChannel.h"
 #include "nsIClassInfo.h"
 #include "nsIDirectoryService.h"
-#include "nsIJSContextStack.h"
 #include "nsIJSRuntimeService.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
@@ -34,6 +33,7 @@
 #include "nsIXPConnect.h"
 #include "nsIXPCScriptable.h"
 
+#include "nsContentUtils.h"
 #include "nsJSUtils.h"
 #include "nsJSPrincipals.h"
 #include "nsThreadUtils.h"
@@ -278,9 +278,9 @@ Load(JSContext *cx,
      unsigned argc,
      JS::Value *vp)
 {
-    JS::Value result;
+    JS::Rooted<JS::Value> result(cx);
 
-    JSObject *obj = JS_THIS_OBJECT(cx, vp);
+    JS::Rooted<JSObject*> obj(cx, JS_THIS_OBJECT(cx, vp));
     if (!obj)
         return JS_FALSE;
 
@@ -309,7 +309,7 @@ Load(JSContext *cx,
             return JS_FALSE;
 
         if (!Environment(cx)->ShouldCompileOnly() &&
-            !JS_ExecuteScript(cx, obj, script, &result)) {
+            !JS_ExecuteScript(cx, obj, script, result.address())) {
             return JS_FALSE;
         }
     }
@@ -492,7 +492,7 @@ DumpHeap(JSContext *cx,
 
 #endif /* DEBUG */
 
-JSFunctionSpec gGlobalFunctions[] =
+const JSFunctionSpec gGlobalFunctions[] =
 {
     JS_FS("print",           Print,          0,0),
     JS_FS("load",            Load,           1,0),
@@ -523,16 +523,17 @@ typedef enum JSShellErrNum
 
 static void
 ProcessFile(JSContext *cx,
-            JSObject *obj,
+            JS::Handle<JSObject*> obj,
             const char *filename,
             FILE *file,
             JSBool forceTTY)
 {
     XPCShellEnvironment* env = Environment(cx);
-    XPCShellEnvironment::AutoContextPusher pusher(env);
+    nsCxPusher pusher;
+    pusher.Push(env->GetContext());
 
     JSScript *script;
-    JS::Value result;
+    JS::Rooted<JS::Value> result(cx);
     int lineno, startline;
     JSBool ok, hitEOF;
     char *bufp, buffer[4096];
@@ -570,10 +571,9 @@ ProcessFile(JSContext *cx,
         options.setUTF8(true)
                .setFileAndLine(filename, 1)
                .setPrincipals(env->GetPrincipal());
-        JS::RootedObject rootedObj(cx, obj);
-        JSScript* script = JS::Compile(cx, rootedObj, options, file);
+        JSScript* script = JS::Compile(cx, obj, options, file);
         if (script && !env->ShouldCompileOnly())
-            (void)JS_ExecuteScript(cx, obj, script, &result);
+            (void)JS_ExecuteScript(cx, obj, script, result.address());
 
         return;
     }
@@ -613,7 +613,7 @@ ProcessFile(JSContext *cx,
             JSErrorReporter older;
 
             if (!env->ShouldCompileOnly()) {
-                ok = JS_ExecuteScript(cx, obj, script, &result);
+                ok = JS_ExecuteScript(cx, obj, script, result.address());
                 if (ok && result != JSVAL_VOID) {
                     /* Suppress error reports from JS_ValueToString(). */
                     older = JS_SetErrorReporter(cx, NULL);
@@ -882,26 +882,6 @@ XPCShellDirProvider::GetFile(const char *prop,
     return NS_ERROR_FAILURE;
 }
 
-XPCShellEnvironment::
-AutoContextPusher::AutoContextPusher(XPCShellEnvironment* aEnv)
-{
-    NS_ASSERTION(aEnv->mCx, "Null context?!");
-
-    if (NS_SUCCEEDED(aEnv->mCxStack->Push(aEnv->mCx))) {
-        mEnv = aEnv;
-    }
-}
-
-XPCShellEnvironment::
-AutoContextPusher::~AutoContextPusher()
-{
-    if (mEnv) {
-        JSContext* cx;
-        mEnv->mCxStack->Pop(&cx);
-        NS_ASSERTION(cx == mEnv->mCx, "Wrong context on the stack!");
-    }
-}
-
 // static
 XPCShellEnvironment*
 XPCShellEnvironment::CreateEnvironment()
@@ -937,8 +917,6 @@ XPCShellEnvironment::~XPCShellEnvironment()
 
         JSRuntime *rt = JS_GetRuntime(mCx);
         JS_GC(rt);
-
-        mCxStack = nullptr;
 
         if (mJSPrincipals) {
             JS_DropPrincipals(rt, mJSPrincipals);
@@ -1027,15 +1005,8 @@ XPCShellEnvironment::Init()
         fprintf(stderr, "+++ Failed to get ScriptSecurityManager service, running without principals");
     }
 
-    nsCOMPtr<nsIJSContextStack> cxStack =
-        do_GetService("@mozilla.org/js/xpc/ContextStack;1");
-    if (!cxStack) {
-        NS_ERROR("failed to get the nsThreadJSContextStack service!");
-        return false;
-    }
-    mCxStack = cxStack;
-
-    AutoContextPusher pusher(this);
+    nsCxPusher pusher;
+    pusher.Push(mCx);
 
     nsRefPtr<BackstagePass> backstagePass;
     rv = NS_NewBackstagePass(getter_AddRefs(backstagePass));
@@ -1055,8 +1026,8 @@ XPCShellEnvironment::Init()
         return false;
     }
 
-    JSObject *globalObj;
-    rv = holder->GetJSObject(&globalObj);
+    JS::Rooted<JSObject*> globalObj(cx);
+    rv = holder->GetJSObject(globalObj.address());
     if (NS_FAILED(rv)) {
         NS_ERROR("Failed to get global JSObject!");
         return false;
@@ -1093,13 +1064,14 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
                                     nsString* aResult)
 {
   XPCShellEnvironment* env = Environment(mCx);
-  XPCShellEnvironment::AutoContextPusher pusher(env);
+  nsCxPusher pusher;
+  pusher.Push(env->GetContext());
 
   JSAutoRequest ar(mCx);
 
   JS_ClearPendingException(mCx);
 
-  JSObject* global = GetGlobalObject();
+  JS::Rooted<JSObject*> global(mCx, GetGlobalObject());
   JSAutoCompartment ac(mCx, global);
 
   JSScript* script =
@@ -1115,8 +1087,8 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
           aResult->Truncate();
       }
 
-      JS::Value result;
-      JSBool ok = JS_ExecuteScript(mCx, global, script, &result);
+      JS::Rooted<JS::Value> result(mCx);
+      JSBool ok = JS_ExecuteScript(mCx, global, script, result.address());
       if (ok && result != JSVAL_VOID) {
           JSErrorReporter old = JS_SetErrorReporter(mCx, NULL);
           JSString* str = JS_ValueToString(mCx, result);

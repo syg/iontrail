@@ -18,7 +18,6 @@
 #include "nsIJSNativeInitializer.h"
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/EventBinding.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "nsIScriptGlobalObject.h"
 
 class nsIContent;
@@ -26,7 +25,13 @@ class nsPresContext;
 struct JSContext;
 class JSObject;
 
-class nsDOMEvent : public nsIDOMEvent,
+// Dummy class so we can cast through it to get from nsISupports to
+// nsDOMEvent subclasses with only two non-ambiguous static casts.
+class nsDOMEventBase : public nsIDOMEvent
+{
+};
+
+class nsDOMEvent : public nsDOMEventBase,
                    public nsIJSNativeInitializer,
                    public nsWrapperCache
 {
@@ -79,7 +84,8 @@ public:
     return mOwner;
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE
   {
     return mozilla::dom::EventBinding::Wrap(aCx, aScope, this);
   }
@@ -89,7 +95,7 @@ public:
 
   // nsIJSNativeInitializer
   NS_IMETHOD Initialize(nsISupports* aOwner, JSContext* aCx, JSObject* aObj,
-                        uint32_t aArgc, JS::Value* aArgv);
+                        const JS::CallArgs& aArgs);
 
   virtual nsresult InitFromCtor(const nsAString& aType,
                                 JSContext* aCx, JS::Value* aVal);

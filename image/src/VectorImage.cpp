@@ -653,6 +653,11 @@ VectorImage::Draw(gfxContext* aContext,
     NS_WARNING("Refusing to make re-entrant call to VectorImage::Draw");
     return NS_ERROR_FAILURE;
   }
+
+  if (mAnimationConsumers == 0 && mStatusTracker) {
+    mStatusTracker->OnUnlockedDraw();
+  }
+
   AutoRestore<bool> autoRestoreIsDrawing(mIsDrawing);
   mIsDrawing = true;
 
@@ -753,6 +758,15 @@ VectorImage::ResetAnimation()
   mSVGDocumentWrapper->ResetAnimation();
 
   return NS_OK;
+}
+
+NS_IMETHODIMP_(float)
+VectorImage::GetFrameIndex(uint32_t aWhichFrame)
+{
+  MOZ_ASSERT(aWhichFrame <= FRAME_MAX_VALUE, "Invalid argument");
+  return aWhichFrame == FRAME_FIRST
+         ? 0.0f
+         : mSVGDocumentWrapper->GetCurrentTime();
 }
 
 //------------------------------------------------------------------------------

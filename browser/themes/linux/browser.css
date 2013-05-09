@@ -475,10 +475,6 @@ menuitem:not([type]):not(.menuitem-tooltip):not(.menuitem-iconic-tooltip) {
   list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.png");
 }
 
-#BMB_bookmarkThisPage {
-  list-style-image: url("chrome://browser/skin/places/starPage.png");
-}
-
 #BMB_unsortedBookmarks {
   list-style-image: url("chrome://browser/skin/places/unsortedBookmarks.png");
 }
@@ -653,17 +649,8 @@ toolbar[mode="full"] .toolbarbutton-1 > .toolbarbutton-menubutton-button {
   -moz-image-region: rect(0px 48px 24px 24px);
 }
 
-#bookmarks-button,
-#bookmarks-menu-button {
+#bookmarks-button {
   -moz-image-region: rect(0px 72px 24px 48px);
-}
-
-#bookmarks-menu-button.bookmark-item {
-  list-style-image: url("chrome://browser/skin/Toolbar-small.png");
-}
-
-#bookmarks-menu-button.toolbarbutton-1 {
-  -moz-box-orient: horizontal;
 }
 
 #print-button {
@@ -726,8 +713,8 @@ toolbar[mode="full"] .toolbarbutton-1 > .toolbarbutton-menubutton-button {
   -moz-image-region: rect(0px 168px 24px 144px);
 }
 
-#feed-button[disabled="true"] > .toolbarbutton-icon {
-  opacity: .3;
+#feed-button[disabled] > .toolbarbutton-icon {
+  opacity: .4;
 }
 
 #webrtc-status-button {
@@ -819,9 +806,7 @@ toolbar[iconsize="small"] #history-button {
   -moz-image-region: rect(0px 32px 16px 16px);
 }
 
-toolbar[iconsize="small"] #bookmarks-button,
-toolbar[iconsize="small"] #bookmarks-menu-button,
-#bookmarks-menu-button.bookmark-item {
+toolbar[iconsize="small"] #bookmarks-button {
   -moz-image-region: rect(0px 48px 16px 32px);
 }
 
@@ -1176,6 +1161,10 @@ toolbar[iconsize="small"] #webrtc-status-button {
   list-style-image: url(chrome://mozapps/skin/plugins/pluginBlocked-64.png);
 }
 
+.popup-notification-icon[popupid="plugins-not-found"] {
+  list-style-image: url(chrome://browser/skin/pluginInstall-64.png);
+}
+
 .popup-notification-icon[popupid="web-notifications"] {
   list-style-image: url(chrome://browser/skin/notification-64.png);
 }
@@ -1204,7 +1193,8 @@ toolbar[iconsize="small"] #webrtc-status-button {
 }
 
 .popup-notification-icon[popupid="indexedDB-permissions-prompt"],
-.popup-notification-icon[popupid="indexedDB-quota-prompt"] {
+.popup-notification-icon[popupid="indexedDB-quota-prompt"],
+.popup-notification-icon[popupid*="offline-app-requested"] {
   list-style-image: url(chrome://global/skin/icons/question-64.png);
 }
 
@@ -1301,6 +1291,10 @@ toolbar[iconsize="small"] #webrtc-status-button {
   list-style-image: url(chrome://mozapps/skin/plugins/notifyPluginBlocked.png);
 }
 
+#plugin-install-notification-icon {
+  list-style-image: url(chrome://browser/skin/pluginInstall-16.png);
+}
+
 #notification-popup-box[hidden] {
   /* Override display:none to make the pluginBlockedNotification animation work
      when showing the notification repeatedly. */
@@ -1350,7 +1344,8 @@ toolbar[iconsize="small"] #webrtc-status-button {
 
 .ac-result-type-bookmark,
 .autocomplete-treebody::-moz-tree-image(bookmark, treecolAutoCompleteImage) {
-  list-style-image: url("chrome://browser/skin/places/pageStarred.png");
+  list-style-image: url("chrome://browser/skin/places/star-icons.png");
+  -moz-image-region: rect(0px 32px 16px 16px);
   width: 16px;
   height: 16px;
 }
@@ -1446,59 +1441,98 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
   list-style-image: url("chrome://browser/skin/Info.png");
 }
 
+
+/* social share panel */
+
+.social-share-frame {
+  background: linear-gradient(to bottom, rgba(242,242,242,.99), rgba(242,242,242,.95));
+  border-left: 1px solid #f8f8f8;
+  width: 330px;
+  height: 150px;
+  /* we resize our panels dynamically, make it look nice */
+  transition: height 100ms ease-out, width 100ms ease-out;
+}
+
+#social-share-button {
+  list-style-image: url("chrome://browser/skin/social/share-button.png");
+}
+
+#social-share-button[open],
+#social-share-button:hover:active {
+  list-style-image: url("chrome://browser/skin/social/share-button-active.png");
+}
+
+.social-share-toolbar {
+  border-right: 1px solid #dedede;
+  background: linear-gradient(to bottom, rgba(247,247,247,.99), rgba(247,247,247,.95));
+}
+
+#social-share-provider-buttons {
+  border-right: 1px solid #fbfbfb;
+  padding: 6px;
+}
+
+#social-share-provider-buttons > .share-provider-button {
+  padding: 6px;
+  margin: 0;
+  border: none;
+  border-radius: 2px;
+}
+
+#social-share-provider-buttons > .share-provider-button[checked],
+#social-share-provider-buttons > .share-provider-button:active {
+  padding: 5px;
+  border: 1px solid #b5b5b8;
+  box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+#social-share-provider-buttons > .share-provider-button[checked] {
+  background: linear-gradient(to bottom, #d9d9d9, #e3e3e3);
+}
+
+#social-share-provider-buttons > .share-provider-button > .toolbarbutton-text {
+  display: none;
+}
+#social-share-provider-buttons > .share-provider-button > .toolbarbutton-icon {
+  width: 16px;
+  min-height: 16px;
+  max-height: 16px;
+}
+
 /* social recommending panel */
 
-#share-button {
+#social-mark-button {
   -moz-image-region: rect(0, 16px, 16px, 0);
 }
 
-#socialUserPortrait {
-  width: 48px;
-  height: 48px;
-  list-style-image:url("chrome://global/skin/icons/information-32.png");
+/* bookmarks menu-button */
+
+#bookmarks-menu-button {
+  list-style-image: url("chrome://browser/skin/Toolbar.png");
+  -moz-image-region: rect(0px 216px 24px 192px);
 }
 
-#socialUserDisplayName,
-#socialUserPortrait {
-  cursor: pointer;
+#bookmarks-menu-button[starred] {
+  -moz-image-region: rect(24px 216px 48px 192px);
 }
 
-#socialUserDisplayName {
-  -moz-appearance: none;
-  border: none;
-  background-color: transparent;
-  margin-top: 0;
-  padding-top: 0;
-  font-size: 130%;
-  font-weight: bold;
+toolbar[iconsize="small"] #bookmarks-menu-button,
+#bookmarks-menu-button.bookmark-item {
+  list-style-image: url("chrome://browser/skin/Toolbar-small.png");
+  -moz-image-region: rect(0px 144px 16px 128px);
 }
 
-#socialUserDisplayName > .button-box {
-  -moz-padding-start: 0;
-  padding-top: 0;
-  border-top-width: 0;
+toolbar[iconsize="small"] #bookmarks-menu-button[starred],
+#bookmarks-menu-button.bookmark-item[starred] {
+  -moz-image-region: rect(16px 144px 32px 128px);
 }
 
-#socialUserDisplayName:hover {
-  color: -moz-nativehyperlinktext;
-  text-decoration: underline;
-}
-
-#unsharePopupText {
-  height: 48px;
-}
-
-#unsharePopupBottomButtons {
-  margin-top: 1em;
-}
-
-/* Star button */
-#star-button {
-  list-style-image: url("chrome://browser/skin/places/starPage.png");
-}
-
-#star-button[starred="true"] {
-  list-style-image: url("chrome://browser/skin/places/pageStarred.png");
+#bookmarks-menu-button[disabled] > .toolbarbutton-icon,
+#bookmarks-menu-button[disabled] > .toolbarbutton-menu-dropmarker,
+#bookmarks-menu-button[disabled] > .toolbarbutton-menubutton-dropmarker,
+#bookmarks-menu-button[disabled] > .toolbarbutton-menubutton-button > .toolbarbutton-icon,
+#bookmarks-menu-button > .toolbarbutton-menubutton-button[disabled] > .toolbarbutton-icon {
+  opacity: .4;
 }
 
 /* Bookmarking panel */
@@ -2118,6 +2152,11 @@ toolbar[mode="text"] toolbarbutton.chevron > .toolbarbutton-icon {
   -moz-margin-end: 2px;
 }
 
+#social-provider-button {
+  -moz-image-region: rect(0, 16px, 16px, 0);
+  list-style-image: url(chrome://browser/skin/social/services-16.png);
+}
+
 #social-provider-button > .toolbarbutton-menu-dropmarker {
   display: none;
 }
@@ -2213,12 +2252,14 @@ toolbar[iconsize="small"] .toolbarbutton-badge-container {
 .chatbar-button {
   -moz-appearance: none;
   background-color: #d9d9d9;
+  background-image: linear-gradient(@toolbarHighlight@, rgba(255,255,255,0));
 }
 
 .chatbar-button > .toolbarbutton-icon {
   -moz-margin-end: 0;
 }
 
+.chatbar-button:hover,
 .chatbar-button[open="true"] {
   background-color: #f0f0f0;
 }
@@ -2338,4 +2379,3 @@ chatbox {
   background: url("chrome://browser/skin/privatebrowsing-mask.png") center no-repeat;
   width: 40px;
 }
-

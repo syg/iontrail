@@ -7,6 +7,7 @@
 CONFIGURE_SUBST_FILES += [
     'autoconf.mk',
     'doxygen.cfg',
+    'emptyvars.mk',
     'makefiles/test/Makefile',
     'tests/makefiles/autodeps/Makefile',
     'tests/src-simple/Makefile',

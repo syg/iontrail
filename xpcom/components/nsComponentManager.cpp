@@ -36,6 +36,7 @@
 #include "nsCategoryManager.h"
 #include "nsCategoryManagerUtils.h"
 #include "xptiprivate.h"
+#include "mozilla/XPTInterfaceInfoManager.h"
 #include "nsIConsoleService.h"
 #include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
@@ -613,8 +614,7 @@ nsComponentManagerImpl::ManifestXPT(ManifestProcessingContext& cx, int lineno, c
         rv = data.Copy(buf, len);
     }
     if (NS_SUCCEEDED(rv)) {
-        xptiInterfaceInfoManager::GetSingleton()
-            ->RegisterBuffer(buf, len);
+        XPTInterfaceInfoManager::GetSingleton()->RegisterBuffer(buf, len);
     } else {
         nsCString uri;
         f.GetURIString(uri);
@@ -1797,9 +1797,8 @@ nsFactoryEntry::GetFactory()
             factory.swap(mFactory);
         }
     }
-    nsIFactory* factory = mFactory;
-    factory->AddRef();
-    return factory;
+    nsCOMPtr<nsIFactory> factory = mFactory;
+    return factory.forget();
 }
 
 size_t

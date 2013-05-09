@@ -6,6 +6,7 @@
 /* Implementation of xptiInterfaceEntry and xptiInterfaceInfo. */
 
 #include "xptiprivate.h"
+#include "mozilla/XPTInterfaceInfoManager.h"
 #include "nsAtomicRefcnt.h"
 
 using namespace mozilla;
@@ -70,7 +71,7 @@ xptiInterfaceEntry::xptiInterfaceEntry(const char* name,
 bool 
 xptiInterfaceEntry::Resolve()
 {
-    MutexAutoLock lock(xptiInterfaceInfoManager::GetResolveLock());
+    MutexAutoLock lock(XPTInterfaceInfoManager::GetResolveLock());
     return ResolveLocked();
 }
 
@@ -126,7 +127,7 @@ nsresult
 xptiInterfaceEntry::GetName(char **name)
 {
     // It is not necessary to Resolve because this info is read from manifest.
-    *name = (char*) nsMemory::Clone(mName, PL_strlen(mName)+1);
+    *name = (char*) nsMemory::Clone(mName, strlen(mName)+1);
     return *name ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
@@ -540,7 +541,7 @@ nsresult
 xptiInterfaceEntry::GetInterfaceInfo(xptiInterfaceInfo** info)
 {
 #ifdef DEBUG
-    xptiInterfaceInfoManager::GetSingleton()->GetWorkingSet()->mTableReentrantMonitor.
+    XPTInterfaceInfoManager::GetSingleton()->mWorkingSet.mTableReentrantMonitor.
         AssertCurrentThreadIn();
 #endif
     LOG_INFO_MONITOR_ENTRY;
@@ -572,8 +573,8 @@ xptiInterfaceEntry::LockedInvalidateInterfaceInfo()
 bool
 xptiInterfaceInfo::BuildParent()
 {
-    mozilla::ReentrantMonitorAutoEnter monitor(xptiInterfaceInfoManager::GetSingleton()->
-                                    GetWorkingSet()->mTableReentrantMonitor);
+    mozilla::ReentrantMonitorAutoEnter monitor(XPTInterfaceInfoManager::GetSingleton()->
+                                    mWorkingSet.mTableReentrantMonitor);
     NS_ASSERTION(mEntry && 
                  mEntry->IsFullyResolved() && 
                  !mParent &&
@@ -615,8 +616,8 @@ xptiInterfaceInfo::Release(void)
     NS_LOG_RELEASE(this, cnt, "xptiInterfaceInfo");
     if(!cnt)
     {
-        mozilla::ReentrantMonitorAutoEnter monitor(xptiInterfaceInfoManager::
-                                          GetSingleton()->GetWorkingSet()->
+        mozilla::ReentrantMonitorAutoEnter monitor(XPTInterfaceInfoManager::
+                                          GetSingleton()->mWorkingSet.
                                           mTableReentrantMonitor);
         LOG_INFO_MONITOR_ENTRY;
 

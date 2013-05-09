@@ -363,6 +363,7 @@ bool StringToJsval(JSContext* cx, mozilla::dom::DOMString& str,
 }
 
 nsIPrincipal *GetCompartmentPrincipal(JSCompartment *compartment);
+nsIPrincipal *GetObjectPrincipal(JSObject *obj);
 
 bool IsXBLScope(JSCompartment *compartment);
 
@@ -462,6 +463,21 @@ GetJunkScope();
 nsCycleCollectionParticipant *
 xpc_JSZoneParticipant();
 
+// This API is for internal use only and should _not_ be used without approval
+// by the XPConnect Module Owner. Consumers who want to push/pop contexts
+// should go through one of the RAII classes (nsCxPusher, or one of the
+// convenience wrappers defined in nsContentUtils.h).
+namespace xpc {
+namespace danger {
+
+NS_EXPORT_(bool) PushJSContext(JSContext *aCx);
+NS_EXPORT_(void) PopJSContext();
+
+bool IsJSContextOnStack(JSContext *aCx);
+
+} /* namespace danger */
+} /* namespace xpc */
+
 namespace mozilla {
 namespace dom {
 
@@ -481,7 +497,11 @@ inline bool IsDOMProxy(JSObject *obj)
 }
 
 typedef JSObject*
-(*DefineInterface)(JSContext *cx, JSObject *global, jsid id, bool *enabled);
+(*DefineInterface)(JSContext *cx, JS::Handle<JSObject*> global,
+                   JS::Handle<jsid> id, bool *enabled);
+
+typedef JSObject*
+(*ConstructNavigatorProperty)(JSContext *cx, JS::Handle<JSObject*> naviObj);
 
 typedef bool
 (*PrefEnabled)();

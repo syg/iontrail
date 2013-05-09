@@ -77,12 +77,12 @@ SmsFilter::SetStartDate(JSContext* aCx, const JS::Value& aStartDate)
     return NS_ERROR_INVALID_ARG;
   }
 
-  JSObject& obj = aStartDate.toObject();
-  if (!JS_ObjectIsDate(aCx, &obj)) {
+  JS::Rooted<JSObject*> obj(aCx, &aStartDate.toObject());
+  if (!JS_ObjectIsDate(aCx, obj)) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  mData.startDate() = js_DateGetMsecSinceEpoch(&obj);
+  mData.startDate() = js_DateGetMsecSinceEpoch(obj);
   return NS_OK;
 }
 
@@ -112,12 +112,12 @@ SmsFilter::SetEndDate(JSContext* aCx, const JS::Value& aEndDate)
     return NS_ERROR_INVALID_ARG;
   }
 
-  JSObject& obj = aEndDate.toObject();
-  if (!JS_ObjectIsDate(aCx, &obj)) {
+  JS::Rooted<JSObject*> obj(aCx, &aEndDate.toObject());
+  if (!JS_ObjectIsDate(aCx, obj)) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  mData.endDate() = js_DateGetMsecSinceEpoch(&obj);
+  mData.endDate() = js_DateGetMsecSinceEpoch(obj);
   return NS_OK;
 }
 
@@ -131,16 +131,27 @@ SmsFilter::GetNumbers(JSContext* aCx, JS::Value* aNumbers)
     return NS_OK;
   }
 
-  JS::Value* numbers = new JS::Value[length];
-
-  for (uint32_t i=0; i<length; ++i) {
-    numbers[i].setString(JS_NewUCStringCopyN(aCx, mData.numbers()[i].get(),
-                                             mData.numbers()[i].Length()));
+  JS::AutoValueVector numbers(aCx);
+  if (!numbers.resize(length)) {
+    return NS_ERROR_FAILURE;
   }
 
-  aNumbers->setObjectOrNull(JS_NewArrayObject(aCx, length, numbers));
-  NS_ENSURE_TRUE(aNumbers->isObject(), NS_ERROR_FAILURE);
+  for (uint32_t i = 0; i < length; ++i) {
+    JSString* str = JS_NewUCStringCopyN(aCx, mData.numbers()[i].get(),
+                                        mData.numbers()[i].Length());
+    if (!str) {
+      return NS_ERROR_FAILURE;
+    }
 
+    numbers[i].setString(str);
+  }
+
+  JSObject* obj = JS_NewArrayObject(aCx, numbers.length(), numbers.begin());
+  if (!obj) {
+    return NS_ERROR_FAILURE;
+  }
+
+  aNumbers->setObject(*obj);
   return NS_OK;
 }
 
@@ -156,19 +167,19 @@ SmsFilter::SetNumbers(JSContext* aCx, const JS::Value& aNumbers)
     return NS_ERROR_INVALID_ARG;
   }
 
-  JSObject& obj = aNumbers.toObject();
-  if (!JS_IsArrayObject(aCx, &obj)) {
+  JS::Rooted<JSObject*> obj(aCx, &aNumbers.toObject());
+  if (!JS_IsArrayObject(aCx, obj)) {
     return NS_ERROR_INVALID_ARG;
   }
 
   uint32_t size;
-  JS_ALWAYS_TRUE(JS_GetArrayLength(aCx, &obj, &size));
+  JS_ALWAYS_TRUE(JS_GetArrayLength(aCx, obj, &size));
 
   nsTArray<nsString> numbers;
 
   for (uint32_t i=0; i<size; ++i) {
-    JS::Value jsNumber;
-    if (!JS_GetElement(aCx, &obj, i, &jsNumber)) {
+    JS::Rooted<JS::Value> jsNumber(aCx);
+    if (!JS_GetElement(aCx, obj, i, jsNumber.address())) {
       return NS_ERROR_INVALID_ARG;
     }
 
@@ -234,7 +245,7 @@ NS_IMETHODIMP
 SmsFilter::GetRead(JSContext* aCx, JS::Value* aRead)
 {
   if (mData.read() == eReadState_Unknown) {
-    *aRead = JSVAL_VOID;
+    *aRead = JSVAL_NULL;
     return NS_OK;
   }
 
@@ -246,7 +257,7 @@ SmsFilter::GetRead(JSContext* aCx, JS::Value* aRead)
 NS_IMETHODIMP
 SmsFilter::SetRead(JSContext* aCx, const JS::Value& aRead)
 {
-  if (aRead == JSVAL_VOID) {
+  if (aRead == JSVAL_NULL) {
     mData.read() = eReadState_Unknown;
     return NS_OK;
   }
@@ -263,7 +274,7 @@ NS_IMETHODIMP
 SmsFilter::GetThreadId(JSContext* aCx, JS::Value* aThreadId)
 {
   if (!mData.threadId()) {
-    *aThreadId = JSVAL_VOID;
+    *aThreadId = JSVAL_NULL;
     return NS_OK;
   }
 
@@ -275,7 +286,7 @@ SmsFilter::GetThreadId(JSContext* aCx, JS::Value* aThreadId)
 NS_IMETHODIMP
 SmsFilter::SetThreadId(JSContext* aCx, const JS::Value& aThreadId)
 {
-  if (aThreadId == JSVAL_VOID) {
+  if (aThreadId == JSVAL_NULL) {
     mData.threadId() = 0;
     return NS_OK;
   }

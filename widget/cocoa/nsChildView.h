@@ -90,7 +90,7 @@ class TextureImage;
 }
 
 namespace layers {
-class LayerManagerOGL;
+class GLManager;
 }
 }
 
@@ -100,6 +100,19 @@ class LayerManagerOGL;
 // synthetic events) until the OS actually "sends" the event.  This method
 // has been present in the same form since at least OS X 10.2.8.
 - (EventRef)_eventRef;
+
+@end
+
+@interface NSView (Undocumented)
+
+// Returns an NSRect that is the bounding box for all an NSView's dirty
+// rectangles (ones that need to be redrawn).  The full list of dirty
+// rectangles can be obtained by calling -[NSView _dirtyRegion] and then
+// calling -[NSRegion getRects:count:] on what it returns.  Both these
+// methods have been present in the same form since at least OS X 10.5.
+// Unlike -[NSView getRectsBeingDrawn:count:], these methods can be called
+// outside a call to -[NSView drawRect:].
+- (NSRect)_dirtyRect;
 
 @end
 
@@ -254,25 +267,18 @@ typedef NSInteger NSEventGestureAxis;
     eGestureState_None,
     eGestureState_StartGesture,
     eGestureState_MagnifyGesture,
-    eGestureState_RotateGesture,
-    eGestureState_TapGesture
+    eGestureState_RotateGesture
   } mGestureState;
   float mCumulativeMagnification;
   float mCumulativeRotation;
-
-  // Custom double tap gesture support
-  //
-  // mFirstTapTime keeps track of the time when the first tap occured
-  // and is used to check whether second tap should be recognized as
-  // a double tap gesture.
-  NSTimeInterval mFirstTapTime;
 
   BOOL mDidForceRefreshOpenGL;
   BOOL mWaitingForPaint;
 
 #ifdef __LP64__
   // Support for fluid swipe tracking.
-  void (^mCancelSwipeAnimation)();
+  BOOL* mCancelSwipeAnimation;
+  PRUint32 mCurrentSwipeDir;
 #endif
 
   // Whether this uses off-main-thread compositing.
@@ -296,6 +302,8 @@ typedef NSInteger NSEventGestureAxis;
 - (void)handleMouseMoved:(NSEvent*)aEvent;
 
 - (void)updateWindowDraggableStateOnMouseMove:(NSEvent*)theEvent;
+
+- (void)maybeDrawInTitlebar;
 
 - (void)drawRect:(NSRect)aRect inTitlebarContext:(CGContextRef)aContext;
 
@@ -330,17 +338,18 @@ typedef NSInteger NSEventGestureAxis;
 - (void)swipeWithEvent:(NSEvent *)anEvent;
 - (void)beginGestureWithEvent:(NSEvent *)anEvent;
 - (void)magnifyWithEvent:(NSEvent *)anEvent;
+- (void)smartMagnifyWithEvent:(NSEvent *)anEvent;
 - (void)rotateWithEvent:(NSEvent *)anEvent;
 - (void)endGestureWithEvent:(NSEvent *)anEvent;
 
-// Not a genuine nsResponder method, but called by touchesBeganWithEvent
-// to simulate double-tap recognition
-- (void)tapWithEvent:(NSEvent *)anEvent;
+// Helper function for Lion smart magnify events
++ (BOOL)isLionSmartMagnifyEvent:(NSEvent*)anEvent;
 
 // Support for fluid swipe tracking.
 #ifdef __LP64__
 - (void)maybeTrackScrollEventAsSwipe:(NSEvent *)anEvent
-                      scrollOverflow:(double)overflow;
+                     scrollOverflowX:(double)overflowX
+                     scrollOverflowY:(double)overflowY;
 #endif
 
 - (void)setUsingOMTCompositor:(BOOL)aUseOMTC;
@@ -506,7 +515,9 @@ public:
 
   virtual void CreateCompositor();
   virtual gfxASurface* GetThebesSurface();
-  virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect);
+  virtual void PrepareWindowEffects() MOZ_OVERRIDE;
+  virtual void CleanupWindowEffects() MOZ_OVERRIDE;
+  virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) MOZ_OVERRIDE;
 
   virtual void UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries);
 
@@ -529,6 +540,8 @@ public:
   nsCocoaWindow*    GetXULWindowWidget();
 
   NS_IMETHOD        ReparentNativeWidget(nsIWidget* aNewParent);
+
+  CGContextRef      GetCGContextForTitlebarDrawing(NSSize aSize);
 
   virtual void      WillPaint() MOZ_OVERRIDE;
 
@@ -571,8 +584,8 @@ protected:
     return widget.forget();
   }
 
-  void MaybeDrawResizeIndicator(mozilla::layers::LayerManagerOGL* aManager, nsIntRect aRect);
-  void MaybeDrawRoundedBottomCorners(mozilla::layers::LayerManagerOGL* aManager, nsIntRect aRect);
+  void MaybeDrawResizeIndicator(mozilla::layers::GLManager* aManager, nsIntRect aRect);
+  void MaybeDrawRoundedBottomCorners(mozilla::layers::GLManager* aManager, nsIntRect aRect);
 
   nsIWidget* GetWidgetForListenerEvents();
 
@@ -591,7 +604,21 @@ protected:
   nsWeakPtr             mAccessible;
 #endif
 
+
   nsRefPtr<gfxASurface> mTempThebesSurface;
+
+  mozilla::Mutex mEffectsLock;
+
+  // May be accessed from any thread, protected
+  // by mEffectsLock.
+  bool mShowsResizeIndicator;
+  nsIntRect mResizeIndicatorRect;
+  bool mHasRoundedBottomCorners;
+  int mDevPixelCornerRadius;
+
+  // Compositor thread only
+  bool                  mFailedResizerImage;
+  bool                  mFailedCornerMaskImage;
   nsRefPtr<mozilla::gl::TextureImage> mResizerImage;
   nsRefPtr<mozilla::gl::TextureImage> mCornerMaskImage;
 
@@ -604,8 +631,6 @@ protected:
   // ** We'll need to reinitialize this if the backing resolution changes. **
   CGFloat               mBackingScaleFactor;
 
-  bool                  mFailedResizerImage;
-  bool                  mFailedCornerMaskImage;
   bool                  mVisible;
   bool                  mDrawing;
   bool                  mPluginDrawing;

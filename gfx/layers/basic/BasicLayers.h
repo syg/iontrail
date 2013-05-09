@@ -21,11 +21,11 @@ namespace mozilla {
 namespace layers {
 
 class BasicShadowableLayer;
-class ShadowThebesLayer;
-class ShadowContainerLayer;
-class ShadowImageLayer;
-class ShadowCanvasLayer;
-class ShadowColorLayer;
+class ThebesLayerComposite;
+class ContainerLayerComposite;
+class ImageLayerComposite;
+class CanvasLayerComposite;
+class ColorLayerComposite;
 class ReadbackProcessor;
 class ImageFactory;
 class PaintLayerContext;
@@ -183,7 +183,7 @@ protected:
   nsRefPtr<gfxContext> mTarget;
   // When we're doing a transaction in order to draw to a non-default
   // target, the layers transaction is only performed in order to send
-  // a PLayers:Update.  We save the original non-default target to
+  // a PLayerTransaction:Update.  We save the original non-default target to
   // mShadowTarget, and then perform the transaction using
   // mDummyTarget as the render target.  After the transaction ends,
   // we send a message to our remote side to capture the actual pixels
@@ -202,128 +202,6 @@ protected:
   bool mCachedSurfaceInUse;
   bool mTransactionIncomplete;
   bool mCompositorMightResample;
-};
-
-class BasicShadowLayerManager : public BasicLayerManager,
-                                public ShadowLayerForwarder
-{
-  typedef nsTArray<nsRefPtr<Layer> > LayerRefArray;
-
-public:
-  BasicShadowLayerManager(nsIWidget* aWidget);
-  virtual ~BasicShadowLayerManager();
-
-  virtual ShadowLayerForwarder* AsShadowForwarder()
-  {
-    return this;
-  }
-
-  virtual int32_t GetMaxTextureSize() const;
-
-  virtual void SetDefaultTargetConfiguration(BufferMode aDoubleBuffering, ScreenRotation aRotation) MOZ_OVERRIDE;
-  virtual void BeginTransactionWithTarget(gfxContext* aTarget);
-  virtual bool EndEmptyTransaction(EndTransactionFlags aFlags = END_DEFAULT);
-  virtual void EndTransaction(DrawThebesLayerCallback aCallback,
-                              void* aCallbackData,
-                              EndTransactionFlags aFlags = END_DEFAULT);
-
-  virtual void SetRoot(Layer* aLayer);
-
-  virtual void Mutated(Layer* aLayer);
-
-  virtual already_AddRefed<ThebesLayer> CreateThebesLayer();
-  virtual already_AddRefed<ContainerLayer> CreateContainerLayer();
-  virtual already_AddRefed<ImageLayer> CreateImageLayer();
-  virtual already_AddRefed<CanvasLayer> CreateCanvasLayer();
-  virtual already_AddRefed<ColorLayer> CreateColorLayer();
-  virtual already_AddRefed<RefLayer> CreateRefLayer();
-
-  ShadowableLayer* Hold(Layer* aLayer);
-
-  bool HasShadowManager() const { return ShadowLayerForwarder::HasShadowManager(); }
-
-  virtual bool IsCompositingCheap();
-  virtual bool HasShadowManagerInternal() const { return HasShadowManager(); }
-
-  virtual void SetIsFirstPaint() MOZ_OVERRIDE;
-
-  // Drop cached resources and ask our shadow manager to do the same,
-  // if we have one.
-  virtual void ClearCachedResources(Layer* aSubtree = nullptr) MOZ_OVERRIDE;
-
-  void SetRepeatTransaction() { mRepeatTransaction = true; }
-  bool GetRepeatTransaction() { return mRepeatTransaction; }
-
-  bool IsRepeatTransaction() { return mIsRepeatTransaction; }
-
-  /**
-   * Called for each iteration of a progressive tile update. Fills
-   * aViewport, aScaleX and aScaleY with the current scale and viewport
-   * being used to composite the layers in this manager, to determine what area
-   * intersects with the target render rectangle. aDrawingCritical will be
-   * true if the current drawing operation is using the critical displayport.
-   * Returns true if the update should continue, or false if it should be
-   * cancelled.
-   * This is only called if gfxPlatform::UseProgressiveTilePainting() returns
-   * true.
-   */
-  bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent,
-                                 gfx::Rect& aViewport,
-                                 float& aScaleX,
-                                 float& aScaleY,
-                                 bool aDrawingCritical);
-
-private:
-  /**
-   * Forward transaction results to the parent context.
-   */
-  void ForwardTransaction();
-
-  // The bounds of |mTarget| in device pixels.
-  nsIntRect mTargetBounds;
-
-  LayerRefArray mKeepAlive;
-
-  // Sometimes we draw to targets that don't natively support
-  // landscape/portrait orientation.  When we need to implement that
-  // ourselves, |mTargetRotation| describes the induced transform we
-  // need to apply when compositing content to our target.
-  ScreenRotation mTargetRotation;
-
-  // Used to repeat the transaction right away (to avoid rebuilding
-  // a display list) to support progressive drawing.
-  bool mRepeatTransaction;
-  bool mIsRepeatTransaction;
-};
-
-class BasicShadowableThebesLayer;
-class BasicShadowableLayer : public ShadowableLayer
-{
-public:
-  BasicShadowableLayer()
-  {
-    MOZ_COUNT_CTOR(BasicShadowableLayer);
-  }
-
-  ~BasicShadowableLayer();
-
-  void SetShadow(PLayerChild* aShadow)
-  {
-    NS_ABORT_IF_FALSE(!mShadow, "can't have two shadows (yet)");
-    mShadow = aShadow;
-  }
-
-  virtual void Disconnect()
-  {
-    // This is an "emergency Disconnect()", called when the compositing
-    // process has died.  |mShadow| and our Shmem buffers are
-    // automatically managed by IPDL, so we don't need to explicitly
-    // free them here (it's hard to get that right on emergency
-    // shutdown anyway).
-    mShadow = nullptr;
-  }
-
-  virtual BasicShadowableThebesLayer* AsThebes() { return nullptr; }
 };
 
 void

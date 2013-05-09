@@ -21,7 +21,6 @@
 #include "nsIWebBrowserChromeFocus.h"
 #include "nsIWidget.h"
 #include "nsIDOMEventListener.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIWindowProvider.h"
 #include "nsIXPCScriptable.h"
@@ -73,8 +72,7 @@ class ClonedMessageData;
 
 class TabChildGlobal : public nsDOMEventTargetHelper,
                        public nsIContentFrameMessageManager,
-                       public nsIScriptObjectPrincipal,
-                       public nsIScriptContextPrincipal
+                       public nsIScriptObjectPrincipal
 {
 public:
   TabChildGlobal(TabChild* aTabChild);
@@ -113,6 +111,7 @@ public:
     return nsDOMEventTargetHelper::AddEventListener(aType, aListener,
                                                     aUseCapture, false, 2);
   }
+  using nsDOMEventTargetHelper::AddEventListener;
   NS_IMETHOD AddEventListener(const nsAString& aType,
                               nsIDOMEventListener* aListener,
                               bool aUseCapture, bool aWantsUntrusted,
@@ -124,7 +123,6 @@ public:
                                                     optional_argc);
   }
 
-  virtual nsIScriptObjectPrincipal* GetObjectPrincipal() { return this; }
   virtual JSContext* GetJSContextForEventHandlers();
   virtual nsIPrincipal* GetPrincipal();
 
@@ -296,6 +294,7 @@ public:
 
     /** Return the DPI of the widget this TabChild draws to. */
     void GetDPI(float* aDPI);
+    void GetDefaultScale(double *aScale);
 
     gfxSize GetZoom() { return mLastMetrics.mZoom; }
 
@@ -314,16 +313,6 @@ public:
      */
     void MakeVisible();
     void MakeHidden();
-
-    virtual bool RecvSetAppType(const nsString& aAppType);
-
-    /**
-     * Get this object's app type.
-     *
-     * A TabChild's app type corresponds to the value of its frame element's
-     * "mozapptype" attribute.
-     */
-    void GetAppType(nsAString& aAppType) const { aAppType = mAppType; }
 
     // Returns true if the file descriptor was found in the cache, false
     // otherwise.
@@ -431,6 +420,7 @@ private:
     class CachedFileDescriptorInfo;
     class CachedFileDescriptorCallbackRunnable;
 
+    TextureFactoryIdentifier mTextureFactoryIdentifier;
     nsCOMPtr<nsIWebNavigation> mWebNav;
     nsCOMPtr<nsIWidget> mWidget;
     nsCOMPtr<nsIURI> mLastURI;
@@ -459,7 +449,6 @@ private:
     bool mNotified;
     bool mContentDocumentIsDisplayed;
     bool mTriedBrowserInit;
-    nsString mAppType;
     ScreenOrientation mOrientation;
 
     DISALLOW_EVIL_CONSTRUCTORS(TabChild);

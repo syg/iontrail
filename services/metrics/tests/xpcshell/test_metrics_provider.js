@@ -6,8 +6,8 @@
 const {utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/Metrics.jsm");
+Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
-Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://testing-common/services/metrics/mocks.jsm");
 
 
@@ -96,6 +96,10 @@ add_task(function test_measurement_storage_basic() {
 
   count = yield provider.storage.getDailyCounterCountFromFieldID(counterID, yesterday);
   do_check_eq(count, 1);
+
+  yield m.incrementDailyCounter("daily-counter", now, 4);
+  count = yield provider.storage.getDailyCounterCountFromFieldID(counterID, now);
+  do_check_eq(count, 6);
 
   // Daily discrete numeric.
   let dailyDiscreteNumericID = m.fieldID("daily-discrete-numeric");

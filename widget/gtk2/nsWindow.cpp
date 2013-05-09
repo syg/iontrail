@@ -995,7 +995,7 @@ nsWindow::Show(bool aState)
 NS_IMETHODIMP
 nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 {
-    double scale = GetDefaultScale();
+    double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
     int32_t width = NSToIntRound(scale * aWidth);
     int32_t height = NSToIntRound(scale * aHeight);
     ConstrainSize(&width, &height);
@@ -1075,7 +1075,7 @@ NS_IMETHODIMP
 nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
                  bool aRepaint)
 {
-    double scale = GetDefaultScale();
+    double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
     int32_t width = NSToIntRound(scale * aWidth);
     int32_t height = NSToIntRound(scale * aHeight);
     ConstrainSize(&width, &height);
@@ -1163,7 +1163,7 @@ nsWindow::Move(double aX, double aY)
     LOG(("nsWindow::Move [%p] %f %f\n", (void *)this,
          aX, aY));
 
-    double scale = GetDefaultScale();
+    double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
     int32_t x = NSToIntRound(aX * scale);
     int32_t y = NSToIntRound(aY * scale);
 
@@ -2123,15 +2123,6 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     }
     // If this widget uses OMTC...
     if (GetLayerManager()->AsShadowForwarder() && GetLayerManager()->AsShadowForwarder()->HasShadowManager()) {
-#if defined(MOZ_WIDGET_GTK2)
-        nsRefPtr<gfxContext> ctx = new gfxContext(GetThebesSurface());
-#else
-        nsRefPtr<gfxContext> ctx = new gfxContext(GetThebesSurface(cr));
-#endif
-        nsBaseWidget::AutoLayerManagerSetup
-          setupLayerManager(this, ctx, mozilla::layers::BUFFER_NONE);
-
-        listener->PaintWindow(this, region, 0);
         listener->DidPaintWindow();
 
         g_free(rects);
@@ -5940,7 +5931,7 @@ nsWindow::GetSurfaceForGdkDrawable(GdkDrawable* aDrawable,
     Display* xDisplay = DisplayOfScreen(xScreen);
     Drawable xDrawable = gdk_x11_drawable_get_xid(aDrawable);
 
-    gfxASurface* result = nullptr;
+    nsRefPtr<gfxASurface> result;
 
     if (visual) {
         Visual* xVisual = gdk_x11_visual_get_xvisual(visual);
@@ -5967,8 +5958,7 @@ nsWindow::GetSurfaceForGdkDrawable(GdkDrawable* aDrawable,
                                     gfxIntSize(aSize.width, aSize.height));
     }
 
-    NS_IF_ADDREF(result);
-    return result;
+    return result.forget();
 }
 #endif
 
@@ -6164,7 +6154,7 @@ nsWindow::BeginResizeDrag(nsGUIEvent* aEvent, int32_t aHorizontal, int32_t aVert
 }
 
 nsIWidget::LayerManager*
-nsWindow::GetLayerManager(PLayersChild* aShadowManager,
+nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
                           LayersBackend aBackendHint,
                           LayerManagerPersistence aPersistence,
                           bool* aAllowRetaining)

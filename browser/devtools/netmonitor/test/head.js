@@ -6,8 +6,9 @@ const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
 
 let { Services } = Cu.import("resource://gre/modules/Services.jsm", {});
 let { Promise } = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {});
-let { TargetFactory } = Cu.import("resource:///modules/devtools/Target.jsm", {});
-let { gDevTools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
+let { gDevTools, devtools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
+let TargetFactory = devtools.TargetFactory;
+let Toolbox = devtools.Toolbox;
 
 const EXAMPLE_URL = "http://example.com/browser/browser/devtools/netmonitor/test/";
 
@@ -16,6 +17,8 @@ const NAVIGATE_URL = EXAMPLE_URL + "html_navigate-test-page.html";
 const CONTENT_TYPE_URL = EXAMPLE_URL + "html_content-type-test-page.html";
 const STATUS_CODES_URL = EXAMPLE_URL + "html_status-codes-test-page.html";
 const POST_DATA_URL = EXAMPLE_URL + "html_post-data-test-page.html";
+const JSONP_URL = EXAMPLE_URL + "html_jsonp-test-page.html";
+const JSON_LONG_URL = EXAMPLE_URL + "html_json-long-test-page.html";
 
 const SIMPLE_SJS = EXAMPLE_URL + "sjs_simple-test-server.sjs";
 const CONTENT_TYPE_SJS = EXAMPLE_URL + "sjs_content-type-test-server.sjs";

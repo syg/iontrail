@@ -6,9 +6,10 @@
 #ifndef mozilla_dom_HTMLAudioElement_h
 #define mozilla_dom_HTMLAudioElement_h
 
+#include "nsITimer.h"
 #include "nsIDOMHTMLAudioElement.h"
-#include "nsIJSNativeInitializer.h"
 #include "mozilla/dom/HTMLMediaElement.h"
+#include "mozilla/dom/TypedArray.h"
 
 typedef uint16_t nsMediaNetworkState;
 typedef uint16_t nsMediaReadyState;
@@ -17,6 +18,7 @@ namespace mozilla {
 namespace dom {
 
 class HTMLAudioElement : public HTMLMediaElement,
+                         public nsITimerCallback,
                          public nsIDOMHTMLAudioElement
 {
 public:
@@ -39,8 +41,11 @@ public:
   using HTMLMediaElement::GetPaused;
   NS_FORWARD_NSIDOMHTMLMEDIAELEMENT(HTMLMediaElement::)
 
-  // nsIDOMHTMLAudioElement
-  NS_DECL_NSIDOMHTMLAUDIOELEMENT
+  // nsIAudioChannelAgentCallback
+  NS_DECL_NSIAUDIOCHANNELAGENTCALLBACK
+
+  // NS_DECL_NSITIMERCALLBACK
+  NS_DECL_NSITIMERCALLBACK
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
   virtual nsresult SetAcceptHeader(nsIHttpChannel* aChannel);
@@ -50,19 +55,36 @@ public:
   // WebIDL
 
   static already_AddRefed<HTMLAudioElement> Audio(const GlobalObject& global,
-                                                  ErrorResult& aRv);
-  static already_AddRefed<HTMLAudioElement> Audio(const GlobalObject& global,
-                                                  const nsAString& src,
+                                                  const Optional<nsAString>& src,
                                                   ErrorResult& aRv);
 
   void MozSetup(uint32_t aChannels, uint32_t aRate, ErrorResult& aRv);
 
-  uint32_t MozWriteAudio(JSContext* aCx, JS::Value aData, ErrorResult& aRv);
+  uint32_t MozWriteAudio(const Float32Array& aData, ErrorResult& aRv)
+  {
+    return MozWriteAudio(aData.Data(), aData.Length(), aRv);
+  }
+  uint32_t MozWriteAudio(const Sequence<float>& aData, ErrorResult& aRv)
+  {
+    return MozWriteAudio(aData.Elements(), aData.Length(), aRv);
+  }
+  uint32_t MozWriteAudio(const float* aData, uint32_t aLength,
+                         ErrorResult& aRv);
 
   uint64_t MozCurrentSampleOffset(ErrorResult& aRv);
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+
+  // Update the audio channel playing state
+  virtual void UpdateAudioChannelPlayingState() MOZ_OVERRIDE;
+
+  // Due to that audio data API doesn't indicate the timing of pause or end,
+  // the timer is used to defer the timing of pause/stop after writing data.
+  nsCOMPtr<nsITimer> mDeferStopPlayTimer;
+  // To indicate mDeferStopPlayTimer is on fire or not.
+  bool mTimerActivated;
 };
 
 } // namespace dom

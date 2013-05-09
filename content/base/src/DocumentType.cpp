@@ -60,7 +60,7 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-DocumentType::WrapNode(JSContext *cx, JSObject *scope)
+DocumentType::WrapNode(JSContext *cx, JS::Handle<JSObject*> scope)
 {
   return DocumentTypeBinding::Wrap(cx, scope, this);
 }
@@ -129,6 +129,13 @@ NS_IMETHODIMP
 DocumentType::GetInternalSubset(nsAString& aInternalSubset)
 {
   aInternalSubset = mInternalSubset;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+DocumentType::MozRemove()
+{
+  Remove();
   return NS_OK;
 }
 

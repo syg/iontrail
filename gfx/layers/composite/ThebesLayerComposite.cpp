@@ -4,10 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ipc/AutoOpenSurface.h"
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
 #include "TiledLayerBuffer.h"
 
-/* This must occur *after* layers/PLayers.h to avoid typedefs conflicts. */
+// This must occur *after* layers/PLayerTransaction.h to avoid
+// typedefs conflicts.
 #include "mozilla/Util.h"
 
 #include "mozilla/layers/ShadowLayers.h"
@@ -25,7 +26,7 @@ namespace mozilla {
 namespace layers {
 
 ThebesLayerComposite::ThebesLayerComposite(LayerManagerComposite *aManager)
-  : ShadowThebesLayer(aManager, nullptr)
+  : ThebesLayer(aManager, nullptr)
   , LayerComposite(aManager)
   , mBuffer(nullptr)
 {
@@ -45,20 +46,6 @@ void
 ThebesLayerComposite::SetCompositableHost(CompositableHost* aHost)
 {
   mBuffer= static_cast<ContentHost*>(aHost);
-}
-
-void
-ThebesLayerComposite::EnsureBuffer(CompositableType aHostType)
-{
-  MOZ_ASSERT(aHostType == BUFFER_TILED, "Should only be called for tiled layers.");
-  if (!mBuffer ||
-      mBuffer->GetType() != aHostType) {
-    RefPtr<CompositableHost> bufferHost
-      = CompositableHost::Create(aHostType, mCompositeManager->GetCompositor());
-    NS_ASSERTION(bufferHost->GetType() == BUFFER_TILED, "bad buffer type");
-    mBuffer = static_cast<ContentHost*>(bufferHost.get());
-    mRequiresTiledProperties = true;
-  }
 }
 
 void
@@ -86,7 +73,7 @@ ThebesLayerComposite::GetLayer()
 }
 
 TiledLayerComposer*
-ThebesLayerComposite::AsTiledLayerComposer()
+ThebesLayerComposite::GetTiledLayerComposer()
 {
   return mBuffer->AsTiledLayerComposer();
 }

@@ -300,39 +300,6 @@ exports.testTabClose = function(test) {
   });
 };
 
-// TEST: tab.reload()
-exports.testTabReload = function(test) {
-  test.waitUntilDone();
-  openBrowserWindow(function(window, browser) {
-    let tabs = require("sdk/tabs");
-    let url = "data:text/html;charset=utf-8,<!doctype%20html><title></title>";
-
-    tabs.open({ url: url, onReady: function onReady(tab) {
-      tab.removeListener("ready", onReady);
-
-      browser.addEventListener(
-        "load",
-        function onLoad() {
-          browser.removeEventListener("load", onLoad, true);
-
-          browser.addEventListener(
-            "load",
-            function onReload() {
-              browser.removeEventListener("load", onReload, true);
-              test.pass("the tab was loaded again");
-              test.assertEqual(tab.url, url, "the tab has the same URL");
-              closeBrowserWindow(window, function() test.done());
-            },
-            true
-          );
-          tab.reload();
-        },
-        true
-      );
-    }});
-  });
-};
-
 // TEST: tab.move()
 exports.testTabMove = function(test) {
   test.waitUntilDone();
@@ -937,49 +904,37 @@ exports['test ready event on new window tab'] = function(test) {
 };
 
 exports['test unique tab ids'] = function(test) {
-  test.waitUntilDone();
+  var windows = require('sdk/windows').browserWindows;
+  var { all, defer } = require('sdk/core/promise');
 
-  var windows = require('sdk/windows').browserWindows,
-    tabIds = {}, win1, win2;
+  function openWindow() {
+    // console.log('in openWindow');
+    let deferred = defer();
+    let win = windows.open({
+      url: "data:text/html;charset=utf-8,<html>foo</html>",
+    });
 
-  let steps = [
-    function (index) {
-      win1 = windows.open({
-          url: "data:text/html;charset=utf-8,foo",
-          onOpen: function(window) {
-            tabIds['tab1'] = window.tabs.activeTab.id;
-            next(index);
-          }
+    win.on('open', function(window) {
+      test.assert(window.tabs.length);
+      test.assert(window.tabs.activeTab);
+      test.assert(window.tabs.activeTab.id);
+      deferred.resolve({
+        id: window.tabs.activeTab.id,
+        win: win
       });
-    },
-    function (index) {
-      win2 = windows.open({
-          url: "data:text/html;charset=utf-8,foo",
-          onOpen: function(window) {
-            tabIds['tab2'] = window.tabs.activeTab.id;
-            next(index);
-          }
-      });
-    },
-    function (index) {
-      test.assertNotEqual(tabIds.tab1, tabIds.tab2, "Tab ids should be unique.");
-      win1.close();
-      win2.close();
-      test.done();
-    }
-  ];
-
-  function next(index) {
-    if (index === steps.length) {
-      return;
-    }
-    let fn = steps[index];
-    index++
-    fn(index);
+    });
+   
+    return deferred.promise;
   }
 
-  // run!
-  next(0);
+  test.waitUntilDone();
+  var one = openWindow(), two = openWindow();
+  all([one, two]).then(function(results) {
+    test.assertNotEqual(results[0].id, results[1].id, "tab Ids should not be equal.");
+    results[0].win.close();
+    results[1].win.close();
+    test.done();
+  });  
 }
 
 // related to Bug 671305
@@ -1040,46 +995,30 @@ exports.testOnLoadEventWithImage = function(test) {
 exports.testOnPageShowEvent = function (test) {
   test.waitUntilDone();
 
-  let firstUrl = 'about:home';
-  let secondUrl = 'about:newtab';
+  let firstUrl = 'data:text/html;charset=utf-8,First';
+  let secondUrl = 'data:text/html;charset=utf-8,Second';
 
   openBrowserWindow(function(window, browser) {
     let tabs = require('sdk/tabs');
 
-    let wait = 500;
-    let counter = 1;
-    tabs.on('pageshow', function setup(tab, persisted) {
-      if (counter === 1)
+    let counter = 0;
+    tabs.on('pageshow', function onPageShow(tab, persisted) {
+      counter++;
+      if (counter === 1) {
         test.assert(!persisted, 'page should not be cached on initial load');
-
-      if (wait > 5000) {
-        test.fail('Page was not cached after 5s')
-        closeBrowserWindow(window, function() test.done());
+        tab.url = secondUrl;
       }
-
-      if (tab.url === firstUrl) {
-        // If first page has persisted, pass
-        if (persisted) {
-          tabs.removeListener('pageshow', setup);
-          test.pass('pageshow event called on history.back()');
-          closeBrowserWindow(window, function() test.done());
-        }
-        // On the first run, or if the page wasn't cached
-        // the first time due to not waiting long enough,
-        // try again with a longer delay (this is terrible
-        // and ugly)
-        else {
-          counter++;
-          timer.setTimeout(function () {
-            tab.url = secondUrl;
-            wait *= 2;
-          }, wait);
-        }
-      }
-      else {
+      else if (counter === 2) {
+        test.assert(!persisted, 'second test page should not be cached either');
         tab.attach({
           contentScript: 'setTimeout(function () { window.history.back(); }, 0)'
         });
+      }
+      else {
+        test.assert(persisted, 'when we get back to the fist page, it has to' +
+                               'come from cache');
+        tabs.removeListener('pageshow', onPageShow);
+        closeBrowserWindow(window, function() test.done());
       }
     });
 

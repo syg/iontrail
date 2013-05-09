@@ -292,6 +292,45 @@ nsContextMenu.prototype = {
                   this.onTextInput && top.gBidiUI);
     this.showItem("context-bidi-page-direction-toggle",
                   !this.onTextInput && top.gBidiUI);
+    
+    // SocialMarks
+    let marksEnabled = SocialUI.enabled && Social.provider.pageMarkInfo;
+    let enablePageMark = marksEnabled && !(this.isContentSelected ||
+                            this.onTextInput || this.onLink || this.onImage ||
+                            this.onVideo || this.onAudio || this.onSocial);
+    let enableLinkMark = marksEnabled && ((this.onLink && !this.onMailtoLink &&
+                                           !this.onSocial) || this.onPlainTextLink);
+    if (enablePageMark) {
+      Social.isURIMarked(gBrowser.currentURI, function(marked) {
+        let label = marked ? "social.unmarkpage.label" : "social.markpage.label";
+        let provider = Social.provider || Social.defaultProvider;
+        let menuLabel = gNavigatorBundle.getFormattedString(label, [provider.name]);
+        this.setItemAttr("context-markpage", "label", menuLabel);
+      }.bind(this));
+    }
+    this.showItem("context-markpage", enablePageMark);
+    if (enableLinkMark) {
+      Social.isURIMarked(this.linkURI, function(marked) {
+        let label = marked ? "social.unmarklink.label" : "social.marklink.label";
+        let provider = Social.provider || Social.defaultProvider;
+        let menuLabel = gNavigatorBundle.getFormattedString(label, [provider.name]);
+        this.setItemAttr("context-marklink", "label", menuLabel);
+      }.bind(this));
+    }
+    this.showItem("context-marklink", enableLinkMark);
+
+    // SocialShare
+    let shareButton = SocialShare.shareButton;
+    let shareEnabled = shareButton && !shareButton.disabled && !this.onSocial;
+    let pageShare = shareEnabled && !(this.isContentSelected ||
+                            this.onTextInput || this.onLink || this.onImage ||
+                            this.onVideo || this.onAudio);
+    this.showItem("context-sharepage", pageShare);
+    this.showItem("context-shareselect", shareEnabled && this.isContentSelected);
+    this.showItem("context-sharelink", shareEnabled && (this.onLink || this.onPlainTextLink) && !this.onMailtoLink);
+    this.showItem("context-shareimage", shareEnabled && this.onImage);
+    this.showItem("context-sharevideo", shareEnabled && this.onVideo);
+    this.setItemAttr("context-sharevideo", "disabled", !this.mediaURL);
   },
 
   initSpellingItems: function() {
@@ -396,7 +435,7 @@ nsContextMenu.prototype = {
     this.showItem("context-media-showcontrols", onMedia && !this.target.controls);
     this.showItem("context-media-hidecontrols", onMedia && this.target.controls);
     this.showItem("context-video-fullscreen", this.onVideo && this.target.ownerDocument.mozFullScreenElement == null);
-    var statsShowing = this.onVideo && this.target.wrappedJSObject.mozMediaStatisticsShowing;
+    var statsShowing = this.onVideo && XPCNativeWrapper.unwrap(this.target).mozMediaStatisticsShowing;
     this.showItem("context-video-showstats", this.onVideo && this.target.controls && !statsShowing);
     this.showItem("context-video-hidestats", this.onVideo && this.target.controls && statsShowing);
 
@@ -437,10 +476,9 @@ nsContextMenu.prototype = {
   },
 
   inspectNode: function CM_inspectNode() {
+    let {devtools} = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
     let gBrowser = this.browser.ownerDocument.defaultView.gBrowser;
-    let imported = {};
-    Cu.import("resource:///modules/devtools/Target.jsm", imported);
-    let tt = imported.TargetFactory.forTab(gBrowser.selectedTab);
+    let tt = devtools.TargetFactory.forTab(gBrowser.selectedTab);
     return gDevTools.showToolbox(tt, "inspector").then(function(toolbox) {
       let inspector = toolbox.getCurrentPanel();
       inspector.selection.setNode(this.target, "browser-context-menu");
@@ -1468,6 +1506,27 @@ nsContextMenu.prototype = {
     }
   },
 
+  markLink: function CM_markLink() {
+    // send link to social
+    SocialMark.toggleURIMark(this.linkURI);
+  },
+
+  shareLink: function CM_shareLink() {
+    SocialShare.sharePage(null, { url: this.linkURI.spec });
+  },
+
+  shareImage: function CM_shareImage() {
+    SocialShare.sharePage(null, { url: this.imageURL, previews: [ this.mediaURL ] });
+  },
+
+  shareVideo: function CM_shareVideo() {
+    SocialShare.sharePage(null, { url: this.mediaURL, source: this.mediaURL });
+  },
+
+  shareSelect: function CM_shareSelect(selection) {
+    SocialShare.sharePage(null, { url: this.browser.currentURI.spec, text: selection });
+  },
+
   savePageAs: function CM_savePageAs() {
     saveDocument(this.browser.contentDocument);
   },
@@ -1505,14 +1564,10 @@ nsContextMenu.prototype = {
       case "showcontrols":
         media.setAttribute("controls", "true");
         break;
-      case "showstats":
-        var event = document.createEvent("CustomEvent");
-        event.initCustomEvent("media-showStatistics", false, true, true);
-        media.dispatchEvent(event);
-        break;
       case "hidestats":
-        var event = document.createEvent("CustomEvent");
-        event.initCustomEvent("media-showStatistics", false, true, false);
+      case "showstats":
+        var event = media.ownerDocument.createEvent("CustomEvent");
+        event.initCustomEvent("media-showStatistics", false, true, command == "showstats");
         media.dispatchEvent(event);
         break;
     }

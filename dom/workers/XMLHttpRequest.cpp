@@ -263,7 +263,7 @@ ConvertStringToResponseType(const nsAString& aString)
   }
 
   MOZ_NOT_REACHED("Don't know anything about this response type!");
-  return _empty;
+  return XMLHttpRequestResponseType::_empty;
 }
 
 enum
@@ -572,8 +572,8 @@ public:
       }
     }
     else {
-      jsval response;
-      mResponseResult = xhr->GetResponse(aCx, &response);
+      JS::Rooted<JS::Value> response(aCx);
+      mResponseResult = xhr->GetResponse(aCx, response.address());
       if (NS_SUCCEEDED(mResponseResult)) {
         if (JSVAL_IS_UNIVERSAL(response)) {
           mResponse = response;
@@ -692,8 +692,8 @@ public:
           nsTArray<nsCOMPtr<nsISupports> > clonedObjects;
           clonedObjects.SwapElements(mClonedObjects);
 
-          jsval response;
-          if (!responseBuffer.read(aCx, &response, callbacks, &clonedObjects)) {
+          JS::Rooted<JS::Value> response(aCx);
+          if (!responseBuffer.read(aCx, response.address(), callbacks, &clonedObjects)) {
             return false;
           }
 
@@ -1119,7 +1119,8 @@ public:
     nsCOMPtr<nsIVariant> variant;
 
     if (mBody.data()) {
-      RuntimeService::AutoSafeJSContext cx;
+      AutoSafeJSContext cx;
+      JSAutoRequest ar(cx);
       nsIXPConnect* xpc = nsContentUtils::XPConnect();
       NS_ASSERTION(xpc, "This should never be null!");
 
@@ -1130,9 +1131,9 @@ public:
         ChromeWorkerStructuredCloneCallbacks(true) :
         WorkerStructuredCloneCallbacks(true);
 
-      jsval body;
-      if (mBody.read(cx, &body, callbacks, &mClonedObjects)) {
-        if (NS_FAILED(xpc->JSValToVariant(cx, &body,
+      JS::Rooted<JS::Value> body(cx);
+      if (mBody.read(cx, body.address(), callbacks, &mClonedObjects)) {
+        if (NS_FAILED(xpc->JSValToVariant(cx, body.address(),
                                           getter_AddRefs(variant)))) {
           rv = NS_ERROR_DOM_INVALID_STATE_ERR;
         }
@@ -1375,7 +1376,8 @@ Proxy::HandleEvent(nsIDOMEvent* aEvent)
   }
 
   {
-    RuntimeService::AutoSafeJSContext cx;
+    AutoSafeJSContext cx;
+    JSAutoRequest ar(cx);
     runnable->Dispatch(cx);
   }
 
@@ -1402,7 +1404,7 @@ Proxy::HandleEvent(nsIDOMEvent* aEvent)
 XMLHttpRequest::XMLHttpRequest(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 : XMLHttpRequestEventTarget(aCx), mJSObject(NULL), mUpload(NULL),
   mWorkerPrivate(aWorkerPrivate),
-  mResponseType(XMLHttpRequestResponseTypeValues::Text), mTimeout(0),
+  mResponseType(XMLHttpRequestResponseType::Text), mTimeout(0),
   mJSObjectRooted(false), mBackgroundRequest(false),
   mWithCredentials(false), mCanceled(false), mMozAnon(false), mMozSystem(false)
 {
@@ -1419,9 +1421,9 @@ void
 XMLHttpRequest::_trace(JSTracer* aTrc)
 {
   if (mUpload) {
-    JS_CallObjectTracer(aTrc, mUpload->GetJSObject(), "mUpload");
+    mUpload->TraceJSObject(aTrc, "mUpload");
   }
-  JS_CallValueTracer(aTrc, mStateData.mResponse, "mResponse");
+  JS_CallValueTracer(aTrc, &mStateData.mResponse, "mResponse");
   XMLHttpRequestEventTarget::_trace(aTrc);
 }
 
@@ -2107,7 +2109,7 @@ XMLHttpRequest::SetResponseType(XMLHttpRequestResponseType aResponseType,
 
   // "document" is fine for the main thread but not for a worker. Short-circuit
   // that here.
-  if (aResponseType == XMLHttpRequestResponseTypeValues::Document) {
+  if (aResponseType == XMLHttpRequestResponseType::Document) {
     return;
   }
 

@@ -8,7 +8,8 @@
 #include <d3d10_1.h>
 #include <dxgi.h>
 
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/LayerManagerComposite.h"
+#include "mozilla/layers/PLayerTransaction.h"
 #include "ShadowLayers.h"
 
 using namespace mozilla::gl;
@@ -78,21 +79,21 @@ ISurfaceAllocator::PlatformDestroySharedSurface(SurfaceDescriptor*)
 }
 
 /*static*/ already_AddRefed<TextureImage>
-ShadowLayerManager::OpenDescriptorForDirectTexturing(GLContext*,
-                                                     const SurfaceDescriptor&,
-                                                     GLenum)
+LayerManagerComposite::OpenDescriptorForDirectTexturing(GLContext*,
+                                                        const SurfaceDescriptor&,
+                                                        GLenum)
 {
   return nullptr;
 }
 
 /*static*/ bool
-ShadowLayerManager::SupportsDirectTexturing()
+LayerManagerComposite::SupportsDirectTexturing()
 {
   return true;
 }
 
 /*static*/ void
-ShadowLayerManager::PlatformSyncBeforeReplyUpdate()
+LayerManagerComposite::PlatformSyncBeforeReplyUpdate()
 {
 }
 
