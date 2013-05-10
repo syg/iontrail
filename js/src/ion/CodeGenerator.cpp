@@ -6431,34 +6431,19 @@ bool
 CodeGenerator::visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool)
 {
     ParallelBailoutCause cause = ool->cause();
-    JSScript *script = ool->basicBlock()->info().script();
     jsbytecode *bytecode = ool->bytecode();
 
     masm.move32(Imm32(cause), CallTempReg0);
-    masm.movePtr(ImmWord((void *) script), CallTempReg1);
-    masm.movePtr(ImmWord((void *) bytecode), CallTempReg2);
+    loadOutermostJSScript(CallTempReg1);
+    loadJSScriptForBlock(ool->basicBlock(), CallTempReg2);
+    masm.movePtr(ImmWord((void *) bytecode), CallTempReg3);
 
-    masm.setupUnalignedABICall(3, CallTempReg3);
+    masm.setupUnalignedABICall(4, CallTempReg4);
     masm.passABIArg(CallTempReg0);
     masm.passABIArg(CallTempReg1);
     masm.passABIArg(CallTempReg2);
+    masm.passABIArg(CallTempReg3);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParallelAbort));
-
-    masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
-    masm.jump(returnLabel_);
-    return true;
-}
-
-bool
-CodeGenerator::visitOutOfLinePropagateParallelAbort(OutOfLinePropagateParallelAbort *ool)
-{
-    JSScript *script = ool->lir()->mirRaw()->block()->info().script();
-
-    masm.movePtr(ImmWord((void *) script), CallTempReg0);
-
-    masm.setupUnalignedABICall(1, CallTempReg1);
-    masm.passABIArg(CallTempReg0);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, PropagateParallelAbort));
 
     masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
     masm.jump(returnLabel_);
@@ -6484,6 +6469,44 @@ CodeGenerator::visitIsCallable(LIsCallable *ins)
     masm.emitSet(Assembler::NonZero, output);
     masm.bind(&done);
 
+    return true;
+}
+
+void
+CodeGenerator::loadOutermostJSScript(Register reg)
+{
+    // The "outermost" JSScript means the script that we are compiling
+    // basically; this is not always the script associated with the
+    // current basic block, which might be an inlined script.
+
+    MIRGraph &graph = current->mir()->graph();
+    MBasicBlock *entryBlock = graph.entryBlock();
+    masm.movePtr(ImmGCPtr(entryBlock->info().script()), reg);
+}
+
+void
+CodeGenerator::loadJSScriptForBlock(MBasicBlock *block, Register reg)
+{
+    // The current JSScript means the script for the current
+    // basic block. This may be an inlined script.
+
+    JSScript *script = block->info().script();
+    masm.movePtr(ImmGCPtr(script), reg);
+}
+
+bool
+CodeGenerator::visitOutOfLinePropagateParallelAbort(OutOfLinePropagateParallelAbort *ool)
+{
+    loadOutermostJSScript(CallTempReg0);
+    loadJSScriptForBlock(ool->lir()->mirRaw()->block(), CallTempReg1);
+
+    masm.setupUnalignedABICall(2, CallTempReg2);
+    masm.passABIArg(CallTempReg0);
+    masm.passABIArg(CallTempReg1);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, PropagateParallelAbort));
+
+    masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
+    masm.jump(returnLabel_);
     return true;
 }
 

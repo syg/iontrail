@@ -273,7 +273,7 @@ IsCloneSpewActive(CloneSpewChannel channel)
 
 #endif // DEBUG
 
-JSFunction
+JSFunction *
 js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
     JS_ASSERT(cx->typeInferenceEnabled());

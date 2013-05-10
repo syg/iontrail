@@ -249,6 +249,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineParNewGCThing(OutOfLineParNewGCThing *ool);
     bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool);
     bool visitOutOfLinePropagateParallelAbort(OutOfLinePropagateParallelAbort *ool);
+    void loadJSScriptForBlock(MBasicBlock *block, Register reg);
+    void loadOutermostJSScript(Register reg);
 
     // Inline caches visitors.
     bool visitOutOfLineCache(OutOfLineUpdateCache *ool);

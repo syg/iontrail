@@ -93,14 +93,6 @@ ForkJoinSlice::runtime()
     JS_NOT_REACHED("Not THREADSAFE build");
 }
 
-void
-ParallelBailoutRecord::setCause(ParallelBailoutCause cause,
-                                JSScript *script,
-                                jsbytecode *pc)
-{
-    JS_NOT_REACHED("Not THREADSAFE build");
-}
-
 bool
 ForkJoinSlice::check()
 {
@@ -119,6 +111,23 @@ ForkJoinSlice::requestZoneGC(JS::Zone *zone, JS::gcreason::Reason reason)
 {
     JS_NOT_REACHED("Not THREADSAFE build");
 }
+
+void
+ParallelBailoutRecord::setCause(ParallelBailoutCause cause,
+                                JSScript *outermostScript,
+                                JSScript *currentScript,
+                                jsbytecode *currentPc)
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
+}
+
+void
+ParallelBailoutRecord::addTrace(JSScript *script,
+                                jsbytecode *pc)
+{
+    JS_NOT_REACHED("Not THREADSAFE build");
+}
+
 #endif // !JS_THREADSAFE || !JS_ION
 
 ///////////////////////////////////////////////////////////////////////////
@@ -182,7 +191,7 @@ class ParallelDo
     HeapPtrObject fun_;
     Vector<ParallelBailoutRecord, 16> bailoutRecords;
 
-    bool executeSequentially();
+    inline bool executeSequentially();
 
     MethodStatus compileForParallelExecution();
     ExecutionStatus disqualifyFromParallelExecution();
@@ -582,37 +591,37 @@ static const char *
 BailoutExplanation(ParallelBailoutCause cause)
 {
     switch (cause) {
-    case ParallelBailoutNone:
+      case ParallelBailoutNone:
         return "no particular reason";
-    case ParallelBailoutCompilationSkipped:
+      case ParallelBailoutCompilationSkipped:
         return "compilation failed (method skipped)";
-    case ParallelBailoutCompilationFailure:
+      case ParallelBailoutCompilationFailure:
         return "compilation failed";
-    case ParallelBailoutInterrupt:
+      case ParallelBailoutInterrupt:
         return "interrupted";
-    case ParallelBailoutFailedIC:
+      case ParallelBailoutFailedIC:
         return "at runtime, the behavior changed, invalidating compiled code (IC update)";
-    case ParallelBailoutHeapBusy:
+      case ParallelBailoutHeapBusy:
         return "heap busy flag set during interrupt";
-    case ParallelBailoutMainScriptNotPresent:
+      case ParallelBailoutMainScriptNotPresent:
         return "main script not present";
-    case ParallelBailoutCalledToUncompiledScript:
+      case ParallelBailoutCalledToUncompiledScript:
         return "called to uncompiled script";
-    case ParallelBailoutIllegalWrite:
+      case ParallelBailoutIllegalWrite:
         return "illegal write";
-    case ParallelBailoutAccessToIntrinsic:
+      case ParallelBailoutAccessToIntrinsic:
         return "access to intrinsic";
-    case ParallelBailoutOverRecursed:
+      case ParallelBailoutOverRecursed:
         return "over recursed";
-    case ParallelBailoutOutOfMemory:
+      case ParallelBailoutOutOfMemory:
         return "out of memory";
-    case ParallelBailoutUnsupported:
+      case ParallelBailoutUnsupported:
         return "unsupported";
-    case ParallelBailoutUnsupportedStringComparison:
+      case ParallelBailoutUnsupportedStringComparison:
         return "unsupported string comparison";
-    case ParallelBailoutUnsupportedSparseArray:
+      case ParallelBailoutUnsupportedSparseArray:
         return "unsupported sparse array";
-    default:
+      default:
         return "no known reason";
     }
 }
@@ -766,7 +775,9 @@ class ParallelIonInvoke
   public:
     Value *args;
 
-    ParallelIonInvoke(JSContext *cx, HandleFunction callee, uint32_t argc)
+    ParallelIonInvoke(JSCompartment *compartment,
+                      HandleFunction callee,
+                      uint32_t argc)
       : argc_(argc),
         args(argv_ + 2)
     {
@@ -780,12 +791,12 @@ class ParallelIonInvoke
         IonScript *ion = callee->nonLazyScript()->parallelIonScript();
         IonCode *code = ion->method();
         jitcode_ = code->raw();
-        enter_ = cx->compartment->ionCompartment()->enterJIT();
+        enter_ = compartment->ionCompartment()->enterJIT();
         calleeToken_ = CalleeToParallelToken(callee);
     }
 
-    bool invoke(JSContext *cx) {
-        RootedValue result(cx);
+    bool invoke(PerThreadData *perThread) {
+        RootedValue result(perThread);
         enter_(jitcode_, argc_ + 1, argv_ + 1, NULL, calleeToken_, NULL, 0, result.address());
         return !result.isMagic();
     }
@@ -1027,16 +1038,17 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
         // op and reaching this point.  In that case, we just fail
         // and fallback.
         Spew(SpewOps, "Down (Script no longer present)");
-        slice.bailoutRecord->setCause(ParallelBailoutMainScriptNotPresent, NULL, NULL);
+        slice.bailoutRecord->setCause(ParallelBailoutMainScriptNotPresent,
+                                      NULL, NULL, NULL);
         setAbortFlag(false);
     } else {
-        ParallelIonInvoke<3> fii(cx_, callee, 3);
+        ParallelIonInvoke<3> fii(cx_->compartment, callee, 3);
 
         fii.args[0] = Int32Value(slice.sliceId);
         fii.args[1] = Int32Value(slice.numSlices);
         fii.args[2] = BooleanValue(false);
 
-        bool ok = fii.invoke(cx_);
+        bool ok = fii.invoke(perThread);
         JS_ASSERT(ok == !slice.bailoutRecord->topScript);
         if (!ok)
             setAbortFlag(false);
@@ -1099,7 +1111,7 @@ ForkJoinShared::check(ForkJoinSlice &slice)
             // right now to abort rather than prove it cannot arise,
             // and safer for short-term than asserting !isHeapBusy.
             setAbortFlag(false);
-            records_->setCause(ParallelBailoutHeapBusy, NULL, NULL);
+            records_->setCause(ParallelBailoutHeapBusy, NULL, NULL, NULL);
             return false;
         }
 
@@ -1123,7 +1135,7 @@ ForkJoinShared::check(ForkJoinSlice &slice)
 
         // (3). Invoke the callback and abort if it returns false.
         if (!js_InvokeOperationCallback(cx_)) {
-            records_->setCause(ParallelBailoutInterrupt, NULL, NULL);
+            records_->setCause(ParallelBailoutInterrupt, NULL, NULL, NULL);
             setAbortFlag(true);
             return false;
         }
@@ -1435,16 +1447,23 @@ js::ParallelBailoutRecord::reset(JSContext *cx)
 
 void
 js::ParallelBailoutRecord::setCause(ParallelBailoutCause cause,
-                                    JSScript *script,
-                                    jsbytecode *pc)
+                                    JSScript *outermostScript,
+                                    JSScript *currentScript,
+                                    jsbytecode *currentPc)
 {
+    JS_ASSERT_IF(outermostScript, currentScript);
+    JS_ASSERT_IF(outermostScript, outermostScript->hasParallelIonScript());
+    JS_ASSERT_IF(currentScript, outermostScript);
+    JS_ASSERT_IF(!currentScript, !currentPc);
+
     this->cause = cause;
 
-    if (script) {
-        this->topScript = script;
-        addTrace(script, pc);
-    } else {
-        JS_ASSERT(!pc);
+    if (outermostScript) {
+        this->topScript = outermostScript;
+    }
+
+    if (currentScript) {
+        addTrace(currentScript, currentPc);
     }
 }
 
@@ -1458,7 +1477,7 @@ js::ParallelBailoutRecord::addTrace(JSScript *script,
     if (topScript == NULL && script != NULL)
         topScript = script;
 
-    if (depth < maxDepth) {
+    if (depth < MaxDepth) {
         trace[depth].script = script;
         trace[depth].bytecode = pc;
         depth += 1;
