@@ -234,6 +234,13 @@ function ParallelArrayView(shape, buffer, offset) {
   return this;
 }
 
+function ProductOfArrayRange(shape, start, limit) {
+  var length = 1;
+  for (var i = start; i < limit; i++)
+    length *= shape[i];
+  return length;
+}
+
 /**
  * Helper for the comprehension form. Constructs an N-dimensional
  * array where |N == shape.length|. |shape| must be an array of
@@ -270,9 +277,7 @@ function ParallelArrayBuild(self, shape, func, mode) {
     computefunc = fill3;
     break;
   default:
-    length = 1;
-    for (var i = 0; i < shape.length; i++)
-      length *= shape[i];
+    length = ProductOfArrayRange(shape, 0, shape.length);
     self.get = ParallelArrayGetN;
     computefunc = fillN;
     break;
@@ -478,7 +483,7 @@ function ParallelArrayReduce(func, mode) {
 
     if (chunkStart === chunkPos) {
       var indexPos = chunkStart << CHUNK_SHIFT;
-      var accumulator = reduceChunk(self.get(indexPos), indexPos + 1, indexPos + CHUNK_SIZE);
+      var accumulator = reduceChunk(self.buffer[self.offset+indexPos], indexPos + 1, indexPos + CHUNK_SIZE);
 
       UnsafeSetElement(subreductions, sliceId, accumulator, // see (*) above
                        info, SLICE_POS(sliceId), ++chunkPos);
@@ -497,7 +502,7 @@ function ParallelArrayReduce(func, mode) {
   function reduceChunk(accumulator, from, to) {
     to = std_Math_min(to, length);
     for (var i = from; i < to; i++)
-      accumulator = func(accumulator, self.get(i));
+      accumulator = func(accumulator, self.buffer[self.offset+i]);
     return accumulator;
   }
 }
@@ -1143,6 +1148,12 @@ function ParallelArrayGet1(i) {
   return this.buffer[this.offset + i];
 }
 
+function MatrixGet1(i) {
+  if (i === undefined)
+    return undefined;
+  return this.buffer[this.offset + i];
+}
+
 /**
  * Specialized variant of get() for two-dimensional case
  */
@@ -1155,6 +1166,22 @@ function ParallelArrayGet2(x, y) {
     return undefined;
   if (y === undefined)
     return NewParallelArray(ParallelArrayView, [yDimension], this.buffer, this.offset + x * yDimension);
+  if (y >= yDimension)
+    return undefined;
+  var offset = y + x * yDimension;
+  return this.buffer[this.offset + offset];
+}
+
+function MatrixGet2(x, y) {
+  var xDimension = this.shape[0];
+  var yDimension = this.shape[1];
+  if (x === undefined)
+    return undefined;
+  if (x >= xDimension)
+    return undefined;
+  if (y === undefined)
+    return NewMatrix(MatrixView, [yDimension], this.buffer, this.offset + x * yDimension,
+                             this.valtype);
   if (y >= yDimension)
     return undefined;
   var offset = y + x * yDimension;
@@ -1180,6 +1207,30 @@ function ParallelArrayGet3(x, y, z) {
   if (z === undefined)
     return NewParallelArray(ParallelArrayView, [zDimension],
                             this.buffer, this.offset + y * zDimension + x * yDimension * zDimension);
+  if (z >= zDimension)
+    return undefined;
+  var offset = z + y*zDimension + x * yDimension * zDimension;
+  return this.buffer[this.offset + offset];
+}
+
+function MatrixGet3(x, y, z) {
+  var xDimension = this.shape[0];
+  var yDimension = this.shape[1];
+  var zDimension = this.shape[2];
+  if (x === undefined)
+    return undefined;
+  if (x >= xDimension)
+    return undefined;
+  if (y === undefined)
+    return NewMatrix(MatrixView, [yDimension, zDimension],
+                            this.buffer, this.offset + x * yDimension * zDimension,
+                            this.valtype);
+  if (y >= yDimension)
+    return undefined;
+  if (z === undefined)
+    return NewMatrix(MatrixView, [zDimension],
+                            this.buffer, this.offset + y * zDimension + x * yDimension * zDimension,
+                            this.valtype);
   if (z >= zDimension)
     return undefined;
   var offset = z + y*zDimension + x * yDimension * zDimension;
@@ -1215,6 +1266,33 @@ function ParallelArrayGetN(...coords) {
   return this.buffer[offset];
 }
 
+function MatrixGetN(...coords) {
+  if (coords.length == 0)
+    return undefined;
+
+  var products = ComputeProducts(this.shape);
+
+  // Compute the offset of the given coordinates. Each index is
+  // multipled by its corresponding entry in the |products|
+  // array, counting in reverse. So if |coords| is [a,b,c,d],
+  // then you get |a*BCD + b*CD + c*D + d|.
+  var offset = this.offset;
+  var sDimensionality = this.shape.length;
+  var cDimensionality = coords.length;
+  for (var i = 0; i < cDimensionality; i++) {
+    if (coords[i] >= this.shape[i])
+      return undefined;
+    offset += coords[i] * products[sDimensionality - i - 1];
+  }
+
+  if (cDimensionality < sDimensionality) {
+    var shape = callFunction(std_Array_slice, this.shape, cDimensionality);
+    return NewMatrix(MatrixView, shape, this.buffer, offset,
+                             this.valtype);
+  }
+  return this.buffer[offset];
+}
+
 /** The length property yields the outermost dimension */
 function ParallelArrayLength() {
   return this.shape[0];
@@ -1240,6 +1318,1033 @@ function ParallelArrayToString() {
   }
   result += open + String(this.get(l - 1)) + close;
   return result;
+}
+
+// Fills buffer starting from offset under the assumption that
+// it has shape = frame x grain at that point, using func to
+// generate each element (of size grain) in the iteration space
+// defined by frame.
+function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func, mode)
+{
+  mode && mode.print && mode.print({called:"PMF A1", buffer:buffer,
+                                    offset:offset, frame:frame, grain:grain});
+
+  var i;
+  var frame_len = ProductOfArrayRange(frame, 0, frame.length);
+  for(i = frame_dims; i < shape.length; i++) {
+    var shape_amt = shape[i];
+    if (i == shape.length - 1 && typeof(shape_amt) !== "number")
+      shape_amt = 1;
+  }
+
+  var indexStart = offset;
+  var indexEnd = offset+frame_len;
+  var grain_len = ProductOfArrayRange(grain, 0, grain.length);
+
+  mode && mode.print && mode.print(
+    {called:"PMF B", buffer:buffer, offset:offset, frame:frame, grain:grain,
+     frame_len:frame_len, grain_len:grain_len, indexStart:indexStart, indexEnd:indexEnd});
+
+  var computefunc;
+  var isLeaf = (grain.length == 0);
+  switch (frame.length) {
+/*
+   case 1:
+    computefunc = isLeaf ? fill1_leaf : fill1_subm;
+    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fill1"});
+    break;
+*/
+/*
+  case 2:
+    computefunc = isLeaf ? fill2_leaf : fill2_subm;
+    break;
+  case 3:
+    computefunc = isLeaf ? fill3_leaf : fill3_subm;
+    break;
+*/
+  default:
+    computefunc = isLeaf ? fillN_leaf : fillN_subm;
+    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fillN"});
+    break;
+  }
+
+  mode && mode.print && mode.print({called:"MatrixPFill prior parallel"});
+
+  parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
+    if (!parexec)
+      break parallel;
+    if (ShouldForceSequential())
+      break parallel;
+    if (!TRY_PARALLEL(mode))
+      break parallel;
+    if (computefunc === fillN_leaf || computefunc === fillN_subm)
+      break parallel;
+
+    var chunks = ComputeNumChunks(frame_len);
+    var numSlices = ParallelSlices();
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    ParallelDo(constructSlice, CheckParallel(mode));
+    return;
+  }
+
+  mode && mode.print && mode.print({called:"MatrixPFill seq fallback", frame_len:frame_len, indexStart:indexStart, indexEnd:indexEnd});
+
+  // Sequential fallback:
+  ASSERT_SEQUENTIAL_IS_OK(mode);
+  computefunc(indexStart, indexEnd);
+  return;
+
+  function constructSlice(sliceId, numSlices, warmup) {
+
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
+
+    if (warmup && chunkEnd > chunkPos)
+      chunkEnd = chunkPos + 1;
+
+    while (chunkPos < chunkEnd) {
+      var indexStart = chunkPos << CHUNK_SHIFT;
+      var indexEnd = std_Math_min(indexStart + CHUNK_SIZE, frame_len);
+      computefunc(indexStart, indexEnd);
+      UnsafeSetElement(info, SLICE_POS(sliceId), ++chunkPos);
+    }
+  }
+
+  function fill1_leaf(indexStart, indexEnd) {
+    mode && mode.print && mode.print({called: "fill1_leaf A", buffer:buffer, indexStart: indexStart, indexEnd: indexEnd});
+
+    for (var i = indexStart; i < indexEnd; i++) {
+      UnsafeSetElement(buffer, i, func(i));
+    }
+  }
+
+  function fill1_subm(indexStart, indexEnd) {
+
+    mode && mode.print && mode.print({called: "fill1_subm A", indexStart: indexStart, indexEnd: indexEnd});
+
+    var bufoffset = indexStart;
+    for (var i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
+      mode && mode.print && mode.print({called: "fill1_subm B", i:i,
+                                        bufoffset:bufoffset,
+                                        indexStart: indexStart,
+                                        indexEnd: indexEnd});
+
+      var subarray = func(i);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+    }
+  }
+
+  function fill2_leaf(indexStart, indexEnd) {
+    var x = (indexStart / yDimension) | 0;
+    var y = indexStart - x*yDimension;
+    for (var i = indexStart; i < indexEnd; i++) {
+      UnsafeSetElement(buffer, i, func(x, y));
+      if (++y == yDimension) {
+        y = 0;
+        ++x;
+      }
+    }
+  }
+
+  function fill2_subm(indexStart, indexEnd) {
+    var bufoffset = indexStart;
+    var x = (indexStart / yDimension) | 0;
+    var y = indexStart - x*yDimension;
+    for (var i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
+      var subarray = func(x, y);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      if (++y == yDimension) {
+        y = 0;
+        ++x;
+      }
+    }
+  }
+
+  function fill3_leaf(indexStart, indexEnd) {
+    var x = (indexStart / (yDimension*zDimension)) | 0;
+    var r = indexStart - x*yDimension*zDimension;
+    var y = (r / zDimension) | 0;
+    var z = r - y*zDimension;
+    for (var i = indexStart; i < indexEnd; i++) {
+      UnsafeSetElement(buffer, i, func(x, y, z));
+      if (++z == zDimension) {
+        z = 0;
+        if (++y == yDimension) {
+          y = 0;
+          ++x;
+        }
+      }
+    }
+  }
+
+  function fill3_subm(indexStart, indexEnd) {
+    var bufoffset = indexStart;
+    var x = (indexStart / (yDimension*zDimension)) | 0;
+    var r = indexStart - x*yDimension*zDimension;
+    var y = (r / zDimension) | 0;
+    var z = r - y*zDimension;
+    for (var i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
+      var subarray = func(x, y, z);
+      var [subbuffer, suboffset] =
+        IdentifySubbufferAndSuboffset(subarray);
+      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      if (++z == zDimension) {
+        z = 0;
+        if (++y == yDimension) {
+          y = 0;
+          ++x;
+        }
+      }
+    }
+  }
+
+  function fillN_leaf(indexStart, indexEnd) {
+    mode && mode.print && mode.print({called: "fillN_leaf A", offset:offset, indexStart: indexStart, indexEnd: indexEnd, frame:frame});
+    var frame_indices = ComputeIndices(frame, indexStart);
+    mode && mode.print && mode.print({called: "fillN_leaf B", frame_indices:frame_indices});
+    var used_outptr = false;
+    function set(v) { UnsafeSetElement(buffer, i, val); used_outptr = true; }
+    for (i = indexStart; i < indexEnd; i++) {
+      used_outptr = false;
+      var outptr = {};
+      outptr.set = set;
+      frame_indices.push(outptr);
+      mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices});
+      var val = func.apply(undefined, frame_indices);
+      mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices, val:val});
+      if (!used_outptr) {
+        UnsafeSetElement(buffer, i, val);
+      }
+      frame_indices.pop();
+      StepIndices(frame, frame_indices);
+    }
+  }
+
+  function fillN_subm(indexStart, indexEnd) {
+
+    mode && mode.print && mode.print({called: "fillN_subm A", offset:offset, indexStart: indexStart, indexEnd: indexEnd});
+
+    var bufoffset = indexStart;
+
+    // allocate new arrays and copy in computed subarrays.
+    var frame_indices = ComputeIndices(frame, indexStart);
+    var used_outptr = false;
+
+    function ndimIndexToOffset(...indices) {
+      mode && mode.print && mode.print({called: "outptr.ndimIndexToOffset", indices:indices});
+      var accum_idx  = 0;
+      var accum_prod = 1;
+      for (var i=indices.length-1; i>=0; i--) {
+        var arg_i = indices[i];
+        var grain_i = grain[i];
+        if (arg_i >= grain_i) {
+          ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set index too large");
+        }
+        accum_idx += arg_i * accum_prod;
+        accum_prod *= grain_i;
+      }
+      return accum_idx;
+    }
+
+    function outptr_set(...args) {
+      mode && mode.print && mode.print({called: "outptr.set A", args:args});
+      var v = args.pop();
+      if (args.length > grain.length) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
+      }
+      if (args.length < grain.length) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
+      }
+      var offset = ndimIndexToOffset.apply(null, args);
+      mode && mode.print && mode.print({called: "outptr.set Y", bufoffset: bufoffset, offset: offset, sum: bufoffset + offset, v:v});
+      UnsafeSetElement(buffer, bufoffset + offset, v);
+      used_outptr = true;
+    }
+
+    function outptr_gather(arg0, arg1, arg2) { // ([depth,] func, [mode])
+      mode && mode.print && mode.print({called: "outptr.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
+      var depth, func, mode;
+      if (typeof arg0 === "function") {
+        depth = grain.length;
+        func = arg0;
+        mode = arg1;
+      } else { // assumes (typeof arg1 === "function")
+        depth = arg0;
+        func = arg1;
+        mode = arg2;
+      }
+
+      var subframe = grain.slice(0, depth);
+      var subgrain = grain.slice(depth);
+
+      mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
+
+      MatrixPFill(true, buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+      used_outptr = true;
+    }
+
+    // FIXME: Something seems off about handling of i, indexStart, bufoffset...
+    for (i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
+      used_outptr = false;
+      var outptr = {};
+      outptr.set = outptr_set;
+      outptr.gather = outptr_gather;
+      frame_indices.push(outptr);
+
+      mode && mode.print && mode.print({called: "fillN_subm C", i:i, frame_indices:frame_indices});
+
+      var subarray = func.apply(null, frame_indices);
+      frame_indices.pop();
+
+      mode && mode.print && mode.print({called: "fillN_subm D", subarray:subarray});
+
+      if (!used_outptr) {
+        var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
+        mode && mode.print && mode.print({called: "fillN_subm E", subbuffer:subbuffer, suboffset:suboffset});
+        CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      }
+
+      mode && mode.print && mode.print({called: "fillN_subm F"});
+
+      StepIndices(frame, frame_indices);
+    }
+  }
+
+  function IdentifySubbufferAndSuboffset(subarray) {
+    var suboffset;
+    var subbuffer;
+
+    if (std_Array_isArray(subarray)) {
+      subbuffer = subarray;
+      suboffset = 0;
+    } else if (IsParallelArray(subarray) || IsMatrix(subarray)) {
+      var subvaltype;
+      if (IsParallelArray(subarray)) {
+         subvaltype = "any";
+      } else {
+         subvaltype = subarray.valtype;
+      }
+      if (!submatrix_matches_expectation(grain, valtype, subarray.shape, subvaltype)) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " mismatched submatrix returned"+
+                                            " with shape: ["+subarray.shape+","+subvaltype+"];"+
+                                            " expected submatrix with shape: ["+grain+","+valtype+"]");
+      }
+      subbuffer = subarray.buffer;
+      suboffset = subarray.offset;
+    } else {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " non-submatrix returned: "+subarray+" expected submatrix with shape: ["+grain+"]");
+    }
+
+    return [subbuffer, suboffset];
+  }
+
+  function CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset) {
+    UnsafeArrayCopy(buffer, bufoffset, subbuffer, suboffset, grain_len);
+  }
+}
+
+function is_value_type(descriptor) {
+  if (typeof descriptor === "string") {
+    if (descriptor === "uint8" ||
+        descriptor === "uint8clamped" ||
+        descriptor === "uint16" ||
+        descriptor === "uint32" ||
+        descriptor === "int8" ||
+        descriptor === "int16" ||
+        descriptor === "int32" ||
+        descriptor === "float32" ||
+        descriptor === "float64" ||
+        descriptor === "any")
+    {
+      return true;
+    }
+    else
+    {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ' invalid data type specification "'+descriptor+'"');
+    }
+  }
+  else
+  {
+    // Other cases (e.g. for Data Type objects) could go here
+  }
+
+  return false;
+}
+
+function submatrix_matches_expectation(expect_shape, expect_valtype, actual_shape, actual_valtype)
+{
+  if (expect_shape.length !== actual_shape.length)
+    return false;
+  if (expect_valtype !== actual_valtype)
+    return false;
+  var len = expect_shape.length;
+  for (var i = 0; i < len; i++) {
+    if (expect_shape[i] !== actual_shape[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function value_type_to_buffer_allocator(descriptor) {
+  function make_univ_buffer(length)         { return NewDenseArray(length); }
+  function make_uint8_buffer(length)        { return new Uint8Array(new ArrayBuffer(length)); }
+  function make_uint8clamped_buffer(length) { return new Uint8ClampedArray(new ArrayBuffer(length)); }
+  function make_uint16_buffer(length)       { return new Uint16Array(new ArrayBuffer(length*2)); }
+  function make_uint32_buffer(length)       { return new Uint32Array(new ArrayBuffer(length*4)); }
+  function make_int8_buffer(length)         { return new Int8Array(new ArrayBuffer(length)); }
+  function make_int16_buffer(length)        { return new Int16Array(new ArrayBuffer(length*2)); }
+  function make_int32_buffer(length)        { return new Int32Array(new ArrayBuffer(length*4)); }
+  function make_flo32_buffer(length)        { return new Float32Array(new ArrayBuffer(length*4)); }
+  function make_flo64_buffer(length)        { return new Float64Array(new ArrayBuffer(length*8)); }
+
+  var lookup = {
+    uint8:   make_uint8_buffer,  uint8clamped: make_uint8clamped_buffer,
+    uint16:  make_uint16_buffer, uint32:       make_uint32_buffer,
+    int8:    make_int8_buffer,   int16:        make_int16_buffer,        int32: make_int32_buffer,
+    float32: make_flo32_buffer,  float64:      make_flo64_buffer,        any: make_univ_buffer
+  };
+
+  return lookup[descriptor];
+}
+
+function make_buffer_from_shape_and_valtype(shape, descriptor) {
+  var buffer_maker = value_type_to_buffer_allocator(descriptor);
+  var elem_count = ProductOfArrayRange(shape, 0, shape.length);
+  return buffer_maker(elem_count);
+}
+
+function MatrixConstructFromGrainFunctionMode(arg0, arg1, arg2, arg3) {
+  // (shape, grain, func, mode)
+
+  // The five properties of matrix under construction.
+  var buffer;
+  var offset = 0;
+  var shape;
+  var valtype;
+  var getFunc;
+
+  // Transient state used during construction.
+  var frame = arg0 || [0];
+  var grain;
+  var func;
+  var mode;
+
+  if (typeof arg1 === "function") {
+    grain = [];
+    func = arg1;
+    mode = arg2;
+  } else {
+    grain = arg1;
+    func = arg2;
+    mode = arg3;
+  }
+
+  if (func === undefined) {
+    func = function fill_with_undef () { return undefined; };
+  }
+
+  mode && mode.print && mode.print({called:"PMC A", frame:frame, grain:grain});
+
+  check_frame_argument_is_valid(frame);
+
+  valtype = pop_valtype(grain);
+  shape = frame.concat(grain);
+
+  mode && mode.print && mode.print({called:"PMC B", shape:shape, valtype:valtype});
+
+  buffer = make_buffer_from_shape_and_valtype(shape, valtype);
+
+  switch(shape.length) {
+    case 1: getFunc = MatrixGet1; break;
+    case 2: getFunc = MatrixGet2; break;
+    case 3: getFunc = MatrixGet3; break;
+    default: getFunc = MatrixGetN; break;
+  }
+
+  mode && mode.print && mode.print({called:"PMC C", shape:shape, valtype:valtype, buffer:buffer});
+
+  // Eventually specialize on particular shape.length's (1, 2, ...).
+  // But more important for now to get semantics of general
+  // case right (and also parallelize on at least *one* case).
+
+  MatrixPFill(true, buffer, offset, shape, frame, grain, valtype, func, mode);
+  setup_fields_in_this(this);
+  return this;
+
+  function pop_valtype(grain) {
+    if (is_value_type(grain[grain.length - 1])) {
+      return grain.pop();
+    } else {
+      return "any"; // might express as "ObjectPointer" from binary data spec
+    }
+  }
+
+  function check_frame_argument_is_valid(frame) {
+    if (!std_Array_isArray(frame)) {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": frame argument "+frame+" is not an array of dimensions");
+    }
+
+    if (is_value_type(frame[frame.length - 1])) {
+      var desc = frame[frame.length - 1];
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ' data type specification ("'+desc+'") should only occur in grain argument');
+    }
+  }
+
+  function setup_fields_in_this(self) {
+    self.buffer = buffer;
+    self.offset = offset;
+    self.shape = shape;
+    self.valtype = valtype;
+    self.get = getFunc;
+  }
+}
+
+// Analogous to ParallelArrayView
+function MatrixView(shape, buffer, offset, valtype)
+{
+  this.shape = shape;
+  this.buffer = buffer;
+  this.offset = offset;
+  this.valtype = valtype;
+
+  switch(shape.length) {
+    case 1: this.get = MatrixGet1; break;
+    case 2: this.get = MatrixGet2; break;
+    case 3: this.get = MatrixGet3; break;
+    default: this.get = MatrixGetN; break;
+  }
+
+  return this;
+}
+
+// Idea: If shape is length L, then depth is either a positive integer <= L
+// or a negative integer >= -L+1.  Depth defaults to L.  A negative depth
+// is interpreted as L+depth.  This way one can generically map over e.g.
+// ARGBV arrays at the leaves of the iteration space.
+// grain is the expected type of the *result* from invoking func.
+function MatrixCommonMap(self, parexec, depth, grain, func, mode) {
+
+  mode && mode.print && mode.print({called:"PMM A", depth:depth, grain:grain});
+
+  var frame = self.shape.slice(0, depth);
+  var indices = ComputeIndices(frame, 0);
+
+  var valtype;
+  if (is_value_type(grain[grain.length - 1])) {
+    valtype = grain.pop();
+    mode && mode.print && mode.print({called:"PMM B", expl_valtype:valtype});
+  } else {
+    valtype = "any"; // this might be expressible as "ObjectPointer" in binary data spec
+    mode && mode.print && mode.print({called:"PMM B", impl_valtype:valtype});
+  }
+
+  var buffer_maker = value_type_to_buffer_allocator(valtype);
+  var shape = frame.concat(grain);
+  var len = ProductOfArrayRange(shape, 0, shape.length);
+  var buffer = buffer_maker(len);
+  var offset = 0;
+
+  function fill1(i) {
+    mode && mode.print && mode.print({called:"fill1",i:i});
+    return func(self.get(i), i); }
+  function fill2(i, j) {
+    mode && mode.print && mode.print({called:"fill2",i:i,j:j});
+    return func(self.get(i, j), i, j); }
+  function fill3(i, j, k) {
+    mode && mode.print && mode.print({called:"fill3",i:i,j:j,k:k});
+    return func(self.get(i, j, k), i, j, k); }
+  function fillN(...args) {
+    mode && mode.print && mode.print({called:"fillN",args:args});
+    return func.apply(undefined, self.get.apply(self, args), args); }
+  var fill;
+  switch (frame.length) {
+    case 1:  fill = fill1; break;
+    case 2:  fill = fill2; break;
+    case 3:  fill = fill3; break;
+    default: fill = fillN; break;
+  }
+
+  MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, fill, mode);
+  return NewMatrix(MatrixView, shape, buffer, offset, valtype);
+
+}
+
+function MatrixDecomposeArgsForMap(self, arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] func, [mode])
+  var depth = self.shape.length;
+  var grain = ["any"];
+  var func, mode;
+  if (typeof arg0 === "function") {
+    func = arg0;
+    mode = arg1;
+  } else if (typeof arg1 === "function") {
+    if (std_Array_isArray(arg0)) {
+      grain = arg0;
+    } else {
+      depth = arg0;
+    }
+    func = arg1;
+    mode = arg2;
+  } else { // assumes (typeof arg2 === "function")
+    depth = arg0;
+    grain = arg1;
+    func = arg2;
+    mode = arg3;
+  }
+
+  return [depth, grain, func, mode];
+}
+
+function MatrixPMap(arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] func, [mode])
+  var [depth, outputgrain, func, mode] =
+    MatrixDecomposeArgsForMap(this, arg0, arg1, arg2, arg3);
+  return MatrixCommonMap(this, true, depth, grain, func, mode);
+}
+
+function MatrixMap(arg0, arg1, arg2, arg3) { // ([depth,] [output-grain-type,] func, [mode])
+  var [depth, grain, func, mode] =
+    MatrixDecomposeArgsForMap(this, arg0, arg1, arg2, arg3);
+  return MatrixCommonMap(this, false, depth, grain, func, mode);
+}
+
+function MatrixCommonReduceScalar(self, parexec, func, mode) {
+
+  var depth = self.shape.length;
+  mode && mode.print && mode.print({where:"MatrixReduce", depth:depth, func:func, mode:mode, self:self});
+  var shape = self.shape;
+  var length = ProductOfArrayRange(shape, 0, shape.length);
+  if (length === 0)
+    ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
+
+  parallel: for (;;) { // see ParallelArrayBuild() to explain why for(;;) etc
+    if (!parexec)
+      break parallel;
+    if (ShouldForceSequential())
+      break parallel;
+    if (!TRY_PARALLEL(mode))
+      break parallel;
+
+    var chunks = ComputeNumChunks(length);
+    var numSlices = ParallelSlices();
+    if (chunks < numSlices)
+      break parallel;
+
+    var info = ComputeAllSliceBounds(chunks, numSlices);
+    var subreductions = NewDenseArray(numSlices);
+    ParallelDo(reduceSlice, CheckParallel(mode));
+    var accumulator = subreductions[0];
+    for (var i = 1; i < numSlices; i++)
+      accumulator = func(accumulator, subreductions[i]);
+    return accumulator;
+  }
+
+  // Sequential fallback:
+  ASSERT_SEQUENTIAL_IS_OK(mode);
+  var accumulator = self.buffer[self.offset];
+  for (var i = 1; i < length; i++)
+    accumulator = func(accumulator, self.buffer[self.offset+i]);
+  return accumulator;
+
+  function reduceSlice(sliceId, numSlices, warmup) {
+    var chunkStart = info[SLICE_START(sliceId)];
+    var chunkPos = info[SLICE_POS(sliceId)];
+    var chunkEnd = info[SLICE_END(sliceId)];
+
+    // (*) This function is carefully designed so that the warmup
+    // (which executes with chunkStart === chunkPos) will execute all
+    // potential loads and stores. In particular, the warmup run
+    // processes two chunks rather than one. Moreover, it stores
+    // accumulator into subreductions and then loads it again to
+    // ensure that the load is executed during the warmup, as it will
+    // certainly be executed during subsequent runs.
+
+    if (warmup && chunkEnd > chunkPos + 2)
+      chunkEnd = chunkPos + 2;
+
+    if (chunkStart === chunkPos) {
+      var indexPos = chunkStart << CHUNK_SHIFT;
+      var accumulator = reduceChunk(self.buffer[self.offset+indexPos], indexPos + 1, indexPos + CHUNK_SIZE);
+
+      UnsafeSetElement(subreductions, sliceId, accumulator, // see (*) above
+                       info, SLICE_POS(sliceId), ++chunkPos);
+    }
+
+    var accumulator = subreductions[sliceId]; // see (*) above
+
+    while (chunkPos < chunkEnd) {
+      var indexPos = chunkPos << CHUNK_SHIFT;
+      accumulator = reduceChunk(accumulator, indexPos, indexPos + CHUNK_SIZE);
+      UnsafeSetElement(subreductions, sliceId, accumulator,
+                       info, SLICE_POS(sliceId), ++chunkPos);
+    }
+  }
+
+  function reduceChunk(accumulator, from, to) {
+    to = std_Math_min(to, length);
+    for (var i = from; i < to; i++)
+      accumulator = func(accumulator, self.buffer[self.offset+i]);
+    return accumulator;
+  }
+}
+
+function MatrixCommonReduce(self, parexec, depth, func, mode) {
+  mode && mode.print && mode.print({where:"MatrixCommonReduce", depth:depth, func:func, mode:mode, self:self});
+
+  if (depth === self.shape.length)
+    return MatrixCommonReduceScalar(self, parexec, func, mode);
+
+  var shape = self.shape;
+  var frame = shape.slice(0, depth);
+  var grain = shape.slice(depth);
+  var valtype = self.valtype;
+  var length = ProductOfArrayRange(shape, 0, shape.length);
+  if (length === 0)
+    ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
+
+  var used_outptr = false;
+
+  function ndimIndexToOffset(...indices) {
+    mode && mode.print && mode.print({called: "outptr.ndimIndexToOffset", indices:indices});
+    var accum_idx  = 0;
+    var accum_prod = 1;
+    for (var i=indices.length-1; i>=0; i--) {
+      var arg_i = indices[i];
+      var grain_i = grain[i];
+      if (arg_i >= grain_i) {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set index too large");
+      }
+      accum_idx += arg_i * accum_prod;
+      accum_prod *= grain_i;
+    }
+    return accum_idx;
+  }
+
+  function outptr_set(...args) {
+    mode && mode.print && mode.print({called: "outptr.set A", args:args});
+    var v = args.pop();
+    if (args.length > grain.length) {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
+    }
+    if (args.length < grain.length) {
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
+    }
+    var offset = ndimIndexToOffset.apply(null, args);
+    mode && mode.print && mode.print({called: "outptr.set Y", bufoffset: bufoffset, offset: offset, sum: bufoffset + offset, v:v});
+    UnsafeSetElement(buffer, bufoffset + offset, v);
+    used_outptr = true;
+  }
+
+  function outptr_gather(arg0, arg1, arg2) { // ([depth,] func, [mode])
+    mode && mode.print && mode.print({called: "outptr.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
+    var depth, func, mode;
+    if (typeof arg0 === "function") {
+      depth = grain.length;
+      func = arg0;
+      mode = arg1;
+    } else { // assumes (typeof arg1 === "function")
+      depth = arg0;
+      func = arg1;
+      mode = arg2;
+    }
+
+    var subframe = grain.slice(0, depth);
+    var subgrain = grain.slice(depth);
+
+    mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
+
+    MatrixPFill(true, buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+    used_outptr = true;
+  }
+
+  mode && mode.print && mode.print({where:"MCR K", depth:depth, func:func, mode:mode, self:self});
+
+  parallel: { /* no code yet */
+    // Idea: preallocate N*3 result areas, where N is numSlices,
+    // and each area can hold a matrix matching [grain, valtype]
+    // Round-robin the use of the areas for intermediate results.
+    //
+    // Sequential code illustrates (simplified) round-robin.
+    var numSlices = ParallelSlices();
+  }
+
+  mode && mode.print && mode.print({where:"MCR L", depth:depth, func:func, mode:mode, self:self});
+
+  // Sequential fallback:
+  var buf0 = make_buffer_from_shape_and_valtype(grain, valtype);
+  var buf1 = make_buffer_from_shape_and_valtype(grain, valtype);
+  var mat0 = NewMatrix(MatrixView, grain, buf0, 0, valtype);
+  var mat1 = NewMatrix(MatrixView, grain, buf1, 0, valtype);
+  var mat2 = NewMatrix(MatrixView, grain, self.buffer, self.offset, valtype);
+  var grain_len = ProductOfArrayRange(grain, 0, grain.length);
+  UnsafeArrayCopy(buf1, 0, self.buffer, self.offset, grain_len);
+  var accumulator = self.buffer[self.offset];
+  var out0 = {set:outptr_set, gather:outptr_gather, buffer:buf0};
+  var out1 = {set:outptr_set, gather:outptr_gather, buffer:buf1};
+  var outptrs = [out0, out1];
+  var temps = [mat0, mat1];
+  for (var i = 1; i < length; i++) {
+    mat2.offset += grain_len;
+    used_outptr = false;
+
+    /* FIXME: must clear outptr[(i+1}%2] before letting control flow to func.*/
+    var result = func(temps[i%2], mat2, outptrs[(i+1)%2]);
+    if (!used_outptr) {
+      var subarray = result;
+      if (IsParallelArray(subarray) || IsMatrix(subarray)) {
+        var subvaltype;
+        if (IsParallelArray(subarray)) {
+          subvaltype = "any";
+        } else {
+          subvaltype = subarray.valtype;
+        }
+        if (!submatrix_matches_expectation(grain, valtype, subarray.shape, subvaltype)) {
+          ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " mismatched submatrix returned"+
+                                              " with shape: ["+subarray.shape+","+subvaltype+"];"+
+                                              " expected submatrix with shape: ["+grain+","+valtype+"]");
+        }
+        UnsafeArrayCopy(outptrs[i%2].buffer, 0,
+                        subarray.buffer, subarray.offset, grain_len);
+      } else {
+        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, " non-submatrix returned: "+subarray+" expected submatrix with shape: ["+grain+"]");
+      }
+    }
+  }
+
+  mode && mode.print && mode.print({where:"MCR Z", depth:depth, func:func, mode:mode, self:self});
+
+  return temps[(i+1)%2];
+}
+
+function MatrixDecomposeArgsForReduceOrScan(self, arg0, arg1, arg2) { // ([depth,] func, [mode])
+  var depth = arg0;
+  var func = arg1;
+  var mode = arg2;
+
+  if (typeof arg0 === "function") {
+    // caller omitted depth argument; shift other arguments down
+    depth = self.shape.length;
+    func = arg0;
+    mode = arg1;
+  } else {
+    depth = arg0;
+    func = arg1;
+    mode = arg2;
+  }
+
+  return [depth, func, mode];
+}
+
+function MatrixPReduce(arg0, arg1, arg2) { // ([depth,] func, [mode])
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
+  return MatrixCommonReduce(this, true, depth, func, mode);
+}
+
+function MatrixReduce(arg0, arg1, arg2) { // ([depth,] func, [mode])
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
+  return MatrixCommonReduce(this, false, depth, func, mode);
+}
+
+function MatrixCommonScan(parexec, self, depth, func, mode) {
+  // FIXME(bug 844887): Check |self instanceof Matrix|
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
+  var length = self.shape[0];
+
+  if (length === 0)
+    ThrowError(JSMSG_PAR_ARRAY_REDUCE_EMPTY);
+
+  var buffer = NewDenseArray(length);
+  scan(self.get(0), 0, length);
+  return NewMatrix(MatrixView, [length], buffer, 0);
+
+  function scan(accumulator, start, end) {
+    UnsafeSetElement(buffer, start, accumulator);
+    for (var i = start + 1; i < end; i++) {
+      accumulator = func(accumulator, self.get(i));
+      UnsafeSetElement(buffer, i, accumulator);
+    }
+    return accumulator;
+  }
+
+}
+
+function MatrixPScan(arg0, arg1, arg2) {
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
+  return MatrixCommonScan(true, this, depth, func, mode);
+}
+
+function MatrixScan(arg0, arg1, arg2) {
+  var [depth, func, mode] =
+    MatrixDecomposeArgsForReduceOrScan(this, arg0, arg1, arg2);
+  return MatrixCommonScan(false, this, depth, func, mode);
+}
+
+function MatrixScatter(targets, defaultValue, conflictFunc, length, mode) {
+  ThrowError(JSMSG_BAD_BYTECODE, "Matrix.scatter");
+}
+function MatrixPScatter(targets, defaultValue, conflictFunc, length, mode) {
+  ThrowError(JSMSG_BAD_BYTECODE, "Matrix.pscatter");
+}
+
+/**
+ * The familiar filter() operation applied across the outermost
+ * dimension.
+ */
+function MatrixCommonFilter(self, parexec, func, mode) {
+  // FIXME(bug 844887): Check |this instanceof ParallelArray|
+  // FIXME(bug 844887): Check |IsCallable(func)|
+
+  mode && mode.print && mode.print({called:"MCF A"});
+
+  var length = self.shape[0];
+  var grain_len = ProductOfArrayRange(self.shape, 1, self.shape.length);
+
+  // The strategy we use for ParallelArrayFilter is
+  // specialized around setting a single element at a time.
+  // UnsafeSetElement cannot express an atomic combination of:
+  // - Copying a whole n-length substring
+  // - updating counts
+  // - updating info
+  // (It could be that such level of generality is not necessary, but
+  //  Felix is just skipping this problem for now.)
+  parallel: /* no code yet */
+
+  // Sequential fallback:
+  ASSERT_SEQUENTIAL_IS_OK(mode);
+  var buffer = make_buffer_from_shape_and_valtype(self.shape, self.valtype);
+  var count = 0;
+  mode && mode.print && mode.print({called:"MCF T2",count:count,length:length,buffer:buffer,self:self,grain_len:grain_len});
+  for (var i = 0; i < length; i++) {
+    var elem = self.get(i);
+    if (func(elem, i, self)) {
+      mode && mode.print && mode.print({called:"MCF U2 AC",to:count*grain_len,fro:i*grain_len});
+      UnsafeArrayCopy(buffer, count * grain_len,
+                      self.buffer, i * grain_len, grain_len);
+      count++;
+    }
+  }
+  mode && mode.print && mode.print({called:"MCF W2",count:count,length:length,buffer:buffer,self:self});
+  var shape = [count];
+  for (var i = 1; i < self.shape.length; i++)
+    ARRAY_PUSH(shape, self.shape[i]);
+
+  mode && mode.print && mode.print({called:"MCF Z2"});
+  return NewMatrix(MatrixView, shape, buffer, 0, self.valtype);
+}
+
+// FIXME: 868422
+// This should be (heavily optimized) intrinsic; (think
+// System.arraycopy from Java).
+function UnsafeArrayCopy(buffer, bufoffset, subbuffer, suboffset, grain_len) {
+  for (var j = 0; j < grain_len; j++) {
+    UnsafeSetElement(buffer, bufoffset+j, subbuffer[suboffset+j]);
+  }
+}
+
+function ArrayCopy(buffer, bufoffset, subbuffer, suboffset, grain_len) {
+  for (var j = 0; j < grain_len; j++) {
+    buffer[bufoffset+j] = subbuffer[suboffset+j];
+  }
+}
+
+function MatrixPFilter(func, mode) {
+  return MatrixCommonFilter(this, true, func, mode);
+}
+
+function MatrixFilter(func, mode) {
+  return MatrixCommonFilter(this, false, func, mode);
+}
+
+/**
+ * Divides the outermost dimension into two dimensions.  Does not copy
+ * or affect the underlying data, just how it is divided amongst
+ * dimensions.  So if we had a vector with shape [M, N, ...] and you
+ * partition with amount=4, you get a [M/4, 4, N, ...] vector.  The
+ * outermost dimension must be evenly divisble by amount (e.g. 4 must
+ * divide M in the above example).
+ */
+function MatrixPartition(amount) {
+  if (amount >>> 0 !== amount)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "");
+
+  var length = this.shape[0];
+  var partitions = (length / amount) | 0;
+
+  if (partitions * amount !== length)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_PARTITION);
+
+  var shape = [partitions, amount];
+  for (var i = 1; i < this.shape.length; i++)
+      ARRAY_PUSH(shape, this.shape[i]);
+
+  return NewMatrix(MatrixView, shape, this.buffer, this.offset, this.valtype);
+}
+
+/**
+ * Collapses two outermost dimensions into one.  So if you had
+ * a [X, Y, Z ...] matrix, you get a [X*Y, Z ...] matrix.
+ */
+function MatrixFlatten()  {
+  if (this.shape.length < 2)
+    ThrowError(JSMSG_PAR_ARRAY_ALREADY_FLAT);
+
+  var shape = [this.shape[0] * this.shape[1]];
+  for (var i = 2; i < this.shape.length; i++)
+    ARRAY_PUSH(shape, this.shape[i]);
+  return NewMatrix(MatrixView, shape, this.buffer, this.offset, this.valtype);
+}
+
+function MatrixToString() {
+  var self = this;
+  var slen = self.shape.length;
+  if (slen == 1) {
+    var subarray = [].slice.call(this.buffer, self.offset, self.offset+self.shape[0]);
+    return "[" + subarray.join(",") + "]";
+  }
+
+  var dim0 = self.shape[0];
+  var dim1 = self.shape[1];
+  var p = false;
+  if (slen > 2) {
+    p = 1;
+    for (var i=2; i < slen; i++) {
+      p *= self.shape[i];
+    }
+  }
+  var matrix = self;
+
+  var payload = false;
+  var ret = "[";
+  var matrixNeedsNewline = false;
+  for (var row=0; row < dim0; row++) {
+    if (matrixNeedsNewline)
+      ret += ",\n ";
+    ret += "[";
+    var rowNeedsComma = false;
+    for (var x=0; x < dim1; x++) {
+      if (rowNeedsComma)
+        ret += ", ";
+      var val = matrix.get(row, x);
+      if (IsParallelArray(val)) {
+        ret += "<"+val+">";
+      } else if (val !== undefined) {
+        ret += val;
+      }
+      rowNeedsComma = true;
+    }
+    ret += "]";
+    matrixNeedsNewline = true;
+  }
+  ret += "]";
+  return ret;
 }
 
 /**
@@ -1296,6 +2401,8 @@ SetScriptHints(ParallelArrayScan,       { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayScatter,    { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
 
+SetScriptHints(UnsafeArrayCopy,       { cloneAtCallsite: true });
+
 /*
  * Mark the common getters as clone-at-callsite and inline. This is
  * overkill as we should only clone per receiver, but we have no
@@ -1305,3 +2412,13 @@ SetScriptHints(ParallelArrayFilter,     { cloneAtCallsite: true });
 SetScriptHints(ParallelArrayGet1,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet2,       { cloneAtCallsite: true, inline: true });
 SetScriptHints(ParallelArrayGet3,       { cloneAtCallsite: true, inline: true });
+
+SetScriptHints(MatrixGet1,      { cloneAtCallsite: true, inline: true });
+SetScriptHints(MatrixGet2,      { cloneAtCallsite: true, inline: true });
+SetScriptHints(MatrixGet3,      { cloneAtCallsite: true, inline: true });
+
+SetScriptHints(MatrixConstructFromGrainFunctionMode, { cloneAtCallsite: true });
+SetScriptHints(MatrixPMap,                           { cloneAtCallsite: true });
+SetScriptHints(MatrixCommonMap,                      { cloneAtCallsite: true });
+SetScriptHints(MatrixDecomposeArgsForMap,            { cloneAtCallsite: true });
+SetScriptHints(MatrixPReduce,                        { cloneAtCallsite: true });

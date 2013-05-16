@@ -91,12 +91,32 @@ function measureN(iters, f) {
   return [measurements, result];
 }
 
+function isParArrOrMat(e) {
+  return (e instanceof ParallelArray) || (e instanceof Matrix);
+}
+
+function isTypedArr(e) {
+  return e instanceof Uint8Array ||
+    e instanceof Uint8ClampedArray ||
+    e instanceof Uint16Array ||
+    e instanceof Uint32Array ||
+    e instanceof Int8Array ||
+    e instanceof Int16Array ||
+    e instanceof Int32Array ||
+    e instanceof Float32Array ||
+    e instanceof Float64Array;
+}
+
 function assertStructuralEq(e1, e2) {
-    if (e1 instanceof ParallelArray && e2 instanceof ParallelArray) {
+    if (isParArrOrMat(e1) && isParArrOrMat(e2)) {
       assertEqParallelArray(e1, e2);
-    } else if (e1 instanceof Array && e2 instanceof ParallelArray) {
+    } else if (e1 instanceof Array && isParArrOrMat(e2)) {
       assertEqParallelArrayArray(e2, e1);
-    } else if (e1 instanceof ParallelArray && e2 instanceof Array) {
+    } else if (isTypedArr(e1) && isParArrOrMat(e2)) {
+      assertEqParallelArrayArray(e2, e1);
+    } else if (isParArrOrMat(e1) && e2 instanceof Array) {
+      assertEqParallelArrayArray(e1, e2);
+    } else if (isParArrOrMat(e1) && isTypedArr(e2)) {
       assertEqParallelArrayArray(e1, e2);
     } else if (e1 instanceof Array && e2 instanceof Array) {
       assertEqArray(e1, e2);
@@ -115,7 +135,7 @@ function assertStructuralEq(e1, e2) {
 
 function assertEqParallelArrayArray(a, b) {
   assertEq(a.shape.length, 1);
-  assertEq(a.length, b.length);
+  assertEq(a.shape[0], b.length); // Matrix does not have a .length property, even in 1D case; (perhaps it should).
   for (var i = 0, l = a.shape[0]; i < l; i++) {
     assertStructuralEq(a.get(i), b[i]);
   }
@@ -129,8 +149,8 @@ function assertEqArray(a, b) {
 }
 
 function assertEqParallelArray(a, b) {
-  assertEq(a instanceof ParallelArray, true);
-  assertEq(b instanceof ParallelArray, true);
+  assertEq(isParArrOrMat(a), true);
+  assertEq(isParArrOrMat(b), true);
 
   var shape = a.shape;
   assertEqArray(shape, b.shape);

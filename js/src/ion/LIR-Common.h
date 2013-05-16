@@ -258,6 +258,16 @@ class LNewParallelArray : public LInstructionHelper<1, 0, 0>
     }
 };
 
+class LNewMatrix : public LInstructionHelper<1, 0, 0>
+{
+  public:
+    LIR_HEADER(NewMatrix);
+
+    MNewMatrix *mir() const {
+        return mir_->toNewMatrix();
+    }
+};
+
 class LNewArray : public LInstructionHelper<1, 0, 0>
 {
   public:

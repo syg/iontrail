@@ -258,3 +258,212 @@ js_InitParallelArrayClass(JSContext *cx, js::HandleObject obj)
 {
     return ParallelArrayObject::initClass(cx, obj);
 }
+
+//
+// MatrixObject
+//
+
+FixedHeapPtr<PropertyName> MatrixObject::ctorNames[NumCtors];
+
+JSFunctionSpec MatrixObject::methods[] = {
+    { "map",       JSOP_NULLWRAPPER, 4, 0, "MatrixMap"       },
+    { "pmap",      JSOP_NULLWRAPPER, 4, 0, "MatrixPMap"      },
+    { "reduce",    JSOP_NULLWRAPPER, 3, 0, "MatrixReduce"    },
+    { "preduce",   JSOP_NULLWRAPPER, 3, 0, "MatrixPReduce"   },
+    { "scan",      JSOP_NULLWRAPPER, 3, 0, "MatrixScan"      },
+    { "pscan",     JSOP_NULLWRAPPER, 3, 0, "MatrixPScan"     },
+    { "scatter",   JSOP_NULLWRAPPER, 5, 0, "MatrixScatter"   },
+    { "pscatter",  JSOP_NULLWRAPPER, 5, 0, "MatrixPScatter"  },
+    { "filter",    JSOP_NULLWRAPPER, 2, 0, "MatrixFilter"    },
+    { "pfilter",   JSOP_NULLWRAPPER, 2, 0, "MatrixPFilter"   },
+    { "partition", JSOP_NULLWRAPPER, 1, 0, "MatrixPartition" },
+    { "flatten",   JSOP_NULLWRAPPER, 0, 0, "MatrixFlatten" },
+
+    // FIXME #838906. Note that `get()` is not currently defined on this table but
+    // rather is assigned to each instance of ParallelArray (and likewise Matrix) as an own
+    // property.  This is a bit of a hack designed to supply a
+    // specialized version of get() based on the dimensionality of the
+    // receiver.  In the future we can improve this by (1) extending
+    // TI to track the dimensionality of the receiver and (2) using a
+    // hint to aggressively inline calls to get().
+    // { "get",      JSOP_NULLWRAPPER, 1, 0, "MatrixGet" },
+
+    { "toString", JSOP_NULLWRAPPER, 0, 0, "MatrixToString" },
+    JS_FS_END
+};
+
+Class MatrixObject::protoClass = {
+    "Matrix",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Matrix),
+    JS_PropertyStub,         // addProperty
+    JS_DeletePropertyStub,   // delProperty
+    JS_PropertyStub,         // getProperty
+    JS_StrictPropertyStub,   // setProperty
+    JS_EnumerateStub,
+    JS_ResolveStub,
+    JS_ConvertStub
+};
+
+Class MatrixObject::class_ = {
+    "Matrix",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Matrix),
+    JS_PropertyStub,         // addProperty
+    JS_DeletePropertyStub,   // delProperty
+    JS_PropertyStub,         // getProperty
+    JS_StrictPropertyStub,   // setProperty
+    JS_EnumerateStub,
+    JS_ResolveStub,
+    JS_ConvertStub
+};
+
+/*static*/ bool
+MatrixObject::initProps(JSContext *cx, HandleObject obj)
+{
+    RootedValue undef(cx, UndefinedValue());
+    RootedValue zero(cx, Int32Value(0));
+
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().buffer, &undef, true))
+        return false;
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().offset, &zero, true))
+        return false;
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().shape, &undef, true))
+        return false;
+    if (!JSObject::setProperty(cx, obj, obj, cx->names().get, &undef, true))
+        return false;
+
+    return true;
+}
+
+/*static*/ JSBool
+MatrixObject::construct(JSContext *cx, unsigned argc, Value *vp)
+{
+    RootedFunction ctor(cx, getConstructor(cx, argc));
+    if (!ctor)
+        return false;
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return constructHelper(cx, &ctor, args);
+}
+
+/* static */ JSFunction *
+MatrixObject::getConstructor(JSContext *cx, unsigned argc)
+{
+    RootedPropertyName ctorName(cx, ctorNames[js::Min(argc, NumCtors - 1)]);
+    RootedValue ctorValue(cx);
+    if (!cx->global()->getIntrinsicValue(cx, ctorName, &ctorValue))
+        return NULL;
+    JS_ASSERT(ctorValue.toObject().isFunction());
+    return ctorValue.toObject().toFunction();
+}
+
+/*static*/ JSObject *
+MatrixObject::newInstance(JSContext *cx)
+{
+    gc::AllocKind kind = gc::GetGCObjectKind(NumFixedSlots);
+    RootedObject result(cx, NewBuiltinClassInstance(cx, &class_, kind));
+    if (!result)
+        return NULL;
+
+    // Add in the basic PM properties now with default values:
+    if (!initProps(cx, result))
+        return NULL;
+
+    return result;
+}
+
+/*static*/ JSBool
+MatrixObject::constructHelper(JSContext *cx, MutableHandleFunction ctor, CallArgs &args0)
+{
+    RootedObject result(cx, newInstance(cx));
+    if (!result)
+        return false;
+
+    if (cx->typeInferenceEnabled()) {
+        jsbytecode *pc;
+        RootedScript script(cx, cx->stack.currentScript(&pc));
+        if (script) {
+            if (ctor->nonLazyScript()->shouldCloneAtCallsite) {
+                ctor.set(CloneFunctionAtCallsite(cx, ctor, script, pc));
+                if (!ctor)
+                    return false;
+            }
+
+            // Create the type object for the PM.  Add in the current
+            // properties as definite properties if this type object is newly
+            // created.  To tell if it is newly created, we check whether it
+            // has any properties yet or not, since any returned type object
+            // must have been created by this same C++ code and hence would
+            // already have properties if it had been returned before.
+            types::TypeObject *pmTypeObject =
+                types::TypeScript::InitObject(cx, script, pc, JSProto_Matrix);
+            if (!pmTypeObject)
+                return false;
+            if (pmTypeObject->getPropertyCount() == 0) {
+                if (!pmTypeObject->addDefiniteProperties(cx, result))
+                    return false;
+
+                // addDefiniteProperties() above should have added one
+                // property for of the fixed slots:
+                JS_ASSERT(pmTypeObject->getPropertyCount() == NumFixedSlots);
+            }
+            result->setType(pmTypeObject);
+        }
+    }
+
+    InvokeArgsGuard args;
+    if (!cx->stack.pushInvokeArgs(cx, args0.length(), &args))
+        return false;
+
+    args.setCallee(ObjectValue(*ctor));
+    args.setThis(ObjectValue(*result));
+
+    for (uint32_t i = 0; i < args0.length(); i++)
+        args[i] = args0[i];
+
+    if (!Invoke(cx, args))
+        return false;
+
+    args0.rval().setObject(*result);
+    return true;
+}
+
+JSObject *
+MatrixObject::initClass(JSContext *cx, HandleObject obj)
+{
+    JS_ASSERT(obj->isNative());
+
+    // Cache constructor names.
+    {
+        const char *ctorStrs[NumCtors] = { "MatrixConstructFromGrainFunctionMode"};
+        for (uint32_t i = 0; i < NumCtors; i++) {
+            JSAtom *atom = Atomize(cx, ctorStrs[i], strlen(ctorStrs[i]), InternAtom);
+            if (!atom)
+                return NULL;
+            ctorNames[i].init(atom->asPropertyName());
+        }
+    }
+
+    Rooted<GlobalObject *> global(cx, &obj->asGlobal());
+
+    RootedObject proto(cx, global->createBlankPrototype(cx, &protoClass));
+    if (!proto)
+        return NULL;
+
+    JSProtoKey key = JSProto_Matrix;
+    RootedFunction ctor(cx, global->createConstructor(cx, construct,
+                                                      cx->names().Matrix, 0));
+    if (!ctor ||
+        !LinkConstructorAndPrototype(cx, ctor, proto) ||
+        !DefinePropertiesAndBrand(cx, proto, NULL, methods) ||
+        !DefineConstructorAndPrototype(cx, global, key, ctor, proto))
+    {
+        return NULL;
+    }
+
+    return proto;
+}
+
+JSObject *
+js_InitMatrixClass(JSContext *cx, js::HandleObject obj)
+{
+    return MatrixObject::initClass(cx, obj);
+}

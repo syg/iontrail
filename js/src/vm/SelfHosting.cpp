@@ -282,6 +282,46 @@ js::intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+JSBool
+js::intrinsic_IsParallelArray(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(args[0].isObject() &&
+                           args[0].toObject().getClass() == &ParallelArrayObject::class_);
+    return true;
+}
+
+/*
+ * NewParallelArray(init, ...args): Creates a new parallel matrix using
+ * an initialization function |init|. All subsequent arguments are
+ * passed to |init|. The new instance will be passed as the |this|
+ * argument.
+ */
+JSBool
+js::intrinsic_NewMatrix(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    JS_ASSERT(args[0].isObject() && args[0].toObject().isFunction());
+
+    RootedFunction init(cx, args[0].toObject().toFunction());
+    CallArgs args0 = CallArgsFromVp(argc - 1, vp + 1);
+    if (!js::MatrixObject::constructHelper(cx, &init, args0))
+        return false;
+    args.rval().set(args0.rval());
+    return true;
+}
+
+JSBool
+js::intrinsic_IsMatrix(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(args[0].isObject() &&
+                           args[0].toObject().getClass() == &MatrixObject::class_);
+    return true;
+}
+
+
 /*
  * NewDenseArray(length): Allocates and returns a new dense array with
  * the given length where all values are initialized to holes.
@@ -460,6 +500,9 @@ const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ForkJoin",             intrinsic_ForkJoin,             2,0),
     JS_FN("ForkJoinSlices",       intrinsic_ForkJoinSlices,       0,0),
     JS_FN("NewParallelArray",     intrinsic_NewParallelArray,     3,0),
+    JS_FN("IsParallelArray",      intrinsic_IsParallelArray,      1,0),
+    JS_FN("NewMatrix",            intrinsic_NewMatrix,            4,0),
+    JS_FN("IsMatrix",             intrinsic_IsMatrix,             1,0),
     JS_FN("NewDenseArray",        intrinsic_NewDenseArray,        1,0),
     JS_FN("UnsafeSetElement",     intrinsic_UnsafeSetElement,     3,0),
     JS_FN("ShouldForceSequential", intrinsic_ShouldForceSequential, 0,0),
