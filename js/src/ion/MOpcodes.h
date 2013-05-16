@@ -164,6 +164,7 @@ namespace ion {
     _(GetDOMProperty)                                                       \
     _(SetDOMProperty)                                                       \
     _(IsCallable)                                                           \
+    _(HaveSameClass)                                                        \
     _(AsmJSNeg)                                                             \
     _(AsmJSUDiv)                                                            \
     _(AsmJSUMod)                                                            \

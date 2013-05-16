@@ -475,14 +475,20 @@ class IonBuilder : public MIRGenerator
     // RegExp natives.
     InliningStatus inlineRegExpTest(CallInfo &callInfo);
 
-    // Parallel Array.
+    // Array intrinsics.
     InliningStatus inlineUnsafeSetElement(CallInfo &callInfo);
     bool inlineUnsafeSetDenseArrayElement(CallInfo &callInfo, uint32_t base);
     bool inlineUnsafeSetTypedArrayElement(CallInfo &callInfo, uint32_t base, int arrayType);
-    InliningStatus inlineForceSequentialOrInParallelSection(CallInfo &callInfo);
     InliningStatus inlineNewDenseArray(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForSequentialExecution(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForParallelExecution(CallInfo &callInfo);
+
+    // Slot intrinsics.
+    InliningStatus inlineUnsafeSetReservedSlot(CallInfo &callInfo);
+    InliningStatus inlineUnsafeGetReservedSlot(CallInfo &callInfo);
+
+    // Parallel intrinsics.
+    InliningStatus inlineForceSequentialOrInParallelSection(CallInfo &callInfo);
     InliningStatus inlineNewParallelArray(CallInfo &callInfo);
     InliningStatus inlineNewMatrix(CallInfo &callInfo);
     InliningStatus inlineParallelArray(CallInfo &callInfo);
@@ -492,8 +498,11 @@ class IonBuilder : public MIRGenerator
                                            types::StackTypeSet *ctorTypes,
                                            uint32_t discards);
 
+    // Utility intrinsics.
     InliningStatus inlineThrowError(CallInfo &callInfo);
     InliningStatus inlineIsCallable(CallInfo &callInfo);
+    InliningStatus inlineNewObjectWithClassPrototype(CallInfo &callInfo);
+    InliningStatus inlineHaveSameClass(CallInfo &callInfo);
     InliningStatus inlineToObject(CallInfo &callInfo);
     InliningStatus inlineDump(CallInfo &callInfo);
 

@@ -219,6 +219,7 @@
     _(SetDOMProperty)               \
     _(CallDOMNative)                \
     _(IsCallable)                   \
+    _(HaveSameClass)                \
     _(AsmJSLoadHeap)                \
     _(AsmJSStoreHeap)               \
     _(AsmJSLoadGlobalVar)           \

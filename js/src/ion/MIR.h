@@ -1189,10 +1189,13 @@ class MNewArray : public MNullaryInstruction
 class MNewObject : public MNullaryInstruction
 {
     CompilerRootObject templateObject_;
+    bool templateObjectIsClassPrototype_;
 
-    MNewObject(JSObject *templateObject)
-      : templateObject_(templateObject)
+    MNewObject(JSObject *templateObject, bool templateObjectIsClassPrototype)
+      : templateObject_(templateObject),
+        templateObjectIsClassPrototype_(templateObjectIsClassPrototype)
     {
+        JS_ASSERT_IF(templateObjectIsClassPrototype, !shouldUseVM());
         setResultType(MIRType_Object);
         setResultTypeSet(MakeSingletonTypeSet(templateObject));
     }
@@ -1200,13 +1203,17 @@ class MNewObject : public MNullaryInstruction
   public:
     INSTRUCTION_HEADER(NewObject)
 
-    static MNewObject *New(JSObject *templateObject) {
-        return new MNewObject(templateObject);
+    static MNewObject *New(JSObject *templateObject, bool templateObjectIsClassPrototype) {
+        return new MNewObject(templateObject, templateObjectIsClassPrototype);
     }
 
     // Returns true if the code generator should call through to the
     // VM rather than the fast path.
     bool shouldUseVM() const;
+
+    bool templateObjectIsClassPrototype() const {
+        return templateObjectIsClassPrototype_;
+    }
 
     JSObject *templateObject() const {
         return templateObject_;
@@ -7616,6 +7623,35 @@ class MIsCallable
 
     MDefinition *object() const {
         return getOperand(0);
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+class MHaveSameClass
+  : public MBinaryInstruction,
+    public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1> >
+{
+    MHaveSameClass(MDefinition *left, MDefinition *right)
+      : MBinaryInstruction(left, right)
+    {
+        setResultType(MIRType_Boolean);
+        setMovable();
+    }
+
+  public:
+    INSTRUCTION_HEADER(HaveSameClass);
+
+    static MHaveSameClass *New(MDefinition *left, MDefinition *right) {
+        return new MHaveSameClass(left, right);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
     }
 };
 
