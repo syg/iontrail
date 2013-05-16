@@ -55,6 +55,8 @@ struct SelfHostedClass
      */
     static JSObject *newPrototype(JSContext *cx, uint32_t numSlots);
 
+    static bool is(Class *clasp);
+
     SelfHostedClass(const char *name, uint32_t numSlots);
 };
 
@@ -78,6 +80,17 @@ SelfHostedClass::newPrototype(JSContext *cx, uint32_t numSlots)
         return NULL;
 
     return proto;
+}
+
+bool
+SelfHostedClass::is(Class *clasp)
+{
+    SelfHostedClass *sh = head;
+    while (sh) {
+        if (clasp == &sh->class_)
+            return true;
+    }
+    return false;
 }
 
 SelfHostedClass::SelfHostedClass(const char *name, uint32_t numSlots)
@@ -785,16 +798,18 @@ CloneProperties(JSContext *cx, HandleObject obj, HandleObject clone, CloneMemory
         }
     }
 
-    for (uint32_t i = 0; i < JSCLASS_RESERVED_SLOTS(obj->getClass()); i++) {
-        val = obj->getReservedSlot(i);
-        if (!CloneValue(cx, &val, clonedObjects))
-            return false;
-        clone->setReservedSlot(i, val);
-    }
+    if (SelfHostedClass::is(obj->getClass())) {
+        for (uint32_t i = 0; i < JSCLASS_RESERVED_SLOTS(obj->getClass()); i++) {
+            val = obj->getReservedSlot(i);
+            if (!CloneValue(cx, &val, clonedObjects))
+                return false;
+            clone->setReservedSlot(i, val);
+        }
 
-    /* Privates are not cloned, so be careful! */
-    if (obj->hasPrivate())
-        clone->setPrivate(obj->getPrivate());
+        /* Privates are not cloned, so be careful! */
+        if (obj->hasPrivate())
+            clone->setPrivate(obj->getPrivate());
+    }
 
     return true;
 }
