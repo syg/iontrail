@@ -85,10 +85,11 @@ SelfHostedClass::newPrototype(JSContext *cx, uint32_t numSlots)
 bool
 SelfHostedClass::is(Class *clasp)
 {
-    SelfHostedClass *sh = head;
-    while (sh) {
-        if (clasp == &sh->class_)
+    SelfHostedClass *shClass = head;
+    while (shClass) {
+        if (clasp == &shClass->class_)
             return true;
+        shClass = shClass->next;
     }
     return false;
 }

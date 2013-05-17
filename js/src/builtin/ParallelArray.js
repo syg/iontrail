@@ -1320,6 +1320,123 @@ function ParallelArrayToString() {
   return result;
 }
 
+// Outpointer cursor
+#define CURSOR_BUFFER_SLOT 0
+#define CURSOR_OFFSET_SLOT 1
+#define CURSOR_GRAIN_SLOT 2
+#define CURSOR_USED_SLOT 3
+#define CURSOR_SLOTS 4
+
+#define CURSOR_SET_BUFFER(c, v) \
+  UnsafeSetReservedSlot(c, CURSOR_BUFFER_SLOT, v)
+#define CURSOR_SET_OFFSET(c, v) \
+  UnsafeSetReservedSlot(c, CURSOR_OFFSET_SLOT, v)
+#define CURSOR_SET_GRAIN(c, v) \
+  UnsafeSetReservedSlot(c, CURSOR_GRAIN_SLOT, v)
+#define CURSOR_SET_USED(c, v) \
+  UnsafeSetReservedSlot(c, CURSOR_USED_SLOT, v)
+#define CURSOR_GET_BUFFER(c) \
+  UnsafeGetReservedSlot(c, CURSOR_BUFFER_SLOT)
+#define CURSOR_GET_OFFSET(c) \
+  UnsafeGetReservedSlot(c, CURSOR_OFFSET_SLOT)
+#define CURSOR_GET_GRAIN(c) \
+  UnsafeGetReservedSlot(c, CURSOR_GRAIN_SLOT)
+#define CURSOR_GET_USED(c) \
+  UnsafeGetReservedSlot(c, CURSOR_USED_SLOT)
+
+#define CHECK_CURSOR_CLASS(c) \
+  do { if (!HaveSameClass(c, Cursor)) ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "bad Cursor object"); } while(false)
+
+function DebugSpew(x) {
+#ifdef DEBUG
+  global.print(global.JSON.stringify(x));
+#endif
+}
+
+function CursorIndexToOffset(grain, indices) {
+  DebugSpew({called: "CursorIndexToOffset", grain: grain, indices: indices});
+  var accum_idx  = 0;
+  var accum_prod = 1;
+  for (var i = indices.length - 1; i >= 0; i--) {
+    var arg_i = indices[i];
+    var grain_i = grain[i];
+    if (arg_i >= grain_i)
+      ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.set index too large");
+    accum_idx += arg_i * accum_prod;
+    accum_prod *= grain_i;
+  }
+  return accum_idx;
+}
+
+var Cursor = NewClassPrototype(CURSOR_SLOTS);
+
+Cursor.set = function CursorSet(...args) {
+  DebugSpew({called: "Cursor.set A", args:args});
+  CHECK_CURSOR_CLASS(this);
+
+  var v = args.pop();
+  var grain = UnsafeGetReservedSlot(this, CURSOR_GRAIN_SLOT);
+
+  if (args.length > grain.length)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.set too many arguments");
+  if (args.length < grain.length)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.set curry unsupported");
+
+  var buffer = UnsafeGetReservedSlot(this, CURSOR_BUFFER_SLOT);
+  var bufferOffset = UnsafeGetReservedSlot(this, CURSOR_OFFSET_SLOT);
+
+  var indexOffset;
+  if (!grain || grain.length == 0)
+    indexOffset = 0;
+  else
+    indexOffset = CursorIndexToOffset(grain, args);
+
+  DebugSpew({called: "Cursor.set Y", bufferOffset: bufferOffset, indexOffset: indexOffset, sum: bufferOffset + indexOffset, v:v});
+
+  UnsafeSetElement(buffer, bufferOffset + indexOffset, v);
+  CURSOR_SET_USED(this, true);
+};
+
+Cursor.gather = function CursorGather(arg0, arg1, arg2) { // ([depth,] func, [mode])
+  DebugSpew({called: "Cursor.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
+  CHECK_CURSOR_CLASS(this);
+
+  var grain = UnsafeGetReservedSlot(this, CURSOR_GRAIN_SLOT);
+  var buffer = UnsafeGetReservedSlot(this, CURSOR_BUFFER_SLOT);
+  var bufferOffset = UnsafeGetReservedSlot(this, CURSOR_OFFSET_SLOT);
+
+  if (!grain || grain.length === 0)
+    ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.gather on empty grain");
+
+  var depth, func, mode;
+  if (typeof arg0 === "function") {
+    depth = grain.length;
+    func = arg0;
+    mode = arg1;
+  } else { // assumes (typeof arg1 === "function")
+    depth = arg0;
+    func = arg1;
+    mode = arg2;
+  }
+
+  var subframe = grain.slice(0, depth);
+  var subgrain = grain.slice(depth);
+
+  DebugSpew({called: "Cursor.gather", bufferOffset:bufferOffset, depth:depth, subframe:subframe, subgrain:subgrain});
+
+  MatrixPFill(true, buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
+  CURSOR_SET_USED(this, true);
+}
+
+function NewCursor(buffer, bufferOffset, grain) {
+  var c = NewObjectWithClassPrototype(Cursor);
+  CURSOR_SET_BUFFER(c, buffer);
+  CURSOR_SET_OFFSET(c, bufferOffset);
+  CURSOR_SET_GRAIN(c, grain);
+  CURSOR_SET_USED(c, false);
+  return c;
+}
+
 // Fills buffer starting from offset under the assumption that
 // it has shape = frame x grain at that point, using func to
 // generate each element (of size grain) in the iteration space
@@ -1507,17 +1624,13 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
     mode && mode.print && mode.print({called: "fillN_leaf A", offset:offset, indexStart: indexStart, indexEnd: indexEnd, frame:frame});
     var frame_indices = ComputeIndices(frame, indexStart);
     mode && mode.print && mode.print({called: "fillN_leaf B", frame_indices:frame_indices});
-    var used_outptr = false;
-    function set(v) { UnsafeSetElement(buffer, i, val); used_outptr = true; }
+    var cursor = NewCursor(buffer, 0);
     for (i = indexStart; i < indexEnd; i++) {
-      used_outptr = false;
-      var outptr = {};
-      outptr.set = set;
-      frame_indices.push(outptr);
+      frame_indices.push(cursor);
       mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices});
       var val = func.apply(undefined, frame_indices);
       mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices, val:val});
-      if (!used_outptr) {
+      if (!IS_CURSOR_USED(cursor)) {
         UnsafeSetElement(buffer, i, val);
       }
       frame_indices.pop();
@@ -1529,72 +1642,18 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
 
     mode && mode.print && mode.print({called: "fillN_subm A", offset:offset, indexStart: indexStart, indexEnd: indexEnd});
 
-    var bufoffset = indexStart;
-
     // allocate new arrays and copy in computed subarrays.
     var frame_indices = ComputeIndices(frame, indexStart);
-    var used_outptr = false;
 
-    function ndimIndexToOffset(...indices) {
-      mode && mode.print && mode.print({called: "outptr.ndimIndexToOffset", indices:indices});
-      var accum_idx  = 0;
-      var accum_prod = 1;
-      for (var i=indices.length-1; i>=0; i--) {
-        var arg_i = indices[i];
-        var grain_i = grain[i];
-        if (arg_i >= grain_i) {
-          ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set index too large");
-        }
-        accum_idx += arg_i * accum_prod;
-        accum_prod *= grain_i;
-      }
-      return accum_idx;
-    }
-
-    function outptr_set(...args) {
-      mode && mode.print && mode.print({called: "outptr.set A", args:args});
-      var v = args.pop();
-      if (args.length > grain.length) {
-        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": too many args to outptr.set");
-      }
-      if (args.length < grain.length) {
-        ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, ": outptr.set curry not yet unsupported");
-      }
-      var offset = ndimIndexToOffset.apply(null, args);
-      mode && mode.print && mode.print({called: "outptr.set Y", bufoffset: bufoffset, offset: offset, sum: bufoffset + offset, v:v});
-      UnsafeSetElement(buffer, bufoffset + offset, v);
-      used_outptr = true;
-    }
-
-    function outptr_gather(arg0, arg1, arg2) { // ([depth,] func, [mode])
-      mode && mode.print && mode.print({called: "outptr.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
-      var depth, func, mode;
-      if (typeof arg0 === "function") {
-        depth = grain.length;
-        func = arg0;
-        mode = arg1;
-      } else { // assumes (typeof arg1 === "function")
-        depth = arg0;
-        func = arg1;
-        mode = arg2;
-      }
-
-      var subframe = grain.slice(0, depth);
-      var subgrain = grain.slice(depth);
-
-      mode && mode.print && mode.print({called: "outptr.gather", bufoffset:bufoffset, depth:depth, subframe:subframe, subgrain:subgrain});
-
-      MatrixPFill(true, buffer, bufoffset, grain, subframe, subgrain, valtype, func, mode);
-      used_outptr = true;
-    }
+    var bufoffset = indexStart;
+    var cursor = NewCursor(buffer, bufoffset, grain);
 
     // FIXME: Something seems off about handling of i, indexStart, bufoffset...
     for (i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
-      used_outptr = false;
-      var outptr = {};
-      outptr.set = outptr_set;
-      outptr.gather = outptr_gather;
-      frame_indices.push(outptr);
+      CURSOR_SET_OFFSET(cursor, bufoffset);
+      CURSOR_SET_USED(cursor, false);
+
+      frame_indices.push(cursor);
 
       mode && mode.print && mode.print({called: "fillN_subm C", i:i, frame_indices:frame_indices});
 
@@ -1603,7 +1662,7 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
 
       mode && mode.print && mode.print({called: "fillN_subm D", subarray:subarray});
 
-      if (!used_outptr) {
+      if (!CURSOR_GET_USED(cursor)) {
         var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
         mode && mode.print && mode.print({called: "fillN_subm E", subbuffer:subbuffer, suboffset:suboffset});
         CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
