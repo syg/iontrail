@@ -61,6 +61,59 @@ LIRGeneratorShared::define(LInstructionHelper<1, X, Y> *lir, MDefinition *mir, L
     return define(lir, mir, LDefinition(type, policy));
 }
 
+template <size_t X, size_t Y, size_t Z> void
+LIRGeneratorShared::lowerParallelizable(LParallelizableInstructionHelper<1, X, Y> *lir,
+                                        MParallelizableAryInstruction<Z> *mir)
+{
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
+        JS_ASSERT(!mir->isParallelized());
+        lir->setForkJoinSlice(LAllocation(mir->forkJoinSlice()->toConstant()->vp()));
+        if (lir->isAlloc())
+            lir->setParallelAllocTemps(LDefinition::BogusTemp(), LDefinition::BogusTemp());
+        break;
+
+      case ParallelExecution:
+        // Unparallelized parallelizable instructions should never make it to
+        // lowering in parallel execution.
+        JS_ASSERT(mir->isParallelized());
+        lir->setForkJoinSlice(useRegister(mir->forkJoinSlice()));
+        if (lir->isAlloc())
+            lir->setParallelAllocTemps(temp(), temp());
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+}
+
+template <size_t X, size_t Y, size_t Z> bool
+LIRGeneratorShared::defineParallelizable(LParallelizableInstructionHelper<1, X, Y> *lir,
+                                         MParallelizableAryInstruction<Z> *mir,
+                                         const LDefinition &def)
+{
+    lowerParallelizable(lir, mir);
+    return define(lir, mir, def);
+}
+
+template <size_t X, size_t Y, size_t Z> bool
+LIRGeneratorShared::defineParallelizable(LParallelizableInstructionHelper<1, X, Y> *lir,
+                                         MParallelizableAryInstruction<Z> *mir,
+                                         LDefinition::Policy policy)
+{
+    lowerParallelizable(lir, mir);
+    LDefinition::Type type = LDefinition::TypeFrom(mir->type());
+    return define(lir, mir, LDefinition(type, policy));
+}
+
+template <size_t X, size_t Y, size_t Z> bool
+LIRGeneratorShared::defineParallelizableReturn(LParallelizableInstructionHelper<1, X, Y> *lir,
+                                               MParallelizableAryInstruction<Z> *mir)
+{
+    lowerParallelizable(lir, mir);
+    return defineReturn(lir, mir);
+}
+
 template <size_t X, size_t Y> bool
 LIRGeneratorShared::defineFixed(LInstructionHelper<1, X, Y> *lir, MDefinition *mir, const LAllocation &output)
 {

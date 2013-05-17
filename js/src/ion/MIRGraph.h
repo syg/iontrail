@@ -662,13 +662,11 @@ class MIRGraph
         return callTargets_.begin();
     }
 
-    // The ParSlice is an instance of ForkJoinSlice*, it carries
-    // "per-helper-thread" information.  So as not to modify the
-    // calling convention for parallel code, we obtain the current
-    // slice from thread-local storage.  This helper method will
-    // lazilly insert an MParSlice instruction in the entry block and
-    // return the definition.
-    MDefinition *parSlice();
+    // So as not to modify the calling convention for parallel code, we obtain
+    // the current slice from thread-local storage.  This helper method will
+    // lazilly insert an MForkJoinSlice instruction in the entry block and return
+    // the definition.
+    MDefinition *forkJoinSlice();
 };
 
 class MDefinitionIterator

@@ -530,6 +530,7 @@ ScriptAnalysis::analyzeBytecode(JSContext *cx)
           case JSOP_LOOPHEAD:
           case JSOP_LOOPENTRY:
           case JSOP_NOTEARG:
+          case JSOP_REST:
             break;
 
           default:

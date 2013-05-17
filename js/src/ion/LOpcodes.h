@@ -29,9 +29,7 @@
     _(NewDeclEnvObject)             \
     _(NewCallObject)                \
     _(NewStringObject)              \
-    _(ParNew)                       \
     _(ParNewDenseArray)             \
-    _(ParNewCallObject)             \
     _(ParBailout)                   \
     _(InitElem)                     \
     _(InitProp)                     \
@@ -124,7 +122,6 @@
     _(RegExpTest)                   \
     _(Lambda)                       \
     _(LambdaForSingleton)           \
-    _(ParLambda)                    \
     _(ImplicitThis)                 \
     _(Slots)                        \
     _(Elements)                     \
@@ -172,7 +169,7 @@
     _(StoreFixedSlotV)              \
     _(StoreFixedSlotT)              \
     _(FunctionEnvironment)          \
-    _(ParSlice)                     \
+    _(ForkJoinSlice)                \
     _(GetPropertyCacheV)            \
     _(GetPropertyCacheT)            \
     _(GetPropertyPolymorphicV)      \
@@ -204,6 +201,7 @@
     _(StringLength)                 \
     _(ArgumentsLength)              \
     _(GetArgument)                  \
+    _(Rest)                         \
     _(TypeOfV)                      \
     _(ToIdV)                        \
     _(Floor)                        \

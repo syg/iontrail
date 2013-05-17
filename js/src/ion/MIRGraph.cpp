@@ -101,12 +101,12 @@ MIRGraph::unmarkBlocks() {
 }
 
 MDefinition *
-MIRGraph::parSlice() {
-    // Search the entry block to find a par slice instruction.  If we do not
-    // find one, add one after the Start instruction.
+MIRGraph::forkJoinSlice() {
+    // Search the entry block to find a fork-join slice instruction.  If we do
+    // not find one, add one after the Start instruction.
     //
     // Note: the original design used a field in MIRGraph to cache the
-    // parSlice rather than searching for it again.  However, this
+    // forkJoinSlice rather than searching for it again.  However, this
     // could become out of date due to DCE.  Given that we do not
     // generally have to search very far to find the par slice
     // instruction if it exists, and that we don't look for it that
@@ -119,16 +119,16 @@ MIRGraph::parSlice() {
 
     MInstruction *start = NULL;
     for (MInstructionIterator ins(entry->begin()); ins != entry->end(); ins++) {
-        if (ins->isParSlice())
+        if (ins->isForkJoinSlice())
             return *ins;
         else if (ins->isStart())
             start = *ins;
     }
     JS_ASSERT(start);
 
-    MParSlice *parSlice = new MParSlice();
-    entry->insertAfter(start, parSlice);
-    return parSlice;
+    MForkJoinSlice *forkJoinSlice = new MForkJoinSlice();
+    entry->insertAfter(start, forkJoinSlice);
+    return forkJoinSlice;
 }
 
 MBasicBlock *

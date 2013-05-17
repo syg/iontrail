@@ -80,7 +80,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitRegExpTest(LRegExpTest *lir);
     bool visitLambda(LLambda *lir);
     bool visitLambdaForSingleton(LLambdaForSingleton *lir);
-    bool visitParLambda(LParLambda *lir);
     bool visitPointer(LPointer *lir);
     bool visitSlots(LSlots *lir);
     bool visitStoreSlotV(LStoreSlotV *store);
@@ -116,9 +115,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineNewObject(OutOfLineNewObject *ool);
     bool visitNewDeclEnvObject(LNewDeclEnvObject *lir);
     bool visitNewCallObject(LNewCallObject *lir);
-    bool visitParNewCallObject(LParNewCallObject *lir);
     bool visitNewStringObject(LNewStringObject *lir);
-    bool visitParNew(LParNew *lir);
     bool visitParNewDenseArray(LParNewDenseArray *lir);
     bool visitParBailout(LParBailout *lir);
     bool visitInitElem(LInitElem *lir);
@@ -174,7 +171,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCharCodeAt(LCharCodeAt *lir);
     bool visitFromCharCode(LFromCharCode *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
-    bool visitParSlice(LParSlice *lir);
+    bool visitForkJoinSlice(LForkJoinSlice *lir);
     bool visitParWriteGuard(LParWriteGuard *lir);
     bool visitParDump(LParDump *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
@@ -215,6 +212,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitIteratorEnd(LIteratorEnd *lir);
     bool visitArgumentsLength(LArgumentsLength *lir);
     bool visitGetArgument(LGetArgument *lir);
+    bool visitRest(LRest *lir);
     bool visitCallSetProperty(LCallSetProperty *ins);
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);
@@ -299,7 +297,9 @@ class CodeGenerator : public CodeGeneratorSpecific
                                 const Register &tempReg1,
                                 const Register &tempReg2,
                                 JSObject *templateObj);
-
+    template <size_t X, size_t Y>
+    bool emitParAllocateGCThing(LParallelizableAllocInstructionHelper<1, X, Y> *lir,
+                                const Register &objReg, JSObject *templateObj);
     bool emitParCallToUncompiledScript(LInstruction *lir,
                                        Register calleeReg);
 

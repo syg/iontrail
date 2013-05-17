@@ -127,6 +127,26 @@ class LIRGeneratorShared : public MInstructionVisitorWithDefaults
     inline bool define(LInstructionHelper<1, Ops, Temps> *lir, MDefinition *mir,
                        LDefinition::Policy policy = LDefinition::DEFAULT);
 
+    // Defines a parallelizable IR. Sets the ForkJoinSlice * and extra
+    // allocation temps depending on execution mode.
+    template <size_t Ops, size_t Temps, size_t MIRArity>
+    inline void lowerParallelizable(LParallelizableInstructionHelper<1, Ops, Temps> *lir,
+                                    MParallelizableAryInstruction<MIRArity> *mir);
+
+    template <size_t Ops, size_t Temps, size_t MIRArity>
+    inline bool defineParallelizable(LParallelizableInstructionHelper<1, Ops, Temps> *lir,
+                                     MParallelizableAryInstruction<MIRArity> *mir,
+                                     const LDefinition &def);
+
+    template <size_t Ops, size_t Temps, size_t MIRArity>
+    inline bool defineParallelizable(LParallelizableInstructionHelper<1, Ops, Temps> *lir,
+                                     MParallelizableAryInstruction<MIRArity> *mir,
+                                     LDefinition::Policy policy = LDefinition::DEFAULT);
+
+    template <size_t Ops, size_t Temps, size_t MIRArity>
+    inline bool defineParallelizableReturn(LParallelizableInstructionHelper<1, Ops, Temps> *lir,
+                                           MParallelizableAryInstruction<MIRArity> *mir);
+
     template <size_t Ops, size_t Temps>
     inline bool defineReuseInput(LInstructionHelper<1, Ops, Temps> *lir, MDefinition *mir, uint32_t operand);
 

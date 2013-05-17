@@ -637,20 +637,36 @@ CodeGenerator::visitLambda(LLambda *lir)
     Register output = ToRegister(lir->output());
     JSFunction *fun = lir->mir()->fun();
 
-    OutOfLineCode *ool = oolCallVM(LambdaInfo, lir, (ArgList(), ImmGCPtr(fun), scopeChain),
-                                   StoreRegisterTo(output));
-    if (!ool)
-        return false;
+    OutOfLineCode *ool = NULL;
 
-    JS_ASSERT(gen->compartment == fun->compartment());
-    JS_ASSERT(!fun->hasSingletonType());
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
+        ool = oolCallVM(LambdaInfo, lir, (ArgList(), ImmGCPtr(fun), scopeChain),
+                        StoreRegisterTo(output));
+        if (!ool)
+            return false;
 
-    masm.newGCThing(output, fun, ool->entry());
-    masm.initGCThing(output, fun);
+        JS_ASSERT(gen->compartment == fun->compartment());
+        JS_ASSERT(!fun->hasSingletonType());
+
+        masm.newGCThing(output, fun, ool->entry());
+        masm.initGCThing(output, fun);
+        break;
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, output, fun))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
 
     emitLambdaInit(output, scopeChain, fun);
 
-    masm.bind(ool->rejoin());
+    if (ool)
+        masm.bind(ool->rejoin());
+
     return true;
 }
 
@@ -677,23 +693,6 @@ CodeGenerator::emitLambdaInit(const Register &output,
                   Address(output, JSFunction::offsetOfNativeOrScript()));
     masm.storePtr(scopeChain, Address(output, JSFunction::offsetOfEnvironment()));
     masm.storePtr(ImmGCPtr(fun->displayAtom()), Address(output, JSFunction::offsetOfAtom()));
-}
-
-bool
-CodeGenerator::visitParLambda(LParLambda *lir)
-{
-    Register resultReg = ToRegister(lir->output());
-    Register parSliceReg = ToRegister(lir->parSlice());
-    Register scopeChainReg    = ToRegister(lir->scopeChain());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
-    JSFunction *fun = lir->mir()->fun();
-
-    JS_ASSERT(scopeChainReg != resultReg);
-
-    emitParAllocateGCThing(lir, resultReg, parSliceReg, tempReg1, tempReg2, fun);
-    emitLambdaInit(resultReg, scopeChainReg, fun);
-    return true;
 }
 
 bool
@@ -1086,7 +1085,7 @@ CodeGenerator::visitFunctionEnvironment(LFunctionEnvironment *lir)
 }
 
 bool
-CodeGenerator::visitParSlice(LParSlice *lir)
+CodeGenerator::visitForkJoinSlice(LForkJoinSlice *lir)
 {
     const Register tempReg = ToRegister(lir->getTempReg());
 
@@ -1103,7 +1102,7 @@ CodeGenerator::visitParWriteGuard(LParWriteGuard *lir)
 
     const Register tempReg = ToRegister(lir->getTempReg());
     masm.setupUnalignedABICall(2, tempReg);
-    masm.passABIArg(ToRegister(lir->parSlice()));
+    masm.passABIArg(ToRegister(lir->forkJoinSlice()));
     masm.passABIArg(ToRegister(lir->object()));
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParWriteGuard));
 
@@ -2105,10 +2104,10 @@ CodeGenerator::visitParCheckOverRecursed(LParCheckOverRecursed *lir)
     // is reset, not the worker threads.  See comment in vm/ForkJoin.h
     // for more details.
 
-    Register parSliceReg = ToRegister(lir->parSlice());
+    Register forkJoinSliceReg = ToRegister(lir->forkJoinSlice());
     Register tempReg = ToRegister(lir->getTempReg());
 
-    masm.loadPtr(Address(parSliceReg, offsetof(ForkJoinSlice, perThreadData)), tempReg);
+    masm.loadPtr(Address(forkJoinSliceReg, offsetof(ForkJoinSlice, perThreadData)), tempReg);
     masm.loadPtr(Address(tempReg, offsetof(PerThreadData, ionStackLimit)), tempReg);
 
     // Conditional forward (unlikely) branch to failure.
@@ -2138,7 +2137,7 @@ CodeGenerator::visitParCheckOverRecursedFailure(ParCheckOverRecursedFailure *ool
     saveSet.maybeTake(tempReg);
 
     masm.PushRegsInMask(saveSet);
-    masm.movePtr(ToRegister(lir->parSlice()), CallTempReg0);
+    masm.movePtr(ToRegister(lir->forkJoinSlice()), CallTempReg0);
     masm.setupUnalignedABICall(1, CallTempReg1);
     masm.passABIArg(CallTempReg0);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckOverRecursed));
@@ -2200,7 +2199,7 @@ CodeGenerator::visitOutOfLineParCheckInterrupt(OutOfLineParCheckInterrupt *ool)
     saveSet.maybeTake(tempReg);
 
     masm.PushRegsInMask(saveSet);
-    masm.movePtr(ToRegister(ool->lir->parSlice()), CallTempReg0);
+    masm.movePtr(ToRegister(ool->lir->forkJoinSlice()), CallTempReg0);
     masm.setupUnalignedABICall(1, CallTempReg1);
     masm.passABIArg(CallTempReg0);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParCheckInterrupt));
@@ -2558,14 +2557,28 @@ CodeGenerator::visitNewParallelArray(LNewParallelArray *lir)
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
-    OutOfLineNewParallelArray *ool = new OutOfLineNewParallelArray(lir);
-    if (!addOutOfLineCode(ool))
-        return false;
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        OutOfLineNewParallelArray *ool = new OutOfLineNewParallelArray(lir);
+        if (!addOutOfLineCode(ool))
+            return false;
 
-    masm.newGCThing(objReg, templateObject, ool->entry());
-    masm.initGCThing(objReg, templateObject);
+        masm.newGCThing(objReg, templateObject, ool->entry());
+        masm.initGCThing(objReg, templateObject);
 
-    masm.bind(ool->rejoin());
+        masm.bind(ool->rejoin());
+        break;
+      }
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, objReg, templateObject))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+
     return true;
 }
 
@@ -2584,14 +2597,28 @@ CodeGenerator::visitNewMatrix(LNewMatrix *lir)
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
-    OutOfLineNewMatrix *ool = new OutOfLineNewMatrix(lir);
-    if (!addOutOfLineCode(ool))
-        return false;
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        OutOfLineNewMatrix *ool = new OutOfLineNewMatrix(lir);
+        if (!addOutOfLineCode(ool))
+            return false;
 
-    masm.newGCThing(objReg, templateObject, ool->entry());
-    masm.initGCThing(objReg, templateObject);
+        masm.newGCThing(objReg, templateObject, ool->entry());
+        masm.initGCThing(objReg, templateObject);
 
-    masm.bind(ool->rejoin());
+        masm.bind(ool->rejoin());
+        break;
+      }
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, objReg, templateObject))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+
     return true;
 }
 
@@ -2607,24 +2634,37 @@ CodeGenerator::visitOutOfLineNewMatrix(OutOfLineNewMatrix *ool)
 bool
 CodeGenerator::visitNewArray(LNewArray *lir)
 {
-    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
     DebugOnly<uint32_t> count = lir->mir()->count();
 
     JS_ASSERT(count < JSObject::NELEMENTS_LIMIT);
 
-    if (lir->mir()->shouldUseVM())
-        return visitNewArrayCallVM(lir);
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        if (lir->mir()->shouldUseVM())
+            return visitNewArrayCallVM(lir);
 
-    OutOfLineNewArray *ool = new OutOfLineNewArray(lir);
-    if (!addOutOfLineCode(ool))
-        return false;
+        OutOfLineNewArray *ool = new OutOfLineNewArray(lir);
+        if (!addOutOfLineCode(ool))
+            return false;
 
-    masm.newGCThing(objReg, templateObject, ool->entry());
-    masm.initGCThing(objReg, templateObject);
+        masm.newGCThing(objReg, templateObject, ool->entry());
+        masm.initGCThing(objReg, templateObject);
 
-    masm.bind(ool->rejoin());
+        masm.bind(ool->rejoin());
+        break;
+      }
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, objReg, templateObject))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+
     return true;
 }
 
@@ -2696,21 +2736,34 @@ CodeGenerator::visitNewObjectVMCall(LNewObject *lir)
 bool
 CodeGenerator::visitNewObject(LNewObject *lir)
 {
-    JS_ASSERT(gen->info().executionMode() == SequentialExecution);
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
 
-    if (lir->mir()->shouldUseVM())
-        return visitNewObjectVMCall(lir);
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        if (lir->mir()->shouldUseVM())
+            return visitNewObjectVMCall(lir);
 
-    OutOfLineNewObject *ool = new OutOfLineNewObject(lir);
-    if (!addOutOfLineCode(ool))
-        return false;
+        OutOfLineNewObject *ool = new OutOfLineNewObject(lir);
+        if (!addOutOfLineCode(ool))
+            return false;
 
-    masm.newGCThing(objReg, templateObject, ool->entry());
-    masm.initGCThing(objReg, templateObject);
+        masm.newGCThing(objReg, templateObject, ool->entry());
+        masm.initGCThing(objReg, templateObject);
 
-    masm.bind(ool->rejoin());
+        masm.bind(ool->rejoin());
+        break;
+      }
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, objReg, templateObject))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+
     return true;
 }
 
@@ -2760,52 +2813,44 @@ CodeGenerator::visitNewCallObject(LNewCallObject *lir)
     JSObject *templateObj = lir->mir()->templateObject();
 
     // If we have a template object, we can inline call object creation.
-    OutOfLineCode *ool;
-    if (lir->slots()->isRegister()) {
-        ool = oolCallVM(NewCallObjectInfo, lir,
-                        (ArgList(), ImmGCPtr(templateObj->lastProperty()),
-                                    ImmGCPtr(templateObj->type()),
-                                    ToRegister(lir->slots())),
-                        StoreRegisterTo(obj));
-    } else {
-        ool = oolCallVM(NewCallObjectInfo, lir,
-                        (ArgList(), ImmGCPtr(templateObj->lastProperty()),
-                                    ImmGCPtr(templateObj->type()),
-                                    ImmWord((void *)NULL)),
-                        StoreRegisterTo(obj));
-    }
-    if (!ool)
-        return false;
+    OutOfLineCode *ool = NULL;
 
-    masm.newGCThing(obj, templateObj, ool->entry());
-    masm.initGCThing(obj, templateObj);
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
+        if (lir->slots()->isRegister()) {
+            ool = oolCallVM(NewCallObjectInfo, lir,
+                            (ArgList(), ImmGCPtr(templateObj->lastProperty()),
+                             ImmGCPtr(templateObj->type()),
+                             ToRegister(lir->slots())),
+                            StoreRegisterTo(obj));
+        } else {
+            ool = oolCallVM(NewCallObjectInfo, lir,
+                            (ArgList(), ImmGCPtr(templateObj->lastProperty()),
+                             ImmGCPtr(templateObj->type()),
+                             ImmWord((void *)NULL)),
+                            StoreRegisterTo(obj));
+        }
+        if (!ool)
+            return false;
+
+        masm.newGCThing(obj, templateObj, ool->entry());
+        masm.initGCThing(obj, templateObj);
+        break;
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, obj, templateObj))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
 
     if (lir->slots()->isRegister())
         masm.storePtr(ToRegister(lir->slots()), Address(obj, JSObject::offsetOfSlots()));
-    masm.bind(ool->rejoin());
-    return true;
-}
 
-bool
-CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
-{
-    Register resultReg = ToRegister(lir->output());
-    Register parSliceReg = ToRegister(lir->parSlice());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
-    JSObject *templateObj = lir->mir()->templateObj();
-
-    emitParAllocateGCThing(lir, resultReg, parSliceReg, tempReg1, tempReg2, templateObj);
-
-    // NB: !lir->slots()->isRegister() implies that there is no slots
-    // array at all, and the memory is already zeroed when copying
-    // from the template object
-
-    if (lir->slots()->isRegister()) {
-        Register slotsReg = ToRegister(lir->slots());
-        JS_ASSERT(slotsReg != resultReg);
-        masm.storePtr(slotsReg, Address(resultReg, JSObject::offsetOfSlots()));
-    }
+    if (ool)
+        masm.bind(ool->rejoin());
 
     return true;
 }
@@ -2813,7 +2858,7 @@ CodeGenerator::visitParNewCallObject(LParNewCallObject *lir)
 bool
 CodeGenerator::visitParNewDenseArray(LParNewDenseArray *lir)
 {
-    Register parSliceReg = ToRegister(lir->parSlice());
+    Register forkJoinSliceReg = ToRegister(lir->forkJoinSlice());
     Register lengthReg = ToRegister(lir->length());
     Register tempReg0 = ToRegister(lir->getTemp0());
     Register tempReg1 = ToRegister(lir->getTemp1());
@@ -2821,8 +2866,8 @@ CodeGenerator::visitParNewDenseArray(LParNewDenseArray *lir)
     JSObject *templateObj = lir->mir()->templateObject();
 
     // Allocate the array into tempReg2.  Don't use resultReg because it
-    // may alias parSliceReg etc.
-    emitParAllocateGCThing(lir, tempReg2, parSliceReg, tempReg0, tempReg1, templateObj);
+    // may alias forkJoinSliceReg etc.
+    emitParAllocateGCThing(lir, tempReg2, forkJoinSliceReg, tempReg0, tempReg1, templateObj);
 
     // Invoke a C helper to allocate the elements.  For convenience,
     // this helper also returns the array back to us, or NULL, which
@@ -2833,7 +2878,7 @@ CodeGenerator::visitParNewDenseArray(LParNewDenseArray *lir)
     // duplicate the code in initGCThing() that already does such an
     // admirable job.
     masm.setupUnalignedABICall(3, CallTempReg3);
-    masm.passABIArg(parSliceReg);
+    masm.passABIArg(forkJoinSliceReg);
     masm.passABIArg(tempReg2);
     masm.passABIArg(lengthReg);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParExtendArray));
@@ -2877,18 +2922,6 @@ CodeGenerator::visitNewStringObject(LNewStringObject *lir)
     return true;
 }
 
-bool
-CodeGenerator::visitParNew(LParNew *lir)
-{
-    Register objReg = ToRegister(lir->output());
-    Register parSliceReg = ToRegister(lir->parSlice());
-    Register tempReg1 = ToRegister(lir->getTemp0());
-    Register tempReg2 = ToRegister(lir->getTemp1());
-    JSObject *templateObject = lir->mir()->templateObject();
-    emitParAllocateGCThing(lir, objReg, parSliceReg, tempReg1, tempReg2, templateObject);
-    return true;
-}
-
 class OutOfLineParNewGCThing : public OutOfLineCodeBase<CodeGenerator>
 {
 public:
@@ -2908,7 +2941,7 @@ public:
 bool
 CodeGenerator::emitParAllocateGCThing(LInstruction *lir,
                                       const Register &objReg,
-                                      const Register &parSliceReg,
+                                      const Register &forkJoinSliceReg,
                                       const Register &tempReg1,
                                       const Register &tempReg2,
                                       JSObject *templateObj)
@@ -2918,11 +2951,22 @@ CodeGenerator::emitParAllocateGCThing(LInstruction *lir,
     if (!ool || !addOutOfLineCode(ool))
         return false;
 
-    masm.parNewGCThing(objReg, parSliceReg, tempReg1, tempReg2,
+    masm.parNewGCThing(objReg, forkJoinSliceReg, tempReg1, tempReg2,
                        templateObj, ool->entry());
     masm.bind(ool->rejoin());
     masm.initGCThing(objReg, templateObj);
     return true;
+}
+
+template <size_t X, size_t Y>
+bool
+CodeGenerator::emitParAllocateGCThing(LParallelizableAllocInstructionHelper<1, X, Y> *lir,
+                                      const Register &objReg, JSObject *templateObj)
+{
+    Register temp0 = ToRegister(lir->getParallelAllocTemp(0));
+    Register temp1 = ToRegister(lir->getParallelAllocTemp(1));
+    Register slice = ToRegister(lir->forkJoinSlice());
+    return emitParAllocateGCThing(lir, objReg, slice, temp0, temp1, templateObj);
 }
 
 bool
@@ -4938,6 +4982,80 @@ CodeGenerator::visitGetArgument(LGetArgument *lir)
         masm.loadValue(argPtr, result);
     }
     return true;
+}
+
+typedef JSObject *(*InitRestParameterFn)(JSContext *, uint32_t, Value *, HandleObject,
+                                         HandleObject);
+static const VMFunction InitRestParameterInfo =
+    FunctionInfo<InitRestParameterFn>(InitRestParameter);
+
+typedef ParallelResult (*ParallelInitRestParameterFn)(ForkJoinSlice *, uint32_t, Value *,
+                                                      HandleObject, HandleObject,
+                                                      MutableHandleObject);
+static const VMFunction ParallelInitRestParameterInfo =
+    FunctionInfo<ParallelInitRestParameterFn>(InitRestParameter);
+
+bool
+CodeGenerator::visitRest(LRest *lir)
+{
+    Register numActuals = ToRegister(lir->numActuals());
+    Register slice = ToRegister(lir->forkJoinSlice());
+    Register temp0 = ToRegister(lir->getTemp(0));
+    Register temp1 = ToRegister(lir->getTemp(1));
+    Register temp2 = ToRegister(lir->getTemp(2));
+
+    // Try to allocate the rest array inline.
+    Label joinAlloc;
+    JSObject *templateObject = lir->mir()->templateObject();
+    switch (gen->info().executionMode()) {
+      case SequentialExecution: {
+        Label failAlloc;
+        masm.newGCThing(temp2, templateObject, &failAlloc);
+        masm.initGCThing(temp2, templateObject);
+        masm.jump(&joinAlloc);
+        {
+            masm.bind(&failAlloc);
+            masm.movePtr(ImmWord((void *)NULL), temp2);
+        }
+        break;
+      }
+
+      case ParallelExecution:
+        if (!emitParAllocateGCThing(lir, temp2, slice, temp0, temp1, templateObject))
+            return false;
+        break;
+
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+    masm.bind(&joinAlloc);
+
+    // Compute actuals() + numFormals.
+    unsigned numFormals = lir->mir()->numFormals();
+    size_t actualsOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
+    masm.movePtr(StackPointer, temp1);
+    masm.addPtr(Imm32(sizeof(Value) * numFormals + actualsOffset), temp1);
+
+    // Compute numActuals - numFormals.
+    Label emptyLength, joinLength;
+    masm.movePtr(numActuals, temp0);
+    masm.branch32(Assembler::LessThanOrEqual, temp0, Imm32(numFormals), &emptyLength);
+    masm.sub32(Imm32(numFormals), temp0);
+    masm.jump(&joinLength);
+    {
+        masm.bind(&emptyLength);
+        masm.move32(Imm32(0), temp0);
+    }
+    masm.bind(&joinLength);
+
+    pushArg(temp2);
+    pushArg(ImmGCPtr(templateObject));
+    pushArg(temp1);
+    pushArg(temp0);
+
+    if (gen->info().executionMode() == SequentialExecution)
+        return callVM(InitRestParameterInfo, lir);
+    return callVM(ParallelInitRestParameterInfo, lir);
 }
 
 bool

@@ -220,7 +220,7 @@ IonBuilder::inlineArray(CallInfo &callInfo)
         templateObject->setShouldConvertDoubleElements();
 
     MNewArray *ins = new MNewArray(initLength, templateObject, allocating);
-    current->add(ins);
+    addParallelizable(ins);
     current->push(ins);
 
     if (callInfo.argc() >= 2) {
@@ -1195,7 +1195,7 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
         return InliningStatus_Error;
     templateObject->setType(typeObject);
     MNewParallelArray *newObject = MNewParallelArray::New(templateObject);
-    current->add(newObject);
+    addParallelizable(newObject);
     MPassArg *newThis = MPassArg::New(newObject);
     current->add(newThis);
     call->addArg(0, newThis);
@@ -1258,7 +1258,7 @@ IonBuilder::inlineNewDenseArrayForParallelExecution(CallInfo &callInfo)
 
     callInfo.unwrapArgs();
 
-    MParNewDenseArray *newObject = new MParNewDenseArray(graph().parSlice(),
+    MParNewDenseArray *newObject = new MParNewDenseArray(graph().forkJoinSlice(),
                                                          callInfo.getArg(0),
                                                          templateObject);
     current->add(newObject);
@@ -1341,7 +1341,7 @@ IonBuilder::inlineNewObjectWithClassPrototype(CallInfo &callInfo)
 
     MNewObject *newObj = MNewObject::New(templateObject,
                                          /* templateObjectIsClassPrototype = */ true);
-    current->add(newObj);
+    addParallelizable(newObj);
     current->push(newObj);
 
     if (!resumeAfter(newObj))

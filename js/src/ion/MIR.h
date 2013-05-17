@@ -54,7 +54,8 @@ MIRType MIRTypeFromValue(const js::Value &vp)
      * points.
      */                                                                         \
     _(Unused)                                                                   \
-    _(DOMFunction)   /* Contains or uses a common DOM method function */
+    _(DOMFunction)   /* Contains or uses a common DOM method function */        \
+    _(Parallelized)
 
 class MDefinition;
 class MInstruction;
@@ -633,6 +634,43 @@ class MUnaryInstruction : public MAryInstruction<1>
     }
 };
 
+// An instruction that can be parallelized and used in both sequential and
+// parallel execution. If parallelized, it has an extra operand, the
+// ForkJoinSlice.
+//
+// MIR specific to a single execution, sequential or parallel, should inherit
+// from MAryInstruction like any other MIR.
+template <size_t Arity>
+class MParallelizableAryInstruction : public MAryInstruction<Arity + 1>
+{
+    typedef MAryInstruction<Arity + 1> MAryIns;
+
+    // Put the slice as the last operand.
+    static const size_t SliceIndex = Arity;
+
+  public:
+    void setForkJoinSlice(MDefinition *slice) {
+        MAryIns::setOperand(SliceIndex, slice);
+        if (slice->isForkJoinSlice())
+            MAryIns::setParallelized();
+    }
+
+    MDefinition *forkJoinSlice() {
+        return MAryIns::getOperand(SliceIndex);
+    }
+};
+
+class MParallelizableNullaryInstruction : public MParallelizableAryInstruction<0>
+{ };
+
+class MParallelizableUnaryInstruction : public MParallelizableAryInstruction<1>
+{
+  protected:
+    MParallelizableUnaryInstruction(MDefinition *ins) {
+        setOperand(0, ins);
+    }
+};
+
 // Generates an LSnapshot without further effect.
 class MStart : public MNullaryInstruction
 {
@@ -1071,7 +1109,7 @@ class MThrow
     }
 };
 
-class MNewParallelArray : public MNullaryInstruction
+class MNewParallelArray : public MParallelizableNullaryInstruction
 {
     CompilerRootObject templateObject_;
 
@@ -1097,7 +1135,7 @@ class MNewParallelArray : public MNullaryInstruction
     }
 };
 
-class MNewMatrix : public MNullaryInstruction
+class MNewMatrix : public MParallelizableNullaryInstruction
 {
     CompilerRootObject templateObject_;
 
@@ -1131,7 +1169,7 @@ void
 MergeTypes(MIRType *ptype, types::StackTypeSet **ptypeSet,
            MIRType newType, types::StackTypeSet *newTypeSet);
 
-class MNewArray : public MNullaryInstruction
+class MNewArray : public MParallelizableNullaryInstruction
 {
   public:
     enum AllocatingBehaviour {
@@ -1186,7 +1224,7 @@ class MNewArray : public MNullaryInstruction
     }
 };
 
-class MNewObject : public MNullaryInstruction
+class MNewObject : public MParallelizableNullaryInstruction
 {
     CompilerRootObject templateObject_;
     bool templateObjectIsClassPrototype_;
@@ -1220,32 +1258,7 @@ class MNewObject : public MNullaryInstruction
     }
 };
 
-// Could be allocating either a new array or a new object.
-class MParNew : public MUnaryInstruction
-{
-    CompilerRootObject templateObject_;
-
-  public:
-    INSTRUCTION_HEADER(ParNew);
-
-    MParNew(MDefinition *parSlice,
-            JSObject *templateObject)
-      : MUnaryInstruction(parSlice),
-        templateObject_(templateObject)
-    {
-        setResultType(MIRType_Object);
-    }
-
-    MDefinition *parSlice() const {
-        return getOperand(0);
-    }
-
-    JSObject *templateObject() const {
-        return templateObject_;
-    }
-};
-
-// Could be allocating either a new array or a new object.
+// Bail out in parallel execution.
 class MParBailout : public MAryControlInstruction<0, 0>
 {
   public:
@@ -3753,15 +3766,15 @@ class MParCheckOverRecursed : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(ParCheckOverRecursed);
 
-    MParCheckOverRecursed(MDefinition *parForkJoinSlice)
-      : MUnaryInstruction(parForkJoinSlice)
+    MParCheckOverRecursed(MDefinition *forkJoinSlice)
+      : MUnaryInstruction(forkJoinSlice)
     {
         setResultType(MIRType_None);
         setGuard();
         setMovable();
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 };
@@ -3772,15 +3785,15 @@ class MParCheckInterrupt : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(ParCheckInterrupt);
 
-    MParCheckInterrupt(MDefinition *parForkJoinSlice)
-      : MUnaryInstruction(parForkJoinSlice)
+    MParCheckInterrupt(MDefinition *forkJoinSlice)
+      : MUnaryInstruction(forkJoinSlice)
     {
         setResultType(MIRType_None);
         setGuard();
         setMovable();
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 };
@@ -3926,13 +3939,13 @@ class MRegExpTest
 };
 
 class MLambda
-  : public MUnaryInstruction,
+  : public MParallelizableUnaryInstruction,
     public SingleObjectPolicy
 {
     CompilerRootFunction fun_;
 
     MLambda(MDefinition *scopeChain, JSFunction *fun)
-      : MUnaryInstruction(scopeChain), fun_(fun)
+      : MParallelizableUnaryInstruction(scopeChain), fun_(fun)
     {
         setResultType(MIRType_Object);
         if (!fun->hasSingletonType() && !types::UseNewTypeForClone(fun))
@@ -3953,50 +3966,6 @@ class MLambda
     }
     TypePolicy *typePolicy() {
         return this;
-    }
-};
-
-class MParLambda
-  : public MBinaryInstruction,
-    public SingleObjectPolicy
-{
-    CompilerRootFunction fun_;
-
-    MParLambda(MDefinition *parSlice,
-               MDefinition *scopeChain, JSFunction *fun)
-      : MBinaryInstruction(parSlice, scopeChain), fun_(fun)
-    {
-        JS_ASSERT(!fun->hasSingletonType());
-        JS_ASSERT(!types::UseNewTypeForClone(fun));
-        setResultType(MIRType_Object);
-        setResultTypeSet(MakeSingletonTypeSet(fun));
-    }
-
-  public:
-    INSTRUCTION_HEADER(ParLambda);
-
-    static MParLambda *New(MDefinition *parSlice,
-                           MDefinition *scopeChain, JSFunction *fun) {
-        return new MParLambda(parSlice, scopeChain, fun);
-    }
-
-    static MParLambda *New(MDefinition *parSlice,
-                           MLambda *originalInstruction) {
-        return New(parSlice,
-                   originalInstruction->scopeChain(),
-                   originalInstruction->fun());
-    }
-
-    MDefinition *parSlice() const {
-        return getOperand(0);
-    }
-
-    MDefinition *scopeChain() const {
-        return getOperand(1);
-    }
-
-    JSFunction *fun() const {
-        return fun_;
     }
 };
 
@@ -6147,17 +6116,17 @@ class MFunctionEnvironment
 
 // Loads the current js::ForkJoinSlice*.
 // Only applicable in ParallelExecution.
-class MParSlice
+class MForkJoinSlice
   : public MNullaryInstruction
 {
   public:
-    MParSlice()
-        : MNullaryInstruction()
+    MForkJoinSlice()
+      : MNullaryInstruction()
     {
         setResultType(MIRType_ForkJoinSlice);
     }
 
-    INSTRUCTION_HEADER(ParSlice);
+    INSTRUCTION_HEADER(ForkJoinSlice);
 
     AliasSet getAliasSet() const {
         // Indicate that this instruction reads nothing, stores nothing.
@@ -7057,16 +7026,57 @@ class MGetArgument
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();
-   }
+    }
+};
+
+class MRest
+  : public MParallelizableUnaryInstruction,
+    public IntPolicy<0>
+{
+    unsigned numFormals_;
+    CompilerRootObject templateObject_;
+
+    MRest(MDefinition *numActuals, unsigned numFormals, JSObject *templateObject)
+      : MParallelizableUnaryInstruction(numActuals),
+        numFormals_(numFormals),
+        templateObject_(templateObject)
+    {
+        setResultType(MIRType_Object);
+        setResultTypeSet(MakeSingletonTypeSet(templateObject));
+    }
+
+  public:
+    INSTRUCTION_HEADER(Rest);
+
+    static MRest *New(MDefinition *numActuals, unsigned numFormals, JSObject *templateObject) {
+        return new MRest(numActuals, numFormals, templateObject);
+    }
+
+    MDefinition *numActuals() const {
+        return getOperand(0);
+    }
+    unsigned numFormals() const {
+        return numFormals_;
+    }
+    JSObject *templateObject() const {
+        return templateObject_;
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
 };
 
 class MParWriteGuard
   : public MBinaryInstruction,
     public ObjectPolicy<1>
 {
-    MParWriteGuard(MDefinition *parThreadContext,
+    MParWriteGuard(MDefinition *forkJoinSlice,
                    MDefinition *obj)
-      : MBinaryInstruction(parThreadContext, obj)
+      : MBinaryInstruction(forkJoinSlice, obj)
     {
         setResultType(MIRType_None);
         setGuard();
@@ -7076,10 +7086,10 @@ class MParWriteGuard
   public:
     INSTRUCTION_HEADER(ParWriteGuard);
 
-    static MParWriteGuard *New(MDefinition *parThreadContext, MDefinition *obj) {
-        return new MParWriteGuard(parThreadContext, obj);
+    static MParWriteGuard *New(MDefinition *forkJoinSlice, MDefinition *obj) {
+        return new MParWriteGuard(forkJoinSlice, obj);
     }
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
     MDefinition *object() const {
@@ -7257,12 +7267,12 @@ class MNewDeclEnvObject : public MNullaryInstruction
     }
 };
 
-class MNewCallObject : public MUnaryInstruction
+class MNewCallObject : public MParallelizableUnaryInstruction
 {
     CompilerRootObject templateObj_;
 
     MNewCallObject(HandleObject templateObj, MDefinition *slots)
-      : MUnaryInstruction(slots),
+      : MParallelizableUnaryInstruction(slots),
         templateObj_(templateObj)
     {
         setResultType(MIRType_Object);
@@ -7281,51 +7291,6 @@ class MNewCallObject : public MUnaryInstruction
     JSObject *templateObject() {
         return templateObj_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
-    }
-};
-
-class MParNewCallObject : public MBinaryInstruction
-{
-    CompilerRootObject templateObj_;
-
-    MParNewCallObject(MDefinition *parSlice,
-                      JSObject *templateObj, MDefinition *slots)
-        : MBinaryInstruction(parSlice, slots),
-          templateObj_(templateObj)
-    {
-        setResultType(MIRType_Object);
-    }
-
-  public:
-    INSTRUCTION_HEADER(ParNewCallObject);
-
-    static MParNewCallObject *New(MDefinition *parSlice,
-                                  JSObject *templateObj,
-                                  MDefinition *slots) {
-        return new MParNewCallObject(parSlice, templateObj, slots);
-    }
-
-    static MParNewCallObject *New(MDefinition *parSlice,
-                                  MNewCallObject *originalInstruction) {
-        return New(parSlice,
-                   originalInstruction->templateObject(),
-                   originalInstruction->slots());
-    }
-
-    MDefinition *parSlice() const {
-        return getOperand(0);
-    }
-
-    MDefinition *slots() const {
-        return getOperand(1);
-    }
-
-    JSObject *templateObj() const {
-        return templateObj_;
-    }
-
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
@@ -7446,16 +7411,16 @@ class MParNewDenseArray : public MBinaryInstruction
   public:
     INSTRUCTION_HEADER(ParNewDenseArray);
 
-    MParNewDenseArray(MDefinition *parSlice,
+    MParNewDenseArray(MDefinition *forkJoinSlice,
                       MDefinition *length,
                       JSObject *templateObject)
-      : MBinaryInstruction(parSlice, length),
+      : MBinaryInstruction(forkJoinSlice, length),
         templateObject_(templateObject)
     {
         setResultType(MIRType_Object);
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 

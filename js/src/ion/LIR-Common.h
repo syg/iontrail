@@ -248,7 +248,7 @@ class LNewSlots : public LCallInstructionHelper<1, 0, 3>
     }
 };
 
-class LNewParallelArray : public LInstructionHelper<1, 0, 0>
+class LNewParallelArray : public LParallelizableAllocInstructionHelper<1, 0, 0>
 {
   public:
     LIR_HEADER(NewParallelArray);
@@ -258,7 +258,7 @@ class LNewParallelArray : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LNewMatrix : public LInstructionHelper<1, 0, 0>
+class LNewMatrix : public LParallelizableAllocInstructionHelper<1, 0, 0>
 {
   public:
     LIR_HEADER(NewMatrix);
@@ -268,7 +268,7 @@ class LNewMatrix : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LNewArray : public LInstructionHelper<1, 0, 0>
+class LNewArray : public LParallelizableAllocInstructionHelper<1, 0, 0>
 {
   public:
     LIR_HEADER(NewArray)
@@ -282,7 +282,7 @@ class LNewArray : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LNewObject : public LInstructionHelper<1, 0, 0>
+class LNewObject : public LParallelizableAllocInstructionHelper<1, 0, 0>
 {
   public:
     LIR_HEADER(NewObject)
@@ -296,48 +296,17 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LParNew : public LInstructionHelper<1, 1, 2>
-{
-  public:
-    LIR_HEADER(ParNew);
-
-    LParNew(const LAllocation &parSlice,
-            const LDefinition &temp1,
-            const LDefinition &temp2)
-    {
-        setOperand(0, parSlice);
-        setTemp(0, temp1);
-        setTemp(1, temp2);
-    }
-
-    MParNew *mir() const {
-        return mir_->toParNew();
-    }
-
-    const LAllocation *parSlice() {
-        return getOperand(0);
-    }
-
-    const LAllocation *getTemp0() {
-        return getTemp(0)->output();
-    }
-
-    const LAllocation *getTemp1() {
-        return getTemp(1)->output();
-    }
-};
-
 class LParNewDenseArray : public LCallInstructionHelper<1, 2, 3>
 {
   public:
     LIR_HEADER(ParNewDenseArray);
 
-    LParNewDenseArray(const LAllocation &parSlice,
+    LParNewDenseArray(const LAllocation &forkJoinSlice,
                       const LAllocation &length,
                       const LDefinition &temp1,
                       const LDefinition &temp2,
                       const LDefinition &temp3) {
-        setOperand(0, parSlice);
+        setOperand(0, forkJoinSlice);
         setOperand(1, length);
         setTemp(0, temp1);
         setTemp(1, temp2);
@@ -348,7 +317,7 @@ class LParNewDenseArray : public LCallInstructionHelper<1, 2, 3>
         return mir_->toParNewDenseArray();
     }
 
-    const LAllocation *parSlice() {
+    const LAllocation *forkJoinSlice() {
         return getOperand(0);
     }
 
@@ -394,7 +363,7 @@ class LNewDeclEnvObject : public LInstructionHelper<1, 0, 0>
 //       call object.
 //   (2) Otherwise, an inline allocation of the call object is attempted.
 //
-class LNewCallObject : public LInstructionHelper<1, 1, 0>
+class LNewCallObject : public LParallelizableAllocInstructionHelper<1, 1, 0>
 {
   public:
     LIR_HEADER(NewCallObject)
@@ -408,64 +377,6 @@ class LNewCallObject : public LInstructionHelper<1, 1, 0>
     }
     MNewCallObject *mir() const {
         return mir_->toNewCallObject();
-    }
-};
-
-class LParNewCallObject : public LInstructionHelper<1, 2, 2>
-{
-    LParNewCallObject(const LAllocation &parSlice,
-                      const LAllocation &slots,
-                      const LDefinition &temp1,
-                      const LDefinition &temp2) {
-        setOperand(0, parSlice);
-        setOperand(1, slots);
-        setTemp(0, temp1);
-        setTemp(1, temp2);
-    }
-
-public:
-    LIR_HEADER(ParNewCallObject);
-
-    static LParNewCallObject *NewWithSlots(const LAllocation &parSlice,
-                                           const LAllocation &slots,
-                                           const LDefinition &temp1,
-                                           const LDefinition &temp2) {
-        return new LParNewCallObject(parSlice, slots, temp1, temp2);
-    }
-
-    static LParNewCallObject *NewSansSlots(const LAllocation &parSlice,
-                                           const LDefinition &temp1,
-                                           const LDefinition &temp2) {
-        LAllocation slots = LConstantIndex::Bogus();
-        return new LParNewCallObject(parSlice, slots, temp1, temp2);
-    }
-
-    const LAllocation *parSlice() {
-        return getOperand(0);
-    }
-
-    const LAllocation *slots() {
-        return getOperand(1);
-    }
-
-    const bool hasDynamicSlots() {
-        // TO INVESTIGATE: Felix tried using isRegister() method here,
-        // but for useFixed(_, CallTempN), isRegister() is false (and
-        // isUse() is true).  So for now ignore that and try to match
-        // the LConstantIndex::Bogus() generated above instead.
-        return slots() && ! slots()->isConstant();
-    }
-
-    const MParNewCallObject *mir() const {
-        return mir_->toParNewCallObject();
-    }
-
-    const LAllocation *getTemp0() {
-        return getTemp(0)->output();
-    }
-
-    const LAllocation *getTemp1() {
-        return getTemp(1)->output();
     }
 };
 
@@ -559,14 +470,14 @@ class LParCheckOverRecursed : public LInstructionHelper<0, 1, 1>
   public:
     LIR_HEADER(ParCheckOverRecursed);
 
-    LParCheckOverRecursed(const LAllocation &parSlice,
+    LParCheckOverRecursed(const LAllocation &forkJoinSlice,
                           const LDefinition &tempReg)
     {
-        setOperand(0, parSlice);
+        setOperand(0, forkJoinSlice);
         setTemp(0, tempReg);
     }
 
-    const LAllocation *parSlice() {
+    const LAllocation *forkJoinSlice() {
         return getOperand(0);
     }
 
@@ -580,14 +491,14 @@ class LParCheckInterrupt : public LInstructionHelper<0, 1, 1>
   public:
     LIR_HEADER(ParCheckInterrupt);
 
-    LParCheckInterrupt(const LAllocation &parSlice,
+    LParCheckInterrupt(const LAllocation &forkJoinSlice,
                        const LDefinition &tempReg)
     {
-        setOperand(0, parSlice);
+        setOperand(0, forkJoinSlice);
         setTemp(0, tempReg);
     }
 
-    const LAllocation *parSlice() {
+    const LAllocation *forkJoinSlice() {
         return getOperand(0);
     }
 
@@ -2565,7 +2476,7 @@ class LLambdaForSingleton : public LCallInstructionHelper<1, 1, 0>
     }
 };
 
-class LLambda : public LInstructionHelper<1, 1, 0>
+class LLambda : public LParallelizableAllocInstructionHelper<1, 1, 0>
 {
   public:
     LIR_HEADER(Lambda)
@@ -2578,37 +2489,6 @@ class LLambda : public LInstructionHelper<1, 1, 0>
     }
     const MLambda *mir() const {
         return mir_->toLambda();
-    }
-};
-
-class LParLambda : public LInstructionHelper<1, 2, 2>
-{
-  public:
-    LIR_HEADER(ParLambda);
-
-    LParLambda(const LAllocation &parSlice,
-               const LAllocation &scopeChain,
-               const LDefinition &temp1,
-               const LDefinition &temp2) {
-        setOperand(0, parSlice);
-        setOperand(1, scopeChain);
-        setTemp(0, temp1);
-        setTemp(1, temp2);
-    }
-    const LAllocation *parSlice() {
-        return getOperand(0);
-    }
-    const LAllocation *scopeChain() {
-        return getOperand(1);
-    }
-    const MParLambda *mir() const {
-        return mir_->toParLambda();
-    }
-    const LAllocation *getTemp0() {
-        return getTemp(0)->output();
-    }
-    const LAllocation *getTemp1() {
-        return getTemp(1)->output();
     }
 };
 
@@ -3840,12 +3720,12 @@ class LFunctionEnvironment : public LInstructionHelper<1, 1, 0>
     }
 };
 
-class LParSlice : public LCallInstructionHelper<1, 0, 1>
+class LForkJoinSlice : public LCallInstructionHelper<1, 0, 1>
 {
   public:
-    LIR_HEADER(ParSlice);
+    LIR_HEADER(ForkJoinSlice);
 
-    LParSlice(const LDefinition &temp1) {
+    LForkJoinSlice(const LDefinition &temp1) {
         setTemp(0, temp1);
     }
 
@@ -4116,15 +3996,36 @@ class LGetArgument : public LInstructionHelper<BOX_PIECES, 1, 0>
     }
 };
 
+// Create the rest parameter.
+class LRest : public LParallelizableCallAllocInstructionHelper<1, 1, 3>
+{
+  public:
+    LIR_HEADER(Rest)
+
+    LRest(const LAllocation &numActuals, const LDefinition &temp1, const LDefinition &temp2,
+          const LDefinition &temp3) {
+        setOperand(0, numActuals);
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+        setTemp(2, temp3);
+    }
+    const LAllocation *numActuals() {
+        return getOperand(0);
+    }
+    MRest *mir() const {
+        return mir_->toRest();
+    }
+};
+
 class LParWriteGuard : public LCallInstructionHelper<0, 2, 1>
 {
   public:
     LIR_HEADER(ParWriteGuard);
 
-    LParWriteGuard(const LAllocation &parSlice,
+    LParWriteGuard(const LAllocation &forkJoinSlice,
                    const LAllocation &object,
                    const LDefinition &temp1) {
-        setOperand(0, parSlice);
+        setOperand(0, forkJoinSlice);
         setOperand(1, object);
         setTemp(0, temp1);
     }
@@ -4133,7 +4034,7 @@ class LParWriteGuard : public LCallInstructionHelper<0, 2, 1>
         return true;
     }
 
-    const LAllocation *parSlice() {
+    const LAllocation *forkJoinSlice() {
         return getOperand(0);
     }
 
