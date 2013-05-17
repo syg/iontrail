@@ -1437,6 +1437,11 @@ function NewCursor(buffer, bufferOffset, grain) {
   return c;
 }
 
+function MoveCursor(c, offset) {
+  CURSOR_SET_OFFSET(c, offset);
+  CURSOR_SET_USED(c, false);
+}
+
 // Fills buffer starting from offset under the assumption that
 // it has shape = frame x grain at that point, using func to
 // generate each element (of size grain) in the iteration space
@@ -1446,12 +1451,33 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   mode && mode.print && mode.print({called:"PMF A1", buffer:buffer,
                                     offset:offset, frame:frame, grain:grain});
 
-  var i;
-  var frame_len = ProductOfArrayRange(frame, 0, frame.length);
-  for(i = frame_dims; i < shape.length; i++) {
-    var shape_amt = shape[i];
-    if (i == shape.length - 1 && typeof(shape_amt) !== "number")
-      shape_amt = 1;
+  var computefunc;
+  var frame_len;
+  var isLeaf = (grain.length == 0);
+
+  switch (frame.length) {
+   case 1:
+    frame_len = frame[0];
+    computefunc = isLeaf ? fill1_leaf : fill1_subm;
+    break;
+  case 2:
+    xDimension = frame[0];
+    yDimension = frame[1];
+    frame_len = xDimension * yDimension;
+    computefunc = isLeaf ? fill2_leaf : fill2_subm;
+    break;
+  case 3:
+    xDimension = frame[0];
+    yDimension = frame[1];
+    zDimension = frame[2];
+    frame_len = xDimension * yDimension * zDimension;
+    computefunc = isLeaf ? fill3_leaf : fill3_subm;
+    break;
+  default:
+    frame_len = ProductOfArrayRange(frame, 0, frame.length);
+    computefunc = isLeaf ? fillN_leaf : fillN_subm;
+    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fillN"});
+    break;
   }
 
   var indexStart = offset;
@@ -1461,31 +1487,6 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   mode && mode.print && mode.print(
     {called:"PMF B", buffer:buffer, offset:offset, frame:frame, grain:grain,
      frame_len:frame_len, grain_len:grain_len, indexStart:indexStart, indexEnd:indexEnd});
-
-  var computefunc;
-  var isLeaf = (grain.length == 0);
-  switch (frame.length) {
-/*
-   case 1:
-    computefunc = isLeaf ? fill1_leaf : fill1_subm;
-    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fill1"});
-    break;
-*/
-/*
-  case 2:
-    computefunc = isLeaf ? fill2_leaf : fill2_subm;
-    break;
-  case 3:
-    computefunc = isLeaf ? fill3_leaf : fill3_subm;
-    break;
-*/
-  default:
-    computefunc = isLeaf ? fillN_leaf : fillN_subm;
-    mode && mode.print && mode.print({called:"MatrixPFill computefunc is fillN"});
-    break;
-  }
-
-  mode && mode.print && mode.print({called:"MatrixPFill prior parallel"});
 
   parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (!parexec)
@@ -1512,7 +1513,6 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   return;
 
   function constructSlice(sliceId, numSlices, warmup) {
-
     var chunkPos = info[SLICE_POS(sliceId)];
     var chunkEnd = info[SLICE_END(sliceId)];
 
@@ -1530,35 +1530,51 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   function fill1_leaf(indexStart, indexEnd) {
     mode && mode.print && mode.print({called: "fill1_leaf A", buffer:buffer, indexStart: indexStart, indexEnd: indexEnd});
 
+    var cursor = NewCursor(buffer, indexStart);
+
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, func(i));
+      MoveCursor(cursor, i);
+      var val = func(i, cursor);
+      if (!CURSOR_GET_USED(cursor))
+        UnsafeSetElement(buffer, i, val);
     }
   }
 
   function fill1_subm(indexStart, indexEnd) {
-
     mode && mode.print && mode.print({called: "fill1_subm A", indexStart: indexStart, indexEnd: indexEnd});
 
     var bufoffset = indexStart;
+    var cursor = NewCursor(buffer, bufoffset, grain);
+
     for (var i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
+      MoveCursor(cursor, bufoffset);
       mode && mode.print && mode.print({called: "fill1_subm B", i:i,
                                         bufoffset:bufoffset,
                                         indexStart: indexStart,
                                         indexEnd: indexEnd});
 
-      var subarray = func(i);
-      var [subbuffer, suboffset] =
-        IdentifySubbufferAndSuboffset(subarray);
+      var subarray = func(i, cursor);
 
-      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      if (!CURSOR_GET_USED(cursor)) {
+        var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
+        mode && mode.print && mode.print({called: "fill1_subm E", subbuffer:subbuffer, suboffset:suboffset});
+        CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      }
     }
   }
 
   function fill2_leaf(indexStart, indexEnd) {
     var x = (indexStart / yDimension) | 0;
     var y = indexStart - x*yDimension;
+    var cursor = NewCursor(buffer, indexStart);
+
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, func(x, y));
+      MoveCursor(cursor, i);
+      var val = func(x, y, cursor);
+
+      if (!CURSOR_GET_USED(cursor))
+        UnsafeSetElement(buffer, i, val);
+
       if (++y == yDimension) {
         y = 0;
         ++x;
@@ -1570,11 +1586,17 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
     var bufoffset = indexStart;
     var x = (indexStart / yDimension) | 0;
     var y = indexStart - x*yDimension;
+    var cursor = NewCursor(buffer, bufoffset, grain);
+
     for (var i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
-      var subarray = func(x, y);
-      var [subbuffer, suboffset] =
-        IdentifySubbufferAndSuboffset(subarray);
-      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      MoveCursor(cursor, bufoffset);
+      var subarray = func(x, y, cursor);
+
+      if (!CURSOR_GET_USED(cursor)) {
+        var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
+        CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      }
+
       if (++y == yDimension) {
         y = 0;
         ++x;
@@ -1587,8 +1609,15 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
     var r = indexStart - x*yDimension*zDimension;
     var y = (r / zDimension) | 0;
     var z = r - y*zDimension;
+    var cursor = NewCursor(buffer, indexStart);
+
     for (var i = indexStart; i < indexEnd; i++) {
-      UnsafeSetElement(buffer, i, func(x, y, z));
+      MoveCursor(cursor, i);
+      var val = func(x, y, z, cursor);
+
+      if (!CURSOR_GET_USED(cursor))
+        UnsafeSetElement(buffer, i, val);
+
       if (++z == zDimension) {
         z = 0;
         if (++y == yDimension) {
@@ -1605,11 +1634,17 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
     var r = indexStart - x*yDimension*zDimension;
     var y = (r / zDimension) | 0;
     var z = r - y*zDimension;
+    var cursor = NewCursor(buffer, bufoffset, grain);
+
     for (var i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
+      MoveCursor(cursor, bufoffset);
       var subarray = func(x, y, z);
-      var [subbuffer, suboffset] =
-        IdentifySubbufferAndSuboffset(subarray);
-      CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+
+      if (!CURSOR_GET_USED(cursor)) {
+        var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
+        CopyFromSubbuffer(buffer, bufoffset, subbuffer, suboffset);
+      }
+
       if (++z == zDimension) {
         z = 0;
         if (++y == yDimension) {
@@ -1624,13 +1659,15 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
     mode && mode.print && mode.print({called: "fillN_leaf A", offset:offset, indexStart: indexStart, indexEnd: indexEnd, frame:frame});
     var frame_indices = ComputeIndices(frame, indexStart);
     mode && mode.print && mode.print({called: "fillN_leaf B", frame_indices:frame_indices});
-    var cursor = NewCursor(buffer, 0);
+    var cursor = NewCursor(buffer, indexStart);
     for (i = indexStart; i < indexEnd; i++) {
+      MoveCursor(cursor, i);
+
       frame_indices.push(cursor);
       mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices});
-      var val = func.apply(undefined, frame_indices);
+      var val = callFunction(std_Function_apply, func, null, frame_indices);
       mode && mode.print && mode.print({called: "fillN_leaf C", i:i, frame_indices:frame_indices, val:val});
-      if (!IS_CURSOR_USED(cursor)) {
+      if (!CURSOR_GET_USED(cursor)) {
         UnsafeSetElement(buffer, i, val);
       }
       frame_indices.pop();
@@ -1650,14 +1687,13 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
 
     // FIXME: Something seems off about handling of i, indexStart, bufoffset...
     for (i = indexStart; i < indexEnd; i++, bufoffset += grain_len) {
-      CURSOR_SET_OFFSET(cursor, bufoffset);
-      CURSOR_SET_USED(cursor, false);
+      MoveCursor(cursor, bufoffset);
 
       frame_indices.push(cursor);
 
       mode && mode.print && mode.print({called: "fillN_subm C", i:i, frame_indices:frame_indices});
 
-      var subarray = func.apply(null, frame_indices);
+      var subarray = callFunction(std_Function_apply, func, null, frame_indices);
       frame_indices.pop();
 
       mode && mode.print && mode.print({called: "fillN_subm D", subarray:subarray});
