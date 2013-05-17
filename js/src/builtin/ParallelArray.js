@@ -1375,15 +1375,15 @@ Cursor.set = function CursorSet(...args) {
   CHECK_CURSOR_CLASS(this);
 
   var v = args.pop();
-  var grain = UnsafeGetReservedSlot(this, CURSOR_GRAIN_SLOT);
+  var grain = CURSOR_GET_GRAIN(this);
 
   if (args.length > grain.length)
     ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.set too many arguments");
   if (args.length < grain.length)
     ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.set curry unsupported");
 
-  var buffer = UnsafeGetReservedSlot(this, CURSOR_BUFFER_SLOT);
-  var bufferOffset = UnsafeGetReservedSlot(this, CURSOR_OFFSET_SLOT);
+  var buffer = CURSOR_GET_BUFFER(this);
+  var bufferOffset = CURSOR_GET_OFFSET(this);
 
   var indexOffset;
   if (!grain || grain.length == 0)
@@ -1401,9 +1401,9 @@ Cursor.gather = function CursorGather(arg0, arg1, arg2) { // ([depth,] func, [mo
   DebugSpew({called: "Cursor.gather A", arg0:arg0, arg1:arg1, arg2:arg2});
   CHECK_CURSOR_CLASS(this);
 
-  var grain = UnsafeGetReservedSlot(this, CURSOR_GRAIN_SLOT);
-  var buffer = UnsafeGetReservedSlot(this, CURSOR_BUFFER_SLOT);
-  var bufferOffset = UnsafeGetReservedSlot(this, CURSOR_OFFSET_SLOT);
+  var grain = CURSOR_GET_GRAIN(this);
+  var buffer = CURSOR_GET_BUFFER(this);
+  var bufferOffset = CURSOR_GET_OFFSET(this);
 
   if (!grain || grain.length === 0)
     ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "Cursor.gather on empty grain");
