@@ -169,16 +169,21 @@ JSRope::init(JSString *left, JSString *right, size_t length)
     js::StringWriteBarrierPost(runtime(), &d.s.u2.right);
 }
 
-template <js::AllowGC allowGC>
+template <js::AllowGC allowGC, js::ExecutionMode mode>
 JS_ALWAYS_INLINE JSRope *
-JSRope::new_(JSContext *cx,
+JSRope::new_(typename js::ContextChooser<mode>::ContextType *cx,
              typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
              typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
              size_t length)
 {
-    if (!validateLength(cx, length))
+    JSContext *scx;
+    if (mode == js::SequentialExecution)
+        scx = js::ContextChooser<mode>::toJSContext(cx);
+    else
+        scx = NULL;
+    if (!validateLength(scx, length))
         return NULL;
-    JSRope *str = (JSRope *) js_NewGCString<allowGC>(cx);
+    JSRope *str = (JSRope *) js_NewGCString<allowGC, mode>(cx);
     if (!str)
         return NULL;
     str->init(left, right, length);

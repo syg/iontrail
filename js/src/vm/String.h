@@ -267,17 +267,19 @@ class JSString : public js::gc::Cell
      * getCharsZ additionally ensures the array is null terminated.
      */
 
-    inline const jschar *getChars(JSContext *cx);
+    template <js::ExecutionMode mode = js::SequentialExecution>
+    inline const jschar *getChars(typename js::ContextChooser<mode>::ContextType *cx);
     inline const jschar *getCharsZ(JSContext *cx);
 
     /* Fallible conversions to more-derived string types. */
 
-    inline JSLinearString *ensureLinear(JSContext *cx);
+    template <js::ExecutionMode mode = js::SequentialExecution>
+    inline JSLinearString *ensureLinear(typename js::ContextChooser<mode>::ContextType *cx);
     inline JSFlatString *ensureFlat(JSContext *cx);
     inline JSStableString *ensureStable(JSContext *cx);
 
     static bool ensureLinear(JSContext *cx, JSString *str) {
-        return str->ensureLinear(cx) != NULL;
+        return str->ensureLinear<js::SequentialExecution>(cx) != NULL;
     }
 
     /* Type query and debug-checked casts */
@@ -435,17 +437,18 @@ class JSString : public js::gc::Cell
 class JSRope : public JSString
 {
     enum UsingBarrier { WithIncrementalBarrier, NoBarrier };
-    template<UsingBarrier b>
-    JSFlatString *flattenInternal(JSContext *cx);
+    template<UsingBarrier b, js::ExecutionMode mode>
+    JSFlatString *flattenInternal(typename js::ContextChooser<mode>::ContextType *cx);
 
     friend class JSString;
-    JSFlatString *flatten(JSContext *cx);
+    template <js::ExecutionMode mode = js::SequentialExecution>
+    JSFlatString *flatten(typename js::ContextChooser<mode>::ContextType *cx);
 
     void init(JSString *left, JSString *right, size_t length);
 
   public:
-    template <js::AllowGC allowGC>
-    static inline JSRope *new_(JSContext *cx,
+    template <js::AllowGC allowGC, js::ExecutionMode mode = js::SequentialExecution>
+    static inline JSRope *new_(typename js::ContextChooser<mode>::ContextType *cx,
                                typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
                                typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
                                size_t length);
@@ -883,10 +886,11 @@ class AutoNameVector : public AutoVectorRooter<PropertyName *>
 
 /* Avoid requiring vm/String-inl.h just to call getChars. */
 
+template <js::ExecutionMode mode>
 JS_ALWAYS_INLINE const jschar *
-JSString::getChars(JSContext *cx)
+JSString::getChars(typename js::ContextChooser<mode>::ContextType *cx)
 {
-    if (JSLinearString *str = ensureLinear(cx))
+    if (JSLinearString *str = ensureLinear<mode>(cx))
         return str->chars();
     return NULL;
 }
@@ -899,12 +903,13 @@ JSString::getCharsZ(JSContext *cx)
     return NULL;
 }
 
+template <js::ExecutionMode mode>
 JS_ALWAYS_INLINE JSLinearString *
-JSString::ensureLinear(JSContext *cx)
+JSString::ensureLinear(typename js::ContextChooser<mode>::ContextType *cx)
 {
     return isLinear()
            ? &asLinear()
-           : asRope().flatten(cx);
+           : asRope().flatten<mode>(cx);
 }
 
 JS_ALWAYS_INLINE JSFlatString *

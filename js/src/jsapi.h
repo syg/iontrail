@@ -5055,6 +5055,50 @@ extern JS_PUBLIC_DATA(const HandleId) JSID_EMPTYHANDLE;
 
 } /* namespace JS */
 
+/*
+ * Execution modes.
+ */
+
+namespace js {
+
+enum ExecutionMode {
+    // Normal JavaScript execution
+    SequentialExecution = 0,
+
+    // JavaScript code to be executed in parallel worker threads,
+    // e.g. by ParallelArray
+    ParallelExecution
+};
+
+struct ForkJoinSlice;
+template <ExecutionMode executionMode> class ContextChooser { };
+
+template <> struct ContextChooser<SequentialExecution> {
+    typedef JSContext ContextType;
+
+    static inline JSContext *toJSContext(ContextType *cx) {
+        return cx;
+    }
+    static inline ForkJoinSlice *toForkJoinSlice(ContextType *slice) {
+        JS_NOT_REACHED("Bad context choice");
+        return NULL;
+    }
+};
+
+template <> struct ContextChooser<ParallelExecution> {
+    typedef ForkJoinSlice ContextType;
+
+    static inline JSContext *toJSContext(ContextType *cx) {
+        JS_NOT_REACHED("Bad context choice");
+        return NULL;
+    }
+    static inline ForkJoinSlice *toForkJoinSlice(ContextType *slice) {
+        return slice;
+    }
+};
+
+};
+
 namespace js {
 
 /*

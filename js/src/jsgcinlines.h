@@ -14,6 +14,7 @@
 
 #include "js/RootingAPI.h"
 #include "js/TemplateLib.h"
+#include "vm/ForkJoin.h"
 #include "vm/Shape.h"
 
 namespace js {
@@ -561,20 +562,38 @@ js_NewGCObject(JSContext *cx, js::gc::AllocKind kind, js::gc::InitialHeap heap)
     return js::gc::NewGCThing<JSObject, allowGC>(cx, kind, js::gc::Arena::thingSize(kind), heap);
 }
 
-template <js::AllowGC allowGC>
+template <js::AllowGC allowGC, js::ExecutionMode mode = js::SequentialExecution>
 inline JSString *
-js_NewGCString(JSContext *cx)
+js_NewGCString(typename js::ContextChooser<mode>::ContextType *cx)
 {
-    return js::gc::NewGCThing<JSString, allowGC>(cx, js::gc::FINALIZE_STRING,
-                                                 sizeof(JSString), js::gc::TenuredHeap);
+    js::gc::AllocKind allocKind = js::gc::FINALIZE_STRING;
+    size_t thingSize = sizeof(JSString);
+
+    if (mode == js::SequentialExecution) {
+        return js::gc::NewGCThing<JSString, allowGC>(js::ContextChooser<mode>::toJSContext(cx),
+                                                     allocKind, thingSize, js::gc::TenuredHeap);
+    }
+
+    js::ForkJoinSlice *slice = js::ContextChooser<mode>::toForkJoinSlice(cx);
+    void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
+    return static_cast<JSString *>(t);
 }
 
-template <js::AllowGC allowGC>
+template <js::AllowGC allowGC, js::ExecutionMode mode = js::SequentialExecution>
 inline JSShortString *
-js_NewGCShortString(JSContext *cx)
+js_NewGCShortString(typename js::ContextChooser<mode>::ContextType *cx)
 {
-    return js::gc::NewGCThing<JSShortString, allowGC>(cx, js::gc::FINALIZE_SHORT_STRING,
-                                                      sizeof(JSShortString), js::gc::TenuredHeap);
+    js::gc::AllocKind allocKind = js::gc::FINALIZE_SHORT_STRING;
+    size_t thingSize = sizeof(JSShortString);
+
+    if (mode == js::SequentialExecution) {
+        return js::gc::NewGCThing<JSShortString, allowGC>(js::ContextChooser<mode>::toJSContext(cx),
+                                                          allocKind, thingSize, js::gc::TenuredHeap);
+    }
+
+    js::ForkJoinSlice *slice = js::ContextChooser<mode>::toForkJoinSlice(cx);
+    void *t = slice->allocator->parallelNewGCThing(allocKind, thingSize);
+    return static_cast<JSShortString *>(t);
 }
 
 inline JSExternalString *

@@ -41,9 +41,9 @@ class MutatingRopeSegmentRange;
  */
 class RopeBuilder;
 
-template <AllowGC allowGC>
+template <AllowGC allowGC, ExecutionMode mode = SequentialExecution>
 extern JSString *
-ConcatStrings(JSContext *cx,
+ConcatStrings(typename ContextChooser<mode>::ContextType *cx,
               typename MaybeRooted<JSString*, allowGC>::HandleType left,
               typename MaybeRooted<JSString*, allowGC>::HandleType right);
 

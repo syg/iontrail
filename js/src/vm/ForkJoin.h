@@ -297,6 +297,10 @@ struct ForkJoinSlice
                   Allocator *arenaLists, ForkJoinShared *shared,
                   ParallelBailoutRecord *bailoutRecord);
 
+    inline JS::Zone *zone() const {
+        return allocator->zone();
+    }
+
     // True if this is the main thread, false if it is one of the parallel workers.
     bool isMainThread();
 

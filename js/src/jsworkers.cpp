@@ -382,8 +382,8 @@ WorkerThread::handleIonWorkload(WorkerThreadState &state)
 
     ionBuilder = state.ionWorklist.popCopy();
 
-    DebugOnly<ion::ExecutionMode> executionMode = ionBuilder->info().executionMode();
-    JS_ASSERT(GetIonScript(ionBuilder->script(), executionMode) == ION_COMPILING_SCRIPT);
+    DebugOnly<ExecutionMode> executionMode = ionBuilder->info().executionMode();
+    JS_ASSERT(ion::GetIonScript(ionBuilder->script(), executionMode) == ION_COMPILING_SCRIPT);
 
     state.unlock();
     {

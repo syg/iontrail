@@ -26,15 +26,6 @@ CountArgSlots(JSScript *script, JSFunction *fun)
     return StartArgSlot(script, fun) + (fun ? fun->nargs + 1 : 0);
 }
 
-enum ExecutionMode {
-    // Normal JavaScript execution
-    SequentialExecution = 0,
-
-    // JavaScript code to be executed in parallel worker threads,
-    // e.g. by ParallelArray
-    ParallelExecution
-};
-
 // Contains information about the compilation source for IR being generated.
 class CompileInfo
 {

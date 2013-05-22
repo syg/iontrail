@@ -36,12 +36,14 @@ namespace js {
  */
 class Allocator : public MallocProvider<Allocator>
 {
-    JS::Zone *zone;
+    JS::Zone *zone_;
 
   public:
-    explicit Allocator(JS::Zone *zone);
+    explicit Allocator(JS::Zone *zone_);
 
     js::gc::ArenaLists arenas;
+
+    inline JS::Zone *zone() { return zone_; }
 
     inline void *parallelNewGCThing(gc::AllocKind thingKind, size_t thingSize);
 

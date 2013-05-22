@@ -134,8 +134,10 @@ JSString::equals(const char *s)
 }
 #endif /* DEBUG */
 
+template <ExecutionMode mode>
 static JS_ALWAYS_INLINE bool
-AllocChars(JSContext *maybecx, size_t length, jschar **chars, size_t *capacity)
+AllocChars(typename ContextChooser<mode>::ContextType *maybecx,
+           size_t length, jschar **chars, size_t *capacity)
 {
     /*
      * String length doesn't include the null char, so include it here before
@@ -157,13 +159,21 @@ AllocChars(JSContext *maybecx, size_t length, jschar **chars, size_t *capacity)
 
     JS_STATIC_ASSERT(JSString::MAX_LENGTH * sizeof(jschar) < UINT32_MAX);
     size_t bytes = numChars * sizeof(jschar);
-    *chars = (jschar *)(maybecx ? maybecx->malloc_(bytes) : js_malloc(bytes));
+    if (mode == SequentialExecution) {
+        JSContext *scx = ContextChooser<mode>::toJSContext(maybecx);
+        *chars = (jschar *)(scx ? scx->malloc_(bytes) : js_malloc(bytes));
+    } else {
+        ForkJoinSlice *slice = ContextChooser<mode>::toForkJoinSlice(maybecx);
+        if (!slice)
+            return false;
+        *chars = (jschar *)(slice->allocator->malloc_(bytes));
+    }
     return *chars != NULL;
 }
 
-template<JSRope::UsingBarrier b>
+template <JSRope::UsingBarrier b, ExecutionMode mode>
 JSFlatString *
-JSRope::flattenInternal(JSContext *maybecx)
+JSRope::flattenInternal(typename ContextChooser<mode>::ContextType *maybecx)
 {
     /*
      * Perform a depth-first dag traversal, splatting each node's characters
@@ -226,7 +236,7 @@ JSRope::flattenInternal(JSContext *maybecx)
         }
     }
 
-    if (!AllocChars(maybecx, wholeLength, &wholeChars, &wholeCapacity))
+    if (!AllocChars<mode>(maybecx, wholeLength, &wholeChars, &wholeCapacity))
         return NULL;
 
     pos = wholeChars;
@@ -284,22 +294,23 @@ JSRope::flattenInternal(JSContext *maybecx)
     }
 }
 
+template <ExecutionMode mode>
 JSFlatString *
-JSRope::flatten(JSContext *maybecx)
+JSRope::flatten(typename ContextChooser<mode>::ContextType *maybecx)
 {
 #if JSGC_INCREMENTAL
     if (zone()->needsBarrier())
-        return flattenInternal<WithIncrementalBarrier>(maybecx);
+        return flattenInternal<WithIncrementalBarrier, mode>(maybecx);
     else
-        return flattenInternal<NoBarrier>(maybecx);
+        return flattenInternal<NoBarrier, mode>(maybecx);
 #else
-    return flattenInternal<NoBarrier>(maybecx);
+    return flattenInternal<NoBarrier, mode>(maybecx);
 #endif
 }
 
-template <AllowGC allowGC>
+template <AllowGC allowGC, ExecutionMode mode>
 JSString *
-js::ConcatStrings(JSContext *cx,
+js::ConcatStrings(typename ContextChooser<mode>::ContextType *cx,
                   typename MaybeRooted<JSString*, allowGC>::HandleType left,
                   typename MaybeRooted<JSString*, allowGC>::HandleType right)
 {
@@ -315,18 +326,18 @@ js::ConcatStrings(JSContext *cx,
         return left;
 
     size_t wholeLength = leftLen + rightLen;
-    JSContext *cxIfCanGC = allowGC ? cx : NULL;
+    JSContext *cxIfCanGC = allowGC ? ContextChooser<mode>::toJSContext(cx) : NULL;
     if (!JSString::validateLength(cxIfCanGC, wholeLength))
         return NULL;
 
     if (JSShortString::lengthFits(wholeLength)) {
-        JSShortString *str = js_NewGCShortString<allowGC>(cx);
+        JSShortString *str = js_NewGCShortString<allowGC, mode>(cx);
         if (!str)
             return NULL;
-        const jschar *leftChars = left->getChars(cx);
+        const jschar *leftChars = left->template getChars<mode>(cx);
         if (!leftChars)
             return NULL;
-        const jschar *rightChars = right->getChars(cx);
+        const jschar *rightChars = right->template getChars<mode>(cx);
         if (!rightChars)
             return NULL;
 
@@ -337,14 +348,17 @@ js::ConcatStrings(JSContext *cx,
         return str;
     }
 
-    return JSRope::new_<allowGC>(cx, left, right, wholeLength);
+    return JSRope::new_<allowGC, mode>(cx, left, right, wholeLength);
 }
 
 template JSString *
-js::ConcatStrings<CanGC>(JSContext *cx, HandleString left, HandleString right);
+js::ConcatStrings<CanGC, SequentialExecution>(JSContext *cx, HandleString left, HandleString right);
 
 template JSString *
-js::ConcatStrings<NoGC>(JSContext *cx, JSString *left, JSString *right);
+js::ConcatStrings<NoGC, SequentialExecution>(JSContext *cx, JSString *left, JSString *right);
+
+template JSString *
+js::ConcatStrings<NoGC, ParallelExecution>(ForkJoinSlice *cx, JSString *left, JSString *right);
 
 JSFlatString *
 JSDependentString::undepend(JSContext *cx)

@@ -39,13 +39,13 @@ js::AutoCompartment::~AutoCompartment()
 void *
 js::Allocator::onOutOfMemory(void *p, size_t nbytes)
 {
-    return zone->rt->onOutOfMemory(p, nbytes);
+    return zone_->rt->onOutOfMemory(p, nbytes);
 }
 
 void
 js::Allocator::updateMallocCounter(size_t nbytes)
 {
-    zone->rt->updateMallocCounter(zone, nbytes);
+    zone_->rt->updateMallocCounter(zone_, nbytes);
 }
 
 void
@@ -57,7 +57,7 @@ js::Allocator::reportAllocationOverflow()
 inline void *
 js::Allocator::parallelNewGCThing(gc::AllocKind thingKind, size_t thingSize)
 {
-    return arenas.parallelAllocate(zone, thingKind, thingSize);
+    return arenas.parallelAllocate(zone_, thingKind, thingSize);
 }
 
 namespace js {
