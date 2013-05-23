@@ -492,6 +492,26 @@ class PerThreadData : public js::PerThreadDataFriendFields
      */
     js::ion::IonActivation  *ionActivation;
 
+  private:
+    /*
+     * Malloc counter to measure memory pressure for GC scheduling. It runs
+     * from gcMaxMallocBytes down to zero.
+     */
+    ptrdiff_t gcMallocBytes;
+
+  public:
+    inline void resetGCMallocBytes();
+
+    inline void updateMallocCounter(size_t nbytes) {
+        ptrdiff_t oldCount = gcMallocBytes;
+        ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
+        gcMallocBytes = newCount;
+    }
+
+    bool isTooMuchMalloc() const {
+        return gcMallocBytes <= 0;
+    }
+
     /*
      * asm.js maintains a stack of AsmJSModule activations (see AsmJS.h). This
      * stack is used by JSRuntime::triggerOperationCallback to stop long-
@@ -1107,13 +1127,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     js::AnalysisPurgeCallback analysisPurgeCallback;
     uint64_t            analysisPurgeTriggerBytes;
 
-  private:
-    /*
-     * Malloc counter to measure memory pressure for GC scheduling. It runs
-     * from gcMaxMallocBytes down to zero.
-     */
-    volatile ptrdiff_t  gcMallocBytes;
-
   public:
     void setNeedsBarrier(bool needs) {
         needsBarrier_ = needs;
@@ -1352,7 +1365,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     void setGCMaxMallocBytes(size_t value);
 
-    void resetGCMallocBytes() { gcMallocBytes = ptrdiff_t(gcMaxMallocBytes); }
+    void resetGCMallocBytes() { mainThread.resetGCMallocBytes(); }
 
     /*
      * Call this after allocating memory held by GC things, to update memory
@@ -1368,7 +1381,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     void reportAllocationOverflow() { js_ReportAllocationOverflow(NULL); }
 
     bool isTooMuchMalloc() const {
-        return gcMallocBytes <= 0;
+        return mainThread.isTooMuchMalloc();
     }
 
     /*
@@ -1445,6 +1458,12 @@ struct JSRuntime : public JS::shadow::Runtime,
 /* Common macros to access thread-local caches in JSRuntime. */
 #define JS_KEEP_ATOMS(rt)   (rt)->gcKeepAtoms++;
 #define JS_UNKEEP_ATOMS(rt) (rt)->gcKeepAtoms--;
+
+inline void
+js::PerThreadData::resetGCMallocBytes()
+{
+    gcMallocBytes = ptrdiff_t(runtime_->gcMaxMallocBytes);
+}
 
 namespace js {
 

@@ -36,7 +36,7 @@ namespace js {
  */
 class Allocator : public MallocProvider<Allocator>
 {
-    JS::Zone *zone;
+    JS::Zone *zone_;
 
   public:
     explicit Allocator(JS::Zone *zone);

@@ -713,6 +713,7 @@ PerThreadData::PerThreadData(JSRuntime *runtime)
     ionJSContext(NULL),
     ionStackLimit(0),
     ionActivation(NULL),
+    gcMallocBytes(0),
     asmJSActivationStack_(NULL),
     suppressGC(0)
 {}
@@ -836,7 +837,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcFinalizeCallback(NULL),
     analysisPurgeCallback(NULL),
     analysisPurgeTriggerBytes(0),
-    gcMallocBytes(0),
     gcBlackRootsTraceOp(NULL),
     gcBlackRootsData(NULL),
     gcGrayRootsTraceOp(NULL),

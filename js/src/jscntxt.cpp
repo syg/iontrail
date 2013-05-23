@@ -1118,6 +1118,18 @@ js_HandleExecutionInterrupt(JSContext *cx)
     return result;
 }
 
+void
+ThreadsafeContext::toSpecificContext(JSContext **cx, ForkJoinSlice **slice)
+{
+    if (perThreadData == &runtime->mainThread) {
+        *cx = reinterpret_cast<JSContext *>(this);
+        *slice = NULL;
+    } else {
+        *slice = reinterpret_cast<ForkJoinSlice *>(this);
+        *cx = NULL;
+    }
+}
+
 JSContext::JSContext(JSRuntime *rt)
   : ContextFriendFields(rt),
     defaultVersion(JSVERSION_DEFAULT),
@@ -1153,8 +1165,14 @@ JSContext::JSContext(JSRuntime *rt)
 #endif
     activeCompilations(0)
 {
+    JS_ASSERT(static_cast<ThreadsafeContext*>(this) ==
+              ThreadsafeContext::get(this));
     JS_ASSERT(static_cast<ContextFriendFields*>(this) ==
               ContextFriendFields::get(this));
+
+#ifdef JS_THREADSAFE
+    perThreadData = &rt->mainThread;
+#endif
 
 #if defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)
     PodArrayZero(thingGCRooters);
@@ -1311,11 +1329,9 @@ JSRuntime::updateMallocCounter(size_t nbytes)
 void
 JSRuntime::updateMallocCounter(JS::Zone *zone, size_t nbytes)
 {
-    /* We tolerate any thread races when updating gcMallocBytes. */
-    ptrdiff_t oldCount = gcMallocBytes;
-    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
-    gcMallocBytes = newCount;
-    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0))
+    bool oldTooMuch = mainThread.isTooMuchMalloc();
+    mainThread.updateMallocCounter(nbytes);
+    if (JS_UNLIKELY(mainThread.isTooMuchMalloc() && !oldTooMuch))
         onTooMuchMalloc();
     else if (zone)
         zone->updateMallocCounter(nbytes);

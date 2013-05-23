@@ -269,9 +269,44 @@ template <> struct RootKind<JSScript *> : SpecificRootKind<JSScript *, THING_ROO
 template <> struct RootKind<jsid> : SpecificRootKind<jsid, THING_ROOT_ID> {};
 template <> struct RootKind<JS::Value> : SpecificRootKind<JS::Value, THING_ROOT_VALUE> {};
 
-struct ContextFriendFields {
+// idea: perthreadcontext prefix which keeps a PerThreadData. usually &runtime->mainThread, if not then not the main thread.
+
+class PerThreadData;
+class ForkJoinSlice;
+
+struct ThreadsafeContext {
+    /*
+     * The current per-thread data. For JSContexts this is
+     * &runtime->mainThread.
+     */
+    PerThreadData      *perThreadData;
+
     JSRuntime *const    runtime;
 
+    explicit ThreadsafeContext(JSRuntime *rt)
+      : perThreadData(NULL), runtime(rt)
+    { }
+
+    void toSpecificContext(JSContext **cx, ForkJoinSlice **slice);
+
+    static const ThreadsafeContext *get(const JSContext *cx) {
+        return reinterpret_cast<const ThreadsafeContext *>(cx);
+    }
+
+    static ThreadsafeContext *get(JSContext *cx) {
+        return reinterpret_cast<ThreadsafeContext *>(cx);
+    }
+
+    static const ThreadsafeContext *get(const ForkJoinSlice *slice) {
+        return reinterpret_cast<const ThreadsafeContext *>(slice);
+    }
+
+    static ThreadsafeContext *get(ForkJoinSlice *slice) {
+        return reinterpret_cast<ThreadsafeContext *>(slice);
+    }
+};
+
+struct ContextFriendFields : public ThreadsafeContext {
     /* The current compartment. */
     JSCompartment       *compartment;
 
@@ -279,7 +314,7 @@ struct ContextFriendFields {
     JS::Zone            *zone_;
 
     explicit ContextFriendFields(JSRuntime *rt)
-      : runtime(rt), compartment(NULL), zone_(NULL)
+      : ThreadsafeContext(rt), compartment(NULL), zone_(NULL)
     { }
 
     static const ContextFriendFields *get(const JSContext *cx) {
@@ -310,8 +345,6 @@ struct ContextFriendFields {
     SkipRoot *skipGCRooters;
 #endif
 };
-
-class PerThreadData;
 
 struct PerThreadDataFriendFields
 {
