@@ -453,12 +453,18 @@ class PerThreadData : public js::PerThreadDataFriendFields
 {
     /*
      * Backpointer to the full shared JSRuntime* with which this
-     * thread is associaed.  This is private because accessing the
+     * thread is associated.  This is private because accessing the
      * fields of this runtime can provoke race conditions, so the
      * intention is that access will be mediated through safe
      * functions like |associatedWith()| below.
      */
     JSRuntime *runtime_;
+
+    /*
+     * PerThreadData exist as a tree. Upon destruction, we merge our state
+     * into our parent.
+     */
+    PerThreadData *parent_;
 
   public:
     /*
@@ -502,11 +508,7 @@ class PerThreadData : public js::PerThreadDataFriendFields
   public:
     inline void resetGCMallocBytes();
 
-    inline void updateMallocCounter(size_t nbytes) {
-        ptrdiff_t oldCount = gcMallocBytes;
-        ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
-        gcMallocBytes = newCount;
-    }
+    inline void updateMallocCounter(JS::Zone *zone, size_t nbytes);
 
     bool isTooMuchMalloc() const {
         return gcMallocBytes <= 0;
@@ -548,7 +550,8 @@ class PerThreadData : public js::PerThreadDataFriendFields
      */
     int32_t             suppressGC;
 
-    PerThreadData(JSRuntime *runtime);
+    PerThreadData(JSRuntime *runtime, PerThreadData *parent);
+    ~PerThreadData();
 
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
 };
@@ -1521,11 +1524,38 @@ FreeOp::free_(void *p)
     js_free(p);
 }
 
+class ForkJoinSlice;
+
+struct ThreadsafeContext : js::ContextFriendFields,
+                           public MallocProvider<ThreadsafeContext>
+{
+  public:
+    enum ThreadsafeContextKind {
+        Context_JS,
+        Context_ForkJoin
+    };
+
+  private:
+    ThreadsafeContextKind threadsafeContextKind_;
+
+  public:
+    PerThreadData *perThreadData;
+
+    explicit ThreadsafeContext(JSRuntime *rt, PerThreadData *pt, ThreadsafeContextKind kind);
+
+    void toSpecificContext(JSContext **cx, ForkJoinSlice **slice);
+    JSContext *toJSContext();
+    ForkJoinSlice *toForkJoinSlice();
+
+    inline void *onOutOfMemory(void *p, size_t nbytes);
+    inline void updateMallocCounter(size_t nbytes);
+    inline void reportAllocationOverflow();
+};
+
 } /* namespace js */
 
-struct JSContext : js::ContextFriendFields,
-                   public mozilla::LinkedListElement<JSContext>,
-                   public js::MallocProvider<JSContext>
+struct JSContext : js::ThreadsafeContext,
+                   public mozilla::LinkedListElement<JSContext>
 {
     explicit JSContext(JSRuntime *rt);
     JSContext *thisDuringConstruction() { return this; }

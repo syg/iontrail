@@ -177,8 +177,7 @@ ion::ParPush(ParPushArgs *args)
     // slow path anyhow as it reallocates the elements vector.
     ForkJoinSlice *slice = js::ForkJoinSlice::Current();
     JSObject::EnsureDenseResult res =
-        args->object->parExtendDenseElements(slice->allocator,
-                                             &args->value, 1);
+        args->object->parExtendDenseElements(slice, &args->value, 1);
     if (res != JSObject::ED_OK)
         return NULL;
     return args->object;
@@ -188,7 +187,7 @@ JSObject *
 ion::ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length)
 {
     JSObject::EnsureDenseResult res =
-        array->parExtendDenseElements(slice->allocator, NULL, length);
+        array->parExtendDenseElements(slice, NULL, length);
     if (res != JSObject::ED_OK)
         return NULL;
     return array;
@@ -468,8 +467,7 @@ ion::InitRestParameter(ForkJoinSlice *slice, uint32_t length, Value *rest,
     JS_ASSERT(res->type() == templateObj->type());
 
     if (length) {
-        JSObject::EnsureDenseResult edr =
-            res->parExtendDenseElements(slice->allocator, rest, length);
+        JSObject::EnsureDenseResult edr = res->parExtendDenseElements(slice, rest, length);
         if (edr != JSObject::ED_OK)
             return TP_FATAL;
     }

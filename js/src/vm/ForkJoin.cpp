@@ -73,7 +73,7 @@ ForkJoinSlice::releaseContext()
 }
 
 bool
-ForkJoinSlice::isMainThread()
+ForkJoinSlice::isMainThread() const
 {
     return true;
 }
@@ -307,6 +307,7 @@ class ForkJoinShared : public TaskExecutor, public Monitor
     void setAbortFlag(bool fatal);
 
     JSRuntime *runtime() { return cx_->runtime; }
+    JS::Zone *cxZone() { return cx_->zone(); }
 
     JSContext *acquireContext() { PR_Lock(cxLock_); return cx_; }
     void releaseContext() { PR_Unlock(cxLock_); }
@@ -891,7 +892,7 @@ ForkJoinShared::executeFromWorker(uint32_t workerId, uintptr_t stackLimit)
 {
     JS_ASSERT(workerId < numSlices_ - 1);
 
-    PerThreadData thisThread(cx_->runtime);
+    PerThreadData thisThread(cx_->runtime, &cx_->mainThread());
     TlsPerThreadData.set(&thisThread);
     // Don't use setIonStackLimit() because that acquires the ionStackLimitLock, and the
     // lock has not been initialized in these cases.
@@ -1125,16 +1126,20 @@ ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
                              uint32_t sliceId, uint32_t numSlices,
                              Allocator *allocator, ForkJoinShared *shared,
                              ParallelBailoutRecord *bailoutRecord)
-    : perThreadData(perThreadData),
-      sliceId(sliceId),
-      numSlices(numSlices),
-      allocator(allocator),
-      bailoutRecord(bailoutRecord),
-      shared(shared)
-{ }
+  : ThreadsafeContext(shared->runtime(), perThreadData, Context_ForkJoin),
+    sliceId(sliceId),
+    numSlices(numSlices),
+    allocator(allocator),
+    bailoutRecord(bailoutRecord),
+    shared(shared)
+{
+    // Leave ContextFriendFields::compartment NULL, but set zone_ to be the
+    // context zone for bumping the malloc counter.
+    zone_ = shared->cxZone();
+}
 
 bool
-ForkJoinSlice::isMainThread()
+ForkJoinSlice::isMainThread() const
 {
     return perThreadData == &shared->runtime()->mainThread;
 }

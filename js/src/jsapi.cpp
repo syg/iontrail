@@ -706,9 +706,10 @@ JitSupportsFloatingPoint()
 #endif
 }
 
-PerThreadData::PerThreadData(JSRuntime *runtime)
+PerThreadData::PerThreadData(JSRuntime *runtime, PerThreadData *parent)
   : PerThreadDataFriendFields(),
     runtime_(runtime),
+    parent_(parent),
     ionTop(NULL),
     ionJSContext(NULL),
     ionStackLimit(0),
@@ -718,8 +719,15 @@ PerThreadData::PerThreadData(JSRuntime *runtime)
     suppressGC(0)
 {}
 
+PerThreadData::~PerThreadData()
+{
+    /* Merge state into our parent. */
+    if (parent_)
+        parent_->gcMallocBytes += gcMallocBytes;
+}
+
 JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
-  : mainThread(this),
+  : mainThread(this, /* parent = */ NULL),
     interrupt(0),
 #ifdef JS_THREADSAFE
     operationCallbackLock(NULL),

@@ -602,16 +602,34 @@ JSContext::zone() const
 }
 
 inline void
-JSContext::updateMallocCounter(size_t nbytes)
-{
-    runtime->updateMallocCounter(zone(), nbytes);
-}
-
-inline void
 JSContext::setCompartment(JSCompartment *comp)
 {
     compartment = comp;
     zone_ = comp ? comp->zone() : NULL;
+}
+
+inline void *
+js::ThreadsafeContext::onOutOfMemory(void *p, size_t nbytes)
+{
+    JSContext *cx;
+    ForkJoinSlice *dummy;
+    toSpecificContext(&cx, &dummy);
+    return runtime->onOutOfMemory(p, nbytes, cx);
+}
+
+inline void
+js::ThreadsafeContext::updateMallocCounter(size_t nbytes)
+{
+    perThreadData->updateMallocCounter(zone_, nbytes);
+}
+
+inline void
+js::ThreadsafeContext::reportAllocationOverflow()
+{
+    JSContext *cx;
+    ForkJoinSlice *dummy;
+    toSpecificContext(&cx, &dummy);
+    js_ReportAllocationOverflow(cx);
 }
 
 #endif /* jscntxtinlines_h___ */
