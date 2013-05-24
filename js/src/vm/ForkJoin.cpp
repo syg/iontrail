@@ -215,6 +215,12 @@ class ForkJoinShared : public TaskExecutor, public Monitor
     ParallelBailoutRecord *const records_; // Bailout records for each slice
 
     /////////////////////////////////////////////////////////////////////////
+    // Per-thread data
+    //
+    // Each non-main thread worker thread gets its own state.
+    Vector<PerThreadData *, 16> perThreadData_;
+
+    /////////////////////////////////////////////////////////////////////////
     // Per-thread arenas
     //
     // Each worker thread gets an arena to use when allocating.
@@ -771,6 +777,7 @@ ForkJoinShared::ForkJoinShared(JSContext *cx,
     rendezvousEnd_(NULL),
     cxLock_(NULL),
     records_(records),
+    perThreadData_(cx),
     allocators_(cx),
     uncompleted_(uncompleted),
     blocked_(0),
@@ -809,13 +816,25 @@ ForkJoinShared::init()
         return false;
 
     for (unsigned i = 0; i < numSlices_; i++) {
-        Allocator *allocator = cx_->runtime->new_<Allocator>(cx_->zone());
+        Allocator *allocator = cx_->new_<Allocator>(cx_->zone());
         if (!allocator)
             return false;
 
         if (!allocators_.append(allocator)) {
             js_delete(allocator);
             return false;
+        }
+
+        // The main thread does not need a new PerThreadData.
+        if (i < numSlices_ - 1) {
+            PerThreadData *pt = cx_->new_<PerThreadData>(cx_->runtime, &cx_->mainThread());
+            if (!pt)
+                return false;
+
+            if (!perThreadData_.append(pt)) {
+                js_delete(pt);
+                return false;
+            }
         }
     }
 
@@ -831,6 +850,8 @@ ForkJoinShared::~ForkJoinShared()
 
     while (allocators_.length() > 0)
         js_delete(allocators_.popCopy());
+    while (perThreadData_.length() > 0)
+        js_delete(perThreadData_.popCopy());
 }
 
 ParallelResult
@@ -892,12 +913,12 @@ ForkJoinShared::executeFromWorker(uint32_t workerId, uintptr_t stackLimit)
 {
     JS_ASSERT(workerId < numSlices_ - 1);
 
-    PerThreadData thisThread(cx_->runtime, &cx_->mainThread());
-    TlsPerThreadData.set(&thisThread);
+    PerThreadData *thisThread = perThreadData_[workerId];
+    TlsPerThreadData.set(thisThread);
     // Don't use setIonStackLimit() because that acquires the ionStackLimitLock, and the
     // lock has not been initialized in these cases.
-    thisThread.ionStackLimit = stackLimit;
-    executePortion(&thisThread, workerId);
+    thisThread->ionStackLimit = stackLimit;
+    executePortion(thisThread, workerId);
     TlsPerThreadData.set(NULL);
 
     AutoLockMonitor lock(*this);
