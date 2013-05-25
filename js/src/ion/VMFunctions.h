@@ -312,6 +312,12 @@ template <> struct MatchContext<JSContext *> {
 template <> struct MatchContext<ForkJoinSlice *> {
     static const ExecutionMode execMode = ParallelExecution;
 };
+template <> struct MatchContext<ThreadSafeContext *> {
+    // ThreadSafeContext functions can be called from either mode, but for
+    // calling from parallel they need to be wrapped first to return a
+    // ParallelResult, so we default to SequentialExecution here.
+    static const ExecutionMode execMode = SequentialExecution;
+};
 
 #define FOR_EACH_ARGS_1(Macro, Sep, Last) Macro(1) Last(1)
 #define FOR_EACH_ARGS_2(Macro, Sep, Last) FOR_EACH_ARGS_1(Macro, Sep, Sep) Macro(2) Last(2)

@@ -2752,7 +2752,7 @@ AllocateElements(ThreadSafeContext *tcx, JSObject *obj, uint32_t nelems)
 }
 
 ObjectElements *
-ReallocateElements(ThreadsafeContext *tcx, JSObject *obj, ObjectElements *oldHeader,
+ReallocateElements(ThreadSafeContext *tcx, JSObject *obj, ObjectElements *oldHeader,
                    uint32_t oldCount, uint32_t newCount)
 {
 #ifdef JSGC_GENERATIONAL

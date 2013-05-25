@@ -23,6 +23,8 @@ class JSStableString;
 
 namespace js {
 
+class ThreadSafeContext;
+
 /* Implemented in jsstrinlines.h */
 class StringBuffer;
 
@@ -43,7 +45,7 @@ class RopeBuilder;
 
 template <AllowGC allowGC>
 extern JSString *
-ConcatStrings(JSContext *cx,
+ConcatStrings(ThreadSafeContext *cx,
               typename MaybeRooted<JSString*, allowGC>::HandleType left,
               typename MaybeRooted<JSString*, allowGC>::HandleType right);
 

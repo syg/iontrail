@@ -104,6 +104,41 @@ StringWriteBarrierPostRemove(JSRuntime *rt, JSString **strp)
 
 } /* namespace js */
 
+JS_ALWAYS_INLINE JSStableString *
+JSString::ensureStable(JSContext *maybecx)
+{
+    if (isRope()) {
+        JSFlatString *flat = asRope().flatten(maybecx);
+        if (!flat)
+            return NULL;
+        JS_ASSERT(!flat->isInline());
+        return &flat->asStable();
+    }
+
+    if (isDependent()) {
+        JSFlatString *flat = asDependent().undepend(maybecx);
+        if (!flat)
+            return NULL;
+        return &flat->asStable();
+    }
+
+    if (!isInline())
+        return &asStable();
+
+    JS_ASSERT(isInline());
+    return asInline().uninline(maybecx);
+}
+
+JS_ALWAYS_INLINE JSFlatString *
+JSString::ensureFlat(JSContext *cx)
+{
+    return isFlat()
+           ? &asFlat()
+           : isDependent()
+             ? asDependent().undepend(cx)
+             : asRope().flatten(cx);
+}
+
 inline void
 JSString::writeBarrierPre(JSString *str)
 {

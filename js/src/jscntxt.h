@@ -1581,6 +1581,9 @@ struct ThreadSafeContext : js::ContextFriendFields,
     template <typename T, AllowGC allowGC>
     inline T *threadsafeNewGCThing(gc::AllocKind kind, size_t thingSize, gc::InitialHeap heap);
 
+    template <AllowGC allowGC>
+    inline JSShortString *threadsafeNewGCShortString();
+
     void *onOutOfMemory(void *p, size_t nbytes);
     inline void updateMallocCounter(size_t nbytes);
     void reportAllocationOverflow();
