@@ -605,7 +605,7 @@ JSObject::ensureDenseInitializedLength(JSContext *cx, uint32_t index, uint32_t e
 }
 
 JSObject::EnsureDenseResult
-JSObject::extendDenseElements(js::ThreadsafeContext *tcx,
+JSObject::extendDenseElements(js::ThreadSafeContext *tcx,
                               uint32_t requiredCapacity, uint32_t extra)
 {
     /*
@@ -642,7 +642,7 @@ JSObject::extendDenseElements(js::ThreadsafeContext *tcx,
 }
 
 inline JSObject::EnsureDenseResult
-JSObject::parExtendDenseElements(js::ThreadsafeContext *tcx, js::Value *v, uint32_t extra)
+JSObject::parExtendDenseElements(js::ThreadSafeContext *tcx, js::Value *v, uint32_t extra)
 {
     JS_ASSERT(isNative());
     JS_ASSERT_IF(isArray(), arrayLengthIsWritable());

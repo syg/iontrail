@@ -1526,42 +1526,75 @@ FreeOp::free_(void *p)
 
 class ForkJoinSlice;
 
-struct ThreadsafeContext : js::ContextFriendFields,
-                           public MallocProvider<ThreadsafeContext>
+/*
+ * ThreadSafeContext is the base class for both JSContext, the "normal"
+ * sequential context, and ForkJoinSlice, the per-thread parallel context used
+ * in PJS.
+ *
+ * When cast to a ThreadSafeContext, the only usable operations are casting
+ * back to the context from which it came, and generic allocation
+ * operations. These generic versions branch internally based on whether the
+ * underneath context is really a JSContext or a ForkJoinSlice, and are in
+ * general more expensive than using the context directly.
+ *
+ * Thus, ThreadSafeContext should only be used for VM functions that may be
+ * called in both sequential and parallel execution. The most likely class of
+ * VM functions that do these are those that allocate commonly used data
+ * structures, such as concatenating strings and extending elements.
+ */
+struct ThreadSafeContext : js::ContextFriendFields,
+                           public MallocProvider<ThreadSafeContext>
 {
   public:
-    enum ThreadsafeContextKind {
+    enum ThreadSafeContextKind {
         Context_JS,
         Context_ForkJoin
     };
 
   private:
-    ThreadsafeContextKind threadsafeContextKind_;
+    ThreadSafeContextKind threadsafeContextKind_;
 
   public:
     PerThreadData *perThreadData;
 
-    explicit ThreadsafeContext(JSRuntime *rt, PerThreadData *pt, ThreadsafeContextKind kind);
+    explicit ThreadSafeContext(JSRuntime *rt, PerThreadData *pt, ThreadSafeContextKind kind);
 
-    void toSpecificContext(JSContext **cx, ForkJoinSlice **slice);
+    /* Returns NULL when not a JSContext. */
     JSContext *toJSContext();
+
+    /* Returns NULL when not a ForkJoinSlice. */
     ForkJoinSlice *toForkJoinSlice();
 
-    inline void *onOutOfMemory(void *p, size_t nbytes);
+    inline JS::Zone *zone() const;
+    inline void setCompartment(JSCompartment *comp);
+
+    /*
+     * This is a generic GCThing allocation function that branches on whether
+     * the context is a JSContext or a ForkJoinSlice. This is slower than
+     * using the respective GC functions directly if you have the specific
+     * context.
+     *
+     * Currently we will assert if called in parallel with a CanGC. The
+     * InitialHeap is also ignored in parallel mode until such time that the
+     * nursery is integrated with parallel execution.
+     */
+    template <typename T, AllowGC allowGC>
+    inline T *threadsafeNewGCThing(gc::AllocKind kind, size_t thingSize, gc::InitialHeap heap);
+
+    void *onOutOfMemory(void *p, size_t nbytes);
     inline void updateMallocCounter(size_t nbytes);
-    inline void reportAllocationOverflow();
+    void reportAllocationOverflow();
 };
 
 } /* namespace js */
 
-struct JSContext : js::ThreadsafeContext,
+struct JSContext : js::ThreadSafeContext,
                    public mozilla::LinkedListElement<JSContext>
 {
     explicit JSContext(JSRuntime *rt);
     JSContext *thisDuringConstruction() { return this; }
     ~JSContext();
 
-    inline JS::Zone *zone() const;
     js::PerThreadData &mainThread() { return runtime->mainThread; }
 
   private:
@@ -1584,8 +1617,6 @@ struct JSContext : js::ThreadsafeContext,
 
     /* True if generating an error, to prevent runaway recursion. */
     bool                generatingError;
-
-    inline void setCompartment(JSCompartment *comp);
 
     /*
      * "Entering" a compartment changes cx->compartment (which changes

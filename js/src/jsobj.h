@@ -40,7 +40,7 @@ struct NativeIterator;
 class Nursery;
 class Shape;
 struct StackShape;
-struct ThreadsafeContext;
+struct ThreadSafeContext;
 
 namespace mjit { class Compiler; }
 
@@ -572,7 +572,7 @@ class JSObject : public js::ObjectImpl
 
     /* Accessors for elements. */
     inline bool ensureElements(JSContext *cx, uint32_t cap);
-    bool growElements(js::ThreadsafeContext *tcx, uint32_t newcap);
+    bool growElements(js::ThreadSafeContext *tcx, uint32_t newcap);
     void shrinkElements(JSContext *cx, uint32_t cap);
     inline void setDynamicElements(js::ObjectElements *header);
 
@@ -608,10 +608,10 @@ class JSObject : public js::ObjectImpl
      */
     enum EnsureDenseResult { ED_OK, ED_FAILED, ED_SPARSE };
     inline EnsureDenseResult ensureDenseElements(JSContext *cx, uint32_t index, uint32_t extra);
-    inline EnsureDenseResult parExtendDenseElements(js::ThreadsafeContext *tcx, js::Value *v,
+    inline EnsureDenseResult parExtendDenseElements(js::ThreadSafeContext *tcx, js::Value *v,
                                                     uint32_t extra);
 
-    inline EnsureDenseResult extendDenseElements(js::ThreadsafeContext *tcx,
+    inline EnsureDenseResult extendDenseElements(js::ThreadSafeContext *tcx,
                                                  uint32_t requiredCapacity, uint32_t extra);
 
     /* Convert a single dense element to a sparse property. */

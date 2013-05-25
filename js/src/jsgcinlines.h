@@ -15,6 +15,7 @@
 #include "js/RootingAPI.h"
 #include "js/TemplateLib.h"
 #include "vm/Shape.h"
+#include "vm/ForkJoin.h"
 
 namespace js {
 
@@ -552,6 +553,23 @@ NewGCThing(JSContext *cx, AllocKind kind, size_t thingSize, InitialHeap heap)
 
 } /* namespace gc */
 } /* namespace js */
+
+template <typename T, js::AllowGC allowGC>
+T *
+js::ThreadSafeContext::threadsafeNewGCThing(js::gc::AllocKind kind, size_t thingSize,
+                                            js::gc::InitialHeap heap)
+{
+    if (JSContext *cx = toJSContext())
+        return js::gc::NewGCThing<T, allowGC>(cx, kind, thingSize, heap);
+
+    ForkJoinSlice *slice = toForkJoinSlice();
+    JS_ASSERT(slice);
+    JS_ASSERT(allowGC != CanGC);
+
+    /* We cannot nursery allocate anything in parallel for now. */
+    void *t = slice->allocator->parallelNewGCThing(kind, thingSize);
+    return static_cast<T *>(t);
+}
 
 template <js::AllowGC allowGC>
 inline JSObject *

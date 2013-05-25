@@ -268,7 +268,7 @@ struct ParallelBailoutRecord {
 
 struct ForkJoinShared;
 
-struct ForkJoinSlice : ThreadsafeContext
+struct ForkJoinSlice : ThreadSafeContext
 {
   public:
     // Which slice should you process? Ranges from 0 to |numSlices|.

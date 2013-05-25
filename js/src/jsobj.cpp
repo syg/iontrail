@@ -2741,7 +2741,7 @@ JSObject::maybeDensifySparseElements(JSContext *cx, HandleObject obj)
 }
 
 ObjectElements *
-AllocateElements(ThreadsafeContext *tcx, JSObject *obj, uint32_t nelems)
+AllocateElements(ThreadSafeContext *tcx, JSObject *obj, uint32_t nelems)
 {
 #ifdef JSGC_GENERATIONAL
     if (JSContext *cx = tcx->toJSContext())
@@ -2765,7 +2765,7 @@ ReallocateElements(ThreadsafeContext *tcx, JSObject *obj, ObjectElements *oldHea
 }
 
 bool
-JSObject::growElements(ThreadsafeContext *tcx, uint32_t newcap)
+JSObject::growElements(ThreadSafeContext *tcx, uint32_t newcap)
 {
     JS_ASSERT(isExtensible());
     JS_ASSERT_IF(isArray() && !arrayLengthIsWritable(),

@@ -1118,22 +1118,15 @@ js_HandleExecutionInterrupt(JSContext *cx)
     return result;
 }
 
-js::ThreadsafeContext::ThreadsafeContext(JSRuntime *rt, PerThreadData *pt,
-                                         ThreadsafeContextKind kind)
+js::ThreadSafeContext::ThreadSafeContext(JSRuntime *rt, PerThreadData *pt,
+                                         ThreadSafeContextKind kind)
   : ContextFriendFields(rt),
     threadsafeContextKind_(kind),
     perThreadData(pt)
 { }
 
-void
-ThreadsafeContext::toSpecificContext(JSContext **cx, ForkJoinSlice **slice)
-{
-    *cx = toJSContext();
-    *slice = toForkJoinSlice();
-}
-
 JSContext *
-ThreadsafeContext::toJSContext()
+ThreadSafeContext::toJSContext()
 {
     if (threadsafeContextKind_ == Context_JS)
         return reinterpret_cast<JSContext *>(this);
@@ -1141,15 +1134,29 @@ ThreadsafeContext::toJSContext()
 }
 
 ForkJoinSlice *
-ThreadsafeContext::toForkJoinSlice()
+ThreadSafeContext::toForkJoinSlice()
 {
     if (threadsafeContextKind_ == Context_ForkJoin)
         return reinterpret_cast<ForkJoinSlice *>(this);
     return NULL;
 }
 
+void *
+js::ThreadSafeContext::onOutOfMemory(void *p, size_t nbytes)
+{
+    JSContext *cx = toJSContext();
+    return runtime->onOutOfMemory(p, nbytes, cx);
+}
+
+void
+js::ThreadSafeContext::reportAllocationOverflow()
+{
+    JSContext *cx = toJSContext();
+    js_ReportAllocationOverflow(cx);
+}
+
 JSContext::JSContext(JSRuntime *rt)
-  : ThreadsafeContext(rt, &rt->mainThread, Context_JS),
+  : ThreadSafeContext(rt, &rt->mainThread, Context_JS),
     defaultVersion(JSVERSION_DEFAULT),
     hasVersionOverride(false),
     throwing(false),

@@ -313,7 +313,7 @@ class ForkJoinShared : public TaskExecutor, public Monitor
     void setAbortFlag(bool fatal);
 
     JSRuntime *runtime() { return cx_->runtime; }
-    JS::Zone *cxZone() { return cx_->zone(); }
+    JSCompartment *compartment() { return cx_->compartment; }
 
     JSContext *acquireContext() { PR_Lock(cxLock_); return cx_; }
     void releaseContext() { PR_Unlock(cxLock_); }
@@ -1147,7 +1147,7 @@ ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
                              uint32_t sliceId, uint32_t numSlices,
                              Allocator *allocator, ForkJoinShared *shared,
                              ParallelBailoutRecord *bailoutRecord)
-  : ThreadsafeContext(shared->runtime(), perThreadData, Context_ForkJoin),
+  : ThreadSafeContext(shared->runtime(), perThreadData, Context_ForkJoin),
     sliceId(sliceId),
     numSlices(numSlices),
     allocator(allocator),
@@ -1156,7 +1156,7 @@ ForkJoinSlice::ForkJoinSlice(PerThreadData *perThreadData,
 {
     // Leave ContextFriendFields::compartment NULL, but set zone_ to be the
     // context zone for bumping the malloc counter.
-    zone_ = shared->cxZone();
+    setCompartment(shared->compartment());
 }
 
 bool
