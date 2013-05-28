@@ -337,7 +337,7 @@ js::ConcatStrings(ThreadSafeContext *tcx,
         return str;
     }
 
-    return JSRope::new_<allowGC>(tcx->toJSContext(), left, right, wholeLength);
+    return JSRope::new_<allowGC>(tcx, left, right, wholeLength);
 }
 
 template JSString *

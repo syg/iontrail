@@ -206,14 +206,15 @@ JSRope::init(JSString *left, JSString *right, size_t length)
 
 template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSRope *
-JSRope::new_(JSContext *cx,
+JSRope::new_(js::ThreadSafeContext *tcx,
              typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
              typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
              size_t length)
 {
-    if (!validateLength(cx, length))
+    JSContext *cxIfCanGC = allowGC ? tcx->toJSContext() : NULL;
+    if (!validateLength(cxIfCanGC, length))
         return NULL;
-    JSRope *str = (JSRope *) js_NewGCString<allowGC>(cx);
+    JSRope *str = (JSRope *) tcx->threadsafeNewGCString<allowGC>();
     if (!str)
         return NULL;
     str->init(left, right, length);

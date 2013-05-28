@@ -572,6 +572,14 @@ js::ThreadSafeContext::threadsafeNewGCThing(js::gc::AllocKind kind, size_t thing
 }
 
 template <js::AllowGC allowGC>
+JSString *
+js::ThreadSafeContext::threadsafeNewGCString()
+{
+    return threadsafeNewGCThing<JSString, allowGC>(js::gc::FINALIZE_STRING,
+                                                   sizeof(JSString), js::gc::TenuredHeap);
+}
+
+template <js::AllowGC allowGC>
 JSShortString *
 js::ThreadSafeContext::threadsafeNewGCShortString()
 {

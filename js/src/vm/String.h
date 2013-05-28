@@ -437,16 +437,16 @@ class JSRope : public JSString
 {
     enum UsingBarrier { WithIncrementalBarrier, NoBarrier };
     template<UsingBarrier b>
-    JSFlatString *flattenInternal(js::ThreadSafeContext *cx);
+    JSFlatString *flattenInternal(js::ThreadSafeContext *tcx);
 
     friend class JSString;
-    JSFlatString *flatten(js::ThreadSafeContext *cx);
+    JSFlatString *flatten(js::ThreadSafeContext *tcx);
 
     void init(JSString *left, JSString *right, size_t length);
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSRope *new_(JSContext *cx,
+    static inline JSRope *new_(js::ThreadSafeContext *tcx,
                                typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
                                typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
                                size_t length);
