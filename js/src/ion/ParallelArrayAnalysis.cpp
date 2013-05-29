@@ -157,7 +157,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SPECIALIZED_OP(Mul, PERMIT_NUMERIC)
     SPECIALIZED_OP(Div, PERMIT_NUMERIC)
     SPECIALIZED_OP(Mod, PERMIT_NUMERIC)
-    UNSAFE_OP(Concat)
+    CUSTOM_OP(Concat)
+    SAFE_OP(ParConcat)
     UNSAFE_OP(CharCodeAt)
     UNSAFE_OP(FromCharCode)
     SAFE_OP(Return)
@@ -616,6 +617,12 @@ bool
 ParallelArrayVisitor::visitRest(MRest *ins)
 {
     return replace(ins, MParRest::New(parSlice(), ins));
+}
+
+bool
+ParallelArrayVisitor::visitConcat(MConcat *ins)
+{
+    return replace(ins, MParConcat::New(parSlice(), ins));
 }
 
 bool

@@ -107,6 +107,7 @@
     _(ModD)                         \
     _(BinaryV)                      \
     _(Concat)                       \
+    _(ParConcat)                    \
     _(CharCodeAt)                   \
     _(FromCharCode)                 \
     _(Int32ToDouble)                \

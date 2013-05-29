@@ -202,8 +202,9 @@ class IonCompartment
     // pointers. This has to be a weak pointer to avoid keeping the whole
     // compartment alive.
     ReadBarriered<IonCode> stringConcatStub_;
+    ReadBarriered<IonCode> parallelStringConcatStub_;
 
-    IonCode *generateStringConcatStub(JSContext *cx);
+    IonCode *generateStringConcatStub(JSContext *cx, ExecutionMode mode);
 
   public:
     IonCode *getVMWrapper(const VMFunction &f);
@@ -295,8 +296,12 @@ class IonCompartment
         return rt->debugTrapHandler(cx);
     }
 
-    IonCode *stringConcatStub() {
-        return stringConcatStub_;
+    IonCode *stringConcatStub(ExecutionMode mode) {
+        switch (mode) {
+          case SequentialExecution: return stringConcatStub_;
+          case ParallelExecution:   return parallelStringConcatStub_;
+          default:                  JS_NOT_REACHED("No such execution mode");
+        }
     }
 
     AutoFlushCache *flusher() {

@@ -3752,7 +3752,41 @@ CodeGenerator::visitConcat(LConcat *lir)
     if (!ool)
         return false;
 
-    IonCode *stringConcatStub = gen->ionCompartment()->stringConcatStub();
+    IonCode *stringConcatStub = gen->ionCompartment()->stringConcatStub(SequentialExecution);
+    masm.call(stringConcatStub);
+    masm.branchTestPtr(Assembler::Zero, output, output, ool->entry());
+
+    masm.bind(ool->rejoin());
+    return true;
+}
+
+typedef ParallelResult (*ParallelConcatStringsFn)(ForkJoinSlice *, HandleString, HandleString,
+                                                  MutableHandleString);
+static const VMFunction ParallelConcatStringsInfo =
+    FunctionInfo<ParallelConcatStringsFn>(ParConcatStrings);
+
+bool
+CodeGenerator::visitParConcat(LParConcat *lir)
+{
+    Register slice = ToRegister(lir->parSlice());
+    Register lhs = ToRegister(lir->lhs());
+    Register rhs = ToRegister(lir->rhs());
+    Register output = ToRegister(lir->output());
+
+    JS_ASSERT(lhs == CallTempReg0);
+    JS_ASSERT(rhs == CallTempReg1);
+    JS_ASSERT(slice == CallTempReg5);
+    JS_ASSERT(ToRegister(lir->temp1()) == CallTempReg2);
+    JS_ASSERT(ToRegister(lir->temp2()) == CallTempReg3);
+    JS_ASSERT(ToRegister(lir->temp3()) == CallTempReg4);
+    JS_ASSERT(output == CallTempReg6);
+
+    OutOfLineCode *ool = oolCallVM(ParallelConcatStringsInfo, lir, (ArgList(), lhs, rhs),
+                                   StoreValueTo(AnyRegister(output)));
+    if (!ool)
+        return false;
+
+    IonCode *stringConcatStub = gen->ionCompartment()->stringConcatStub(ParallelExecution);
     masm.call(stringConcatStub);
     masm.branchTestPtr(Assembler::Zero, output, output, ool->entry());
 
@@ -3786,7 +3820,7 @@ CopyStringChars(MacroAssembler &masm, Register to, Register from, Register len, 
 }
 
 IonCode *
-IonCompartment::generateStringConcatStub(JSContext *cx)
+IonCompartment::generateStringConcatStub(JSContext *cx, ExecutionMode mode)
 {
     MacroAssembler masm(cx);
 
@@ -3798,7 +3832,12 @@ IonCompartment::generateStringConcatStub(JSContext *cx)
     Register temp4 = CallTempReg5;
     Register output = CallTempReg6;
 
-    Label failure;
+    // In parallel execution, we pass in the ForkJoinSlice in CallTempReg5, as
+    // by the time we need to use the temp4 we no longer have need of the
+    // slice.
+    Register forkJoinSlice = CallTempReg5;
+
+    Label failure, failurePopTemps;
 
     // If lhs is empty, return rhs.
     Label leftEmpty;
@@ -3821,7 +3860,20 @@ IonCompartment::generateStringConcatStub(JSContext *cx)
     masm.branch32(Assembler::Above, temp2, Imm32(JSString::MAX_LENGTH), &failure);
 
     // Allocate a new rope.
-    masm.newGCString(output, &failure);
+    switch (mode) {
+      case SequentialExecution:
+        masm.newGCString(output, &failure);
+        break;
+      case ParallelExecution:
+        masm.push(temp1);
+        masm.push(temp2);
+        masm.parNewGCString(output, forkJoinSlice, temp1, temp2, &failurePopTemps);
+        masm.pop(temp2);
+        masm.pop(temp1);
+        break;
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
 
     // Store lengthAndFlags.
     JS_STATIC_ASSERT(JSString::ROPE_FLAGS == 0);
@@ -3853,7 +3905,20 @@ IonCompartment::generateStringConcatStub(JSContext *cx)
                        Imm32(JSString::FLAGS_MASK), &failure);
 
     // Allocate a JSShortString.
-    masm.newGCShortString(output, &failure);
+    switch (mode) {
+      case SequentialExecution:
+        masm.newGCShortString(output, &failure);
+        break;
+      case ParallelExecution:
+        masm.push(temp1);
+        masm.push(temp2);
+        masm.parNewGCShortString(output, forkJoinSlice, temp1, temp2, &failurePopTemps);
+        masm.pop(temp2);
+        masm.pop(temp1);
+        break;
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
 
     // Set lengthAndFlags.
     masm.lshiftPtr(Imm32(JSString::LENGTH_SHIFT), temp2);
@@ -3877,6 +3942,10 @@ IonCompartment::generateStringConcatStub(JSContext *cx)
     // Null-terminate.
     masm.store16(Imm32(0), Address(temp2, 0));
     masm.ret();
+
+    masm.bind(&failurePopTemps);
+    masm.pop(temp2);
+    masm.pop(temp1);
 
     masm.bind(&failure);
     masm.movePtr(ImmWord((void *)NULL), output);
