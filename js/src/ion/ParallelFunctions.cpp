@@ -204,6 +204,16 @@ ion::ParConcatStrings(ForkJoinSlice *slice, HandleString left, HandleString righ
     return TP_SUCCESS;
 }
 
+ParallelResult
+ion::ParIntToString(ForkJoinSlice *slice, int i, MutableHandleString out)
+{
+    JSFlatString *str = Int32ToString<NoGC>(slice, i);
+    if (!str)
+        return TP_RETRY_SEQUENTIALLY;
+    out.set(str);
+    return TP_SUCCESS;
+}
+
 #define PAR_RELATIONAL_OP(OP, EXPECTED)                                         \
 do {                                                                            \
     /* Optimize for two int-tagged operands (typical loop control). */          \

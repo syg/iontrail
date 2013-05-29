@@ -489,23 +489,23 @@ ToCStringBuf::~ToCStringBuf()
 
 template <AllowGC allowGC>
 JSFlatString *
-js::Int32ToString(JSContext *cx, int32_t si)
+js::Int32ToString(ThreadSafeContext *tcx, int32_t si)
 {
     uint32_t ui;
     if (si >= 0) {
         if (StaticStrings::hasInt(si))
-            return cx->runtime->staticStrings.getInt(si);
+            return tcx->runtime->staticStrings.getInt(si);
         ui = si;
     } else {
         ui = uint32_t(-si);
         JS_ASSERT_IF(si == INT32_MIN, ui == uint32_t(INT32_MAX) + 1);
     }
 
-    JSCompartment *c = cx->compartment;
+    JSCompartment *c = tcx->compartment;
     if (JSFlatString *str = c->dtoaCache.lookup(10, si))
         return str;
 
-    JSShortString *str = js_NewGCShortString<allowGC>(cx);
+    JSShortString *str = tcx->threadsafeNewGCShortString<allowGC>();
     if (!str)
         return NULL;
 
@@ -520,15 +520,20 @@ js::Int32ToString(JSContext *cx, int32_t si)
     jschar *dst = str->init(end - start);
     PodCopy(dst, start.get(), end - start + 1);
 
-    c->dtoaCache.cache(10, si, str);
+    /*
+     * Only attempt to cache the result if we have a JSContext, as it is
+     * racy.
+     */
+    if (tcx->toJSContext())
+        c->dtoaCache.cache(10, si, str);
     return str;
 }
 
 template JSFlatString *
-js::Int32ToString<CanGC>(JSContext *cx, int32_t si);
+js::Int32ToString<CanGC>(ThreadSafeContext *cx, int32_t si);
 
 template JSFlatString *
-js::Int32ToString<NoGC>(JSContext *cx, int32_t si);
+js::Int32ToString<NoGC>(ThreadSafeContext *cx, int32_t si);
 
 /* Returns a non-NULL pointer to inside cbuf.  */
 static char *
