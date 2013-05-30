@@ -517,7 +517,6 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         masm.lea(Operand(rsp,IonExitFrameLayout::SizeWithFooter()), argsBase);
     }
 
-
     // Reserve space for the outparameter.
     Register outReg = InvalidReg;
     switch (f.outParam) {
