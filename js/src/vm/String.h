@@ -33,6 +33,7 @@ namespace js {
 
 class StaticStrings;
 class PropertyName;
+class ThreadSafeContext;
 
 /* The buffer length required to contain any unsigned 32-bit integer. */
 static const size_t UINT32_CHAR_BUFFER_LENGTH = sizeof("4294967295") - 1;
@@ -267,17 +268,17 @@ class JSString : public js::gc::Cell
      * getCharsZ additionally ensures the array is null terminated.
      */
 
-    inline const jschar *getChars(JSContext *cx);
+    inline const jschar *getChars(js::ThreadSafeContext *tcx);
     inline const jschar *getCharsZ(JSContext *cx);
 
     /* Fallible conversions to more-derived string types. */
 
-    inline JSLinearString *ensureLinear(JSContext *cx);
+    inline JSLinearString *ensureLinear(js::ThreadSafeContext *tcx);
     inline JSFlatString *ensureFlat(JSContext *cx);
     inline JSStableString *ensureStable(JSContext *cx);
 
-    static bool ensureLinear(JSContext *cx, JSString *str) {
-        return str->ensureLinear(cx) != NULL;
+    static bool ensureLinear(js::ThreadSafeContext *tcx, JSString *str) {
+        return str->ensureLinear(tcx) != NULL;
     }
 
     /* Type query and debug-checked casts */
@@ -436,16 +437,16 @@ class JSRope : public JSString
 {
     enum UsingBarrier { WithIncrementalBarrier, NoBarrier };
     template<UsingBarrier b>
-    JSFlatString *flattenInternal(JSContext *cx);
+    JSFlatString *flattenInternal(js::ThreadSafeContext *tcx);
 
     friend class JSString;
-    JSFlatString *flatten(JSContext *cx);
+    JSFlatString *flatten(js::ThreadSafeContext *tcx);
 
     void init(JSString *left, JSString *right, size_t length);
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSRope *new_(JSContext *cx,
+    static inline JSRope *new_(js::ThreadSafeContext *tcx,
                                typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
                                typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
                                size_t length);
@@ -565,7 +566,7 @@ class JSStableString : public JSFlatString
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSStableString *new_(JSContext *cx, const jschar *chars, size_t length);
+    static inline JSStableString *new_(js::ThreadSafeContext *cx, const jschar *chars, size_t length);
 
     JS_ALWAYS_INLINE
     JS::StableCharPtr chars() const {
@@ -662,7 +663,7 @@ class JSInlineString : public JSFlatString
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSInlineString *new_(JSContext *cx);
+    static inline JSInlineString *new_(js::ThreadSafeContext *tcx);
 
     inline jschar *init(size_t length);
 
@@ -698,7 +699,7 @@ class JSShortString : public JSInlineString
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSShortString *new_(JSContext *cx);
+    static inline JSShortString *new_(js::ThreadSafeContext *tcx);
 
     static const size_t MAX_SHORT_LENGTH = JSString::NUM_INLINE_CHARS +
                                            INLINE_EXTENSION_CHARS
@@ -884,9 +885,9 @@ class AutoNameVector : public AutoVectorRooter<PropertyName *>
 /* Avoid requiring vm/String-inl.h just to call getChars. */
 
 JS_ALWAYS_INLINE const jschar *
-JSString::getChars(JSContext *cx)
+JSString::getChars(js::ThreadSafeContext *tcx)
 {
-    if (JSLinearString *str = ensureLinear(cx))
+    if (JSLinearString *str = ensureLinear(tcx))
         return str->chars();
     return NULL;
 }
@@ -900,46 +901,11 @@ JSString::getCharsZ(JSContext *cx)
 }
 
 JS_ALWAYS_INLINE JSLinearString *
-JSString::ensureLinear(JSContext *cx)
+JSString::ensureLinear(js::ThreadSafeContext *tcx)
 {
     return isLinear()
            ? &asLinear()
-           : asRope().flatten(cx);
-}
-
-JS_ALWAYS_INLINE JSFlatString *
-JSString::ensureFlat(JSContext *cx)
-{
-    return isFlat()
-           ? &asFlat()
-           : isDependent()
-             ? asDependent().undepend(cx)
-             : asRope().flatten(cx);
-}
-
-JS_ALWAYS_INLINE JSStableString *
-JSString::ensureStable(JSContext *maybecx)
-{
-    if (isRope()) {
-        JSFlatString *flat = asRope().flatten(maybecx);
-        if (!flat)
-            return NULL;
-        JS_ASSERT(!flat->isInline());
-        return &flat->asStable();
-    }
-
-    if (isDependent()) {
-        JSFlatString *flat = asDependent().undepend(maybecx);
-        if (!flat)
-            return NULL;
-        return &flat->asStable();
-    }
-
-    if (!isInline())
-        return &asStable();
-
-    JS_ASSERT(isInline());
-    return asInline().uninline(maybecx);
+           : asRope().flatten(tcx);
 }
 
 inline JSLinearString *

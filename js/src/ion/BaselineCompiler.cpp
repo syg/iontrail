@@ -571,9 +571,6 @@ BaselineCompiler::emitBody()
 
         switch (op) {
           default:
-            // Ignore fat opcodes, we compile the decomposed version instead.
-            if (js_CodeSpec[op].format & JOF_DECOMPOSE)
-                break;
             IonSpew(IonSpew_BaselineAbort, "Unhandled op: %s", js_CodeName[op]);
             return Method_CantCompile;
 
@@ -2434,6 +2431,24 @@ BaselineCompiler::emit_JSOP_ARGUMENTS()
         return false;
 
     masm.bind(&done);
+    frame.push(R0);
+    return true;
+}
+
+bool
+BaselineCompiler::emit_JSOP_REST()
+{
+    frame.syncStack(0);
+
+    RootedTypeObject type(cx, types::TypeScript::InitObject(cx, script, pc, JSProto_Array));
+    if (!type)
+        return false;
+    masm.movePtr(ImmGCPtr(type), R0.scratchReg());
+
+    ICRest_Fallback::Compiler stubCompiler(cx);
+    if (!emitOpIC(stubCompiler.getStub(&stubSpace_)))
+        return false;
+
     frame.push(R0);
     return true;
 }

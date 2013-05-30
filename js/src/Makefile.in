@@ -8,6 +8,8 @@ DEPTH		= @DEPTH@
 topsrcdir	= @top_srcdir@
 srcdir		= @srcdir@
 
+TOPLEVEL_BUILD := 1
+
 run_for_side_effects := $(shell echo "MAKE: $(MAKE)")
 include $(DEPTH)/config/autoconf.mk
 
@@ -18,6 +20,7 @@ LIBRARY_NAME	= mozjs
 endif
 
 STATIC_LIBRARY_NAME = js_static
+MSVC_ENABLE_PGO := 1
 LIBS		= $(NSPR_LIBS)
 
 # JavaScript must be built shared, even for static builds, as it is used by
@@ -240,9 +243,7 @@ CPPSRCS +=	MIR.cpp \
 		AsmJSLink.cpp \
 		AsmJSSignalHandlers.cpp \
 		$(NULL)
-endif #ENABLE_ION
 ifeq (86, $(findstring 86,$(TARGET_CPU)))
-ifdef ENABLE_ION
 CPPSRCS +=	CodeGenerator-x86-shared.cpp
 CPPSRCS +=	IonFrames-x86-shared.cpp
 CPPSRCS +=	MoveEmitter-x86-shared.cpp
@@ -250,20 +251,7 @@ CPPSRCS +=	Assembler-x86-shared.cpp
 CPPSRCS +=	Lowering-x86-shared.cpp
 CPPSRCS +=	BaselineCompiler-x86-shared.cpp
 CPPSRCS +=	BaselineIC-x86-shared.cpp
-endif #ENABLE_ION
 ifeq (x86_64, $(TARGET_CPU))
-ifdef _MSC_VER
-ASFILES +=	TrampolineMasmX64.asm
-endif
-ifeq ($(OS_ARCH),WINNT)
-ifdef GNU_CC
-ASFILES +=	TrampolineMingwX64.s
-endif
-endif
-ifdef SOLARIS_SUNPRO_CXX
-ASFILES +=	TrampolineSUNWX64.s
-endif
-ifdef ENABLE_ION
 VPATH +=	$(srcdir)/ion/x64
 CPPSRCS += 	Lowering-x64.cpp \
 		CodeGenerator-x64.cpp \
@@ -274,9 +262,7 @@ CPPSRCS += 	Lowering-x64.cpp \
 		BaselineCompiler-x64.cpp \
 		BaselineIC-x64.cpp \
 		$(NULL)
-endif #ENABLE_ION
 else
-ifdef ENABLE_ION
 VPATH +=	$(srcdir)/ion/x86
 CPPSRCS +=	Lowering-x86.cpp \
 		CodeGenerator-x86.cpp \
@@ -287,15 +273,9 @@ CPPSRCS +=	Lowering-x86.cpp \
 		BaselineCompiler-x86.cpp \
 		BaselineIC-x86.cpp \
 		$(NULL)
-endif #ENABLE_ION
-ifdef SOLARIS_SUNPRO_CXX
-ASFILES +=	TrampolineSUNWX86.s
 endif
 endif
-endif
-ifdef ENABLE_ION
 ifeq (arm, $(findstring arm, $(TARGET_CPU)))
-ifdef ENABLE_ION
 VPATH +=	$(srcdir)/ion/arm
 CPPSRCS +=	Lowering-arm.cpp \
 		CodeGenerator-arm.cpp \
@@ -309,7 +289,6 @@ CPPSRCS +=	Lowering-arm.cpp \
 		BaselineCompiler-arm.cpp \
 		BaselineIC-arm.cpp \
 		$(NULL)
-endif #ENABLE_ION
 endif
 endif #ENABLE_ION
 
@@ -797,7 +776,6 @@ JS_CONFIG_SUBSTITUTIONS=\
 	-Dexec_prefix="$(exec_prefix)" \
 	-Dincludedir="$(includedir)" \
 	-Dlibdir="$(libdir)" \
-	-DMODULE="$(MODULE)" \
 	-DMOZILLA_VERSION="$(MOZILLA_VERSION)" \
 	-DLIBRARY_NAME="$(LIBRARY_NAME)" \
 	-DJS_CONFIG_LIBS="$(JS_CONFIG_LIBS)" \
@@ -835,7 +813,7 @@ install:: $(LIBRARY_NAME).pc
 # The overall directory structure of the installed headers looks like so:
 #
 #   $(includedir)/
-#      $(MODULE)/
+#      $(LIBRARY_NAME)/
 #        jsapi.h, jspubtd.h, etc. (all of EXPORTS)
 #        js/
 #          js/public/* headers (all are public)
@@ -848,13 +826,13 @@ install:: $(LIBRARY_NAME).pc
 #
 
 install:: $(EXPORTS)
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)
+	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(LIBRARY_NAME)
 
 install:: $(EXPORTS_js)
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)/js
+	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(LIBRARY_NAME)/js
 
 install:: $(EXPORTS_mozilla)
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(MODULE)/mozilla
+	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(LIBRARY_NAME)/mozilla
 
 #
 # END SpiderMonkey header installation
@@ -947,14 +925,15 @@ selfhosted_out_h_deps := \
   $(srcdir)/builtin/embedjs.py \
   $(NULL)
 
+SELFHOSTED_DEFINES += $(DEFINES) $(ACDEFINES)
 ifdef MOZ_DEBUG
-SELFHOSTED_DEFINES = $(MOZ_DEBUG_ENABLE_DEFS)
+SELFHOSTED_DEFINES += $(MOZ_DEBUG_ENABLE_DEFS)
 else
-SELFHOSTED_DEFINES = $(MOZ_DEBUG_DISABLE_DEFS)
+SELFHOSTED_DEFINES += $(MOZ_DEBUG_DISABLE_DEFS)
 endif
 
 selfhosted.out.h: $(selfhosted_out_h_deps)
-	$(PYTHON) $(srcdir)/builtin/embedjs.py $(DEFINES) $(ACDEFINES) $(SELFHOSTED_DEFINES) \
+	$(PYTHON) $(srcdir)/builtin/embedjs.py $(SELFHOSTED_DEFINES) \
 	  -p '$(CPP)' -m $(srcdir)/js.msg -o $@ $(selfhosting_srcs)
 
 ###############################################

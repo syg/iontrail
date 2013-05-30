@@ -22,6 +22,7 @@ bool ParCheckOverRecursed(ForkJoinSlice *slice);
 bool ParCheckInterrupt(ForkJoinSlice *context);
 
 void ParDumpValue(Value *v);
+ParallelResult ParSpew(ForkJoinSlice *slice, HandleString str);
 
 // We pass the arguments to ParPush in a structure because, in code
 // gen, it is convenient to store them on the stack to avoid
@@ -41,6 +42,13 @@ JSObject* ParPush(ParPushArgs *args);
 // generation.
 JSObject *ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length);
 
+// String related parallel functions. These tend to call existing VM functions
+// that take a ThreadSafeContext.
+ParallelResult ParConcatStrings(ForkJoinSlice *slice, HandleString left, HandleString right,
+                                MutableHandleString out);
+ParallelResult ParIntToString(ForkJoinSlice *slice, int i, MutableHandleString out);
+ParallelResult ParDoubleToString(ForkJoinSlice *slice, double d, MutableHandleString out);
+
 // These parallel operations fail if they would be required to convert
 // to a string etc etc.
 ParallelResult ParStrictlyEqual(ForkJoinSlice *slice, MutableHandleValue v1, MutableHandleValue v2, JSBool *);
@@ -54,6 +62,10 @@ ParallelResult ParGreaterThanOrEqual(ForkJoinSlice *slice, MutableHandleValue v1
 
 ParallelResult ParStringsEqual(ForkJoinSlice *slice, HandleString v1, HandleString v2, JSBool *);
 ParallelResult ParStringsUnequal(ForkJoinSlice *slice, HandleString v1, HandleString v2, JSBool *);
+
+ParallelResult InitRestParameter(ForkJoinSlice *slice, uint32_t length, Value *rest,
+                                 HandleObject templateObj, HandleObject res,
+                                 MutableHandleObject out);
 
 void ParallelAbort(ParallelBailoutCause cause,
                    JSScript *outermostScript,

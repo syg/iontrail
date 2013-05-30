@@ -409,7 +409,7 @@ WorkerThread::threadLoop()
     WorkerThreadState &state = *runtime->workerThreadState;
     state.lock();
 
-    threadData.construct(runtime);
+    threadData.construct(runtime, &runtime->mainThread);
     js::TlsPerThreadData.set(threadData.addr());
 
     while (true) {

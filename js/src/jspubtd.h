@@ -270,7 +270,7 @@ template <> struct RootKind<jsid> : SpecificRootKind<jsid, THING_ROOT_ID> {};
 template <> struct RootKind<JS::Value> : SpecificRootKind<JS::Value, THING_ROOT_VALUE> {};
 
 struct ContextFriendFields {
-    JSRuntime *const    runtime;
+    JSRuntime *const     runtime;
 
     /* The current compartment. */
     JSCompartment       *compartment;

@@ -490,7 +490,7 @@ LIRGenerator::visitFilterArguments(MFilterArguments *ins)
                                                  tempFixed(CallTempReg1),
                                                  tempFixed(CallTempReg2));
 
-    return assignSnapshot(lir) && add(lir, ins);
+    return assignSnapshot(lir) && add(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -1314,6 +1314,28 @@ LIRGenerator::visitConcat(MConcat *ins)
 }
 
 bool
+LIRGenerator::visitParConcat(MParConcat *ins)
+{
+    MDefinition *parSlice = ins->parSlice();
+    MDefinition *lhs = ins->lhs();
+    MDefinition *rhs = ins->rhs();
+
+    JS_ASSERT(lhs->type() == MIRType_String);
+    JS_ASSERT(rhs->type() == MIRType_String);
+    JS_ASSERT(ins->type() == MIRType_String);
+
+    LParConcat *lir = new LParConcat(useFixed(parSlice, CallTempReg5),
+                                     useFixed(lhs, CallTempReg0),
+                                     useFixed(rhs, CallTempReg1),
+                                     tempFixed(CallTempReg2),
+                                     tempFixed(CallTempReg3),
+                                     tempFixed(CallTempReg4));
+    if (!defineFixed(lir, ins, LAllocation(AnyRegister(CallTempReg6))))
+        return false;
+    return assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitCharCodeAt(MCharCodeAt *ins)
 {
     MDefinition *str = ins->getOperand(0);
@@ -1511,12 +1533,19 @@ LIRGenerator::visitToString(MToString *ins)
     MDefinition *opd = ins->input();
 
     switch (opd->type()) {
-      case MIRType_Double:
       case MIRType_Null:
       case MIRType_Undefined:
       case MIRType_Boolean:
         JS_NOT_REACHED("NYI: Lower MToString");
         return false;
+
+      case MIRType_Double: {
+        LDoubleToString *lir = new LDoubleToString(useRegister(opd), temp());
+
+        if (!define(lir, ins))
+            return false;
+        return assignSafepoint(lir, ins);
+      }
 
       case MIRType_Int32: {
         LIntToString *lir = new LIntToString(useRegister(opd));
@@ -1672,6 +1701,13 @@ LIRGenerator::visitParDump(MParDump *ins)
     LParDump *lir = new LParDump();
     useBoxFixed(lir, LParDump::Value, ins->value(), CallTempReg0, CallTempReg1);
     return add(lir);
+}
+
+bool
+LIRGenerator::visitParSpew(MParSpew *ins)
+{
+    LParSpew *lir = new LParSpew(useFixed(ins->string(), CallTempReg0));
+    return add(lir) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -2451,6 +2487,31 @@ LIRGenerator::visitGetArgument(MGetArgument *ins)
 {
     LGetArgument *lir = new LGetArgument(useRegisterOrConstant(ins->index()));
     return defineBox(lir, ins);
+}
+
+bool
+LIRGenerator::visitRest(MRest *ins)
+{
+    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
+
+    LRest *lir = new LRest(useFixed(ins->numActuals(), CallTempReg0),
+                           tempFixed(CallTempReg1),
+                           tempFixed(CallTempReg2),
+                           tempFixed(CallTempReg3));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitParRest(MParRest *ins)
+{
+    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
+
+    LParRest *lir = new LParRest(useFixed(ins->parSlice(), CallTempReg0),
+                                 useFixed(ins->numActuals(), CallTempReg1),
+                                 tempFixed(CallTempReg2),
+                                 tempFixed(CallTempReg3),
+                                 tempFixed(CallTempReg4));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool

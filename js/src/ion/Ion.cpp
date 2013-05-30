@@ -289,7 +289,8 @@ IonCompartment::IonCompartment(IonRuntime *rt)
   : rt(rt),
     stubCodes_(NULL),
     baselineCallReturnAddr_(NULL),
-    stringConcatStub_(NULL)
+    stringConcatStub_(NULL),
+    parallelStringConcatStub_(NULL)
 {
 }
 
@@ -313,10 +314,18 @@ bool
 IonCompartment::ensureIonStubsExist(JSContext *cx)
 {
     if (!stringConcatStub_) {
-        stringConcatStub_ = generateStringConcatStub(cx);
+        stringConcatStub_ = generateStringConcatStub(cx, SequentialExecution);
         if (!stringConcatStub_)
             return false;
     }
+
+#ifdef JS_THREADSAFE
+    if (!parallelStringConcatStub_) {
+        parallelStringConcatStub_ = generateStringConcatStub(cx, ParallelExecution);
+        if (!parallelStringConcatStub_)
+            return false;
+    }
+#endif
 
     return true;
 }
@@ -1944,8 +1953,6 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
 
     void *calleeToken;
     if (fp->isFunctionFrame()) {
-        fp->cleanupTornValues();
-
         // CountArgSlot include |this| and the |scopeChain| and maybe |argumentsObj|.
         // Keep |this|, but discard the others.
         maxArgc = CountArgSlots(fp->script(), fp->fun()) - StartArgSlot(fp->script(), fp->fun());

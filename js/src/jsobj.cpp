@@ -2741,41 +2741,31 @@ JSObject::maybeDensifySparseElements(JSContext *cx, HandleObject obj)
 }
 
 ObjectElements *
-AllocateElements(JSObject::MaybeContext maybecx, JSObject *obj, uint32_t nelems)
+AllocateElements(ThreadSafeContext *tcx, JSObject *obj, uint32_t nelems)
 {
-    if (JSContext *cx = maybecx.context) {
 #ifdef JSGC_GENERATIONAL
+    if (JSContext *cx = tcx->toJSContext())
         return cx->runtime->gcNursery.allocateElements(cx, obj, nelems);
-#else
-        return static_cast<js::ObjectElements *>(cx->malloc_(nelems * sizeof(HeapValue)));
 #endif
-    }
 
-    Allocator *alloc = maybecx.allocator;
-    return static_cast<js::ObjectElements *>(alloc->malloc_(nelems * sizeof(HeapValue)));
+    return static_cast<js::ObjectElements *>(tcx->malloc_(nelems * sizeof(HeapValue)));
 }
 
 ObjectElements *
-ReallocateElements(JSObject::MaybeContext maybecx, JSObject *obj, ObjectElements *oldHeader,
+ReallocateElements(ThreadSafeContext *tcx, JSObject *obj, ObjectElements *oldHeader,
                    uint32_t oldCount, uint32_t newCount)
 {
-    if (JSContext *cx = maybecx.context) {
 #ifdef JSGC_GENERATIONAL
+    if (JSContext *cx = maybecx.context)
         return cx->runtime->gcNursery.reallocateElements(cx, obj, oldHeader, oldCount, newCount);
-#else
-        return static_cast<js::ObjectElements *>(cx->realloc_(oldHeader,
-                                                              oldCount * sizeof(HeapValue),
-                                                              newCount * sizeof(HeapSlot)));
 #endif
-    }
 
-    Allocator *alloc = maybecx.allocator;
-    return static_cast<js::ObjectElements *>(alloc->realloc_(oldHeader, oldCount * sizeof(HeapSlot),
-                                                             newCount * sizeof(HeapSlot)));
+    return static_cast<js::ObjectElements *>(tcx->realloc_(oldHeader, oldCount * sizeof(HeapSlot),
+                                                           newCount * sizeof(HeapSlot)));
 }
 
 bool
-JSObject::growElements(MaybeContext cx, uint32_t newcap)
+JSObject::growElements(ThreadSafeContext *tcx, uint32_t newcap)
 {
     JS_ASSERT(isExtensible());
     JS_ASSERT_IF(isArray() && !arrayLengthIsWritable(),
@@ -2822,11 +2812,11 @@ JSObject::growElements(MaybeContext cx, uint32_t newcap)
 
     ObjectElements *newheader;
     if (hasDynamicElements()) {
-        newheader = ReallocateElements(cx, this, getElementsHeader(), oldAllocated, newAllocated);
+        newheader = ReallocateElements(tcx, this, getElementsHeader(), oldAllocated, newAllocated);
         if (!newheader)
             return false; /* Leave elements as its old size. */
     } else {
-        newheader = AllocateElements(cx, this, newAllocated);
+        newheader = AllocateElements(tcx, this, newAllocated);
         if (!newheader)
             return false; /* Leave elements as its old size. */
         js_memcpy(newheader, getElementsHeader(),
@@ -4178,14 +4168,6 @@ js::ReportIfUndeclaredVarAssignment(JSContext *cx, HandleString propname)
          * need to check name-access because this method is only supposed to be
          * called in assignment contexts.
          */
-        MOZ_ASSERT(*pc != JSOP_INCNAME);
-        MOZ_ASSERT(*pc != JSOP_INCGNAME);
-        MOZ_ASSERT(*pc != JSOP_NAMEINC);
-        MOZ_ASSERT(*pc != JSOP_GNAMEINC);
-        MOZ_ASSERT(*pc != JSOP_DECNAME);
-        MOZ_ASSERT(*pc != JSOP_DECGNAME);
-        MOZ_ASSERT(*pc != JSOP_NAMEDEC);
-        MOZ_ASSERT(*pc != JSOP_GNAMEDEC);
         MOZ_ASSERT(*pc != JSOP_NAME);
         MOZ_ASSERT(*pc != JSOP_GETGNAME);
         if (*pc != JSOP_SETNAME && *pc != JSOP_SETGNAME)

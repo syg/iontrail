@@ -406,6 +406,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_arguments_length();
     bool jsop_arguments_getelem();
     bool jsop_arguments_setelem(MDefinition *object, MDefinition *index, MDefinition *value);
+    bool jsop_rest();
     bool jsop_not();
     bool jsop_getprop(HandlePropertyName name);
     bool jsop_setprop(HandlePropertyName name);
@@ -505,6 +506,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineHaveSameClass(CallInfo &callInfo);
     InliningStatus inlineToObject(CallInfo &callInfo);
     InliningStatus inlineDump(CallInfo &callInfo);
+    InliningStatus inlineParallelSpew(CallInfo &callInfo);
 
     // Main inlining functions
     InliningStatus inlineNativeCall(CallInfo &callInfo, JSNative native);

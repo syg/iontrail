@@ -143,6 +143,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitDiv(MDiv *ins);
     bool visitMod(MMod *ins);
     bool visitConcat(MConcat *ins);
+    bool visitParConcat(MParConcat *ins);
     bool visitCharCodeAt(MCharCodeAt *ins);
     bool visitFromCharCode(MFromCharCode *ins);
     bool visitStart(MStart *start);
@@ -169,6 +170,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitParWriteGuard(MParWriteGuard *ins);
     bool visitParCheckInterrupt(MParCheckInterrupt *ins);
     bool visitParDump(MParDump *ins);
+    bool visitParSpew(MParSpew *ins);
     bool visitStoreSlot(MStoreSlot *ins);
     bool visitTypeBarrier(MTypeBarrier *ins);
     bool visitMonitorTypes(MMonitorTypes *ins);
@@ -219,6 +221,8 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitStringLength(MStringLength *ins);
     bool visitArgumentsLength(MArgumentsLength *ins);
     bool visitGetArgument(MGetArgument *ins);
+    bool visitRest(MRest *ins);
+    bool visitParRest(MParRest *ins);
     bool visitThrow(MThrow *ins);
     bool visitIn(MIn *ins);
     bool visitInArray(MInArray *ins);

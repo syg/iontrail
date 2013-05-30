@@ -11,6 +11,7 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	= xpwidgets_s
+MSVC_ENABLE_PGO := 1
 LIBXUL_LIBRARY  = 1
 
 DEFINES += \
@@ -70,6 +71,7 @@ endif
 LOCAL_INCLUDES	+= \
 		-I$(srcdir)/../$(MOZ_WIDGET_TOOLKIT) \
 		-I$(srcdir)/../shared \
+		-I$(topsrcdir)/layout/base \
 		-I$(topsrcdir)/layout/forms \
 		-I$(topsrcdir)/layout/generic \
 		-I$(topsrcdir)/layout/xul/base/src \

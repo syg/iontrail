@@ -313,6 +313,24 @@ js::intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp)
     args.rval().setUndefined();
     return true;
 }
+
+JSBool
+js::intrinsic_ParallelSpew(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isString());
+
+    JSLinearString *linear = args[0].toString()->ensureLinear(cx);
+    if (!linear)
+        return false;
+
+    parallel::Spew(parallel::SpewOps,
+                   LossyTwoByteCharsToNewLatin1CharsZ(cx, linear->range()).c_str());
+
+    args.rval().setUndefined();
+    return true;
+}
 #endif
 
 /*
@@ -678,6 +696,7 @@ const JSFunctionSpec intrinsic_functions[] = {
 
 #ifdef DEBUG
     JS_FN("Dump",                 intrinsic_Dump,                 1,0),
+    JS_FN("ParallelSpew",         intrinsic_ParallelSpew,         1,0),
 #endif
 
     JS_FS_END

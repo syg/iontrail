@@ -65,6 +65,7 @@ namespace ion {
     _(Div)                                                                  \
     _(Mod)                                                                  \
     _(Concat)                                                               \
+    _(ParConcat)                                                            \
     _(CharCodeAt)                                                           \
     _(FromCharCode)                                                         \
     _(Return)                                                               \
@@ -154,6 +155,7 @@ namespace ion {
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
     _(GetArgument)                                                          \
+    _(Rest)                                                                 \
     _(Floor)                                                                \
     _(Round)                                                                \
     _(In)                                                                   \
@@ -187,9 +189,11 @@ namespace ion {
     _(ParNewDenseArray)                                                     \
     _(ParBailout)                                                           \
     _(ParLambda)                                                            \
+    _(ParRest)                                                              \
     _(ParSlice)                                                             \
     _(ParWriteGuard)                                                        \
     _(ParDump)                                                              \
+    _(ParSpew)                                                              \
     _(ParCheckInterrupt)
 
 // Forward declarations of MIR types.

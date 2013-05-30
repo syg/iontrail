@@ -121,6 +121,8 @@ IonBuilder::inlineNativeCall(CallInfo &callInfo, JSNative native)
 #ifdef DEBUG
     if (native == intrinsic_Dump)
         return inlineDump(callInfo);
+    if (native == intrinsic_ParallelSpew)
+        return inlineParallelSpew(callInfo);
 #endif
 
     return InliningStatus_NotInlined;
@@ -1497,6 +1499,32 @@ IonBuilder::inlineDump(CallInfo &callInfo)
     JS_ASSERT(1 == callInfo.argc());
     MParDump *dump = new MParDump(callInfo.getArg(0));
     current->add(dump);
+
+    MConstant *udef = MConstant::New(UndefinedValue());
+    current->add(udef);
+    current->push(udef);
+
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineParallelSpew(CallInfo &callInfo)
+{
+    if (callInfo.constructing())
+        return InliningStatus_NotInlined;
+
+    ExecutionMode executionMode = info().executionMode();
+    switch (executionMode) {
+      case SequentialExecution:
+        return InliningStatus_NotInlined;
+      case ParallelExecution:
+        break;
+    }
+
+    callInfo.unwrapArgs();
+    JS_ASSERT(1 == callInfo.argc());
+    MParSpew *spew = new MParSpew(callInfo.getArg(0));
+    current->add(spew);
 
     MConstant *udef = MConstant::New(UndefinedValue());
     current->add(udef);

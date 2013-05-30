@@ -157,7 +157,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SPECIALIZED_OP(Mul, PERMIT_NUMERIC)
     SPECIALIZED_OP(Div, PERMIT_NUMERIC)
     SPECIALIZED_OP(Mod, PERMIT_NUMERIC)
-    UNSAFE_OP(Concat)
+    CUSTOM_OP(Concat)
+    SAFE_OP(ParConcat)
     UNSAFE_OP(CharCodeAt)
     UNSAFE_OP(FromCharCode)
     SAFE_OP(Return)
@@ -168,7 +169,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ToDouble)
     SAFE_OP(ToInt32)
     SAFE_OP(TruncateToInt32)
-    UNSAFE_OP(ToString)
+    CUSTOM_OP(ToString)
     SAFE_OP(NewSlots)
     CUSTOM_OP(NewArray)
     CUSTOM_OP(NewObject)
@@ -239,6 +240,8 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(StringLength)
     UNSAFE_OP(ArgumentsLength)
     UNSAFE_OP(GetArgument)
+    CUSTOM_OP(Rest)
+    SAFE_OP(ParRest)
     SAFE_OP(Floor)
     SAFE_OP(Round)
     UNSAFE_OP(InstanceOf)
@@ -249,6 +252,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParNewCallObject)
     SAFE_OP(ParLambda)
     SAFE_OP(ParDump)
+    SAFE_OP(ParSpew)
     SAFE_OP(ParBailout)
     UNSAFE_OP(ArrayConcat)
     UNSAFE_OP(GetDOMProperty)
@@ -618,6 +622,27 @@ ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction)
 
     return replaceWithParNew(newInstruction,
                              newInstruction->templateObject());
+}
+
+bool
+ParallelArrayVisitor::visitRest(MRest *ins)
+{
+    return replace(ins, MParRest::New(parSlice(), ins));
+}
+
+bool
+ParallelArrayVisitor::visitConcat(MConcat *ins)
+{
+    return replace(ins, MParConcat::New(parSlice(), ins));
+}
+
+bool
+ParallelArrayVisitor::visitToString(MToString *ins)
+{
+    MIRType inputType = ins->input()->type();
+    if (inputType != MIRType_Int32 && inputType != MIRType_Double)
+        return markUnsafe();
+    return true;
 }
 
 bool

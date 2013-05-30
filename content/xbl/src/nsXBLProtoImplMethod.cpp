@@ -203,8 +203,7 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
   JS::CompileOptions options(cx);
   options.setFileAndLine(functionUri.get(),
                          uncompiledMethod->mBodyText.GetLineNumber())
-         .setVersion(JSVERSION_LATEST)
-         .setUserBit(true); // Flag us as XBL
+         .setVersion(JSVERSION_LATEST);
   JS::RootedObject rootedNull(cx, nullptr); // See bug 781070.
   JS::RootedObject methodObject(cx);
   nsresult rv = nsJSUtils::CompileFunction(cx, rootedNull, options, cname,
@@ -264,7 +263,8 @@ nsXBLProtoImplMethod::Write(nsIScriptContext* aContext,
     rv = aStream->WriteWStringZ(mName);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    return XBL_SerializeFunction(aContext, aStream, mJSMethodObject);
+    return XBL_SerializeFunction(aContext, aStream,
+                                 JS::Handle<JSObject*>::fromMarkedLocation(&mJSMethodObject));
   }
 
   return NS_OK;
@@ -369,7 +369,8 @@ nsXBLProtoImplAnonymousMethod::Write(nsIScriptContext* aContext,
     nsresult rv = aStream->Write8(aType);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = XBL_SerializeFunction(aContext, aStream, mJSMethodObject);
+    rv = XBL_SerializeFunction(aContext, aStream,
+                               JS::Handle<JSObject*>::fromMarkedLocation(&mJSMethodObject));
     NS_ENSURE_SUCCESS(rv, rv);
   }
 

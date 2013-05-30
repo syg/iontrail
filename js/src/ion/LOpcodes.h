@@ -108,6 +108,7 @@
     _(ModD)                         \
     _(BinaryV)                      \
     _(Concat)                       \
+    _(ParConcat)                    \
     _(CharCodeAt)                   \
     _(FromCharCode)                 \
     _(Int32ToDouble)                \
@@ -116,6 +117,7 @@
     _(DoubleToInt32)                \
     _(TruncateDToInt32)             \
     _(IntToString)                  \
+    _(DoubleToString)               \
     _(Start)                        \
     _(OsrEntry)                     \
     _(OsrValue)                     \
@@ -138,6 +140,7 @@
     _(GuardClass)                   \
     _(ParWriteGuard)                \
     _(ParDump)                      \
+    _(ParSpew)                      \
     _(TypeBarrier)                  \
     _(MonitorTypes)                 \
     _(InitializedLength)            \
@@ -204,6 +207,8 @@
     _(StringLength)                 \
     _(ArgumentsLength)              \
     _(GetArgument)                  \
+    _(Rest)                         \
+    _(ParRest)                      \
     _(TypeOfV)                      \
     _(ToIdV)                        \
     _(Floor)                        \

@@ -959,9 +959,6 @@ static const char js_werror_option_str[] = JS_OPTIONS_DOT_STR "werror";
 static const char js_zeal_option_str[]        = JS_OPTIONS_DOT_STR "gczeal";
 static const char js_zeal_frequency_str[]     = JS_OPTIONS_DOT_STR "gczeal.frequency";
 #endif
-static const char js_methodjit_content_str[]  = JS_OPTIONS_DOT_STR "methodjit.content";
-static const char js_methodjit_chrome_str[]   = JS_OPTIONS_DOT_STR "methodjit.chrome";
-static const char js_methodjit_always_str[]   = JS_OPTIONS_DOT_STR "methodjit_always";
 static const char js_typeinfer_str[]          = JS_OPTIONS_DOT_STR "typeinference";
 static const char js_pccounts_content_str[]   = JS_OPTIONS_DOT_STR "pccounts.content";
 static const char js_pccounts_chrome_str[]    = JS_OPTIONS_DOT_STR "pccounts.chrome";
@@ -1004,13 +1001,9 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
   nsCOMPtr<nsIDOMWindow> contentWindow(do_QueryInterface(global));
   nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(global));
 
-  bool useMethodJIT = Preferences::GetBool(chromeWindow || !contentWindow ?
-                                               js_methodjit_chrome_str :
-                                               js_methodjit_content_str);
   bool usePCCounts = Preferences::GetBool(chromeWindow || !contentWindow ?
                                             js_pccounts_chrome_str :
                                             js_pccounts_content_str);
-  bool useMethodJITAlways = Preferences::GetBool(js_methodjit_always_str);
   bool useTypeInference = !chromeWindow && contentWindow && Preferences::GetBool(js_typeinfer_str);
   bool useHardening = Preferences::GetBool(js_jit_hardening_str);
   bool useBaselineJIT = Preferences::GetBool(chromeWindow || !contentWindow ?
@@ -1024,10 +1017,8 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
     bool safeMode = false;
     xr->GetInSafeMode(&safeMode);
     if (safeMode) {
-      useMethodJIT = false;
       usePCCounts = false;
       useTypeInference = false;
-      useMethodJITAlways = true;
       useHardening = false;
       useBaselineJIT = false;
       useIon = false;
@@ -1035,20 +1026,10 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
     }
   }
 
-  if (useMethodJIT)
-    newDefaultJSOptions |= JSOPTION_METHODJIT;
-  else
-    newDefaultJSOptions &= ~JSOPTION_METHODJIT;
-
   if (usePCCounts)
     newDefaultJSOptions |= JSOPTION_PCCOUNT;
   else
     newDefaultJSOptions &= ~JSOPTION_PCCOUNT;
-
-  if (useMethodJITAlways)
-    newDefaultJSOptions |= JSOPTION_METHODJIT_ALWAYS;
-  else
-    newDefaultJSOptions &= ~JSOPTION_METHODJIT_ALWAYS;
 
   if (useTypeInference)
     newDefaultJSOptions |= JSOPTION_TYPE_INFERENCE;
@@ -1141,7 +1122,6 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime, bool aGCOnDestruction,
     ::JS_SetOperationCallback(mContext, DOMOperationCallback);
   }
   mIsInitialized = false;
-  mTerminations = nullptr;
   mScriptsEnabled = true;
   mOperationCallbackTime = 0;
   mModalStateTime = 0;
@@ -1155,11 +1135,6 @@ nsJSContext::~nsJSContext()
   if (mNext) {
     mNext->mPrev = mPrev;
   }
-
-  // We may still have pending termination functions if the context is destroyed
-  // before they could be executed. In this case, free the references to their
-  // parameters, but don't execute the functions (see bug 622326).
-  delete mTerminations;
 
   mGlobalObjectRef = nullptr;
 
@@ -1289,8 +1264,6 @@ nsJSContext::EvaluateString(const nsAString& aScript,
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(ok, NS_OK);
 
-  nsJSContext::TerminationFuncHolder holder(this);
-
   // Scope the JSAutoCompartment so that it gets destroyed before we pop the
   // cx and potentially call JS_RestoreFrameChain.
   XPCAutoRequest ar(mContext);
@@ -1414,7 +1387,6 @@ nsJSContext::ExecuteScript(JSScript* aScriptObject_,
   nsCxPusher pusher;
   pusher.Push(mContext);
 
-  nsJSContext::TerminationFuncHolder holder(this);
   XPCAutoRequest ar(mContext);
 
   // Scope the JSAutoCompartment so that it gets destroyed before we pop the
@@ -1677,27 +1649,17 @@ nsJSContext::SetProperty(JS::Handle<JSObject*> aTarget, const char* aPropName, n
     ConvertSupportsTojsvals(aArgs, global, &argc, &argv, tempStorage);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  JS::Value vargs;
-
   // got the arguments, now attach them.
 
-  // window.dialogArguments is supposed to be an array if a JS array
-  // was passed to showModalDialog(), deal with that here.
-  if (strcmp(aPropName, "dialogArguments") == 0 && argc <= 1) {
-    vargs = argc ? argv[0] : JSVAL_VOID;
-  } else {
-    for (uint32_t i = 0; i < argc; ++i) {
-      if (!JS_WrapValue(mContext, &argv[i])) {
-        return NS_ERROR_FAILURE;
-      }
+  for (uint32_t i = 0; i < argc; ++i) {
+    if (!JS_WrapValue(mContext, &argv[i])) {
+      return NS_ERROR_FAILURE;
     }
-
-    JSObject *args = ::JS_NewArrayObject(mContext, argc, argv);
-    vargs = OBJECT_TO_JSVAL(args);
   }
 
-  // Make sure to use JS_DefineProperty here so that we can override
-  // readonly XPConnect properties here as well (read dialogArguments).
+  JSObject *args = ::JS_NewArrayObject(mContext, argc, argv);
+  JS::Value vargs = OBJECT_TO_JSVAL(args);
+
   return JS_DefineProperty(mContext, aTarget, aPropName, vargs, NULL, NULL, 0)
     ? NS_OK
     : NS_ERROR_FAILURE;
@@ -2371,20 +2333,6 @@ nsJSContext::IsContextInitialized()
 void
 nsJSContext::ScriptEvaluated(bool aTerminated)
 {
-  if (aTerminated && mTerminations) {
-    // Make sure to null out mTerminations before doing anything that
-    // might cause new termination funcs to be added!
-    nsJSContext::TerminationFuncClosure* start = mTerminations;
-    mTerminations = nullptr;
-
-    for (nsJSContext::TerminationFuncClosure* cur = start;
-         cur;
-         cur = cur->mNext) {
-      (*(cur->mTerminationFunc))(cur->mTerminationFuncArg);
-    }
-    delete start;
-  }
-
   JS_MaybeGC(mContext);
 
   if (aTerminated) {
@@ -2392,17 +2340,6 @@ nsJSContext::ScriptEvaluated(bool aTerminated)
     mModalStateTime = 0;
     mActive = true;
   }
-}
-
-void
-nsJSContext::SetTerminationFunction(nsScriptTerminationFunc aFunc,
-                                    nsIDOMWindow* aRef)
-{
-  NS_PRECONDITION(GetExecutingScript(), "should be executing script");
-
-  nsJSContext::TerminationFuncClosure* newClosure =
-    new nsJSContext::TerminationFuncClosure(aFunc, aRef, mTerminations);
-  mTerminations = newClosure;
 }
 
 bool
@@ -2544,72 +2481,6 @@ nsJSContext::ShrinkGCBuffersNow()
   JS::ShrinkGCBuffers(nsJSRuntime::sRuntime);
 }
 
-// Return true if there exists a JSContext with a default global whose current
-// inner is gray. The intent is to look for JS Object windows. We don't merge
-// system compartments, so we don't use them to trigger merging CCs.
-static bool
-AnyGrayCurrentContentInnerWindows()
-{
-  if (!nsJSRuntime::sRuntime) {
-    return false;
-  }
-  JSContext *iter = nullptr;
-  JSContext *cx;
-  while ((cx = JS_ContextIterator(nsJSRuntime::sRuntime, &iter))) {
-    // Skip anything without an nsIScriptContext, as well as any scx whose
-    // NativeGlobal() is not an outer window (this happens with XUL Prototype
-    // compilation scopes, for example, which we're not interested in).
-    nsIScriptContext *scx = GetScriptContextFromJSContext(cx);
-    JS::RootedObject global(cx, scx ? scx->GetNativeGlobal() : nullptr);
-    if (!global || !js::GetObjectParent(global)) {
-      continue;
-    }
-    // Grab the inner from the outer.
-    global = JS_ObjectToInnerObject(cx, global);
-    MOZ_ASSERT(!js::GetObjectParent(global));
-    if (JS::GCThingIsMarkedGray(global) &&
-        !js::IsSystemCompartment(js::GetObjectCompartment(global))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-static bool
-DoMergingCC(bool aForced)
-{
-  // Don't merge too many times in a row, and do at least a minimum
-  // number of unmerged CCs in a row.
-  static const int32_t kMinConsecutiveUnmerged = 3;
-  static const int32_t kMaxConsecutiveMerged = 3;
-
-  static int32_t sUnmergedNeeded = 0;
-  static int32_t sMergedInARow = 0;
-
-  MOZ_ASSERT(0 <= sUnmergedNeeded && sUnmergedNeeded <= kMinConsecutiveUnmerged);
-  MOZ_ASSERT(0 <= sMergedInARow && sMergedInARow <= kMaxConsecutiveMerged);
-
-  if (sMergedInARow == kMaxConsecutiveMerged) {
-    MOZ_ASSERT(sUnmergedNeeded == 0);
-    sUnmergedNeeded = kMinConsecutiveUnmerged;
-  }
-
-  if (sUnmergedNeeded > 0) {
-    sUnmergedNeeded--;
-    sMergedInARow = 0;
-    return false;
-  }
-
-  if (!aForced && AnyGrayCurrentContentInnerWindows()) {
-    sMergedInARow++;
-    return true;
-  } else {
-    sMergedInARow = 0;
-    return false;
-  }
-
-}
-
 static void
 FinishAnyIncrementalGC()
 {
@@ -2652,7 +2523,7 @@ TimeBetween(PRTime start, PRTime end)
 void
 nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener,
                              int32_t aExtraForgetSkippableCalls,
-                             bool aForced)
+                             bool aManuallyTriggered)
 {
   if (!NS_IsMainThread()) {
     return;
@@ -2691,9 +2562,8 @@ nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener,
   uint32_t skippableDuration = TimeBetween(endGCTime, endSkippableTime);
 
   // Prepare to actually run the CC.
-  bool mergingCC = DoMergingCC(aForced);
   nsCycleCollectorResults ccResults;
-  nsCycleCollector_collect(mergingCC, &ccResults, aListener);
+  nsCycleCollector_collect(aManuallyTriggered, &ccResults, aListener);
   sCCollectedWaitingForGC += ccResults.mFreedRefCounted + ccResults.mFreedGCed;
 
   // If we collected a substantial amount of cycles, poke the GC since more objects
@@ -2728,7 +2598,7 @@ nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener,
 
   if (sPostGCEventsToConsole) {
     nsCString mergeMsg;
-    if (mergingCC) {
+    if (ccResults.mMergedZones) {
       mergeMsg.AssignLiteral(" merged");
     }
 

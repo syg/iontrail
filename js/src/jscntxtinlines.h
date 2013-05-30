@@ -29,6 +29,15 @@ NewObjectCache::staticAsserts()
     JS_STATIC_ASSERT(gc::FINALIZE_OBJECT_LAST == gc::FINALIZE_OBJECT16_BACKGROUND);
 }
 
+inline void
+NewObjectCache::clearNurseryObjects(JSRuntime *rt)
+{
+    for (unsigned i = 0; i < mozilla::ArrayLength(entries); ++i) {
+        if (IsInsideNursery(rt, entries[i].key))
+            mozilla::PodZero(&entries[i]);
+    }
+}
+
 inline bool
 NewObjectCache::lookup(Class *clasp, gc::Cell *key, gc::AllocKind kind, EntryIndex *pentry)
 {
@@ -585,7 +594,7 @@ JSContext::leaveCompartment(JSCompartment *oldCompartment)
 }
 
 inline JS::Zone *
-JSContext::zone() const
+js::ThreadSafeContext::zone() const
 {
     JS_ASSERT_IF(!compartment, !zone_);
     JS_ASSERT_IF(compartment, compartment->zone() == zone_);
@@ -593,16 +602,16 @@ JSContext::zone() const
 }
 
 inline void
-JSContext::updateMallocCounter(size_t nbytes)
-{
-    runtime->updateMallocCounter(zone(), nbytes);
-}
-
-inline void
-JSContext::setCompartment(JSCompartment *comp)
+js::ThreadSafeContext::setCompartment(JSCompartment *comp)
 {
     compartment = comp;
     zone_ = comp ? comp->zone() : NULL;
+}
+
+inline void
+js::ThreadSafeContext::updateMallocCounter(size_t nbytes)
+{
+    perThreadData->updateMallocCounter(zone_, nbytes);
 }
 
 #endif /* jscntxtinlines_h___ */

@@ -43,7 +43,6 @@
 #include "vm/StringBuffer.h"
 
 #include "jsatominlines.h"
-#include "jsnuminlines.h"
 #include "jsobjinlines.h"
 
 #include "vm/NumberObject-inl.h"
@@ -77,7 +76,7 @@ ComputeAccurateDecimalInteger(JSContext *cx, const jschar *start, const jschar *
 
     char *estr;
     int err = 0;
-    *dp = js_strtod_harder(cx->runtime->dtoaState, cstr, &estr, &err);
+    *dp = js_strtod_harder(cx->mainThread().dtoaState, cstr, &estr, &err);
     if (err == JS_DTOA_ENOMEM) {
         JS_ReportOutOfMemory(cx);
         js_free(cstr);
@@ -490,23 +489,23 @@ ToCStringBuf::~ToCStringBuf()
 
 template <AllowGC allowGC>
 JSFlatString *
-js::Int32ToString(JSContext *cx, int32_t si)
+js::Int32ToString(ThreadSafeContext *tcx, int32_t si)
 {
     uint32_t ui;
     if (si >= 0) {
         if (StaticStrings::hasInt(si))
-            return cx->runtime->staticStrings.getInt(si);
+            return tcx->runtime->staticStrings.getInt(si);
         ui = si;
     } else {
         ui = uint32_t(-si);
         JS_ASSERT_IF(si == INT32_MIN, ui == uint32_t(INT32_MAX) + 1);
     }
 
-    JSCompartment *c = cx->compartment;
+    JSCompartment *c = tcx->compartment;
     if (JSFlatString *str = c->dtoaCache.lookup(10, si))
         return str;
 
-    JSShortString *str = js_NewGCShortString<allowGC>(cx);
+    JSShortString *str = tcx->threadsafeNewGCShortString<allowGC>();
     if (!str)
         return NULL;
 
@@ -521,15 +520,20 @@ js::Int32ToString(JSContext *cx, int32_t si)
     jschar *dst = str->init(end - start);
     PodCopy(dst, start.get(), end - start + 1);
 
-    c->dtoaCache.cache(10, si, str);
+    /*
+     * Only attempt to cache the result if we have a JSContext, as it is
+     * racy.
+     */
+    if (tcx->toJSContext())
+        c->dtoaCache.cache(10, si, str);
     return str;
 }
 
 template JSFlatString *
-js::Int32ToString<CanGC>(JSContext *cx, int32_t si);
+js::Int32ToString<CanGC>(ThreadSafeContext *cx, int32_t si);
 
 template JSFlatString *
-js::Int32ToString<NoGC>(JSContext *cx, int32_t si);
+js::Int32ToString<NoGC>(ThreadSafeContext *cx, int32_t si);
 
 /* Returns a non-NULL pointer to inside cbuf.  */
 static char *
@@ -569,7 +573,7 @@ IntToCString(ToCStringBuf *cbuf, int i, int base = 10)
 
 template <AllowGC allowGC>
 static JSString * JS_FASTCALL
-js_NumberToStringWithBase(JSContext *cx, double d, int base);
+js_NumberToStringWithBase(ThreadSafeContext *cx, double d, int base);
 
 JS_ALWAYS_INLINE bool
 num_toString_impl(JSContext *cx, CallArgs args)
@@ -781,7 +785,7 @@ static bool
 DToStrResult(JSContext *cx, double d, JSDToStrMode mode, int precision, CallArgs args)
 {
     char buf[DTOSTR_VARIABLE_BUFFER_SIZE(MAX_PRECISION + 1)];
-    char *numStr = js_dtostr(cx->runtime->dtoaState, buf, sizeof buf, mode, precision, d);
+    char *numStr = js_dtostr(cx->mainThread().dtoaState, buf, sizeof buf, mode, precision, d);
     if (!numStr) {
         JS_ReportOutOfMemory(cx);
         return false;
@@ -1166,7 +1170,7 @@ js_InitNumberClass(JSContext *cx, HandleObject obj)
 }
 
 static char *
-FracNumberToCString(JSContext *cx, ToCStringBuf *cbuf, double d, int base = 10)
+FracNumberToCString(ThreadSafeContext *tcx, ToCStringBuf *cbuf, double d, int base = 10)
 {
 #ifdef DEBUG
     {
@@ -1190,7 +1194,7 @@ FracNumberToCString(JSContext *cx, ToCStringBuf *cbuf, double d, int base = 10)
         converter.ToShortest(d, &builder);
         numStr = builder.Finalize();
     } else {
-        numStr = cbuf->dbuf = js_dtobasestr(cx->runtime->dtoaState, base, d);
+        numStr = cbuf->dbuf = js_dtobasestr(tcx->perThreadData->dtoaState, base, d);
     }
     return numStr;
 }
@@ -1206,7 +1210,7 @@ js::NumberToCString(JSContext *cx, ToCStringBuf *cbuf, double d, int base/* = 10
 
 template <AllowGC allowGC>
 static JSString * JS_FASTCALL
-js_NumberToStringWithBase(JSContext *cx, double d, int base)
+js_NumberToStringWithBase(ThreadSafeContext *tcx, double d, int base)
 {
     ToCStringBuf cbuf;
     char *numStr;
@@ -1219,18 +1223,19 @@ js_NumberToStringWithBase(JSContext *cx, double d, int base)
     if (base < 2 || base > 36)
         return NULL;
 
-    JSCompartment *c = cx->compartment;
+    JSCompartment *c = tcx->compartment;
+    JSContext *cx = tcx->toJSContext();
 
     int32_t i;
     if (mozilla::DoubleIsInt32(d, &i)) {
         if (base == 10 && StaticStrings::hasInt(i))
-            return cx->runtime->staticStrings.getInt(i);
+            return tcx->runtime->staticStrings.getInt(i);
         if (unsigned(i) < unsigned(base)) {
             if (i < 10)
-                return cx->runtime->staticStrings.getInt(i);
+                return tcx->runtime->staticStrings.getInt(i);
             jschar c = 'a' + i - 10;
             JS_ASSERT(StaticStrings::hasUnit(c));
-            return cx->runtime->staticStrings.getUnit(c);
+            return tcx->runtime->staticStrings.getUnit(c);
         }
 
         if (JSFlatString *str = c->dtoaCache.lookup(base, d))
@@ -1242,9 +1247,10 @@ js_NumberToStringWithBase(JSContext *cx, double d, int base)
         if (JSFlatString *str = c->dtoaCache.lookup(base, d))
             return str;
 
-        numStr = FracNumberToCString(cx, &cbuf, d, base);
+        numStr = FracNumberToCString(tcx, &cbuf, d, base);
         if (!numStr) {
-            JS_ReportOutOfMemory(cx);
+            if (cx)
+                JS_ReportOutOfMemory(cx);
             return NULL;
         }
         JS_ASSERT_IF(base == 10,
@@ -1253,23 +1259,29 @@ js_NumberToStringWithBase(JSContext *cx, double d, int base)
                      cbuf.dbuf && cbuf.dbuf == numStr);
     }
 
-    JSFlatString *s = js_NewStringCopyZ<allowGC>(cx, numStr);
-    c->dtoaCache.cache(base, d, s);
+    JSFlatString *s = js_NewStringCopyZ<allowGC>(tcx, numStr);
+
+    /*
+     * We will only cache dtoa results if we have a JSContext, as it is
+     * racy.
+     */
+    if (cx)
+        c->dtoaCache.cache(base, d, s);
     return s;
 }
 
 template <AllowGC allowGC>
 JSString *
-js_NumberToString(JSContext *cx, double d)
+js_NumberToString(ThreadSafeContext *tcx, double d)
 {
-    return js_NumberToStringWithBase<allowGC>(cx, d, 10);
+    return js_NumberToStringWithBase<allowGC>(tcx, d, 10);
 }
 
 template JSString *
-js_NumberToString<CanGC>(JSContext *cx, double d);
+js_NumberToString<CanGC>(ThreadSafeContext *tcx, double d);
 
 template JSString *
-js_NumberToString<NoGC>(JSContext *cx, double d);
+js_NumberToString<NoGC>(ThreadSafeContext *tcx, double d);
 
 JSFlatString *
 js::NumberToString(JSContext *cx, double d)
@@ -1331,6 +1343,68 @@ js::NumberValueToStringBuffer(JSContext *cx, const Value &v, StringBuffer &sb)
     return sb.appendInflated(cstr, cstrlen);
 }
 
+static bool
+StringToNumber(JSContext *cx, JSString *str, double *result)
+{
+    size_t length = str->length();
+    const jschar *chars = str->getChars(NULL);
+    if (!chars)
+        return false;
+
+    if (length == 1) {
+        jschar c = chars[0];
+        if ('0' <= c && c <= '9') {
+            *result = c - '0';
+            return true;
+        }
+        if (unicode::IsSpace(c)) {
+            *result = 0.0;
+            return true;
+        }
+        *result = js_NaN;
+        return true;
+    }
+
+    const jschar *end = chars + length;
+    const jschar *bp = SkipSpace(chars, end);
+
+    /* ECMA doesn't allow signed hex numbers (bug 273467). */
+    if (end - bp >= 2 && bp[0] == '0' && (bp[1] == 'x' || bp[1] == 'X')) {
+        /*
+         * It's probably a hex number.  Accept if there's at least one hex
+         * digit after the 0x, and if no non-whitespace characters follow all
+         * the hex digits.
+         */
+        const jschar *endptr;
+        double d;
+        if (!GetPrefixInteger(cx, bp + 2, end, 16, &endptr, &d) ||
+            endptr == bp + 2 ||
+            SkipSpace(endptr, end) != end)
+        {
+            *result = js_NaN;
+            return true;
+        }
+        *result = d;
+        return true;
+    }
+
+    /*
+     * Note that ECMA doesn't treat a string beginning with a '0' as
+     * an octal number here. This works because all such numbers will
+     * be interpreted as decimal by js_strtod.  Also, any hex numbers
+     * that have made it here (which can only be negative ones) will
+     * be treated as 0 without consuming the 'x' by js_strtod.
+     */
+    const jschar *ep;
+    double d;
+    if (!js_strtod(cx, bp, end, &ep, &d) || SkipSpace(ep, end) != end) {
+        *result = js_NaN;
+        return true;
+    }
+    *result = d;
+    return true;
+}
+
 #if defined(_MSC_VER)
 # pragma optimize("g", off)
 #endif
@@ -1365,7 +1439,7 @@ js::ToNumberSlow(JSContext *cx, Value v, double *out)
         }
       skip_int_double:
         if (v.isString())
-            return StringToNumberType<double>(cx, v.toString(), out);
+            return StringToNumber(cx, v.toString(), out);
         if (v.isBoolean()) {
             if (v.toBoolean()) {
                 *out = 1.0;
@@ -1535,7 +1609,7 @@ js_strtod(JSContext *cx, const jschar *s, const jschar *send,
         estr = istr + 8;
     } else {
         int err;
-        d = js_strtod_harder(cx->runtime->dtoaState, cstr, &estr, &err);
+        d = js_strtod_harder(cx->mainThread().dtoaState, cstr, &estr, &err);
         if (d == HUGE_VAL)
             d = js_PositiveInfinity;
         else if (d == -HUGE_VAL)

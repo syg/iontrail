@@ -169,6 +169,18 @@ ion::ParDumpValue(Value *v)
 #endif
 }
 
+ParallelResult
+ion::ParSpew(ForkJoinSlice *slice, HandleString str)
+{
+    JSLinearString *linear = str->ensureLinear(slice);
+    if (!linear)
+        return TP_RETRY_SEQUENTIALLY;
+
+    Spew(SpewOps, LossyTwoByteCharsToNewLatin1CharsZ(slice, linear->range()).c_str());
+
+    return TP_SUCCESS;
+}
+
 JSObject*
 ion::ParPush(ParPushArgs *args)
 {
@@ -177,8 +189,7 @@ ion::ParPush(ParPushArgs *args)
     // slow path anyhow as it reallocates the elements vector.
     ForkJoinSlice *slice = js::ForkJoinSlice::Current();
     JSObject::EnsureDenseResult res =
-        args->object->parExtendDenseElements(slice->allocator,
-                                             &args->value, 1);
+        args->object->parExtendDenseElements(slice, &args->value, 1);
     if (res != JSObject::ED_OK)
         return NULL;
     return args->object;
@@ -188,10 +199,41 @@ JSObject *
 ion::ParExtendArray(ForkJoinSlice *slice, JSObject *array, uint32_t length)
 {
     JSObject::EnsureDenseResult res =
-        array->parExtendDenseElements(slice->allocator, NULL, length);
+        array->parExtendDenseElements(slice, NULL, length);
     if (res != JSObject::ED_OK)
         return NULL;
     return array;
+}
+
+ParallelResult
+ion::ParConcatStrings(ForkJoinSlice *slice, HandleString left, HandleString right,
+                      MutableHandleString out)
+{
+    JSString *str = ConcatStrings<NoGC>(slice, left, right);
+    if (!str)
+        return TP_RETRY_SEQUENTIALLY;
+    out.set(str);
+    return TP_SUCCESS;
+}
+
+ParallelResult
+ion::ParIntToString(ForkJoinSlice *slice, int i, MutableHandleString out)
+{
+    JSFlatString *str = Int32ToString<NoGC>(slice, i);
+    if (!str)
+        return TP_RETRY_SEQUENTIALLY;
+    out.set(str);
+    return TP_SUCCESS;
+}
+
+ParallelResult
+ion::ParDoubleToString(ForkJoinSlice *slice, double d, MutableHandleString out)
+{
+    JSString *str = js_NumberToString<NoGC>(slice, d);
+    if (!str)
+        return TP_RETRY_SEQUENTIALLY;
+    out.set(str);
+    return TP_SUCCESS;
 }
 
 #define PAR_RELATIONAL_OP(OP, EXPECTED)                                         \
@@ -452,4 +494,27 @@ ion::ParCallToUncompiledScript(JSFunction *func)
         JS_NOT_REACHED("ParCall'ed functions must have scripts or be ES6 bound functions.");
     }
 #endif
+}
+
+ParallelResult
+ion::InitRestParameter(ForkJoinSlice *slice, uint32_t length, Value *rest,
+                       HandleObject templateObj, HandleObject res,
+                       MutableHandleObject out)
+{
+    // In parallel execution, we should always have succeeded in allocation
+    // before this point. We can do the allocation here like in the sequential
+    // path, but duplicating the initGCThing logic is too tedious.
+    JS_ASSERT(res);
+    JS_ASSERT(res->isArray());
+    JS_ASSERT(!res->getDenseInitializedLength());
+    JS_ASSERT(res->type() == templateObj->type());
+
+    if (length) {
+        JSObject::EnsureDenseResult edr = res->parExtendDenseElements(slice, rest, length);
+        if (edr != JSObject::ED_OK)
+            return TP_FATAL;
+    }
+
+    out.set(res);
+    return TP_SUCCESS;
 }

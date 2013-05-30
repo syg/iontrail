@@ -10,6 +10,7 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	= gkgeneric_s
+MSVC_ENABLE_PGO := 1
 LIBXUL_LIBRARY	= 1
 ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
@@ -26,6 +27,7 @@ CPPSRCS		= \
 		nsColumnSetFrame.cpp \
 		nsContainerFrame.cpp \
 		nsFirstLetterFrame.cpp \
+		nsFlexContainerFrame.cpp \
 		nsFloatManager.cpp \
 		nsFontInflationData.cpp \
 		nsFrame.cpp \
@@ -60,12 +62,6 @@ CPPSRCS		= \
 		nsViewportFrame.cpp \
 		nsVideoFrame.cpp \
 		$(NULL)
-
-ifdef MOZ_FLEXBOX
-CPPSRCS		+= \
-		nsFlexContainerFrame.cpp \
-		$(NULL)
-endif
 
 ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 CMMSRCS		+= \

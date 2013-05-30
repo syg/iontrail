@@ -75,6 +75,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitTypeObjectDispatch(LTypeObjectDispatch *lir);
     bool visitPolyInlineDispatch(LPolyInlineDispatch *lir);
     bool visitIntToString(LIntToString *lir);
+    bool visitDoubleToString(LDoubleToString *lir);
     bool visitInteger(LInteger *lir);
     bool visitRegExp(LRegExp *lir);
     bool visitRegExpTest(LRegExpTest *lir);
@@ -171,12 +172,14 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitEmulatesUndefined(LEmulatesUndefined *lir);
     bool visitEmulatesUndefinedAndBranch(LEmulatesUndefinedAndBranch *lir);
     bool visitConcat(LConcat *lir);
+    bool visitParConcat(LParConcat *lir);
     bool visitCharCodeAt(LCharCodeAt *lir);
     bool visitFromCharCode(LFromCharCode *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
     bool visitParSlice(LParSlice *lir);
     bool visitParWriteGuard(LParWriteGuard *lir);
     bool visitParDump(LParDump *lir);
+    bool visitParSpew(LParSpew *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);
     bool visitCallSetElement(LCallSetElement *lir);
@@ -215,6 +218,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitIteratorEnd(LIteratorEnd *lir);
     bool visitArgumentsLength(LArgumentsLength *lir);
     bool visitGetArgument(LGetArgument *lir);
+    bool emitRest(LInstruction *lir, Register array, Register numActuals,
+                  Register temp0, Register temp1, unsigned numFormals,
+                  JSObject *templateObject, const VMFunction &f);
+    bool visitRest(LRest *lir);
+    bool visitParRest(LParRest *lir);
     bool visitCallSetProperty(LCallSetProperty *ins);
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);

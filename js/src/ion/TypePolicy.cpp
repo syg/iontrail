@@ -77,7 +77,7 @@ BinaryStringPolicy::adjustInputs(MInstruction *ins)
             continue;
 
         MInstruction *replace = NULL;
-        if (in->type() == MIRType_Int32) {
+        if (in->type() == MIRType_Int32 || in->type() == MIRType_Double) {
             replace = MToString::New(in);
         } else {
             if (in->type() != MIRType_Value)
@@ -295,7 +295,7 @@ StringPolicy<Op>::staticAdjustInputs(MInstruction *def)
         return true;
 
     MInstruction *replace;
-    if (in->type() == MIRType_Int32) {
+    if (in->type() == MIRType_Int32 || in->type() == MIRType_Double) {
         replace = MToString::New(in);
     } else {
         if (in->type() != MIRType_Value)
@@ -310,6 +310,7 @@ StringPolicy<Op>::staticAdjustInputs(MInstruction *def)
 
 template bool StringPolicy<0>::staticAdjustInputs(MInstruction *ins);
 template bool StringPolicy<1>::staticAdjustInputs(MInstruction *ins);
+template bool StringPolicy<2>::staticAdjustInputs(MInstruction *ins);
 
 template <unsigned Op>
 bool

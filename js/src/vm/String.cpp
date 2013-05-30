@@ -135,7 +135,7 @@ JSString::equals(const char *s)
 #endif /* DEBUG */
 
 static JS_ALWAYS_INLINE bool
-AllocChars(JSContext *maybecx, size_t length, jschar **chars, size_t *capacity)
+AllocChars(ThreadSafeContext *maybetcx, size_t length, jschar **chars, size_t *capacity)
 {
     /*
      * String length doesn't include the null char, so include it here before
@@ -157,13 +157,13 @@ AllocChars(JSContext *maybecx, size_t length, jschar **chars, size_t *capacity)
 
     JS_STATIC_ASSERT(JSString::MAX_LENGTH * sizeof(jschar) < UINT32_MAX);
     size_t bytes = numChars * sizeof(jschar);
-    *chars = (jschar *)(maybecx ? maybecx->malloc_(bytes) : js_malloc(bytes));
+    *chars = (jschar *)(maybetcx ? maybetcx->malloc_(bytes) : js_malloc(bytes));
     return *chars != NULL;
 }
 
 template<JSRope::UsingBarrier b>
 JSFlatString *
-JSRope::flattenInternal(JSContext *maybecx)
+JSRope::flattenInternal(ThreadSafeContext *maybetcx)
 {
     /*
      * Perform a depth-first dag traversal, splatting each node's characters
@@ -226,7 +226,7 @@ JSRope::flattenInternal(JSContext *maybecx)
         }
     }
 
-    if (!AllocChars(maybecx, wholeLength, &wholeChars, &wholeCapacity))
+    if (!AllocChars(maybetcx, wholeLength, &wholeChars, &wholeCapacity))
         return NULL;
 
     pos = wholeChars;
@@ -285,26 +285,26 @@ JSRope::flattenInternal(JSContext *maybecx)
 }
 
 JSFlatString *
-JSRope::flatten(JSContext *maybecx)
+JSRope::flatten(ThreadSafeContext *maybetcx)
 {
 #if JSGC_INCREMENTAL
     if (zone()->needsBarrier())
-        return flattenInternal<WithIncrementalBarrier>(maybecx);
+        return flattenInternal<WithIncrementalBarrier>(maybetcx);
     else
-        return flattenInternal<NoBarrier>(maybecx);
+        return flattenInternal<NoBarrier>(maybetcx);
 #else
-    return flattenInternal<NoBarrier>(maybecx);
+    return flattenInternal<NoBarrier>(maybetcx);
 #endif
 }
 
 template <AllowGC allowGC>
 JSString *
-js::ConcatStrings(JSContext *cx,
+js::ConcatStrings(ThreadSafeContext *tcx,
                   typename MaybeRooted<JSString*, allowGC>::HandleType left,
                   typename MaybeRooted<JSString*, allowGC>::HandleType right)
 {
-    JS_ASSERT_IF(!left->isAtom(), left->zone() == cx->zone());
-    JS_ASSERT_IF(!right->isAtom(), right->zone() == cx->zone());
+    JS_ASSERT_IF(!left->isAtom(), left->zone() == tcx->zone());
+    JS_ASSERT_IF(!right->isAtom(), right->zone() == tcx->zone());
 
     size_t leftLen = left->length();
     if (leftLen == 0)
@@ -315,18 +315,18 @@ js::ConcatStrings(JSContext *cx,
         return left;
 
     size_t wholeLength = leftLen + rightLen;
-    JSContext *cxIfCanGC = allowGC ? cx : NULL;
+    JSContext *cxIfCanGC = allowGC ? tcx->toJSContext() : NULL;
     if (!JSString::validateLength(cxIfCanGC, wholeLength))
         return NULL;
 
     if (JSShortString::lengthFits(wholeLength)) {
-        JSShortString *str = js_NewGCShortString<allowGC>(cx);
+        JSShortString *str = tcx->threadsafeNewGCShortString<allowGC>();
         if (!str)
             return NULL;
-        const jschar *leftChars = left->getChars(cx);
+        const jschar *leftChars = left->getChars(tcx);
         if (!leftChars)
             return NULL;
-        const jschar *rightChars = right->getChars(cx);
+        const jschar *rightChars = right->getChars(tcx);
         if (!rightChars)
             return NULL;
 
@@ -337,14 +337,14 @@ js::ConcatStrings(JSContext *cx,
         return str;
     }
 
-    return JSRope::new_<allowGC>(cx, left, right, wholeLength);
+    return JSRope::new_<allowGC>(tcx, left, right, wholeLength);
 }
 
 template JSString *
-js::ConcatStrings<CanGC>(JSContext *cx, HandleString left, HandleString right);
+js::ConcatStrings<CanGC>(ThreadSafeContext *cx, HandleString left, HandleString right);
 
 template JSString *
-js::ConcatStrings<NoGC>(JSContext *cx, JSString *left, JSString *right);
+js::ConcatStrings<NoGC>(ThreadSafeContext *cx, JSString *left, JSString *right);
 
 JSFlatString *
 JSDependentString::undepend(JSContext *cx)

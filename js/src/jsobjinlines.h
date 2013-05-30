@@ -604,9 +604,8 @@ JSObject::ensureDenseInitializedLength(JSContext *cx, uint32_t index, uint32_t e
     }
 }
 
-template<typename MallocProviderType>
 JSObject::EnsureDenseResult
-JSObject::extendDenseElements(MallocProviderType *cx,
+JSObject::extendDenseElements(js::ThreadSafeContext *tcx,
                               uint32_t requiredCapacity, uint32_t extra)
 {
     /*
@@ -636,14 +635,14 @@ JSObject::extendDenseElements(MallocProviderType *cx,
         return ED_SPARSE;
     }
 
-    if (!growElements(cx, requiredCapacity))
+    if (!growElements(tcx, requiredCapacity))
         return ED_FAILED;
 
     return ED_OK;
 }
 
 inline JSObject::EnsureDenseResult
-JSObject::parExtendDenseElements(js::Allocator *alloc, js::Value *v, uint32_t extra)
+JSObject::parExtendDenseElements(js::ThreadSafeContext *tcx, js::Value *v, uint32_t extra)
 {
     JS_ASSERT(isNative());
     JS_ASSERT_IF(isArray(), arrayLengthIsWritable());
@@ -655,7 +654,7 @@ JSObject::parExtendDenseElements(js::Allocator *alloc, js::Value *v, uint32_t ex
         return ED_SPARSE; /* Overflow. */
 
     if (requiredCapacity > header->capacity) {
-        EnsureDenseResult edr = extendDenseElements(alloc, requiredCapacity, extra);
+        EnsureDenseResult edr = extendDenseElements(tcx, requiredCapacity, extra);
         if (edr != ED_OK)
             return edr;
     }

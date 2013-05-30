@@ -109,7 +109,7 @@ JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, JS::RuntimeSizes 
     for (ContextIter acx(this); !acx.done(); acx.next())
         rtSizes->contexts += acx->sizeOfIncludingThis(mallocSizeOf);
 
-    rtSizes->dtoa = mallocSizeOf(dtoaState);
+    rtSizes->dtoa = mallocSizeOf(mainThread.dtoaState);
 
     rtSizes->temporary = tempLifoAlloc.sizeOfExcludingThis(mallocSizeOf);
 
@@ -1122,8 +1122,45 @@ js_HandleExecutionInterrupt(JSContext *cx)
     return result;
 }
 
-JSContext::JSContext(JSRuntime *rt)
+js::ThreadSafeContext::ThreadSafeContext(JSRuntime *rt, PerThreadData *pt,
+                                         ThreadSafeContextKind kind)
   : ContextFriendFields(rt),
+    threadsafeContextKind_(kind),
+    perThreadData(pt)
+{ }
+
+JSContext *
+ThreadSafeContext::toJSContext()
+{
+    if (threadsafeContextKind_ == Context_JS)
+        return reinterpret_cast<JSContext *>(this);
+    return NULL;
+}
+
+ForkJoinSlice *
+ThreadSafeContext::toForkJoinSlice()
+{
+    if (threadsafeContextKind_ == Context_ForkJoin)
+        return reinterpret_cast<ForkJoinSlice *>(this);
+    return NULL;
+}
+
+void *
+js::ThreadSafeContext::onOutOfMemory(void *p, size_t nbytes)
+{
+    JSContext *cx = toJSContext();
+    return runtime->onOutOfMemory(p, nbytes, cx);
+}
+
+void
+js::ThreadSafeContext::reportAllocationOverflow()
+{
+    JSContext *cx = toJSContext();
+    js_ReportAllocationOverflow(cx);
+}
+
+JSContext::JSContext(JSRuntime *rt)
+  : ThreadSafeContext(rt, &rt->mainThread, Context_JS),
     defaultVersion(JSVERSION_DEFAULT),
     hasVersionOverride(false),
     throwing(false),
@@ -1307,6 +1344,18 @@ JSRuntime::setGCMaxMallocBytes(size_t value)
 }
 
 void
+PerThreadData::updateMallocCounter(JS::Zone *zone, size_t nbytes)
+{
+    ptrdiff_t oldCount = gcMallocBytes;
+    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
+    gcMallocBytes = newCount;
+    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0 && !InParallelSection()))
+        runtime_->onTooMuchMalloc();
+    else if (zone)
+        zone->updateMallocCounter(nbytes);
+}
+
+void
 JSRuntime::updateMallocCounter(size_t nbytes)
 {
     updateMallocCounter(NULL, nbytes);
@@ -1315,14 +1364,7 @@ JSRuntime::updateMallocCounter(size_t nbytes)
 void
 JSRuntime::updateMallocCounter(JS::Zone *zone, size_t nbytes)
 {
-    /* We tolerate any thread races when updating gcMallocBytes. */
-    ptrdiff_t oldCount = gcMallocBytes;
-    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
-    gcMallocBytes = newCount;
-    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0))
-        onTooMuchMalloc();
-    else if (zone)
-        zone->updateMallocCounter(nbytes);
+    mainThread.updateMallocCounter(zone, nbytes);
 }
 
 JS_FRIEND_API(void)

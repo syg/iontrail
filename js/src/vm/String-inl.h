@@ -24,13 +24,13 @@ namespace js {
 
 template <AllowGC allowGC>
 static JS_ALWAYS_INLINE JSInlineString *
-NewShortString(JSContext *cx, JS::Latin1Chars chars)
+NewShortString(ThreadSafeContext *tcx, JS::Latin1Chars chars)
 {
     size_t len = chars.length();
     JS_ASSERT(JSShortString::lengthFits(len));
     JSInlineString *str = JSInlineString::lengthFits(len)
-                          ? JSInlineString::new_<allowGC>(cx)
-                          : JSShortString::new_<allowGC>(cx);
+                          ? JSInlineString::new_<allowGC>(tcx)
+                          : JSShortString::new_<allowGC>(tcx);
     if (!str)
         return NULL;
 
@@ -104,6 +104,41 @@ StringWriteBarrierPostRemove(JSRuntime *rt, JSString **strp)
 
 } /* namespace js */
 
+JS_ALWAYS_INLINE JSStableString *
+JSString::ensureStable(JSContext *maybecx)
+{
+    if (isRope()) {
+        JSFlatString *flat = asRope().flatten(maybecx);
+        if (!flat)
+            return NULL;
+        JS_ASSERT(!flat->isInline());
+        return &flat->asStable();
+    }
+
+    if (isDependent()) {
+        JSFlatString *flat = asDependent().undepend(maybecx);
+        if (!flat)
+            return NULL;
+        return &flat->asStable();
+    }
+
+    if (!isInline())
+        return &asStable();
+
+    JS_ASSERT(isInline());
+    return asInline().uninline(maybecx);
+}
+
+JS_ALWAYS_INLINE JSFlatString *
+JSString::ensureFlat(JSContext *cx)
+{
+    return isFlat()
+           ? &asFlat()
+           : isDependent()
+             ? asDependent().undepend(cx)
+             : asRope().flatten(cx);
+}
+
 inline void
 JSString::writeBarrierPre(JSString *str)
 {
@@ -171,14 +206,15 @@ JSRope::init(JSString *left, JSString *right, size_t length)
 
 template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSRope *
-JSRope::new_(JSContext *cx,
+JSRope::new_(js::ThreadSafeContext *tcx,
              typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
              typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
              size_t length)
 {
-    if (!validateLength(cx, length))
+    JSContext *cxIfCanGC = allowGC ? tcx->toJSContext() : NULL;
+    if (!validateLength(cxIfCanGC, length))
         return NULL;
-    JSRope *str = (JSRope *) js_NewGCString<allowGC>(cx);
+    JSRope *str = (JSRope *) tcx->threadsafeNewGCString<allowGC>();
     if (!str)
         return NULL;
     str->init(left, right, length);
@@ -286,13 +322,13 @@ JSStableString::init(const jschar *chars, size_t length)
 
 template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSStableString *
-JSStableString::new_(JSContext *cx, const jschar *chars, size_t length)
+JSStableString::new_(js::ThreadSafeContext *tcx, const jschar *chars, size_t length)
 {
     JS_ASSERT(chars[length] == jschar(0));
 
-    if (!validateLength(cx, length))
+    if (!validateLength(tcx->toJSContext(), length))
         return NULL;
-    JSStableString *str = (JSStableString *)js_NewGCString<allowGC>(cx);
+    JSStableString *str = (JSStableString *)tcx->threadsafeNewGCString<allowGC>();
     if (!str)
         return NULL;
     str->init(chars, length);
@@ -301,9 +337,9 @@ JSStableString::new_(JSContext *cx, const jschar *chars, size_t length)
 
 template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSInlineString *
-JSInlineString::new_(JSContext *cx)
+JSInlineString::new_(js::ThreadSafeContext *tcx)
 {
-    return (JSInlineString *)js_NewGCString<allowGC>(cx);
+    return (JSInlineString *)tcx->threadsafeNewGCString<allowGC>();
 }
 
 JS_ALWAYS_INLINE jschar *
@@ -324,9 +360,9 @@ JSInlineString::resetLength(size_t length)
 
 template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSShortString *
-JSShortString::new_(JSContext *cx)
+JSShortString::new_(js::ThreadSafeContext *tcx)
 {
-    return js_NewGCShortString<allowGC>(cx);
+    return tcx->threadsafeNewGCShortString<allowGC>();
 }
 
 JS_ALWAYS_INLINE void

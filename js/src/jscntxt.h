@@ -338,6 +338,9 @@ class NewObjectCache
     NewObjectCache() { mozilla::PodZero(this); }
     void purge() { mozilla::PodZero(this); }
 
+    /* Remove any cached items keyed on moved objects. */
+    inline void clearNurseryObjects(JSRuntime *rt);
+
     /*
      * Get the entry index for the given lookup, return whether there was a hit
      * on an existing entry.
@@ -450,12 +453,18 @@ class PerThreadData : public js::PerThreadDataFriendFields
 {
     /*
      * Backpointer to the full shared JSRuntime* with which this
-     * thread is associaed.  This is private because accessing the
+     * thread is associated.  This is private because accessing the
      * fields of this runtime can provoke race conditions, so the
      * intention is that access will be mediated through safe
      * functions like |associatedWith()| below.
      */
     JSRuntime *runtime_;
+
+    /*
+     * PerThreadData exist as a tree. Upon destruction, we merge our state
+     * into our parent.
+     */
+    PerThreadData *parent_;
 
   public:
     /*
@@ -488,6 +497,25 @@ class PerThreadData : public js::PerThreadDataFriendFields
      * This points to the most recent Ion activation running on the thread.
      */
     js::ion::IonActivation  *ionActivation;
+
+    /* State used by jsdtoa.cpp. */
+    DtoaState           *dtoaState;
+
+  private:
+    /*
+     * Malloc counter to measure memory pressure for GC scheduling. It runs
+     * from gcMaxMallocBytes down to zero.
+     */
+    ptrdiff_t gcMallocBytes;
+
+  public:
+    inline void resetGCMallocBytes();
+
+    inline void updateMallocCounter(JS::Zone *zone, size_t nbytes);
+
+    bool isTooMuchMalloc() const {
+        return gcMallocBytes <= 0;
+    }
 
     /*
      * asm.js maintains a stack of AsmJSModule activations (see AsmJS.h). This
@@ -525,7 +553,10 @@ class PerThreadData : public js::PerThreadDataFriendFields
      */
     int32_t             suppressGC;
 
-    PerThreadData(JSRuntime *runtime);
+    PerThreadData(JSRuntime *runtime, PerThreadData *parent);
+    ~PerThreadData();
+
+    bool init();
 
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
 };
@@ -1104,13 +1135,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     js::AnalysisPurgeCallback analysisPurgeCallback;
     uint64_t            analysisPurgeTriggerBytes;
 
-  private:
-    /*
-     * Malloc counter to measure memory pressure for GC scheduling. It runs
-     * from gcMaxMallocBytes down to zero.
-     */
-    volatile ptrdiff_t  gcMallocBytes;
-
   public:
     void setNeedsBarrier(bool needs) {
         needsBarrier_ = needs;
@@ -1249,9 +1273,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     js::SourceDataCache sourceDataCache;
     js::EvalCache       evalCache;
 
-    /* State used by jsdtoa.cpp. */
-    DtoaState           *dtoaState;
-
     js::DateTimeInfo    dateTimeInfo;
 
     js::ConservativeGCData conservativeGC;
@@ -1349,7 +1370,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     void setGCMaxMallocBytes(size_t value);
 
-    void resetGCMallocBytes() { gcMallocBytes = ptrdiff_t(gcMaxMallocBytes); }
+    void resetGCMallocBytes() { mainThread.resetGCMallocBytes(); }
 
     /*
      * Call this after allocating memory held by GC things, to update memory
@@ -1365,7 +1386,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     void reportAllocationOverflow() { js_ReportAllocationOverflow(NULL); }
 
     bool isTooMuchMalloc() const {
-        return gcMallocBytes <= 0;
+        return mainThread.isTooMuchMalloc();
     }
 
     /*
@@ -1443,6 +1464,12 @@ struct JSRuntime : public JS::shadow::Runtime,
 #define JS_KEEP_ATOMS(rt)   (rt)->gcKeepAtoms++;
 #define JS_UNKEEP_ATOMS(rt) (rt)->gcKeepAtoms--;
 
+inline void
+js::PerThreadData::resetGCMallocBytes()
+{
+    gcMallocBytes = ptrdiff_t(runtime_->gcMaxMallocBytes);
+}
+
 namespace js {
 
 struct AutoResolving;
@@ -1499,17 +1526,82 @@ FreeOp::free_(void *p)
     js_free(p);
 }
 
+class ForkJoinSlice;
+
+/*
+ * ThreadSafeContext is the base class for both JSContext, the "normal"
+ * sequential context, and ForkJoinSlice, the per-thread parallel context used
+ * in PJS.
+ *
+ * When cast to a ThreadSafeContext, the only usable operations are casting
+ * back to the context from which it came, and generic allocation
+ * operations. These generic versions branch internally based on whether the
+ * underneath context is really a JSContext or a ForkJoinSlice, and are in
+ * general more expensive than using the context directly.
+ *
+ * Thus, ThreadSafeContext should only be used for VM functions that may be
+ * called in both sequential and parallel execution. The most likely class of
+ * VM functions that do these are those that allocate commonly used data
+ * structures, such as concatenating strings and extending elements.
+ */
+struct ThreadSafeContext : js::ContextFriendFields,
+                           public MallocProvider<ThreadSafeContext>
+{
+  public:
+    enum ThreadSafeContextKind {
+        Context_JS,
+        Context_ForkJoin
+    };
+
+  private:
+    ThreadSafeContextKind threadsafeContextKind_;
+
+  public:
+    PerThreadData *perThreadData;
+
+    explicit ThreadSafeContext(JSRuntime *rt, PerThreadData *pt, ThreadSafeContextKind kind);
+
+    /* Returns NULL when not a JSContext. */
+    JSContext *toJSContext();
+
+    /* Returns NULL when not a ForkJoinSlice. */
+    ForkJoinSlice *toForkJoinSlice();
+
+    inline JS::Zone *zone() const;
+    inline void setCompartment(JSCompartment *comp);
+
+    /*
+     * This is a generic GCThing allocation function that branches on whether
+     * the context is a JSContext or a ForkJoinSlice. This is slower than
+     * using the respective GC functions directly if you have the specific
+     * context.
+     *
+     * Currently we will assert if called in parallel with a CanGC. The
+     * InitialHeap is also ignored in parallel mode until such time that the
+     * nursery is integrated with parallel execution.
+     */
+    template <typename T, AllowGC allowGC>
+    inline T *threadsafeNewGCThing(gc::AllocKind kind, size_t thingSize, gc::InitialHeap heap);
+
+    template <AllowGC allowGC>
+    inline JSString *threadsafeNewGCString();
+    template <AllowGC allowGC>
+    inline JSShortString *threadsafeNewGCShortString();
+
+    void *onOutOfMemory(void *p, size_t nbytes);
+    inline void updateMallocCounter(size_t nbytes);
+    void reportAllocationOverflow();
+};
+
 } /* namespace js */
 
-struct JSContext : js::ContextFriendFields,
-                   public mozilla::LinkedListElement<JSContext>,
-                   public js::MallocProvider<JSContext>
+struct JSContext : js::ThreadSafeContext,
+                   public mozilla::LinkedListElement<JSContext>
 {
     explicit JSContext(JSRuntime *rt);
     JSContext *thisDuringConstruction() { return this; }
     ~JSContext();
 
-    inline JS::Zone *zone() const;
     js::PerThreadData &mainThread() { return runtime->mainThread; }
 
   private:
@@ -1532,8 +1624,6 @@ struct JSContext : js::ContextFriendFields,
 
     /* True if generating an error, to prevent runaway recursion. */
     bool                generatingError;
-
-    inline void setCompartment(JSCompartment *comp);
 
     /*
      * "Entering" a compartment changes cx->compartment (which changes
@@ -2376,6 +2466,7 @@ JSBool intrinsic_IsMatrix(JSContext *cx, unsigned argc, Value *vp);
 
 #ifdef DEBUG
 JSBool intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_ParallelSpew(JSContext *cx, unsigned argc, Value *vp);
 #endif
 
 } /* namespace js */
