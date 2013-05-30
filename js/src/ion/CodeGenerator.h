@@ -175,6 +175,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitParSlice(LParSlice *lir);
     bool visitParWriteGuard(LParWriteGuard *lir);
     bool visitParDump(LParDump *lir);
+    bool visitParSpew(LParSpew *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);
     bool visitCallSetElement(LCallSetElement *lir);

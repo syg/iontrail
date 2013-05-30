@@ -169,6 +169,18 @@ ion::ParDumpValue(Value *v)
 #endif
 }
 
+ParallelResult
+ion::ParSpew(ForkJoinSlice *slice, HandleString str)
+{
+    JSLinearString *linear = str->ensureLinear(slice);
+    if (!linear)
+        return TP_RETRY_SEQUENTIALLY;
+
+    Spew(SpewOps, LossyTwoByteCharsToNewLatin1CharsZ(slice, linear->range()).c_str());
+
+    return TP_SUCCESS;
+}
+
 JSObject*
 ion::ParPush(ParPushArgs *args)
 {

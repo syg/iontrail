@@ -22,6 +22,7 @@ bool ParCheckOverRecursed(ForkJoinSlice *slice);
 bool ParCheckInterrupt(ForkJoinSlice *context);
 
 void ParDumpValue(Value *v);
+ParallelResult ParSpew(ForkJoinSlice *slice, HandleString str);
 
 // We pass the arguments to ParPush in a structure because, in code
 // gen, it is convenient to store them on the stack to avoid

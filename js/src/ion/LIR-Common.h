@@ -4247,6 +4247,20 @@ class LParDump : public LCallInstructionHelper<0, BOX_PIECES, 0>
     }
 };
 
+class LParSpew : public LCallInstructionHelper<0, 1, 0>
+{
+  public:
+    LIR_HEADER(ParSpew);
+
+    LParSpew(const LAllocation &string) {
+        setOperand(0, string);
+    }
+
+    const LAllocation *string() {
+        return getOperand(0);
+    }
+};
+
 // Guard that a value is in a TypeSet.
 class LTypeBarrier : public LInstructionHelper<0, BOX_PIECES, 1>
 {

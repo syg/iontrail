@@ -1189,6 +1189,16 @@ CodeGenerator::visitParDump(LParDump *lir)
     return true;
 }
 
+typedef ParallelResult (*ParallelSpewFn)(ForkJoinSlice *, HandleString);
+static const VMFunction ParallelSpewInfo = FunctionInfo<ParallelSpewFn>(ParSpew);
+
+bool
+CodeGenerator::visitParSpew(LParSpew *lir)
+{
+    pushArg(ToRegister(lir->string()));
+    return callVM(ParallelSpewInfo, lir);
+}
+
 bool
 CodeGenerator::visitTypeBarrier(LTypeBarrier *lir)
 {

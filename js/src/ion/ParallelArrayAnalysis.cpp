@@ -251,6 +251,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ParNewCallObject)
     SAFE_OP(ParLambda)
     SAFE_OP(ParDump)
+    SAFE_OP(ParSpew)
     SAFE_OP(ParBailout)
     UNSAFE_OP(ArrayConcat)
     UNSAFE_OP(GetDOMProperty)

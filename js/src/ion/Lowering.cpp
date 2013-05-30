@@ -1697,6 +1697,13 @@ LIRGenerator::visitParDump(MParDump *ins)
 }
 
 bool
+LIRGenerator::visitParSpew(MParSpew *ins)
+{
+    LParSpew *lir = new LParSpew(useFixed(ins->string(), CallTempReg0));
+    return add(lir) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitParNew(MParNew *ins)
 {
     LParNew *lir = new LParNew(useRegister(ins->parSlice()),

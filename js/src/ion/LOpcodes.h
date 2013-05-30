@@ -139,6 +139,7 @@
     _(GuardClass)                   \
     _(ParWriteGuard)                \
     _(ParDump)                      \
+    _(ParSpew)                      \
     _(TypeBarrier)                  \
     _(MonitorTypes)                 \
     _(InitializedLength)            \
