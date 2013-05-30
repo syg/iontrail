@@ -169,7 +169,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(ToDouble)
     SAFE_OP(ToInt32)
     SAFE_OP(TruncateToInt32)
-    SAFE_OP(ToString)
+    CUSTOM_OP(ToString)
     SAFE_OP(NewSlots)
     CUSTOM_OP(NewArray)
     CUSTOM_OP(NewObject)
@@ -623,6 +623,13 @@ bool
 ParallelArrayVisitor::visitConcat(MConcat *ins)
 {
     return replace(ins, MParConcat::New(parSlice(), ins));
+}
+
+bool
+ParallelArrayVisitor::visitToString(MToString *ins)
+{
+    MIRType inputType = ins->input()->type();
+    return inputType == MIRType_Int32 || inputType == MIRType_Double;
 }
 
 bool

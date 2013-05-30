@@ -51,7 +51,7 @@ class JSString;
  */
 template <js::AllowGC allowGC>
 extern JSString *
-js_NumberToString(JSContext *cx, double d);
+js_NumberToString(js::ThreadSafeContext *cx, double d);
 
 namespace js {
 

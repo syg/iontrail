@@ -498,6 +498,9 @@ class PerThreadData : public js::PerThreadDataFriendFields
      */
     js::ion::IonActivation  *ionActivation;
 
+    /* State used by jsdtoa.cpp. */
+    DtoaState           *dtoaState;
+
   private:
     /*
      * Malloc counter to measure memory pressure for GC scheduling. It runs
@@ -552,6 +555,8 @@ class PerThreadData : public js::PerThreadDataFriendFields
 
     PerThreadData(JSRuntime *runtime, PerThreadData *parent);
     ~PerThreadData();
+
+    bool init();
 
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
 };
@@ -1267,9 +1272,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     js::NativeIterCache nativeIterCache;
     js::SourceDataCache sourceDataCache;
     js::EvalCache       evalCache;
-
-    /* State used by jsdtoa.cpp. */
-    DtoaState           *dtoaState;
 
     js::DateTimeInfo    dateTimeInfo;
 

@@ -566,7 +566,7 @@ class JSStableString : public JSFlatString
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSStableString *new_(JSContext *cx, const jschar *chars, size_t length);
+    static inline JSStableString *new_(js::ThreadSafeContext *cx, const jschar *chars, size_t length);
 
     JS_ALWAYS_INLINE
     JS::StableCharPtr chars() const {
@@ -663,7 +663,7 @@ class JSInlineString : public JSFlatString
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSInlineString *new_(JSContext *cx);
+    static inline JSInlineString *new_(js::ThreadSafeContext *tcx);
 
     inline jschar *init(size_t length);
 
@@ -699,7 +699,7 @@ class JSShortString : public JSInlineString
 
   public:
     template <js::AllowGC allowGC>
-    static inline JSShortString *new_(JSContext *cx);
+    static inline JSShortString *new_(js::ThreadSafeContext *tcx);
 
     static const size_t MAX_SHORT_LENGTH = JSString::NUM_INLINE_CHARS +
                                            INLINE_EXTENSION_CHARS
