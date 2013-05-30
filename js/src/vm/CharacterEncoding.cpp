@@ -14,11 +14,11 @@
 using namespace JS;
 
 Latin1CharsZ
-JS::LossyTwoByteCharsToNewLatin1CharsZ(JSContext *cx, TwoByteChars tbchars)
+JS::LossyTwoByteCharsToNewLatin1CharsZ(js::ThreadSafeContext *tcx, TwoByteChars tbchars)
 {
-    JS_ASSERT(cx);
+    JS_ASSERT(tcx);
     size_t len = tbchars.length();
-    unsigned char *latin1 = cx->pod_malloc<unsigned char>(len + 1);
+    unsigned char *latin1 = tcx->pod_malloc<unsigned char>(len + 1);
     if (!latin1)
         return Latin1CharsZ();
     for (size_t i = 0; i < len; ++i)

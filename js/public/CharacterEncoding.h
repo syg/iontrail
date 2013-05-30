@@ -13,6 +13,8 @@
 
 #include "jspubtd.h"
 
+namespace js { class ThreadSafeContext; }
+
 namespace JS {
 
 /*
@@ -142,7 +144,7 @@ class TwoByteCharsZ : public mozilla::RangedPtr<jschar>
  * This method cannot trigger GC.
  */
 extern Latin1CharsZ
-LossyTwoByteCharsToNewLatin1CharsZ(JSContext *cx, TwoByteChars tbchars);
+LossyTwoByteCharsToNewLatin1CharsZ(js::ThreadSafeContext *tcx, TwoByteChars tbchars);
 
 extern UTF8CharsZ
 TwoByteCharsToNewUTF8CharsZ(JSContext *cx, TwoByteChars tbchars);

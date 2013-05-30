@@ -2456,6 +2456,7 @@ JSBool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 
 #ifdef DEBUG
 JSBool intrinsic_Dump(JSContext *cx, unsigned argc, Value *vp);
+JSBool intrinsic_ParallelSpew(JSContext *cx, unsigned argc, Value *vp);
 #endif
 
 } /* namespace js */
