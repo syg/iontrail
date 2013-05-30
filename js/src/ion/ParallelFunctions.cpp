@@ -217,9 +217,6 @@ ion::ParIntToString(ForkJoinSlice *slice, int i, MutableHandleString out)
 ParallelResult
 ion::ParDoubleToString(ForkJoinSlice *slice, double d, MutableHandleString out)
 {
-    if (d == 32.5) {
-        printf("here\n");
-    }
     JSString *str = js_NumberToString<NoGC>(slice, d);
     if (!str)
         return TP_RETRY_SEQUENTIALLY;
