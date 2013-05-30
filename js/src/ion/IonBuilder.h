@@ -359,10 +359,6 @@ class IonBuilder : public MIRGenerator
     MInstruction *getTypedArrayLength(MDefinition *obj);
     MInstruction *getTypedArrayElements(MDefinition *obj);
 
-    // Parallel execution helpers.
-    template <size_t X>
-    void addParallelizable(MParallelizableAryInstruction<X> *ins);
-
     bool jsop_add(MDefinition *left, MDefinition *right);
     bool jsop_bitnot();
     bool jsop_bitop(JSOp op);
@@ -410,7 +406,6 @@ class IonBuilder : public MIRGenerator
     bool jsop_arguments_length();
     bool jsop_arguments_getelem();
     bool jsop_arguments_setelem(MDefinition *object, MDefinition *index, MDefinition *value);
-    bool jsop_rest();
     bool jsop_not();
     bool jsop_getprop(HandlePropertyName name);
     bool jsop_setprop(HandlePropertyName name);

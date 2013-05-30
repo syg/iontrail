@@ -68,7 +68,7 @@ class ParallelArrayVisitor : public MInstructionVisitor
     JSContext *cx_;
     MIRGraph &graph_;
     bool unsafe_;
-    MDefinition *forkJoinSlice_;
+    MDefinition *parSlice_;
 
     bool insertWriteGuard(MInstruction *writeInstruction,
                           MDefinition *valueBeingWritten);
@@ -95,15 +95,15 @@ class ParallelArrayVisitor : public MInstructionVisitor
       : cx_(cx),
         graph_(graph),
         unsafe_(false),
-        forkJoinSlice_(NULL)
+        parSlice_(NULL)
     { }
 
     void clearUnsafe() { unsafe_ = false; }
     bool unsafe() { return unsafe_; }
-    MDefinition *forkJoinSlice() {
-        if (!forkJoinSlice_)
-            forkJoinSlice_ = graph_.forkJoinSlice();
-        return forkJoinSlice_;
+    MDefinition *parSlice() {
+        if (!parSlice_)
+            parSlice_ = graph_.parSlice();
+        return parSlice_;
     }
 
     bool convertToBailout(MBasicBlock *block, MInstruction *ins);
@@ -172,9 +172,9 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(NewSlots)
     CUSTOM_OP(NewArray)
     CUSTOM_OP(NewObject)
-    SAFE_OP(NewCallObject)
-    SAFE_OP(NewParallelArray)
-    SAFE_OP(NewMatrix)
+    CUSTOM_OP(NewCallObject)
+    CUSTOM_OP(NewParallelArray)
+    CUSTOM_OP(NewMatrix)
     UNSAFE_OP(InitElem)
     UNSAFE_OP(InitProp)
     SAFE_OP(Start)
@@ -239,13 +239,15 @@ class ParallelArrayVisitor : public MInstructionVisitor
     SAFE_OP(StringLength)
     UNSAFE_OP(ArgumentsLength)
     UNSAFE_OP(GetArgument)
-    SAFE_OP(Rest)
     SAFE_OP(Floor)
     SAFE_OP(Round)
     UNSAFE_OP(InstanceOf)
     CUSTOM_OP(InterruptCheck)
-    SAFE_OP(ForkJoinSlice)
+    SAFE_OP(ParSlice)
+    SAFE_OP(ParNew)
     SAFE_OP(ParNewDenseArray)
+    SAFE_OP(ParNewCallObject)
+    SAFE_OP(ParLambda)
     SAFE_OP(ParDump)
     SAFE_OP(ParBailout)
     UNSAFE_OP(ArrayConcat)
@@ -553,33 +555,77 @@ ParallelArrayVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
 // These allocations will take place using per-helper-thread arenas.
 
 bool
+ParallelArrayVisitor::visitNewParallelArray(MNewParallelArray *ins)
+{
+    MParNew *parNew = new MParNew(parSlice(), ins->templateObject());
+    replace(ins, parNew);
+    return true;
+}
+
+bool
+ParallelArrayVisitor::visitNewMatrix(MNewMatrix *ins)
+{
+    MParNew *parNew = new MParNew(parSlice(), ins->templateObject());
+    replace(ins, parNew);
+    return true;
+}
+
+bool
+ParallelArrayVisitor::visitNewCallObject(MNewCallObject *ins)
+{
+    // fast path: replace with ParNewCallObject op
+    MParNewCallObject *parNewCallObjectInstruction =
+        MParNewCallObject::New(parSlice(), ins);
+    replace(ins, parNewCallObjectInstruction);
+    return true;
+}
+
+bool
 ParallelArrayVisitor::visitLambda(MLambda *ins)
 {
     if (ins->fun()->hasSingletonType() ||
         types::UseNewTypeForClone(ins->fun()))
     {
+        // slow path: bail on parallel execution.
         return markUnsafe();
     }
+
+    // fast path: replace with ParLambda op
+    MParLambda *parLambdaInstruction = MParLambda::New(parSlice(), ins);
+    replace(ins, parLambdaInstruction);
     return true;
 }
 
 bool
-ParallelArrayVisitor::visitNewObject(MNewObject *ins)
+ParallelArrayVisitor::visitNewObject(MNewObject *newInstruction)
 {
-    if (ins->shouldUseVM()) {
-        SpewMIR(ins, "should use VM");
+    if (newInstruction->shouldUseVM()) {
+        SpewMIR(newInstruction, "should use VM");
         return markUnsafe();
     }
-    return true;
+
+    return replaceWithParNew(newInstruction,
+                             newInstruction->templateObject());
 }
 
 bool
-ParallelArrayVisitor::visitNewArray(MNewArray *ins)
+ParallelArrayVisitor::visitNewArray(MNewArray *newInstruction)
 {
-    if (ins->shouldUseVM()) {
-        SpewMIR(ins, "should use VM");
+    if (newInstruction->shouldUseVM()) {
+        SpewMIR(newInstruction, "should use VM");
         return markUnsafe();
     }
+
+    return replaceWithParNew(newInstruction,
+                             newInstruction->templateObject());
+}
+
+bool
+ParallelArrayVisitor::replaceWithParNew(MInstruction *newInstruction,
+                                        JSObject *templateObject)
+{
+    MParNew *parNewInstruction = new MParNew(parSlice(), templateObject);
+    replace(newInstruction, parNewInstruction);
     return true;
 }
 
@@ -662,22 +708,16 @@ ParallelArrayVisitor::insertWriteGuard(MInstruction *writeInstruction,
         object = object->toUnbox()->input();
 
     switch (object->op()) {
-      case MDefinition::Op_NewObject:
-      case MDefinition::Op_NewArray:
-        // If these operations were parallelized, then they will always
-        // creating something thread-local, omit the guard.
-        if (object->isParallelized()) {
-            SpewMIR(writeInstruction, "write to parallelized %s prop does not require guard",
-                    object->opName());
-            return true;
-        }
-        break;
+      case MDefinition::Op_ParNew:
+        // MParNew will always be creating something thread-local, omit the guard
+        SpewMIR(writeInstruction, "write to ParNew prop does not require guard");
+        return true;
       default:
         break;
     }
 
     MBasicBlock *block = writeInstruction->block();
-    MParWriteGuard *writeGuard = MParWriteGuard::New(forkJoinSlice(), object);
+    MParWriteGuard *writeGuard = MParWriteGuard::New(parSlice(), object);
     block->insertBefore(writeInstruction, writeGuard);
     writeGuard->adjustInputs(writeGuard);
     return true;
@@ -774,14 +814,14 @@ ParallelArrayVisitor::visitCall(MCall *ins)
 bool
 ParallelArrayVisitor::visitCheckOverRecursed(MCheckOverRecursed *ins)
 {
-    MParCheckOverRecursed *replacement = new MParCheckOverRecursed(forkJoinSlice());
+    MParCheckOverRecursed *replacement = new MParCheckOverRecursed(parSlice());
     return replace(ins, replacement);
 }
 
 bool
 ParallelArrayVisitor::visitInterruptCheck(MInterruptCheck *ins)
 {
-    MParCheckInterrupt *replacement = new MParCheckInterrupt(forkJoinSlice());
+    MParCheckInterrupt *replacement = new MParCheckInterrupt(parSlice());
     return replace(ins, replacement);
 }
 

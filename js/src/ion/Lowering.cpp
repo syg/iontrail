@@ -116,7 +116,7 @@ bool
 LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
 {
     LParCheckOverRecursed *lir = new LParCheckOverRecursed(
-        useRegister(ins->forkJoinSlice()),
+        useRegister(ins->parSlice()),
         temp());
     if (!add(lir, ins))
         return false;
@@ -159,28 +159,28 @@ bool
 LIRGenerator::visitNewParallelArray(MNewParallelArray *ins)
 {
     LNewParallelArray *lir = new LNewParallelArray();
-    return defineParallelizable(lir, ins) && assignSafepoint(lir, ins);
+    return define(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
 LIRGenerator::visitNewMatrix(MNewMatrix *ins)
 {
     LNewMatrix *lir = new LNewMatrix();
-    return defineParallelizable(lir, ins) && assignSafepoint(lir, ins);
+    return define(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
 LIRGenerator::visitNewArray(MNewArray *ins)
 {
     LNewArray *lir = new LNewArray();
-    return defineParallelizable(lir, ins) && assignSafepoint(lir, ins);
+    return define(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
 LIRGenerator::visitNewObject(MNewObject *ins)
 {
     LNewObject *lir = new LNewObject();
-    return defineParallelizable(lir, ins) && assignSafepoint(lir, ins);
+    return define(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -200,7 +200,32 @@ LIRGenerator::visitNewCallObject(MNewCallObject *ins)
         slots = LConstantIndex::Bogus();
 
     LNewCallObject *lir = new LNewCallObject(slots);
-    return defineParallelizable(lir, ins) && assignSafepoint(lir, ins);
+    if (!define(lir, ins))
+        return false;
+
+    if (!assignSafepoint(lir, ins))
+        return false;
+
+    return true;
+}
+
+bool
+LIRGenerator::visitParNewCallObject(MParNewCallObject *ins)
+{
+    const LAllocation &parThreadContext = useRegister(ins->parSlice());
+    const LDefinition &temp1 = temp();
+    const LDefinition &temp2 = temp();
+
+    LParNewCallObject *lir;
+    if (ins->slots()->type() == MIRType_Slots) {
+        const LAllocation &slots = useRegister(ins->slots());
+        lir = LParNewCallObject::NewWithSlots(parThreadContext, slots,
+                                              temp1, temp2);
+    } else {
+        lir = LParNewCallObject::NewSansSlots(parThreadContext, temp1, temp2);
+    }
+
+    return define(lir, ins);
 }
 
 bool
@@ -1540,7 +1565,18 @@ LIRGenerator::visitLambda(MLambda *ins)
     }
 
     LLambda *lir = new LLambda(useRegister(ins->scopeChain()));
-    return defineParallelizable(lir, ins) && assignSafepoint(lir, ins);
+    return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitParLambda(MParLambda *ins)
+{
+    JS_ASSERT(!ins->fun()->hasSingletonType());
+    JS_ASSERT(!types::UseNewTypeForClone(ins->fun()));
+    LParLambda *lir = new LParLambda(useRegister(ins->parSlice()),
+                                     useRegister(ins->scopeChain()),
+                                     temp(), temp());
+    return define(lir, ins);
 }
 
 bool
@@ -1601,16 +1637,16 @@ LIRGenerator::visitFunctionEnvironment(MFunctionEnvironment *ins)
 }
 
 bool
-LIRGenerator::visitForkJoinSlice(MForkJoinSlice *ins)
+LIRGenerator::visitParSlice(MParSlice *ins)
 {
-    LForkJoinSlice *lir = new LForkJoinSlice(tempFixed(CallTempReg0));
+    LParSlice *lir = new LParSlice(tempFixed(CallTempReg0));
     return defineReturn(lir, ins);
 }
 
 bool
 LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
 {
-    LParWriteGuard *lir = new LParWriteGuard(useFixed(ins->forkJoinSlice(), CallTempReg0),
+    LParWriteGuard *lir = new LParWriteGuard(useFixed(ins->parSlice(), CallTempReg0),
                                              useFixed(ins->object(), CallTempReg1),
                                              tempFixed(CallTempReg2));
     lir->setMir(ins);
@@ -1621,7 +1657,7 @@ bool
 LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
 {
     LParCheckInterrupt *lir = new LParCheckInterrupt(
-        useRegister(ins->forkJoinSlice()),
+        useRegister(ins->parSlice()),
         temp());
     if (!add(lir, ins))
         return false;
@@ -1639,10 +1675,18 @@ LIRGenerator::visitParDump(MParDump *ins)
 }
 
 bool
+LIRGenerator::visitParNew(MParNew *ins)
+{
+    LParNew *lir = new LParNew(useRegister(ins->parSlice()),
+                               temp(), temp());
+    return define(lir, ins);
+}
+
+bool
 LIRGenerator::visitParNewDenseArray(MParNewDenseArray *ins)
 {
     LParNewDenseArray *lir = new LParNewDenseArray(
-        useFixed(ins->forkJoinSlice(), CallTempReg0),
+        useFixed(ins->parSlice(), CallTempReg0),
         useFixed(ins->length(), CallTempReg1),
         tempFixed(CallTempReg2),
         tempFixed(CallTempReg3),
@@ -2407,18 +2451,6 @@ LIRGenerator::visitGetArgument(MGetArgument *ins)
 {
     LGetArgument *lir = new LGetArgument(useRegisterOrConstant(ins->index()));
     return defineBox(lir, ins);
-}
-
-bool
-LIRGenerator::visitRest(MRest *ins)
-{
-    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
-
-    LRest *lir = new LRest(useFixed(ins->numActuals(), CallTempReg0),
-                           tempFixed(CallTempReg1),
-                           tempFixed(CallTempReg2),
-                           tempFixed(CallTempReg3));
-    return defineParallelizableReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool

@@ -134,9 +134,6 @@ class LAllocation : public TempObject
         return (Kind)((bits_ >> KIND_SHIFT) & KIND_MASK);
     }
 
-    bool isInvalid() const {
-        return bits_ == 0;
-    }
     bool isUse() const {
         return kind() == USE;
     }
@@ -671,16 +668,6 @@ class LInstruction
         return false;
     }
 
-#if 0
-    // Implemented by LParallelizableInstructionHelper.
-    virtual LAllocation *forkJoinSlice() {
-        return NULL;
-    }
-    virtual LDefinition *getParallelAllocTemp(size_t index) {
-        return NULL;
-    }
-#endif
-
     virtual void print(FILE *fp);
     static void printName(FILE *fp, Opcode op);
     virtual void printName(FILE *fp);
@@ -862,70 +849,6 @@ class LCallInstructionHelper : public LInstructionHelper<Defs, Operands, Temps>
 {
   public:
     virtual bool isCall() const {
-        return true;
-    }
-};
-
-template <size_t Defs, size_t Operands, size_t Temps>
-class LParallelizableInstructionHelper
-  : public LInstructionHelper<Defs, Operands + 1, Temps>
-{
-    typedef LInstructionHelper<Defs, Operands + 1, Temps> LInsHelper;
-
-    static const size_t SliceIndex = Operands;
-
-  public:
-    void setForkJoinSlice(const LAllocation &slice) {
-        LInsHelper::setOperand(SliceIndex, slice);
-    }
-
-    LAllocation *forkJoinSlice() {
-        return LInsHelper::getOperand(SliceIndex);
-    }
-
-    virtual bool isAlloc() const {
-        return false;
-    }
-
-    void setParallelAllocTemps(const LDefinition &temp0, const LDefinition &temp1) {
-        JS_ASSERT(isAlloc());
-        // The parallel allocation temps should always be the last 2.
-        LInsHelper::setTemp(Temps - 1, temp0);
-        LInsHelper::setTemp(Temps - 2, temp1);
-    }
-
-    LDefinition *getParallelAllocTemp(size_t index) {
-        JS_ASSERT(isAlloc());
-        return LInsHelper::getTemp(Temps - (index + 1));
-    }
-};
-
-template <size_t Defs, size_t Operands, size_t Temps>
-class LParallelizableAllocInstructionHelper
-  : public LParallelizableInstructionHelper<Defs, Operands, (Temps < 2 ? 2 : Temps)>
-{
-  public:
-    bool isAlloc() const {
-        return true;
-    }
-};
-
-template <size_t Defs, size_t Operands, size_t Temps>
-class LParallelizableCallInstructionHelper
-  : public LParallelizableInstructionHelper<Defs, Operands, Temps>
-{
-  public:
-    bool isCall() const {
-        return true;
-    }
-};
-
-template <size_t Defs, size_t Operands, size_t Temps>
-class LParallelizableCallAllocInstructionHelper
-  : public LParallelizableAllocInstructionHelper<Defs, Operands, Temps>
-{
-  public:
-    bool isCall() const {
         return true;
     }
 };

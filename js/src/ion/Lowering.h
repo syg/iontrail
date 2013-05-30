@@ -73,8 +73,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     // Free argument slots following a function call.
     void freeArguments(uint32_t argc);
 
-    void parallelizeInstruction(LInstruction *ins);
-
   public:
     bool visitInstruction(MInstruction *ins);
     bool visitBlock(MBasicBlock *block);
@@ -93,6 +91,8 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitNewDeclEnvObject(MNewDeclEnvObject *ins);
     bool visitNewCallObject(MNewCallObject *ins);
     bool visitNewStringObject(MNewStringObject *ins);
+    bool visitParNew(MParNew *ins);
+    bool visitParNewCallObject(MParNewCallObject *ins);
     bool visitParNewDenseArray(MParNewDenseArray *ins);
     bool visitParBailout(MParBailout *ins);
     bool visitInitElem(MInitElem *ins);
@@ -157,6 +157,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitRegExp(MRegExp *ins);
     bool visitRegExpTest(MRegExpTest *ins);
     bool visitLambda(MLambda *ins);
+    bool visitParLambda(MParLambda *ins);
     bool visitImplicitThis(MImplicitThis *ins);
     bool visitSlots(MSlots *ins);
     bool visitElements(MElements *ins);
@@ -164,7 +165,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitConvertElementsToDoubles(MConvertElementsToDoubles *ins);
     bool visitLoadSlot(MLoadSlot *ins);
     bool visitFunctionEnvironment(MFunctionEnvironment *ins);
-    bool visitForkJoinSlice(MForkJoinSlice *ins);
+    bool visitParSlice(MParSlice *ins);
     bool visitParWriteGuard(MParWriteGuard *ins);
     bool visitParCheckInterrupt(MParCheckInterrupt *ins);
     bool visitParDump(MParDump *ins);
@@ -218,7 +219,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitStringLength(MStringLength *ins);
     bool visitArgumentsLength(MArgumentsLength *ins);
     bool visitGetArgument(MGetArgument *ins);
-    bool visitRest(MRest *ins);
     bool visitThrow(MThrow *ins);
     bool visitIn(MIn *ins);
     bool visitInArray(MInArray *ins);

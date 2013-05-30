@@ -154,7 +154,6 @@ namespace ion {
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
     _(GetArgument)                                                          \
-    _(Rest)                                                                 \
     _(Floor)                                                                \
     _(Round)                                                                \
     _(In)                                                                   \
@@ -183,9 +182,12 @@ namespace ion {
     _(AsmJSCall)                                                            \
     _(AsmJSCheckOverRecursed)                                               \
     _(ParCheckOverRecursed)                                                 \
+    _(ParNewCallObject)                                                     \
+    _(ParNew)                                                               \
     _(ParNewDenseArray)                                                     \
     _(ParBailout)                                                           \
-    _(ForkJoinSlice)                                                        \
+    _(ParLambda)                                                            \
+    _(ParSlice)                                                             \
     _(ParWriteGuard)                                                        \
     _(ParDump)                                                              \
     _(ParCheckInterrupt)
