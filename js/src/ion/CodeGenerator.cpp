@@ -607,6 +607,43 @@ CodeGenerator::visitIntToString(LIntToString *lir)
     return true;
 }
 
+typedef JSString *(*DoubleToStringFn)(ThreadSafeContext *, double);
+static const VMFunction DoubleToStringInfo =
+    FunctionInfo<DoubleToStringFn>(js_NumberToString<CanGC>);
+
+bool
+CodeGenerator::visitDoubleToString(LDoubleToString *lir)
+{
+    FloatRegister input = ToFloatRegister(lir->input());
+    Register temp = ToRegister(lir->tempInt());
+    Register output = ToRegister(lir->output());
+
+    OutOfLineCode *ool;
+    switch (gen->info().executionMode()) {
+      case SequentialExecution:
+        ool = oolCallVM(DoubleToStringInfo, lir, (ArgList(), input),
+                        StoreRegisterTo(output));
+        break;
+      case ParallelExecution:
+        JS_NOT_REACHED("NYI: Parallel DoubleToString");
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+    if (!ool)
+        return false;
+
+    masm.convertDoubleToInt32(input, temp, ool->entry(), true);
+
+    masm.branch32(Assembler::AboveOrEqual, temp, Imm32(StaticStrings::INT_STATIC_LIMIT),
+                  ool->entry());
+
+    masm.movePtr(ImmWord(&gen->compartment->rt->staticStrings.intStaticTable), output);
+    masm.loadPtr(BaseIndex(output, temp, ScalePointer), output);
+
+    masm.bind(ool->rejoin());
+    return true;
+}
+
 typedef JSObject *(*CloneRegExpObjectFn)(JSContext *, JSObject *, JSObject *);
 static const VMFunction CloneRegExpObjectInfo =
     FunctionInfo<CloneRegExpObjectFn>(CloneRegExpObject);
