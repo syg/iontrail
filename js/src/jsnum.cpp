@@ -1224,11 +1224,6 @@ js_NumberToStringWithBase(ThreadSafeContext *tcx, double d, int base)
         return NULL;
 
     JSCompartment *c = tcx->compartment;
-
-    /*
-     * We will only cache dtoa results if we have a JSContext, as it is
-     * racy.
-     */
     JSContext *cx = tcx->toJSContext();
 
     int32_t i;
@@ -1265,6 +1260,11 @@ js_NumberToStringWithBase(ThreadSafeContext *tcx, double d, int base)
     }
 
     JSFlatString *s = js_NewStringCopyZ<allowGC>(tcx, numStr);
+
+    /*
+     * We will only cache dtoa results if we have a JSContext, as it is
+     * racy.
+     */
     if (cx)
         c->dtoaCache.cache(base, d, s);
     return s;

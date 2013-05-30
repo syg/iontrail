@@ -3232,8 +3232,10 @@ IonBuilder::jsop_binary(JSOp op, MDefinition *left, MDefinition *right)
     // and at least one is a string.
     if (op == JSOP_ADD &&
         (left->type() == MIRType_String || right->type() == MIRType_String) &&
-        (left->type() == MIRType_String || left->type() == MIRType_Int32) &&
-        (right->type() == MIRType_String || right->type() == MIRType_Int32))
+        (left->type() == MIRType_String ||
+         left->type() == MIRType_Int32 || left->type() == MIRType_Double) &&
+        (right->type() == MIRType_String ||
+         right->type() == MIRType_Int32 || right->type() == MIRType_Double))
     {
         MConcat *ins = MConcat::New(left, right);
         current->add(ins);

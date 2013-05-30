@@ -629,7 +629,9 @@ bool
 ParallelArrayVisitor::visitToString(MToString *ins)
 {
     MIRType inputType = ins->input()->type();
-    return inputType == MIRType_Int32 || inputType == MIRType_Double;
+    if (inputType != MIRType_Int32 && inputType != MIRType_Double)
+        return markUnsafe();
+    return true;
 }
 
 bool

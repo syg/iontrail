@@ -611,6 +611,10 @@ typedef JSString *(*DoubleToStringFn)(ThreadSafeContext *, double);
 static const VMFunction DoubleToStringInfo =
     FunctionInfo<DoubleToStringFn>(js_NumberToString<CanGC>);
 
+typedef ParallelResult (*ParallelDoubleToStringFn)(ForkJoinSlice *, double, MutableHandleString);
+static const VMFunction ParallelDoubleToStringInfo =
+    FunctionInfo<ParallelDoubleToStringFn>(ParDoubleToString);
+
 bool
 CodeGenerator::visitDoubleToString(LDoubleToString *lir)
 {
@@ -625,7 +629,9 @@ CodeGenerator::visitDoubleToString(LDoubleToString *lir)
                         StoreRegisterTo(output));
         break;
       case ParallelExecution:
-        JS_NOT_REACHED("NYI: Parallel DoubleToString");
+        ool = oolCallVM(ParallelDoubleToStringInfo, lir, (ArgList(), input),
+                        StoreValueTo(AnyRegister(output)));
+        break;
       default:
         JS_NOT_REACHED("No such execution mode");
     }
@@ -633,7 +639,6 @@ CodeGenerator::visitDoubleToString(LDoubleToString *lir)
         return false;
 
     masm.convertDoubleToInt32(input, temp, ool->entry(), true);
-
     masm.branch32(Assembler::AboveOrEqual, temp, Imm32(StaticStrings::INT_STATIC_LIMIT),
                   ool->entry());
 

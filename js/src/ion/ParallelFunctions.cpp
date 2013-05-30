@@ -214,6 +214,19 @@ ion::ParIntToString(ForkJoinSlice *slice, int i, MutableHandleString out)
     return TP_SUCCESS;
 }
 
+ParallelResult
+ion::ParDoubleToString(ForkJoinSlice *slice, double d, MutableHandleString out)
+{
+    if (d == 32.5) {
+        printf("here\n");
+    }
+    JSString *str = js_NumberToString<NoGC>(slice, d);
+    if (!str)
+        return TP_RETRY_SEQUENTIALLY;
+    out.set(str);
+    return TP_SUCCESS;
+}
+
 #define PAR_RELATIONAL_OP(OP, EXPECTED)                                         \
 do {                                                                            \
     /* Optimize for two int-tagged operands (typical loop control). */          \
