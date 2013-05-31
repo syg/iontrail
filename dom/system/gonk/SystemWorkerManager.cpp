@@ -32,6 +32,7 @@
 #include "mozilla/ipc/Ril.h"
 #include "nsIObserverService.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "nsRadioInterfaceLayer.h"
@@ -154,7 +155,7 @@ ConnectWorkerToRIL::RunTask(JSContext *aCx)
   // communication.
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
   NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
-  JSObject *workerGlobal = JS_GetGlobalObject(aCx);
+  JSObject *workerGlobal = JS_GetGlobalForScopeChain(aCx);
 
   if (!JS_DefineProperty(aCx, workerGlobal, "CLIENT_ID",
                          INT_TO_JSVAL(mClientId), nullptr, nullptr, 0)) {
@@ -260,7 +261,7 @@ ConnectWorkerToNetd::RunTask(JSContext *aCx)
   // communication.
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
   NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
-  JSObject *workerGlobal = JS_GetGlobalObject(aCx);
+  JSObject *workerGlobal = JS_GetGlobalForScopeChain(aCx);
   return !!JS_DefineFunction(aCx, workerGlobal, "postNetdCommand",
                              DoNetdCommand, 1, 0);
 }
@@ -299,7 +300,7 @@ private:
 bool
 NetdReceiver::DispatchNetdEvent::RunTask(JSContext *aCx)
 {
-  JSObject *obj = JS_GetGlobalObject(aCx);
+  JSObject *obj = JS_GetGlobalForScopeChain(aCx);
 
   JSObject *array = JS_NewUint8Array(aCx, mMessage->mSize);
   if (!array) {
@@ -486,7 +487,6 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
     return NS_ERROR_FAILURE;
   }
 
-  JSAutoRequest ar(aCx);
   JSAutoCompartment ac(aCx, JSVAL_TO_OBJECT(aWorker));
 
   WorkerCrossThreadDispatcher *wctd =
@@ -519,7 +519,6 @@ SystemWorkerManager::InitNetd(JSContext *cx)
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(workerval), NS_ERROR_UNEXPECTED);
 
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, JSVAL_TO_OBJECT(workerval));
 
   WorkerCrossThreadDispatcher *wctd =

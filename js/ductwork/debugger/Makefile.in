@@ -17,10 +17,6 @@ LIBXUL_LIBRARY = 1
 EXPORT_LIBRARY = 1
 IS_COMPONENT = 1
 
-CPPSRCS = \
-  JSDebugger.cpp \
-  $(NULL)
-
 EXTRA_DSO_LDOPTS += \
   $(MOZ_COMPONENT_LIBS) \
   $(MOZ_JS_LIBS) \
@@ -29,7 +25,5 @@ EXTRA_DSO_LDOPTS += \
 EXTRA_JS_MODULES = \
   jsdebugger.jsm \
   $(NULL)
-
-DISABLED_XPCSHELL_TESTS = tests
 
 include $(topsrcdir)/config/rules.mk

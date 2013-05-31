@@ -41,7 +41,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "EventEmitter",
                                   "resource:///modules/devtools/shared/event-emitter.js");
 
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource:///modules/devtools/gDevTools.jsm");
+                                  "resource://gre/modules/devtools/Loader.jsm");
 
 const STRINGS_URI = "chrome://browser/locale/devtools/webconsole.properties";
 let l10n = new WebConsoleUtils.l10n(STRINGS_URI);
@@ -857,6 +857,10 @@ WebConsoleFrame.prototype = {
       isFiltered = true;
     }
 
+    if (isFiltered && aNode.classList.contains("webconsole-msg-inspector")) {
+      aNode.classList.add("hidden-message");
+    }
+
     return isFiltered;
   },
 
@@ -957,6 +961,9 @@ WebConsoleFrame.prototype = {
                              [category, aMessage]);
           break;
         }
+        case "LogMessage":
+          this.handleLogMessage(aMessage);
+          break;
         case "ConsoleAPI":
           this.outputMessage(CATEGORY_WEBDEV, this.logConsoleAPIMessage,
                              [aMessage]);
@@ -971,7 +978,7 @@ WebConsoleFrame.prototype = {
    *
    * @param object aMessage
    *        The message received from the server.
-   * @return nsIDOMElement|undefined
+   * @return nsIDOMElement|null
    *         The message element to display in the Web Console output.
    */
   logConsoleAPIMessage: function WCF_logConsoleAPIMessage(aMessage)
@@ -1046,11 +1053,11 @@ WebConsoleFrame.prototype = {
       case "time": {
         let timer = aMessage.timer;
         if (!timer) {
-          return;
+          return null;
         }
         if (timer.error) {
           Cu.reportError(l10n.getStr(timer.error));
-          return;
+          return null;
         }
         body = l10n.getFormatStr("timerStarted", [timer.name]);
         clipboardText = body;
@@ -1060,7 +1067,7 @@ WebConsoleFrame.prototype = {
       case "timeEnd": {
         let timer = aMessage.timer;
         if (!timer) {
-          return;
+          return null;
         }
         let duration = Math.round(timer.duration * 100) / 100;
         body = l10n.getFormatStr("timeEnd", [timer.name, duration]);
@@ -1070,7 +1077,7 @@ WebConsoleFrame.prototype = {
 
       default:
         Cu.reportError("Unknown Console API log level: " + level);
-        return;
+        return null;
     }
 
     // Release object actors for arguments coming from console API methods that
@@ -1089,12 +1096,15 @@ WebConsoleFrame.prototype = {
     }
 
     if (level == "groupEnd") {
-      return; // no need to continue
+      return null; // no need to continue
     }
 
     let node = this.createMessageNode(CATEGORY_WEBDEV, LEVELS[level], body,
                                       sourceURL, sourceLine, clipboardText,
                                       level, aMessage.timeStamp);
+    if (aMessage.private) {
+      node.setAttribute("private", true);
+    }
 
     if (objectActors.size > 0) {
       node._objectActors = objectActors;
@@ -1172,6 +1182,9 @@ WebConsoleFrame.prototype = {
                                       aScriptError.sourceName,
                                       aScriptError.lineNumber, null, null,
                                       aScriptError.timeStamp);
+    if (aScriptError.private) {
+      node.setAttribute("private", true);
+    }
     return node;
   },
 
@@ -1189,18 +1202,33 @@ WebConsoleFrame.prototype = {
   },
 
   /**
+   * Handle log messages received from the server. This method outputs the given
+   * message.
+   *
+   * @param object aPacket
+   *        The message packet received from the server.
+   */
+  handleLogMessage: function WCF_handleLogMessage(aPacket)
+  {
+    this.outputMessage(CATEGORY_JS, () => {
+      return this.createMessageNode(CATEGORY_JS, SEVERITY_LOG, aPacket.message,
+                                    null, null, null, null, aPacket.timeStamp);
+    });
+  },
+
+  /**
    * Log network event.
    *
    * @param object aActorId
    *        The network event actor ID to log.
-   * @return nsIDOMElement|undefined
+   * @return nsIDOMElement|null
    *         The message element to display in the Web Console output.
    */
   logNetEvent: function WCF_logNetEvent(aActorId)
   {
     let networkInfo = this._networkRequests[aActorId];
     if (!networkInfo) {
-      return;
+      return null;
     }
 
     let request = networkInfo.request;
@@ -1251,6 +1279,9 @@ WebConsoleFrame.prototype = {
 
     let messageNode = this.createMessageNode(CATEGORY_NETWORK, severity,
                                              msgNode, null, null, clipboardText);
+    if (networkInfo.private) {
+      messageNode.setAttribute("private", true);
+    }
 
     messageNode._connectionId = aActorId;
     messageNode.url = request.url;
@@ -1376,6 +1407,7 @@ WebConsoleFrame.prototype = {
       response: {},
       timings: {},
       updates: [], // track the list of network event updates
+      private: aActor.private,
     };
 
     this._networkRequests[aActor.actor] = networkInfo;
@@ -2174,8 +2206,12 @@ WebConsoleFrame.prototype = {
         targetElement: viewContainer,
         hideFilterInput: true,
       };
-      this.jsterm.openVariablesView(options)
-        .then((aView) => node._variablesView = aView);
+      this.jsterm.openVariablesView(options).then((aView) => {
+        node._variablesView = aView;
+        if (node.classList.contains("hidden-message")) {
+          node.classList.remove("hidden-message");
+        }
+      });
 
       let bodyContainer = this.document.createElement("vbox");
       bodyContainer.flex = 1;
@@ -2236,7 +2272,7 @@ WebConsoleFrame.prototype = {
       if (aItem && typeof aItem != "object" || !inspectable) {
         aContainer.appendChild(this.document.createTextNode(text));
 
-        if (aItem.type == "longString") {
+        if (aItem.type && aItem.type == "longString") {
           let ellipsis = this.document.createElement("description");
           ellipsis.classList.add("hud-clickable");
           ellipsis.classList.add("longStringEllipsis");
@@ -3039,8 +3075,9 @@ JSTerm.prototype = {
       aOptions.view = view;
       this._updateVariablesView(aOptions);
 
-      this.sidebar.show();
-      aOptions.autofocus && aWindow.focus();
+      if (!aOptions.targetElement && aOptions.autofocus) {
+        aWindow.focus();
+      }
 
       this.emit("variablesview-open", view, aOptions);
       return view;
@@ -3500,8 +3537,21 @@ JSTerm.prototype = {
 
     let client = new GripClient(this.hud.proxy.client, grip);
     client.getPrototypeAndProperties((aResponse) => {
-      let { ownProperties, prototype } = aResponse;
+      let { ownProperties, prototype, safeGetterValues } = aResponse;
       let sortable = VariablesView.NON_SORTABLE_CLASSES.indexOf(grip.class) == -1;
+
+      // Merge the safe getter values into one object such that we can use it
+      // in VariablesView.
+      for (let name of Object.keys(safeGetterValues)) {
+        if (name in ownProperties) {
+          ownProperties[name].getterValue = safeGetterValues[name].getterValue;
+          ownProperties[name].getterPrototypeLevel = safeGetterValues[name]
+                                                     .getterPrototypeLevel;
+        }
+        else {
+          ownProperties[name] = safeGetterValues[name];
+        }
+      }
 
       // Add all the variable properties.
       if (ownProperties) {
@@ -3647,6 +3697,18 @@ JSTerm.prototype = {
     if (aClearStorage) {
       this.webConsoleClient.clearMessagesCache();
     }
+  },
+
+  /**
+   * Remove all of the private messages from the Web Console output.
+   */
+  clearPrivateMessages: function JST_clearPrivateMessages()
+  {
+    let nodes = this.hud.outputNode.querySelectorAll("richlistitem[private]");
+    for (let node of nodes) {
+      this.hud.removeOutputMessage(node);
+    }
+    this.emit("private-messages-cleared");
   },
 
   /**
@@ -4422,7 +4484,7 @@ CommandController.prototype = {
       case "consoleCmd_copyURL": {
         // Only enable URL-related actions if node is Net Activity.
         let selectedItem = this.owner.outputNode.selectedItem;
-        return selectedItem && selectedItem.url;
+        return selectedItem && "url" in selectedItem;
       }
       case "cmd_fontSizeEnlarge":
       case "cmd_fontSizeReduce":
@@ -4432,6 +4494,7 @@ CommandController.prototype = {
       case "cmd_close":
         return this.owner.owner._browserConsole;
     }
+    return false;
   },
 
   doCommand: function CommandController_doCommand(aCommand)
@@ -4485,6 +4548,7 @@ function WebConsoleConnectionProxy(aWebConsole, aTarget)
   this.target = aTarget;
 
   this._onPageError = this._onPageError.bind(this);
+  this._onLogMessage = this._onLogMessage.bind(this);
   this._onConsoleAPICall = this._onConsoleAPICall.bind(this);
   this._onNetworkEvent = this._onNetworkEvent.bind(this);
   this._onNetworkEventUpdate = this._onNetworkEventUpdate.bind(this);
@@ -4493,6 +4557,7 @@ function WebConsoleConnectionProxy(aWebConsole, aTarget)
   this._onAttachConsole = this._onAttachConsole.bind(this);
   this._onCachedMessages = this._onCachedMessages.bind(this);
   this._connectionTimeout = this._connectionTimeout.bind(this);
+  this._onLastPrivateContextExited = this._onLastPrivateContextExited.bind(this);
 }
 
 WebConsoleConnectionProxy.prototype = {
@@ -4588,11 +4653,13 @@ WebConsoleConnectionProxy.prototype = {
 
     let client = this.client = this.target.client;
 
+    client.addListener("logMessage", this._onLogMessage);
     client.addListener("pageError", this._onPageError);
     client.addListener("consoleAPICall", this._onConsoleAPICall);
     client.addListener("networkEvent", this._onNetworkEvent);
     client.addListener("networkEventUpdate", this._onNetworkEventUpdate);
     client.addListener("fileActivity", this._onFileActivity);
+    client.addListener("lastPrivateContextExited", this._onLastPrivateContextExited);
     this.target.on("will-navigate", this._onTabNavigated);
     this.target.on("navigate", this._onTabNavigated);
 
@@ -4709,6 +4776,23 @@ WebConsoleConnectionProxy.prototype = {
   },
 
   /**
+   * The "logMessage" message type handler. We redirect any message to the UI
+   * for displaying.
+   *
+   * @private
+   * @param string aType
+   *        Message type.
+   * @param object aPacket
+   *        The message received from the server.
+   */
+  _onLogMessage: function WCCP__onLogMessage(aType, aPacket)
+  {
+    if (this.owner && aPacket.from == this._consoleActor) {
+      this.owner.handleLogMessage(aPacket);
+    }
+  },
+
+  /**
    * The "consoleAPICall" message type handler. We redirect any message to
    * the UI for displaying.
    *
@@ -4778,6 +4862,24 @@ WebConsoleConnectionProxy.prototype = {
   },
 
   /**
+   * The "lastPrivateContextExited" message type handler. When this message is
+   * received the Web Console UI is cleared.
+   *
+   * @private
+   * @param string aType
+   *        Message type.
+   * @param object aPacket
+   *        The message received from the server.
+   */
+  _onLastPrivateContextExited:
+  function WCCP__onLastPrivateContextExited(aType, aPacket)
+  {
+    if (this.owner && aPacket.from == this._consoleActor) {
+      this.owner.jsterm.clearPrivateMessages();
+    }
+  },
+
+  /**
    * The "will-navigate" and "navigate" event handlers. We redirect any message
    * to the UI for displaying.
    *
@@ -4834,11 +4936,13 @@ WebConsoleConnectionProxy.prototype = {
       return this._disconnecter.promise;
     }
 
+    this.client.removeListener("logMessage", this._onLogMessage);
     this.client.removeListener("pageError", this._onPageError);
     this.client.removeListener("consoleAPICall", this._onConsoleAPICall);
     this.client.removeListener("networkEvent", this._onNetworkEvent);
     this.client.removeListener("networkEventUpdate", this._onNetworkEventUpdate);
     this.client.removeListener("fileActivity", this._onFileActivity);
+    this.client.removeListener("lastPrivateContextExited", this._onLastPrivateContextExited);
     this.target.off("will-navigate", this._onTabNavigated);
     this.target.off("navigate", this._onTabNavigated);
 

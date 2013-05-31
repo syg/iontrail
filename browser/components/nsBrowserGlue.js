@@ -168,7 +168,7 @@ BrowserGlue.prototype = {
         this._onAppDefaults();
         break;
       case "final-ui-startup":
-        this._onProfileStartup();
+        this._finalUIStartup();
         break;
       case "browser-delayed-startup-finished":
         this._onFirstWindowLoaded();
@@ -388,12 +388,13 @@ BrowserGlue.prototype = {
 
   _onAppDefaults: function BG__onAppDefaults() {
     // apply distribution customizations (prefs)
-    // other customizations are applied in _onProfileStartup()
+    // other customizations are applied in _finalUIStartup()
     this._distributionCustomizer.applyPrefDefaults();
   },
 
-  // profile startup handler (contains profile initialization routines)
-  _onProfileStartup: function BG__onProfileStartup() {
+  // runs on startup, before the first command line handler is invoked
+  // (i.e. before the first window is opened)
+  _finalUIStartup: function BG__finalUIStartup() {
     this._sanitizer.onStartup();
     // check if we're in safe mode
     if (Services.appinfo.inSafeMode) {
@@ -504,7 +505,7 @@ BrowserGlue.prototype = {
     if (WINTASKBAR_CONTRACTID in Cc &&
         Cc[WINTASKBAR_CONTRACTID].getService(Ci.nsIWinTaskbar).available) {
       let temp = {};
-      Cu.import("resource://gre/modules/WindowsJumpLists.jsm", temp);
+      Cu.import("resource:///modules/WindowsJumpLists.jsm", temp);
       temp.WinTaskbarJumpList.startup();
     }
 #endif
@@ -579,9 +580,17 @@ BrowserGlue.prototype = {
           (ss.sessionType == Ci.nsISessionStartup.RECOVER_SESSION);
       }
       catch (ex) { /* never mind; suppose SessionStore is broken */ }
-      if (shouldCheck &&
-          !shell.isDefaultBrowser(true, false) &&
-          !willRecoverSession) {
+
+      let isDefault = shell.isDefaultBrowser(true, false); // startup check, check all assoc
+      try {
+        // Report default browser status on startup to telemetry
+        // so we can track whether we are the default.
+        Services.telemetry.getHistogramById("BROWSER_IS_USER_DEFAULT")
+                          .add(isDefault);
+      }
+      catch (ex) { /* Don't break the default prompt if telemetry is broken. */ }
+
+      if (shouldCheck && !isDefault && !willRecoverSession) {
         Services.tm.mainThread.dispatch(function() {
           var win = this.getMostRecentBrowserWindow();
           var brandBundle = win.document.getElementById("bundle_brand");
@@ -1344,22 +1353,11 @@ BrowserGlue.prototype = {
       let currentset = this._getPersist(toolbarResource, currentsetResource);
       // Need to migrate only if toolbar is customized.
       if (currentset) {
-        if (currentset.contains("bookmarks-menu-button-container"))
-          currentset = currentset.replace(/(^|,)bookmarks-menu-button-container($|,)/,"$2");
-
-        // Now insert the new button.
-        if (currentset.contains("downloads-button")) {
-          currentset = currentset.replace(/(^|,)downloads-button($|,)/,
-                                          "$1bookmarks-menu-button,downloads-button$2");
-        } else if (currentset.contains("home-button")) {
-          currentset = currentset.replace(/(^|,)home-button($|,)/,
-                                          "$1bookmarks-menu-button,home-button$2");
-        } else {
-          // Just append.
-          currentset = currentset.replace(/(^|,)window-controls($|,)/,
-                                          "$1bookmarks-menu-button,window-controls$2")
+        if (currentset.contains("bookmarks-menu-button-container")) {
+          currentset = currentset.replace(/(^|,)bookmarks-menu-button-container($|,)/,
+                                          "$1bookmarks-menu-button$2");
+          this._setPersist(toolbarResource, currentsetResource, currentset);
         }
-        this._setPersist(toolbarResource, currentsetResource, currentset);
       }
     }
 

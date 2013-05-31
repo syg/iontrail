@@ -187,9 +187,18 @@ function log(aThing) {
         i++;
       }
     }
-    else if (type == "Error") {
-      reply += "  " + aThing.message + "\n";
-      reply += logProperty("stack", aThing.stack);
+    else if (type.match("Error$") ||
+             (typeof aThing.name == "string" &&
+              aThing.name.match("NS_ERROR_"))) {
+      reply += "  Message: " + aThing + "\n";
+      if (aThing.stack) {
+        reply += "  Stack:\n";
+        var frame = aThing.stack;
+        while (frame) {
+          reply += "    " + frame + "\n";
+          frame = frame.caller;
+        }
+      }
     }
     else if (aThing instanceof Components.interfaces.nsIDOMNode && aThing.tagName) {
       reply += "  " + debugElement(aThing) + "\n";

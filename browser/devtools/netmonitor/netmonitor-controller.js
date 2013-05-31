@@ -5,9 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -17,6 +15,9 @@ Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 Cu.import("resource:///modules/devtools/SideMenuWidget.jsm");
 Cu.import("resource:///modules/devtools/VariablesView.jsm");
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
+  "resource://gre/modules/PluralForm.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "NetworkHelper",
   "resource://gre/modules/devtools/NetworkHelper.jsm");
@@ -245,13 +246,23 @@ TargetEventsHandler.prototype = {
    *        Packet received from the server.
    */
   _onTabNavigated: function(aType, aPacket) {
-    if (aType == "will-navigate") {
-      NetMonitorView.RequestsMenu.reset();
-      NetMonitorView.NetworkDetails.toggle(false);
-      window.emit("NetMonitor:TargetWillNavigate");
-    }
-    if (aType == "navigate") {
-      window.emit("NetMonitor:TargetNavigate");
+    switch (aType) {
+      case "will-navigate": {
+        // Reset UI.
+        NetMonitorView.RequestsMenu.reset();
+        NetMonitorView.NetworkDetails.reset();
+
+        // Reset global helpers cache.
+        nsIURL.store.clear();
+        drain.store.clear();
+
+        window.emit("NetMonitor:TargetWillNavigate");
+        break;
+      }
+      case "navigate": {
+        window.emit("NetMonitor:TargetNavigate");
+        break;
+      }
     }
   },
 
@@ -312,8 +323,8 @@ NetworkEventsHandler.prototype = {
    *        The message received from the server.
    */
   _onNetworkEvent: function(aType, aPacket) {
-    let { actor, startedDateTime, method, url } = aPacket.eventActor;
-    NetMonitorView.RequestsMenu.addRequest(actor, startedDateTime, method, url);
+    let { actor, startedDateTime, method, url, isXHR } = aPacket.eventActor;
+    NetMonitorView.RequestsMenu.addRequest(actor, startedDateTime, method, url, isXHR);
 
     window.emit("NetMonitor:NetworkEvent");
   },
@@ -461,7 +472,7 @@ NetworkEventsHandler.prototype = {
    * @param object aResponse
    *        The message received from the server.
    */
-  _onEventTimings: function NEH__onEventTimings(aResponse) {
+  _onEventTimings: function(aResponse) {
     NetMonitorView.RequestsMenu.updateRequest(aResponse.from, {
       eventTimings: aResponse
     });
@@ -479,7 +490,7 @@ NetworkEventsHandler.prototype = {
    *         A promise that is resolved when the full string contents
    *         are available, or rejected if something goes wrong.
    */
-  getString: function NEH_getString(aStringGrip) {
+  getString: function(aStringGrip) {
     // Make sure this is a long string.
     if (typeof aStringGrip != "object" || aStringGrip.type != "longString") {
       return Promise.resolve(aStringGrip); // Go home string, you're drunk.

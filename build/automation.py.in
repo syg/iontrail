@@ -756,7 +756,7 @@ user_pref("camino.use_system_proxy_settings", false); // Camino-only, harmless t
     # 841150, and 839677 (at least)
     # Also (temporary) bug 870002 (mediastreamgraph)
     if 'NSPR_LOG_MODULES' not in env:
-      env['NSPR_LOG_MODULES'] = 'signaling:5,mtransport:3,mediastreamgraph:4'
+      env['NSPR_LOG_MODULES'] = 'signaling:5,mtransport:3'
     env['R_LOG_LEVEL'] = '5'
     env['R_LOG_DESTINATION'] = 'stderr'
     env['R_LOG_VERBOSE'] = '1'
@@ -917,7 +917,7 @@ user_pref("camino.use_system_proxy_settings", false); // Camino-only, harmless t
        Also attempts to obtain a screenshot before killing the process."""
     if not debuggerInfo:
       self.dumpScreen(utilityPath)
-    self.killAndGetStackNoScreenshot(self, processPID, utilityPath, debuggerInfo)
+    self.killAndGetStackNoScreenshot(processPID, utilityPath, debuggerInfo)
 
   def killAndGetStackNoScreenshot(self, processPID, utilityPath, debuggerInfo):
     """Kill the process, preferrably in a way that gets us a stack trace."""

@@ -145,15 +145,6 @@ static bool ConvertToMidasInternalCommand(const nsAString & inCommandID,
 // ==================================================================
 // =
 // ==================================================================
-static void
-ReportUseOfDeprecatedMethod(nsHTMLDocument* aDoc, const char* aWarning)
-{
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  "DOM Events", aDoc,
-                                  nsContentUtils::eDOM_PROPERTIES,
-                                  aWarning);
-}
-
 static nsresult
 RemoveFromAgentSheets(nsCOMArray<nsIStyleSheet> &aAgentSheets, const nsAString& url)
 {
@@ -211,39 +202,20 @@ nsHTMLDocument::nsHTMLDocument()
 }
 
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLDocument, nsDocument)
-  NS_ASSERTION(!nsCCUncollectableMarker::InGeneration(cb, tmp->GetMarkedCCGeneration()),
-               "Shouldn't traverse nsHTMLDocument!");
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImages)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mApplets)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEmbeds)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLinks)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnchors)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScripts)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mForms)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFormControls)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWyciwygChannel)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMidasCommandManager)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsHTMLDocument, nsDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mImages)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mApplets)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mEmbeds)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLinks)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAnchors)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mScripts)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mForms)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFormControls)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mWyciwygChannel)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mMidasCommandManager)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_INHERITED_10(nsHTMLDocument, nsDocument,
+                                      mImages,
+                                      mApplets,
+                                      mEmbeds,
+                                      mLinks,
+                                      mAnchors,
+                                      mScripts,
+                                      mForms,
+                                      mFormControls,
+                                      mWyciwygChannel,
+                                      mMidasCommandManager)
 
 NS_IMPL_ADDREF_INHERITED(nsHTMLDocument, nsDocument)
 NS_IMPL_RELEASE_INHERITED(nsHTMLDocument, nsDocument)
-
-
-DOMCI_NODE_DATA(HTMLDocument, nsHTMLDocument)
 
 // QueryInterface implementation for nsHTMLDocument
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHTMLDocument)
@@ -252,7 +224,6 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHTMLDocument)
     NS_INTERFACE_TABLE_ENTRY(nsHTMLDocument, nsIDOMHTMLDocument)
   NS_OFFSET_AND_INTERFACE_TABLE_END
   NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(HTMLDocument)
 NS_INTERFACE_MAP_END_INHERITING(nsDocument)
 
 JSObject*
@@ -381,17 +352,16 @@ nsHTMLDocument::TryUserForcedCharset(nsIMarkupDocumentViewer* aMarkupDV,
 
   if (aDocShell) {
     // This is the Character Encoding menu code path in Firefox
-    nsCOMPtr<nsIAtom> csAtom;
-    aDocShell->GetForcedCharset(getter_AddRefs(csAtom));
-    if (csAtom) {
-      nsAutoCString charset;
-      csAtom->ToUTF8String(charset);
+    nsAutoCString charset;
+    rv = aDocShell->GetForcedCharset(charset);
+
+    if (NS_SUCCEEDED(rv) && !charset.IsEmpty()) {
       if (!EncodingUtils::IsAsciiCompatible(charset)) {
         return;
       }
       aCharset = charset;
       aCharsetSource = kCharsetFromUserForced;
-      aDocShell->SetForcedCharset(nullptr);
+      aDocShell->SetForcedCharset(NS_LITERAL_CSTRING(""));
     }
   }
 }
@@ -447,15 +417,13 @@ nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
     return;
   }
 
-  nsCOMPtr<nsIAtom> csAtom;
   int32_t parentSource;
   nsAutoCString parentCharset;
-  aDocShell->GetParentCharset(getter_AddRefs(csAtom));
-  if (!csAtom) {
+  aDocShell->GetParentCharset(parentCharset);
+  if (parentCharset.IsEmpty()) {
     return;
   }
   aDocShell->GetParentCharsetSource(&parentSource);
-  csAtom->ToUTF8String(parentCharset);
   if (kCharsetFromParentForced == parentSource ||
       kCharsetFromUserForced == parentSource) {
     if (WillIgnoreCharsetOverride() ||
@@ -2251,27 +2219,6 @@ nsHTMLDocument::GetSelection(ErrorResult& rv)
   return sel.forget();
 }
 
-NS_IMETHODIMP
-nsHTMLDocument::CaptureEvents(int32_t aEventFlags)
-{
-  ReportUseOfDeprecatedMethod(this, "UseOfCaptureEventsWarning");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLDocument::ReleaseEvents(int32_t aEventFlags)
-{
-  ReportUseOfDeprecatedMethod(this, "UseOfReleaseEventsWarning");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLDocument::RouteEvent(nsIDOMEvent* aEvt)
-{
-  ReportUseOfDeprecatedMethod(this, "UseOfRouteEventWarning");
-  return NS_OK;
-}
-
 // Mapped to document.embeds for NS4 compatibility
 NS_IMETHODIMP
 nsHTMLDocument::GetPlugins(nsIDOMHTMLCollection** aPlugins)
@@ -3331,7 +3278,6 @@ nsHTMLDocument::DoClipboardSecurityCheck(bool aPaste)
   if (!cx) {
     return NS_OK;
   }
-  JSAutoRequest ar(cx);
 
   NS_NAMED_LITERAL_CSTRING(classNameStr, "Clipboard");
 

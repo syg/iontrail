@@ -5,6 +5,7 @@
 
 #include "MobileMessageCallback.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIDOMMozSmsMessage.h"
 #include "nsIDOMMozMmsMessage.h"
 #include "nsIScriptGlobalObject.h"
@@ -13,6 +14,7 @@
 #include "jsapi.h"
 #include "xpcpublic.h"
 #include "nsServiceManagerUtils.h"
+#include "nsTArrayHelpers.h"
 
 namespace mozilla {
 namespace dom {
@@ -37,7 +39,7 @@ MobileMessageCallback::~MobileMessageCallback()
 
 
 nsresult
-MobileMessageCallback::NotifySuccess(const JS::Value& aResult)
+MobileMessageCallback::NotifySuccess(JS::Handle<JS::Value> aResult)
 {
   mDOMRequest->FireSuccess(aResult);
   return NS_OK;
@@ -57,7 +59,6 @@ MobileMessageCallback::NotifySuccess(nsISupports *aMessage)
   JS::Rooted<JSObject*> global(cx, scriptContext->GetNativeGlobal());
   NS_ENSURE_TRUE(global, NS_ERROR_FAILURE);
 
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, global);
 
   JS::Rooted<JS::Value> wrappedMessage(cx);
@@ -117,9 +118,32 @@ MobileMessageCallback::NotifyGetMessageFailed(int32_t aError)
 }
 
 NS_IMETHODIMP
-MobileMessageCallback::NotifyMessageDeleted(bool aDeleted)
+MobileMessageCallback::NotifyMessageDeleted(bool *aDeleted, uint32_t aSize)
 {
-  return NotifySuccess(aDeleted ? JSVAL_TRUE : JSVAL_FALSE);
+  if (aSize == 1) {
+    AutoJSContext cx;
+    JS::Rooted<JS::Value> val(cx, aDeleted[0] ? JSVAL_TRUE : JSVAL_FALSE);
+    return NotifySuccess(val);
+  }
+
+  nsresult rv;
+  nsIScriptContext* sc = mDOMRequest->GetContextForEventHandlers(&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(sc, NS_ERROR_FAILURE);
+
+  AutoPushJSContext cx(sc->GetNativeContext());
+  NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
+
+  JS::Rooted<JSObject*> deleteArrayObj(cx, JS_NewArrayObject(cx, aSize, NULL));
+  JS::Rooted<JS::Value> jsValTrue(cx, JS::BooleanValue(true));
+  JS::Rooted<JS::Value> jsValFalse(cx, JS::BooleanValue(false));
+  for (uint32_t i = 0; i < aSize; i++) {
+    JS_SetElement(cx, deleteArrayObj, i,
+                  aDeleted[i] ? jsValTrue.address() : jsValFalse.address());
+  }
+
+  JS::Rooted<JS::Value> deleteArrayVal(cx, JS::ObjectValue(*deleteArrayObj));
+  return NotifySuccess(deleteArrayVal);
 }
 
 NS_IMETHODIMP
@@ -131,7 +155,9 @@ MobileMessageCallback::NotifyDeleteMessageFailed(int32_t aError)
 NS_IMETHODIMP
 MobileMessageCallback::NotifyMessageMarkedRead(bool aRead)
 {
-  return NotifySuccess(aRead ? JSVAL_TRUE : JSVAL_FALSE);
+  AutoJSContext cx;
+  JS::Rooted<JS::Value> val(cx, aRead ? JSVAL_TRUE : JSVAL_FALSE);
+  return NotifySuccess(val);
 }
 
 NS_IMETHODIMP

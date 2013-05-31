@@ -174,9 +174,14 @@ public:
 
   /**
    * Update the texture host using the data from aSurfaceDescriptor.
+   *
+   * @param aImage Source image to update with.
+   * @param aRegion Region of the texture host to update.
+   * @param aOffset Offset in the source to update from
    */
   void Update(const SurfaceDescriptor& aImage,
-              nsIntRegion *aRegion = nullptr);
+              nsIntRegion *aRegion = nullptr,
+              nsIntPoint* aOffset = nullptr);
 
   /**
    * Change the current surface of the texture host to aImage. aResult will return
@@ -195,13 +200,14 @@ public:
   	                  const gfx::IntSize& aSize) {}
 
   /**
-   * Lock the texture host for compositing, returns an effect that should
-   * be used to composite this texture.
+   * Lock the texture host for compositing, returns true if the TextureHost is
+   * valid for composition.
    */
-  virtual bool Lock() { return true; }
+  virtual bool Lock() { return IsValid(); }
 
   /**
-   * Unlock the texture host after compositing
+   * Unlock the texture host after compositing.
+   * Should handle the case where Lock failed without crashing.
    */
   virtual void Unlock() {}
 
@@ -223,10 +229,6 @@ public:
     return mDeAllocator;
   }
 
-#ifdef MOZ_DUMP_PAINTING
-  virtual already_AddRefed<gfxImageSurface> Dump() { return nullptr; }
-#endif
-
   bool operator== (const TextureHost& o) const
   {
     return GetIdentifier() == o.GetIdentifier();
@@ -242,13 +244,42 @@ public:
                             mFlags & NeedsYFlip ? LAYER_RENDER_STATE_Y_FLIPPED : 0);
   }
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() = 0;
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char *Name() = 0;
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
 #endif
 
+  /**
+   * TEMPORARY.
+   *
+   * Ensure that a buffer of the given size/type has been allocated so that
+   * we can update it using Update and/or CopyTo.
+   */
+  virtual void EnsureBuffer(const nsIntSize& aSize, gfxASurface::gfxContentType aType)
+  {
+    NS_RUNTIMEABORT("TextureHost doesn't support EnsureBuffer");
+  }
+
+  /**
+   * Copy the contents of this TextureHost to aDest. aDest must already
+   * have a suitable buffer allocated using EnsureBuffer.
+   *
+   * @param aSourceRect Area of this texture host to copy.
+   * @param aDest Destination texture host.
+   * @param aDestRect Destination rect.
+   */
+  virtual void CopyTo(const nsIntRect& aSourceRect,
+                      TextureHost *aDest,
+                      const nsIntRect& aDestRect)
+  {
+    NS_RUNTIMEABORT("TextureHost doesn't support CopyTo");
+  }
+
 
   SurfaceDescriptor* GetBuffer() const { return mBuffer; }
+
   /**
    * Set a SurfaceDescriptor for this texture host. By setting a buffer and
    * allocator/de-allocator for the TextureHost, you cause the TextureHost to
@@ -276,7 +307,8 @@ protected:
    * to be thread-safe.
    */
   virtual void UpdateImpl(const SurfaceDescriptor& aImage,
-                          nsIntRegion *aRegion)
+                          nsIntRegion *aRegion,
+                          nsIntPoint *aOffset = nullptr)
   {
     NS_RUNTIMEABORT("Should not be reached");
   }
@@ -293,7 +325,7 @@ protected:
   virtual void SwapTexturesImpl(const SurfaceDescriptor& aImage,
                                 nsIntRegion *aRegion)
   {
-    UpdateImpl(aImage, aRegion);
+    UpdateImpl(aImage, aRegion, nullptr);
   }
 
   // An internal identifier for this texture host. Two texture hosts

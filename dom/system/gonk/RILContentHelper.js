@@ -78,6 +78,8 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:DataError",
   "RIL:SetCallForwardingOption",
   "RIL:GetCallForwardingOption",
+  "RIL:SetCallBarringOption",
+  "RIL:GetCallBarringOption",
   "RIL:SetCallWaitingOption",
   "RIL:GetCallWaitingOption",
   "RIL:CellBroadcastReceived",
@@ -311,6 +313,19 @@ CellBroadcastEtwsInfo.prototype = {
   popup: null
 };
 
+function CallBarringOption(option) {
+  this.program = option.program;
+  this.enabled = option.enabled;
+  this.password = option.password;
+  this.serviceClass = option.serviceClass;
+}
+CallBarringOption.prototype = {
+  __exposedProps__ : {program: 'r',
+                      enabled: 'r',
+                      password: 'r',
+                      serviceClass: 'r'}
+};
+
 function RILContentHelper() {
   this.rilContext = {
     cardState:            RIL.GECKO_CARDSTATE_UNKNOWN,
@@ -417,27 +432,33 @@ RILContentHelper.prototype = {
   },
 
   get iccInfo() {
-    return this.getRilContext().iccInfo;
+    let context = this.getRilContext();
+    return context && context.iccInfo;
   },
 
   get voiceConnectionInfo() {
-    return this.getRilContext().voiceConnectionInfo;
+    let context = this.getRilContext();
+    return context && context.voiceConnectionInfo;
   },
 
   get dataConnectionInfo() {
-    return this.getRilContext().dataConnectionInfo;
+    let context = this.getRilContext();
+    return context && context.dataConnectionInfo;
   },
 
   get cardState() {
-    return this.getRilContext().cardState;
+    let context = this.getRilContext();
+    return context && context.cardState;
   },
 
   get retryCount() {
-    return this.getRilContext().retryCount;
+    let context = this.getRilContext();
+    return context && context.retryCount;
   },
 
   get networkSelectionMode() {
-    return this.getRilContext().networkSelectionMode;
+    let context = this.getRilContext();
+    return context && context.networkSelectionMode;
   },
 
   /**
@@ -708,6 +729,14 @@ RILContentHelper.prototype = {
       iccContact.number = contact.tel[0].value;
     }
 
+    if (contact.email) {
+      iccContact.email = contact.email[0].value;
+    }
+
+    if (contact.tel.length > 1) {
+      iccContact.anr = contact.tel.slice(1);
+    }
+
     cpmm.sendAsyncMessage("RIL:UpdateIccContact", {requestId: requestId,
                                                    contactType: contactType,
                                                    contact: iccContact,
@@ -761,6 +790,53 @@ RILContentHelper.prototype = {
       timeSeconds: cfInfo.timeSeconds
     });
 
+    return request;
+  },
+
+  getCallBarringOption: function getCallBarringOption(window, option) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+
+    if (DEBUG) debug("getCallBarringOption: " + JSON.stringify(option));
+    if (!this._isValidCallBarringOption(option)) {
+      this.dispatchFireRequestError(requestId, "InvalidCallBarringOption");
+      return request;
+    }
+
+    cpmm.sendAsyncMessage("RIL:GetCallBarringOption", {
+      requestId: requestId,
+      program: option.program,
+      password: option.password,
+      serviceClass: option.serviceClass
+    });
+    return request;
+  },
+
+  setCallBarringOption: function setCallBarringOption(window, option) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+
+    if (DEBUG) debug("setCallBarringOption: " + JSON.stringify(option));
+    if (!this._isValidCallBarringOption(option)) {
+      this.dispatchFireRequestError(requestId, "InvalidCallBarringOption");
+      return request;
+    }
+
+    cpmm.sendAsyncMessage("RIL:SetCallBarringOption", {
+      requestId: requestId,
+      program: option.program,
+      enabled: option.enabled,
+      password: option.password,
+      serviceClass: option.serviceClass
+    });
     return request;
   },
 
@@ -984,7 +1060,6 @@ RILContentHelper.prototype = {
     if (topic == "xpcom-shutdown") {
       this.removeMessageListener();
       Services.obs.removeObserver(this, "xpcom-shutdown");
-      cpmm = null;
     }
   },
 
@@ -1089,7 +1164,8 @@ RILContentHelper.prototype = {
         this._deliverEvent("_telephonyListeners",
                            "callStateChanged",
                            [msg.json.callIndex, msg.json.state,
-                            msg.json.number, msg.json.isActive]);
+                            msg.json.number, msg.json.isActive,
+                            msg.json.isOutgoing, msg.json.isEmergency]);
         break;
       case "RIL:CallError":
         this._deliverEvent("_telephonyListeners",
@@ -1167,6 +1243,12 @@ RILContentHelper.prototype = {
       case "RIL:SetCallForwardingOption":
         this.handleSetCallForwardingOption(msg.json);
         break;
+      case "RIL:GetCallBarringOption":
+        this.handleGetCallBarringOption(msg.json);
+        break;
+      case "RIL:SetCallBarringOption":
+        this.handleSetCallBarringOption(msg.json);
+        break;
       case "RIL:GetCallWaitingOption":
         this.handleGetCallWaitingOption(msg.json);
         break;
@@ -1192,13 +1274,19 @@ RILContentHelper.prototype = {
   handleEnumerateCalls: function handleEnumerateCalls(calls) {
     debug("handleEnumerateCalls: " + JSON.stringify(calls));
     let callback = this._enumerateTelephonyCallbacks.shift();
+    if (!calls.length) {
+      callback.enumerateCallStateComplete();
+      return;
+    }
+
     for (let i in calls) {
       let call = calls[i];
       let keepGoing;
       try {
         keepGoing =
           callback.enumerateCallState(call.callIndex, call.state, call.number,
-                                      call.isActive);
+                                      call.isActive, call.isOutgoing,
+                                      call.isEmergency);
       } catch (e) {
         debug("callback handler for 'enumerateCallState' threw an " +
               " exception: " + e);
@@ -1208,6 +1296,8 @@ RILContentHelper.prototype = {
         break;
       }
     }
+
+    callback.enumerateCallStateComplete();
   },
 
   handleGetAvailableNetworks: function handleGetAvailableNetworks(message) {
@@ -1388,6 +1478,23 @@ RILContentHelper.prototype = {
     Services.DOMRequest.fireSuccess(request, null);
   },
 
+  handleGetCallBarringOption: function handleGetCallBarringOption(message) {
+    if (!message.success) {
+      this.fireRequestError(message.requestId, message.errorMsg);
+    } else {
+      let option = new CallBarringOption(message);
+      this.fireRequestSuccess(message.requestId, option);
+    }
+  },
+
+  handleSetCallBarringOption: function handleSetCallBarringOption(message) {
+    if (!message.success) {
+      this.fireRequestError(message.requestId, message.errorMsg);
+    } else {
+      this.fireRequestSuccess(message.requestId, null);
+    }
+  },
+
   handleGetCallWaitingOption: function handleGetCallWaitingOption(message) {
     let requestId = message.requestId;
     let request = this.takeRequest(requestId);
@@ -1475,7 +1582,7 @@ RILContentHelper.prototype = {
        default:
          return false;
      }
-  },
+   },
 
   /**
    * Helper for guarding us again invalid action values for call forwarding.
@@ -1490,6 +1597,31 @@ RILContentHelper.prototype = {
        default:
          return false;
      }
+   },
+
+  /**
+   * Helper for guarding us against invalid program values for call barring.
+   */
+  _isValidCallBarringProgram: function _isValidCallBarringProgram(program) {
+    switch (program) {
+      case Ci.nsIDOMMozMobileConnection.CALL_BARRING_PROGRAM_ALL_OUTGOING:
+      case Ci.nsIDOMMozMobileConnection.CALL_BARRING_PROGRAM_OUTGOING_INTERNATIONAL:
+      case Ci.nsIDOMMozMobileConnection.CALL_BARRING_PROGRAM_OUTGOING_INTERNATIONAL_EXCEPT_HOME:
+      case Ci.nsIDOMMozMobileConnection.CALL_BARRING_PROGRAM_ALL_INCOMING:
+      case Ci.nsIDOMMozMobileConnection.CALL_BARRING_PROGRAM_INCOMING_ROAMING:
+        return true;
+      default:
+        return false;
+    }
+  },
+
+  /**
+   * Helper for guarding us against invalid option for call barring.
+   */
+  _isValidCallBarringOption: function _isValidCallBarringOption(option) {
+    return (option
+            && option.serviceClass != null
+            && this._isValidCallBarringProgram(option.program));
   }
 };
 

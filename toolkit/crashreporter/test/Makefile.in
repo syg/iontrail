@@ -11,8 +11,6 @@ relativesrcdir  = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DISABLED_XPCSHELL_TESTS = unit unit_ipc
-
 LIBRARY_NAME = testcrasher
 NO_DIST_INSTALL = 1
 
@@ -22,15 +20,6 @@ VPATH += \
   $(srcdir)/../google-breakpad/src/processor/ \
   $(srcdir)/../google-breakpad/src/common/ \
   $(topsrcdir)/build/ \
-  $(NULL)
-
-CPPSRCS = \
-  nsTestCrasher.cpp \
-  dumputils.cpp \
-  basic_code_modules.cc \
-  logging.cc \
-  minidump.cc \
-  pathname_stripper.cc \
   $(NULL)
 
 LOCAL_INCLUDES += \

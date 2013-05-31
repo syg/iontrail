@@ -27,6 +27,7 @@
 #include "nsIScriptSecurityManager.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsDOMClassInfoID.h"
 #include "nsGlobalWindow.h"
 #include "nsHashKeys.h"
@@ -157,7 +158,7 @@ IDBFactory::Create(nsPIDOMWindow* aWindow,
 // static
 nsresult
 IDBFactory::Create(JSContext* aCx,
-                   JSObject* aOwningObject,
+                   JS::Handle<JSObject*> aOwningObject,
                    ContentParent* aContentParent,
                    IDBFactory** aFactory)
 {
@@ -209,7 +210,6 @@ IDBFactory::Create(ContentParent* aContentParent,
   NS_ENSURE_TRUE(principal, NS_ERROR_FAILURE);
 
   AutoSafeJSContext cx;
-  JSAutoRequest ar(cx);
 
   nsIXPConnect* xpc = nsContentUtils::XPConnect();
   NS_ASSERTION(xpc, "This should never be null!");
@@ -218,9 +218,8 @@ IDBFactory::Create(ContentParent* aContentParent,
   nsresult rv = xpc->CreateSandbox(cx, principal, getter_AddRefs(globalHolder));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  JS::Rooted<JSObject*> global(cx);
-  rv = globalHolder->GetJSObject(global.address());
-  NS_ENSURE_SUCCESS(rv, rv);
+  JS::Rooted<JSObject*> global(cx, globalHolder->GetJSObject());
+  NS_ENSURE_STATE(global);
 
   // The CreateSandbox call returns a proxy to the actual sandbox object. We
   // don't need a proxy here.
@@ -534,7 +533,7 @@ IDBFactory::OpenInternal(const nsAString& aName,
   NS_ASSERTION(mWindow || mOwningObject, "Must have one of these!");
 
   nsCOMPtr<nsPIDOMWindow> window;
-  JSObject* scriptOwner = nullptr;
+  JS::Rooted<JSObject*> scriptOwner(aCallingCx);
   StoragePrivilege privilege;
 
   if (mWindow) {
@@ -622,8 +621,8 @@ IDBFactory::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 int16_t
-IDBFactory::Cmp(JSContext* aCx, JS::Value aFirst, JS::Value aSecond,
-                ErrorResult& aRv)
+IDBFactory::Cmp(JSContext* aCx, JS::Handle<JS::Value> aFirst,
+                JS::Handle<JS::Value> aSecond, ErrorResult& aRv)
 {
   Key first, second;
   nsresult rv = first.SetFromJSVal(aCx, aFirst);

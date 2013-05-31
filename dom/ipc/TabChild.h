@@ -306,6 +306,17 @@ public:
 
     bool IsAsyncPanZoomEnabled();
 
+    /** Return a boolean indicating if the page has called preventDefault on
+     *  the event.
+     */
+    bool DispatchMouseEvent(const nsString& aType,
+                            const float&    aX,
+                            const float&    aY,
+                            const int32_t&  aButton,
+                            const int32_t&  aClickCount,
+                            const int32_t&  aModifiers,
+                            const bool&     aIgnoreRootScrollFrame);
+
     /**
      * Signal to this TabChild that it should be made visible:
      * activated widget, retained layer tree, etc.  (Respectively,
@@ -366,6 +377,7 @@ private:
     bool InitRenderingState();
     void DestroyWindow();
     void SetProcessNameToAppName();
+    bool ProcessUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics);
 
     // Call RecvShow(nsIntSize(0, 0)) and block future calls to RecvShow().
     void DoFakeShow();
@@ -439,6 +451,8 @@ private:
     // the touch we're tracking.  That is, if touchend or a touchmove
     // that exceeds the gesture threshold doesn't happen.
     CancelableTask* mTapHoldTimer;
+    // Whether we have already received a FileDescriptor for the app package.
+    bool mAppPackageFileDescriptorRecved;
     // At present only 1 of these is really expected.
     nsAutoTArray<nsAutoPtr<CachedFileDescriptorInfo>, 1>
         mCachedFileDescriptorInfos;

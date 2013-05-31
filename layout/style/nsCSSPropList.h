@@ -1555,7 +1555,6 @@ CSS_PROP_TABLEBORDER(
     kEmptyCellsKTable,
     CSS_PROP_NO_OFFSET,
     eStyleAnimType_None)
-#ifdef MOZ_FLEXBOX
 CSS_PROP_POSITION(
     align-items,
     align_items,
@@ -1655,7 +1654,6 @@ CSS_PROP_POSITION(
     kJustifyContentKTable,
     offsetof(nsStylePosition, mJustifyContent),
     eStyleAnimType_EnumU8)
-#endif // MOZ_FLEXBOX
 CSS_PROP_DISPLAY(
     float,
     float,
@@ -1707,6 +1705,18 @@ CSS_PROP_FONT(
     "",
     0,
     nullptr,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_FONT(
+    font-kerning,
+    font_kerning,
+    FontKerning,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    VARIANT_HK,
+    kFontKerningKTable,
     CSS_PROP_NO_OFFSET,
     eStyleAnimType_None)
 CSS_PROP_FONT(
@@ -1774,6 +1784,19 @@ CSS_PROP_FONT(
     kFontStyleKTable,
     offsetof(nsStyleFont, mFont.style),
     eStyleAnimType_EnumU8)
+ CSS_PROP_FONT(
+    font-synthesis,
+    font_synthesis,
+    FontSynthesis,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    0,
+    kFontSynthesisKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
 CSS_PROP_FONT(
     font-variant,
     font_variant,
@@ -1786,6 +1809,82 @@ CSS_PROP_FONT(
     kFontVariantKTable,
     offsetof(nsStyleFont, mFont.variant),
     eStyleAnimType_EnumU8)
+CSS_PROP_FONT(
+    font-variant-alternates,
+    font_variant_alternates,
+    FontVariantAlternates,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    VARIANT_HK,
+    kFontVariantAlternatesKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_FONT(
+    font-variant-caps,
+    font_variant_caps,
+    FontVariantCaps,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    VARIANT_HMK,
+    kFontVariantCapsKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_FONT(
+    font-variant-east-asian,
+    font_variant_east_asian,
+    FontVariantEastAsian,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    0,
+    kFontVariantEastAsianKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_FONT(
+    font-variant-ligatures,
+    font_variant_ligatures,
+    FontVariantLigatures,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    0,
+    kFontVariantLigaturesKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_FONT(
+    font-variant-numeric,
+    font_variant_numeric,
+    FontVariantNumeric,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    0,
+    kFontVariantNumericKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
+CSS_PROP_FONT(
+    font-variant-position,
+    font_variant_position,
+    FontVariantPosition,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
+        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
+    "layout.css.font-features.enabled",
+    VARIANT_HMK,
+    kFontVariantPositionKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
 CSS_PROP_FONT(
     font-weight,
     font_weight,

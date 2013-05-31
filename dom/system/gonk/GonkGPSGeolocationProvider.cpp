@@ -48,7 +48,7 @@ NS_IMPL_THREADSAFE_ISUPPORTS3(GonkGPSGeolocationProvider,
                               nsIRILDataCallback,
                               nsISettingsServiceCallback)
 
-GonkGPSGeolocationProvider* GonkGPSGeolocationProvider::sSingleton;
+/* static */ GonkGPSGeolocationProvider* GonkGPSGeolocationProvider::sSingleton = nullptr;
 GpsCallbacks GonkGPSGeolocationProvider::mCallbacks = {
   sizeof(GpsCallbacks),
   LocationCallback,
@@ -294,8 +294,8 @@ GonkGPSGeolocationProvider::GetSingleton()
   if (!sSingleton)
     sSingleton = new GonkGPSGeolocationProvider();
 
-  NS_ADDREF(sSingleton);
-  return sSingleton;
+  nsRefPtr<GonkGPSGeolocationProvider> provider = sSingleton;
+  return provider.forget();
 }
 
 const GpsInterface*
@@ -679,7 +679,6 @@ GonkGPSGeolocationProvider::Handle(const nsAString& aName,
   if (aName.EqualsLiteral("ril.supl.apn")) {
     JSContext *cx = nsContentUtils::GetCurrentJSContext();
     NS_ENSURE_TRUE(cx, NS_OK);
-    JSAutoRequest ar(cx);
 
     // When we get the APN, we attempt to call data_call_open of AGPS.
     if (aResult.isString()) {

@@ -13,6 +13,7 @@ const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
 const DEBUG_CONTRACTID = "@mozilla.org/xpcom/debug;1";
 const PRINTSETTINGS_CONTRACTID = "@mozilla.org/gfx/printsettings-service;1";
+const ENVIRONMENT_CONTRACTID = "@mozilla.org/process/environment;1";
 
 // "<!--CLEAR-->"
 const BLANK_URL_FOR_CLEARING = "data:text/html;charset=UTF-8,%3C%21%2D%2DCLEAR%2D%2D%3E";
@@ -38,10 +39,13 @@ var gFailureReason;
 var gAssertionCount = 0;
 
 var gDebug;
+var gVerbose = false;
 
 var gCurrentTestStartTime;
 var gClearingForAssertionCheck = false;
 
+const TYPE_LOAD = 'load';  // test without a reference (just test that it does
+                           // not assert, crash, hang, or leak)
 const TYPE_SCRIPT = 'script'; // test contains individual test results
 
 function markupDocumentViewer() {
@@ -93,6 +97,8 @@ function OnInitialLoad()
 #endif
 
     gDebug = CC[DEBUG_CONTRACTID].getService(CI.nsIDebug2);
+    var env = CC[ENVIRONMENT_CONTRACTID].getService(CI.nsIEnvironment);
+    gVerbose = !!env.get("MOZ_REFTEST_VERBOSE");
 
     RegisterMessageListeners();
 
@@ -626,18 +632,32 @@ function LoadURI(uri)
 
 function LogWarning(str)
 {
-    sendAsyncMessage("reftest:Log", { type: "warning", msg: str });
+    if (gVerbose) {
+        sendSyncMessage("reftest:Log", { type: "warning", msg: str });
+    } else {
+        sendAsyncMessage("reftest:Log", { type: "warning", msg: str });
+    }
 }
 
 function LogInfo(str)
 {
-    sendAsyncMessage("reftest:Log", { type: "info", msg: str });
+    if (gVerbose) {
+        sendSyncMessage("reftest:Log", { type: "info", msg: str });
+    } else {
+        sendAsyncMessage("reftest:Log", { type: "info", msg: str });
+    }
 }
 
 const SYNC_DEFAULT = 0x0;
 const SYNC_ALLOW_DISABLE = 0x1;
 function SynchronizeForSnapshot(flags)
 {
+    if (gCurrentTestType == TYPE_SCRIPT ||
+        gCurrentTestType == TYPE_LOAD) {
+        // Script tests or load-only tests do not need any snapshotting
+        return;
+    }
+
     if (flags & SYNC_ALLOW_DISABLE) {
         var docElt = content.document.documentElement;
         if (docElt && docElt.hasAttribute("reftest-no-sync-layers")) {

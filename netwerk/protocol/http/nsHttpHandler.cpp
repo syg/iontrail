@@ -183,11 +183,14 @@ nsHttpHandler::nsHttpHandler()
     , mCoalesceSpdy(true)
     , mUseAlternateProtocol(false)
     , mSpdyPersistentSettings(false)
+    , mAllowSpdyPush(true)
     , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize)
+    , mSpdyPushAllowance(32768)
     , mSpdyPingThreshold(PR_SecondsToInterval(58))
     , mSpdyPingTimeout(PR_SecondsToInterval(8))
     , mConnectTimeout(90000)
+    , mBypassCacheLockThreshold(250.0)
     , mParallelSpeculativeConnectLimit(6)
     , mRequestTokenBucketEnabled(true)
     , mRequestTokenBucketMinParallelism(6)
@@ -201,7 +204,7 @@ nsHttpHandler::nsHttpHandler()
 
     LOG(("Creating nsHttpHandler [this=%x].\n", this));
 
-    NS_ASSERTION(!gHttpHandler, "HTTP handler already created!");
+    MOZ_ASSERT(!gHttpHandler, "HTTP handler already created!");
     gHttpHandler = this;
 }
 
@@ -491,7 +494,7 @@ uint32_t
 nsHttpHandler::Get32BitsOfPseudoRandom()
 {
     // only confirm rand seeding on socket thread
-    NS_ABORT_IF_FALSE(PR_GetCurrentThread() == gSocketThread, "wrong thread");
+    MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
     // rand() provides different amounts of PRNG on different platforms.
     // 15 or 31 bits are common amounts.
@@ -560,9 +563,9 @@ nsHttpHandler::BuildUserAgent()
 {
     LOG(("nsHttpHandler::BuildUserAgent\n"));
 
-    NS_ASSERTION(!mLegacyAppName.IsEmpty() &&
-                 !mLegacyAppVersion.IsEmpty(),
-                 "HTTP cannot send practical requests without this much");
+    MOZ_ASSERT(!mLegacyAppName.IsEmpty() &&
+               !mLegacyAppVersion.IsEmpty(),
+               "HTTP cannot send practical requests without this much");
 
     // preallocate to worst-case size, which should always be better
     // than if we didn't preallocate at all.
@@ -656,7 +659,7 @@ nsHttpHandler::InitUserAgentComponents()
 
 #if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO) || defined(MOZ_B2G)
     nsCOMPtr<nsIPropertyBag2> infoService = do_GetService("@mozilla.org/system-info;1");
-    NS_ASSERTION(infoService, "Could not find a system info service");
+    MOZ_ASSERT(infoService, "Could not find a system info service");
 
     bool isTablet;
     nsresult rv = infoService->GetPropertyAsBool(NS_LITERAL_STRING("tablet"), &isTablet);
@@ -1158,6 +1161,22 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
                 PR_SecondsToInterval((uint16_t) clamped(val, 0, 0x7fffffff));
     }
 
+    if (PREF_CHANGED(HTTP_PREF("spdy.allow-push"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("spdy.allow-push"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mAllowSpdyPush = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("spdy.push-allowance"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("spdy.push-allowance"), &val);
+        if (NS_SUCCEEDED(rv)) {
+            mSpdyPushAllowance =
+                static_cast<uint32_t>
+                (clamped(val, 1024, static_cast<int32_t>(ASpdySession::kInitialRwin)));
+        }
+    }
+
     // The amount of seconds to wait for a spdy ping response before
     // closing the session.
     if (PREF_CHANGED(HTTP_PREF("spdy.send-buffer-size"))) {
@@ -1173,6 +1192,16 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         if (NS_SUCCEEDED(rv))
             // the pref is in seconds, but the variable is in milliseconds
             mConnectTimeout = clamped(val, 1, 0xffff) * PR_MSEC_PER_SEC;
+    }
+
+    // The maximum amount of time the cache session lock can be held
+    // before a new transaction bypasses the cache. In milliseconds.
+    if (PREF_CHANGED(HTTP_PREF("bypass-cachelock-threshold"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("bypass-cachelock-threshold"), &val);
+        if (NS_SUCCEEDED(rv))
+            // the pref and variable are both in milliseconds
+            mBypassCacheLockThreshold =
+                static_cast<double>(clamped(val, 0, 0x7ffffff));
     }
 
     // The maximum number of current global half open sockets allowable
@@ -1429,7 +1458,7 @@ PrepareAcceptLanguages(const char *i_AcceptLanguages, nsACString &o_AcceptLangua
             q -= dec;
             p2 += wrote;
             available -= wrote;
-            NS_ASSERTION(available > 0, "allocated string not long enough");
+            MOZ_ASSERT(available > 0, "allocated string not long enough");
         }
     }
     nsCRT::free(o_Accept);
@@ -1870,7 +1899,7 @@ nsHttpsHandler::Init()
 {
     nsCOMPtr<nsIProtocolHandler> httpHandler(
             do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http"));
-    NS_ASSERTION(httpHandler.get() != nullptr, "no http handler?");
+    MOZ_ASSERT(httpHandler.get() != nullptr);
     return NS_OK;
 }
 
@@ -1907,7 +1936,7 @@ nsHttpsHandler::NewURI(const nsACString &aSpec,
 NS_IMETHODIMP
 nsHttpsHandler::NewChannel(nsIURI *aURI, nsIChannel **_retval)
 {
-    NS_ABORT_IF_FALSE(gHttpHandler, "Should have a HTTP handler by now.");
+    MOZ_ASSERT(gHttpHandler);
     if (!gHttpHandler)
       return NS_ERROR_UNEXPECTED;
     return gHttpHandler->NewChannel(aURI, _retval);

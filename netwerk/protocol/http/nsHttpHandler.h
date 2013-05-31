@@ -101,11 +101,14 @@ public:
     bool           UseSpdyPersistentSettings() { return mSpdyPersistentSettings; }
     uint32_t       SpdySendingChunkSize() { return mSpdySendingChunkSize; }
     uint32_t       SpdySendBufferSize()      { return mSpdySendBufferSize; }
+    uint32_t       SpdyPushAllowance()       { return mSpdyPushAllowance; }
     PRIntervalTime SpdyPingThreshold() { return mSpdyPingThreshold; }
     PRIntervalTime SpdyPingTimeout() { return mSpdyPingTimeout; }
+    bool           AllowSpdyPush()   { return mAllowSpdyPush; }
     uint32_t       ConnectTimeout()  { return mConnectTimeout; }
     uint32_t       ParallelSpeculativeConnectLimit() { return mParallelSpeculativeConnectLimit; }
     bool           CritialRequestPrioritization() { return mCritialRequestPrioritization; }
+    double         BypassCacheLockThreshold() { return mBypassCacheLockThreshold; }
 
     bool           UseRequestTokenBucket() { return mRequestTokenBucketEnabled; }
     uint16_t       RequestTokenBucketMinParallelism() { return mRequestTokenBucketMinParallelism; }
@@ -132,10 +135,10 @@ public:
     //
     // - the handler keeps a count of active connections to enforce the
     //   steady-state max-connections pref.
-    // 
+    //
 
     // Called to kick-off a new transaction, by default the transaction
-    // will be put on the pending transaction queue if it cannot be 
+    // will be put on the pending transaction queue if it cannot be
     // initiated at this time.  Callable from any thread.
     nsresult InitiateTransaction(nsHttpTransaction *trans, int32_t priority)
     {
@@ -257,7 +260,7 @@ public:
     {
         return mPipelineRescheduleTimeout;
     }
-    
+
     PRIntervalTime GetPipelineTimeout()   { return mPipelineReadTimeout; }
 
     mozilla::net::SpdyInformation *SpdyInfo() { return &mSpdyInfo; }
@@ -271,6 +274,13 @@ public:
             uint32_t appId,
             bool inBrowser,
             nsACString& sessionName);
+
+    // When the disk cache is responding slowly its use is suppressed
+    // for 1 minute for most requests. Callable from main thread only.
+    mozilla::TimeStamp GetCacheSkippedUntil() { return mCacheSkippedUntil; }
+    void SetCacheSkippedUntil(mozilla::TimeStamp arg) { mCacheSkippedUntil = arg; }
+    void ClearCacheSkippedUntil() { mCacheSkippedUntil = mozilla::TimeStamp(); }
+
 private:
 
     //
@@ -380,7 +390,7 @@ private:
     bool           mUseCache;
 
     bool           mPromptTempRedirect;
-    // mSendSecureXSiteReferrer: default is false, 
+    // mSendSecureXSiteReferrer: default is false,
     // if true allow referrer headers between secure non-matching hosts
     bool           mSendSecureXSiteReferrer;
 
@@ -408,14 +418,20 @@ private:
     bool           mCoalesceSpdy;
     bool           mUseAlternateProtocol;
     bool           mSpdyPersistentSettings;
+    bool           mAllowSpdyPush;
     uint32_t       mSpdySendingChunkSize;
     uint32_t       mSpdySendBufferSize;
+    uint32_t       mSpdyPushAllowance;
     PRIntervalTime mSpdyPingThreshold;
     PRIntervalTime mSpdyPingTimeout;
 
     // The maximum amount of time to wait for socket transport to be
     // established. In milliseconds.
     uint32_t       mConnectTimeout;
+
+    // The maximum amount of time the nsICacheSession lock can be held
+    // before a new transaction bypasses the cache. In milliseconds.
+    double         mBypassCacheLockThreshold;
 
     // The maximum number of current global half open sockets allowable
     // when starting a new speculative connection.
@@ -431,6 +447,10 @@ private:
     // Whether or not to block requests for non head js/css items (e.g. media)
     // while those elements load.
     bool           mCritialRequestPrioritization;
+
+    // When the disk cache is responding slowly its use is suppressed
+    // for 1 minute for most requests.
+    mozilla::TimeStamp                mCacheSkippedUntil;
 
 private:
     // For Rate Pacing Certain Network Events. Only assign this pointer on
@@ -469,7 +489,7 @@ class nsHttpsHandler : public nsIHttpProtocolHandler
 public:
     // we basically just want to override GetScheme and GetDefaultPort...
     // all other methods should be forwarded to the nsHttpHandler instance.
-    
+
     NS_DECL_ISUPPORTS
     NS_DECL_NSIPROTOCOLHANDLER
     NS_FORWARD_NSIPROXIEDPROTOCOLHANDLER (gHttpHandler->)

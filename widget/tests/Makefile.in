@@ -12,8 +12,6 @@ FAIL_ON_WARNINGS = 1
 
 include $(DEPTH)/config/autoconf.mk
 
-DISABLED_XPCSHELL_TESTS  = unit
-
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 
 ifdef NS_ENABLE_TSF
@@ -80,6 +78,7 @@ MOCHITEST_CHROME_FILES += native_menus_window.xul \
                test_bug596600.xul \
                test_bug673301.xul \
                test_taskbar_progress.xul \
+               test_secure_input.html \
                $(NULL)
 endif
 

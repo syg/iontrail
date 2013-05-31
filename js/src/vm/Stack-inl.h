@@ -12,7 +12,6 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 
-#include "methodjit/MethodJIT.h"
 #include "vm/Stack.h"
 #ifdef JS_ION
 #include "ion/BaselineFrame.h"
@@ -73,14 +72,6 @@ StackFrame::compartment() const
     return scopeChain()->compartment();
 }
 
-#ifdef JS_METHODJIT
-inline mjit::JITScript *
-StackFrame::jit()
-{
-    return script()->getJIT(isConstructing(), script()->zone()->compileBarriers());
-}
-#endif
-
 inline void
 StackFrame::initPrev(JSContext *cx)
 {
@@ -88,13 +79,11 @@ StackFrame::initPrev(JSContext *cx)
     if (FrameRegs *regs = cx->maybeRegs()) {
         prev_ = regs->fp();
         prevpc_ = regs->pc;
-        prevInline_ = regs->inlined();
         JS_ASSERT(uint32_t(prevpc_ - prev_->script()->code) < prev_->script()->length);
     } else {
         prev_ = NULL;
 #ifdef DEBUG
         prevpc_ = (jsbytecode *)0xbadc;
-        prevInline_ = (InlinedSite *)0xbadc;
 #endif
     }
 }
@@ -107,38 +96,10 @@ StackFrame::resetGeneratorPrev(JSContext *cx)
 }
 
 inline void
-StackFrame::initInlineFrame(JSFunction *fun, StackFrame *prevfp, jsbytecode *prevpc)
-{
-    /*
-     * Note: no need to ensure the scopeChain is instantiated for inline
-     * frames. Functions which use the scope chain are never inlined.
-     */
-    flags_ = StackFrame::FUNCTION;
-    exec.fun = fun;
-    resetInlinePrev(prevfp, prevpc);
-
-    if (prevfp->hasPushedSPSFrame())
-        setPushedSPSFrame();
-}
-
-inline void
-StackFrame::resetInlinePrev(StackFrame *prevfp, jsbytecode *prevpc)
-{
-    JS_ASSERT_IF(flags_ & StackFrame::HAS_PREVPC, prevInline_);
-    flags_ |= StackFrame::HAS_PREVPC;
-    prev_ = prevfp;
-    prevpc_ = prevpc;
-    prevInline_ = NULL;
-}
-
-inline void
 StackFrame::initCallFrame(JSContext *cx, JSFunction &callee,
                           JSScript *script, uint32_t nactual, StackFrame::Flags flagsArg)
 {
-    JS_ASSERT((flagsArg & ~(CONSTRUCTING |
-                            LOWERED_CALL_APPLY |
-                            OVERFLOW_ARGS |
-                            UNDERFLOW_ARGS)) == 0);
+    JS_ASSERT((flagsArg & ~CONSTRUCTING) == 0);
     JS_ASSERT(callee.nonLazyScript() == script);
 
     /* Initialize stack frame members. */
@@ -146,7 +107,6 @@ StackFrame::initCallFrame(JSContext *cx, JSFunction &callee,
     exec.fun = &callee;
     u.nactual = nactual;
     scopeChain_ = callee.environment();
-    ncode_ = NULL;
     initPrev(cx);
     blockChain_= NULL;
     JS_ASSERT(!hasBlockChain());
@@ -155,54 +115,10 @@ StackFrame::initCallFrame(JSContext *cx, JSFunction &callee,
     initVarsToUndefined();
 }
 
-/*
- * Reinitialize the StackFrame fields that have been initialized up to the
- * point of FixupArity in the function prologue.
- */
-inline void
-StackFrame::initFixupFrame(StackFrame *prev, StackFrame::Flags flags, void *ncode, unsigned nactual)
-{
-    JS_ASSERT((flags & ~(CONSTRUCTING |
-                         LOWERED_CALL_APPLY |
-                         FUNCTION |
-                         OVERFLOW_ARGS |
-                         UNDERFLOW_ARGS)) == 0);
-
-    flags_ = FUNCTION | flags;
-    prev_ = prev;
-    ncode_ = ncode;
-    u.nactual = nactual;
-}
-
-inline bool
-StackFrame::jitHeavyweightFunctionPrologue(JSContext *cx)
-{
-    JS_ASSERT(isNonEvalFunctionFrame());
-    JS_ASSERT(fun()->isHeavyweight());
-
-    CallObject *callobj = CallObject::createForFunction(cx, this);
-    if (!callobj)
-        return false;
-
-    pushOnScopeChain(*callobj);
-    flags_ |= HAS_CALL_OBJ;
-
-    return true;
-}
-
 inline void
 StackFrame::initVarsToUndefined()
 {
     SetValueRangeToUndefined(slots(), script()->nfixed);
-}
-
-inline JSObject *
-StackFrame::createRestParameter(JSContext *cx)
-{
-    JS_ASSERT(fun()->hasRest());
-    unsigned nformal = fun()->nargs - 1, nactual = numActualArgs();
-    unsigned nrest = (nactual > nformal) ? nactual - nformal : 0;
-    return NewDenseCopiedArray(cx, nrest, actuals() + nformal, NULL);
 }
 
 inline Value &
@@ -228,7 +144,7 @@ StackFrame::unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing)
     JS_ASSERT(i < numFormalArgs());
     JS_ASSERT_IF(checkAliasing, !script()->argsObjAliasesFormals());
     JS_ASSERT_IF(checkAliasing, !script()->formalIsAliased(i));
-    return formals()[i];
+    return argv()[i];
 }
 
 inline Value &
@@ -237,7 +153,7 @@ StackFrame::unaliasedActual(unsigned i, MaybeCheckAliasing checkAliasing)
     JS_ASSERT(i < numActualArgs());
     JS_ASSERT_IF(checkAliasing, !script()->argsObjAliasesFormals());
     JS_ASSERT_IF(checkAliasing && i < numFormalArgs(), !script()->formalIsAliased(i));
-    return i < numFormalArgs() ? formals()[i] : actuals()[i];
+    return argv()[i];
 }
 
 template <class Op>
@@ -247,25 +163,9 @@ StackFrame::forEachUnaliasedActual(Op op)
     JS_ASSERT(!script()->funHasAnyAliasedFormal);
     JS_ASSERT(!script()->needsArgsObj());
 
-    unsigned nformal = numFormalArgs();
-    unsigned nactual = numActualArgs();
-
-    const Value *formalsEnd = (const Value *)this;
-    const Value *formals = formalsEnd - nformal;
-
-    if (nactual <= nformal) {
-        const Value *actualsEnd = formals + nactual;
-        for (const Value *p = formals; p < actualsEnd; ++p)
-            op(*p);
-    } else {
-        for (const Value *p = formals; p < formalsEnd; ++p)
-            op(*p);
-
-        const Value *actualsEnd = formals - 2;
-        const Value *actuals = actualsEnd - nactual;
-        for (const Value *p = actuals + nformal; p < actualsEnd; ++p)
-            op(*p);
-    }
+    const Value *argsEnd = argv() + numActualArgs();
+    for (const Value *p = argv(); p < argsEnd; ++p)
+        op(*p);
 }
 
 struct CopyTo
@@ -281,30 +181,6 @@ struct CopyToHeap
     CopyToHeap(HeapValue *dst) : dst(dst) {}
     void operator()(const Value &src) { dst->init(src); ++dst; }
 };
-
-inline unsigned
-StackFrame::numFormalArgs() const
-{
-    JS_ASSERT(hasArgs());
-    return fun()->nargs;
-}
-
-inline unsigned
-StackFrame::numActualArgs() const
-{
-    /*
-     * u.nactual is always coherent, except for method JIT frames where the
-     * callee does not access its arguments and the number of actual arguments
-     * matches the number of formal arguments. The JIT requires that all frames
-     * which do not have an arguments object and use their arguments have a
-     * coherent u.nactual (even though the below code may not use it), as
-     * JIT code may access the field directly.
-     */
-    JS_ASSERT(hasArgs());
-    if (JS_UNLIKELY(flags_ & (OVERFLOW_ARGS | UNDERFLOW_ARGS)))
-        return u.nactual;
-    return numFormalArgs();
-}
 
 inline ArgumentsObject &
 StackFrame::argsObj() const
@@ -374,16 +250,6 @@ StackSpace::ensureSpace(JSContext *cx, MaybeReportError report, Value *from, ptr
     return true;
 }
 
-inline Value *
-StackSpace::getStackLimit(JSContext *cx, MaybeReportError report)
-{
-    FrameRegs &regs = cx->regs();
-    unsigned nvals = regs.fp()->script()->nslots + STACK_JIT_EXTRA;
-    return ensureSpace(cx, report, regs.sp, nvals)
-           ? conservativeEnd_
-           : NULL;
-}
-
 /*****************************************************************************/
 
 JS_ALWAYS_INLINE StackFrame *
@@ -396,34 +262,21 @@ ContextStack::getCallFrame(JSContext *cx, MaybeReportError report, const CallArg
     Value *firstUnused = args.end();
     JS_ASSERT(firstUnused == space().firstUnused());
 
-    /* Include extra space to satisfy the method-jit stackLimit invariant. */
-    unsigned nvals = VALUES_PER_STACK_FRAME + script->nslots + StackSpace::STACK_JIT_EXTRA;
+    unsigned nvals = VALUES_PER_STACK_FRAME + script->nslots;
 
-    /* Maintain layout invariant: &formals[0] == ((Value *)fp) - nformal. */
-
-    if (args.length() == nformal) {
+    if (args.length() >= nformal) {
         if (!space().ensureSpace(cx, report, firstUnused, nvals))
             return NULL;
         return reinterpret_cast<StackFrame *>(firstUnused);
     }
 
-    if (args.length() < nformal) {
-        *flags = StackFrame::Flags(*flags | StackFrame::UNDERFLOW_ARGS);
-        unsigned nmissing = nformal - args.length();
-        if (!space().ensureSpace(cx, report, firstUnused, nmissing + nvals))
-            return NULL;
-        SetValueRangeToUndefined(firstUnused, nmissing);
-        return reinterpret_cast<StackFrame *>(firstUnused + nmissing);
-    }
-
-    *flags = StackFrame::Flags(*flags | StackFrame::OVERFLOW_ARGS);
-    unsigned ncopy = 2 + nformal;
-    if (!space().ensureSpace(cx, report, firstUnused, ncopy + nvals))
+    /* Pad any missing arguments with |undefined|. */
+    JS_ASSERT(args.length() < nformal);
+    unsigned nmissing = nformal - args.length();
+    if (!space().ensureSpace(cx, report, firstUnused, nmissing + nvals))
         return NULL;
-    Value *dst = firstUnused;
-    Value *src = args.base();
-    mozilla::PodCopy(dst, src, ncopy);
-    return reinterpret_cast<StackFrame *>(firstUnused + ncopy);
+    SetValueRangeToUndefined(firstUnused, nmissing);
+    return reinterpret_cast<StackFrame *>(firstUnused + nmissing);
 }
 
 JS_ALWAYS_INLINE bool
@@ -463,27 +316,6 @@ ContextStack::pushInlineFrame(JSContext *cx, FrameRegs &regs, const CallArgs &ar
     return true;
 }
 
-JS_ALWAYS_INLINE StackFrame *
-ContextStack::getFixupFrame(JSContext *cx, MaybeReportError report,
-                            const CallArgs &args, JSFunction *fun, HandleScript script,
-                            void *ncode, InitialFrameFlags initial, Value **stackLimit)
-{
-    JS_ASSERT(onTop());
-    JS_ASSERT(fun->nonLazyScript() == args.callee().toFunction()->nonLazyScript());
-    JS_ASSERT(fun->nonLazyScript() == script);
-
-    StackFrame::Flags flags = ToFrameFlags(initial);
-    StackFrame *fp = getCallFrame(cx, report, args, fun, script, &flags);
-    if (!fp)
-        return NULL;
-
-    /* Do not init late prologue or regs; this is done by jit code. */
-    fp->initFixupFrame(cx->fp(), flags, ncode, args.length());
-
-    *stackLimit = space().conservativeEnd_;
-    return fp;
-}
-
 JS_ALWAYS_INLINE void
 ContextStack::popInlineFrame(FrameRegs &regs)
 {
@@ -491,20 +323,11 @@ ContextStack::popInlineFrame(FrameRegs &regs)
     JS_ASSERT(&regs == &seg_->regs());
 
     StackFrame *fp = regs.fp();
-    Value *newsp = fp->actuals() - 1;
+    Value *newsp = fp->argv() - 1;
     JS_ASSERT(newsp >= fp->prev()->base());
 
     newsp[-1] = fp->returnValue();
     regs.popFrame(newsp);
-}
-
-inline void
-ContextStack::popFrameAfterOverflow()
-{
-    /* Restore the regs to what they were on entry to JSOP_CALL. */
-    FrameRegs &regs = seg_->regs();
-    StackFrame *fp = regs.fp();
-    regs.popFrame(fp->actuals() + fp->numActualArgs());
 }
 
 inline JSScript *
@@ -526,21 +349,6 @@ ContextStack::currentScript(jsbytecode **ppc,
         ion::GetPcScript(cx_, &script, ppc);
         if (!allowCrossCompartment && script->compartment() != cx_->compartment)
             return NULL;
-        return script;
-    }
-#endif
-
-#ifdef JS_METHODJIT
-    mjit::CallSite *inlined = regs.inlined();
-    if (inlined) {
-        mjit::JITChunk *chunk = fp->jit()->chunk(regs.pc);
-        JS_ASSERT(inlined->inlineIndex < chunk->nInlineFrames);
-        mjit::InlineFrame *frame = &chunk->inlineFrames()[inlined->inlineIndex];
-        JSScript *script = frame->fun->nonLazyScript();
-        if (!allowCrossCompartment && script->compartment() != cx_->compartment)
-            return NULL;
-        if (ppc)
-            *ppc = script->code + inlined->pcOffset;
         return script;
     }
 #endif
@@ -944,27 +752,17 @@ AbstractFramePtr::isStrictEvalFrame() const
 }
 
 inline Value *
-AbstractFramePtr::formals() const
+AbstractFramePtr::argv() const
 {
     if (isStackFrame())
-        return asStackFrame()->formals();
+        return asStackFrame()->argv();
 #ifdef JS_ION
-    return asBaselineFrame()->formals();
+    return asBaselineFrame()->argv();
 #else
     JS_NOT_REACHED("Invalid frame");
 #endif
 }
-inline Value *
-AbstractFramePtr::actuals() const
-{
-    if (isStackFrame())
-        return asStackFrame()->actuals();
-#ifdef JS_ION
-    return asBaselineFrame()->actuals();
-#else
-    JS_NOT_REACHED("Invalid frame");
-#endif
-}
+
 inline bool
 AbstractFramePtr::hasArgsObj() const
 {

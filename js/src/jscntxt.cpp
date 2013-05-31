@@ -44,9 +44,6 @@
 #include "ion/Ion.h"
 #endif
 
-#ifdef JS_METHODJIT
-# include "methodjit/MethodJIT.h"
-#endif
 #include "gc/Marking.h"
 #include "js/CharacterEncoding.h"
 #include "js/MemoryMetrics.h"
@@ -209,25 +206,6 @@ JSRuntime::createMathCache(JSContext *cx)
     mathCache_ = newMathCache;
     return mathCache_;
 }
-
-#ifdef JS_METHODJIT
-mjit::JaegerRuntime *
-JSRuntime::createJaegerRuntime(JSContext *cx)
-{
-    JS_ASSERT(!jaegerRuntime_);
-    JS_ASSERT(cx->runtime == this);
-
-    mjit::JaegerRuntime *jr = js_new<mjit::JaegerRuntime>();
-    if (!jr || !jr->init(cx)) {
-        js_ReportOutOfMemory(cx);
-        js_delete(jr);
-        return NULL;
-    }
-
-    jaegerRuntime_ = jr;
-    return jaegerRuntime_;
-}
-#endif
 
 void
 JSCompartment::sweepCallsiteClones()
@@ -1215,10 +1193,7 @@ JSContext::JSContext(JSRuntime *rt)
 #endif
     resolveFlags(0),
     iterValue(MagicValue(JS_NO_ITER_VALUE)),
-#ifdef JS_METHODJIT
-    methodJitEnabled(false),
     jitIsBroken(false),
-#endif
 #ifdef MOZ_TRACE_JSCALLS
     functionCallback(NULL),
 #endif
@@ -1442,7 +1417,6 @@ JSContext::purge()
     }
 }
 
-#if defined(JS_METHODJIT)
 static bool
 ComputeIsJITBroken()
 {
@@ -1513,15 +1487,11 @@ IsJITBrokenHere()
     }
     return isBroken;
 }
-#endif
 
 void
 JSContext::updateJITEnabled()
 {
-#ifdef JS_METHODJIT
     jitIsBroken = IsJITBrokenHere();
-    methodJitEnabled = (options_ & JSOPTION_METHODJIT) && !jitIsBroken;
-#endif
 }
 
 size_t

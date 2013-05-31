@@ -87,7 +87,6 @@ SetFrameArgumentsObject(JSContext *cx, AbstractFramePtr frame,
 inline const char *
 JSScript::filename() const
 {
-    JS_ASSERT(scriptSource_);
     return scriptSource()->filename();
 }
 
@@ -95,6 +94,12 @@ inline void
 JSScript::setFunction(JSFunction *fun)
 {
     function_ = fun;
+}
+
+inline js::ScriptSource *
+JSScript::scriptSource() const
+{
+    return sourceObject()->source();
 }
 
 inline JSFunction *
@@ -157,24 +162,6 @@ JSScript::global() const
     return *compartment()->maybeGlobal();
 }
 
-#ifdef JS_METHODJIT
-inline bool
-JSScript::ensureHasMJITInfo(JSContext *cx)
-{
-    if (mJITInfo)
-        return true;
-    mJITInfo = cx->new_<JITScriptSet>();
-    return mJITInfo != NULL;
-}
-
-inline void
-JSScript::destroyMJITInfo(js::FreeOp *fop)
-{
-    fop->delete_(mJITInfo);
-    mJITInfo = NULL;
-}
-#endif /* JS_METHODJIT */
-
 inline void
 JSScript::writeBarrierPre(JSScript *script)
 {
@@ -195,6 +182,23 @@ JSScript::writeBarrierPre(JSScript *script)
 inline void
 JSScript::writeBarrierPost(JSScript *script, void *addr)
 {
+}
+
+/* static */ inline void
+js::LazyScript::writeBarrierPre(js::LazyScript *lazy)
+{
+#ifdef JSGC_INCREMENTAL
+    if (!lazy)
+        return;
+
+    JS::Zone *zone = lazy->zone();
+    if (zone->needsBarrier()) {
+        JS_ASSERT(!zone->rt->isHeapBusy());
+        js::LazyScript *tmp = lazy;
+        MarkLazyScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
+        JS_ASSERT(tmp == lazy);
+    }
+#endif
 }
 
 inline JSPrincipals *

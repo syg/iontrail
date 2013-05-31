@@ -129,6 +129,13 @@ Download.prototype = {
   error: null,
 
   /**
+   * Indicates the start time of the download.  When the download starts,
+   * this property is set to a valid Date object.  The default value is null
+   * before the download starts.
+   */
+  startTime: null,
+
+  /**
    * Indicates whether this download's "progress" property is able to report
    * partial progress while the download proceeds, and whether the value in
    * totalBytes is relevant.  This depends on the saver and the download source.
@@ -237,6 +244,7 @@ Download.prototype = {
     this.progress = 0;
     this.totalBytes = 0;
     this.currentBytes = 0;
+    this.startTime = new Date();
 
     // Create a new deferred object and an associated promise before starting
     // the actual download.  We store it on the download as the current attempt.
@@ -419,6 +427,19 @@ DownloadSource.prototype = {
    * The nsIURI for the download source.
    */
   uri: null,
+
+  /**
+   * Indicates whether the download originated from a private window.  This
+   * determines the context of the network request that is made to retrieve the 
+   * resource.
+   */
+  isPrivate: false,
+
+  /**
+   * The nsIURI for the referrer of the download source, or null if no referrer
+   * should be sent or the download source is not HTTP.
+   */
+  referrer: null,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -588,8 +609,14 @@ DownloadCopySaver.prototype = {
       backgroundFileSaver.setTarget(download.target.file, false);
 
       // Create a channel from the source, and listen to progress notifications.
-      // TODO: Handle downloads initiated from private browsing windows.
       let channel = NetUtil.newChannel(download.source.uri);
+      if (channel instanceof Ci.nsIPrivateBrowsingChannel) {
+        channel.setPrivate(download.source.isPrivate);
+      }
+      if (channel instanceof Ci.nsIHttpChannel) {
+        channel.referrer = download.source.referrer;
+      }
+
       channel.notificationCallbacks = {
         QueryInterface: XPCOMUtils.generateQI([Ci.nsIInterfaceRequestor]),
         getInterface: XPCOMUtils.generateQI([Ci.nsIProgressEventSink]),

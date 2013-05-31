@@ -45,7 +45,7 @@ public:
                                                          nsIScriptContext)
 
   virtual nsresult EvaluateString(const nsAString& aScript,
-                                  JSObject& aScopeObject,
+                                  JS::Handle<JSObject*> aScopeObject,
                                   JS::CompileOptions &aOptions,
                                   bool aCoerceToString,
                                   JS::Value* aRetValue);
@@ -62,8 +62,8 @@ public:
                                  JSObject* aScopeObject);
 
   virtual nsresult BindCompiledEventHandler(nsISupports *aTarget,
-                                            JSObject *aScope,
-                                            JSObject* aHandler,
+                                            JS::Handle<JSObject*> aScope,
+                                            JS::Handle<JSObject*> aHandler,
                                             JS::MutableHandle<JSObject*> aBoundHandler);
 
   virtual nsIScriptGlobalObject *GetGlobalObject();
@@ -75,24 +75,23 @@ public:
   virtual bool IsContextInitialized();
 
   virtual void ScriptEvaluated(bool aTerminated);
-  virtual void SetTerminationFunction(nsScriptTerminationFunc aFunc,
-                                      nsIDOMWindow* aRef);
   virtual bool GetScriptsEnabled();
   virtual void SetScriptsEnabled(bool aEnabled, bool aFireTimeouts);
 
-  virtual nsresult SetProperty(JSObject* aTarget, const char* aPropName, nsISupports* aVal);
+  virtual nsresult SetProperty(JS::Handle<JSObject*> aTarget, const char* aPropName, nsISupports* aVal);
 
   virtual bool GetProcessingScriptTag();
   virtual void SetProcessingScriptTag(bool aResult);
 
   virtual bool GetExecutingScript();
 
-  virtual nsresult InitClasses(JSObject* aGlobalObj);
+  virtual nsresult InitClasses(JS::Handle<JSObject*> aGlobalObj);
 
   virtual void WillInitializeContext();
   virtual void DidInitializeContext();
 
-  virtual nsresult Serialize(nsIObjectOutputStream* aStream, JSScript* aScriptObject);
+  virtual nsresult Serialize(nsIObjectOutputStream* aStream,
+                             JS::Handle<JSScript*> aScriptObject);
   virtual nsresult Deserialize(nsIObjectInputStream* aStream,
                                JS::MutableHandle<JSScript*> aResult);
 
@@ -129,7 +128,7 @@ public:
   // called even if the previous collection was GC.
   static void CycleCollectNow(nsICycleCollectorListener *aListener = nullptr,
                               int32_t aExtraForgetSkippableCalls = 0,
-                              bool aForced = true);
+                              bool aManuallyTriggered = true);
 
   static void PokeGC(JS::gcreason::Reason aReason, int aDelay = 0);
   static void KillGCTimer();
@@ -153,7 +152,7 @@ public:
   {
     // Verify that we have a global so that this
     // does always return a null when GetGlobalObject() is null.
-    JSObject* global = JS_GetGlobalObject(mContext);
+    JSObject* global = GetNativeGlobal();
     return global ? mGlobalObjectRef.get() : nullptr;
   }
 protected:
@@ -186,66 +185,6 @@ private:
   JSContext *mContext;
   bool mActive;
 
-  // Public so we can use it from CallbackFunction
-public:
-  struct TerminationFuncHolder;
-protected:
-  friend struct TerminationFuncHolder;
-  
-  struct TerminationFuncClosure
-  {
-    TerminationFuncClosure(nsScriptTerminationFunc aFunc,
-                           nsISupports* aArg,
-                           TerminationFuncClosure* aNext) :
-      mTerminationFunc(aFunc),
-      mTerminationFuncArg(aArg),
-      mNext(aNext)
-    {
-    }
-    ~TerminationFuncClosure()
-    {
-      delete mNext;
-    }
-    
-    nsScriptTerminationFunc mTerminationFunc;
-    nsCOMPtr<nsISupports> mTerminationFuncArg;
-    TerminationFuncClosure* mNext;
-  };
-
-  // Public so we can use it from CallbackFunction
-public:
-  struct TerminationFuncHolder
-  {
-    TerminationFuncHolder(nsJSContext* aContext)
-      : mContext(aContext),
-        mTerminations(aContext->mTerminations)
-    {
-      aContext->mTerminations = nullptr;
-    }
-    ~TerminationFuncHolder()
-    {
-      // Have to be careful here.  mContext might have picked up new
-      // termination funcs while the script was evaluating.  Prepend whatever
-      // we have to the current termination funcs on the context (since our
-      // termination funcs were posted first).
-      if (mTerminations) {
-        TerminationFuncClosure* cur = mTerminations;
-        while (cur->mNext) {
-          cur = cur->mNext;
-        }
-        cur->mNext = mContext->mTerminations;
-        mContext->mTerminations = mTerminations;
-      }
-    }
-
-    nsJSContext* mContext;
-    TerminationFuncClosure* mTerminations;
-  };
-
-protected:
-  TerminationFuncClosure* mTerminations;
-
-private:
   bool mIsInitialized;
   bool mScriptsEnabled;
   bool mGCOnDestruction;

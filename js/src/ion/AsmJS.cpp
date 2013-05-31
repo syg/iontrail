@@ -17,6 +17,7 @@ using namespace js;
 using namespace js::frontend;
 using namespace mozilla;
 
+#include "ion/PerfSpewer.h"
 #include "ion/CodeGenerator.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
@@ -843,7 +844,7 @@ TypedArrayStoreType(ArrayBufferView::ViewType viewType)
 /*****************************************************************************/
 
 typedef Vector<PropertyName*,1> LabelVector;
-typedef Vector<MBasicBlock*,16> CaseVector;
+typedef Vector<MBasicBlock*,8> BlockVector;
 
 // ModuleCompiler encapsulates the compilation of an entire asm.js module. Over
 // the course of an ModuleCompiler object's lifetime, many FunctionCompiler
@@ -894,7 +895,16 @@ typedef Vector<MBasicBlock*,16> CaseVector;
 // to add a new exit or reuse an existing one. The key is an ExitDescriptor
 // (which holds the exit pairing) and the value is an index into the
 // Vector<Exit> stored in the AsmJSModule.
-class ModuleCompiler
+//
+// Rooting note: ModuleCompiler is a stack class that contains unrooted
+// PropertyName (JSAtom) pointers.  This is safe because it cannot be
+// constructed without a TokenStream reference.  TokenStream is itself a stack
+// class that cannot be constructed without an AutoKeepAtoms being live on the
+// stack, which prevents collection of atoms.
+//
+// ModuleCompiler is marked as rooted in the rooting analysis.  Don't add
+// non-JSAtom pointers, or this will break!
+class MOZ_STACK_CLASS ModuleCompiler
 {
   public:
     class Func
@@ -1537,7 +1547,6 @@ class FunctionCompiler
     typedef HashMap<PropertyName*, Local> LocalMap;
 
   private:
-    typedef Vector<MBasicBlock*, 2> BlockVector;
     typedef HashMap<PropertyName*, BlockVector> LabeledBlockMap;
     typedef HashMap<ParseNode*, BlockVector> UnlabeledBlockMap;
     typedef Vector<ParseNode*, 4> NodeStack;
@@ -2010,42 +2019,48 @@ class FunctionCompiler
         return true;
     }
 
-    void joinIf(MBasicBlock *joinBlock)
+    bool appendThenBlock(BlockVector *thenBlocks) {
+        if (!curBlock_)
+            return true;
+        return thenBlocks->append(curBlock_);
+    }
+
+    void joinIf(const BlockVector &thenBlocks, MBasicBlock *joinBlock)
     {
         if (!joinBlock)
             return;
-        if (curBlock_) {
-            curBlock_->end(MGoto::New(joinBlock));
-            joinBlock->addPredecessor(curBlock_);
+        JS_ASSERT_IF(curBlock_, thenBlocks.back() == curBlock_);
+        for (size_t i = 0; i < thenBlocks.length(); i++) {
+            thenBlocks[i]->end(MGoto::New(joinBlock));
+            joinBlock->addPredecessor(thenBlocks[i]);
         }
         curBlock_ = joinBlock;
         mirGraph().moveBlockToEnd(curBlock_);
     }
 
-    MBasicBlock *switchToElse(MBasicBlock *elseBlock)
+    void switchToElse(MBasicBlock *elseBlock)
     {
         if (!elseBlock)
-            return NULL;
-        MBasicBlock *thenEnd = curBlock_;
+            return;
         curBlock_ = elseBlock;
         mirGraph().moveBlockToEnd(curBlock_);
-        return thenEnd;
     }
 
-    bool joinIfElse(MBasicBlock *thenEnd)
+    bool joinIfElse(const BlockVector &thenBlocks)
     {
-        if (!curBlock_ && !thenEnd)
+        if (!curBlock_ && thenBlocks.empty())
             return true;
-        MBasicBlock *pred = curBlock_ ? curBlock_ : thenEnd;
+        MBasicBlock *pred = curBlock_ ? curBlock_ : thenBlocks[0];
         MBasicBlock *join;
         if (!newBlock(pred, &join))
             return false;
         if (curBlock_)
             curBlock_->end(MGoto::New(join));
-        if (thenEnd)
-            thenEnd->end(MGoto::New(join));
-        if (curBlock_ && thenEnd)
-            join->addPredecessor(thenEnd);
+        for (size_t i = 0; i < thenBlocks.length(); i++) {
+            thenBlocks[i]->end(MGoto::New(join));
+            if (pred == curBlock_ || i > 0)
+                join->addPredecessor(thenBlocks[i]);
+        }
         curBlock_ = join;
         return true;
     }
@@ -2235,7 +2250,7 @@ class FunctionCompiler
         return true;
     }
 
-    bool startSwitchDefault(MBasicBlock *switchBlock, CaseVector *cases, MBasicBlock **defaultBlock)
+    bool startSwitchDefault(MBasicBlock *switchBlock, BlockVector *cases, MBasicBlock **defaultBlock)
     {
         if (!startSwitchCase(switchBlock, defaultBlock))
             return false;
@@ -2255,7 +2270,7 @@ class FunctionCompiler
         return true;
     }
 
-    bool joinSwitch(MBasicBlock *switchBlock, const CaseVector &cases, MBasicBlock *defaultBlock)
+    bool joinSwitch(MBasicBlock *switchBlock, const BlockVector &cases, MBasicBlock *defaultBlock)
     {
         ParseNode *pn = breakableStack_.popCopy();
         if (!switchBlock)
@@ -3327,6 +3342,28 @@ CheckMathAbs(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type
 }
 
 static bool
+CheckMathSqrt(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type)
+{
+    if (CallArgListLength(call) != 1)
+        return f.fail(call, "Math.sqrt must be passed 1 argument");
+
+    ParseNode *arg = CallArgList(call);
+
+    MDefinition *argDef;
+    Type argType;
+    if (!CheckExpr(f, arg, Use::ToNumber, &argDef, &argType))
+        return false;
+
+    if (argType.isDoublish()) {
+        *def = f.unary<MSqrt>(argDef, MIRType_Double);
+        *type = Type::Double;
+        return true;
+    }
+
+    return f.failf(call, "%s is not a subtype of doublish", argType.toChars());
+}
+
+static bool
 CheckCallArgs(FunctionCompiler &f, ParseNode *callNode, Use use, FunctionCompiler::Args *args)
 {
     f.startCallArgs(args);
@@ -3526,7 +3563,7 @@ CheckMathBuiltinCall(FunctionCompiler &f, ParseNode *callNode, AsmJSMathBuiltin 
       case AsmJSMathBuiltin_floor: arity = 1; callee = UnaryMathFunCast(floor);      break;
       case AsmJSMathBuiltin_exp:   arity = 1; callee = UnaryMathFunCast(exp);        break;
       case AsmJSMathBuiltin_log:   arity = 1; callee = UnaryMathFunCast(log);        break;
-      case AsmJSMathBuiltin_sqrt:  arity = 1; callee = UnaryMathFunCast(sqrt);       break;
+      case AsmJSMathBuiltin_sqrt:  return CheckMathSqrt(f, callNode, def, type);
       case AsmJSMathBuiltin_pow:   arity = 2; callee = BinaryMathFunCast(ecmaPow);   break;
       case AsmJSMathBuiltin_atan2: arity = 2; callee = BinaryMathFunCast(ecmaAtan2); break;
     }
@@ -3742,8 +3779,12 @@ CheckConditional(FunctionCompiler &f, ParseNode *ternary, MDefinition **def, Typ
     if (!CheckExpr(f, thenExpr, Use::NoCoercion, &thenDef, &thenType))
         return false;
 
+    BlockVector thenBlocks(f.cx());
+    if (!f.appendThenBlock(&thenBlocks))
+        return false;
+
     f.pushPhiInput(thenDef);
-    MBasicBlock *thenEnd = f.switchToElse(elseBlock);
+    f.switchToElse(elseBlock);
 
     MDefinition *elseDef;
     Type elseType;
@@ -3751,7 +3792,7 @@ CheckConditional(FunctionCompiler &f, ParseNode *ternary, MDefinition **def, Typ
         return false;
 
     f.pushPhiInput(elseDef);
-    if (!f.joinIfElse(thenEnd))
+    if (!f.joinIfElse(thenBlocks))
         return false;
     *def = f.popPhiOutput();
 
@@ -4234,6 +4275,13 @@ CheckLabel(FunctionCompiler &f, ParseNode *labeledStmt, LabelVector *maybeLabels
 static bool
 CheckIf(FunctionCompiler &f, ParseNode *ifStmt)
 {
+    // Handle if/else-if chains using iteration instead of recursion. This
+    // avoids blowing the C stack quota for long if/else-if chains and also
+    // creates fewer MBasicBlocks at join points (by creating one join block
+    // for the entire if/else-if chain).
+    BlockVector thenBlocks(f.cx());
+
+  recurse:
     JS_ASSERT(ifStmt->isKind(PNK_IF));
     ParseNode *cond = TernaryKid1(ifStmt);
     ParseNode *thenStmt = TernaryKid2(ifStmt);
@@ -4254,13 +4302,23 @@ CheckIf(FunctionCompiler &f, ParseNode *ifStmt)
     if (!CheckStatement(f, thenStmt))
         return false;
 
+    if (!f.appendThenBlock(&thenBlocks))
+        return false;
+
     if (!elseStmt) {
-        f.joinIf(elseBlock);
+        f.joinIf(thenBlocks, elseBlock);
     } else {
-        MBasicBlock *thenEnd = f.switchToElse(elseBlock);
+        f.switchToElse(elseBlock);
+
+        if (elseStmt->isKind(PNK_IF)) {
+            ifStmt = elseStmt;
+            goto recurse;
+        }
+
         if (!CheckStatement(f, elseStmt))
             return false;
-        if (!f.joinIfElse(thenEnd))
+
+        if (!f.joinIfElse(thenBlocks))
             return false;
     }
 
@@ -4318,6 +4376,7 @@ CheckSwitchRange(FunctionCompiler &f, ParseNode *stmt, int32_t *low, int32_t *hi
 
     *low = *high = i;
 
+    ParseNode *initialStmt = stmt;
     for (stmt = NextNode(stmt); stmt && stmt->isKind(PNK_CASE); stmt = NextNode(stmt)) {
         int32_t i = 0;
         if (!CheckCaseExpr(f, CaseExpr(stmt), &i))
@@ -4329,7 +4388,7 @@ CheckSwitchRange(FunctionCompiler &f, ParseNode *stmt, int32_t *low, int32_t *hi
 
     int64_t i64 = (int64_t(*high) - int64_t(*low)) + 1;
     if (i64 > 128*1024*1024)
-        return f.fail(stmt, "all switch statements generate tables; this table would be too big");
+        return f.fail(initialStmt, "all switch statements generate tables; this table would be too big");
 
     *tableLength = int32_t(i64);
     return true;
@@ -4365,7 +4424,7 @@ CheckSwitch(FunctionCompiler &f, ParseNode *switchStmt)
     if (!CheckSwitchRange(f, stmt, &low, &high, &tableLength))
         return false;
 
-    CaseVector cases(f.cx());
+    BlockVector cases(f.cx());
     if (!cases.resize(tableLength))
         return false;
 
@@ -4565,7 +4624,8 @@ CheckFunctionBody(ModuleCompiler &m, ModuleCompiler::Func &func, LifoAlloc &lifo
     // Memory for the objects is provided by the LifoAlloc argument,
     // which may be explicitly tracked by the caller.
     MIRGraph *graph = lifo.new_<MIRGraph>(tempAlloc);
-    CompileInfo *info = lifo.new_<CompileInfo>(locals.count());
+    CompileInfo *info = lifo.new_<CompileInfo>(locals.count(),
+                                               SequentialExecution);
     MIRGenerator *mirGen = lifo.new_<MIRGenerator>(m.cx()->compartment, tempAlloc, graph, info);
     JS_ASSERT(tempAlloc && graph && info && mirGen);
 
@@ -4884,6 +4944,10 @@ AssertStackAlignment(MacroAssembler &masm)
 #endif
 }
 
+static const unsigned FramePushedAfterSave = NonVolatileRegs.gprs().size() * STACK_SLOT_SIZE +
+                                             NonVolatileRegs.fpus().size() * sizeof(double);
+
+#ifndef JS_CPU_ARM
 static unsigned
 StackArgBytes(const MIRTypeVector &argTypes)
 {
@@ -4903,9 +4967,6 @@ StackDecrementForCall(MacroAssembler &masm, const MIRTypeVector &argTypes, unsig
     return AlignBytes(alreadyPushed + extraBytes + argBytes, StackAlignment) - alreadyPushed;
 }
 
-static const unsigned FramePushedAfterSave = NonVolatileRegs.gprs().size() * STACK_SLOT_SIZE +
-                                             NonVolatileRegs.fpus().size() * sizeof(double);
-#ifndef JS_CPU_ARM
 static bool
 GenerateEntry(ModuleCompiler &m, const AsmJSModule::ExportedFunction &exportedFunc)
 {

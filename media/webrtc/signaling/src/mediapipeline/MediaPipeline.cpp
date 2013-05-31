@@ -4,6 +4,7 @@
 
 // Original author: ekr@rtfm.com
 
+#include "logging.h"
 #include "MediaPipeline.h"
 
 #ifndef USE_FAKE_MEDIA_STREAMS
@@ -13,7 +14,6 @@
 #include <math.h>
 
 #include "nspr.h"
-#include <prlog.h>
 #include "srtp.h"
 
 #ifdef MOZILLA_INTERNAL_API
@@ -27,7 +27,6 @@
 #endif
 #endif
 
-#include "logging.h"
 #include "nsError.h"
 #include "AudioSegment.h"
 #include "MediaSegment.h"
@@ -36,7 +35,6 @@
 #include "transportlayer.h"
 #include "transportlayerdtls.h"
 #include "transportlayerice.h"
-
 #include "runnable_utils.h"
 
 using namespace mozilla;
@@ -48,13 +46,17 @@ using namespace mozilla;
 #define MP_LOG_INFO PR_LOG_DEBUG
 #endif
 
-
 // Logging context
 MOZ_MTLOG_MODULE("mediapipeline")
 
 namespace mozilla {
 
 static char kDTLSExporterLabel[] = "EXTRACTOR-dtls_srtp";
+
+MediaPipeline::~MediaPipeline() {
+  MOZ_ASSERT(!stream_);  // Check that we have shut down already.
+  MOZ_MTLOG(PR_LOG_DEBUG, "Destroying MediaPipeline: " << description_);
+}
 
 nsresult MediaPipeline::Init() {
   ASSERT_ON_THREAD(main_thread_);
@@ -112,10 +114,12 @@ nsresult MediaPipeline::Init_s() {
 }
 
 
-// Disconnect us from the transport so that we can cleanly destruct
-// the pipeline on the main thread.
+// Disconnect us from the transport so that we can cleanly destruct the
+// pipeline on the main thread.  ShutdownMedia_m() must have already been
+// called
 void MediaPipeline::ShutdownTransport_s() {
   ASSERT_ON_THREAD(sts_thread_);
+  MOZ_ASSERT(!stream_); // verifies that ShutdownMedia_m() has run
 
   disconnect_all();
   transport_->Detach();
@@ -780,12 +784,44 @@ void MediaPipelineTransmit::PipelineListener::ProcessAudioChunk(
 }
 
 #ifdef MOZILLA_INTERNAL_API
+static void FillBlackYCbCr420PixelData(uint8_t* aBuffer, const gfxIntSize& aSize)
+{
+  // Fill Y plane
+}
+
 void MediaPipelineTransmit::PipelineListener::ProcessVideoChunk(
     VideoSessionConduit* conduit,
     TrackRate rate,
     VideoChunk& chunk) {
-  // We now need to send the video frame to the other side
   layers::Image *img = chunk.mFrame.GetImage();
+  gfxIntSize size = img ? img->GetSize() : chunk.mFrame.GetIntrinsicSize();
+  if ((size.width & 1) != 0 || (size.height & 1) != 0) {
+    MOZ_ASSERT(false, "Can't handle odd-sized images");
+    return;
+  }
+
+  if (chunk.mFrame.GetForceBlack()) {
+    uint32_t yPlaneLen = size.width*size.height;
+    uint32_t cbcrPlaneLen = yPlaneLen/2;
+    uint32_t length = yPlaneLen + cbcrPlaneLen;
+
+    // Send a black image.
+    nsAutoArrayPtr<uint8_t> pixelData;
+    static const fallible_t fallible = fallible_t();
+    pixelData = new (fallible) uint8_t[length];
+    if (pixelData) {
+      memset(pixelData, 0x10, yPlaneLen);
+      // Fill Cb/Cr planes
+      memset(pixelData + yPlaneLen, 0x80, cbcrPlaneLen);
+
+      MOZ_MTLOG(PR_LOG_DEBUG, "Sending a black video frame");
+      conduit->SendVideoFrame(pixelData, length, size.width, size.height,
+                              mozilla::kVideoI420, 0);
+    }
+    return;
+  }
+
+  // We now need to send the video frame to the other side
   if (!img) {
     // segment.AppendFrame() allows null images, which show up here as null
     return;
@@ -1020,6 +1056,7 @@ nsresult MediaPipelineReceiveVideo::Init() {
   listener_->AddSelf(new VideoSegment());
 #endif
 
+  // Always happens before we can DetachMediaStream()
   static_cast<VideoSessionConduit *>(conduit_.get())->
       AttachRenderer(renderer_);
 
@@ -1050,7 +1087,11 @@ void MediaPipelineReceiveVideo::PipelineListener::RenderVideoFrame(
   ReentrantMonitorAutoEnter enter(monitor_);
 
   // Create a video frame and append it to the track.
+#ifdef MOZ_WIDGET_GONK
+  ImageFormat format = GRALLOC_PLANAR_YCBCR;
+#else
   ImageFormat format = PLANAR_YCBCR;
+#endif
   nsRefPtr<layers::Image> image = image_container_->CreateImage(&format, 1);
 
   layers::PlanarYCbCrImage* videoImage = static_cast<layers::PlanarYCbCrImage*>(image.get());

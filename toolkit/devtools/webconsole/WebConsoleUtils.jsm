@@ -24,6 +24,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
 XPCOMUtils.defineLazyModuleGetter(this, "NetworkHelper",
                                   "resource://gre/modules/devtools/NetworkHelper.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
+                                  "resource://gre/modules/PrivateBrowsingUtils.jsm");
+
 XPCOMUtils.defineLazyServiceGetter(this, "gActivityDistributor",
                                    "@mozilla.org/network/http-activity-distributor;1",
                                    "nsIHttpActivityDistributor");
@@ -33,13 +36,13 @@ XPCOMUtils.defineLazyServiceGetter(this, "gActivityDistributor",
 XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
                                   "resource:///modules/devtools/gDevTools.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource:///modules/devtools/gDevTools.jsm");
+                                  "resource://gre/modules/devtools/Loader.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
                                   "resource:///modules/devtools/VariablesView.jsm");
 
 this.EXPORTED_SYMBOLS = ["WebConsoleUtils", "JSPropertyProvider", "JSTermHelpers",
-                         "PageErrorListener", "ConsoleAPIListener",
+                         "ConsoleServiceListener", "ConsoleAPIListener",
                          "NetworkResponseListener", "NetworkMonitor",
                          "ConsoleProgressListener"];
 
@@ -189,143 +192,6 @@ this.WebConsoleUtils = {
   },
 
   /**
-   * Format the jsterm execution result based on its type.
-   *
-   * @param mixed aResult
-   *        The evaluation result object you want displayed.
-   * @return string
-   *         The string that can be displayed.
-   */
-  formatResult: function WCU_formatResult(aResult)
-  {
-    let output = "";
-    let type = this.getResultType(aResult);
-
-    switch (type) {
-      case "string":
-        output = this.formatResultString(aResult);
-        break;
-      case "boolean":
-      case "date":
-      case "error":
-      case "number":
-      case "regexp":
-        try {
-          output = aResult + "";
-        }
-        catch (ex) {
-          output = ex;
-        }
-        break;
-      case "null":
-      case "undefined":
-        output = type;
-        break;
-      default:
-        try {
-          if (aResult.toSource) {
-            output = aResult.toSource();
-          }
-          if (!output || output == "({})") {
-            output = aResult + "";
-          }
-        }
-        catch (ex) {
-          output = ex;
-        }
-        break;
-    }
-
-    return output + "";
-  },
-
-  /**
-   * Format a string for output.
-   *
-   * @param string aString
-   *        The string you want to display.
-   * @return string
-   *         The string that can be displayed.
-   */
-  formatResultString: function WCU_formatResultString(aString)
-  {
-    function isControlCode(c) {
-      // See http://en.wikipedia.org/wiki/C0_and_C1_control_codes
-      // C0 is 0x00-0x1F, C1 is 0x80-0x9F (inclusive).
-      // We also include DEL (U+007F) and NBSP (U+00A0), which are not strictly
-      // in C1 but border it.
-      return (c <= 0x1F) || (0x7F <= c && c <= 0xA0);
-    }
-
-    function replaceFn(aMatch, aType, aHex) {
-      // Leave control codes escaped, but unescape the rest of the characters.
-      let c = parseInt(aHex, 16);
-      return isControlCode(c) ? aMatch : String.fromCharCode(c);
-    }
-
-    let output = uneval(aString).replace(/\\(x)([0-9a-fA-F]{2})/g, replaceFn)
-                 .replace(/\\(u)([0-9a-fA-F]{4})/g, replaceFn);
-
-    return output;
-  },
-
-  /**
-   * Determine if an object can be inspected or not.
-   *
-   * @param mixed aObject
-   *        The object you want to check if it can be inspected.
-   * @return boolean
-   *         True if the object is inspectable or false otherwise.
-   */
-  isObjectInspectable: function WCU_isObjectInspectable(aObject)
-  {
-    let isEnumerable = false;
-
-    // Skip Iterators and Generators.
-    if (this.isIteratorOrGenerator(aObject)) {
-      return false;
-    }
-
-    try {
-      for (let p in aObject) {
-        isEnumerable = true;
-        break;
-      }
-    }
-    catch (ex) {
-      // Proxy objects can lack an enumerable method.
-    }
-
-    return isEnumerable && typeof(aObject) != "string";
-  },
-
-  /**
-   * Determine the type of the jsterm execution result.
-   *
-   * @param mixed aResult
-   *        The evaluation result object you want to check.
-   * @return string
-   *         Constructor name or type: string, number, boolean, regexp, date,
-   *         function, object, null, undefined...
-   */
-  getResultType: function WCU_getResultType(aResult)
-  {
-    let type = aResult === null ? "null" : typeof aResult;
-    try {
-      if (type == "object" && aResult.constructor && aResult.constructor.name) {
-        type = aResult.constructor.name + "";
-      }
-    }
-    catch (ex) {
-      // Prevent potential exceptions in page-provided objects from taking down
-      // the Web Console. If the constructor.name is a getter that throws, or
-      // something else bad happens.
-    }
-
-    return type.toLowerCase();
-  },
-
-  /**
    * Tells if the given function is native or not.
    *
    * @param function aFunction
@@ -434,133 +300,6 @@ this.WebConsoleUtils = {
   },
 
   /**
-   * Inspect the properties of the given object. For each property a descriptor
-   * object is created. The descriptor gives you information about the property
-   * name, value, type, getter and setter. When the property value references
-   * another object you get a wrapper that holds information about that object.
-   *
-   * @see this.inspectObjectProperty
-   * @param object aObject
-   *        The object you want to inspect.
-   * @param function aObjectWrapper
-   *        The function that creates wrappers for property values which
-   *        reference other objects. This function must take one argument, the
-   *        object to wrap, and it must return an object grip that gives
-   *        information about the referenced object.
-   * @return array
-   *         An array of property descriptors.
-   */
-  inspectObject: function WCU_inspectObject(aObject, aObjectWrapper)
-  {
-    let properties = [];
-    let isDOMDocument = aObject instanceof Ci.nsIDOMDocument;
-    let deprecated = ["width", "height", "inputEncoding"];
-
-    for (let name in aObject) {
-      // See bug 632275: skip deprecated properties.
-      if (isDOMDocument && deprecated.indexOf(name) > -1) {
-        continue;
-      }
-
-      properties.push(this.inspectObjectProperty(aObject, name, aObjectWrapper));
-    }
-
-    return properties.sort(this.propertiesSort);
-  },
-
-  /**
-   * A helper method that creates a property descriptor for the provided object,
-   * properly formatted for sending in a protocol response.
-   *
-   * The property value can reference other objects. Since actual objects cannot
-   * be sent to the client, we need to send simple object grips - descriptors
-   * for those objects. This is why you need to give an object wrapper function
-   * that creates object grips.
-   *
-   * @param string aProperty
-   *        Property name for which we have the descriptor.
-   * @param object aObject
-   *        The object that the descriptor is generated for.
-   * @param function aObjectWrapper
-   *        This function is given the property value. Whatever the function
-   *        returns is used as the representation of the property value.
-   * @return object
-   *         The property descriptor formatted for sending to the client.
-   */
-  inspectObjectProperty:
-  function WCU_inspectObjectProperty(aObject, aProperty, aObjectWrapper)
-  {
-    let descriptor = this.getPropertyDescriptor(aObject, aProperty) || {};
-
-    let result = { name: aProperty };
-    result.configurable = descriptor.configurable;
-    result.enumerable = descriptor.enumerable;
-    result.writable = descriptor.writable;
-    if (descriptor.value !== undefined) {
-      result.value = this.createValueGrip(descriptor.value, aObjectWrapper);
-    }
-    else if (descriptor.get) {
-      let gotValue = false;
-      if (this.isNativeFunction(descriptor.get)) {
-        try {
-          result.value = this.createValueGrip(aObject[aProperty], aObjectWrapper);
-          gotValue = true;
-        } catch (e) {}
-      }
-      if (!gotValue) {
-        result.get = this.createValueGrip(descriptor.get, aObjectWrapper);
-        result.set = this.createValueGrip(descriptor.set, aObjectWrapper);
-      }
-    }
-
-    // There are cases with properties that have no value and no getter. For
-    // example window.screen.width.
-    if (result.value === undefined && result.get === undefined) {
-      try {
-        result.value = this.createValueGrip(aObject[aProperty], aObjectWrapper);
-      }
-      catch (ex) {
-        // This can throw when security restrictions prevent us from reading
-        // the value.
-      }
-    }
-
-    return result;
-  },
-
-  /**
-   * Make an object grip for the given object. An object grip of the simplest
-   * form with minimal information about the given object is returned. This
-   * method is usually combined with other functions that add further state
-   * information and object ID such that, later, the client is able to retrieve
-   * more information about the object being represented by this grip.
-   *
-   * @param object aObject
-   *        The object you want to create a grip for.
-   * @return object
-   *         The object grip.
-   */
-  getObjectGrip: function WCU_getObjectGrip(aObject)
-  {
-    let className = null;
-    let type = typeof aObject;
-
-    let result = {
-      "type": type,
-      "className": this.getObjectClassName(aObject),
-      "displayString": this.formatResult(aObject),
-      "inspectable": this.isObjectInspectable(aObject),
-    };
-
-    if (type == "function") {
-      result.functionName = this.getFunctionName(aObject);
-      result.functionArguments = this.getFunctionArguments(aObject);
-    }
-
-    return result;
-  },
-
-  /**
    * Create a grip for the given value. If the value is an object,
    * an object wrapper will be created.
    *
@@ -662,45 +401,6 @@ this.WebConsoleUtils = {
   },
 
   /**
-   * Make a string representation for an object actor grip.
-   *
-   * @param object aGrip
-   *        The object grip received from the server.
-   * @param boolean [aFormatString=false]
-   *        Optional boolean that tells if you want strings to be unevaled or
-   *        not.
-   * @return string
-   *         The object grip converted to a string.
-   */
-  objectActorGripToString: function WCU_objectActorGripToString(aGrip, aFormatString)
-  {
-    // Primitives like strings and numbers are not sent as objects.
-    // But null and undefined are sent as objects with the type property
-    // telling which type of value we have. We also have long strings which are
-    // sent using the LongStringActor.
-
-    let type = typeof(aGrip);
-    if (type == "string" ||
-        (aGrip && type == "object" && aGrip.type == "longString")) {
-      let str = type == "string" ? aGrip : aGrip.initial;
-      if (aFormatString) {
-        return this.formatResultString(str);
-      }
-      return str;
-    }
-
-    if (aGrip && type == "object") {
-      if (aGrip.displayString && typeof aGrip.displayString == "object" &&
-          aGrip.displayString.type == "longString") {
-        return aGrip.displayString.initial;
-      }
-      return aGrip.displayString || aGrip.className || aGrip.type || type;
-    }
-
-    return aGrip + "";
-  },
-
-  /**
    * Helper function to deduce the name of the provided function.
    *
    * @param funtion aFunction
@@ -732,28 +432,6 @@ this.WebConsoleUtils = {
       catch (ex) { }
     }
     return name;
-  },
-
-  /**
-   * Helper function to deduce the arguments of the provided function.
-   *
-   * @param funtion aFunction
-   *        The function whose name will be returned.
-   * @return array
-   *         Function arguments.
-   */
-  getFunctionArguments: function WCF_getFunctionArguments(aFunction)
-  {
-    let args = [];
-    try {
-      let str = (aFunction.toString() || aFunction.toSource()) + "";
-      let argsString = (str.match(REGEX_MATCH_FUNCTION_ARGS) || [])[1];
-      if (argsString) {
-        args = argsString.split(/\s*,\s*/);
-      }
-    }
-    catch (ex) { }
-    return args;
   },
 
   /**
@@ -794,49 +472,6 @@ this.WebConsoleUtils = {
     catch (ex) { }
 
     return className;
-  },
-
-  /**
-   * Determine the string to display as a property value in the property panel.
-   *
-   * @param object aActor
-   *        Object actor grip.
-   * @return string
-   *         Property value as suited for the property panel.
-   */
-  getPropertyPanelValue: function WCU_getPropertyPanelValue(aActor)
-  {
-    if (aActor.get) {
-      return "Getter";
-    }
-
-    let val = aActor.value;
-    if (typeof val == "string") {
-      return this.formatResultString(val);
-    }
-
-    if (typeof val != "object" || !val) {
-      return val;
-    }
-
-    if (val.type == "longString") {
-      return this.formatResultString(val.initial) + "\u2026";
-    }
-
-    if (val.type == "function" && val.functionName) {
-      return "function " + val.functionName + "(" +
-             val.functionArguments.join(", ") + ")";
-    }
-    if (val.type == "object" && val.className) {
-      return val.className;
-    }
-
-    if (val.displayString && typeof val.displayString == "object" &&
-        val.displayString.type == "longString") {
-      return val.displayString.initial;
-    }
-
-    return val.displayString || val.type;
   },
 
   /**
@@ -1241,25 +876,25 @@ return JSPropertyProvider;
 ///////////////////////////////////////////////////////////////////////////////
 
 /**
- * The nsIConsoleService listener. This is used to send all the page errors
- * (JavaScript, CSS and more) to the remote Web Console instance.
+ * The nsIConsoleService listener. This is used to send all of the console
+ * messages (JavaScript, CSS and more) to the remote Web Console instance.
  *
  * @constructor
  * @param nsIDOMWindow [aWindow]
  *        Optional - the window object for which we are created. This is used
  *        for filtering out messages that belong to other windows.
  * @param object aListener
- *        The listener object must have a method: onPageError. This method is
- *        invoked with one argument, the nsIScriptError, whenever a relevant
- *        page error is received.
+ *        The listener object must have one method:
+ *        - onConsoleServiceMessage(). This method is invoked with one argument, the
+ *        nsIConsoleMessage, whenever a relevant message is received.
  */
-this.PageErrorListener = function PageErrorListener(aWindow, aListener)
+this.ConsoleServiceListener = function ConsoleServiceListener(aWindow, aListener)
 {
   this.window = aWindow;
   this.listener = aListener;
 }
 
-PageErrorListener.prototype =
+ConsoleServiceListener.prototype =
 {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIConsoleListener]),
 
@@ -1270,8 +905,7 @@ PageErrorListener.prototype =
   window: null,
 
   /**
-   * The listener object which is notified of page errors. It must have
-   * a onPageError method which is invoked with one argument: the nsIScriptError.
+   * The listener object which is notified of messages from the console service.
    * @type object
    */
   listener: null,
@@ -1279,7 +913,7 @@ PageErrorListener.prototype =
   /**
    * Initialize the nsIConsoleService listener.
    */
-  init: function PEL_init()
+  init: function CSL_init()
   {
     Services.console.registerListener(this);
   },
@@ -1289,43 +923,48 @@ PageErrorListener.prototype =
    * messages belonging to the current window and sends them to the remote Web
    * Console instance.
    *
-   * @param nsIScriptError aScriptError
-   *        The script error object coming from the nsIConsoleService.
+   * @param nsIConsoleMessage aMessage
+   *        The message object coming from the nsIConsoleService.
    */
-  observe: function PEL_observe(aScriptError)
+  observe: function CSL_observe(aMessage)
   {
-    if (!this.listener ||
-        !(aScriptError instanceof Ci.nsIScriptError)) {
+    if (!this.listener) {
       return;
     }
 
     if (this.window) {
-      if (!aScriptError.outerWindowID ||
-          !this.isCategoryAllowed(aScriptError.category)) {
+      if (!(aMessage instanceof Ci.nsIScriptError) ||
+          !aMessage.outerWindowID ||
+          !this.isCategoryAllowed(aMessage.category)) {
         return;
       }
 
-      let errorWindow =
-        Services.wm.getOuterWindowWithId(aScriptError.outerWindowID);
+      let errorWindow = Services.wm.getOuterWindowWithId(aMessage.outerWindowID);
       if (!errorWindow || errorWindow.top != this.window) {
         return;
       }
     }
 
-    this.listener.onPageError(aScriptError);
+    if (aMessage.message) {
+      this.listener.onConsoleServiceMessage(aMessage);
+    }
   },
 
   /**
-   * Check if the given script error category is allowed to be tracked or not.
+   * Check if the given message category is allowed to be tracked or not.
    * We ignore chrome-originating errors as we only care about content.
    *
    * @param string aCategory
-   *        The nsIScriptError category you want to check.
+   *        The message category you want to check.
    * @return boolean
    *         True if the category is allowed to be logged, false otherwise.
    */
-  isCategoryAllowed: function PEL_isCategoryAllowed(aCategory)
+  isCategoryAllowed: function CSL_isCategoryAllowed(aCategory)
   {
+    if (!aCategory) {
+      return false;
+    }
+
     switch (aCategory) {
       case "XPConnect JavaScript":
       case "component javascript":
@@ -1344,29 +983,44 @@ PageErrorListener.prototype =
   /**
    * Get the cached page errors for the current inner window.
    *
+   * @param boolean [aIncludePrivate=false]
+   *        Tells if you want to also retrieve messages coming from private
+   *        windows. Defaults to false.
    * @return array
-   *         The array of cached messages. Each element is an nsIScriptError
-   *         with an added _type property so the remote Web Console instance can
-   *         tell the difference between various types of cached messages.
+   *         The array of cached messages. Each element is an nsIScriptError or
+   *         an nsIConsoleMessage
    */
-  getCachedMessages: function PEL_getCachedMessages()
+  getCachedMessages: function CSL_getCachedMessages(aIncludePrivate = false)
   {
-    let innerWindowId = this.window ?
+    let innerWindowID = this.window ?
                         WebConsoleUtils.getInnerWindowId(this.window) : null;
     let errors = Services.console.getMessageArray() || [];
 
-    return errors.filter(function(aError) {
-      return aError instanceof Ci.nsIScriptError &&
-             (!innerWindowId ||
-              (aError.innerWindowID == innerWindowId &&
-               this.isCategoryAllowed(aError.category)));
-    }, this);
+    return errors.filter((aError) => {
+      if (aError instanceof Ci.nsIScriptError) {
+        if (!aIncludePrivate && aError.isFromPrivateWindow) {
+          return false;
+        }
+        if (innerWindowID &&
+            (aError.innerWindowID != innerWindowID ||
+             !this.isCategoryAllowed(aError.category))) {
+          return false;
+        }
+      }
+      else if (innerWindowID) {
+        // If this is not an nsIScriptError and we need to do window-based
+        // filtering we skip this message.
+        return false;
+      }
+
+      return true;
+    });
   },
 
   /**
    * Remove the nsIConsoleService listener.
    */
-  destroy: function PEL_destroy()
+  destroy: function CSL_destroy()
   {
     Services.console.unregisterListener(this);
     this.listener = this.window = null;
@@ -1458,15 +1112,22 @@ ConsoleAPIListener.prototype =
   /**
    * Get the cached messages for the current inner window.
    *
+   * @param boolean [aIncludePrivate=false]
+   *        Tells if you want to also retrieve messages coming from private
+   *        windows. Defaults to false.
    * @return array
-   *         The array of cached messages. Each element is a Console API
-   *         prepared to be sent to the remote Web Console instance.
+   *         The array of cached messages.
    */
-  getCachedMessages: function CAL_getCachedMessages()
+  getCachedMessages: function CAL_getCachedMessages(aIncludePrivate = false)
   {
     let innerWindowId = this.window ?
                         WebConsoleUtils.getInnerWindowId(this.window) : null;
-    return ConsoleAPIStorage.getEvents(innerWindowId);
+    let events = ConsoleAPIStorage.getEvents(innerWindowId);
+    if (aIncludePrivate) {
+      return events;
+    }
+
+    return events.filter((m) => !m.private);
   },
 
   /**
@@ -2273,13 +1934,7 @@ NetworkMonitor.prototype = {
   _onRequestHeader:
   function NM__onRequestHeader(aChannel, aTimestamp, aExtraStringData)
   {
-    let win = null;
-    try {
-      win = NetworkHelper.getWindowForRequest(aChannel);
-    }
-    catch (ex) {
-      // getWindowForRequest() throws on b2g.
-    }
+    let win = NetworkHelper.getWindowForRequest(aChannel);
 
     // Try to get the source window of the request.
     if (this.window && (!win || win.top !== this.window)) {
@@ -2290,6 +1945,7 @@ NetworkMonitor.prototype = {
 
     // see NM__onRequestBodySent()
     httpActivity.charset = win ? win.document.characterSet : null;
+    httpActivity.private = win ? PrivateBrowsingUtils.isWindowPrivate(win) : false;
 
     httpActivity.timings.REQUEST_HEADER = {
       first: aTimestamp,
@@ -2303,6 +1959,16 @@ NetworkMonitor.prototype = {
     event.headersSize = aExtraStringData.length;
     event.method = aChannel.requestMethod;
     event.url = aChannel.URI.spec;
+    event.private = httpActivity.private;
+
+    // Determine if this is an XHR request.
+    try {
+      let callbacks = aChannel.notificationCallbacks;
+      let xhrRequest = callbacks ? callbacks.getInterface(Ci.nsIXMLHttpRequest) : null;
+      httpActivity.isXHR = event.isXHR = !!xhrRequest;
+    } catch (e) {
+      httpActivity.isXHR = event.isXHR = false;
+    }
 
     // Determine the HTTP version.
     aChannel.QueryInterface(Ci.nsIHttpChannelInternal);

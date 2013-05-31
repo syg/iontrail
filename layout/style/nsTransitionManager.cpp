@@ -451,6 +451,11 @@ nsTransitionManager::StyleContextChanged(dom::Element *aElement,
                       aNewStyleContext->HasPseudoElementData(),
                   "pseudo type mismatch");
 
+  if (!mPresContext->IsDynamic()) {
+    // For print or print preview, ignore transitions.
+    return nullptr;
+  }
+
   // NOTE: Things in this function (and ConsiderStartingTransition)
   // should never call PeekStyleData because we don't preserve gotten
   // structs across reframes.
@@ -498,7 +503,7 @@ nsTransitionManager::StyleContextChanged(dom::Element *aElement,
     return nullptr;
   }
 
-  NS_WARN_IF_FALSE(!CommonAnimationManager::ThrottlingEnabled() ||
+  NS_WARN_IF_FALSE(!nsLayoutUtils::AreAsyncAnimationsEnabled() ||
                      mPresContext->ThrottledStyleIsUpToDate(),
                    "throttled animations not up to date");
 
@@ -890,6 +895,11 @@ nsTransitionManager::WalkTransitionRule(ElementDependentRuleProcessorData* aData
   ElementTransitions *et =
     GetElementTransitions(aData->mElement, aPseudoType, false);
   if (!et) {
+    return;
+  }
+
+  if (!mPresContext->IsDynamic()) {
+    // For print or print preview, ignore animations.
     return;
   }
 

@@ -47,14 +47,17 @@ public:
    * Transfers ownership of aEngine to the new AudioNodeStream.
    */
   AudioNodeStream(AudioNodeEngine* aEngine,
-                  MediaStreamGraph::AudioNodeStreamKind aKind)
+                  MediaStreamGraph::AudioNodeStreamKind aKind,
+                  TrackRate aSampleRate)
     : ProcessedMediaStream(nullptr),
       mEngine(aEngine),
+      mSampleRate(aSampleRate),
       mKind(aKind),
       mNumberOfInputChannels(2),
       mMarkAsFinishedAfterThisBlock(false),
       mAudioParamStream(false)
   {
+    MOZ_ASSERT(NS_IsMainThread());
     mChannelCountMode = dom::ChannelCountMode::Max;
     mChannelInterpretation = dom::ChannelInterpretation::Speakers;
     // AudioNodes are always producing data
@@ -75,6 +78,8 @@ public:
   void SetTimelineParameter(uint32_t aIndex, const dom::AudioParamTimeline& aValue);
   void SetThreeDPointParameter(uint32_t aIndex, const dom::ThreeDPoint& aValue);
   void SetBuffer(already_AddRefed<ThreadSharedFloatArrayBufferList> aBuffer);
+  // This consumes the contents of aData.  aData will be emptied after this returns.
+  void SetRawArrayData(nsTArray<float>& aData);
   void SetChannelMixingParameters(uint32_t aNumberOfChannels,
                                   dom::ChannelCountMode aChannelCountMoe,
                                   dom::ChannelInterpretation aChannelInterpretation);
@@ -106,6 +111,7 @@ public:
 
   // Any thread
   AudioNodeEngine* Engine() { return mEngine; }
+  TrackRate SampleRate() const { return mSampleRate; }
 
 protected:
   void FinishOutput();
@@ -117,6 +123,8 @@ protected:
   nsAutoPtr<AudioNodeEngine> mEngine;
   // The last block produced by this node.
   OutputChunks mLastChunks;
+  // The stream's sampling rate
+  const TrackRate mSampleRate;
   // Whether this is an internal or external stream
   MediaStreamGraph::AudioNodeStreamKind mKind;
   // The number of input channels that this stream requires. 0 means don't care.

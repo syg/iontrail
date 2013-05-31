@@ -51,6 +51,7 @@
 #include "nsIDocument.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 
 using namespace mozilla;
 
@@ -160,14 +161,13 @@ nsHTTPIndex::OnFTPControlLog(bool server, const char *msg)
     AutoPushJSContext cx(context->GetNativeContext());
     NS_ENSURE_TRUE(cx, NS_OK);
 
-    JS::Rooted<JSObject*> global(cx, JS_GetGlobalObject(cx));
+    JS::Rooted<JSObject*> global(cx, JS_GetGlobalForScopeChain(cx));
     NS_ENSURE_TRUE(global, NS_OK);
 
     JS::Value params[2];
 
     nsString unicodeMsg;
     unicodeMsg.AssignWithConversion(msg);
-    JSAutoRequest ar(cx);
     JSString* jsMsgStr = JS_NewUCStringCopyZ(cx, (jschar*) unicodeMsg.get());
     NS_ENSURE_TRUE(jsMsgStr, NS_ERROR_OUT_OF_MEMORY);
 
@@ -236,7 +236,7 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
 
     AutoPushJSContext cx(context->GetNativeContext());
-    JS::Rooted<JSObject*> global(cx, JS_GetGlobalObject(cx));
+    JS::Rooted<JSObject*> global(cx, JS_GetGlobalForScopeChain(cx));
 
     // Using XPConnect, wrap the HTTP index object...
     static NS_DEFINE_CID(kXPConnectCID, NS_XPCONNECT_CID);
@@ -253,16 +253,14 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     NS_ASSERTION(NS_SUCCEEDED(rv), "unable to xpconnect-wrap http-index");
     if (NS_FAILED(rv)) return rv;
 
-    JS::Rooted<JSObject*> jsobj(cx);
-    rv = wrapper->GetJSObject(jsobj.address());
-    NS_ASSERTION(NS_SUCCEEDED(rv),
+    JS::Rooted<JSObject*> jsobj(cx, wrapper->GetJSObject());
+    NS_ASSERTION(jsobj,
                  "unable to get jsobj from xpconnect wrapper");
-    if (NS_FAILED(rv)) return rv;
+    if (!jsobj) return NS_ERROR_UNEXPECTED;
 
     JS::Rooted<JS::Value> jslistener(cx, OBJECT_TO_JSVAL(jsobj));
 
     // ...and stuff it into the global context
-    JSAutoRequest ar(cx);
     bool ok = JS_SetProperty(cx, global, "HTTPIndex", jslistener.address());
     NS_ASSERTION(ok, "unable to set Listener property");
     if (!ok)

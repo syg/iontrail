@@ -3,11 +3,13 @@
  * file, You can obtain one at http:mozilla.org/MPL/2.0/. */
 
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "mozilla/net/Dashboard.h"
 #include "mozilla/net/HttpInfo.h"
 #include "mozilla/dom/NetDashboardBinding.h"
 #include "jsapi.h"
 
+using mozilla::AutoSafeJSContext;
 namespace mozilla {
 namespace net {
 
@@ -49,8 +51,7 @@ Dashboard::GetSocketsDispatch()
 nsresult
 Dashboard::GetSockets()
 {
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
-    JSAutoRequest request(cx);
+    AutoSafeJSContext cx;
 
     mozilla::dom::SocketsDict dict;
     dict.mHost.Construct();
@@ -90,8 +91,8 @@ Dashboard::GetSockets()
         dict.mReceived += mSock.data[i].received;
     }
 
-    JS::Value val;
-    if (!dict.ToObject(cx, JS::NullPtr(), &val)) {
+    JS::RootedValue val(cx);
+    if (!dict.ToObject(cx, JS::NullPtr(), val.address())) {
         mSock.cb = nullptr;
         mSock.data.Clear();
         return NS_ERROR_FAILURE;
@@ -128,8 +129,7 @@ Dashboard::GetHttpDispatch()
 nsresult
 Dashboard::GetHttpConnections()
 {
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
-    JSAutoRequest request(cx);
+    AutoSafeJSContext cx;
 
     mozilla::dom::HttpConnDict dict;
     dict.mActive.Construct();
@@ -197,8 +197,8 @@ Dashboard::GetHttpConnections()
         }
     }
 
-    JS::Value val;
-    if (!dict.ToObject(cx, JS::NullPtr(), &val)) {
+    JS::RootedValue val(cx);
+    if (!dict.ToObject(cx, JS::NullPtr(), val.address())) {
         mHttp.cb = nullptr;
         mHttp.data.Clear();
         return NS_ERROR_FAILURE;
@@ -299,8 +299,7 @@ Dashboard::RequestWebsocketConnections(NetDashboardCallback* cb)
 nsresult
 Dashboard::GetWebSocketConnections()
 {
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
-    JSAutoRequest request(cx);
+    AutoSafeJSContext cx;
 
     mozilla::dom::WebSocketDict dict;
     dict.mEncrypted.Construct();
@@ -337,8 +336,8 @@ Dashboard::GetWebSocketConnections()
         *encrypted.AppendElement() = mWs.data[i].mEncrypted;
     }
 
-    JS::Value val;
-    if (!dict.ToObject(cx, JS::NullPtr(), &val)) {
+    JS::RootedValue val(cx);
+    if (!dict.ToObject(cx, JS::NullPtr(), val.address())) {
         mWs.cb = nullptr;
         mWs.data.Clear();
         return NS_ERROR_FAILURE;
@@ -382,8 +381,7 @@ Dashboard::GetDnsInfoDispatch()
 nsresult
 Dashboard::GetDNSCacheEntries()
 {
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
-    JSAutoRequest request(cx);
+    AutoSafeJSContext cx;
 
     mozilla::dom::DNSCacheDict dict;
     dict.mExpiration.Construct();
@@ -426,8 +424,8 @@ Dashboard::GetDNSCacheEntries()
             CopyASCIItoUTF16("ipv4", *family.AppendElement());
     }
 
-    JS::Value val;
-    if (!dict.ToObject(cx, JS::NullPtr(), &val)) {
+    JS::RootedValue val(cx);
+    if (!dict.ToObject(cx, JS::NullPtr(), val.address())) {
         mDns.cb = nullptr;
         mDns.data.Clear();
         return NS_ERROR_FAILURE;

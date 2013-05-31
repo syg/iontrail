@@ -47,6 +47,7 @@ const HTTP_BASE = "http://localhost:" + HTTP_SERVER_PORT;
 const FAKE_SERVER_PORT = 4445;
 const FAKE_BASE = "http://localhost:" + FAKE_SERVER_PORT;
 
+const TEST_REFERRER_URI = NetUtil.newURI(HTTP_BASE + "/referrer.html");
 const TEST_SOURCE_URI = NetUtil.newURI(HTTP_BASE + "/source.txt");
 const TEST_EMPTY_URI = NetUtil.newURI(HTTP_BASE + "/empty.txt");
 const TEST_FAKE_SOURCE_URI = NetUtil.newURI(FAKE_BASE + "/source.txt");
@@ -124,6 +125,20 @@ function promiseExecuteSoon()
 {
   let deferred = Promise.defer();
   do_execute_soon(deferred.resolve);
+  return deferred.promise;
+}
+
+/**
+ * Waits for a pending events to be processed after a timeout.
+ *
+ * @return {Promise}
+ * @resolves When pending events have been processed.
+ * @rejects Never.
+ */
+function promiseTimeout(aTime)
+{
+  let deferred = Promise.defer();
+  do_timeout(aTime, deferred.resolve);
   return deferred.promise;
 }
 
@@ -294,6 +309,16 @@ function registerInterruptibleHandler(aPath, aFirstPartFn, aSecondPartFn)
       do_print("Interruptible request aborted.");
     });
   });
+}
+
+/**
+ * Ensure the given date object is valid.
+ *
+ * @param aDate
+ *        The date object to be checked. This value can be null.
+ */
+function isValidDate(aDate) {
+  return aDate && aDate.getTime && !isNaN(aDate.getTime());
 }
 
 ////////////////////////////////////////////////////////////////////////////////

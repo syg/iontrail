@@ -23,6 +23,7 @@
 #include "nsError.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "jswrapper.h"
 
 #include "nsPrincipal.h"
@@ -402,7 +403,9 @@ nsPrincipal::CheckMayLoad(nsIURI* aURI, bool aReport, bool aAllowIfInheritsPrinc
           NS_FAILED(codebaseFileURL->GetFile(getter_AddRefs(codebaseFile))) ||
           !targetFile || !codebaseFile ||
           NS_FAILED(targetFile->Normalize()) ||
+#ifndef MOZ_WIDGET_ANDROID
           NS_FAILED(codebaseFile->Normalize()) ||
+#endif
           NS_FAILED(targetFile->IsDirectory(&targetIsDir)) ||
           targetIsDir) {
         if (aReport) {

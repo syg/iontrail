@@ -1180,10 +1180,6 @@ class DebugScopeProxy : public BaseProxyHandler
                     if (action == GET)
                         vp.set(UndefinedValue());
                 }
-
-                if (action == SET)
-                    TypeScript::SetLocal(cx, script, i, vp);
-
             } else {
                 JS_ASSERT(bi->kind() == ARGUMENT);
                 unsigned i = bi.frameIndex();
@@ -1492,7 +1488,8 @@ DebugScopeProxy DebugScopeProxy::singleton;
 DebugScopeObject::create(JSContext *cx, ScopeObject &scope, HandleObject enclosing)
 {
     JS_ASSERT(scope.compartment() == cx->compartment);
-    JSObject *obj = NewProxyObject(cx, &DebugScopeProxy::singleton, ObjectValue(scope),
+    RootedValue priv(cx, ObjectValue(scope));
+    JSObject *obj = NewProxyObject(cx, &DebugScopeProxy::singleton, priv,
                                    NULL /* proto */, &scope.global(), ProxyNotCallable);
     if (!obj)
         return NULL;
@@ -1723,6 +1720,7 @@ DebugScopes::addDebugScope(JSContext *cx, const ScopeIter &si, DebugScopeObject 
         js_ReportOutOfMemory(cx);
         return false;
     }
+    HashTableWriteBarrierPost(cx->runtime, &scopes->liveScopes, &debugScope.scope());
 
     return true;
 }
@@ -1872,10 +1870,12 @@ DebugScopes::onGeneratorFrameChange(AbstractFramePtr from, AbstractFramePtr to, 
              */
             JS_ASSERT(toIter.scope().compartment() == cx->compartment);
             LiveScopeMap::AddPtr livePtr = scopes->liveScopes.lookupForAdd(&toIter.scope());
-            if (livePtr)
+            if (livePtr) {
                 livePtr->value = to;
-            else
+            } else {
                 scopes->liveScopes.add(livePtr, &toIter.scope(), to);  // OOM here?
+                HashTableWriteBarrierPost(cx->runtime, &scopes->liveScopes, &toIter.scope());
+            }
         } else {
             ScopeIter si(toIter, from, cx);
             JS_ASSERT(si.frame().scopeChain()->compartment() == cx->compartment);
@@ -1936,6 +1936,7 @@ DebugScopes::updateLiveScopes(JSContext *cx)
                     return false;
                 if (!scopes->liveScopes.put(&si.scope(), frame))
                     return false;
+                HashTableWriteBarrierPost(cx->runtime, &scopes->liveScopes, &si.scope());
             }
         }
 

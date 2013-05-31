@@ -33,10 +33,6 @@
 #include "vm/StringBuffer.h"
 #include "vm/Xdr.h"
 
-#ifdef JS_METHODJIT
-#include "methodjit/MethodJIT.h"
-#endif
-
 #include "jsfuninlines.h"
 #include "jsinferinlines.h"
 #include "jsinterpinlines.h"
@@ -132,28 +128,6 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
         vp.setObject(*argsobj);
         return true;
     }
-
-#ifdef JS_METHODJIT
-    StackFrame *fp = NULL;
-    if (!iter.isIon())
-        fp = iter.interpFrame();
-
-    if (JSID_IS_ATOM(id, cx->names().caller) && fp && fp->prev()) {
-        /*
-         * If the frame was called from within an inlined frame, mark the
-         * innermost function as uninlineable to expand its frame and allow us
-         * to recover its callee object.
-         */
-        InlinedSite *inlined;
-        jsbytecode *prevpc = fp->prevpc(&inlined);
-        if (inlined) {
-            mjit::JITChunk *chunk = fp->prev()->jit()->chunk(prevpc);
-            JSFunction *fun = chunk->inlineFrames()[inlined->inlineIndex].fun;
-            fun->nonLazyScript()->uninlineable = true;
-            MarkTypeObjectFlags(cx, fun, OBJECT_FLAG_UNINLINEABLE);
-        }
-    }
-#endif
 
     if (JSID_IS_ATOM(id, cx->names().caller)) {
         ++iter;
@@ -441,12 +415,14 @@ template bool
 js::XDRInterpretedFunction(XDRState<XDR_DECODE> *, HandleObject, HandleScript, MutableHandleObject);
 
 JSObject *
-js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleFunction srcFun)
+js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleFunction srcFun,
+                             NewObjectKind newKind /* = GenericObject */)
 {
     /* NB: Keep this in sync with XDRInterpretedFunction. */
 
     RootedFunction clone(cx, NewFunction(cx, NullPtr(), NULL, 0,
-                                         JSFunction::INTERPRETED, NullPtr(), NullPtr()));
+                                         JSFunction::INTERPRETED, NullPtr(), NullPtr(),
+                                         JSFunction::FinalizeKind, newKind));
     if (!clone)
         return NULL;
 
@@ -515,8 +491,13 @@ JSFunction::trace(JSTracer *trc)
         MarkString(trc, &atom_, "atom");
 
     if (isInterpreted()) {
-        if (hasScript())
-            MarkScriptUnbarriered(trc, &u.i.script_, "script");
+        // Functions can be be marked as interpreted despite having no script
+        // yet at some points when parsing, and can be lazy with no lazy script
+        // for self hosted code.
+        if (hasScript() && u.i.s.script_)
+            MarkScriptUnbarriered(trc, &u.i.s.script_, "script");
+        else if (isInterpretedLazy() && u.i.s.lazy_)
+            MarkLazyScriptUnbarriered(trc, &u.i.s.lazy_, "lazyScript");
         if (u.i.env_)
             MarkObjectUnbarriered(trc, &u.i.env_, "fun_callscope");
     }
@@ -608,8 +589,8 @@ FindBody(JSContext *cx, HandleFunction fun, StableCharPtr chars, size_t length,
 JSString *
 js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lambdaParen)
 {
-    StringBuffer out(cx);
-    RootedScript script(cx);
+    if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
+        return NULL;
 
     // If the object is an automatically-bound arrow function, get the source
     // of the pre-binding target.
@@ -619,6 +600,9 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
         JS_ASSERT(targetFun->isArrow());
         return FunctionToString(cx, targetFun, bodyOnly, lambdaParen);
     }
+
+    StringBuffer out(cx);
+    RootedScript script(cx);
 
     if (fun->hasScript()) {
         script = fun->nonLazyScript();
@@ -1085,17 +1069,65 @@ JSFunction::getBoundFunctionArgumentCount() const
     return getSlot(JSSLOT_BOUND_FUNCTION_ARGS_COUNT).toPrivateUint32();
 }
 
-bool
-JSFunction::initializeLazyScript(JSContext *cx)
+/* static */ bool
+JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFunction fun)
 {
-    JS_ASSERT(isInterpretedLazy());
-    const JSFunctionSpec *fs = static_cast<JSFunctionSpec *>(getExtendedSlot(0).toPrivate());
-    Rooted<JSFunction*> self(cx, this);
+    JS_ASSERT(fun->isInterpretedLazy());
+
+    if (LazyScript *lazy = fun->lazyScriptOrNull()) {
+        /* Trigger a pre barrier on the lazy script being overwritten. */
+        if (cx->zone()->needsBarrier())
+            LazyScript::writeBarrierPre(lazy);
+
+        if (JSScript *script = lazy->maybeScript()) {
+            fun->flags &= ~INTERPRETED_LAZY;
+            fun->flags |= INTERPRETED;
+            fun->initScript(script);
+
+            /*
+             * Set some bits that are normally filled in by the Parser after
+             * the full parse tree has been produced.
+             */
+            if (script->function()->isHeavyweight())
+                fun->setIsHeavyweight();
+            fun->nargs = script->function()->nargs;
+            return true;
+        }
+
+        /* Lazily parsed script. */
+        const jschar *chars = lazy->source()->chars(cx);
+        if (!chars)
+            return false;
+
+        /*
+         * GC must be suppressed for the remainder of the lazy parse, as any
+         * GC activity may destroy the characters.
+         */
+        AutoSuppressGC suppressGC(cx);
+
+        fun->flags &= ~INTERPRETED_LAZY;
+        fun->flags |= INTERPRETED;
+        fun->initScript(NULL);
+
+        const jschar *lazyStart = chars + lazy->begin();
+        size_t lazyLength = lazy->end() - lazy->begin();
+
+        if (!frontend::CompileLazyFunction(cx, fun, lazy, lazyStart, lazyLength)) {
+            fun->initLazyScript(lazy);
+            return false;
+        }
+
+        lazy->initScript(fun->nonLazyScript());
+        return true;
+    }
+
+    /* Lazily cloned self hosted script. */
+    JSFunctionSpec *fs = static_cast<JSFunctionSpec *>(fun->getExtendedSlot(0).toPrivate());
     RootedAtom funAtom(cx, Atomize(cx, fs->selfHostedName, strlen(fs->selfHostedName)));
     if (!funAtom)
         return false;
     Rooted<PropertyName *> funName(cx, funAtom->asPropertyName());
-    return cx->runtime->cloneSelfHostedFunctionScript(cx, funName, self);
+    return cx->runtime->cloneSelfHostedFunctionScript(cx, funName, fun);
 }
 
 /* ES5 15.3.4.5.1 and 15.3.4.5.2. */
@@ -1519,7 +1551,8 @@ js::NewFunction(JSContext *cx, HandleObject funobjArg, Native native, unsigned n
 }
 
 JSFunction *
-js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, gc::AllocKind allocKind)
+js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, gc::AllocKind allocKind,
+                        NewObjectKind newKindArg /* = GenericObject */)
 {
     JS_ASSERT(parent);
     JS_ASSERT(!fun->isBoundFunction());
@@ -1527,7 +1560,11 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
     bool useSameScript = cx->compartment == fun->compartment() &&
                          !fun->hasSingletonType() &&
                          !types::UseNewTypeForClone(fun);
-    NewObjectKind newKind = useSameScript ? GenericObject : SingletonObject;
+
+    if (!useSameScript && fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
+        return NULL;
+
+    NewObjectKind newKind = useSameScript ? newKindArg : SingletonObject;
     JSObject *cloneobj = NewObjectWithClassProto(cx, &FunctionClass, NULL, SkipScopeParent(parent),
                                                  allocKind, newKind);
     if (!cloneobj)
@@ -1536,15 +1573,12 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
 
     clone->nargs = fun->nargs;
     clone->flags = fun->flags & ~JSFunction::EXTENDED;
-    if (fun->isInterpreted()) {
-        if (fun->isInterpretedLazy()) {
-            RootedFunction cloneRoot(cx, clone);
-            AutoCompartment ac(cx, fun);
-            if (!fun->getOrCreateScript(cx))
-                return NULL;
-            clone = cloneRoot;
-        }
+    if (fun->hasScript()) {
         clone->initScript(fun->nonLazyScript());
+        clone->initEnvironment(parent);
+    } else if (fun->isInterpretedLazy()) {
+        LazyScript *lazy = fun->lazyScriptOrNull();
+        clone->initLazyScript(lazy);
         clone->initEnvironment(parent);
     } else {
         clone->initNative(fun->native(), fun->jitInfo());
@@ -1579,7 +1613,7 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
      * (JS_CloneFunctionObject) which dynamically ensures that 'script' has
      * no enclosing lexical scope (only the global scope).
      */
-    if (cloneRoot->isInterpreted() && !CloneFunctionScript(cx, fun, cloneRoot))
+    if (cloneRoot->isInterpreted() && !CloneFunctionScript(cx, fun, cloneRoot, newKindArg))
         return NULL;
 
     return cloneRoot;

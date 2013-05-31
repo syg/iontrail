@@ -470,7 +470,13 @@ js_ErrorFromException(jsval exn)
     if (JSVAL_IS_PRIMITIVE(exn))
         return NULL;
 
-    JSObject *obj = JSVAL_TO_OBJECT(exn);
+    // It's ok to UncheckedUnwrap here, since all we do is get the
+    // JSErrorReport, and consumers are careful with the information they get
+    // from that anyway.  Anyone doing things that would expose anything in the
+    // JSErrorReport to page script either does a security check on the
+    // JSErrorReport's principal or also tries to do toString on our object and
+    // will fail if they can't unwrap it.
+    JSObject *obj = UncheckedUnwrap(JSVAL_TO_OBJECT(exn));
     if (!obj->isError())
         return NULL;
 
@@ -565,7 +571,7 @@ Exception(JSContext *cx, unsigned argc, Value *vp)
     NonBuiltinScriptFrameIter iter(cx);
 
     /* Set the 'fileName' property. */
-    RootedScript script(cx, iter.script());
+    RootedScript script(cx, iter.done() ? NULL : iter.script());
     RootedString filename(cx);
     if (args.length() > 1) {
         filename = ToString<CanGC>(cx, args[1]);

@@ -33,6 +33,7 @@
 #include "nsIDOMApplicationRegistry.h"
 #include "nsIBaseWindow.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIXPConnect.h"
 #include "nsUnicharUtils.h"
 #include "nsIScriptGlobalObject.h"
@@ -2204,7 +2205,7 @@ public:
 
       nsRefPtr<nsFrameMessageManager> mm = tabChild->GetInnerManager();
       mm->ReceiveMessage(static_cast<EventTarget*>(tabChild), mMessage,
-                         false, &data, nullptr, nullptr, nullptr);
+                         false, &data, JS::NullPtr(), nullptr, nullptr);
     }
     return NS_OK;
   }
@@ -2554,6 +2555,10 @@ nsFrameLoader::ResetPermissionManagerStatus()
 /* [infallible] */ NS_IMETHODIMP
 nsFrameLoader::SetVisible(bool aVisible)
 {
+  if (mVisible == aVisible) {
+    return NS_OK;
+  }
+
   mVisible = aVisible;
   nsCOMPtr<nsIObserverService> os = services::GetObserverService();
   if (os) {

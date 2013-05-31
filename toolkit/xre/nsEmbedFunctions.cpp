@@ -282,7 +282,8 @@ XRE_InitChildProcess(int aArgc,
   NS_ENSURE_ARG_MIN(aArgc, 2);
   NS_ENSURE_ARG_POINTER(aArgv);
   NS_ENSURE_ARG_POINTER(aArgv[0]);
-  profiler_init();
+  char aLocal;
+  profiler_init(&aLocal);
   PROFILER_LABEL("Startup", "XRE_InitChildProcess");
 
   sChildProcessType = aProcess;
@@ -716,11 +717,12 @@ XRE_SendTestShellCommand(JSContext* aCx,
                          JSString* aCommand,
                          void* aCallback)
 {
+    JS::RootedString cmd(aCx, aCommand);
     TestShellParent* tsp = GetOrCreateTestShellParent();
     NS_ENSURE_TRUE(tsp, false);
 
     nsDependentJSString command;
-    NS_ENSURE_TRUE(command.init(aCx, aCommand), false);
+    NS_ENSURE_TRUE(command.init(aCx, cmd), false);
 
     if (!aCallback) {
         return tsp->SendExecuteCommand(command);

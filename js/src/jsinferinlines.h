@@ -91,31 +91,19 @@ namespace types {
 inline
 CompilerOutput::CompilerOutput()
   : script(NULL),
-    kindInt(MethodJIT),
+    kindInt(Ion),
     constructing(false),
     barriers(false),
     chunkIndex(false)
 {
 }
 
-inline mjit::JITScript *
-CompilerOutput::mjit() const
-{
-#ifdef JS_METHODJIT
-    JS_ASSERT(kind() == MethodJIT && isValid());
-    return script->getJIT(constructing, barriers);
-#else
-    return NULL;
-#endif
-}
-
 inline ion::IonScript *
 CompilerOutput::ion() const
 {
 #ifdef JS_ION
-    JS_ASSERT(kind() != MethodJIT && isValid());
+    JS_ASSERT(isValid());
     switch (kind()) {
-      case MethodJIT: break;
       case Ion: return script->ionScript();
       case ParallelIon: return script->parallelIonScript();
     }
@@ -130,24 +118,11 @@ CompilerOutput::isValid() const
     if (!script)
         return false;
 
-#if defined(DEBUG) && (defined(JS_METHODJIT) || defined(JS_ION))
+#if defined(DEBUG) && defined(JS_ION)
     TypeCompartment &types = script->compartment()->types;
 #endif
 
     switch (kind()) {
-      case MethodJIT: {
-#ifdef JS_METHODJIT
-        mjit::JITScript *jit = script->getJIT(constructing, barriers);
-        if (!jit)
-            return false;
-        mjit::JITChunk *chunk = jit->chunkDescriptor(chunkIndex).chunk;
-        if (!chunk)
-            return false;
-        JS_ASSERT(this == chunk->recompileInfo.compilerOutput(types));
-        return true;
-#endif
-      }
-
       case Ion:
 #ifdef JS_ION
         if (script->hasIonScript()) {
@@ -580,20 +555,14 @@ void TypeMonitorCallSlow(JSContext *cx, JSObject *callee, const CallArgs &args,
  * Monitor a javascript call, either on entry to the interpreter or made
  * from within the interpreter.
  */
-inline bool
+inline void
 TypeMonitorCall(JSContext *cx, const js::CallArgs &args, bool constructing)
 {
     if (args.callee().isFunction()) {
         JSFunction *fun = args.callee().toFunction();
-        if (fun->isInterpreted()) {
-            if (!fun->nonLazyScript()->ensureHasTypes(cx))
-                return false;
-            if (cx->typeInferenceEnabled())
-                TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
-        }
+        if (fun->isInterpreted() && fun->nonLazyScript()->types && cx->typeInferenceEnabled())
+            TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
     }
-
-    return true;
 }
 
 inline bool
@@ -747,7 +716,7 @@ UseNewTypeForClone(JSFunction *fun)
     if (!fun->isInterpreted())
         return false;
 
-    if (fun->nonLazyScript()->shouldCloneAtCallsite)
+    if (fun->hasScript() && fun->nonLazyScript()->shouldCloneAtCallsite)
         return true;
 
     if (fun->isArrow())
@@ -811,7 +780,7 @@ UseNewTypeForClone(JSFunction *fun)
 /* static */ inline unsigned
 TypeScript::NumTypeSets(JSScript *script)
 {
-    return script->nTypeSets + analyze::TotalSlots(script);
+    return script->nTypeSets + analyze::LocalSlot(script, 0);
 }
 
 /* static */ inline HeapTypeSet *
@@ -843,17 +812,9 @@ TypeScript::ArgTypes(JSScript *script, unsigned i)
 }
 
 /* static */ inline StackTypeSet *
-TypeScript::LocalTypes(JSScript *script, unsigned i)
-{
-    JS_ASSERT(i < script->nfixed);
-    TypeSet *types = script->types->typeArray() + script->nTypeSets + js::analyze::LocalSlot(script, i);
-    return types->toStackTypeSet();
-}
-
-/* static */ inline StackTypeSet *
 TypeScript::SlotTypes(JSScript *script, unsigned slot)
 {
-    JS_ASSERT(slot < js::analyze::TotalSlots(script));
+    JS_ASSERT(slot < js::analyze::LocalSlot(script, 0));
     TypeSet *types = script->types->typeArray() + script->nTypeSets + slot;
     return types->toStackTypeSet();
 }
@@ -1093,22 +1054,15 @@ TypeScript::MonitorAssign(JSContext *cx, HandleObject obj, jsid id)
 /* static */ inline void
 TypeScript::SetThis(JSContext *cx, JSScript *script, Type type)
 {
-    if (!cx->typeInferenceEnabled())
+    if (!cx->typeInferenceEnabled() || !script->types)
         return;
-    JS_ASSERT(script->types);
 
-    /* Analyze the script regardless if -a was used. */
-    bool analyze = cx->hasOption(JSOPTION_METHODJIT_ALWAYS);
-
-    if (!ThisTypes(script)->hasType(type) || analyze) {
+    if (!ThisTypes(script)->hasType(type)) {
         AutoEnterAnalysis enter(cx);
 
         InferSpew(ISpewOps, "externalType: setThis #%u: %s",
                   script->id(), TypeString(type));
         ThisTypes(script)->addType(cx, type);
-
-        if (analyze)
-            script->ensureRanInference(cx);
     }
 }
 
@@ -1120,36 +1074,10 @@ TypeScript::SetThis(JSContext *cx, JSScript *script, const js::Value &value)
 }
 
 /* static */ inline void
-TypeScript::SetLocal(JSContext *cx, JSScript *script, unsigned local, Type type)
-{
-    if (!cx->typeInferenceEnabled())
-        return;
-    JS_ASSERT(script->types);
-
-    if (!LocalTypes(script, local)->hasType(type)) {
-        AutoEnterAnalysis enter(cx);
-
-        InferSpew(ISpewOps, "externalType: setLocal #%u %u: %s",
-                  script->id(), local, TypeString(type));
-        LocalTypes(script, local)->addType(cx, type);
-    }
-}
-
-/* static */ inline void
-TypeScript::SetLocal(JSContext *cx, JSScript *script, unsigned local, const js::Value &value)
-{
-    if (cx->typeInferenceEnabled()) {
-        Type type = GetValueType(cx, value);
-        SetLocal(cx, script, local, type);
-    }
-}
-
-/* static */ inline void
 TypeScript::SetArgument(JSContext *cx, JSScript *script, unsigned arg, Type type)
 {
-    if (!cx->typeInferenceEnabled())
+    if (!cx->typeInferenceEnabled() || !script->types)
         return;
-    JS_ASSERT(script->types);
 
     if (!ArgTypes(script, arg)->hasType(type)) {
         AutoEnterAnalysis enter(cx);
@@ -1589,6 +1517,22 @@ TypeSet::getTypeObject(unsigned i) const
 {
     TypeObjectKey *key = getObject(i);
     return (key && !(uintptr_t(key) & 1)) ? (TypeObject *) key : NULL;
+}
+
+inline TypeObject *
+TypeSet::getTypeOrSingleObject(JSContext *cx, unsigned i) const
+{
+    JS_ASSERT(cx->compartment->activeAnalysis);
+    TypeObject *type = getTypeObject(i);
+    if (!type) {
+        JSObject *singleton = getSingleObject(i);
+        if (!singleton)
+            return NULL;
+        type = singleton->getType(cx);
+        if (!type)
+            cx->compartment->types.setPendingNukeTypes(cx);
+    }
+    return type;
 }
 
 /////////////////////////////////////////////////////////////////////

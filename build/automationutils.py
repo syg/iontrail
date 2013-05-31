@@ -30,6 +30,16 @@ DEBUGGER_INFO = {
     "args": "-q --args"
   },
 
+  "cgdb": {
+    "interactive": True,
+    "args": "-q --args"
+  },
+
+  "lldb": {
+    "interactive": True,
+    "args": "--"
+  },
+
   # valgrind doesn't explain much about leaks unless you set the
   # '--leak-check=full' flag.
   "valgrind": {

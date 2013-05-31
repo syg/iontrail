@@ -1011,14 +1011,13 @@ nsWindow::GetAttention(int32_t aCycleCount)
 static already_AddRefed<gfxASurface>
 GetSurfaceForQWidget(QWidget* aDrawable)
 {
-    gfxASurface* result =
+    nsRefPtr<gfxASurface> result =
         new gfxXlibSurface(gfxQtPlatform::GetXDisplay(aDrawable),
                            aDrawable->winId(),
                            DefaultVisualOfScreen(gfxQtPlatform::GetXScreen(aDrawable)),
                            gfxIntSize(aDrawable->size().width(),
                            aDrawable->size().height()));
-    NS_IF_ADDREF(result);
-    return result;
+    return result.forget();
 }
 #endif
 
@@ -1077,7 +1076,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
 #endif //MOZ_ENABLE_QTMOBILITY
 
         if (mWidgetListener)
-          painted = mWidgetListener->PaintWindow(this, region, 0);
+          painted = mWidgetListener->PaintWindow(this, region);
         aPainter->endNativePainting();
         if (mWidgetListener)
           mWidgetListener->DidPaintWindow();
@@ -1135,7 +1134,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
             setupLayerManager(this, ctx, mozilla::layers::BUFFER_NONE);
         if (mWidgetListener) {
           nsIntRegion region(rect);
-          painted = mWidgetListener->PaintWindow(this, region, 0);
+          painted = mWidgetListener->PaintWindow(this, region);
         }
     }
 

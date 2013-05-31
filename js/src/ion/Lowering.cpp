@@ -426,8 +426,6 @@ LIRGenerator::visitApplyArgs(MApplyArgs *apply)
 {
     JS_ASSERT(apply->getFunction()->type() == MIRType_Object);
 
-    JSFunction *target = apply->getSingleTarget();
-
     // Assert if we cannot build a rectifier frame.
     JS_ASSERT(CallTempReg0 != ArgumentsRectifierReg);
     JS_ASSERT(CallTempReg1 != ArgumentsRectifierReg);
@@ -447,7 +445,7 @@ LIRGenerator::visitApplyArgs(MApplyArgs *apply)
         return false;
 
     // Bailout is only needed in the case of possible non-JSFunction callee.
-    if (!target && !assignSnapshot(lir))
+    if (!apply->getSingleTarget() && !assignSnapshot(lir))
         return false;
 
     if (!defineReturn(lir, apply))
@@ -485,7 +483,7 @@ LIRGenerator::visitFilterArguments(MFilterArguments *ins)
                                                  tempFixed(CallTempReg1),
                                                  tempFixed(CallTempReg2));
 
-    return assignSnapshot(lir) && add(lir, ins);
+    return assignSnapshot(lir) && add(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -859,8 +857,8 @@ ReorderCommutative(MDefinition **lhsp, MDefinition **rhsp)
 
     // Ensure that if there is a constant, then it is in rhs.
     // In addition, since clobbering binary operations clobber the left
-    // operand, prefer a lhs operand with no further uses.
-    if (lhs->isConstant() || rhs->useCount() == 1) {
+    // operand, prefer a non-constant lhs operand with no further uses.
+    if (lhs->isConstant() || (!rhs->isConstant() && rhs->useCount() == 1)) {
         *rhsp = lhs;
         *lhsp = rhs;
     }
@@ -1738,6 +1736,32 @@ LIRGenerator::visitMonitorTypes(MMonitorTypes *ins)
 }
 
 bool
+LIRGenerator::visitPostWriteBarrier(MPostWriteBarrier *ins)
+{
+#ifdef JSGC_GENERATIONAL
+    switch (ins->value()->type()) {
+      case MIRType_Object: {
+        LPostWriteBarrierO *lir = new LPostWriteBarrierO(useRegisterOrConstant(ins->object()),
+                                                         useRegister(ins->value()));
+        return add(lir, ins) && assignSafepoint(lir, ins);
+      }
+      case MIRType_Value: {
+        LPostWriteBarrierV *lir =
+            new LPostWriteBarrierV(useRegisterOrConstant(ins->object()), temp());
+        if (!useBox(lir, LPostWriteBarrierV::Input, ins->value()))
+            return false;
+        return add(lir, ins) && assignSafepoint(lir, ins);
+      }
+      default:
+        // Currently, only objects can be in the nursery. Other instruction
+        // types cannot hold nursery pointers.
+        return true;
+    }
+#endif // JSGC_GENERATIONAL
+    return true;
+}
+
+bool
 LIRGenerator::visitArrayLength(MArrayLength *ins)
 {
     JS_ASSERT(ins->elements()->type() == MIRType_Elements);
@@ -2370,6 +2394,33 @@ LIRGenerator::visitSetPropertyCache(MSetPropertyCache *ins)
 }
 
 bool
+LIRGenerator::visitSetElementCache(MSetElementCache *ins)
+{
+    JS_ASSERT(ins->object()->type() == MIRType_Object);
+    JS_ASSERT(ins->index()->type() == MIRType_Value);
+
+    LInstruction *lir;
+    if (ins->value()->type() == MIRType_Value) {
+        lir = new LSetElementCacheV(useRegister(ins->object()), temp());
+
+        if (!useBox(lir, LSetElementCacheV::Index, ins->index()))
+            return false;
+        if (!useBox(lir, LSetElementCacheV::Value, ins->value()))
+            return false;
+    } else {
+        lir = new LSetElementCacheT(
+            useRegister(ins->object()),
+            useRegisterOrConstant(ins->value()),
+            temp());
+
+        if (!useBox(lir, LSetElementCacheT::Index, ins->index()))
+            return false;
+    }
+
+    return add(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitCallSetElement(MCallSetElement *ins)
 {
     JS_ASSERT(ins->object()->type() == MIRType_Object);
@@ -2447,6 +2498,31 @@ LIRGenerator::visitGetArgument(MGetArgument *ins)
 {
     LGetArgument *lir = new LGetArgument(useRegisterOrConstant(ins->index()));
     return defineBox(lir, ins);
+}
+
+bool
+LIRGenerator::visitRest(MRest *ins)
+{
+    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
+
+    LRest *lir = new LRest(useFixed(ins->numActuals(), CallTempReg0),
+                           tempFixed(CallTempReg1),
+                           tempFixed(CallTempReg2),
+                           tempFixed(CallTempReg3));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitParRest(MParRest *ins)
+{
+    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
+
+    LParRest *lir = new LParRest(useFixed(ins->parSlice(), CallTempReg0),
+                                 useFixed(ins->numActuals(), CallTempReg1),
+                                 tempFixed(CallTempReg2),
+                                 tempFixed(CallTempReg3),
+                                 tempFixed(CallTempReg4));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool

@@ -7,11 +7,15 @@
 
 #include "nsCoord.h"
 #include "nsCSSProperty.h"
+#include "gfxFontFeatures.h"
+#include "nsIPrincipal.h"
+#include "nsSubstring.h"
 
 class nsCSSValue;
 class nsStringComparator;
 class nsIContent;
 struct gfxFontFeature;
+class nsCSSValueList;
 template <class E> class nsTArray;
 
 // Style utility functions
@@ -49,6 +53,20 @@ public:
   static void AppendFontFeatureSettings(const nsCSSValue& src,
                                         nsAString& aResult);
 
+  // convert bitmask value to keyword name for a functional alternate
+  static void GetFunctionalAlternatesName(int32_t aFeature,
+                                          nsAString& aFeatureName);
+
+  // Append functional font-variant-alternates values to string
+  static void
+  SerializeFunctionalAlternates(const nsTArray<gfxAlternateValue>& aAlternates,
+                                nsAString& aResult);
+
+  // List of functional font-variant-alternates values to feature/value pairs
+  static void
+  ComputeFunctionalAlternates(const nsCSSValueList* aList,
+                              nsTArray<gfxAlternateValue>& aAlternateValues);
+
   /*
    * Convert an author-provided floating point number to an integer (0
    * ... 255) appropriate for use in the alpha component of a color.
@@ -74,6 +92,22 @@ public:
   static bool IsSignificantChild(nsIContent* aChild,
                                    bool aTextIsSignificant,
                                    bool aWhitespaceIsSignificant);
+  /*
+   *  Does this principal have a CSP that blocks the application of
+   *  inline styles ? Returns false if application of the style should
+   *  be blocked.
+   *
+   *  Note that the principal passed in here needs to be the principal
+   *  of the document, not of the style sheet. The document's principal
+   *  is where any Content Security Policy that should be used to
+   *  block or allow inline styles will be located.
+   */
+  static bool CSPAllowsInlineStyle(nsIPrincipal* aPrincipal,
+                                   nsIURI* aSourceURI,
+                                   uint32_t aLineNumber,
+                                   const nsSubstring& aStyleText,
+                                   nsresult* aRv);
+
 };
 
 

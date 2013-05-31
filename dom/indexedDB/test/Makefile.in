@@ -10,8 +10,6 @@ relativesrcdir = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DISABLED_XPCSHELL_TESTS = unit
-
 MOCHITEST_FILES = \
   bfcache_iframe1.html \
   bfcache_iframe2.html \
@@ -76,6 +74,7 @@ MOCHITEST_FILES = \
   test_key_requirements.html \
   test_keys.html \
   test_leaving_page.html \
+  test_lowDiskSpace.html \
   test_multientry.html \
   test_names_sorted.html \
   test_objectCursors.html \

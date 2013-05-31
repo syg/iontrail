@@ -65,7 +65,7 @@ ScriptAnalysis::addJump(JSContext *cx, unsigned offset,
 
     if (offset < *currentOffset) {
         /* Scripts containing loops are never inlined. */
-        isJaegerInlineable = isIonInlineable = false;
+        isJaegerInlineable = false;
         hasLoops_ = true;
 
         if (code->analyzed) {
@@ -254,18 +254,12 @@ ScriptAnalysis::analyzeBytecode(JSContext *cx)
         if (!forwardJump)
             code->unconditional = true;
 
-        /*
-         * Treat decompose ops as no-ops which do not adjust the stack. We will
-         * pick up the stack depths as we go through the decomposed version.
-         */
-        if (!(js_CodeSpec[op].format & JOF_DECOMPOSE)) {
-            unsigned nuses = GetUseCount(script_, offset);
-            unsigned ndefs = GetDefCount(script_, offset);
+        unsigned nuses = GetUseCount(script_, offset);
+        unsigned ndefs = GetDefCount(script_, offset);
 
-            JS_ASSERT(stackDepth >= nuses);
-            stackDepth -= nuses;
-            stackDepth += ndefs;
-        }
+        JS_ASSERT(stackDepth >= nuses);
+        stackDepth -= nuses;
+        stackDepth += ndefs;
 
         switch (op) {
 
@@ -530,13 +524,12 @@ ScriptAnalysis::analyzeBytecode(JSContext *cx)
           case JSOP_LOOPHEAD:
           case JSOP_LOOPENTRY:
           case JSOP_NOTEARG:
+          case JSOP_REST:
             break;
 
           default:
-            if (!(js_CodeSpec[op].format & JOF_DECOMPOSE)) {
-                isJaegerCompileable = false;
-                isJaegerInlineable = isIonInlineable = false;
-            }
+            isJaegerCompileable = false;
+            isJaegerInlineable = isIonInlineable = false;
             break;
         }
 
@@ -596,25 +589,6 @@ ScriptAnalysis::analyzeBytecode(JSContext *cx)
      */
     if (!script_->analyzedArgsUsage())
         analyzeSSA(cx);
-
-    /*
-     * If the script has JIT information (we are reanalyzing the script after
-     * a purge), add safepoints for the targets of any cross chunk edges in
-     * the script. These safepoints are normally added when the JITScript is
-     * constructed, but will have been lost during the purge.
-     */
-#ifdef JS_METHODJIT
-    mjit::JITScript *jit = NULL;
-    for (int constructing = 0; constructing <= 1 && !jit; constructing++) {
-        for (int barriers = 0; barriers <= 1 && !jit; barriers++)
-            jit = script_->getJIT((bool) constructing, (bool) barriers);
-    }
-    if (jit) {
-        mjit::CrossChunkEdge *edges = jit->edges();
-        for (size_t i = 0; i < jit->nedges; i++)
-            getCode(edges[i].target).safePoint = true;
-    }
-#endif
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -890,7 +864,7 @@ ScriptAnalysis::analyzeLifetimes(JSContext *cx)
     ranLifetimes_ = true;
 }
 
-#ifdef JS_METHODJIT_SPEW
+#ifdef DEBUG
 void
 LifetimeVariable::print() const
 {
@@ -1106,21 +1080,6 @@ ScriptAnalysis::ensureVariable(LifetimeVariable &var, unsigned until)
     var.ensured = true;
 }
 
-void
-ScriptAnalysis::clearAllocations()
-{
-    /*
-     * Clear out storage used for register allocations in a compilation once
-     * that compilation has finished. Register allocations are only used for
-     * a single compilation.
-     */
-    for (unsigned i = 0; i < script_->length; i++) {
-        Bytecode *code = maybeCode(i);
-        if (code)
-            code->allocation = NULL;
-    }
-}
-
 /////////////////////////////////////////////////////////////////////
 // SSA Analysis
 /////////////////////////////////////////////////////////////////////
@@ -1306,11 +1265,6 @@ ScriptAnalysis::analyzeSSA(JSContext *cx)
             freezeNewValues(cx, offset);
         }
 
-        if (js_CodeSpec[op].format & JOF_DECOMPOSE) {
-            offset = successorOffset;
-            continue;
-        }
-
         unsigned nuses = GetUseCount(script_, offset);
         unsigned ndefs = GetDefCount(script_, offset);
         JS_ASSERT(stackDepth >= nuses);
@@ -1408,6 +1362,8 @@ ScriptAnalysis::analyzeSSA(JSContext *cx)
             break;
 
           case JSOP_INITPROP:
+          case JSOP_INITPROP_GETTER:
+          case JSOP_INITPROP_SETTER:
             stack[stackDepth - 1].v = code->poppedValues[1];
             break;
 
@@ -1421,6 +1377,8 @@ ScriptAnalysis::analyzeSSA(JSContext *cx)
             break;
 
           case JSOP_INITELEM:
+          case JSOP_INITELEM_GETTER:
+          case JSOP_INITELEM_SETTER:
             stack[stackDepth - 1].v = code->poppedValues[2];
             break;
 
@@ -1841,13 +1799,9 @@ ScriptAnalysis::needsArgsObj(JSContext *cx, SeenVector &seen, SSAUseChain *use)
     if (op == JSOP_POP || op == JSOP_POPN)
         return false;
 
-    /* SplatApplyArgs can read fp->canonicalActualArg(i) directly. */
-    if (op == JSOP_FUNAPPLY && GET_ARGC(pc) == 2 && use->u.which == 0) {
-#ifdef JS_METHODJIT
-        JS_ASSERT(mjit::IsLowerableFunCallOrApply(pc));
-#endif
+    /* We can read the frame's arguments directly for f.apply(x, arguments). */
+    if (op == JSOP_FUNAPPLY && GET_ARGC(pc) == 2 && use->u.which == 0)
         return false;
-    }
 
     /* arguments[i] can read fp->canonicalActualArg(i) directly. */
     if (op == JSOP_GETELEM && use->u.which == 1)

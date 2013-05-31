@@ -16,7 +16,6 @@
 #include "jswrapper.h"
 
 #include "builtin/TestingFunctions.h"
-#include "methodjit/MethodJIT.h"
 #include "vm/ForkJoin.h"
 
 #include "vm/Stack-inl.h"
@@ -168,14 +167,6 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
     value = BooleanValue(false);
 #endif
     if (!JS_SetProperty(cx, info, "oom-backtraces", &value))
-        return false;
-
-#ifdef JS_METHODJIT
-    value = BooleanValue(true);
-#else
-    value = BooleanValue(false);
-#endif
-    if (!JS_SetProperty(cx, info, "methodjit", &value))
         return false;
 
 #ifdef ENABLE_PARALLEL_JS
@@ -740,6 +731,29 @@ CountHeap(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
+#ifdef DEBUG
+static JSBool
+OOMAfterAllocations(JSContext *cx, unsigned argc, jsval *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 1) {
+        JS_ReportError(cx, "count argument required");
+        return false;
+    }
+
+    int32_t count;
+    if (!JS_ValueToInt32(cx, args[0], &count))
+        return false;
+    if (count <= 0) {
+        JS_ReportError(cx, "count argument must be positive");
+        return false;
+    }
+
+    OOM_maxAllocations = OOM_counter + count;
+    return true;
+}
+#endif
+
 static unsigned finalizeCount = 0;
 
 static void
@@ -813,45 +827,6 @@ DumpHeapComplete(JSContext *cx, unsigned argc, jsval *vp)
     fclose(dumpFile);
 
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
-    return true;
-}
-
-JSBool
-MJitChunkLimit(JSContext *cx, unsigned argc, jsval *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    if (argc != 1) {
-        RootedObject callee(cx, &args.callee());
-        ReportUsageError(cx, callee, "Wrong number of arguments");
-        return JS_FALSE;
-    }
-
-    if (cx->runtime->alwaysPreserveCode) {
-        JS_ReportError(cx, "Can't change chunk limit after gcPreserveCode()");
-        return JS_FALSE;
-    }
-
-    for (CompartmentsIter c(cx->runtime); !c.done(); c.next()) {
-        if (c->lastAnimationTime != 0) {
-            JS_ReportError(cx, "Can't change chunk limit if code may be preserved");
-            return JS_FALSE;
-        }
-    }
-
-    double t;
-    if (!JS_ValueToNumber(cx, args[0], &t))
-        return JS_FALSE;
-
-#ifdef JS_METHODJIT
-    mjit::SetChunkLimit((uint32_t) t);
-#endif
-
-    // Clear out analysis information which might refer to code compiled with
-    // the previous chunk limit.
-    JS_GC(cx->runtime);
-
-    vp->setUndefined();
     return true;
 }
 
@@ -967,6 +942,13 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "  count all things or one of 'object', 'double', 'string', 'function'\n"
 "  to count only things of that kind."),
 
+#ifdef DEBUG
+    JS_FN_HELP("oomAfterAllocations", OOMAfterAllocations, 1, 0,
+"oomAfterAllocations(count)",
+"  After 'count' js_malloc memory allocations, fail every following allocation\n"
+"  (return NULL)."),
+#endif
+
     JS_FN_HELP("makeFinalizeObserver", MakeFinalizeObserver, 0, 0,
 "makeFinalizeObserver()",
 "  Get a special object whose finalization increases the counter returned\n"
@@ -1056,10 +1038,6 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "dumpHeapComplete([filename])",
 "  Dump reachable and unreachable objects to a file."),
 
-    JS_FN_HELP("mjitChunkLimit", MJitChunkLimit, 1, 0,
-"mjitChunkLimit(N)",
-"  Specify limit on compiled chunk size during mjit compilation."),
-
     JS_FN_HELP("terminate", Terminate, 0, 0,
 "terminate()",
 "  Terminate JavaScript execution, as if we had run out of\n"
@@ -1093,7 +1071,7 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "  validated according to the asm.js spec."),
 
     JS_FN_HELP("isAsmJSFunction", IsAsmJSFunction, 1, 0,
-"isAsmJSModule(fn)",
+"isAsmJSFunction(fn)",
 "  Returns whether the given value is a nested function in an asm.js module that has been\n"
 "  both compile- and link-time validated."),
 

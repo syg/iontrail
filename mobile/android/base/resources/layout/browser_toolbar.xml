@@ -97,7 +97,7 @@
                         android:layout_marginTop="12dip"
                         android:layout_alignRight="@id/tabs"/>
 
-    <LinearLayout android:id="@+id/awesome_bar_content"
+    <LinearLayout android:id="@+id/awesome_bar_display_container"
                   style="@style/AddressBar.Button"
                   android:layout_toLeftOf="@id/tabs"
                   android:layout_marginRight="-24dp"
@@ -155,6 +155,7 @@
                android:layout_height="2dp"
                android:layout_alignParentBottom="true"
                android:background="@drawable/address_bar_bg_shadow_repeat"
+               android:contentDescription="@null"
                android:visibility="gone"/>
 
 </org.mozilla.gecko.BrowserToolbarLayout>

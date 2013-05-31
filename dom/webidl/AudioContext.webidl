@@ -49,6 +49,8 @@ interface AudioContext : EventTarget {
     [Creator]
     BiquadFilterNode createBiquadFilter();
     [Creator]
+    WaveShaperNode createWaveShaper();
+    [Creator]
     PannerNode createPanner();
 
     [Creator, Throws]
@@ -58,6 +60,9 @@ interface AudioContext : EventTarget {
 
     [Creator]
     DynamicsCompressorNode createDynamicsCompressor();
+
+    [Creator, Throws]
+    WaveTable createWaveTable(Float32Array real, Float32Array imag);
 
 };
 

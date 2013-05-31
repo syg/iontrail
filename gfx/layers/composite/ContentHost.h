@@ -34,10 +34,6 @@ public:
                             const nsIntRegion& aOldValidRegionBack,
                             nsIntRegion* aUpdatedRegionBack) = 0;
 
-#ifdef MOZ_DUMP_PAINTING
-  virtual already_AddRefed<gfxImageSurface> Dump() { return nullptr; }
-#endif
-  
   virtual void SetPaintWillResample(bool aResample) { }
 
 protected:
@@ -93,11 +89,15 @@ public:
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
 #ifdef MOZ_DUMP_PAINTING
-  virtual already_AddRefed<gfxImageSurface> Dump()
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface()
   {
-    return mTextureHost->Dump();
+    return mTextureHost->GetAsSurface();
   }
 #endif
+
+  virtual void Dump(FILE* aFile=NULL,
+                    const char* aPrefix="",
+                    bool aDumpHtml=false) MOZ_OVERRIDE;
 
   virtual TextureHost* GetTextureHost() MOZ_OVERRIDE;
 
@@ -157,6 +157,10 @@ public:
                                  const TextureInfo& aTextureInfo) MOZ_OVERRIDE;
   virtual void DestroyTextures() MOZ_OVERRIDE;
 
+  virtual void Dump(FILE* aFile=NULL,
+                    const char* aPrefix="",
+                    bool aDumpHtml=false) MOZ_OVERRIDE;
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
 #endif
@@ -197,6 +201,160 @@ public:
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
 #endif
+};
+
+/**
+ * Maintains a host-side only texture, and gets provided with
+ * surfaces that only cover the changed pixels during an update.
+ *
+ * Takes ownership of the passed in update surfaces, and must
+ * free them once texture upload is complete.
+ *
+ * Delays texture uploads until the next composite to
+ * avoid blocking the main thread.
+ */
+class ContentHostIncremental : public ContentHostBase
+{
+public:
+  ContentHostIncremental(const TextureInfo& aTextureInfo)
+    : ContentHostBase(aTextureInfo)
+    , mDeAllocator(nullptr)
+  {}
+
+  virtual CompositableType GetType() { return BUFFER_CONTENT; }
+
+  virtual void EnsureTextureHost(ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo,
+                                 const nsIntRect& aBufferRect) MOZ_OVERRIDE;
+
+  virtual void EnsureTextureHost(TextureIdentifier aTextureId,
+                                 const SurfaceDescriptor& aSurface,
+                                 ISurfaceAllocator* aAllocator,
+                                 const TextureInfo& aTextureInfo)
+  {
+    NS_RUNTIMEABORT("Shouldn't call this");
+  }
+
+  virtual void UpdateIncremental(TextureIdentifier aTextureId,
+                                 SurfaceDescriptor& aSurface,
+                                 const nsIntRegion& aUpdated,
+                                 const nsIntRect& aBufferRect,
+                                 const nsIntPoint& aBufferRotation) MOZ_OVERRIDE;
+
+  virtual void UpdateThebes(const ThebesBufferData& aData,
+                            const nsIntRegion& aUpdated,
+                            const nsIntRegion& aOldValidRegionBack,
+                            nsIntRegion* aUpdatedRegionBack)
+  {
+    NS_RUNTIMEABORT("Shouldn't call this");
+  }
+
+  virtual void Composite(EffectChain& aEffectChain,
+                         float aOpacity,
+                         const gfx::Matrix4x4& aTransform,
+                         const gfx::Point& aOffset,
+                         const gfx::Filter& aFilter,
+                         const gfx::Rect& aClipRect,
+                         const nsIntRegion* aVisibleRegion = nullptr,
+                         TiledLayerProperties* aLayerProperties = nullptr)
+  {
+    ProcessTextureUpdates();
+
+    ContentHostBase::Composite(aEffectChain, aOpacity,
+                               aTransform, aOffset, aFilter,
+                               aClipRect, aVisibleRegion,
+                               aLayerProperties);
+  }
+
+  virtual void DestroyTextures()
+  {
+    mTextureHost = nullptr;
+    mTextureHostOnWhite = nullptr;
+    mUpdateList.Clear();
+  }
+
+private:
+
+  void ProcessTextureUpdates();
+
+  class Request
+  {
+  public:
+    Request()
+    {
+      MOZ_COUNT_CTOR(ContentHostIncremental::Request);
+    }
+
+    virtual ~Request()
+    {
+      MOZ_COUNT_DTOR(ContentHostIncremental::Request);
+    }
+
+    virtual void Execute(ContentHostIncremental *aHost) = 0;
+  };
+
+  class TextureCreationRequest : public Request
+  {
+  public:
+    TextureCreationRequest(const TextureInfo& aTextureInfo,
+                           const nsIntRect& aBufferRect)
+      : mTextureInfo(aTextureInfo)
+      , mBufferRect(aBufferRect)
+    {}
+
+    virtual void Execute(ContentHostIncremental *aHost);
+
+  private:
+    TextureInfo mTextureInfo;
+    nsIntRect mBufferRect;
+  };
+
+  class TextureUpdateRequest : public Request
+  {
+  public:
+    TextureUpdateRequest(ISurfaceAllocator* aDeAllocator,
+                         TextureIdentifier aTextureId,
+                         SurfaceDescriptor& aDescriptor,
+                         const nsIntRegion& aUpdated,
+                         const nsIntRect& aBufferRect,
+                         const nsIntPoint& aBufferRotation)
+      : mDeAllocator(aDeAllocator)
+      , mTextureId(aTextureId)
+      , mDescriptor(aDescriptor)
+      , mUpdated(aUpdated)
+      , mBufferRect(aBufferRect)
+      , mBufferRotation(aBufferRotation)
+    {}
+
+    ~TextureUpdateRequest()
+    {
+      //TODO: Recycle these?
+      mDeAllocator->DestroySharedSurface(&mDescriptor);
+    }
+
+    virtual void Execute(ContentHostIncremental *aHost);
+
+  private:
+    enum XSide {
+      LEFT, RIGHT
+    };
+    enum YSide {
+      TOP, BOTTOM
+    };
+
+    nsIntRect GetQuadrantRectangle(XSide aXSide, YSide aYSide) const;
+
+    ISurfaceAllocator* mDeAllocator;
+    TextureIdentifier mTextureId;
+    SurfaceDescriptor mDescriptor;
+    nsIntRegion mUpdated;
+    nsIntRect mBufferRect;
+    nsIntPoint mBufferRotation;
+  };
+
+  nsTArray<nsAutoPtr<Request> > mUpdateList;
+
+  ISurfaceAllocator* mDeAllocator;
 };
 
 }

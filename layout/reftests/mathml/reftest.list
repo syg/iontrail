@@ -7,6 +7,7 @@ fails == dir-6.html dir-6-ref.html
 == dir-7.html dir-7-ref.html
 fails == dir-8.html dir-8-ref.html
 fails == dir-9.html dir-9-ref.html # Bug 787215
+== dir-10.html dir-10-ref.html
 skip-if(B2G) fails-if(smallScreen&&Android) fuzzy(255,200) == mirror-op-1.html mirror-op-1-ref.html
 != mirror-op-2.html mirror-op-2-ref.html
 != mirror-op-3.html mirror-op-3-ref.html
@@ -61,6 +62,8 @@ skip-if(B2G) == quotes-1.xhtml quotes-1-ref.xhtml
 == embellished-op-5-1.html embellished-op-5-ref.html
 == embellished-op-5-2.html embellished-op-5-ref.html
 == semantics-1.xhtml semantics-1-ref.xhtml
+== semantics-2.html semantics-2-ref.html
+== semantics-3.html semantics-3-ref.html
 != mathcolor-1.xml mathcolor-1-ref.xml
 != mathcolor-2.xml mathcolor-2-ref.xml
 != mathcolor-3.xml mathcolor-3-ref.xml

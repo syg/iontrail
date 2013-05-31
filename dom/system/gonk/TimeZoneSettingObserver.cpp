@@ -20,6 +20,7 @@
 #include "TimeZoneSettingObserver.h"
 #include "xpcpublic.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 
 #undef LOG
 #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Time Zone Setting" , ## args)
@@ -80,7 +81,6 @@ public:
 
     // Set the system timezone based on the current settings.
     if (aResult.isString()) {
-      JSAutoRequest ar(cx);
       return TimeZoneSettingObserver::SetTimeZone(aResult, cx);
     }
 
@@ -172,7 +172,7 @@ TimeZoneSettingObserver::Observe(nsISupports *aSubject,
 
   // Parse the JSON value.
   nsDependentString dataStr(aData);
-  JS::Value val;
+  JS::Rooted<JS::Value> val(cx);
   if (!JS_ParseJSON(cx, dataStr.get(), dataStr.Length(), &val) ||
       !val.isObject()) {
     return NS_OK;

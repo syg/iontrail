@@ -8,6 +8,7 @@
 #define mozilla_dom_bluetooth_bluetoothoppmanager_h__
 
 #include "BluetoothCommon.h"
+#include "BluetoothProfileManagerBase.h"
 #include "BluetoothSocketObserver.h"
 #include "DeviceStorage.h"
 #include "mozilla/dom/ipc/Blob.h"
@@ -24,6 +25,7 @@ class BluetoothSocket;
 class ObexHeaderSet;
 
 class BluetoothOppManager : public BluetoothSocketObserver
+                          , public BluetoothProfileManagerBase
 {
 public:
   /*
@@ -50,7 +52,7 @@ public:
    * either call Disconnect() to close RFCOMM connection or start another
    * file-sending thread via calling SendFile() again.
    */
-  bool Connect(const nsAString& aDeviceObjectPath,
+  void Connect(const nsAString& aDeviceAddress,
                BluetoothReplyRunnable* aRunnable);
   void Disconnect();
   bool Listen();
@@ -83,9 +85,10 @@ public:
   virtual void OnConnectSuccess(BluetoothSocket* aSocket) MOZ_OVERRIDE;
   virtual void OnConnectError(BluetoothSocket* aSocket) MOZ_OVERRIDE;
   virtual void OnDisconnect(BluetoothSocket* aSocket) MOZ_OVERRIDE;
-  void OnConnectSuccess() MOZ_OVERRIDE;
-  void OnConnectError() MOZ_OVERRIDE;
-  void OnDisconnect() MOZ_OVERRIDE;
+  virtual void OnGetServiceChannel(const nsAString& aDeviceAddress,
+                                   const nsAString& aServiceUuid,
+                                   int aChannel) MOZ_OVERRIDE;
+  virtual void OnUpdateSdpRecords(const nsAString& aDeviceAddress) MOZ_OVERRIDE;
 
 private:
   BluetoothOppManager();
@@ -98,7 +101,7 @@ private:
   bool WriteToFile(const uint8_t* aData, int aDataLength);
   void DeleteReceivedFile();
   void ReplyToConnect();
-  void ReplyToDisconnect();
+  void ReplyToDisconnectOrAbort();
   void ReplyToPut(bool aFinal, bool aContinue);
   void AfterOppConnected();
   void AfterFirstPut();
@@ -107,7 +110,6 @@ private:
   bool IsReservedChar(PRUnichar c);
   void ClearQueue();
   void RetrieveSentFileName();
-  DeviceStorageFile* CreateDeviceStorageFile(nsIFile* aFile);
   void NotifyAboutFileChange();
 
   /**
@@ -136,6 +138,12 @@ private:
   int mBodySegmentLength;
   int mReceivedDataBufferOffset;
   int mUpdateProgressCounter;
+
+  /**
+   * When it is true and the target service on target device couldn't be found,
+   * refreshing SDP records is necessary.
+   */
+  bool mNeedsUpdatingSdpRecords;
 
   /**
    * Set when StopSendingFile() is called.

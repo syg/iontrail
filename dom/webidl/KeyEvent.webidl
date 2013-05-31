@@ -6,7 +6,8 @@
 
 interface WindowProxy;
 
-interface KeyEvent : UIEvent
+// http://www.w3.org/TR/1999/WD-DOM-Level-2-19990923/events.html#Events-KeyEvent
+interface KeyEvent
 {
   const unsigned long DOM_VK_CANCEL         = 0x03;
   const unsigned long DOM_VK_HELP           = 0x06;
@@ -223,14 +224,6 @@ interface KeyEvent : UIEvent
   // for compatibility with the other web browsers on Windows.
   const unsigned long DOM_VK_WIN_OEM_CLEAR  = 0xFE;
 
-  readonly attribute unsigned long    charCode;
-  readonly attribute unsigned long    keyCode;
-
-  readonly attribute boolean          altKey;
-  readonly attribute boolean          ctrlKey;
-  readonly attribute boolean          shiftKey;
-  readonly attribute boolean          metaKey;
-
   [Throws]
   void initKeyEvent(DOMString type,
                     boolean canBubble,
@@ -242,17 +235,4 @@ interface KeyEvent : UIEvent
                     boolean metaKey,
                     unsigned long keyCode,
                     unsigned long charCode);
-
-  boolean getModifierState(DOMString key);
-
-  const unsigned long DOM_KEY_LOCATION_STANDARD = 0x00;
-  const unsigned long DOM_KEY_LOCATION_LEFT     = 0x01;
-  const unsigned long DOM_KEY_LOCATION_RIGHT    = 0x02;
-  const unsigned long DOM_KEY_LOCATION_NUMPAD   = 0x03;
-  const unsigned long DOM_KEY_LOCATION_MOBILE   = 0x04;
-  const unsigned long DOM_KEY_LOCATION_JOYSTICK = 0x05;
-
-  readonly attribute unsigned long location;
-
-  readonly attribute DOMString key;
 };

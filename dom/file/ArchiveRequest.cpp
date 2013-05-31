@@ -8,6 +8,7 @@
 
 #include "mozilla/dom/ArchiveRequestBinding.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsLayoutStatics.h"
 #include "nsEventDispatcher.h"
 #include "nsDOMClassInfoID.h"
@@ -130,7 +131,6 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
     return NS_OK;
   }
 
-  JS::Value result;
   nsresult rv;
 
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
@@ -142,20 +142,20 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
   JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
   NS_ASSERTION(global, "Failed to get global object!");
 
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, global);
 
+  JS::Rooted<JS::Value> result(cx);
   switch (mOperation) {
     case GetFilenames:
-      rv = GetFilenamesResult(cx, &result, aFileList);
+      rv = GetFilenamesResult(cx, result.address(), aFileList);
       break;
 
     case GetFile:
-      rv = GetFileResult(cx, &result, aFileList);
+      rv = GetFileResult(cx, result.address(), aFileList);
       break;
 
       case GetFiles:
-        rv = GetFilesResult(cx, &result, aFileList);
+        rv = GetFilesResult(cx, result.address(), aFileList);
         break;
   }
 
@@ -195,9 +195,9 @@ ArchiveRequest::GetFilenamesResult(JSContext* aCx,
     JSString* str = JS_NewUCStringCopyZ(aCx, filename.get());
     NS_ENSURE_TRUE(str, NS_ERROR_OUT_OF_MEMORY);
 
-    JS::Value item = STRING_TO_JSVAL(str);
+    JS::Rooted<JS::Value> item(aCx, STRING_TO_JSVAL(str));
 
-    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, &item)) {
+    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, item.address())) {
       return NS_ERROR_FAILURE;
     }
   }

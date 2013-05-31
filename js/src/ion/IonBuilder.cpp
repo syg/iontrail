@@ -53,8 +53,6 @@ IonBuilder::IonBuilder(JSContext *cx, TempAllocator *temp, MIRGraph *graph,
 {
     script_.init(info->script());
     pc = info->startPC();
-
-    types::TypeScript::AddFreezeConstraints(cx, script_);
 }
 
 void
@@ -237,16 +235,15 @@ IonBuilder::canInlineTarget(JSFunction *target, CallInfo &callInfo)
     RootedScript inlineScript(cx, target->nonLazyScript());
     ExecutionMode executionMode = info().executionMode();
     if (!CanIonCompile(inlineScript, executionMode)) {
-        IonSpew(IonSpew_Inlining, "Cannot inline due to disable Ion compilation");
+        IonSpew(IonSpew_Inlining, "%s:%d Cannot inline due to disable Ion compilation",
+                                  inlineScript->filename(), inlineScript->lineno);
         return false;
     }
 
     // Don't inline functions which don't have baseline scripts compiled for them.
-    if (executionMode == SequentialExecution &&
-        ion::IsBaselineEnabled(cx) &&
-        !inlineScript->hasBaselineScript())
-    {
-        IonSpew(IonSpew_Inlining, "Cannot inline target with no baseline jitcode");
+    if (executionMode == SequentialExecution && !inlineScript->hasBaselineScript()) {
+        IonSpew(IonSpew_Inlining, "%s:%d Cannot inline target with no baseline jitcode",
+                                  inlineScript->filename(), inlineScript->lineno);
         return false;
     }
 
@@ -254,18 +251,20 @@ IonBuilder::canInlineTarget(JSFunction *target, CallInfo &callInfo)
     IonBuilder *builder = callerBuilder_;
     while (builder) {
         if (builder->script() == inlineScript) {
-            IonSpew(IonSpew_Inlining, "Not inlining recursive call");
+            IonSpew(IonSpew_Inlining, "%s:%d Not inlining recursive call",
+                                       inlineScript->filename(), inlineScript->lineno);
             return false;
         }
         builder = builder->callerBuilder_;
     }
 
     if (!canEnterInlinedFunction(target)) {
-        IonSpew(IonSpew_Inlining, "Cannot inline due to analysis data %d", script()->lineno);
+        IonSpew(IonSpew_Inlining, "%s:%d Cannot inline due to oracle veto %d",
+                                  inlineScript->filename(), inlineScript->lineno,
+                                  script()->lineno);
         return false;
     }
 
-    IonSpew(IonSpew_Inlining, "Inlining good to go!");
     return true;
 }
 
@@ -296,8 +295,8 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock *entry, jsbytecode *start, jsbytecod
     // under-approximating the types will cause the loop body to be analyzed
     // multiple times as the correct types are deduced (see finishLoop).
 
-    jsbytecode *last = NULL;
-    for (jsbytecode *pc = start; pc != end; last = pc, pc += GetBytecodeLength(pc)) {
+    jsbytecode *last = NULL, *earlier = NULL;
+    for (jsbytecode *pc = start; pc != end; earlier = last, last = pc, pc += GetBytecodeLength(pc)) {
         uint32_t slot;
         if (*pc == JSOP_SETLOCAL)
             slot = info().localSlot(GET_SLOTNO(pc));
@@ -311,6 +310,9 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock *entry, jsbytecode *start, jsbytecod
             continue;
 
         MPhi *phi = entry->getSlot(slot)->toPhi();
+
+        if (*last == JSOP_POS)
+            last = earlier;
 
         if (js_CodeSpec[*last].format & JOF_TYPESET) {
             types::StackTypeSet *typeSet = types::TypeScript::BytecodeTypes(script(), last);
@@ -525,6 +527,8 @@ IonBuilder::build()
     if (!processIterators())
         return false;
 
+    types::TypeScript::AddFreezeConstraints(cx, script());
+
     JS_ASSERT(loopDepth_ == 0);
     abortReason_ = AbortReason_NoAbort;
     return true;
@@ -669,7 +673,11 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
         current->add(lazyArguments_);
     }
 
-    return traverseBytecode();
+    if (!traverseBytecode())
+        return false;
+
+    types::TypeScript::AddFreezeConstraints(cx, script());
+    return true;
 }
 
 void
@@ -1086,10 +1094,6 @@ IonBuilder::snoopControlFlow(JSOp op)
 bool
 IonBuilder::inspectOpcode(JSOp op)
 {
-    // Don't compile fat opcodes, run the decomposed version instead.
-    if (js_CodeSpec[op].format & JOF_DECOMPOSE)
-        return true;
-
     switch (op) {
       case JSOP_NOP:
       case JSOP_LINENO:
@@ -1184,6 +1188,9 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_ARGUMENTS:
         return jsop_arguments();
 
+      case JSOP_REST:
+        return jsop_rest();
+
       case JSOP_NOTEARG:
         return jsop_notearg();
 
@@ -1236,6 +1243,11 @@ IonBuilder::inspectOpcode(JSOp op)
         if (pc[JSOP_POP_LENGTH] == JSOP_POP)
             return true;
         return maybeInsertResume();
+
+      case JSOP_POPN:
+        for (uint32_t i = 0, n = GET_UINT16(pc); i < n; i++)
+            current->pop();
+        return true;
 
       case JSOP_NEWINIT:
       {
@@ -1741,8 +1753,10 @@ IonBuilder::restartLoop(CFGState state)
 {
     spew("New types at loop header, restarting loop body");
 
-    if (++numLoopRestarts_ >= MAX_LOOP_RESTARTS)
-        return ControlStatus_Abort;
+    if (js_IonOptions.limitScriptSize) {
+        if (++numLoopRestarts_ >= MAX_LOOP_RESTARTS)
+            return ControlStatus_Abort;
+    }
 
     MBasicBlock *header = state.loop.entry;
 
@@ -3429,6 +3443,12 @@ IonBuilder::inlineScriptedCall(CallInfo &callInfo, JSFunction *target)
 
     // Accumulate return values.
     MIRGraphExits &exits = *inlineBuilder.graph().exitAccumulator();
+    if (exits.length() == 0) {
+        // Inlining of functions that have no exit is not supported.
+        calleeScript->analysis()->setIonUninlineable();
+        abortReason_ = AbortReason_Inlining;
+        return false;
+    }
     MDefinition *retvalDefn = patchInlinedReturns(callInfo, exits, returnBlock);
     if (!retvalDefn)
         return false;
@@ -3541,11 +3561,13 @@ IonBuilder::makeInliningDecision(JSFunction *target, CallInfo &callInfo)
                                       targetScript->filename(), targetScript->lineno);
             return false;
         }
-     }
 
-    // Always inline the empty script up to the inlining depth.
-    if (targetScript->length == 1)
-        return true;
+        if (targetScript->analysis()->hasLoops()) {
+            IonSpew(IonSpew_Inlining, "%s:%d - Vetoed: big function that contains a loop",
+                                      targetScript->filename(), targetScript->lineno);
+            return false;
+        }
+     }
 
     // Callee must not be excessively large.
     // This heuristic also applies to the callsite as a whole.
@@ -4227,7 +4249,10 @@ IonBuilder::createDeclEnvObject(MDefinition *callee, MDefinition *scope)
     MInstruction *declEnvObj = MNewDeclEnvObject::New(templateObj);
     current->add(declEnvObj);
 
-    // Initialize the object's reserved slots.
+    // Initialize the object's reserved slots. No post barrier is needed here:
+    // the object will be allocated in the nursery if possible, and if the
+    // tenured heap is used instead, a minor collection will have been performed
+    // that moved scope/callee to the tenured heap.
     current->add(MStoreFixedSlot::New(declEnvObj, DeclEnvObject::enclosingScopeSlot(), scope));
     current->add(MStoreFixedSlot::New(declEnvObj, DeclEnvObject::lambdaSlot(), callee));
 
@@ -4264,7 +4289,8 @@ IonBuilder::createCallObject(MDefinition *callee, MDefinition *scope)
     MInstruction *callObj = MNewCallObject::New(templateObj, slots);
     current->add(callObj);
 
-    // Initialize the object's reserved slots.
+    // Initialize the object's reserved slots. No post barrier is needed here,
+    // for the same reason as in createDeclEnvObject.
     current->add(MStoreFixedSlot::New(callObj, CallObject::enclosingScopeSlot(), scope));
     current->add(MStoreFixedSlot::New(callObj, CallObject::calleeSlot(), callee));
 
@@ -4351,7 +4377,7 @@ IonBuilder::createThisScriptedSingleton(HandleFunction target, MDefinition *call
     if (!types::TypeScript::ThisTypes(target->nonLazyScript())->hasType(types::Type::ObjectType(type)))
         return NULL;
 
-    RootedObject templateObject(cx, CreateThisForFunctionWithProto(cx, target, proto));
+    RootedObject templateObject(cx, CreateThisForFunctionWithProto(cx, target, proto, TenuredObject));
     if (!templateObject)
         return NULL;
 
@@ -4433,6 +4459,7 @@ IonBuilder::jsop_funcall(uint32_t argc)
             return false;
         return makeCall(native, callInfo, false);
     }
+    current->peek(calleeDepth)->setFolded();
 
     // Extract call target.
     types::StackTypeSet *funTypes = current->peek(funcDepth)->resultTypeSet();
@@ -4507,6 +4534,8 @@ IonBuilder::jsop_funapply(uint32_t argc)
     {
         return abort("fun.apply speculation failed");
     }
+
+    current->peek(calleeDepth)->setFolded();
 
     // Use funapply that definitely uses |arguments|
     return jsop_funapplyarguments(argc);
@@ -4610,6 +4639,20 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
 bool
 IonBuilder::jsop_call(uint32_t argc, bool constructing)
 {
+    // If this call has never executed, try to seed the observed type set
+    // based on how the call result is used.
+    types::StackTypeSet *observed = types::TypeScript::BytecodeTypes(script(), pc);
+    if (observed->empty() && observed->noConstraints()) {
+        if (BytecodeFlowsToBitop(pc)) {
+            observed->addType(cx, types::Type::Int32Type());
+        } else if (*GetNextPc(pc) == JSOP_POS) {
+            // Note: this is lame, overspecialized on the code patterns used
+            // by asm.js and should be replaced by a more general mechanism.
+            // See bug 870847.
+            observed->addType(cx, types::Type::DoubleType());
+        }
+    }
+
     int calleeDepth = -((int)argc + 2);
 
     // Acquire known call target if existent.
@@ -5050,6 +5093,11 @@ IonBuilder::getNewArrayTemplateObject(uint32_t count)
 {
     RootedScript scriptRoot(cx, script());
     NewObjectKind newKind = types::UseNewTypeForInitializer(cx, scriptRoot, pc, JSProto_Array);
+
+    // Do not allocate template objects in the nursery.
+    if (newKind == GenericObject)
+        newKind = TenuredObject;
+
     RootedObject templateObject(cx, NewDenseUnallocatedArray(cx, count, NULL, newKind));
     if (!templateObject)
         return NULL;
@@ -5096,6 +5144,11 @@ IonBuilder::jsop_newobject(HandleObject baseObj)
 
     RootedScript scriptRoot(cx, script());
     NewObjectKind newKind = types::UseNewTypeForInitializer(cx, scriptRoot, pc, JSProto_Object);
+
+    // Do not allocate template objects in the nursery.
+    if (newKind == GenericObject)
+        newKind = TenuredObject;
+
     if (baseObj) {
         templateObject = CopyInitializerObject(cx, baseObj, newKind);
     } else {
@@ -5157,6 +5210,9 @@ IonBuilder::jsop_initelem_array()
             needStub = true;
         }
     }
+
+    if (NeedsPostBarrier(info(), value))
+        current->add(MPostWriteBarrier::New(obj, value));
 
     if (needStub) {
         MCallInitElementArray *store = MCallInitElementArray::New(obj, GET_UINT24(pc), value);
@@ -5231,6 +5287,9 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
         current->add(init);
         return resumeAfter(init);
     }
+
+    if (NeedsPostBarrier(info(), value))
+        current->add(MPostWriteBarrier::New(obj, value));
 
     bool needsBarrier = true;
     if ((id == types::IdToTypeId(id)) &&
@@ -5761,6 +5820,10 @@ TestSingletonPropertyTypes(JSContext *cx, MDefinition *obj, JSObject *singleton,
 bool
 IonBuilder::pushTypeBarrier(MInstruction *ins, types::StackTypeSet *observed, bool needsBarrier)
 {
+    // Barriers are never needed for instructions whose result will not be used.
+    if (BytecodeIsPopped(pc))
+        needsBarrier = false;
+
     // If the instruction has no side effects, we'll resume the entire operation.
     // The actual type barrier will occur in the interpreter. If the
     // instruction is effectful, even if it has a singleton type, there
@@ -5951,6 +6014,13 @@ ion::TypeSetIncludes(types::TypeSet *types, MIRType input, types::TypeSet *input
     }
 }
 
+// Whether a write of the given value may need a post-write barrier for GC purposes.
+bool
+ion::NeedsPostBarrier(CompileInfo &info, MDefinition *value)
+{
+    return info.executionMode() != ParallelExecution && value->mightBeType(MIRType_Object);
+}
+
 bool
 IonBuilder::jsop_setgname(HandlePropertyName name)
 {
@@ -6001,6 +6071,8 @@ IonBuilder::jsop_setgname(HandlePropertyName name)
     MSlots *slots = MSlots::New(global);
     current->add(slots);
 
+    // Note: we do not use a post barrier when writing to the global object.
+    // Slots in the global object will be treated as roots during a minor GC.
     current->pop();
     MStoreSlot *store = MStoreSlot::New(slots, shape->slot() - globalObj->numFixedSlots(), value);
     current->add(store);
@@ -6208,6 +6280,14 @@ IonBuilder::jsop_getelem_dense()
     MDefinition *obj = current->pop();
 
     types::StackTypeSet *types = types::TypeScript::BytecodeTypes(script(), pc);
+
+    if (JSOp(*pc) == JSOP_CALLELEM && !id->mightBeType(MIRType_String) && types->noConstraints()) {
+        // Indexed call on an element of an array. Populate the observed types
+        // with any objects that could be in the array, to avoid extraneous
+        // type barriers.
+        AddObjectsForPropertyRead(cx, obj, NULL, types);
+    }
+
     bool barrier = PropertyReadNeedsTypeBarrier(cx, obj, NULL, types);
     bool needsHoleCheck = !ElementAccessIsPacked(cx, obj);
 
@@ -6533,6 +6613,31 @@ IonBuilder::jsop_setelem()
     if (script()->argumentsHasVarBinding() && object->mightBeType(MIRType_Magic))
         return abort("Type is not definitely lazy arguments.");
 
+    // Check if only objects are manipulated valid index, and generate a SetElementCache.
+    do {
+        if (!object->mightBeType(MIRType_Object))
+            break;
+
+        if (!index->mightBeType(MIRType_Int32) &&
+            !index->mightBeType(MIRType_String))
+        {
+            break;
+        }
+
+        // TODO: Bug 876650: remove this check:
+        // Temporary disable the cache if non dense native,
+        // untill the cache supports more ics
+        SetElemICInspector icInspect(inspector->setElemICInspector(pc));
+        if (!icInspect.sawDenseWrite())
+            break;
+
+        MInstruction *ins = MSetElementCache::New(object, index, value, script()->strict);
+        current->add(ins);
+        current->push(value);
+
+        return resumeAfter(ins);
+    } while (false);
+
     MInstruction *ins = MCallSetElement::New(object, index, value);
     current->add(ins);
     current->push(value);
@@ -6551,6 +6656,9 @@ IonBuilder::jsop_setelem_dense(types::StackTypeSet::DoubleConversion conversion,
     // Writes which are on holes in the object do not have to bail out if they
     // cannot hit another indexed property on the object or its prototypes.
     bool writeOutOfBounds = !ElementAccessHasExtraIndexedProperty(cx, obj);
+
+    if (NeedsPostBarrier(info(), value))
+        current->add(MPostWriteBarrier::New(obj, value));
 
     // Ensure id is an integer.
     MInstruction *idInt32 = MToInt32::New(id);
@@ -6753,7 +6861,9 @@ IonBuilder::jsop_length_fastPath()
 
     MDefinition *obj = current->peek(-1);
 
-    if (obj->type() == MIRType_String) {
+    if (obj->mightBeType(MIRType_String)) {
+        if (obj->mightBeType(MIRType_Object))
+            return false;
         current->pop();
         MStringLength *ins = MStringLength::New(obj);
         current->add(ins);
@@ -6761,7 +6871,7 @@ IonBuilder::jsop_length_fastPath()
         return true;
     }
 
-    if (obj->type() == MIRType_Object) {
+    if (obj->mightBeType(MIRType_Object)) {
         types::StackTypeSet *objTypes = obj->resultTypeSet();
 
         if (objTypes &&
@@ -6858,6 +6968,84 @@ bool
 IonBuilder::jsop_arguments_setelem(MDefinition *object, MDefinition *index, MDefinition *value)
 {
     return abort("NYI arguments[]=");
+}
+
+bool
+IonBuilder::jsop_rest()
+{
+    // We don't know anything about the callee.
+    if (inliningDepth_ == 0) {
+        // Get an empty template array.
+        JSObject *templateObject = getNewArrayTemplateObject(0);
+        if (!templateObject)
+            return false;
+
+        MArgumentsLength *numActuals = MArgumentsLength::New();
+        current->add(numActuals);
+
+        // Pass in the number of actual arguments, the number of formals (not
+        // including the rest parameter slot itself), and the template object.
+        MRest *rest = MRest::New(numActuals, info().nargs() - 1, templateObject);
+        current->add(rest);
+        current->push(rest);
+        return true;
+    }
+
+    // We know the exact number of arguments the callee pushed.
+    unsigned numActuals = inlinedArguments_.length();
+    unsigned numFormals = info().nargs() - 1;
+    unsigned numRest = numActuals > numFormals ? numActuals - numFormals : 0;
+    JSObject *templateObject = getNewArrayTemplateObject(numRest);
+
+    MNewArray *array = new MNewArray(numRest, templateObject, MNewArray::NewArray_Allocating);
+    current->add(array);
+
+    if (numActuals <= numFormals) {
+        current->push(array);
+        return true;
+    }
+
+    MElements *elements = MElements::New(array);
+    current->add(elements);
+
+    types::TypeObject *arrayType = templateObject->type();
+    types::HeapTypeSet *elemTypes = NULL;
+    Vector<MInstruction *> setElemCalls(cx);
+    if (!arrayType->unknownProperties()) {
+        elemTypes = arrayType->getProperty(cx, JSID_VOID, false);
+        if (!elemTypes)
+            return false;
+    }
+
+    // Unroll the argument copy loop. We don't need to do any bounds or hole
+    // checking here.
+    MConstant *index;
+    for (unsigned i = numFormals; i < numActuals; i++) {
+        index = MConstant::New(Int32Value(i - numFormals));
+        current->add(index);
+
+        MInstruction *store;
+        MDefinition *arg = inlinedArguments_[i];
+        if (elemTypes && !TypeSetIncludes(elemTypes, arg->type(), arg->resultTypeSet())) {
+            elemTypes->addFreeze(cx);
+            store = MCallSetElement::New(array, index, arg);
+            if (!setElemCalls.append(store))
+                return false;
+        } else {
+            store = MStoreElement::New(elements, index, arg, /* needsHoleCheck = */ false);
+        }
+
+        current->add(store);
+
+        if (store->isCallSetElement() && !resumeAfter(store))
+            return false;
+    }
+
+    MSetInitializedLength *initLength = MSetInitializedLength::New(elements, index);
+    current->add(initLength);
+
+    current->push(array);
+    return true;
 }
 
 inline types::HeapTypeSet *
@@ -7472,13 +7660,8 @@ IonBuilder::getPropTryInlineAccess(bool *emitted, HandlePropertyName name, Handl
         return true;
 
     Vector<Shape *> shapes(cx);
-    if (Shape *objShape = mjit::GetPICSingleShape(cx, script(), pc, info().constructing())) {
-        if (!shapes.append(objShape))
-            return false;
-    } else {
-        if (!inspector->maybeShapesForPropertyOp(pc, shapes))
-            return false;
-    }
+    if (!inspector->maybeShapesForPropertyOp(pc, shapes))
+        return false;
 
     if (shapes.empty() || !CanInlinePropertyOpShapes(shapes))
         return true;
@@ -7597,6 +7780,9 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
 
     types::StackTypeSet *objTypes = obj->resultTypeSet();
 
+    if (NeedsPostBarrier(info(), value))
+        current->add(MPostWriteBarrier::New(obj, value));
+
     RootedId id(cx, NameToId(name));
 
     JSFunction *commonSetter;
@@ -7674,13 +7860,8 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
     }
 
     Vector<Shape *> shapes(cx);
-    if (Shape *objShape = mjit::GetPICSingleShape(cx, script(), pc, info().constructing())) {
-        if (!shapes.append(objShape))
-            return false;
-    } else {
-        if (!inspector->maybeShapesForPropertyOp(pc, shapes))
-            return false;
-    }
+    if (!inspector->maybeShapesForPropertyOp(pc, shapes))
+        return false;
 
     if (!shapes.empty() && CanInlinePropertyOpShapes(shapes)) {
         if (shapes.length() == 1) {
@@ -7788,6 +7969,9 @@ IonBuilder::jsop_object(JSObject *obj)
 bool
 IonBuilder::jsop_lambda(JSFunction *fun)
 {
+    if (fun->isInterpreted() && !fun->getOrCreateScript(cx))
+        return false;
+
     JS_ASSERT(script()->analysis()->usesScopeChain());
     if (fun->isArrow())
         return abort("bound arrow function");
@@ -8000,6 +8184,9 @@ IonBuilder::jsop_setaliasedvar(ScopeCoordinate sc)
     MDefinition *obj = walkScopeChain(sc.hops);
 
     RootedShape shape(cx, ScopeCoordinateToStaticScopeShape(cx, script(), pc));
+
+    if (NeedsPostBarrier(info(), rval))
+        current->add(MPostWriteBarrier::New(obj, rval));
 
     MInstruction *store;
     if (shape->numFixedSlots() <= sc.slot) {

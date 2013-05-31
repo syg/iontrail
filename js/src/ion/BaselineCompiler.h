@@ -35,6 +35,7 @@ namespace ion {
     _(JSOP_LABEL)              \
     _(JSOP_NOTEARG)            \
     _(JSOP_POP)                \
+    _(JSOP_POPN)               \
     _(JSOP_DUP)                \
     _(JSOP_DUP2)               \
     _(JSOP_SWAP)               \
@@ -96,7 +97,11 @@ namespace ion {
     _(JSOP_NEWOBJECT)          \
     _(JSOP_NEWINIT)            \
     _(JSOP_INITELEM)           \
+    _(JSOP_INITELEM_GETTER)    \
+    _(JSOP_INITELEM_SETTER)    \
     _(JSOP_INITPROP)           \
+    _(JSOP_INITPROP_GETTER)    \
+    _(JSOP_INITPROP_SETTER)    \
     _(JSOP_ENDINIT)            \
     _(JSOP_GETELEM)            \
     _(JSOP_SETELEM)            \
@@ -143,6 +148,7 @@ namespace ion {
     _(JSOP_INSTANCEOF)         \
     _(JSOP_TYPEOF)             \
     _(JSOP_TYPEOFEXPR)         \
+    _(JSOP_SETCALL)            \
     _(JSOP_THROW)              \
     _(JSOP_TRY)                \
     _(JSOP_ENTERBLOCK)         \
@@ -152,12 +158,14 @@ namespace ion {
     _(JSOP_EXCEPTION)          \
     _(JSOP_DEBUGGER)           \
     _(JSOP_ARGUMENTS)          \
+    _(JSOP_REST)               \
     _(JSOP_TOID)               \
     _(JSOP_TABLESWITCH)        \
     _(JSOP_ITER)               \
     _(JSOP_MOREITER)           \
     _(JSOP_ITERNEXT)           \
     _(JSOP_ENDITER)            \
+    _(JSOP_CALLEE)             \
     _(JSOP_POPV)               \
     _(JSOP_SETRVAL)            \
     _(JSOP_RETURN)             \
@@ -228,6 +236,9 @@ class BaselineCompiler : public BaselineCompilerSpecific
     bool emitTest(bool branchIfTrue);
     bool emitAndOr(bool branchIfTrue);
     bool emitCall();
+
+    bool emitInitPropGetterSetter();
+    bool emitInitElemGetterSetter();
 
     bool emitFormalArgAccess(uint32_t arg, bool get);
 

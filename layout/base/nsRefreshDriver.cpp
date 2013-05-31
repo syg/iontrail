@@ -22,12 +22,16 @@
 // mmsystem isn't part of WIN32_LEAN_AND_MEAN, so we have
 // to manually include it
 #include <mmsystem.h>
+
+#include <dwmapi.h>
+typedef HRESULT (WINAPI*DwmGetCompositionTimingInfoProc)(HWND hWnd, DWM_TIMING_INFO *info);
 #endif
 
 #include "mozilla/Util.h"
 
 #include "nsRefreshDriver.h"
 #include "nsITimer.h"
+#include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include "nsComponentManagerUtils.h"
 #include "prlog.h"
@@ -38,6 +42,7 @@
 #include "nsEventDispatcher.h"
 #include "jsapi.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "mozilla/Preferences.h"
 #include "nsViewManager.h"
 #include "GeckoProfiler.h"
@@ -298,6 +303,156 @@ protected:
   }
 };
 
+#ifdef XP_WIN
+/*
+ * Uses vsync timing on windows with DWM. Falls back dynamically to fixed rate if required.
+ * - Call LoadDll() before usage and UnloadDll() when done (static, nesting unsupported)
+ */
+class PreciseRefreshDriverTimerWindowsDwmVsync :
+  public PreciseRefreshDriverTimer
+{
+public:
+  static void LoadDll()
+  {
+    if (sDwmGetCompositionTimingInfoPtr) {
+      return; // Already loaded.
+    }
+
+    sDwmDll = ::LoadLibraryW(L"dwmapi.dll");
+    if (sDwmDll) {
+      sDwmGetCompositionTimingInfoPtr = (DwmGetCompositionTimingInfoProc)::GetProcAddress(sDwmDll, "DwmGetCompositionTimingInfo");
+    }
+
+    if (!sDwmDll || !sDwmGetCompositionTimingInfoPtr) {
+      UnloadDll();
+    }
+  }
+
+  // Checks if the vsync API is accessible.
+  // Return value is meaningful after calling LoadDll() and before UnloadDll(), and false otherwise.
+  // Even when supported, API calls could still fail when DWM is disabled (can change at runtime)
+  static bool IsSupported()
+  {
+    return sDwmGetCompositionTimingInfoPtr ? true : false;
+  }
+
+  // OK to call even if never loaded and/or if load failed.
+  static void UnloadDll()
+  {
+    if (sDwmDll) {
+      FreeLibrary(sDwmDll);
+    }
+    sDwmDll = nullptr;
+    sDwmGetCompositionTimingInfoPtr = nullptr;
+  }
+
+  PreciseRefreshDriverTimerWindowsDwmVsync(double aRate, bool aPreferHwTiming = false)
+    : PreciseRefreshDriverTimer(aRate)
+    , mPreferHwTiming(aPreferHwTiming)
+  {
+  }
+
+protected:
+  // Indicates we should try to adjust to the HW's timing (get rate from the OS or use vsync)
+  // This is typically true if the default refresh-rate value was not modified by the user.
+  bool mPreferHwTiming;
+
+  nsresult GetVBlankInfo(mozilla::TimeStamp &aLastVBlank, mozilla::TimeDuration &aInterval)
+  {
+    MOZ_ASSERT(sDwmGetCompositionTimingInfoPtr, "DwmGetCompositionTimingInfoPtr is unavailable (windows vsync)");
+
+    DWM_TIMING_INFO timingInfo;
+    timingInfo.cbSize = sizeof(DWM_TIMING_INFO);
+    HRESULT hr = sDwmGetCompositionTimingInfoPtr(0, &timingInfo); // For the desktop window instead of a specific one.
+
+    if (FAILED(hr)) {
+      // This happens first time this is called.
+      return NS_ERROR_NOT_INITIALIZED;
+    }
+
+    LARGE_INTEGER time, freq;
+    ::QueryPerformanceCounter(&time);
+    ::QueryPerformanceFrequency(&freq);
+    aLastVBlank = TimeStamp::Now();
+    double secondsPassed = double(time.QuadPart - timingInfo.qpcVBlank) / double(freq.QuadPart);
+
+    aLastVBlank -= TimeDuration::FromSeconds(secondsPassed);
+    aInterval = TimeDuration::FromSeconds(double(timingInfo.qpcRefreshPeriod) / double(freq.QuadPart));
+
+    return NS_OK;
+  }
+
+  virtual void ScheduleNextTick(TimeStamp aNowTime)
+  {
+    static const TimeDuration kMinSaneInterval = TimeDuration::FromMilliseconds(3); // 330Hz
+    static const TimeDuration kMaxSaneInterval = TimeDuration::FromMilliseconds(44); // 23Hz
+    static const TimeDuration kNegativeMaxSaneInterval = TimeDuration::FromMilliseconds(-44); // Saves conversions for abs interval
+    TimeStamp lastVblank;
+    TimeDuration vblankInterval;
+
+    if (!mPreferHwTiming ||
+        NS_OK != GetVBlankInfo(lastVblank, vblankInterval) ||
+        vblankInterval > kMaxSaneInterval ||
+        vblankInterval < kMinSaneInterval ||
+        (aNowTime - lastVblank) > kMaxSaneInterval ||
+        (aNowTime - lastVblank) < kNegativeMaxSaneInterval) {
+      // Use the default timing without vsync
+      PreciseRefreshDriverTimer::ScheduleNextTick(aNowTime);
+      return;
+    }
+
+    TimeStamp newTarget = lastVblank + vblankInterval; // Base target
+
+    // However, timer callback might return early (or late, but that wouldn't bother us), and vblankInterval
+    // appears to be slightly (~1%) different on each call (probably the OS measuring recent actual interval[s])
+    // and since we don't want to re-target the same vsync, we keep advancing in vblank intervals until we find the
+    // next safe target (next vsync, but not within 10% interval of previous target).
+    // This is typically 0 or 1 iteration:
+    // If we're too early, next vsync would be the one we've already targeted (1 iteration).
+    // If the timer returned late, no iteration will be required.
+
+    const double kSameVsyncThreshold = 0.1;
+    while (newTarget <= mTargetTime + vblankInterval.MultDouble(kSameVsyncThreshold)) {
+      newTarget += vblankInterval;
+    }
+
+    // To make sure we always hit the same "side" of the signal:
+    // round the delay up (by adding 1, since we later floor) and add a little (10% by default).
+    // Note that newTarget doesn't change (and is the next vblank) as a reference when we're back.
+    static const double kDefaultPhaseShiftPercent = 10;
+    static const double phaseShiftFactor = 0.01 *
+      (Preferences::GetInt("layout.frame_rate.vsync.phasePercentage", kDefaultPhaseShiftPercent) % 100);
+
+    double phaseDelay = 1.0 + vblankInterval.ToMilliseconds() * phaseShiftFactor;
+
+    // ms until the next time we should tick
+    double delayMs = (newTarget - aNowTime).ToMilliseconds() + phaseDelay;
+
+    // Make sure the delay is never negative.
+    uint32_t delay = static_cast<uint32_t>(delayMs < 0 ? 0 : delayMs);
+
+    // log info & lateness
+    LOG("[%p] precise dwm-vsync timer last tick late by %f ms, next tick in %d ms",
+        this,
+        (aNowTime - mTargetTime).ToMilliseconds(),
+        delay);
+
+    // then schedule the timer
+    LOG("[%p] scheduling callback for %d ms (2)", this, delay);
+    mTimer->InitWithFuncCallback(TimerTick, this, delay, nsITimer::TYPE_ONE_SHOT);
+
+    mTargetTime = newTarget;
+  }
+
+private:
+  static HMODULE sDwmDll;
+  static DwmGetCompositionTimingInfoProc sDwmGetCompositionTimingInfoPtr;
+};
+
+HMODULE PreciseRefreshDriverTimerWindowsDwmVsync::sDwmDll = nullptr;
+DwmGetCompositionTimingInfoProc PreciseRefreshDriverTimerWindowsDwmVsync::sDwmGetCompositionTimingInfoPtr = nullptr;
+#endif
+
 /*
  * A RefreshDriverTimer for inactive documents.  When a new refresh driver is
  * added, the rate is reset to the base (normally 1s/1fps).  Every time
@@ -428,6 +583,22 @@ protected:
 
 } // namespace mozilla
 
+static uint32_t
+GetFirstFrameDelay(imgIRequest* req)
+{
+  nsCOMPtr<imgIContainer> container;
+  if (NS_FAILED(req->GetImage(getter_AddRefs(container))) || !container) {
+    return 0;
+  }
+
+  // If this image isn't animated, there isn't a first frame delay.
+  int32_t delay = container->GetFirstFrameDelay();
+  if (delay < 0)
+    return 0;
+
+  return static_cast<uint32_t>(delay);
+}
+
 static PreciseRefreshDriverTimer *sRegularRateTimer = nullptr;
 static InactiveRefreshDriverTimer *sThrottledRateTimer = nullptr;
 
@@ -440,6 +611,10 @@ static nsITimer *sDisableHighPrecisionTimersTimer = nullptr;
 /* static */ void
 nsRefreshDriver::InitializeStatics()
 {
+#ifdef XP_WIN
+  PreciseRefreshDriverTimerWindowsDwmVsync::LoadDll();
+#endif
+
 #ifdef PR_LOGGING
   if (!gLog) {
     gLog = PR_NewLogModule("nsRefreshDriver");
@@ -458,6 +633,8 @@ nsRefreshDriver::Shutdown()
   sThrottledRateTimer = nullptr;
 
 #ifdef XP_WIN
+  PreciseRefreshDriverTimerWindowsDwmVsync::UnloadDll();
+
   if (sDisableHighPrecisionTimersTimer) {
     sDisableHighPrecisionTimersTimer->Cancel();
     NS_RELEASE(sDisableHighPrecisionTimersTimer);
@@ -474,15 +651,22 @@ nsRefreshDriver::DefaultInterval()
   return NSToIntRound(1000.0 / DEFAULT_FRAME_RATE);
 }
 
-// Compute the interval to use for the refresh driver timer, in
-// milliseconds
+// Compute the interval to use for the refresh driver timer, in milliseconds.
+// outIsDefault indicates that rate was not explicitly set by the user
+// so we might choose other, more appropriate rates (e.g. vsync, etc)
 double
-nsRefreshDriver::GetRegularTimerInterval() const
+nsRefreshDriver::GetRegularTimerInterval(bool *outIsDefault) const
 {
   int32_t rate = Preferences::GetInt("layout.frame_rate", -1);
   if (rate <= 0) {
-    // TODO: get the rate from the platform
     rate = DEFAULT_FRAME_RATE;
+    if (outIsDefault) {
+      *outIsDefault = true;
+    }
+  } else {
+    if (outIsDefault) {
+      *outIsDefault = false;
+    }
   }
   return 1000.0 / rate;
 }
@@ -513,8 +697,18 @@ nsRefreshDriver::ChooseTimer() const
     return sThrottledRateTimer;
   }
 
-  if (!sRegularRateTimer)
-    sRegularRateTimer = new PreciseRefreshDriverTimer(GetRegularTimerInterval());
+  if (!sRegularRateTimer) {
+    bool isDefault = true;
+    double rate = GetRegularTimerInterval(&isDefault);
+#ifdef XP_WIN
+    if (PreciseRefreshDriverTimerWindowsDwmVsync::IsSupported()) {
+      sRegularRateTimer = new PreciseRefreshDriverTimerWindowsDwmVsync(rate, isDefault);
+    }
+#endif
+    if (!sRegularRateTimer) {
+      sRegularRateTimer = new PreciseRefreshDriverTimer(rate);
+    }
+  }
   return sRegularRateTimer;
 }
 
@@ -533,6 +727,7 @@ nsRefreshDriver::nsRefreshDriver(nsPresContext* aPresContext)
   mPaintFlashing = Preferences::GetBool("nglayout.debug.paint_flashing");
 
   mRequests.Init();
+  mStartTable.Init();
 }
 
 nsRefreshDriver::~nsRefreshDriver()
@@ -616,8 +811,18 @@ nsRefreshDriver::RemoveRefreshObserver(nsARefreshObserver* aObserver,
 bool
 nsRefreshDriver::AddImageRequest(imgIRequest* aRequest)
 {
-  if (!mRequests.PutEntry(aRequest)) {
-    return false;
+  uint32_t delay = GetFirstFrameDelay(aRequest);
+  if (delay == 0) {
+    if (!mRequests.PutEntry(aRequest)) {
+      return false;
+    }
+  } else {
+    ImageStartData* start = mStartTable.Get(delay);
+    if (!start) {
+      start = new ImageStartData();
+      mStartTable.Put(delay, start);
+    }
+    start->mEntries.PutEntry(aRequest);
   }
 
   EnsureTimerStarted(false);
@@ -628,12 +833,16 @@ nsRefreshDriver::AddImageRequest(imgIRequest* aRequest)
 void
 nsRefreshDriver::RemoveImageRequest(imgIRequest* aRequest)
 {
+  // Try to remove from both places, just in case, because we can't tell
+  // whether RemoveEntry() succeeds.
   mRequests.RemoveEntry(aRequest);
-}
-
-void nsRefreshDriver::ClearAllImageRequests()
-{
-  mRequests.Clear();
+  uint32_t delay = GetFirstFrameDelay(aRequest);
+  if (delay != 0) {
+    ImageStartData* start = mStartTable.Get(delay);
+    if (start) {
+      start->mEntries.RemoveEntry(aRequest);
+    }
+  }
 }
 
 void
@@ -771,10 +980,23 @@ nsRefreshDriver::ObserverCount() const
   return sum;
 }
 
+/* static */ PLDHashOperator
+nsRefreshDriver::StartTableRequestCounter(const uint32_t& aKey,
+                                          ImageStartData* aEntry,
+                                          void* aUserArg)
+{
+  uint32_t *count = static_cast<uint32_t*>(aUserArg);
+  *count += aEntry->mEntries.Count();
+
+  return PL_DHASH_NEXT;
+}
+
 uint32_t
 nsRefreshDriver::ImageRequestCount() const
 {
-  return mRequests.Count();
+  uint32_t count = 0;
+  mStartTable.EnumerateRead(nsRefreshDriver::StartTableRequestCounter, &count);
+  return count + mRequests.Count();
 }
 
 nsRefreshDriver::ObserverArray&
@@ -847,6 +1069,8 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
   if (mFrozen || !mPresContext) {
     return;
   }
+
+  TimeStamp previousRefresh = mMostRecentRefresh;
 
   mMostRecentRefresh = aNowTime;
   mMostRecentRefreshEpochTime = aNowEpoch;
@@ -969,19 +1193,24 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
    * for refresh events.
    */
 
-  ImageRequestParameters parms = {aNowTime};
+  ImageRequestParameters parms = {aNowTime, previousRefresh, &mRequests};
+
+  mStartTable.EnumerateRead(nsRefreshDriver::StartTableRefresh, &parms);
+
   if (mRequests.Count()) {
     mRequests.EnumerateEntries(nsRefreshDriver::ImageRequestEnumerator, &parms);
   }
-    
+
   for (uint32_t i = 0; i < mPresShellsToInvalidateIfHidden.Length(); i++) {
     mPresShellsToInvalidateIfHidden[i]->InvalidatePresShellIfHidden();
   }
   mPresShellsToInvalidateIfHidden.Clear();
 
   if (mViewManagerFlushIsPending) {
-#ifdef DEBUG_INVALIDATIONS
-    printf("Starting ProcessPendingUpdates\n");
+#ifdef MOZ_DUMP_PAINTING
+    if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+      printf("Starting ProcessPendingUpdates\n");
+    }
 #endif
 #ifndef MOZ_WIDGET_GONK
     // Waiting for bug 830475 to work on B2G.
@@ -994,24 +1223,80 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
     mViewManagerFlushIsPending = false;
     nsRefPtr<nsViewManager> vm = mPresContext->GetPresShell()->GetViewManager();
     vm->ProcessPendingUpdates();
-#ifdef DEBUG_INVALIDATIONS
-    printf("Ending ProcessPendingUpdates\n");
+#ifdef MOZ_DUMP_PAINTING
+    if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+      printf("Ending ProcessPendingUpdates\n");
+    }
 #endif
   }
 }
 
-PLDHashOperator
+/* static */ PLDHashOperator
 nsRefreshDriver::ImageRequestEnumerator(nsISupportsHashKey* aEntry,
                                         void* aUserArg)
 {
   ImageRequestParameters* parms =
     static_cast<ImageRequestParameters*> (aUserArg);
-  mozilla::TimeStamp mostRecentRefresh = parms->ts;
+  mozilla::TimeStamp mostRecentRefresh = parms->mCurrent;
   imgIRequest* req = static_cast<imgIRequest*>(aEntry->GetKey());
   NS_ABORT_IF_FALSE(req, "Unable to retrieve the image request");
   nsCOMPtr<imgIContainer> image;
   if (NS_SUCCEEDED(req->GetImage(getter_AddRefs(image)))) {
     image->RequestRefresh(mostRecentRefresh);
+  }
+
+  return PL_DHASH_NEXT;
+}
+
+/* static */ PLDHashOperator
+nsRefreshDriver::BeginRefreshingImages(nsISupportsHashKey* aEntry,
+                                       void* aUserArg)
+{
+  ImageRequestParameters* parms =
+    static_cast<ImageRequestParameters*> (aUserArg);
+
+  imgIRequest* req = static_cast<imgIRequest*>(aEntry->GetKey());
+  NS_ABORT_IF_FALSE(req, "Unable to retrieve the image request");
+
+  parms->mRequests->PutEntry(req);
+
+  nsCOMPtr<imgIContainer> image;
+  if (NS_SUCCEEDED(req->GetImage(getter_AddRefs(image)))) {
+    image->SetAnimationStartTime(parms->mDesired);
+  }
+
+  return PL_DHASH_REMOVE;
+}
+
+/* static */ PLDHashOperator
+nsRefreshDriver::StartTableRefresh(const uint32_t& aDelay,
+                                   ImageStartData* aData,
+                                   void* aUserArg)
+{
+  ImageRequestParameters* parms =
+    static_cast<ImageRequestParameters*> (aUserArg);
+
+  if (!aData->mStartTime.empty()) {
+    TimeStamp& start = aData->mStartTime.ref();
+    TimeDuration prev = parms->mPrevious - start;
+    TimeDuration curr = parms->mCurrent - start;
+    uint32_t prevMultiple = static_cast<uint32_t>(prev.ToMilliseconds()) / aDelay;
+
+    // We want to trigger images' refresh if we've just crossed over a multiple
+    // of the first image's start time. If so, set the animation start time to
+    // the nearest multiple of the delay and move all the images in this table
+    // to the main requests table.
+    if (prevMultiple != static_cast<uint32_t>(curr.ToMilliseconds()) / aDelay) {
+      parms->mDesired = start + TimeDuration::FromMilliseconds(prevMultiple * aDelay);
+      aData->mEntries.EnumerateEntries(nsRefreshDriver::BeginRefreshingImages, parms);
+    }
+  } else {
+    // This is the very first time we've drawn images with this time delay.
+    // Set the animation start time to "now" and move all the images in this
+    // table to the main requests table.
+    parms->mDesired = parms->mCurrent;
+    aData->mEntries.EnumerateEntries(nsRefreshDriver::BeginRefreshingImages, parms);
+    aData->mStartTime.construct(parms->mCurrent);
   }
 
   return PL_DHASH_NEXT;

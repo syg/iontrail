@@ -67,6 +67,9 @@ BaselineCompiler::compile()
     IonSpew(IonSpew_BaselineScripts, "Baseline compiling script %s:%d (%p)",
             script->filename(), script->lineno, script.get());
 
+    if (cx->typeInferenceEnabled() && !script->ensureHasBytecodeTypeMap(cx))
+        return Method_Error;
+
     // Only need to analyze scripts which are marked |argumensHasVarBinding|, to
     // compute |needsArgsObj| flag.
     if (script->argumentsHasVarBinding()) {
@@ -189,23 +192,6 @@ BaselineCompiler::compile()
 
     return Method_Compiled;
 }
-
-#ifdef DEBUG
-#define SPEW_OPCODE()                                                         \
-    JS_BEGIN_MACRO                                                            \
-        if (IsJaegerSpewChannelActive(JSpew_JSOps)) {                         \
-            Sprinter sprinter(cx);                                            \
-            sprinter.init();                                                  \
-            RootedScript script_(cx, script);                                 \
-            js_Disassemble1(cx, script_, pc, pc - script_->code,              \
-                            JS_TRUE, &sprinter);                              \
-            JaegerSpew(JSpew_JSOps, "    %2u %s",                             \
-                       (unsigned)frame.stackDepth(), sprinter.string());      \
-        }                                                                     \
-    JS_END_MACRO;
-#else
-#define SPEW_OPCODE()
-#endif /* DEBUG */
 
 bool
 BaselineCompiler::emitPrologue()
@@ -539,7 +525,6 @@ BaselineCompiler::emitBody()
     uint32_t emittedOps = 0;
 
     while (true) {
-        SPEW_OPCODE();
         JSOp op = JSOp(*pc);
         IonSpew(IonSpew_BaselineOp, "Compiling op @ %d: %s",
                 int(pc - script->code), js_CodeName[op]);
@@ -569,7 +554,7 @@ BaselineCompiler::emitBody()
         if (frame.stackDepth() > 2)
             frame.syncStack(2);
 
-        frame.assertValidState(pc);
+        frame.assertValidState(*info);
 
         masm.bind(labelOf(pc));
 
@@ -589,9 +574,6 @@ BaselineCompiler::emitBody()
 
         switch (op) {
           default:
-            // Ignore fat opcodes, we compile the decomposed version instead.
-            if (js_CodeSpec[op].format & JOF_DECOMPOSE)
-                break;
             IonSpew(IonSpew_BaselineAbort, "Unhandled op: %s", js_CodeName[op]);
             return Method_CantCompile;
 
@@ -638,6 +620,13 @@ bool
 BaselineCompiler::emit_JSOP_POP()
 {
     frame.pop();
+    return true;
+}
+
+bool
+BaselineCompiler::emit_JSOP_POPN()
+{
+    frame.popn(GET_UINT16(pc));
     return true;
 }
 
@@ -1895,6 +1884,78 @@ BaselineCompiler::emit_JSOP_DEFFUN()
     return callVM(DefFunOperationInfo);
 }
 
+typedef bool (*InitPropGetterSetterFn)(JSContext *, jsbytecode *, HandleObject, HandlePropertyName,
+                                       HandleValue);
+static const VMFunction InitPropGetterSetterInfo =
+    FunctionInfo<InitPropGetterSetterFn>(InitGetterSetterOperation);
+
+bool
+BaselineCompiler::emitInitPropGetterSetter()
+{
+    JS_ASSERT(JSOp(*pc) == JSOP_INITPROP_GETTER ||
+              JSOp(*pc) == JSOP_INITPROP_SETTER);
+
+    // Load value in R0, keep object on the stack.
+    frame.popRegsAndSync(1);
+    prepareVMCall();
+
+    pushArg(R0);
+    pushArg(ImmGCPtr(script->getName(pc)));
+    masm.extractObject(frame.addressOfStackValue(frame.peek(-1)), R0.scratchReg());
+    pushArg(R0.scratchReg());
+    pushArg(ImmWord(pc));
+
+    return callVM(InitPropGetterSetterInfo);
+}
+
+bool
+BaselineCompiler::emit_JSOP_INITPROP_GETTER()
+{
+    return emitInitPropGetterSetter();
+}
+
+bool
+BaselineCompiler::emit_JSOP_INITPROP_SETTER()
+{
+    return emitInitPropGetterSetter();
+}
+
+typedef bool (*InitElemGetterSetterFn)(JSContext *, jsbytecode *, HandleObject, HandleValue,
+                                       HandleValue);
+static const VMFunction InitElemGetterSetterInfo =
+    FunctionInfo<InitElemGetterSetterFn>(InitGetterSetterOperation);
+
+bool
+BaselineCompiler::emitInitElemGetterSetter()
+{
+    JS_ASSERT(JSOp(*pc) == JSOP_INITELEM_GETTER ||
+              JSOp(*pc) == JSOP_INITELEM_SETTER);
+
+    // Load index and value in R0 and R1, keep object on the stack.
+    frame.popRegsAndSync(2);
+    prepareVMCall();
+
+    pushArg(R1);
+    pushArg(R0);
+    masm.extractObject(frame.addressOfStackValue(frame.peek(-1)), R0.scratchReg());
+    pushArg(R0.scratchReg());
+    pushArg(ImmWord(pc));
+
+    return callVM(InitElemGetterSetterInfo);
+}
+
+bool
+BaselineCompiler::emit_JSOP_INITELEM_GETTER()
+{
+    return emitInitElemGetterSetter();
+}
+
+bool
+BaselineCompiler::emit_JSOP_INITELEM_SETTER()
+{
+    return emitInitElemGetterSetter();
+}
+
 bool
 BaselineCompiler::emit_JSOP_GETLOCAL()
 {
@@ -2108,6 +2169,16 @@ bool
 BaselineCompiler::emit_JSOP_TYPEOFEXPR()
 {
     return emit_JSOP_TYPEOF();
+}
+
+typedef bool (*SetCallFn)(JSContext *);
+static const VMFunction SetCallInfo = FunctionInfo<SetCallFn>(js::SetCallOperation);
+
+bool
+BaselineCompiler::emit_JSOP_SETCALL()
+{
+    prepareVMCall();
+    return callVM(SetCallInfo);
 }
 
 typedef bool (*ThrowFn)(JSContext *, HandleValue);
@@ -2411,6 +2482,17 @@ BaselineCompiler::emit_JSOP_SETRVAL()
 }
 
 bool
+BaselineCompiler::emit_JSOP_CALLEE()
+{
+    JS_ASSERT(function());
+    frame.syncStack(0);
+    masm.loadPtr(frame.addressOfCallee(), R0.scratchReg());
+    masm.tagValue(JSVAL_TYPE_OBJECT, R0.scratchReg(), R0);
+    frame.push(R0);
+    return true;
+}
+
+bool
 BaselineCompiler::emit_JSOP_POPV()
 {
     return emit_JSOP_SETRVAL();
@@ -2452,6 +2534,24 @@ BaselineCompiler::emit_JSOP_ARGUMENTS()
         return false;
 
     masm.bind(&done);
+    frame.push(R0);
+    return true;
+}
+
+bool
+BaselineCompiler::emit_JSOP_REST()
+{
+    frame.syncStack(0);
+
+    RootedTypeObject type(cx, types::TypeScript::InitObject(cx, script, pc, JSProto_Array));
+    if (!type)
+        return false;
+    masm.movePtr(ImmGCPtr(type), R0.scratchReg());
+
+    ICRest_Fallback::Compiler stubCompiler(cx);
+    if (!emitOpIC(stubCompiler.getStub(&stubSpace_)))
+        return false;
+
     frame.push(R0);
     return true;
 }

@@ -63,6 +63,7 @@ var ignoreCallees = {
     "js::ion::MDefinition.opName" : true, // macro generated virtuals just return a constant
     "js::ion::LInstruction.getDef" : true, // virtual but no implementation can GC
     "js::ion::IonCache.kind" : true, // macro generated virtuals just return a constant
+    "icu_50::UObject.__deleting_dtor" : true, // destructors in ICU code can't cause GC
 };
 
 function fieldCallCannotGC(csu, fullfield)
@@ -105,6 +106,24 @@ function ignoreEdgeUse(edge, variable)
     return false;
 }
 
+function ignoreEdgeAddressTaken(edge)
+{
+    // Functions which may take indirect pointers to unrooted GC things,
+    // but will copy them into rooted locations before calling anything
+    // that can GC. These parameters should usually be replaced with
+    // handles or mutable handles.
+    if (edge.Kind == "Call") {
+        var callee = edge.Exp[0];
+        if (callee.Kind == "Var") {
+            var name = callee.Variable.Name[0];
+            if (/js::Invoke\(/.test(name))
+                return true;
+        }
+    }
+
+    return false;
+}
+
 // Ignore calls of these functions (so ignore any stack containing these)
 var ignoreFunctions = {
     "ptio.c:pt_MapError" : true,
@@ -133,7 +152,8 @@ function isRootedTypeName(name)
 {
     if (name == "mozilla::ErrorResult" ||
         name == "js::frontend::TokenStream" ||
-        name == "js::frontend::TokenStream::Position")
+        name == "js::frontend::TokenStream::Position" ||
+        name == "ModuleCompiler")
     {
         return true;
     }

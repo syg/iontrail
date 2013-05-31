@@ -6,6 +6,7 @@
 #ifndef WEBGLCONTEXT_H_
 #define WEBGLCONTEXT_H_
 
+#include "mozilla/Attributes.h"
 #include "WebGLElementArrayCache.h"
 #include "WebGLObjectModel.h"
 #include "WebGLShader.h"
@@ -202,25 +203,25 @@ public:
     NS_DECL_NSIDOMWEBGLRENDERINGCONTEXT
 
     // nsICanvasRenderingContextInternal
-    NS_IMETHOD SetDimensions(int32_t width, int32_t height);
-    NS_IMETHOD InitializeWithSurface(nsIDocShell *docShell, gfxASurface *surface, int32_t width, int32_t height)
+    NS_IMETHOD SetDimensions(int32_t width, int32_t height) MOZ_OVERRIDE;
+    NS_IMETHOD InitializeWithSurface(nsIDocShell *docShell, gfxASurface *surface, int32_t width, int32_t height) MOZ_OVERRIDE
         { return NS_ERROR_NOT_IMPLEMENTED; }
-    NS_IMETHOD Reset()
+    NS_IMETHOD Reset() MOZ_OVERRIDE
         { /* (InitializeWithSurface) */ return NS_ERROR_NOT_IMPLEMENTED; }
     NS_IMETHOD Render(gfxContext *ctx,
                       gfxPattern::GraphicsFilter f,
-                      uint32_t aFlags = RenderFlagPremultAlpha);
+                      uint32_t aFlags = RenderFlagPremultAlpha) MOZ_OVERRIDE;
     NS_IMETHOD GetInputStream(const char* aMimeType,
                               const PRUnichar* aEncoderOptions,
-                              nsIInputStream **aStream);
-    NS_IMETHOD GetThebesSurface(gfxASurface **surface);
-    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot()
+                              nsIInputStream **aStream) MOZ_OVERRIDE;
+    NS_IMETHOD GetThebesSurface(gfxASurface **surface) MOZ_OVERRIDE;
+    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot() MOZ_OVERRIDE
         { return nullptr; }
 
-    NS_IMETHOD SetIsOpaque(bool b) { return NS_OK; };
-    NS_IMETHOD SetContextOptions(nsIPropertyBag *aOptions);
+    NS_IMETHOD SetIsOpaque(bool b) MOZ_OVERRIDE { return NS_OK; };
+    NS_IMETHOD SetContextOptions(nsIPropertyBag *aOptions) MOZ_OVERRIDE;
 
-    NS_IMETHOD SetIsIPC(bool b) { return NS_ERROR_NOT_IMPLEMENTED; }
+    NS_IMETHOD SetIsIPC(bool b) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
     NS_IMETHOD Redraw(const gfxRect&) { return NS_ERROR_NOT_IMPLEMENTED; }
     NS_IMETHOD Swap(mozilla::ipc::Shmem& aBack,
                     int32_t x, int32_t y, int32_t w, int32_t h)
@@ -256,11 +257,11 @@ public:
 
     already_AddRefed<CanvasLayer> GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                                                  CanvasLayer *aOldLayer,
-                                                 LayerManager *aManager);
+                                                 LayerManager *aManager) MOZ_OVERRIDE;
 
     // Note that 'clean' here refers to its invalidation state, not the
     // contents of the buffer.
-    void MarkContextClean() { mInvalidated = false; }
+    void MarkContextClean() MOZ_OVERRIDE { mInvalidated = false; }
 
     gl::GLContext* GL() const {
         return gl;
@@ -857,6 +858,7 @@ protected:
     bool mCanLoseContextInForeground;
     bool mShouldPresent;
     bool mIsScreenCleared;
+    bool mDisableFragHighP;
 
     template<typename WebGLObjectType>
     void DeleteWebGLObjectsArray(nsTArray<WebGLObjectType>& array);
@@ -912,6 +914,7 @@ protected:
     // extensions
     enum WebGLExtensionID {
         EXT_texture_filter_anisotropic,
+        OES_element_index_uint,
         OES_standard_derivatives,
         OES_texture_float,
         WEBGL_compressed_texture_atc,
@@ -1125,6 +1128,10 @@ protected:
     bool mDrawSinceContextLossTimerSet;
     ContextStatus mContextStatus;
     bool mContextLostErrorSet;
+
+    // Used for some hardware (particularly Tegra 2 and 4) that likes to
+    // be Flushed while doing hundreds of draw calls.
+    int mDrawCallsSinceLastFlush;
 
     int mAlreadyGeneratedWarnings;
     bool mAlreadyWarnedAboutFakeVertexAttrib0;

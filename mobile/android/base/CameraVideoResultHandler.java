@@ -18,25 +18,41 @@ class CameraVideoResultHandler implements ActivityResultHandler {
     private static final String LOGTAG = "GeckoCameraVideoResultHandler";
 
     private final Queue<String> mFilePickerResult;
+    private final ActivityHandlerHelper.FileResultHandler mHandler;
 
     CameraVideoResultHandler(Queue<String> resultQueue) {
         mFilePickerResult = resultQueue;
+        mHandler = null;
+    }
+
+    /* Use this constructor to asynchronously listen for results */
+    public CameraVideoResultHandler(ActivityHandlerHelper.FileResultHandler handler) {
+        mFilePickerResult = null;
+        mHandler = handler;
+    }
+
+    private void sendResult(String res) {
+        if (mFilePickerResult != null)
+            mFilePickerResult.offer(res);
+
+        if (mHandler != null)
+            mHandler.gotFile(res);
     }
 
     @Override
     public void onActivityResult(int resultCode, Intent data) {
         if (data == null || resultCode != Activity.RESULT_OK) {
-            mFilePickerResult.offer("");
+            sendResult("");
             return;
         }
 
-        Cursor cursor = GeckoApp.mAppContext.managedQuery(data.getData(),
+        Cursor cursor = GeckoAppShell.getGeckoInterface().getActivity().managedQuery(data.getData(),
                 new String[] { MediaStore.Video.Media.DATA },
                 null,
                 null,
                 null);
         cursor.moveToFirst();
-        mFilePickerResult.offer(cursor.getString(
-            cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)));
+
+        sendResult(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)));
     }
 }

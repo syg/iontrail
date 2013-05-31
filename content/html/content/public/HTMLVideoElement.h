@@ -7,6 +7,7 @@
 #ifndef mozilla_dom_HTMLVideoElement_h
 #define mozilla_dom_HTMLVideoElement_h
 
+#include "mozilla/Attributes.h"
 #include "nsIDOMHTMLVideoElement.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 
@@ -45,10 +46,10 @@ public:
                                 nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
+  NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const MOZ_OVERRIDE;
+  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const MOZ_OVERRIDE;
 
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
   // Set size with the current video frame's height and width.
   // If there is no video frame, returns NS_ERROR_FAILURE.
@@ -56,7 +57,7 @@ public:
 
   virtual nsresult SetAcceptHeader(nsIHttpChannel* aChannel);
 
-  virtual nsIDOMNode* AsDOMNode() { return this; }
+  virtual nsIDOMNode* AsDOMNode() MOZ_OVERRIDE { return this; }
 
   // WebIDL
 
@@ -108,9 +109,17 @@ public:
 
   bool MozHasAudio() const;
 
+  void NotifyOwnerDocumentActivityChanged() MOZ_OVERRIDE;
+
 protected:
   virtual JSObject* WrapNode(JSContext* aCx,
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+
+  virtual void WakeLockCreate();
+  virtual void WakeLockRelease();
+  void WakeLockUpdate();
+
+  nsCOMPtr<nsIDOMMozWakeLock> mScreenWakeLock;
 };
 
 } // namespace dom

@@ -6,7 +6,8 @@ const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
 
 let { Services } = Cu.import("resource://gre/modules/Services.jsm", {});
 let { Promise } = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {});
-let { gDevTools, devtools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
+let { gDevTools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
+let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
 let TargetFactory = devtools.TargetFactory;
 let Toolbox = devtools.Toolbox;
 
@@ -15,14 +16,20 @@ const EXAMPLE_URL = "http://example.com/browser/browser/devtools/netmonitor/test
 const SIMPLE_URL = EXAMPLE_URL + "html_simple-test-page.html";
 const NAVIGATE_URL = EXAMPLE_URL + "html_navigate-test-page.html";
 const CONTENT_TYPE_URL = EXAMPLE_URL + "html_content-type-test-page.html";
+const CYRILLIC_URL = EXAMPLE_URL + "html_cyrillic-test-page.html";
 const STATUS_CODES_URL = EXAMPLE_URL + "html_status-codes-test-page.html";
 const POST_DATA_URL = EXAMPLE_URL + "html_post-data-test-page.html";
 const JSONP_URL = EXAMPLE_URL + "html_jsonp-test-page.html";
 const JSON_LONG_URL = EXAMPLE_URL + "html_json-long-test-page.html";
+const SORTING_URL = EXAMPLE_URL + "html_sorting-test-page.html";
+const FILTERING_URL = EXAMPLE_URL + "html_filter-test-page.html";
+const INFINITE_GET_URL = EXAMPLE_URL + "html_infinite-get-page.html";
+const CUSTOM_GET_URL = EXAMPLE_URL + "html_custom-get-page.html";
 
 const SIMPLE_SJS = EXAMPLE_URL + "sjs_simple-test-server.sjs";
 const CONTENT_TYPE_SJS = EXAMPLE_URL + "sjs_content-type-test-server.sjs";
 const STATUS_CODES_SJS = EXAMPLE_URL + "sjs_status-codes-test-server.sjs";
+const SORTING_SJS = EXAMPLE_URL + "sjs_sorting-test-server.sjs";
 
 const TEST_IMAGE = EXAMPLE_URL + "test-image.png";
 
@@ -47,9 +54,10 @@ function addTab(aUrl, aWindow) {
 
   targetWindow.focus();
   let tab = targetBrowser.selectedTab = targetBrowser.addTab(aUrl);
+  let browser = tab.linkedBrowser;
 
-  tab.addEventListener("load", function onLoad() {
-    tab.removeEventListener("load", onLoad, true);
+  browser.addEventListener("load", function onLoad() {
+    browser.removeEventListener("load", onLoad, true);
     deferred.resolve(tab);
   }, true);
 
@@ -181,7 +189,7 @@ function verifyRequestItemTarget(aRequestItem, aMethod, aUrl, aData = {}) {
   info("> Verifying: " + aMethod + " " + aUrl + " " + aData.toSource());
   info("> Request: " + aRequestItem.attachment.toSource());
 
-  let { status, statusText, type, fullMimeType, size, time } = aData;
+  let { fuzzyUrl, status, statusText, type, fullMimeType, size, time } = aData;
   let { attachment, target } = aRequestItem
 
   let uri = Services.io.newURI(aUrl, null, null).QueryInterface(Ci.nsIURL);
@@ -189,19 +197,28 @@ function verifyRequestItemTarget(aRequestItem, aMethod, aUrl, aData = {}) {
   let query = uri.query;
   let hostPort = uri.hostPort;
 
-  is(attachment.method, aMethod,
-    "The attached method is incorrect.");
-
-  is(attachment.url, aUrl,
-    "The attached url is incorrect.");
+  if (fuzzyUrl) {
+    ok(attachment.method.startsWith(aMethod), "The attached method is incorrect.");
+    ok(attachment.url.startsWith(aUrl), "The attached url is incorrect.");
+  } else {
+    is(attachment.method, aMethod, "The attached method is incorrect.");
+    is(attachment.url, aUrl, "The attached url is incorrect.");
+  }
 
   is(target.querySelector(".requests-menu-method").getAttribute("value"),
     aMethod, "The displayed method is incorrect.");
 
-  is(target.querySelector(".requests-menu-file").getAttribute("value"),
-    name + (query ? "?" + query : ""), "The displayed file is incorrect.");
-  is(target.querySelector(".requests-menu-file").getAttribute("tooltiptext"),
-    name + (query ? "?" + query : ""), "The tooltip file is incorrect.");
+  if (fuzzyUrl) {
+    ok(target.querySelector(".requests-menu-file").getAttribute("value").startsWith(
+      name + (query ? "?" + query : "")), "The displayed file is incorrect.");
+    ok(target.querySelector(".requests-menu-file").getAttribute("tooltiptext").startsWith(
+      name + (query ? "?" + query : "")), "The tooltip file is incorrect.");
+  } else {
+    is(target.querySelector(".requests-menu-file").getAttribute("value"),
+      name + (query ? "?" + query : ""), "The displayed file is incorrect.");
+    is(target.querySelector(".requests-menu-file").getAttribute("tooltiptext"),
+      name + (query ? "?" + query : ""), "The tooltip file is incorrect.");
+  }
 
   is(target.querySelector(".requests-menu-domain").getAttribute("value"),
     hostPort, "The displayed domain is incorrect.");

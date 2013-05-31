@@ -36,275 +36,267 @@ function test() {
 'use strict';
 
 // var assert = require('test/assert');
-var Requisition = require('gcli/cli').Requisition;
+var cli = require('gcli/cli');
 
 exports.testBlanks = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize('');
-  assert.is(1, args.length);
-  assert.is('', args[0].text);
-  assert.is('', args[0].prefix);
-  assert.is('', args[0].suffix);
+  args = cli.tokenize('');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '');
+  assert.is(args[0].prefix, '');
+  assert.is(args[0].suffix, '');
 
-  args = requ._tokenize(' ');
-  assert.is(1, args.length);
-  assert.is('', args[0].text);
-  assert.is(' ', args[0].prefix);
-  assert.is('', args[0].suffix);
+  args = cli.tokenize(' ');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '');
+  assert.is(args[0].prefix, ' ');
+  assert.is(args[0].suffix, '');
 };
 
 exports.testTokSimple = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize('s');
-  assert.is(1, args.length);
-  assert.is('s', args[0].text);
-  assert.is('', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('Argument', args[0].type);
+  args = cli.tokenize('s');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, 's');
+  assert.is(args[0].prefix, '');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'Argument');
 
-  args = requ._tokenize('s s');
-  assert.is(2, args.length);
-  assert.is('s', args[0].text);
-  assert.is('', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('Argument', args[0].type);
-  assert.is('s', args[1].text);
-  assert.is(' ', args[1].prefix);
-  assert.is('', args[1].suffix);
-  assert.is('Argument', args[1].type);
+  args = cli.tokenize('s s');
+  assert.is(args.length, 2);
+  assert.is(args[0].text, 's');
+  assert.is(args[0].prefix, '');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'Argument');
+  assert.is(args[1].text, 's');
+  assert.is(args[1].prefix, ' ');
+  assert.is(args[1].suffix, '');
+  assert.is(args[1].type, 'Argument');
 };
 
 exports.testJavascript = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize('{x}');
-  assert.is(1, args.length);
-  assert.is('x', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{x}');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, 'x');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{ x }');
-  assert.is(1, args.length);
-  assert.is('x', args[0].text);
-  assert.is('{ ', args[0].prefix);
-  assert.is(' }', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{ x }');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, 'x');
+  assert.is(args[0].prefix, '{ ');
+  assert.is(args[0].suffix, ' }');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{x} {y}');
-  assert.is(2, args.length);
-  assert.is('x', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
-  assert.is('y', args[1].text);
-  assert.is(' {', args[1].prefix);
-  assert.is('}', args[1].suffix);
-  assert.is('ScriptArgument', args[1].type);
+  args = cli.tokenize('{x} {y}');
+  assert.is(args.length, 2);
+  assert.is(args[0].text, 'x');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
+  assert.is(args[1].text, 'y');
+  assert.is(args[1].prefix, ' {');
+  assert.is(args[1].suffix, '}');
+  assert.is(args[1].type, 'ScriptArgument');
 
-  args = requ._tokenize('{x}{y}');
-  assert.is(2, args.length);
-  assert.is('x', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
-  assert.is('y', args[1].text);
-  assert.is('{', args[1].prefix);
-  assert.is('}', args[1].suffix);
-  assert.is('ScriptArgument', args[1].type);
+  args = cli.tokenize('{x}{y}');
+  assert.is(args.length, 2);
+  assert.is(args[0].text, 'x');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
+  assert.is(args[1].text, 'y');
+  assert.is(args[1].prefix, '{');
+  assert.is(args[1].suffix, '}');
+  assert.is(args[1].type, 'ScriptArgument');
 
-  args = requ._tokenize('{');
-  assert.is(1, args.length);
-  assert.is('', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{ ');
-  assert.is(1, args.length);
-  assert.is('', args[0].text);
-  assert.is('{ ', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{ ');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '');
+  assert.is(args[0].prefix, '{ ');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{x');
-  assert.is(1, args.length);
-  assert.is('x', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{x');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, 'x');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'ScriptArgument');
 };
 
 exports.testRegularNesting = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize('{"x"}');
-  assert.is(1, args.length);
-  assert.is('"x"', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{"x"}');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '"x"');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{\'x\'}');
-  assert.is(1, args.length);
-  assert.is('\'x\'', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{\'x\'}');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '\'x\'');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('"{x}"');
-  assert.is(1, args.length);
-  assert.is('{x}', args[0].text);
-  assert.is('"', args[0].prefix);
-  assert.is('"', args[0].suffix);
-  assert.is('Argument', args[0].type);
+  args = cli.tokenize('"{x}"');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '{x}');
+  assert.is(args[0].prefix, '"');
+  assert.is(args[0].suffix, '"');
+  assert.is(args[0].type, 'Argument');
 
-  args = requ._tokenize('\'{x}\'');
-  assert.is(1, args.length);
-  assert.is('{x}', args[0].text);
-  assert.is('\'', args[0].prefix);
-  assert.is('\'', args[0].suffix);
-  assert.is('Argument', args[0].type);
+  args = cli.tokenize('\'{x}\'');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '{x}');
+  assert.is(args[0].prefix, '\'');
+  assert.is(args[0].suffix, '\'');
+  assert.is(args[0].type, 'Argument');
 };
 
 exports.testDeepNesting = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize('{{}}');
-  assert.is(1, args.length);
-  assert.is('{}', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{{}}');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '{}');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{{x} {y}}');
-  assert.is(1, args.length);
-  assert.is('{x} {y}', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  args = cli.tokenize('{{x} {y}}');
+  assert.is(args.length, 1);
+  assert.is(args[0].text, '{x} {y}');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  args = requ._tokenize('{{w} {{{x}}}} {y} {{{z}}}');
+  args = cli.tokenize('{{w} {{{x}}}} {y} {{{z}}}');
 
-  assert.is(3, args.length);
+  assert.is(args.length, 3);
 
-  assert.is('{w} {{{x}}}', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  assert.is(args[0].text, '{w} {{{x}}}');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  assert.is('y', args[1].text);
-  assert.is(' {', args[1].prefix);
-  assert.is('}', args[1].suffix);
-  assert.is('ScriptArgument', args[1].type);
+  assert.is(args[1].text, 'y');
+  assert.is(args[1].prefix, ' {');
+  assert.is(args[1].suffix, '}');
+  assert.is(args[1].type, 'ScriptArgument');
 
-  assert.is('{{z}}', args[2].text);
-  assert.is(' {', args[2].prefix);
-  assert.is('}', args[2].suffix);
-  assert.is('ScriptArgument', args[2].type);
+  assert.is(args[2].text, '{{z}}');
+  assert.is(args[2].prefix, ' {');
+  assert.is(args[2].suffix, '}');
+  assert.is(args[2].type, 'ScriptArgument');
 
-  args = requ._tokenize('{{w} {{{x}}} {y} {{{z}}}');
+  args = cli.tokenize('{{w} {{{x}}} {y} {{{z}}}');
 
-  assert.is(1, args.length);
+  assert.is(args.length, 1);
 
-  assert.is('{w} {{{x}}} {y} {{{z}}}', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  assert.is(args[0].text, '{w} {{{x}}} {y} {{{z}}}');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'ScriptArgument');
 };
 
 exports.testStrangeNesting = function(options) {
   var args;
-  var requ = new Requisition();
 
   // Note: When we get real JS parsing this should break
-  args = requ._tokenize('{"x}"}');
+  args = cli.tokenize('{"x}"}');
 
-  assert.is(2, args.length);
+  assert.is(args.length, 2);
 
-  assert.is('"x', args[0].text);
-  assert.is('{', args[0].prefix);
-  assert.is('}', args[0].suffix);
-  assert.is('ScriptArgument', args[0].type);
+  assert.is(args[0].text, '"x');
+  assert.is(args[0].prefix, '{');
+  assert.is(args[0].suffix, '}');
+  assert.is(args[0].type, 'ScriptArgument');
 
-  assert.is('}', args[1].text);
-  assert.is('"', args[1].prefix);
-  assert.is('', args[1].suffix);
-  assert.is('Argument', args[1].type);
+  assert.is(args[1].text, '}');
+  assert.is(args[1].prefix, '"');
+  assert.is(args[1].suffix, '');
+  assert.is(args[1].type, 'Argument');
 };
 
 exports.testComplex = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize(' 1234  \'12 34\'');
+  args = cli.tokenize(' 1234  \'12 34\'');
 
-  assert.is(2, args.length);
+  assert.is(args.length, 2);
 
-  assert.is('1234', args[0].text);
-  assert.is(' ', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('Argument', args[0].type);
+  assert.is(args[0].text, '1234');
+  assert.is(args[0].prefix, ' ');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'Argument');
 
-  assert.is('12 34', args[1].text);
-  assert.is('  \'', args[1].prefix);
-  assert.is('\'', args[1].suffix);
-  assert.is('Argument', args[1].type);
+  assert.is(args[1].text, '12 34');
+  assert.is(args[1].prefix, '  \'');
+  assert.is(args[1].suffix, '\'');
+  assert.is(args[1].type, 'Argument');
 
-  args = requ._tokenize('12\'34 "12 34" \\'); // 12'34 "12 34" \
+  args = cli.tokenize('12\'34 "12 34" \\'); // 12'34 "12 34" \
 
-  assert.is(3, args.length);
+  assert.is(args.length, 3);
 
-  assert.is('12\'34', args[0].text);
-  assert.is('', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('Argument', args[0].type);
+  assert.is(args[0].text, '12\'34');
+  assert.is(args[0].prefix, '');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'Argument');
 
-  assert.is('12 34', args[1].text);
-  assert.is(' "', args[1].prefix);
-  assert.is('"', args[1].suffix);
-  assert.is('Argument', args[1].type);
+  assert.is(args[1].text, '12 34');
+  assert.is(args[1].prefix, ' "');
+  assert.is(args[1].suffix, '"');
+  assert.is(args[1].type, 'Argument');
 
-  assert.is('\\', args[2].text);
-  assert.is(' ', args[2].prefix);
-  assert.is('', args[2].suffix);
-  assert.is('Argument', args[2].type);
+  assert.is(args[2].text, '\\');
+  assert.is(args[2].prefix, ' ');
+  assert.is(args[2].suffix, '');
+  assert.is(args[2].type, 'Argument');
 };
 
 exports.testPathological = function(options) {
   var args;
-  var requ = new Requisition();
 
-  args = requ._tokenize('a\\ b \\t\\n\\r \\\'x\\\" \'d'); // a_b \t\n\r \'x\" 'd
+  args = cli.tokenize('a\\ b \\t\\n\\r \\\'x\\\" \'d'); // a_b \t\n\r \'x\" 'd
 
-  assert.is(4, args.length);
+  assert.is(args.length, 4);
 
-  assert.is('a b', args[0].text);
-  assert.is('', args[0].prefix);
-  assert.is('', args[0].suffix);
-  assert.is('Argument', args[0].type);
+  assert.is(args[0].text, 'a\\ b');
+  assert.is(args[0].prefix, '');
+  assert.is(args[0].suffix, '');
+  assert.is(args[0].type, 'Argument');
 
-  assert.is('\t\n\r', args[1].text);
-  assert.is(' ', args[1].prefix);
-  assert.is('', args[1].suffix);
-  assert.is('Argument', args[1].type);
+  assert.is(args[1].text, '\\t\\n\\r');
+  assert.is(args[1].prefix, ' ');
+  assert.is(args[1].suffix, '');
+  assert.is(args[1].type, 'Argument');
 
-  assert.is('\'x"', args[2].text);
-  assert.is(' ', args[2].prefix);
-  assert.is('', args[2].suffix);
-  assert.is('Argument', args[2].type);
+  assert.is(args[2].text, '\\\'x\\"');
+  assert.is(args[2].prefix, ' ');
+  assert.is(args[2].suffix, '');
+  assert.is(args[2].type, 'Argument');
 
-  assert.is('d', args[3].text);
-  assert.is(' \'', args[3].prefix);
-  assert.is('', args[3].suffix);
-  assert.is('Argument', args[3].type);
+  assert.is(args[3].text, 'd');
+  assert.is(args[3].prefix, ' \'');
+  assert.is(args[3].suffix, '');
+  assert.is(args[3].type, 'Argument');
 };
 
 

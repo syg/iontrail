@@ -28,7 +28,7 @@ public:
   // nsIMathMLFrame ---
 
   virtual bool
-  IsSpaceLike() {
+  IsSpaceLike() MOZ_OVERRIDE {
     return NS_MATHML_IS_SPACE_LIKE(mPresentationData.flags);
   }
 
@@ -135,11 +135,6 @@ public:
   static void
   FindAttrDisplaystyle(nsIContent*         aContent,
                        nsPresentationData& aPresentationData);
-
-  // helper used to see if an element has a dir attribute 
-  static void
-  FindAttrDirectionality(nsIContent*         aContent,
-                         nsPresentationData& aPresentationData);
 
   // helper to check if a content has an attribute. If content is nullptr or if
   // the attribute is not there, check if the attribute is on the mstyle hierarchy

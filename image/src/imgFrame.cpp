@@ -150,8 +150,10 @@ nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
                         gfxASurface::gfxImageFormat aFormat, uint8_t aPaletteDepth /* = 0 */)
 {
   // assert for properties that should be verified by decoders, warn for properties related to bad content
-  if (!AllowedImageSize(aWidth, aHeight))
+  if (!AllowedImageSize(aWidth, aHeight)) {
+    NS_WARNING("Should have legal image size");
     return NS_ERROR_FAILURE;
+  }
 
   mOffset.MoveTo(aX, aY);
   mSize.SizeTo(aWidth, aHeight);
@@ -162,12 +164,15 @@ nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
   if (aPaletteDepth != 0) {
     // We're creating for a paletted image.
     if (aPaletteDepth > 8) {
+      NS_WARNING("Should have legal palette depth");
       NS_ERROR("This Depth is not supported");
       return NS_ERROR_FAILURE;
     }
 
     // Use the fallible allocator here
     mPalettedImageData = (uint8_t*)moz_malloc(PaletteDataLength() + GetImageDataLength());
+    if (!mPalettedImageData)
+      NS_WARNING("moz_malloc for paletted image data should succeed");
     NS_ENSURE_TRUE(mPalettedImageData, NS_ERROR_OUT_OF_MEMORY);
   } else {
     // For Windows, we must create the device surface first (if we're
@@ -195,6 +200,11 @@ nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
     if (!mImageSurface || mImageSurface->CairoStatus()) {
       mImageSurface = nullptr;
       // guess
+      if (!mImageSurface) {
+        NS_WARNING("Allocation of gfxImageSurface should succeed");
+      } else if (!mImageSurface->CairoStatus()) {
+        NS_WARNING("gfxImageSurface should have good CairoStatus");
+      }
       return NS_ERROR_OUT_OF_MEMORY;
     }
 
@@ -218,6 +228,8 @@ nsresult imgFrame::Init(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
 
 nsresult imgFrame::Optimize()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   if (gDisableOptimize)
     return NS_OK;
 
@@ -476,57 +488,7 @@ void imgFrame::Draw(gfxContext *aContext, gfxPattern::GraphicsFilter aFilter,
   }
 }
 
-nsresult imgFrame::Extract(const nsIntRect& aRegion, imgFrame** aResult)
-{
-  nsAutoPtr<imgFrame> subImage(new imgFrame());
-
-  // The scaling problems described in bug 468496 are especially
-  // likely to be visible for the sub-image, as at present the only
-  // user is the border-image code and border-images tend to get
-  // stretched a lot.  At the same time, the performance concerns
-  // that prevent us from just using Cairo's fallback scaler when
-  // accelerated graphics won't cut it are less relevant to such
-  // images, since they also tend to be small.  Thus, we forcibly
-  // disable the use of anything other than a client-side image
-  // surface for the sub-image; this ensures that the correct
-  // (albeit slower) Cairo fallback scaler will be used.
-  subImage->mNeverUseDeviceSurface = true;
-
-  nsresult rv = subImage->Init(0, 0, aRegion.width, aRegion.height,
-                               mFormat, mPaletteDepth);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  subImage->SetAsNonPremult(mNonPremult);
-
-  // scope to destroy ctx
-  {
-    gfxContext ctx(subImage->ThebesSurface());
-    ctx.SetOperator(gfxContext::OPERATOR_SOURCE);
-    if (mSinglePixel) {
-      ctx.SetDeviceColor(mSinglePixelColor);
-    } else {
-      // SetSource() places point (0,0) of its first argument at
-      // the coordinages given by its second argument.  We want
-      // (x,y) of the image to be (0,0) of source space, so we
-      // put (0,0) of the image at (-x,-y).
-      ctx.SetSource(this->ThebesSurface(), gfxPoint(-aRegion.x, -aRegion.y));
-    }
-    ctx.Rectangle(gfxRect(0, 0, aRegion.width, aRegion.height));
-    ctx.Fill();
-  }
-
-  nsIntRect filled(0, 0, aRegion.width, aRegion.height);
-
-  rv = subImage->ImageUpdated(filled);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  subImage->Optimize();
-
-  *aResult = subImage.forget();
-
-  return NS_OK;
-}
-
+// This can be called from any thread, but not simultaneously.
 nsresult imgFrame::ImageUpdated(const nsIntRect &aUpdateRect)
 {
   mDecoded.UnionRect(mDecoded, aUpdateRect);
@@ -536,10 +498,6 @@ nsresult imgFrame::ImageUpdated(const nsIntRect &aUpdateRect)
   nsIntRect boundsRect(mOffset, mSize);
   mDecoded.IntersectRect(mDecoded, boundsRect);
 
-#ifdef XP_MACOSX
-  if (mQuartzSurface)
-    mQuartzSurface->Flush();
-#endif
   return NS_OK;
 }
 
@@ -616,6 +574,8 @@ void imgFrame::GetPaletteData(uint32_t **aPalette, uint32_t *length) const
 
 nsresult imgFrame::LockImageData()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   NS_ABORT_IF_FALSE(mLockCount >= 0, "Unbalanced locks and unlocks");
   if (mLockCount < 0) {
     return NS_ERROR_FAILURE;
@@ -671,6 +631,8 @@ nsresult imgFrame::LockImageData()
 
 nsresult imgFrame::UnlockImageData()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   NS_ABORT_IF_FALSE(mLockCount != 0, "Unlocking an unlocked image!");
   if (mLockCount == 0) {
     return NS_ERROR_FAILURE;
@@ -713,6 +675,8 @@ nsresult imgFrame::UnlockImageData()
 
 void imgFrame::MarkImageDataDirty()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   if (mImageSurface)
     mImageSurface->Flush();
 

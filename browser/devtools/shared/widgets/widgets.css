@@ -16,8 +16,8 @@
   overflow-y: auto;
 }
 
-.side-menu-widget-group[name=""] > .side-menu-widget-group-title {
-  display: none;
+.side-menu-widget-item-contents {
+  -moz-user-focus: normal;
 }
 
 /* VariablesView */

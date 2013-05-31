@@ -6,6 +6,7 @@
 #ifndef nsDOMEvent_h__
 #define nsDOMEvent_h__
 
+#include "mozilla/Attributes.h"
 #include "nsIDOMEvent.h"
 #include "nsISupports.h"
 #include "nsCOMPtr.h"
@@ -38,7 +39,11 @@ class nsDOMEvent : public nsDOMEventBase,
 protected:
   nsDOMEvent(mozilla::dom::EventTarget* aOwner, nsPresContext* aPresContext,
              nsEvent* aEvent);
+  nsDOMEvent(nsPIDOMWindow* aWindow);
   virtual ~nsDOMEvent();
+private:
+  void ConstructorInit(mozilla::dom::EventTarget* aOwner,
+                       nsPresContext* aPresContext, nsEvent* aEvent);
 public:
   void GetParentObject(nsIScriptGlobalObject** aParentObject)
   {
@@ -95,7 +100,7 @@ public:
 
   // nsIJSNativeInitializer
   NS_IMETHOD Initialize(nsISupports* aOwner, JSContext* aCx, JSObject* aObj,
-                        const JS::CallArgs& aArgs);
+                        const JS::CallArgs& aArgs) MOZ_OVERRIDE;
 
   virtual nsresult InitFromCtor(const nsAString& aType,
                                 JSContext* aCx, JS::Value* aVal);
@@ -185,10 +190,7 @@ public:
   mozilla::dom::EventTarget* GetOriginalTarget() const;
   mozilla::dom::EventTarget* GetExplicitOriginalTarget() const;
 
-  bool GetPreventDefault() const
-  {
-    return DefaultPrevented();
-  }
+  bool GetPreventDefault() const;
 
 protected:
 
@@ -223,8 +225,6 @@ protected:
   NS_IMETHOD StopImmediatePropagation(void) { return _to StopImmediatePropagation(); } \
   NS_IMETHOD GetOriginalTarget(nsIDOMEventTarget** aOriginalTarget) { return _to GetOriginalTarget(aOriginalTarget); } \
   NS_IMETHOD GetExplicitOriginalTarget(nsIDOMEventTarget** aExplicitOriginalTarget) { return _to GetExplicitOriginalTarget(aExplicitOriginalTarget); } \
-  NS_IMETHOD PreventBubble() { return _to PreventBubble(); } \
-  NS_IMETHOD PreventCapture() { return _to PreventCapture(); } \
   NS_IMETHOD GetPreventDefault(bool* aRetval) { return _to GetPreventDefault(aRetval); } \
   NS_IMETHOD GetIsTrusted(bool* aIsTrusted) { return _to GetIsTrusted(aIsTrusted); } \
   NS_IMETHOD SetTarget(nsIDOMEventTarget *aTarget) { return _to SetTarget(aTarget); } \

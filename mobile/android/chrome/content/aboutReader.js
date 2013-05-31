@@ -62,38 +62,57 @@ let AboutReader = function(doc, win) {
   this._setupButton("share-button", this._onShare.bind(this));
 
   let colorSchemeOptions = [
+    { name: gStrings.GetStringFromName("aboutReader.colorSchemeDark"),
+      value: "dark"},
     { name: gStrings.GetStringFromName("aboutReader.colorSchemeLight"),
       value: "light"},
-    { name: gStrings.GetStringFromName("aboutReader.colorSchemeDark"),
-      value: "dark"}
+    { name: gStrings.GetStringFromName("aboutReader.colorSchemeAuto"),
+      value: "auto"}
   ];
 
   let colorScheme = Services.prefs.getCharPref("reader.color_scheme");
-  this._setupSegmentedButton("color-scheme-buttons", colorSchemeOptions, colorScheme, this._setColorScheme.bind(this));
-  this._setColorScheme(colorScheme);
+  this._setupSegmentedButton("color-scheme-buttons", colorSchemeOptions, colorScheme, this._setColorSchemePref.bind(this));
+  this._setColorSchemePref(colorScheme);
 
+  let fontTypeSample = gStrings.GetStringFromName("aboutReader.fontTypeSample");
   let fontTypeOptions = [
-    { name: gStrings.GetStringFromName("aboutReader.fontTypeSansSerif"),
-      value: "sans-serif"},
-    { name: gStrings.GetStringFromName("aboutReader.fontTypeSerif"),
-      value: "serif"}
+    { name: fontTypeSample,
+      description: gStrings.GetStringFromName("aboutReader.fontTypeCharis"),
+      value: "serif",
+      linkClass: "serif" },
+    { name: fontTypeSample,
+      description: gStrings.GetStringFromName("aboutReader.fontTypeOpenSans"),
+      value: "sans-serif",
+      linkClass: "sans-serif"
+    },
   ];
 
   let fontType = Services.prefs.getCharPref("reader.font_type");
   this._setupSegmentedButton("font-type-buttons", fontTypeOptions, fontType, this._setFontType.bind(this));
   this._setFontType(fontType);
 
-  let fontTitle = gStrings.GetStringFromName("aboutReader.textTitle");
-  this._fontSize = 0;
-  this._setupStepControl("font-size-control", fontTitle,
-    this._FONT_SIZE_MIN, this._FONT_SIZE_MAX, this._FONT_SIZE_STEP, Services.prefs.getIntPref("reader.font_size"),
-    this._onFontSizeChange.bind(this));
+  let fontSizeSample = gStrings.GetStringFromName("aboutReader.fontSizeSample");
+  let fontSizeOptions = [
+    { name: fontSizeSample,
+      value: 1,
+      linkClass: "font-size1-sample" },
+    { name: fontSizeSample,
+      value: 2,
+      linkClass: "font-size2-sample" },
+    { name: fontSizeSample,
+      value: 3,
+      linkClass: "font-size3-sample" },
+    { name: fontSizeSample,
+      value: 4,
+      linkClass: "font-size4-sample" },
+    { name: fontSizeSample,
+      value: 5,
+      linkClass: "font-size5-sample" }
+  ];
 
-  let marginTitle = gStrings.GetStringFromName("aboutReader.marginTitle");
-  this._marginSize = 0;
-  this._setupStepControl("margin-size-control", marginTitle,
-    this._MARGIN_SIZE_MIN, this._MARGIN_SIZE_MAX, this._MARGIN_SIZE_STEP, Services.prefs.getIntPref("reader.margin_size"),
-    this._onMarginSizeChange.bind(this));
+  let fontSize = Services.prefs.getIntPref("reader.font_size");
+  this._setupSegmentedButton("font-size-buttons", fontSizeOptions, fontSize, this._setFontSize.bind(this));
+  this._setFontSize(fontSize);
 
   dump("Decoding query arguments");
   let queryArgs = this._decodeQueryString(win.location.href);
@@ -113,13 +132,6 @@ let AboutReader = function(doc, win) {
 }
 
 AboutReader.prototype = {
-  _FONT_SIZE_MIN: 1,
-  _FONT_SIZE_MAX: 7,
-  _FONT_SIZE_STEP: 1,
-  _MARGIN_SIZE_MIN: 5,
-  _MARGIN_SIZE_MAX: 25,
-  _MARGIN_SIZE_STEP: 5,
-
   _BLOCK_IMAGES_SELECTOR: ".content p > img:only-child, " +
                           ".content p > a:only-child > img:only-child, " +
                           ".content .wp-caption img, " +
@@ -219,6 +231,10 @@ AboutReader.prototype = {
         this._updateImageMargins();
         break;
 
+      case "devicelight":
+        this._handleDeviceLight(aEvent.value);
+        break;
+
       case "unload":
         Services.obs.removeObserver(this, "Reader:Add");
         Services.obs.removeObserver(this, "Reader:Remove");
@@ -292,19 +308,7 @@ AboutReader.prototype = {
     });
   },
 
-  _onMarginSizeChange: function Reader_onMarginSizeChange(newMarginSize) {
-    let doc = this._doc;
-
-    this._marginSize = newMarginSize;
-    doc.body.style.marginLeft = this._marginSize + "%";
-    doc.body.style.marginRight = this._marginSize + "%";
-
-    this._updateImageMargins();
-
-    Services.prefs.setIntPref("reader.margin_size", this._marginSize);
-  },
-
-  _onFontSizeChange: function Reader_onFontSizeChange(newFontSize) {
+  _setFontSize: function Reader_setFontSize(newFontSize) {
     let bodyClasses = this._doc.body.classList;
 
     if (this._fontSize > 0)
@@ -314,6 +318,18 @@ AboutReader.prototype = {
     bodyClasses.add("font-size" + this._fontSize);
 
     Services.prefs.setIntPref("reader.font_size", this._fontSize);
+  },
+
+  _handleDeviceLight: function Reader_handleDeviceLight(luxValue) {
+    // Ignore changes that are within a certain threshold of previous lux values.
+    if ((this._colorScheme === "dark" && luxValue < 50) ||
+        (this._colorScheme === "light" && luxValue > 25))
+      return;
+
+    if (luxValue < 30)
+      this._setColorScheme("dark");
+    else
+      this._setColorScheme("light");
   },
 
   _setColorScheme: function Reader_setColorScheme(newColorScheme) {
@@ -327,8 +343,19 @@ AboutReader.prototype = {
 
     this._colorScheme = newColorScheme;
     bodyClasses.add(this._colorScheme);
+  },
 
-    Services.prefs.setCharPref("reader.color_scheme", this._colorScheme);
+  // Pref values include "dark", "light", and "auto", which automatically switches
+  // between light and dark color schemes based on the ambient light level.
+  _setColorSchemePref: function Reader_setColorSchemePref(colorSchemePref) {
+    if (colorSchemePref === "auto") {
+      this._win.addEventListener("devicelight", this, false);
+    } else {
+      this._win.removeEventListener("devicelight", this, false);
+      this._setColorScheme(colorSchemePref);
+    }
+
+    Services.prefs.setCharPref("reader.color_scheme", colorSchemePref);
   },
 
   _setFontType: function Reader_setFontType(newFontType) {
@@ -488,10 +515,9 @@ AboutReader.prototype = {
 
     this._article = article;
 
+    this._domainElement.href = article.url;
     let articleUri = Services.io.newURI(article.url, null, null);
-    let domain = articleUri.host;
-
-    this._domainElement.innerHTML = domain;
+    this._domainElement.innerHTML = articleUri.host;
 
     this._creditsElement.innerHTML = article.byline;
 
@@ -550,69 +576,6 @@ AboutReader.prototype = {
     return result;
   },
 
-  _setupStepControl: function Reader_setupStepControl(id, name, min, max, step, initial, callback) {
-    let doc = this._doc;
-    let stepControl = doc.getElementById(id);
-
-    let title = this._doc.createElement("h1");
-    title.innerHTML = name;
-    stepControl.appendChild(title);
-
-    let plusButton = doc.createElement("div");
-    plusButton.className = "button plus-button";
-    stepControl.appendChild(plusButton);
-
-    let minusButton = doc.createElement("div");
-    minusButton.className = "button minus-button";
-    stepControl.appendChild(minusButton);
-
-    let updateControls = function() {
-      current = Math.max(min, Math.min(max, current));
-      if (current == min) {
-        minusButton.classList.add("disabled");
-      } else {
-        minusButton.classList.remove("disabled");
-      }
-      if (current == max) {
-        plusButton.classList.add("disabled");
-      } else {
-        plusButton.classList.remove("disabled");
-      }
-    }
-
-    let current = initial;
-    updateControls();
-
-    plusButton.addEventListener("click", function(aEvent) {
-      if (!aEvent.isTrusted)
-        return;
-
-      aEvent.stopPropagation();
-
-      if (current < max) {
-        current += step;
-        updateControls();
-        callback(current);
-      }
-    }.bind(this), true);
-
-    minusButton.addEventListener("click", function(aEvent) {
-      if (!aEvent.isTrusted)
-        return;
-
-      aEvent.stopPropagation();
-
-      if (current > min) {
-        current -= step;
-        updateControls();
-        callback(current);
-      }
-    }.bind(this), true);
-
-    // Always callback initial current setting
-    callback(current);
-  },
-
   _setupSegmentedButton: function Reader_setupSegmentedButton(id, options, initialValue, callback) {
     let doc = this._doc;
     let segmentedButton = doc.getElementById(id);
@@ -622,8 +585,17 @@ AboutReader.prototype = {
 
       let item = doc.createElement("li");
       let link = doc.createElement("a");
-      link.innerHTML = option.name;
+      link.textContent = option.name;
       item.appendChild(link);
+
+      if (option.linkClass !== undefined)
+        link.classList.add(option.linkClass);
+
+      if (option.description !== undefined) {
+        let description = doc.createElement("div");
+        description.textContent = option.description;
+        item.appendChild(description);
+      }
 
       link.style.MozUserSelect = 'none';
       segmentedButton.appendChild(item);
@@ -680,25 +652,26 @@ AboutReader.prototype = {
       dropdownPopup.appendChild(dropdownArrow);
 
       let updatePopupPosition = function() {
-          let popupWidth = dropdownPopup.offsetWidth + 30;
-          let arrowWidth = dropdownArrow.offsetWidth;
-          let toggleWidth = dropdownToggle.offsetWidth;
-          let toggleLeft = dropdownToggle.offsetLeft;
+        let popupWidth = dropdownPopup.offsetWidth + 30;
+        let arrowWidth = dropdownArrow.offsetWidth;
+        let toggleWidth = dropdownToggle.offsetWidth;
+        let toggleLeft = dropdownToggle.offsetLeft;
 
-          let popupShift = (toggleWidth - popupWidth) / 2;
-          let popupLeft = Math.max(0, Math.min(win.innerWidth - popupWidth, toggleLeft + popupShift));
-          dropdownPopup.style.left = popupLeft + "px";
+        let popupShift = (toggleWidth - popupWidth) / 2;
+        let popupLeft = Math.max(0, Math.min(win.innerWidth - popupWidth, toggleLeft + popupShift));
+        dropdownPopup.style.left = popupLeft + "px";
 
-          let arrowShift = (toggleWidth - arrowWidth) / 2;
-          let arrowLeft = toggleLeft - popupLeft + arrowShift;
-          dropdownArrow.style.left = arrowLeft + "px";
+        let arrowShift = (toggleWidth - arrowWidth) / 2;
+        let arrowLeft = toggleLeft - popupLeft + arrowShift;
+        dropdownArrow.style.left = arrowLeft + "px";
       };
 
       win.addEventListener("resize", function(aEvent) {
         if (!aEvent.isTrusted)
           return;
 
-        updatePopupPosition();
+        // Wait for reflow before calculating the new position of the popup.
+        setTimeout(updatePopupPosition, 0);
       }, true);
 
       dropdownToggle.addEventListener("click", function(aEvent) {

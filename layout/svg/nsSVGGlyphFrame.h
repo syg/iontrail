@@ -35,15 +35,15 @@ class SVGIRect;
 // Slightly horrible callback for deferring application of opacity
 struct SVGTextObjectPaint : public gfxTextObjectPaint {
   already_AddRefed<gfxPattern> GetFillPattern(float aOpacity,
-                                              const gfxMatrix& aCTM);
+                                              const gfxMatrix& aCTM) MOZ_OVERRIDE;
   already_AddRefed<gfxPattern> GetStrokePattern(float aOpacity,
-                                                const gfxMatrix& aCTM);
+                                                const gfxMatrix& aCTM) MOZ_OVERRIDE;
 
   void SetFillOpacity(float aOpacity) { mFillOpacity = aOpacity; }
-  float GetFillOpacity() { return mFillOpacity; }
+  float GetFillOpacity() MOZ_OVERRIDE { return mFillOpacity; }
 
   void SetStrokeOpacity(float aOpacity) { mStrokeOpacity = aOpacity; }
-  float GetStrokeOpacity() { return mStrokeOpacity; }
+  float GetStrokeOpacity() MOZ_OVERRIDE { return mStrokeOpacity; }
 
   struct Paint {
     Paint() {
@@ -192,9 +192,9 @@ public:
   bool IsAllWhitespace() const;
 
   // nsIFrame interface:
-  NS_IMETHOD  CharacterDataChanged(CharacterDataChangeInfo* aInfo);
+  NS_IMETHOD  CharacterDataChanged(CharacterDataChangeInfo* aInfo) MOZ_OVERRIDE;
 
-  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
+  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext) MOZ_OVERRIDE;
 
   virtual void Init(nsIContent*      aContent,
                     nsIFrame*        aParent,
@@ -205,9 +205,9 @@ public:
    *
    * @see nsGkAtoms::svgGlyphFrame
    */
-  virtual nsIAtom* GetType() const;
+  virtual nsIAtom* GetType() const MOZ_OVERRIDE;
 
-  virtual bool IsFrameOfType(uint32_t aFlags) const
+  virtual bool IsFrameOfType(uint32_t aFlags) const MOZ_OVERRIDE
   {
     // Set the frame state bit for text frames to mark them as replaced.
     // XXX kipp: temporary
@@ -216,7 +216,7 @@ public:
   }
 
 #ifdef DEBUG
-  NS_IMETHOD GetFrameName(nsAString& aResult) const
+  NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE
   {
     return MakeFrameName(NS_LITERAL_STRING("SVGGlyph"), aResult);
   }
@@ -229,7 +229,7 @@ public:
   // nsISVGChildFrame interface:
   // These four always use the global transform, even if NS_STATE_NONDISPLAY_CHILD
   NS_IMETHOD PaintSVG(nsRenderingContext *aContext,
-                      const nsIntRect *aDirtyRect);
+                      const nsIntRect *aDirtyRect) MOZ_OVERRIDE;
   NS_IMETHOD_(nsIFrame*) GetFrameForPoint(const nsPoint &aPoint) MOZ_OVERRIDE;
   virtual SVGBBox GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
                                       uint32_t aFlags) MOZ_OVERRIDE;
@@ -240,11 +240,11 @@ public:
   NS_IMETHOD_(bool) IsDisplayContainer() MOZ_OVERRIDE { return false; }
 
   // nsSVGGeometryFrame methods
-  gfxMatrix GetCanvasTM(uint32_t aFor);
+  gfxMatrix GetCanvasTM(uint32_t aFor) MOZ_OVERRIDE;
 
   // nsISVGGlyphFragmentNode interface:
   // These do not use the global transform if NS_STATE_NONDISPLAY_CHILD
-  virtual uint32_t GetNumberOfChars();
+  virtual uint32_t GetNumberOfChars() MOZ_OVERRIDE;
   virtual float GetComputedTextLength() MOZ_OVERRIDE;
   virtual float GetSubStringLength(uint32_t charnum, uint32_t fragmentChars) MOZ_OVERRIDE;
   virtual int32_t GetCharNumAtPosition(mozilla::nsISVGPoint *point) MOZ_OVERRIDE;

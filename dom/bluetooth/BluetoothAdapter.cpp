@@ -13,6 +13,7 @@
 #include "GeneratedEvents.h"
 
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsDOMClassInfo.h"
 #include "nsIDOMBluetoothDeviceEvent.h"
 #include "nsTArrayHelpers.h"
@@ -103,7 +104,8 @@ public:
       return false;
     }
 
-    rv = nsTArrayToJSArray(sc->GetNativeContext(), devices, &JsDevices);
+    AutoPushJSContext cx(sc->GetNativeContext());
+    rv = nsTArrayToJSArray(cx, devices, &JsDevices);
     if (!JsDevices) {
       NS_WARNING("Cannot create JS array!");
       SetError(NS_LITERAL_STRING("BluetoothError"));
@@ -122,6 +124,37 @@ public:
   }
 private:
   nsRefPtr<BluetoothAdapter> mAdapterPtr;
+};
+
+class GetScoConnectionStatusTask : public BluetoothReplyRunnable
+{
+public:
+  GetScoConnectionStatusTask(nsIDOMDOMRequest* aReq) :
+    BluetoothReplyRunnable(aReq)
+  {
+    MOZ_ASSERT(aReq);
+  }
+
+  virtual bool ParseSuccessfulReply(JS::Value* aValue)
+  {
+    *aValue = JSVAL_VOID;
+
+    const BluetoothValue& v = mReply->get_BluetoothReplySuccess().value();
+    if (v.type() != BluetoothValue::Tbool) {
+      NS_WARNING("Not a boolean!");
+      SetError(NS_LITERAL_STRING("BluetoothReplyTypeError"));
+      return false;
+    }
+
+    aValue->setBoolean(v.get_bool());
+    return true;
+  }
+
+  void
+  ReleaseMembers()
+  {
+    BluetoothReplyRunnable::ReleaseMembers();
+  }
 };
 
 static int kCreatePairedDeviceTimeout = 50000; // unit: msec
@@ -228,9 +261,8 @@ BluetoothAdapter::SetPropertyByValue(const BluetoothNamedValue& aValue)
     nsIScriptContext* sc = GetContextForEventHandlers(&rv);
     NS_ENSURE_SUCCESS_VOID(rv);
 
-    if (NS_FAILED(nsTArrayToJSArray(sc->GetNativeContext(),
-                                    mUuids,
-                                    &mJsUuids))) {
+    AutoPushJSContext cx(sc->GetNativeContext());
+    if (NS_FAILED(nsTArrayToJSArray(cx, mUuids, &mJsUuids))) {
       NS_WARNING("Cannot set JS UUIDs object!");
       return;
     }
@@ -247,8 +279,8 @@ BluetoothAdapter::SetPropertyByValue(const BluetoothNamedValue& aValue)
     nsIScriptContext* sc = GetContextForEventHandlers(&rv);
     NS_ENSURE_SUCCESS_VOID(rv);
 
-    if (NS_FAILED(nsTArrayToJSArray(sc->GetNativeContext(),
-                                    mDeviceAddresses,
+    AutoPushJSContext cx(sc->GetNativeContext());
+    if (NS_FAILED(nsTArrayToJSArray(cx, mDeviceAddresses,
                                     &mJsDeviceAddresses))) {
       NS_WARNING("Cannot set JS Devices object!");
       return;
@@ -738,6 +770,60 @@ BluetoothAdapter::ConfirmReceivingFile(const nsAString& aDeviceAddress,
   BluetoothService* bs = BluetoothService::Get();
   NS_ENSURE_TRUE(bs, NS_ERROR_FAILURE);
   bs->ConfirmReceivingFile(aDeviceAddress, aConfirmation, results);
+
+  req.forget(aRequest);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::ConnectSco(nsIDOMDOMRequest** aRequest)
+{
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = PrepareDOMRequest(GetOwner(), getter_AddRefs(req));
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results =
+    new BluetoothVoidReplyRunnable(req);
+
+  BluetoothService* bs = BluetoothService::Get();
+  NS_ENSURE_TRUE(bs, NS_ERROR_FAILURE);
+  bs->ConnectSco(results);
+
+  req.forget(aRequest);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::DisconnectSco(nsIDOMDOMRequest** aRequest)
+{
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = PrepareDOMRequest(GetOwner(), getter_AddRefs(req));
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results =
+    new BluetoothVoidReplyRunnable(req);
+
+  BluetoothService* bs = BluetoothService::Get();
+  NS_ENSURE_TRUE(bs, NS_ERROR_FAILURE);
+  bs->DisconnectSco(results);
+
+  req.forget(aRequest);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::IsScoConnected(nsIDOMDOMRequest** aRequest)
+{
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = PrepareDOMRequest(GetOwner(), getter_AddRefs(req));
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+
+  nsRefPtr<BluetoothReplyRunnable> results =
+    new GetScoConnectionStatusTask(req);
+
+  BluetoothService* bs = BluetoothService::Get();
+  NS_ENSURE_TRUE(bs, NS_ERROR_FAILURE);
+  bs->IsScoConnected(results);
 
   req.forget(aRequest);
   return NS_OK;

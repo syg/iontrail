@@ -52,7 +52,7 @@ void
 CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   if (!mTextureClient) {
-    mTextureClient = CreateTextureClient(TEXTURE_SHMEM);
+    mTextureClient = CreateTextureClient(TEXTURE_CONTENT);
     MOZ_ASSERT(mTextureClient, "Failed to create texture client");
   }
 
@@ -68,7 +68,7 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 }
 
 void
-CanvasClient2D::Updated()
+CanvasClientWebGL::Updated()
 {
   mForwarder->UpdateTextureNoSwap(this, 1, mTextureClient->GetDescriptor());
 }

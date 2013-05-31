@@ -55,6 +55,7 @@ var tests = {
     if (navigator.platform.contains("Mac")) {
       info("Skipping checking the menubar on Mac OS");
       next();
+      return;
     }
 
     // Test that keyboard accessible menuitem doesn't exist when no ambient icons specified.
@@ -95,6 +96,14 @@ var tests = {
       label: "Test Ambient 3",
       menuURL: "https://example.com/testAmbient3"
     };
+    let ambience4 = {
+      name: "testIcon4",
+      iconURL: "https://example.com/browser/browser/base/content/test/moz.png",
+      contentPanel: "about:blank",
+      counter: 0,
+      label: "Test Ambient 4",
+      menuURL: "https://example.com/testAmbient4"
+    };
     Social.provider.setAmbientNotification(ambience);
 
     // for Bug 813834.  Check preference whether stored data is correct.
@@ -102,6 +111,12 @@ var tests = {
 
     Social.provider.setAmbientNotification(ambience2);
     Social.provider.setAmbientNotification(ambience3);
+    
+    try {
+      Social.provider.setAmbientNotification(ambience4);
+    } catch(e) {}
+    let numIcons = Object.keys(Social.provider.ambientNotificationIcons).length;
+    ok(numIcons == 3, "prevent adding more than 3 ambient notification icons");
 
     let statusIcon = document.getElementById("social-provider-button").nextSibling;
     waitForCondition(function() {
@@ -121,8 +136,10 @@ var tests = {
       is(statusIcon.getAttribute("aria-label"), "Test Ambient 1 \u2046");
 
       // The menu bar isn't as easy to instrument on Mac.
-      if (navigator.platform.contains("Mac"))
+      if (navigator.platform.contains("Mac")) {
         next();
+        return;
+      }
 
       // Test that keyboard accessible menuitem was added.
       let toolsPopup = document.getElementById("menu_ToolsPopup");

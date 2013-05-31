@@ -21,7 +21,6 @@ const Cu = Components.utils;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource:///modules/PropertyPanel.jsm");
 Cu.import("resource:///modules/source-editor.jsm");
 Cu.import("resource:///modules/devtools/LayoutHelpers.jsm");
 Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
@@ -34,7 +33,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
                                   "resource:///modules/devtools/VariablesView.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource:///modules/devtools/gDevTools.jsm");
+                                  "resource://gre/modules/devtools/Loader.jsm");
+
+let Telemetry = devtools.require("devtools/shared/telemetry");
 
 const SCRATCHPAD_CONTEXT_CONTENT = 1;
 const SCRATCHPAD_CONTEXT_BROWSER = 2;
@@ -47,6 +48,10 @@ const BUTTON_POSITION_DONT_SAVE = 2;
 const BUTTON_POSITION_REVERT = 0;
 const VARIABLES_VIEW_URL = "chrome://browser/content/devtools/widgets/VariablesView.xul";
 
+// Because we have no constructor / destructor where we can log metrics we need
+// to do so here.
+let telemetry = new Telemetry();
+telemetry.toolOpened("scratchpad");
 
 /**
  * The scratchpad object handles the Scratchpad window functionality.
@@ -79,7 +84,7 @@ var Scratchpad = {
       .replace(/^\/\*/, "")
       .replace(/\*\/$/, "");
 
-    aLine.split(",").forEach(function (pair) {
+    aLine.split(",").forEach(pair => {
       let [key, val] = pair.split(":");
 
       if (key && val) {
@@ -621,18 +626,18 @@ var Scratchpad = {
     let encoder = new TextEncoder();
     let buffer = encoder.encode(this.getText());
     let promise = OS.File.writeAtomic(aFile.path, buffer,{tmpPath: aFile.path + ".tmp"});
-    promise.then(function success(value) {
+    promise.then(value => {
       if (aCallback) {
         aCallback.call(this, Components.results.NS_OK);
       }
-    }.bind(this), function failure(reason) {
+    }, reason => {
       if (!aSilentError) {
         window.alert(this.strings.GetStringFromName("saveFile.failed"));
       }
       if (aCallback) {
         aCallback.call(this, Components.results.NS_ERROR_UNEXPECTED);
       }
-    }.bind(this));
+    });
 
   },
 
@@ -656,8 +661,7 @@ var Scratchpad = {
     let channel = NetUtil.newChannel(aFile);
     channel.contentType = "application/javascript";
 
-    let self = this;
-    NetUtil.asyncFetch(channel, function(aInputStream, aStatus) {
+    NetUtil.asyncFetch(channel, (aInputStream, aStatus) => {
       let content = null;
 
       if (Components.isSuccessCode(aStatus)) {
@@ -670,22 +674,22 @@ var Scratchpad = {
 
         // Check to see if the first line is a mode-line comment.
         let line = content.split("\n")[0];
-        let modeline = self._scanModeLine(line);
+        let modeline = this._scanModeLine(line);
         let chrome = Services.prefs.getBoolPref(DEVTOOLS_CHROME_ENABLED);
 
         if (chrome && modeline["-sp-context"] === "browser") {
-          self.setBrowserContext();
+          this.setBrowserContext();
         }
 
-        self.setText(content);
-        self.editor.resetUndo();
+        this.setText(content);
+        this.editor.resetUndo();
       }
       else if (!aSilentError) {
-        window.alert(self.strings.GetStringFromName("openFile.failed"));
+        window.alert(this.strings.GetStringFromName("openFile.failed"));
       }
 
       if (aCallback) {
-        aCallback.call(self, aStatus, content);
+        aCallback.call(this, aStatus, content);
       }
     });
   },
@@ -698,8 +702,8 @@ var Scratchpad = {
    */
   openFile: function SP_openFile(aIndex)
   {
-    let promptCallback = function(aFile) {
-      this.promptSave(function(aCloseFile, aSaved, aStatus) {
+    let promptCallback = aFile => {
+      this.promptSave((aCloseFile, aSaved, aStatus) => {
         let shouldOpen = aCloseFile;
         if (aSaved && !Components.isSuccessCode(aStatus)) {
           shouldOpen = false;
@@ -732,23 +736,21 @@ var Scratchpad = {
           this.importFromFile(file, false);
           this.setRecentFile(file);
         }
-      }.bind(this));
-    }.bind(this);
+      });
+    };
 
     if (aIndex > -1) {
       promptCallback();
     } else {
       let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-      let fpCallback = function fpCallback_done(aResult) {
-        if (aResult != Ci.nsIFilePicker.returnCancel) {
-          promptCallback(fp.file);
-        }
-      };
-
       fp.init(window, this.strings.GetStringFromName("openFile.title"),
               Ci.nsIFilePicker.modeOpen);
       fp.defaultString = "";
-      fp.open(fpCallback);
+      fp.open(aResult => {
+        if (aResult != Ci.nsIFilePicker.returnCancel) {
+          promptCallback(fp.file);
+        }
+      });
     }
   },
 
@@ -953,7 +955,7 @@ var Scratchpad = {
     let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
     file.initWithPath(this.filename);
 
-    this.exportToFile(file, true, false, function(aStatus) {
+    this.exportToFile(file, true, false, aStatus => {
       if (Components.isSuccessCode(aStatus)) {
         this.editor.dirty = false;
         this.setRecentFile(file);
@@ -973,10 +975,10 @@ var Scratchpad = {
   saveFileAs: function SP_saveFileAs(aCallback)
   {
     let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-    let fpCallback = function fpCallback_done(aResult) {
+    let fpCallback = aResult => {
       if (aResult != Ci.nsIFilePicker.returnCancel) {
         this.setFilename(fp.file.path);
-        this.exportToFile(fp.file, true, false, function(aStatus) {
+        this.exportToFile(fp.file, true, false, aStatus => {
           if (Components.isSuccessCode(aStatus)) {
             this.editor.dirty = false;
             this.setRecentFile(fp.file);
@@ -986,7 +988,7 @@ var Scratchpad = {
           }
         });
       }
-    }.bind(this);
+    };
 
     fp.init(window, this.strings.GetStringFromName("saveFileAs"),
             Ci.nsIFilePicker.modeSave);
@@ -1009,7 +1011,7 @@ var Scratchpad = {
       return;
     }
 
-    this.importFromFile(file, false, function(aStatus, aContent) {
+    this.importFromFile(file, false, (aStatus, aContent) => {
       if (aCallback) {
         aCallback(aStatus);
       }
@@ -1045,8 +1047,8 @@ var Scratchpad = {
         return;
       }
       if (button == BUTTON_POSITION_REVERT) {
-        this.revertFile(function(aStatus) {
-          if(aCallback){
+        this.revertFile(aStatus => {
+          if (aCallback) {
             aCallback(true, aStatus);
           }
         });
@@ -1348,7 +1350,7 @@ var Scratchpad = {
       }
 
       if (button == BUTTON_POSITION_SAVE) {
-        this.saveFile(function(aStatus) {
+        this.saveFile(aStatus => {
           if (aCallback) {
             aCallback(true, true, aStatus);
           }
@@ -1387,19 +1389,20 @@ var Scratchpad = {
    */
   close: function SP_close(aCallback)
   {
-    this.promptSave(function(aShouldClose, aSaved, aStatus) {
+    this.promptSave((aShouldClose, aSaved, aStatus) => {
       let shouldClose = aShouldClose;
       if (aSaved && !Components.isSuccessCode(aStatus)) {
         shouldClose = false;
       }
 
       if (shouldClose) {
+        telemetry.toolClosed("scratchpad");
         window.close();
       }
       if (aCallback) {
         aCallback();
       }
-    }.bind(this));
+    });
   },
 
   _observers: [],

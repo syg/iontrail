@@ -20,6 +20,7 @@
 #include "nsIDocument.h"
 #include "nsINodeInfo.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
@@ -1306,7 +1307,13 @@ nsDisplayImage::BuildLayer(nsDisplayListBuilder* aBuilder,
   nsresult rv = mImage->GetImageContainer(aManager, getter_AddRefs(container));
   NS_ENSURE_SUCCESS(rv, nullptr);
 
-  nsRefPtr<ImageLayer> layer = aManager->CreateImageLayer();
+  nsRefPtr<ImageLayer> layer = static_cast<ImageLayer*>
+    (aManager->GetLayerBuilder()->GetLeafLayerFor(aBuilder, this));
+  if (!layer) {
+    layer = aManager->CreateImageLayer();
+    if (!layer)
+      return nullptr;
+  }
   layer->SetContainer(container);
   ConfigureLayer(layer, aParameters.mOffset);
   return layer.forget();

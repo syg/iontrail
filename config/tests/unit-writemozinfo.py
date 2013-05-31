@@ -11,7 +11,6 @@ class TestBuildDict(unittest.TestCase):
         """
         Test that missing required values raises.
         """
-        self.assertRaises(Exception, build_dict, {})
         self.assertRaises(Exception, build_dict, {'OS_TARGET':'foo'})
         self.assertRaises(Exception, build_dict, {'TARGET_CPU':'foo'})
         self.assertRaises(Exception, build_dict, {'MOZ_WIDGET_TOOLKIT':'foo'})
@@ -175,12 +174,16 @@ class TestWriteJson(unittest.TestCase):
         """
         write_json(self.f, env={'OS_TARGET':'WINNT',
                                 'TARGET_CPU':'i386',
+                                'TOPSRCDIR':'/tmp',
+                                'MOZCONFIG':'foo',
                                 'MOZ_WIDGET_TOOLKIT':'windows'})
         with open(self.f) as f:
             d = json.load(f)
             self.assertEqual('win', d['os'])
             self.assertEqual('x86', d['processor'])
             self.assertEqual('windows', d['toolkit'])
+            self.assertEqual('/tmp', d['topsrcdir'])
+            self.assertEqual(os.path.normpath('/tmp/foo'), d['mozconfig'])
             self.assertEqual(32, d['bits'])
 
     def testFileObj(self):

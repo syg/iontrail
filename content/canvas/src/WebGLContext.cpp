@@ -158,7 +158,7 @@ WebGLContext::WebGLContext()
 
     mScissorTestEnabled = 0;
     mDitherEnabled = 1;
-    
+
     // initialize some GL values: we're going to get them from the GL and use them as the sizes of arrays,
     // so in case glGetIntegerv leaves them uninitialized because of a GL bug, we would have very weird crashes.
     mGLMaxVertexAttribs = 0;
@@ -196,6 +196,10 @@ WebGLContext::WebGLContext()
     mMinInUseAttribArrayLength = 0;
 
     mIsScreenCleared = false;
+
+    mDisableFragHighP = false;
+
+    mDrawCallsSinceLastFlush = 0;
 }
 
 WebGLContext::~WebGLContext()
@@ -518,12 +522,12 @@ WebGLContext::SetDimensions(int32_t width, int32_t height)
 
     // try the default provider, whatever that is
     if (!gl && useOpenGL) {
-        GLContext::ContextFlags flag = useMesaLlvmPipe 
+        GLContext::ContextFlags flag = useMesaLlvmPipe
                                        ? GLContext::ContextFlagsMesaLLVMPipe
                                        : GLContext::ContextFlagsNone;
         gl = gl::GLContextProvider::CreateOffscreen(size, caps, flag);
         if (gl && !InitAndValidateGL()) {
-            GenerateWarning("Error during %s initialization", 
+            GenerateWarning("Error during %s initialization",
                             useMesaLlvmPipe ? "Mesa LLVMpipe" : "OpenGL");
             return NS_ERROR_FAILURE;
         }
@@ -804,6 +808,7 @@ public:
 
         // Present our screenbuffer, if needed.
         context->PresentScreenBuffer();
+        context->mDrawCallsSinceLastFlush = 0;
     }
 
     /** DidTransactionCallback gets called by the Layers code everytime the WebGL canvas gets composite,
@@ -943,9 +948,16 @@ bool WebGLContext::IsExtensionSupported(JSContext *cx, WebGLExtensionID ext) con
     }
 
     switch (ext) {
+        case OES_element_index_uint:
+            if (!gl->IsGLES2())
+                return true;
+            return gl->IsExtensionSupported(GLContext::OES_element_index_uint);
         case OES_standard_derivatives:
+            if (!gl->IsGLES2())
+                return true;
+            return gl->IsExtensionSupported(GLContext::OES_standard_derivatives);
         case WEBGL_lose_context:
-            // We always support these extensions.
+            // We always support this extension.
             return true;
         case OES_texture_float:
             return gl->IsExtensionSupported(gl->IsGLES2() ? GLContext::OES_texture_float
@@ -957,23 +969,20 @@ bool WebGLContext::IsExtensionSupported(JSContext *cx, WebGLExtensionID ext) con
                 return true;
             }
             else if (gl->IsExtensionSupported(GLContext::EXT_texture_compression_dxt1) &&
-                       gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt3) &&
-                       gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt5))
+                     gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt3) &&
+                     gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt5))
             {
                 return true;
             }
-            else
-            {
-                return false;
-            }
+            return false;
         case WEBGL_compressed_texture_atc:
             return gl->IsExtensionSupported(GLContext::AMD_compressed_ATC_texture);
         case WEBGL_compressed_texture_pvrtc:
             return gl->IsExtensionSupported(GLContext::IMG_texture_compression_pvrtc);
         case WEBGL_depth_texture:
-            if (gl->IsGLES2() && 
+            if (gl->IsGLES2() &&
                 gl->IsExtensionSupported(GLContext::OES_packed_depth_stencil) &&
-                gl->IsExtensionSupported(GLContext::OES_depth_texture)) 
+                gl->IsExtensionSupported(GLContext::OES_depth_texture))
             {
                 return true;
             }
@@ -982,17 +991,15 @@ bool WebGLContext::IsExtensionSupported(JSContext *cx, WebGLExtensionID ext) con
             {
                 return true;
             }
-            else
-            {
-                return false;
-            }
+            return false;
         case WEBGL_debug_renderer_info:
             return xpc::AccessCheck::isChrome(js::GetContextCompartment(cx));
         default:
-            MOZ_ASSERT(false, "should not get there.");
+            // For warnings-as-errors.
+            break;
     }
 
-    MOZ_ASSERT(false, "should not get there.");
+    MOZ_NOT_REACHED("Query for unknown extension.");
     return false;
 }
 
@@ -1013,7 +1020,11 @@ WebGLContext::GetExtension(JSContext *cx, const nsAString& aName, ErrorResult& r
     WebGLExtensionID ext = WebGLExtensionID_unknown_extension;
 
     // step 1: figure what extension is wanted
-    if (CompareWebGLExtensionName(name, "OES_texture_float"))
+    if (CompareWebGLExtensionName(name, "OES_element_index_uint"))
+    {
+        ext = OES_element_index_uint;
+    }
+    else if (CompareWebGLExtensionName(name, "OES_texture_float"))
     {
         ext = OES_texture_float;
     }
@@ -1075,6 +1086,9 @@ WebGLContext::GetExtension(JSContext *cx, const nsAString& aName, ErrorResult& r
     if (!IsExtensionEnabled(ext)) {
         WebGLExtensionBase *obj = nullptr;
         switch (ext) {
+            case OES_element_index_uint:
+                obj = new WebGLExtensionElementIndexUint(this);
+                break;
             case OES_standard_derivatives:
                 obj = new WebGLExtensionStandardDerivatives(this);
                 break;
@@ -1378,7 +1392,7 @@ WebGLContext::MaybeRestoreContext()
             resetStatus = GLContext::CONTEXT_GUILTY_CONTEXT_RESET_ARB;
         }
     }
-    
+
     if (resetStatus != GLContext::CONTEXT_NO_ERROR) {
         // It's already lost, but clean up after it and signal to JS that it is
         // lost.
@@ -1439,6 +1453,8 @@ WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString>
 
     nsTArray<nsString>& arr = retval.SetValue();
 
+    if (IsExtensionSupported(cx, OES_element_index_uint))
+        arr.AppendElement(NS_LITERAL_STRING("OES_element_index_uint"));
     if (IsExtensionSupported(cx, OES_texture_float))
         arr.AppendElement(NS_LITERAL_STRING("OES_texture_float"));
     if (IsExtensionSupported(cx, OES_standard_derivatives))

@@ -20,6 +20,10 @@
 #include <windows.h>
 #endif
 
+#ifdef GetClassName
+#undef GetClassName
+#endif
+
 #include "GLDefs.h"
 #include "GLLibraryLoader.h"
 #include "gfxASurface.h"
@@ -205,7 +209,7 @@ public:
 
     // Mark this context as destroyed.  This will NULL out all
     // the GL function pointers!
-    void THEBES_API MarkDestroyed();
+    void MarkDestroyed();
 
     bool IsDestroyed() {
         // MarkDestroyed will mark all these as null.
@@ -262,7 +266,7 @@ public:
     bool IsGLES2() const {
         return mIsGLES2;
     }
-    
+
     /**
      * Returns true if either this is the GLES2 API, or had the GL_ARB_ES2_compatibility extension
      */
@@ -297,9 +301,11 @@ public:
     enum {
         RendererAdreno200,
         RendererAdreno205,
-        RendererAdreno320,
+        RendererAdrenoTM205,
+        RendererAdrenoTM320,
         RendererSGX530,
         RendererSGX540,
+        RendererTegra,
         RendererOther
     };
 
@@ -808,7 +814,7 @@ public:
      * Note that neither ReadPixelsIntoImageSurface nor
      * ReadScreenIntoImageSurface call dest->Flush/MarkDirty.
      */
-    void THEBES_API ReadPixelsIntoImageSurface(gfxImageSurface* dest);
+    void ReadPixelsIntoImageSurface(gfxImageSurface* dest);
 
     // Similar to ReadPixelsIntoImageSurface, but pulls from the screen
     // instead of the currently bound framebuffer.
@@ -858,14 +864,14 @@ public:
      * The aDstPoint parameter is ignored if no texture was provided
      * or aOverwrite is true.
      *
-     * \param aSurface Surface to upload. 
+     * \param aSurface Surface to upload.
      * \param aDstRegion Region of texture to upload to.
      * \param aTexture Texture to use, or 0 to have one created for you.
      * \param aOverwrite Over an existing texture with a new one.
-     * \param aSrcPoint Offset into aSrc where the region's bound's 
+     * \param aSrcPoint Offset into aSrc where the region's bound's
      *  TopLeft() sits.
      * \param aPixelBuffer Pass true to upload texture data with an
-     *  offset from the base data (generally for pixel buffer objects), 
+     *  offset from the base data (generally for pixel buffer objects),
      *  otherwise textures are upload with an absolute pointer to the data.
      * \param aTextureUnit, the texture unit used temporarily to upload the
      *  surface. This testure may be overridden, clients should not rely on
@@ -873,7 +879,7 @@ public:
      *  texture unit being active.
      * \return Shader program needed to render this texture.
      */
-    ShaderProgramType UploadSurfaceToTexture(gfxASurface *aSurface, 
+    ShaderProgramType UploadSurfaceToTexture(gfxASurface *aSurface,
                                              const nsIntRegion& aDstRegion,
                                              GLuint& aTexture,
                                              bool aOverwrite = false,
@@ -881,16 +887,16 @@ public:
                                              bool aPixelBuffer = false,
                                              GLenum aTextureUnit = LOCAL_GL_TEXTURE0);
 
-    
-    void TexImage2D(GLenum target, GLint level, GLint internalformat, 
+
+    void TexImage2D(GLenum target, GLint level, GLint internalformat,
                     GLsizei width, GLsizei height, GLsizei stride,
-                    GLint pixelsize, GLint border, GLenum format, 
+                    GLint pixelsize, GLint border, GLenum format,
                     GLenum type, const GLvoid *pixels);
 
-    void TexSubImage2D(GLenum target, GLint level, 
-                       GLint xoffset, GLint yoffset, 
+    void TexSubImage2D(GLenum target, GLint level,
+                       GLint xoffset, GLint yoffset,
                        GLsizei width, GLsizei height, GLsizei stride,
-                       GLint pixelsize, GLenum format, 
+                       GLint pixelsize, GLenum format,
                        GLenum type, const GLvoid* pixels);
 
     /**
@@ -1016,6 +1022,7 @@ public:
         OES_EGL_sync,
         OES_EGL_image_external,
         EXT_packed_depth_stencil,
+        OES_element_index_uint,
         Extensions_Max
     };
 
@@ -1397,19 +1404,19 @@ protected:
     }
 
 public:
- 
+
     /** \returns the first GL error, and guarantees that all GL error flags are cleared,
       * i.e. that a subsequent GetError call will return NO_ERROR
       */
     GLenum GetAndClearError() {
         // the first error is what we want to return
         GLenum error = fGetError();
-        
+
         if (error) {
             // clear all pending errors
             while(fGetError()) {}
         }
-        
+
         return error;
     }
 
@@ -1458,7 +1465,7 @@ public:
             if (DebugMode() & DebugTrace)
                 printf_stderr("[gl:%p] < %s [0x%04x]\n", this, glFunction, mGLError);
             if (mGLError != LOCAL_GL_NO_ERROR) {
-                printf_stderr("GL ERROR: %s generated GL error %s(0x%04x)\n", 
+                printf_stderr("GL ERROR: %s generated GL error %s(0x%04x)\n",
                               glFunction,
                               GLErrorToString(mGLError),
                               mGLError);
@@ -1495,7 +1502,7 @@ public:
 #define BEFORE_GL_CALL do {                     \
     BeforeGLCall(MOZ_FUNCTION_NAME);            \
 } while (0)
-    
+
 #define AFTER_GL_CALL do {                      \
     AfterGLCall(MOZ_FUNCTION_NAME);             \
 } while (0)
@@ -1589,7 +1596,7 @@ private:
         // we use viewport instead and assume viewport size matches the
         // destination. If we ever try use partial viewports for layers we need
         // to fix this, and remove the assertion.
-        NS_ASSERTION(!mFlipped || (x == 0 && y == 0), "TODO: Need to flip the viewport rect"); 
+        NS_ASSERTION(!mFlipped || (x == 0 && y == 0), "TODO: Need to flip the viewport rect");
         mSymbols.fViewport(x, y, width, height);
         AFTER_GL_CALL;
     }
@@ -1983,7 +1990,7 @@ public:
     }
 
     void fGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params)
-    {  
+    {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fGetTexLevelParameteriv);
         mSymbols.fGetTexLevelParameteriv(target, level, pname, params);
@@ -2865,20 +2872,20 @@ public:
 #undef ASSERT_SYMBOL_PRESENT
 
 #ifdef DEBUG
-    void THEBES_API CreatedProgram(GLContext *aOrigin, GLuint aName);
-    void THEBES_API CreatedShader(GLContext *aOrigin, GLuint aName);
-    void THEBES_API CreatedBuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API CreatedQueries(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API CreatedTextures(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API CreatedFramebuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API CreatedRenderbuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API DeletedProgram(GLContext *aOrigin, GLuint aName);
-    void THEBES_API DeletedShader(GLContext *aOrigin, GLuint aName);
-    void THEBES_API DeletedBuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API DeletedQueries(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API DeletedTextures(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API DeletedFramebuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
-    void THEBES_API DeletedRenderbuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void CreatedProgram(GLContext *aOrigin, GLuint aName);
+    void CreatedShader(GLContext *aOrigin, GLuint aName);
+    void CreatedBuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void CreatedQueries(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void CreatedTextures(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void CreatedFramebuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void CreatedRenderbuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void DeletedProgram(GLContext *aOrigin, GLuint aName);
+    void DeletedShader(GLContext *aOrigin, GLuint aName);
+    void DeletedBuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void DeletedQueries(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void DeletedTextures(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void DeletedFramebuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
+    void DeletedRenderbuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames);
 
     void SharedContextDestroyed(GLContext *aChild);
     void ReportOutstandingNames();

@@ -26,24 +26,16 @@ function testSelectTool(aToolbox) {
 
 function testOptionsShortcut() {
   ok(true, "Toolbox selected via selectTool method");
-  toolbox.once("options-selected", testOptionsButtonClick);
+  toolbox.once("options-selected", testOptions);
   toolbox.selectTool("webconsole")
          .then(() => synthesizeKeyFromKeyTag("toolbox-options-key", doc));
 }
 
-function testOptionsButtonClick() {
-  ok(true, "Toolbox selected via shortcut");
-  toolbox.once("options-selected", testOptions);
-  toolbox.selectTool("webconsole")
-         .then(() => doc.getElementById("toolbox-tab-options").click());
-}
-
-function testOptions(event, iframe) {
+function testOptions(event, tool) {
   ok(true, "Toolbox selected via button click");
-  panelWin = iframe.contentWindow;
-  let panelDoc = iframe.contentDocument;
+  panelWin = tool.panelWin;
   // Testing pref changes
-  let prefCheckboxes = panelDoc.querySelectorAll("checkbox[data-pref]");
+  let prefCheckboxes = tool.panelDoc.querySelectorAll("checkbox[data-pref]");
   for (let checkbox of prefCheckboxes) {
     prefNodes.push(checkbox);
     prefValues.push(Services.prefs.getBoolPref(checkbox.getAttribute("data-pref")));
@@ -63,7 +55,13 @@ function testMouseClicks() {
   }
   gDevTools.once("pref-changed", prefChanged);
   info("Click event synthesized for index " + index);
-  EventUtils.synthesizeMouse(prefNodes[index], 10, 10, {}, panelWin);
+  prefNodes[index].scrollIntoView();
+
+  // We use executeSoon here to ensure that the element is in view and
+  // clickable.
+  executeSoon(function() {
+    EventUtils.synthesizeMouseAtCenter(prefNodes[index], {}, panelWin);
+  });
 }
 
 function prefChanged(event, data) {
@@ -97,11 +95,11 @@ function checkTools() {
 function toggleTools() {
   if (index < prefNodes.length) {
     gDevTools.once("tool-unregistered", checkUnregistered);
-    EventUtils.synthesizeMouse(prefNodes[index], 10, 10, {}, panelWin);
+    EventUtils.synthesizeMouseAtCenter(prefNodes[index], {}, panelWin);
   }
   else if (index < 2*prefNodes.length) {
     gDevTools.once("tool-registered", checkRegistered);
-    EventUtils.synthesizeMouse(prefNodes[index - prefNodes.length], 10, 10, {}, panelWin);
+    EventUtils.synthesizeMouseAtCenter(prefNodes[index - prefNodes.length], {}, panelWin);
   }
   else {
     cleanup();

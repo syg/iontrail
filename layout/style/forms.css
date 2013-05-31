@@ -404,28 +404,30 @@ input[type="image"]:disabled {
   cursor: inherit;
 }
 
-input[type="image"]:-moz-focusring,
-input[type="range"]:-moz-focusring {
+input[type="image"]:-moz-focusring {
   /* Don't specify the outline-color, we should always use initial value. */
   outline: 1px dotted;
 }
 
 /* file selector */
 input[type="file"] {
-  -moz-appearance: none;
+  display: inline-block;
   white-space: nowrap;
-  cursor: default;
+  overflow: hidden;
+  color: inherit;
+
+  /* Revert rules which apply on all inputs. */
+  -moz-appearance: none;
   -moz-binding: none;
+  cursor: default;
 
   border: none;
   background-color: transparent;
-
-  /* TODO: check why. */
-  padding: 0 !important;
+  padding: 0;
 }
 
 input[type="file"] > xul|label {
-  width: 12em;
+  min-width: 12em;
   -moz-padding-start: 5px;
 
   color: inherit;

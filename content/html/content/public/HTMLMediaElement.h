@@ -28,6 +28,8 @@
 #include "MediaMetadataManager.h"
 #include "AudioChannelAgent.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/TextTrack.h"
+#include "mozilla/dom/TextTrackList.h"
 #include "mozilla/ErrorResult.h"
 
 // Define to output information on decoding and painting framerate
@@ -40,6 +42,8 @@ namespace mozilla {
 class MediaResource;
 class MediaDecoder;
 }
+
+class nsITimer;
 
 namespace mozilla {
 namespace dom {
@@ -92,7 +96,7 @@ public:
   virtual bool ParseAttribute(int32_t aNamespaceID,
                               nsIAtom* aAttribute,
                               const nsAString& aValue,
-                              nsAttrValue& aResult);
+                              nsAttrValue& aResult) MOZ_OVERRIDE;
   // SetAttr override.  C++ is stupid, so have to override both
   // overloaded methods.
   nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
@@ -102,26 +106,26 @@ public:
   }
   virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                            nsIAtom* aPrefix, const nsAString& aValue,
-                           bool aNotify);
+                           bool aNotify) MOZ_OVERRIDE;
   virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttr,
-                             bool aNotify);
+                             bool aNotify) MOZ_OVERRIDE;
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
-                              bool aCompileEventHandlers);
+                              bool aCompileEventHandlers) MOZ_OVERRIDE;
   virtual void UnbindFromTree(bool aDeep = true,
-                              bool aNullParent = true);
-  virtual void DoneCreatingElement();
+                              bool aNullParent = true) MOZ_OVERRIDE;
+  virtual void DoneCreatingElement() MOZ_OVERRIDE;
 
   virtual bool IsHTMLFocusable(bool aWithMouse, bool *aIsFocusable,
-                               int32_t *aTabIndex);
-  virtual int32_t TabIndexDefault();
+                               int32_t *aTabIndex) MOZ_OVERRIDE;
+  virtual int32_t TabIndexDefault() MOZ_OVERRIDE;
 
   /**
    * Call this to reevaluate whether we should start/stop due to our owner
    * document being active, inactive, visible or hidden.
    */
-  void NotifyOwnerDocumentActivityChanged();
+  virtual void NotifyOwnerDocumentActivityChanged();
 
   // Called by the video decoder object, on the main thread,
   // when it has read the metadata containing video dimensions,
@@ -280,7 +284,7 @@ public:
   virtual void NotifyAudioAvailable(float* aFrameBuffer, uint32_t aFrameBufferLength,
                                     float aTime) MOZ_FINAL MOZ_OVERRIDE;
 
-  virtual bool IsNodeOfType(uint32_t aFlags) const;
+  virtual bool IsNodeOfType(uint32_t aFlags) const MOZ_OVERRIDE;
 
   /**
    * Returns the current load ID. Asynchronous events store the ID that was
@@ -448,7 +452,7 @@ public:
 
   bool Muted() const
   {
-    return mMuted;
+    return mMuted & MUTED_BY_CONTENT;
   }
 
   // XPCOM SetMuted() is OK
@@ -509,17 +513,29 @@ public:
     SetHTMLAttr(nsGkAtoms::mozaudiochannel, aValue, aRv);
   }
 
+  TextTrackList* TextTracks() const;
+
+  already_AddRefed<TextTrack> AddTextTrack(TextTrackKind aKind,
+                                           const nsAString& aLabel,
+                                           const nsAString& aLanguage);
+
+  void AddTextTrack(TextTrack* aTextTrack) {
+    mTextTracks->AddTextTrack(aTextTrack);
+  }
+
 protected:
   class MediaLoadListener;
   class StreamListener;
 
-  virtual void GetItemValueText(nsAString& text);
-  virtual void SetItemValueText(const nsAString& text);
+  virtual void GetItemValueText(nsAString& text) MOZ_OVERRIDE;
+  virtual void SetItemValueText(const nsAString& text) MOZ_OVERRIDE;
 
   class WakeLockBoolWrapper {
   public:
     WakeLockBoolWrapper(bool val = false)
       : mValue(val), mCanPlay(true), mOuter(nullptr) {}
+
+    ~WakeLockBoolWrapper();
 
     void SetOuter(HTMLMediaElement* outer) { mOuter = outer; }
     void SetCanPlay(bool aCanPlay);
@@ -530,15 +546,24 @@ protected:
 
     bool operator !() const { return !mValue; }
 
+    static void TimerCallback(nsITimer* aTimer, void* aClosure);
+
   private:
     void UpdateWakeLock();
 
     bool mValue;
     bool mCanPlay;
     HTMLMediaElement* mOuter;
-
-    nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
+    nsCOMPtr<nsITimer> mTimer;
   };
+
+  /**
+   * These two methods are called by the WakeLockBoolWrapper when the wakelock
+   * has to be created or released.
+   */
+  virtual void WakeLockCreate();
+  virtual void WakeLockRelease();
+  nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
 
   /**
    * Logs a warning message to the web console to report various failures.
@@ -623,11 +648,6 @@ protected:
    * created.
    */
   void AbortExistingLoads();
-
-  /**
-   * Create a URI for the given aURISpec string.
-   */
-  nsresult NewURIFromString(const nsAutoString& aURISpec, nsIURI** aURI);
 
   /**
    * Called when all potential resources are exhausted. Changes network
@@ -780,9 +800,14 @@ protected:
   void ProcessMediaFragmentURI();
 
   /**
-   * Mute or unmute the audio, without changing the value that |muted| reports.
+   * Mute or unmute the audio and change the value that the |muted| map.
    */
-  void SetMutedInternal(bool aMuted);
+  void SetMutedInternal(uint32_t aMuted);
+  /**
+   * Update the volume of the output audio stream to match the element's
+   * current mMuted/mVolume state.
+   */
+  void SetVolumeInternal();
 
   /**
    * Suspend (if aPauseForInactiveDocument) or resume element playback and
@@ -1003,8 +1028,13 @@ protected:
   // 'Pause' method, or playback not yet having started.
   WakeLockBoolWrapper mPaused;
 
-  // True if the sound is muted.
-  bool mMuted;
+  enum MutedReasons {
+    MUTED_BY_CONTENT               = 0x01,
+    MUTED_BY_INVALID_PLAYBACK_RATE = 0x02,
+    MUTED_BY_AUDIO_CHANNEL         = 0x04
+  };
+
+  uint32_t mMuted;
 
   // True if the sound is being captured.
   bool mAudioCaptured;
@@ -1087,14 +1117,14 @@ protected:
   // Audio Channel Type.
   AudioChannelType mAudioChannelType;
 
-  // The audiochannel has been suspended.
-  bool mChannelSuspended;
-
   // Is this media element playing?
   bool mPlayingThroughTheAudioChannel;
 
   // An agent used to join audio channel service.
   nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
+
+  // List of our attached text track objects.
+  nsRefPtr<TextTrackList> mTextTracks;
 };
 
 } // namespace dom

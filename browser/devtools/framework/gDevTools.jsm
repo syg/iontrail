@@ -4,192 +4,16 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = [ "gDevTools", "DevTools", "gDevToolsBrowser", "devtools" ];
+this.EXPORTED_SYMBOLS = [ "gDevTools", "DevTools", "gDevToolsBrowser" ];
 
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
-Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
-
-XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
-
-let loader = Cu.import("resource://gre/modules/commonjs/toolkit/loader.js", {}).Loader;
-
-// Used when the tools should be loaded from the Firefox package itself (the default)
-
-var BuiltinProvider = {
-  load: function(done) {
-    this.loader = new loader.Loader({
-      paths: {
-        "": "resource://gre/modules/commonjs/",
-        "main" : "resource:///modules/devtools/main",
-        "devtools": "resource:///modules/devtools",
-        "devtools/toolkit": "resource://gre/modules/devtools"
-      },
-      globals: {},
-    });
-    this.main = loader.main(this.loader, "main");
-
-    return Promise.resolve(undefined);
-  },
-
-  unload: function(reason) {
-    loader.unload(this.loader, reason);
-    delete this.loader;
-  },
-};
-
-var SrcdirProvider = {
-  load: function(done) {
-    let srcdir = Services.prefs.getComplexValue("devtools.loader.srcdir",
-                                                Ci.nsISupportsString);
-    srcdir = OS.Path.normalize(srcdir.data.trim());
-    let devtoolsDir = OS.Path.join(srcdir, "browser/devtools");
-    let toolkitDir = OS.Path.join(srcdir, "toolkit/devtools");
-
-    this.loader = new loader.Loader({
-      paths: {
-        "": "resource://gre/modules/commonjs/",
-        "devtools/toolkit": "file://" + toolkitDir,
-        "devtools": "file://" + devtoolsDir,
-        "main": "file://" + devtoolsDir + "/main.js"
-      },
-      globals: {}
-    });
-
-    this.main = loader.main(this.loader, "main");
-
-    return this._writeManifest(devtoolsDir).then((data) => {
-      this._writeManifest(toolkitDir);
-    }).then(null, Cu.reportError);
-  },
-
-  unload: function(reason) {
-    loader.unload(this.loader, reason);
-    delete this.loader;
-  },
-
-  _readFile: function(filename) {
-    let deferred = Promise.defer();
-    let file = new FileUtils.File(filename);
-    NetUtil.asyncFetch(file, (inputStream, status) => {
-      if (!Components.isSuccessCode(status)) {
-        deferred.reject(new Error("Couldn't load manifest: " + filename + "\n"));
-        return;
-      }
-      var data = NetUtil.readInputStreamToString(inputStream, inputStream.available());
-      deferred.resolve(data);
-    });
-    return deferred.promise;
-  },
-
-  _writeFile: function(filename, data) {
-    let deferred = Promise.defer();
-    let file = new FileUtils.File(filename);
-
-    var ostream = FileUtils.openSafeFileOutputStream(file)
-
-    var converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
-                    createInstance(Ci.nsIScriptableUnicodeConverter);
-    converter.charset = "UTF-8";
-    var istream = converter.convertToInputStream(data);
-    NetUtil.asyncCopy(istream, ostream, (status) => {
-      if (!Components.isSuccessCode(status)) {
-        deferred.reject(new Error("Couldn't write manifest: " + filename + "\n"));
-        return;
-      }
-
-      deferred.resolve(null);
-    });
-    return deferred.promise;
-  },
-
-  _writeManifest: function(dir) {
-    return this._readFile(dir + "/jar.mn").then((data) => {
-      // The file data is contained within inputStream.
-      // You can read it into a string with
-      let entries = [];
-      let lines = data.split(/\n/);
-      let preprocessed = /^\s*\*/;
-      let contentEntry = new RegExp("^\\s+content/(\\w+)/(\\S+)\\s+\\((\\S+)\\)");
-      for (let line of lines) {
-        if (preprocessed.test(line)) {
-          dump("Unable to override preprocessed file: " + line + "\n");
-          continue;
-        }
-        let match = contentEntry.exec(line);
-        if (match) {
-          let entry = "override chrome://" + match[1] + "/content/" + match[2] + "\tfile://" + dir + "/" + match[3];
-          entries.push(entry);
-        }
-      }
-      return this._writeFile(dir + "/chrome.manifest", entries.join("\n"));
-    }).then(() => {
-      Components.manager.addBootstrappedManifestLocation(new FileUtils.File(dir));
-    });
-  }
-};
-
-this.devtools = {
-  _provider: null,
-
-  get main() this._provider.main,
-
-  // This is a gross gross hack.  In one place (computed-view.js) we use
-  // Iterator, but the addon-sdk loader takes Iterator off the global.
-  // Give computed-view.js a way to get back to the Iterator until we have
-  // a chance to fix that crap.
-  _Iterator: Iterator,
-
-  setProvider: function(provider) {
-    if (provider === this._provider) {
-      return;
-    }
-
-    if (this._provider) {
-      delete this.require;
-      this._provider.unload("newprovider");
-      gDevTools._teardown();
-    }
-    this._provider = provider;
-    this._provider.load();
-    this.require = loader.Require(this._provider.loader, { id: "devtools" })
-
-    let exports = this._provider.main;
-    // Let clients find exports on this object.
-    Object.getOwnPropertyNames(exports).forEach(key => {
-      XPCOMUtils.defineLazyGetter(this, key, () => exports[key]);
-    });
-  },
-
-  /**
-   * Choose a default tools provider based on the preferences.
-   */
-  _chooseProvider: function() {
-    if (Services.prefs.prefHasUserValue("devtools.loader.srcdir")) {
-      this.setProvider(SrcdirProvider);
-    } else {
-      this.setProvider(BuiltinProvider);
-    }
-  },
-
-  /**
-   * Reload the current provider.
-   */
-  reload: function() {
-    var events = devtools.require("sdk/system/events");
-    events.emit("startupcache-invalidate", {});
-
-    this._provider.unload("reload");
-    delete this._provider;
-    gDevTools._teardown();
-    this._chooseProvider();
-  },
-};
+Cu.import("resource://gre/modules/devtools/Loader.jsm");
+Cu.import("resource:///modules/devtools/ProfilerController.jsm");
 
 const FORBIDDEN_IDS = new Set(["toolbox", ""]);
 const MAX_ORDINAL = 99;
@@ -204,9 +28,11 @@ this.DevTools = function DevTools() {
 
   // destroy() is an observer's handler so we need to preserve context.
   this.destroy = this.destroy.bind(this);
+  this._teardown = this._teardown.bind(this);
 
   EventEmitter.decorate(this);
 
+  Services.obs.addObserver(this._teardown, "devtools-unloaded", false);
   Services.obs.addObserver(this.destroy, "quit-application", false);
 }
 
@@ -222,8 +48,8 @@ DevTools.prototype = {
    *
    * Each toolDefinition has the following properties:
    * - id: Unique identifier for this tool (string|required)
-   * - killswitch: Property name to allow us to turn this tool on/off globally
-   *               (string|required) (TODO: default to devtools.{id}.enabled?)
+   * - visibilityswitch: Property name to allow us to hide this tool from the
+   *                     DevTools Toolbox.
    * - icon: URL pointing to a graphic which will be used as the src for an
    *         16x16 img tag (string|required)
    * - url: URL pointing to a XUL/XHTML document containing the user interface
@@ -241,7 +67,7 @@ DevTools.prototype = {
       throw new Error("Invalid definition.id");
     }
 
-    toolDefinition.killswitch = toolDefinition.killswitch ||
+    toolDefinition.visibilityswitch = toolDefinition.visibilityswitch ||
         "devtools." + toolId + ".enabled";
     this._tools.set(toolId, toolDefinition);
 
@@ -307,21 +133,17 @@ DevTools.prototype = {
    */
   getToolDefinitionMap: function DT_getToolDefinitionMap() {
     let tools = new Map();
-    let disabledTools = [];
-    try {
-      disabledTools = JSON.parse(Services.prefs.getCharPref("devtools.toolbox.disabledTools"));
-    } catch(ex) {}
 
     for (let [key, value] of this._tools) {
       let enabled;
 
       try {
-        enabled = Services.prefs.getBoolPref(value.killswitch);
+        enabled = Services.prefs.getBoolPref(value.visibilityswitch);
       } catch(e) {
         enabled = true;
       }
 
-      if (enabled && disabledTools.indexOf(key) == -1) {
+      if (enabled || value.id == "options") {
         tools.set(key, value);
       }
     }
@@ -453,8 +275,9 @@ DevTools.prototype = {
    */
   destroy: function() {
     Services.obs.removeObserver(this.destroy, "quit-application");
+    Services.obs.removeObserver(this._teardown, "devtools-unloaded");
 
-    for (let [key, tool] of this._tools) {
+    for (let [key, tool] of this.getToolDefinitionMap()) {
       this.unregisterTool(key, true);
     }
 
@@ -578,21 +401,32 @@ let gDevToolsBrowser = {
   },
 
   /**
-   * Add the menuitem for a tool to all open browser windows. Also toggles the
-   * kill switch preference of the tool.
+   * Add the menuitem for a tool to all open browser windows.
    *
    * @param {object} toolDefinition
    *        properties of the tool to add
    */
   _addToolToWindows: function DT_addToolToWindows(toolDefinition) {
-    // Set the kill switch pref boolean to true
-    Services.prefs.setBoolPref(toolDefinition.killswitch, true);
+    // No menu item or global shortcut is required for options panel.
+    if (toolDefinition.id == "options") {
+      return;
+    }
+
+    // Skip if the tool is disabled.
+    try {
+      if (!Services.prefs.getBoolPref(toolDefinition.visibilityswitch)) {
+        return;
+      }
+    } catch(e) {}
 
     // We need to insert the new tool in the right place, which means knowing
     // the tool that comes before the tool that we're trying to add
     let allDefs = gDevTools.getToolDefinitionArray();
     let prevDef;
     for (let def of allDefs) {
+      if (def.id == "options") {
+        continue;
+      }
       if (def === toolDefinition) {
         break;
       }
@@ -613,18 +447,35 @@ let gDevToolsBrowser = {
 
       let amp = doc.getElementById("appmenu_webDeveloper_popup");
       if (amp) {
-        let ref = (prevDef != null) ?
-            doc.getElementById("appmenuitem_" + prevDef.id).nextSibling :
-            doc.getElementById("appmenu_devtools_separator");
+        let ref;
 
-        amp.insertBefore(elements.appmenuitem, ref);
+        if (prevDef != null) {
+          let menuitem = doc.getElementById("appmenuitem_" + prevDef.id);
+          ref = menuitem && menuitem.nextSibling ? menuitem.nextSibling : null;
+        } else {
+          ref = doc.getElementById("appmenu_devtools_separator");
+        }
+
+        if (ref) {
+          amp.insertBefore(elements.appmenuitem, ref);
+        }
       }
 
       let mp = doc.getElementById("menuWebDeveloperPopup");
-      let ref = (prevDef != null) ?
-          doc.getElementById("menuitem_" + prevDef.id).nextSibling :
-          doc.getElementById("menu_devtools_separator");
-      mp.insertBefore(elements.menuitem, ref);
+      if (mp) {
+        let ref;
+
+        if (prevDef != null) {
+          let menuitem = doc.getElementById("menuitem_" + prevDef.id);
+          ref = menuitem && menuitem.nextSibling ? menuitem.nextSibling : null;
+        } else {
+          ref = doc.getElementById("menu_devtools_separator");
+        }
+
+        if (ref) {
+          mp.insertBefore(elements.menuitem, ref);
+        }
+      }
     }
   },
 
@@ -642,6 +493,17 @@ let gDevToolsBrowser = {
     let fragMenuItems = doc.createDocumentFragment();
 
     for (let toolDefinition of gDevTools.getToolDefinitionArray()) {
+      if (toolDefinition.id == "options") {
+        continue;
+      }
+
+      // Skip if the tool is disabled.
+      try {
+        if (!Services.prefs.getBoolPref(toolDefinition.visibilityswitch)) {
+          continue;
+        }
+      } catch(e) {}
+
       let elements = gDevToolsBrowser._createToolMenuElements(toolDefinition, doc);
 
       if (!elements) {
@@ -714,7 +576,7 @@ let gDevToolsBrowser = {
 
     let bc = doc.createElement("broadcaster");
     bc.id = "devtoolsMenuBroadcaster_" + id;
-    bc.setAttribute("label", toolDefinition.label);
+    bc.setAttribute("label", toolDefinition.menuLabel || toolDefinition.label);
     bc.setAttribute("command", cmd.id);
 
     if (key) {
@@ -767,16 +629,31 @@ let gDevToolsBrowser = {
   },
 
   /**
-   * Remove the menuitem for a tool to all open browser windows. Also sets the
-   * kill switch boolean pref to false.
-   *
-   * @param {object} toolId
-   *        id of the tool to remove
-   * @param {string} killswitch
-   *        The kill switch preference string of the tool
+   * Connects to the SPS profiler when the developer tools are open.
    */
-  _removeToolFromWindows: function DT_removeToolFromWindows(toolId, killswitch) {
-    Services.prefs.setBoolPref(killswitch, false);
+  _connectToProfiler: function DT_connectToProfiler() {
+    for (let win of gDevToolsBrowser._trackedBrowserWindows) {
+      if (devtools.TargetFactory.isKnownTab(win.gBrowser.selectedTab)) {
+        let target = devtools.TargetFactory.forTab(win.gBrowser.selectedTab);
+        if (gDevTools._toolboxes.has(target)) {
+          target.makeRemote().then(() => {
+            let profiler = new ProfilerController(target);
+            profiler.connect();
+          }).then(null, Cu.reportError);
+
+          return;
+        }
+      }
+    }
+  },
+
+  /**
+   * Remove the menuitem for a tool to all open browser windows.
+   *
+   * @param {string} toolId
+   *        id of the tool to remove
+   */
+  _removeToolFromWindows: function DT_removeToolFromWindows(toolId) {
     for (let win of gDevToolsBrowser._trackedBrowserWindows) {
       gDevToolsBrowser._removeToolFromMenu(toolId, win.document);
     }
@@ -843,6 +720,7 @@ let gDevToolsBrowser = {
    * All browser windows have been closed, tidy up remaining objects.
    */
   destroy: function() {
+    gDevTools.off("toolbox-ready", gDevToolsBrowser._connectToProfiler);
     Services.obs.removeObserver(gDevToolsBrowser.destroy, "quit-application");
   },
 }
@@ -854,21 +732,17 @@ gDevTools.on("tool-registered", function(ev, toolId) {
 });
 
 gDevTools.on("tool-unregistered", function(ev, toolId) {
-  let killswitch;
-  if (typeof toolId == "string") {
-    killswitch = "devtools." + toolId + ".enabled";
-  }
-  else {
-    killswitch = toolId.killswitch;
+  if (typeof toolId != "string") {
     toolId = toolId.id;
   }
-  gDevToolsBrowser._removeToolFromWindows(toolId, killswitch);
+  gDevToolsBrowser._removeToolFromWindows(toolId);
 });
 
 gDevTools.on("toolbox-ready", gDevToolsBrowser._updateMenuCheckbox);
+gDevTools.on("toolbox-ready", gDevToolsBrowser._connectToProfiler);
 gDevTools.on("toolbox-destroyed", gDevToolsBrowser._updateMenuCheckbox);
 
 Services.obs.addObserver(gDevToolsBrowser.destroy, "quit-application", false);
 
-// Now load the tools.
-devtools._chooseProvider();
+// Load the browser devtools main module as the loader's main module.
+devtools.main("main");

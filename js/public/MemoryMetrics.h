@@ -91,7 +91,6 @@ struct TypeInferenceSizes
 // Data for tracking JIT-code memory usage.
 struct CodeSizes
 {
-    size_t jaeger;
     size_t ion;
     size_t asmJS;
     size_t baseline;
@@ -153,9 +152,11 @@ struct ZoneStats
         gcHeapUnusedGcThings(0),
         gcHeapStringsNormal(0),
         gcHeapStringsShort(0),
+        gcHeapLazyScripts(0),
         gcHeapTypeObjects(0),
         gcHeapIonCodes(0),
         stringCharsNonHuge(0),
+        lazyScripts(0),
         typeObjects(0),
         typePool(0),
         hugeStrings()
@@ -167,9 +168,11 @@ struct ZoneStats
         gcHeapUnusedGcThings(other.gcHeapUnusedGcThings),
         gcHeapStringsNormal(other.gcHeapStringsNormal),
         gcHeapStringsShort(other.gcHeapStringsShort),
+        gcHeapLazyScripts(other.gcHeapLazyScripts),
         gcHeapTypeObjects(other.gcHeapTypeObjects),
         gcHeapIonCodes(other.gcHeapIonCodes),
         stringCharsNonHuge(other.stringCharsNonHuge),
+        lazyScripts(other.lazyScripts),
         typeObjects(other.typeObjects),
         typePool(other.typePool),
         hugeStrings()
@@ -186,10 +189,12 @@ struct ZoneStats
 
         ADD(gcHeapStringsNormal);
         ADD(gcHeapStringsShort);
+        ADD(gcHeapLazyScripts);
         ADD(gcHeapTypeObjects);
         ADD(gcHeapIonCodes);
 
         ADD(stringCharsNonHuge);
+        ADD(lazyScripts);
         ADD(typeObjects);
         ADD(typePool);
 
@@ -207,10 +212,12 @@ struct ZoneStats
     size_t gcHeapStringsNormal;
     size_t gcHeapStringsShort;
 
+    size_t gcHeapLazyScripts;
     size_t gcHeapTypeObjects;
     size_t gcHeapIonCodes;
 
     size_t stringCharsNonHuge;
+    size_t lazyScripts;
     size_t typeObjects;
     size_t typePool;
 
@@ -241,7 +248,6 @@ struct CompartmentStats
         shapesExtraTreeShapeKids(0),
         shapesCompartmentTables(0),
         scriptData(0),
-        jaegerData(0),
         baselineData(0),
         baselineStubsFallback(0),
         baselineStubsOptimized(0),
@@ -271,7 +277,6 @@ struct CompartmentStats
         shapesExtraTreeShapeKids(other.shapesExtraTreeShapeKids),
         shapesCompartmentTables(other.shapesCompartmentTables),
         scriptData(other.scriptData),
-        jaegerData(other.jaegerData),
         baselineData(other.baselineData),
         baselineStubsFallback(other.baselineStubsFallback),
         baselineStubsOptimized(other.baselineStubsOptimized),
@@ -306,7 +311,6 @@ struct CompartmentStats
     size_t shapesExtraTreeShapeKids;
     size_t shapesCompartmentTables;
     size_t scriptData;
-    size_t jaegerData;
     size_t baselineData;
     size_t baselineStubsFallback;
     size_t baselineStubsOptimized;
@@ -339,7 +343,6 @@ struct CompartmentStats
         ADD(shapesExtraTreeShapeKids);
         ADD(shapesCompartmentTables);
         ADD(scriptData);
-        ADD(jaegerData);
         ADD(baselineData);
         ADD(baselineStubsFallback);
         ADD(baselineStubsOptimized);

@@ -70,7 +70,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.7.16.1
+SQLITE_VERSION=3.7.17
 
 MSMANIFEST_TOOL=
 
@@ -203,7 +203,7 @@ if test -n "$gonkdir" ; then
 
     case "$ANDROID_VERSION" in
     15)
-        GONK_INCLUDES="-I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/frameworks/base/include -I$gonkdir/frameworks/base/services/camera -I$gonkdir/frameworks/base/include/media/stagefright -I$gonkdir/frameworks/base/include/media/stagefright/openmax -I$gonkdir/frameworks/base/media/libstagefright/rtsp -I$gonkdir/frameworks/base/media/libstagefright/include -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib -I$gonkdir/dalvik/libnativehelper/include/nativehelper"
+        GONK_INCLUDES="-I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/frameworks/base/include -I$gonkdir/frameworks/base/services/camera -I$gonkdir/frameworks/base/include/media/stagefright -I$gonkdir/frameworks/base/include/media/stagefright/openmax -I$gonkdir/frameworks/base/media/libstagefright/rtsp -I$gonkdir/frameworks/base/media/libstagefright/include -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib -I$gonkdir/dalvik/libnativehelper/include/nativehelper -I$gonkdir/external/valgrind"
         MOZ_B2G_BT=1
         MOZ_B2G_CAMERA=1
         MOZ_OMX_DECODER=1
@@ -486,24 +486,7 @@ case "$target" in
             AC_MSG_ERROR([The major versions of \$CC and \$CXX do not match.])
         fi
 
-        if test "$_CC_MAJOR_VERSION" = "14"; then
-            dnl Require VC8SP1 or newer.
-            dnl VC8 is 14.00.50727.42, VC8SP1 is 14.00.50727.762.
-            if test "$_CC_RELEASE" -lt 50727 -o \
-                    \( "$_CC_RELEASE" -eq 50727 -a "$_CC_BUILD" -lt 762 \); then
-              AC_MSG_ERROR([This version ($CC_VERSION) of the MSVC compiler is unsupported. You probably need to install Service Pack 1 of Visual Studio 2005. See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
-            fi
-
-            _CC_SUITE=8
-            _MSVS_VERSION=2005
-            AC_DEFINE(_CRT_SECURE_NO_DEPRECATE)
-            AC_DEFINE(_CRT_NONSTDC_NO_DEPRECATE)
-        elif test "$_CC_MAJOR_VERSION" = "15"; then
-            _CC_SUITE=9
-            _MSVS_VERSION=2008
-            AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
-            AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
-        elif test "$_CC_MAJOR_VERSION" = "16"; then
+        if test "$_CC_MAJOR_VERSION" = "16"; then
             _CC_SUITE=10
             _MSVS_VERSION=2010
             AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
@@ -2109,6 +2092,7 @@ ia64*-hpux*)
         RC='$(WINDRES)'
         # Use static libgcc and libstdc++
         LDFLAGS="$LDFLAGS -static-libgcc -static-libstdc++"
+        NSPR_LDFLAGS="$NSPR_LDFLAGS -static-libgcc"
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
@@ -4200,7 +4184,6 @@ ENABLE_SYSTEM_EXTENSION_DIRS=1
 MOZ_BRANDING_DIRECTORY=
 MOZ_OFFICIAL_BRANDING=
 MOZ_FEEDS=1
-MOZ_FLEXBOX=1
 MOZ_WEBAPP_RUNTIME=
 MOZ_JSDEBUGGER=1
 MOZ_AUTH_EXTENSION=1
@@ -4247,6 +4230,7 @@ LIBJPEG_TURBO_ARM_ASM=
 MOZ_PANGO=1
 MOZ_PERMISSIONS=1
 MOZ_PLACES=1
+MOZ_SOCIAL=1
 MOZ_PREF_EXTENSIONS=1
 MOZ_PROFILELOCKING=1
 MOZ_PSM=1
@@ -6221,13 +6205,6 @@ if test -n "$MOZ_USE_NATIVE_POPUP_WINDOWS"; then
 fi
 
 dnl ========================================================
-dnl CSS3 Flexbox Support
-dnl ========================================================
-if test -n "$MOZ_FLEXBOX"; then
-  AC_DEFINE(MOZ_FLEXBOX)
-fi
-
-dnl ========================================================
 dnl Build Freetype in the tree
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(tree-freetype,
@@ -8076,7 +8053,7 @@ dnl ========================================================
 dnl Graphics checks.
 dnl ========================================================
 
-if test "${OS_TARGET}" = "WINNT" -o "${MOZ_WIDGET_TOOLKIT}" = "android" -o "${MOZ_WIDGET_TOOLKIT}" = "gtk2"; then
+if test "${OS_TARGET}" = "WINNT" -o "${OS_ARCH}" = "Darwin" -o "${MOZ_WIDGET_TOOLKIT}" = "android" -o "${MOZ_WIDGET_TOOLKIT}" = "gtk2"; then
 MOZ_ENABLE_SKIA=1
 else
 MOZ_ENABLE_SKIA=
@@ -8469,6 +8446,11 @@ if test "$MOZ_PLACES"; then
   AC_DEFINE(MOZ_PLACES)
 fi
 
+dnl Build SocialAPI if required
+if test "$MOZ_SOCIAL"; then
+  AC_DEFINE(MOZ_SOCIAL)
+fi
+
 dnl Build Common JS modules provided by services.
 AC_SUBST(MOZ_SERVICES_COMMON)
 if test -n "$MOZ_SERVICES_COMMON"; then
@@ -8578,6 +8560,7 @@ AC_SUBST(MOZ_VTUNE)
 AC_SUBST(MOZ_PROFILING)
 AC_SUBST(LIBICONV)
 AC_SUBST(MOZ_PLACES)
+AC_SUBST(MOZ_SOCIAL)
 AC_SUBST(MOZ_TOOLKIT_SEARCH)
 AC_SUBST(MOZ_FEEDS)
 AC_SUBST(NS_PRINTING)
@@ -8822,7 +8805,6 @@ AC_SUBST(MOZ_NATIVE_JPEG)
 AC_SUBST(MOZ_NATIVE_PNG)
 AC_SUBST(MOZ_NATIVE_BZ2)
 
-AC_SUBST(MOZ_FLEXBOX)
 AC_SUBST(MOZ_JPEG_CFLAGS)
 AC_SUBST(MOZ_JPEG_LIBS)
 AC_SUBST(MOZ_BZ2_CFLAGS)
@@ -9366,20 +9348,30 @@ if test -z "$MOZ_NATIVE_NSPR"; then
         ac_configure_args="$ac_configure_args --with-arm-kuser"
     fi
     ac_configure_args="$ac_configure_args $NSPR_CONFIGURE_ARGS"
+
+    # Save these, so we can mess with them for the subconfigure ..
+    _SAVE_CFLAGS="$CFLAGS"
+    _SAVE_CPPFLAGS="$CPPFLAGS"
+    _SAVE_LDFLAGS="$LDFLAGS"
+
     if test -n "$MOZ_LINKER" -a "$ac_cv_func_dladdr" = no ; then
       # dladdr is supported by the new linker, even when the system linker doesn't
       # support it. Trick nspr into using dladdr when it's not supported.
-      _SAVE_CPPFLAGS="$CPPFLAGS"
       export CPPFLAGS="-include $_topsrcdir/mozglue/linker/dladdr.h $CPPFLAGS"
     fi
-    _SAVE_LDFLAGS="$LDFLAGS"
     export LDFLAGS="$LDFLAGS $NSPR_LDFLAGS"
+    export CFLAGS="$CFLAGS $MOZ_FRAMEPTR_FLAGS"
+
     AC_OUTPUT_SUBDIRS(nsprpub)
+
+    # .. and restore them
+    unset CFLAGS
+    unset CPPFLAGS
+    unset LDFLAGS
+    CFLAGS="$_SAVE_CFLAGS"
+    CPPFLAGS="$_SAVE_CPPFLAGS"
     LDFLAGS="$_SAVE_LDFLAGS"
-    if test -n "$MOZ_LINKER" -a "$ac_cv_func_dladdr" = no; then
-      unset CPPFLAGS
-      CPPFLAGS="$_SAVE_CFLAGS"
-    fi
+
     ac_configure_args="$_SUBDIR_CONFIG_ARGS"
 fi
 

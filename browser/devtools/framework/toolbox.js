@@ -8,6 +8,7 @@ const {Cc, Ci, Cu} = require("chrome");
 const MAX_ORDINAL = 99;
 let Promise = require("sdk/core/promise");
 let EventEmitter = require("devtools/shared/event-emitter");
+let Telemetry = require("devtools/shared/telemetry");
 
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import("resource://gre/modules/Services.jsm");
@@ -37,7 +38,7 @@ XPCOMUtils.defineLazyGetter(this, "toolboxStrings", function() {
 XPCOMUtils.defineLazyGetter(this, "Requisition", function() {
   let scope = {};
   Cu.import("resource://gre/modules/devtools/Require.jsm", scope);
-  Cu.import("resource:///modules/devtools/gcli.jsm", scope);
+  Cu.import("resource://gre/modules/devtools/gcli.jsm", {});
 
   let req = scope.require;
   return req('gcli/cli').Requisition;
@@ -58,6 +59,7 @@ XPCOMUtils.defineLazyGetter(this, "Requisition", function() {
 function Toolbox(target, selectedTool, hostType) {
   this._target = target;
   this._toolPanels = new Map();
+  this._telemetry = new Telemetry();
 
   this._toolRegistered = this._toolRegistered.bind(this);
   this._toolUnregistered = this._toolUnregistered.bind(this);
@@ -191,8 +193,8 @@ Toolbox.prototype = {
   open: function TBOX_open() {
     let deferred = Promise.defer();
 
-    this._host.create().then(function(iframe) {
-      let domReady = function() {
+    this._host.create().then(iframe => {
+      let domReady = () => {
         iframe.removeEventListener("DOMContentLoaded", domReady, true);
 
         this.isReady = true;
@@ -206,28 +208,22 @@ Toolbox.prototype = {
         this._buildButtons();
         this._addKeysToWindow();
 
+        this._telemetry.toolOpened("toolbox");
+
         this.selectTool(this._defaultToolId).then(function(panel) {
           this.emit("ready");
           deferred.resolve();
         }.bind(this));
-      }.bind(this);
+      };
 
       iframe.addEventListener("DOMContentLoaded", domReady, true);
       iframe.setAttribute("src", this._URL);
-    }.bind(this));
+    });
 
     return deferred.promise;
   },
 
   _buildOptions: function TBOX__buildOptions() {
-    this.optionsButton = this.doc.getElementById("toolbox-tab-options");
-    this.optionsButton.addEventListener("command", function() {
-      this.selectTool("options");
-    }.bind(this), false);
-
-    let iframe = this.doc.getElementById("toolbox-panel-iframe-options");
-    this._toolPanels.set("options", iframe);
-
     let key = this.doc.getElementById("toolbox-options-key");
     key.addEventListener("command", function(toolId) {
       this.selectTool(toolId);
@@ -328,15 +324,14 @@ Toolbox.prototype = {
     }
 
     let toolbarSpec = CommandUtils.getCommandbarSpec("devtools.toolbox.toolbarSpec");
-    let environment = { chromeDocument: this.target.tab.ownerDocument };
-    let requisition = new Requisition(environment);
+    let env = CommandUtils.createEnvironment(this.target.tab.ownerDocument,
+                                             this.target.window.document);
+    let requisition = new Requisition(env);
 
     let buttons = CommandUtils.createButtons(toolbarSpec, this._target, this.doc, requisition);
 
     let container = this.doc.getElementById("toolbox-buttons");
-    buttons.forEach(function(button) {
-      container.appendChild(button);
-    }.bind(this));
+    buttons.forEach(container.appendChild.bind(container));
   },
 
   /**
@@ -358,7 +353,6 @@ Toolbox.prototype = {
     let radio = this.doc.createElement("radio");
     radio.className = "toolbox-tab devtools-tab";
     radio.id = "toolbox-tab-" + id;
-    radio.setAttribute("flex", "1");
     radio.setAttribute("toolid", id);
     if (toolDefinition.ordinal == undefined || toolDefinition.ordinal < 0) {
       toolDefinition.ordinal = MAX_ORDINAL;
@@ -370,22 +364,30 @@ Toolbox.prototype = {
       this.selectTool(id);
     }.bind(this, id));
 
+    // spacer lets us center the image and label, while allowing cropping
+    let spacer = this.doc.createElement("spacer");
+    spacer.setAttribute("flex", "1");
+    radio.appendChild(spacer);
+
     if (toolDefinition.icon) {
       let image = this.doc.createElement("image");
       image.setAttribute("src", toolDefinition.icon);
       radio.appendChild(image);
     }
 
-    let label = this.doc.createElement("label");
-    label.setAttribute("value", toolDefinition.label)
-    label.setAttribute("crop", "end");
-    label.setAttribute("flex", "1");
+    if (toolDefinition.label) {
+      let label = this.doc.createElement("label");
+      label.setAttribute("value", toolDefinition.label)
+      label.setAttribute("crop", "end");
+      label.setAttribute("flex", "1");
+      radio.appendChild(label);
+      radio.setAttribute("flex", "1");
+    }
 
     let vbox = this.doc.createElement("vbox");
     vbox.className = "toolbox-panel";
     vbox.id = "toolbox-panel-" + id;
 
-    radio.appendChild(label);
 
     // If there is no tab yet, or the ordinal to be added is the largest one.
     if (tabs.childNodes.length == 0 ||
@@ -398,14 +400,56 @@ Toolbox.prototype = {
       Array.some(tabs.childNodes, (node, i) => {
         if (+node.getAttribute("ordinal") > toolDefinition.ordinal) {
           tabs.insertBefore(radio, node);
-          deck.insertBefore(vbox, deck.childNodes[i + 1]);
-          // + 1 because of options panel.
+          deck.insertBefore(vbox, deck.childNodes[i]);
           return true;
         }
       });
     }
 
     this._addKeysToWindow();
+  },
+
+  /**
+   * Load a tool with a given id.
+   *
+   * @param {string} id
+   *        The id of the tool to load.
+   */
+  loadTool: function TBOX_loadTool(id) {
+    let deferred = Promise.defer();
+    let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
+
+    if (iframe) {
+      this.once(id + "-ready", () => { deferred.resolve() });
+      return deferred.promise;
+    }
+
+    let definition = gDevTools.getToolDefinitionMap().get(id);
+    iframe = this.doc.createElement("iframe");
+    iframe.className = "toolbox-panel-iframe";
+    iframe.id = "toolbox-panel-iframe-" + id;
+    iframe.setAttribute("flex", 1);
+    iframe.setAttribute("forceOwnRefreshDriver", "");
+    iframe.tooltip = "aHTMLTooltip";
+
+    let vbox = this.doc.getElementById("toolbox-panel-" + id);
+    vbox.appendChild(iframe);
+
+    let onLoad = () => {
+      iframe.removeEventListener("DOMContentLoaded", onLoad, true);
+
+      let built = definition.build(iframe.contentWindow, this);
+      Promise.resolve(built).then((panel) => {
+        this._toolPanels.set(id, panel);
+        this.emit(id + "-ready", panel);
+        gDevTools.emit(id + "-ready", this, panel);
+        deferred.resolve(panel);
+      });
+    };
+
+    iframe.addEventListener("DOMContentLoaded", onLoad, true);
+    iframe.setAttribute("src", definition.url);
+    return deferred.promise;
   },
 
   /**
@@ -424,6 +468,8 @@ Toolbox.prototype = {
     let tab = this.doc.getElementById("toolbox-tab-" + id);
     tab.setAttribute("selected", "true");
 
+    let prevToolId = this._currentToolId;
+
     if (this._currentToolId == id) {
       // Return the existing panel in order to have a consistent return value.
       return Promise.resolve(this._toolPanels.get(id));
@@ -434,14 +480,20 @@ Toolbox.prototype = {
     }
     let tab = this.doc.getElementById("toolbox-tab-" + id);
 
-    if (!tab) {
+    if (tab) {
+      if (prevToolId) {
+        this._telemetry.toolClosed(prevToolId);
+      }
+      this._telemetry.toolOpened(id);
+    } else {
       throw new Error("No tool found");
     }
 
     let tabstrip = this.doc.getElementById("toolbox-tabs");
 
-    // select the right tab
-    let index = -1;
+    // select the right tab, making 0th index the default tab if right tab not
+    // found
+    let index = 0;
     let tabs = tabstrip.childNodes;
     for (let i = 0; i < tabs.length; i++) {
       if (tabs[i] === tab) {
@@ -453,17 +505,7 @@ Toolbox.prototype = {
 
     // and select the right iframe
     let deck = this.doc.getElementById("toolbox-deck");
-    // offset by 1 due to options panel
-    if (id == "options") {
-      deck.selectedIndex = 0;
-      this.optionsButton.setAttribute("checked", true);
-    }
-    else {
-      deck.selectedIndex = index != -1 ? index + 1: -1;
-      this.optionsButton.removeAttribute("checked");
-    }
-
-    let definition = gDevTools.getToolDefinitionMap().get(id);
+    deck.selectedIndex = index;
 
     this._currentToolId = id;
 
@@ -475,32 +517,11 @@ Toolbox.prototype = {
 
     let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
     if (!iframe) {
-      iframe = this.doc.createElement("iframe");
-      iframe.className = "toolbox-panel-iframe";
-      iframe.id = "toolbox-panel-iframe-" + id;
-      iframe.setAttribute("flex", 1);
-      iframe.setAttribute("forceOwnRefreshDriver", "");
-      iframe.tooltip = "aHTMLTooltip";
-
-      let vbox = this.doc.getElementById("toolbox-panel-" + id);
-      vbox.appendChild(iframe);
-
-      let boundLoad = function() {
-        iframe.removeEventListener("DOMContentLoaded", boundLoad, true);
-
-        let built = definition.build(iframe.contentWindow, this);
-        Promise.resolve(built).then(function(panel) {
-          this._toolPanels.set(id, panel);
-
-          this.emit(id + "-ready", panel);
-          gDevTools.emit(id + "-ready", this, panel);
-
-          resolveSelected(panel);
-        }.bind(this));
-      }.bind(this);
-
-      iframe.addEventListener("DOMContentLoaded", boundLoad, true);
-      iframe.setAttribute("src", definition.url);
+      this.loadTool(id).then((panel) => {
+        this.emit("select", id);
+        this.emit(id + "-selected", panel);
+        deferred.resolve(panel);
+      });
     } else {
       let panel = this._toolPanels.get(id);
       // only emit 'select' event if the iframe has been loaded
@@ -668,7 +689,7 @@ Toolbox.prototype = {
 
     if (this.hostType == Toolbox.HostType.WINDOW) {
       let doc = this.doc.defaultView.parent.document;
-      let key = doc.getElementById("key_" + id);
+      let key = doc.getElementById("key_" + toolId);
       if (key) {
         key.parentNode.removeChild(key);
       }
@@ -709,7 +730,6 @@ Toolbox.prototype = {
 
     let outstanding = [];
 
-    this._toolPanels.delete("options");
     for (let [id, panel] of this._toolPanels) {
       outstanding.push(panel.destroy());
     }
@@ -720,6 +740,8 @@ Toolbox.prototype = {
     }
 
     outstanding.push(this._host.destroy());
+
+    this._telemetry.destroy();
 
     // Targets need to be notified that the toolbox is being torn down, so that
     // remote protocol connections can be gracefully terminated.

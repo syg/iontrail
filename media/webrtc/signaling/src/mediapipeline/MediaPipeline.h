@@ -97,22 +97,14 @@ class MediaPipeline : public sigslot::has_slots<> {
         description_() {
   }
 
-  virtual ~MediaPipeline() {
-    MOZ_ASSERT(!stream_);  // Check that we have shut down already.
-  }
+  virtual ~MediaPipeline();
 
-
-
-  // Must be called on the STS thread. Must be called
-  // before ShutdownMedia_m.
+  // Must be called on the STS thread.  Must be called after ShutdownMedia_m().
   void ShutdownTransport_s();
 
   // Must be called on the main thread.
   void ShutdownMedia_m() {
     ASSERT_ON_THREAD(main_thread_);
-
-    MOZ_ASSERT(!rtp_transport_);
-    MOZ_ASSERT(!rtcp_transport_);
 
     if (stream_) {
       DetachMediaStream();
@@ -318,9 +310,7 @@ class MediaPipelineTransmit : public MediaPipeline {
   virtual void DetachMediaStream() {
     ASSERT_ON_THREAD(main_thread_);
     stream_->RemoveListener(listener_);
-    // Remove our reference so that when the MediaStreamGraph
-    // releases the listener, it will be destroyed.
-    listener_ = nullptr;
+    // Let the listener be destroyed with the pipeline (or later).
     stream_ = nullptr;
   }
 
@@ -434,9 +424,6 @@ class MediaPipelineReceiveAudio : public MediaPipelineReceive {
     ASSERT_ON_THREAD(main_thread_);
     listener_->EndTrack();
     stream_->RemoveListener(listener_);
-    // Remove our reference so that when the MediaStreamGraph
-    // releases the listener, it will be destroyed.
-    listener_ = nullptr;
     stream_ = nullptr;
   }
 
@@ -500,15 +487,12 @@ class MediaPipelineReceiveVideo : public MediaPipelineReceive {
     ASSERT_ON_THREAD(main_thread_);
 
     listener_->EndTrack();
-
-    conduit_ = nullptr;  // Force synchronous destruction so we
-                         // stop generating video.
-
+    // stop generating video and thus stop invoking the PipelineRenderer
+    // and PipelineListener - the renderer has a raw ptr to the Pipeline to
+    // avoid cycles, and the render callbacks are invoked from a different
+    // thread so simple null-checks would cause TSAN bugs without locks.
+    static_cast<VideoSessionConduit*>(conduit_.get())->DetachRenderer();
     stream_->RemoveListener(listener_);
-    // Remove our reference so that when the MediaStreamGraph
-    // releases the listener, it will be destroyed.
-    listener_ = nullptr;
-
     stream_ = nullptr;
   }
 

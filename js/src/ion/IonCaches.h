@@ -22,6 +22,7 @@ namespace ion {
     _(GetProperty)                                              \
     _(SetProperty)                                              \
     _(GetElement)                                               \
+    _(SetElement)                                               \
     _(BindName)                                                 \
     _(Name)                                                     \
     _(CallsiteClone)                                            \
@@ -228,7 +229,7 @@ class IonCache
     LinkStatus linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code);
     // Fixup variables and update jumps in the list of stubs.  Increment the
     // number of attached stubs accordingly.
-    void attachStub(MacroAssembler &masm, StubAttacher &attacher, IonCode *code);
+    void attachStub(MacroAssembler &masm, StubAttacher &attacher, Handle<IonCode *> code);
 
     // Combine both linkStub and attachStub into one function. In addition, it
     // produces a spew augmented with the attachKind string.
@@ -510,7 +511,9 @@ class GetPropertyIC : public RepatchIonCache
         output_(output),
         allowGetters_(allowGetters),
         hasArrayLengthStub_(false),
-        hasTypedArrayLengthStub_(false)
+        hasTypedArrayLengthStub_(false),
+        hasStrictArgumentsLengthStub_(false),
+        hasNormalArgumentsLengthStub_(false)
     {
     }
 
@@ -542,6 +545,7 @@ class GetPropertyIC : public RepatchIonCache
 
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
+    bool attachListBaseShadowed(JSContext *cx, IonScript *ion, JSObject *obj, void *returnAddr);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                           HandleShape shape,
                           const SafepointIndex *safepointIndex, void *returnAddr);
@@ -629,6 +633,8 @@ class GetElementIC : public RepatchIonCache
         output_(output),
         monitoredResult_(monitoredResult),
         hasDenseStub_(false),
+        hasStrictArgumentsStub_(false),
+        hasNormalArgumentsStub_(false),
         failedUpdates_(0)
     {
     }
@@ -679,6 +685,65 @@ class GetElementIC : public RepatchIonCache
         return !canAttachStub() ||
                (stubCount_ == 0 && failedUpdates_ > MAX_FAILED_UPDATES);
     }
+};
+
+class SetElementIC : public RepatchIonCache
+{
+  protected:
+    Register object_;
+    Register temp_;
+    ValueOperand index_;
+    ConstantOrRegister value_;
+    bool strict_;
+
+    bool hasDenseStub_ : 1;
+
+  public:
+    SetElementIC(Register object, Register temp,
+                 ValueOperand index, ConstantOrRegister value,
+                 bool strict)
+      : object_(object),
+        temp_(temp),
+        index_(index),
+        value_(value),
+        strict_(strict),
+        hasDenseStub_(false)
+    {
+    }
+
+    CACHE_HEADER(SetElement)
+
+    void reset();
+
+    Register object() const {
+        return object_;
+    }
+    Register temp() const {
+        return temp_;
+    }
+    ValueOperand index() const {
+        return index_;
+    }
+    ConstantOrRegister value() const {
+        return value_;
+    }
+    bool strict() const {
+        return strict_;
+    }
+
+    bool hasDenseStub() const {
+        return hasDenseStub_;
+    }
+    void setHasDenseStub() {
+        JS_ASSERT(!hasDenseStub());
+        hasDenseStub_ = true;
+    }
+
+    bool attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
+
+    static bool
+    update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
+                HandleValue value);
 };
 
 class BindNameIC : public RepatchIonCache

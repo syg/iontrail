@@ -454,7 +454,7 @@ ContactDB.prototype = {
       if (aContact.properties[field] && contact.search[field]) {
         for (let i = 0; i <= aContact.properties[field].length; i++) {
           if (aContact.properties[field][i]) {
-            if (field == "tel") {
+            if (field == "tel" && aContact.properties[field][i].value) {
               let number = aContact.properties.tel[i].value.toString();
               let normalized = PhoneNumberUtils.normalize(number);
               // We use an object here to avoid duplicates
@@ -500,7 +500,7 @@ ContactDB.prototype = {
               for (let num in matchSearch) {
                 contact.search.parsedTel.push(num);
               }
-            } else if (field == "impp" || field == "email") {
+            } else if ((field == "impp" || field == "email") && aContact.properties[field][i].value) {
               let value = aContact.properties[field][i].value;
               if (value && typeof value == "string") {
                 contact.search[field].push(value.toLowerCase());
@@ -693,7 +693,8 @@ ContactDB.prototype = {
     }
   },
 
-  _clearDispatcher: function CDB_clearDispatcher(aCursorId) {
+  clearDispatcher: function CDB_clearDispatcher(aCursorId) {
+    if (DEBUG) debug("clearDispatcher: " + aCursorId);
     if (aCursorId in this._dispatcher) {
       delete this._dispatcher[aCursorId];
     }
@@ -709,7 +710,7 @@ ContactDB.prototype = {
       // object store again.
       if (aCachedResults && aCachedResults.length > 0) {
         let newTxnFn = this.newTxn.bind(this);
-        let clearDispatcherFn = this._clearDispatcher.bind(this, aCursorId);
+        let clearDispatcherFn = this.clearDispatcher.bind(this, aCursorId);
         this._dispatcher[aCursorId] = new ContactDispatcher(aCachedResults, aFullContacts,
                                                             aSuccessCb, newTxnFn, clearDispatcherFn);
         this._dispatcher[aCursorId].sendNow();

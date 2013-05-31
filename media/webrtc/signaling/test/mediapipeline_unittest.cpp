@@ -8,6 +8,7 @@
 
 #include "sigslot.h"
 
+#include "logging.h"
 #include "nsThreadUtils.h"
 #include "nsXPCOM.h"
 #include "nss.h"
@@ -15,7 +16,6 @@
 #include "sslproto.h"
 
 #include "dtlsidentity.h"
-#include "logging.h"
 #include "mozilla/RefPtr.h"
 #include "FakeMediaStreams.h"
 #include "FakeMediaStreamsImpl.h"
@@ -109,14 +109,15 @@ class TestAgent {
   void Stop() {
     MOZ_MTLOG(PR_LOG_DEBUG, "Stopping");
 
-    mozilla::SyncRunnable::DispatchToThread(
-      test_utils->sts_target(),
-      WrapRunnable(this, &TestAgent::StopInt));
-
     if (audio_pipeline_)
       audio_pipeline_->ShutdownMedia_m();
     if (video_pipeline_)
       video_pipeline_->ShutdownMedia_m();
+
+    mozilla::SyncRunnable::DispatchToThread(
+      test_utils->sts_target(),
+      WrapRunnable(this, &TestAgent::StopInt));
+
     audio_pipeline_ = NULL;
     video_pipeline_ = NULL;
 

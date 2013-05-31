@@ -44,8 +44,8 @@ bool
 ion::ParWriteGuard(ForkJoinSlice *slice, JSObject *object)
 {
     JS_ASSERT(ForkJoinSlice::Current() == slice);
-    return slice->allocator->arenas.containsArena(slice->runtime(),
-                                                  object->arenaHeader());
+    return !IsInsideNursery(object->runtime(), object) &&
+           slice->allocator->arenas.containsArena(slice->runtime(), object->arenaHeader());
 }
 
 #ifdef DEBUG
@@ -386,7 +386,8 @@ ion::ParallelAbort(ParallelBailoutCause cause,
          "(%p:%s:%d at line %d)",
          cause,
          outermostScript, outermostScript->filename(), outermostScript->lineno,
-         currentScript, currentScript->filename(), currentScript->lineno);
+         currentScript, currentScript->filename(), currentScript->lineno,
+         (currentScript ? PCToLineNumber(currentScript, bytecode) : 0));
 
     JS_ASSERT(ParallelJSActive());
     JS_ASSERT(outermostScript != NULL);
@@ -412,7 +413,7 @@ ion::PropagateParallelAbort(JSScript *outermostScript,
     JS_ASSERT(ParallelJSActive());
     JS_ASSERT(outermostScript->hasParallelIonScript());
 
-    outermostScript->parallelIonScript()->setHasInvalidatedCallTarget();
+    outermostScript->parallelIonScript()->setHasUncompiledCallTarget();
 
     ForkJoinSlice *slice = ForkJoinSlice::Current();
     if (currentScript)
@@ -452,4 +453,30 @@ ion::ParCallToUncompiledScript(JSFunction *func)
         JS_NOT_REACHED("ParCall'ed functions must have scripts or be ES6 bound functions.");
     }
 #endif
+}
+
+ParallelResult
+ion::InitRestParameter(ForkJoinSlice *slice, uint32_t length, Value *rest,
+                       HandleObject templateObj, HandleObject res,
+                       MutableHandleObject out)
+{
+    // In parallel execution, we should always have succeeded in allocation
+    // before this point. We can do the allocation here like in the sequential
+    // path, but duplicating the initGCThing logic is too tedious.
+    JS_ASSERT(res);
+    JS_ASSERT(res->isArray());
+    JS_ASSERT(!res->getDenseInitializedLength());
+    JS_ASSERT(res->type() == templateObj->type());
+    // See note in visitRest in ParallelArrayAnalysis.
+    JS_ASSERT(res->type()->unknownProperties());
+
+    if (length) {
+        JSObject::EnsureDenseResult edr =
+            res->parExtendDenseElements(slice->allocator, rest, length);
+        if (edr != JSObject::ED_OK)
+            return TP_FATAL;
+    }
+
+    out.set(res);
+    return TP_SUCCESS;
 }

@@ -3019,7 +3019,17 @@ nsSVGTextFrame2::AttributeChanged(int32_t aNameSpaceID,
     return NS_OK;
 
   if (aAttribute == nsGkAtoms::transform) {
-    NotifySVGChanged(TRANSFORM_CHANGED);
+    // We don't invalidate for transform changes (the layers code does that).
+    // Also note that SVGTransformableElement::GetAttributeChangeHint will
+    // return nsChangeHint_UpdateOverflow for "transform" attribute changes
+    // and cause DoApplyRenderingChangeToTree to make the SchedulePaint call.
+
+    if (!(mState & NS_FRAME_FIRST_REFLOW) &&
+        mCanvasTM && mCanvasTM->IsSingular()) {
+      // We won't have calculated the glyph positions correctly.
+      NotifyGlyphMetricsChange();
+    }
+    mCanvasTM = nullptr;
   } else if (IsGlyphPositioningAttribute(aAttribute)) {
     NotifyGlyphMetricsChange();
   }
@@ -3131,7 +3141,7 @@ nsSVGTextFrame2::Reflow(nsPresContext*           aPresContext,
                "reflow roots should be reflowed at existing size and "
                "svg.css should ensure we have no padding/border/margin");
 
-  DoReflow(false);
+  DoReflow();
 
   aDesiredSize.width = aReflowState.ComputedWidth();
   aDesiredSize.height = aReflowState.ComputedHeight();
@@ -3149,7 +3159,7 @@ nsSVGTextFrame2::FindCloserFrameForSelection(
   if (GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) {
     return;
   }
-  UpdateGlyphPositioning(true);
+  UpdateGlyphPositioning();
 
   nsPresContext* presContext = PresContext();
 
@@ -3186,7 +3196,7 @@ nsSVGTextFrame2::NotifySVGChanged(uint32_t aFlags)
   bool needGlyphMetricsUpdate = false;
   bool needNewCanvasTM = false;
 
-  if (aFlags & COORD_CONTEXT_CHANGED) {
+  if ((aFlags & COORD_CONTEXT_CHANGED) && mPositioningMayUsePercentages) {
     needGlyphMetricsUpdate = true;
   }
 
@@ -3282,7 +3292,7 @@ nsSVGTextFrame2::PaintSVG(nsRenderingContext* aContext,
   if (mState & NS_STATE_SVG_NONDISPLAY_CHILD) {
     // Text frames inside <clipPath>, <mask>, etc. will never have had
     // ReflowSVG called on them, so call UpdateGlyphPositioning to do this now.
-    UpdateGlyphPositioning(true);
+    UpdateGlyphPositioning();
   } else if (NS_SUBTREE_DIRTY(this)) {
     // If we are asked to paint before reflow has recomputed mPositions etc.
     // directly via PaintSVG, rather than via a display list, then we need
@@ -3401,7 +3411,7 @@ nsSVGTextFrame2::GetFrameForPoint(const nsPoint& aPoint)
     // them, so call UpdateGlyphPositioning to do this now.  (Text frames
     // inside <mask> and other non-display containers will never need to
     // be hit tested.)
-    UpdateGlyphPositioning(true);
+    UpdateGlyphPositioning();
   } else {
     NS_ASSERTION(!NS_SUBTREE_DIRTY(this), "reflow should have happened");
   }
@@ -3456,13 +3466,8 @@ nsSVGTextFrame2::ReflowSVG()
     return;
   }
 
-  // UpdateGlyphPositioning may have been called under DOM calls and set
-  // mPositioningDirty to false. We may now have better positioning, though, so
-  // set it to true so that UpdateGlyphPositioning will do its work.
-  mPositioningDirty = true;
-
   // UpdateGlyphPositioning will call DoReflow if necessary.
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   nsPresContext* presContext = PresContext();
 
@@ -3496,15 +3501,6 @@ nsSVGTextFrame2::ReflowSVG()
     nsSVGEffects::UpdateEffects(this);
   }
 
-  // We only invalidate if we are dirty, if our outer-<svg> has already had its
-  // initial reflow (since if it hasn't, its entire area will be invalidated
-  // when it gets that initial reflow), and if our parent is not dirty (since
-  // if it is, then it will invalidate its entire new area, which will include
-  // our new area).
-  bool invalidate = (mState & NS_FRAME_IS_DIRTY) &&
-    !(GetParent()->GetStateBits() &
-       (NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY));
-
   nsRect overflow = nsRect(nsPoint(0,0), mRect.Size());
   nsOverflowAreas overflowAreas(overflow, overflow);
   FinishAndStoreOverflow(overflowAreas, mRect.Size());
@@ -3517,11 +3513,6 @@ nsSVGTextFrame2::ReflowSVG()
   // children, and calls ConsiderChildOverflow on them.  Does it matter
   // that ConsiderChildOverflow won't be called on our children?
   nsSVGTextFrame2Base::ReflowSVG();
-
-  if (invalidate) {
-    // XXXSDL Let FinishAndStoreOverflow do this.
-    nsSVGUtils::InvalidateBounds(this, true);
-  }
 }
 
 /**
@@ -3552,7 +3543,7 @@ nsSVGTextFrame2::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
 {
   NS_ASSERTION(GetFirstPrincipalChild(), "must have a child frame");
 
-  UpdateGlyphPositioning(true);
+  UpdateGlyphPositioning();
 
   gfxRect bbox;
   nsPresContext* presContext = PresContext();
@@ -3665,7 +3656,7 @@ nsSVGTextFrame2::ConvertTextElementCharIndexToAddressableIndex(
 uint32_t
 nsSVGTextFrame2::GetNumberOfChars(nsIContent* aContent)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   uint32_t n = 0;
   CharIterator it(this, CharIterator::eAddressable, aContent);
@@ -3685,7 +3676,7 @@ nsSVGTextFrame2::GetNumberOfChars(nsIContent* aContent)
 float
 nsSVGTextFrame2::GetComputedTextLength(nsIContent* aContent)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   float cssPxPerDevPx = PresContext()->
     AppUnitsToFloatCSSPixels(PresContext()->AppUnitsPerDevPixel());
@@ -3709,7 +3700,7 @@ nsresult
 nsSVGTextFrame2::SelectSubString(nsIContent* aContent,
                                  uint32_t charnum, uint32_t nchars)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   // Convert charnum/nchars from addressable characters relative to
   // aContent to global character indices.
@@ -3742,7 +3733,7 @@ nsSVGTextFrame2::GetSubStringLength(nsIContent* aContent,
                                     uint32_t charnum, uint32_t nchars,
                                     float* aResult)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   // Convert charnum/nchars from addressable characters relative to
   // aContent to global character indices.
@@ -3815,7 +3806,7 @@ int32_t
 nsSVGTextFrame2::GetCharNumAtPosition(nsIContent* aContent,
                                       mozilla::nsISVGPoint* aPoint)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   nsPresContext* context = PresContext();
 
@@ -3848,7 +3839,7 @@ nsSVGTextFrame2::GetStartPositionOfChar(nsIContent* aContent,
                                         uint32_t aCharNum,
                                         mozilla::nsISVGPoint** aResult)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   CharIterator it(this, CharIterator::eAddressable, aContent);
   if (!it.AdvanceToSubtree() ||
@@ -3872,7 +3863,7 @@ nsSVGTextFrame2::GetEndPositionOfChar(nsIContent* aContent,
                                       uint32_t aCharNum,
                                       mozilla::nsISVGPoint** aResult)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   CharIterator it(this, CharIterator::eAddressable, aContent);
   if (!it.AdvanceToSubtree() ||
@@ -3909,7 +3900,7 @@ nsSVGTextFrame2::GetExtentOfChar(nsIContent* aContent,
                                  uint32_t aCharNum,
                                  dom::SVGIRect** aResult)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   CharIterator it(this, CharIterator::eAddressable, aContent);
   if (!it.AdvanceToSubtree() ||
@@ -3960,7 +3951,7 @@ nsSVGTextFrame2::GetRotationOfChar(nsIContent* aContent,
                                    uint32_t aCharNum,
                                    float* aResult)
 {
-  UpdateGlyphPositioning(false);
+  UpdateGlyphPositioning();
 
   CharIterator it(this, CharIterator::eAddressable, aContent);
   if (!it.AdvanceToSubtree() ||
@@ -4082,6 +4073,7 @@ nsSVGTextFrame2::ResolvePositions(nsIContent* aContent,
     }
 
     uint32_t count = GetTextContentLength(aContent);
+    bool& percentages = mPositioningMayUsePercentages;
 
     // New text anchoring chunks start at each character assigned a position
     // with x="" or y="", or if we forced one with aForceStartOfChunk due to
@@ -4104,12 +4096,14 @@ nsSVGTextFrame2::ResolvePositions(nsIContent* aContent,
       for (uint32_t i = 0, j = 0; i < dx.Length() && j < count; j++) {
         if (!mPositions[aIndex + j].mUnaddressable) {
           aDeltas[aIndex + j].x = dx[i];
+          percentages = percentages || dx.HasPercentageValueAt(i);
           i++;
         }
       }
       for (uint32_t i = 0, j = 0; i < dy.Length() && j < count; j++) {
         if (!mPositions[aIndex + j].mUnaddressable) {
           aDeltas[aIndex + j].y = dy[i];
+          percentages = percentages || dy.HasPercentageValueAt(i);
           i++;
         }
       }
@@ -4119,12 +4113,14 @@ nsSVGTextFrame2::ResolvePositions(nsIContent* aContent,
     for (uint32_t i = 0, j = 0; i < x.Length() && j < count; j++) {
       if (!mPositions[aIndex + j].mUnaddressable) {
         mPositions[aIndex + j].mPosition.x = x[i];
+        percentages = percentages || x.HasPercentageValueAt(i);
         i++;
       }
     }
     for (uint32_t i = 0, j = 0; i < y.Length() && j < count; j++) {
       if (!mPositions[aIndex + j].mUnaddressable) {
         mPositions[aIndex + j].mPosition.y = y[i];
+        percentages = percentages || y.HasPercentageValueAt(i);
         i++;
       }
     }
@@ -4168,6 +4164,7 @@ bool
 nsSVGTextFrame2::ResolvePositions(nsTArray<gfxPoint>& aDeltas)
 {
   NS_ASSERTION(mPositions.IsEmpty(), "expected mPositions to be empty");
+  mPositioningMayUsePercentages = false;
 
   CharIterator it(this, CharIterator::eOriginal);
   if (it.AtEnd()) {
@@ -4772,38 +4769,51 @@ nsSVGTextFrame2::NotifyGlyphMetricsChange(uint32_t aFlags)
 }
 
 void
-nsSVGTextFrame2::UpdateGlyphPositioning(bool aForceGlobalTransform)
+nsSVGTextFrame2::UpdateGlyphPositioning()
 {
   nsIFrame* kid = GetFirstPrincipalChild();
   if (!kid)
     return;
 
-  bool needsReflow =
-    (mState & (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN));
-
   NS_ASSERTION(!(kid->GetStateBits() & NS_FRAME_IN_REFLOW),
                "should not be in reflow when about to reflow again");
 
-  if (!needsReflow)
-    return;
-
-  if (mState & NS_FRAME_IS_DIRTY) {
-    // If we require a full reflow, ensure our kid is marked fully dirty.
-    kid->AddStateBits(NS_FRAME_IS_DIRTY);
-  }
-
-  if (needsReflow) {
+  if (mState & (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN)) {
+    if (mState & NS_FRAME_IS_DIRTY) {
+      // If we require a full reflow, ensure our kid is marked fully dirty.
+      // (Note that our anonymous nsBlockFrame is not an nsISVGChildFrame, so
+      // even when we are called via our ReflowSVG this will not be done for us
+      // by nsSVGDisplayContainerFrame::ReflowSVG.)
+      kid->AddStateBits(NS_FRAME_IS_DIRTY);
+    }
     nsPresContext::InterruptPreventer noInterrupts(PresContext());
-    DoReflow(aForceGlobalTransform);
+    DoReflow();
   }
 
-  DoGlyphPositioning();
+  if (mPositioningDirty) {
+    DoGlyphPositioning();
+  }
 }
 
 void
-nsSVGTextFrame2::DoReflow(bool aForceGlobalTransform)
+nsSVGTextFrame2::DoReflow()
 {
+  // Since we are going to reflow the anonymous block frame, we will
+  // need to update mPositions.
   mPositioningDirty = true;
+
+  if (mState & NS_STATE_SVG_NONDISPLAY_CHILD) {
+    // Normally, this flag would be cleared in ReflowSVG(), but that doesn't
+    // get called for non-display frames. We don't want to reflow our
+    // descendants every time nsSVGTextFrame2::PaintSVG makes sure that we have
+    // valid positions by calling UpdateGlyphPositioning(), so we need to clear
+    // these dirty bits. Note that this also breaks an invalidation loop where
+    // our descendants invalidate as they reflow, which invalidates rendering
+    // observers, which reschedules the frame that is currently painting by
+    // referencing us to paint again. See bug 839958 comment 7. Hopefully we
+    // will break that loop more convincingly at some point.
+    mState &= ~(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
+  }
 
   nsPresContext *presContext = PresContext();
   nsIFrame* kid = GetFirstPrincipalChild();
@@ -4817,7 +4827,7 @@ nsSVGTextFrame2::DoReflow(bool aForceGlobalTransform)
   if (!renderingContext)
     return;
 
-  UpdateFontSizeScaleFactor(aForceGlobalTransform);
+  UpdateFontSizeScaleFactor();
 
   nscoord width = kid->GetPrefWidth(renderingContext);
   nsHTMLReflowState reflowState(presContext, kid,
@@ -4845,7 +4855,7 @@ nsSVGTextFrame2::DoReflow(bool aForceGlobalTransform)
 #define PRECISE_SIZE   200.0
 
 void
-nsSVGTextFrame2::UpdateFontSizeScaleFactor(bool aForceGlobalTransform)
+nsSVGTextFrame2::UpdateFontSizeScaleFactor()
 {
   nsPresContext* presContext = PresContext();
 
@@ -4879,8 +4889,8 @@ nsSVGTextFrame2::UpdateFontSizeScaleFactor(bool aForceGlobalTransform)
   }
 
   gfxMatrix m;
-  if (aForceGlobalTransform ||
-      !(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+  if (!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) ||
+      mGetCanvasTMForFlag != FOR_OUTERSVG_TM) {
     m = GetCanvasTM(mGetCanvasTMForFlag);
     if (m.IsSingular()) {
       mFontSizeScaleFactor = 1.0;
@@ -4960,7 +4970,7 @@ nsSVGTextFrame2::TransformFramePointToTextChild(const gfxPoint& aPoint,
                  (aChildFrame->GetParent(), nsGkAtoms::svgTextFrame2) == this,
                "aChildFrame must be a descendant of this frame");
 
-  UpdateGlyphPositioning(true);
+  UpdateGlyphPositioning();
 
   nsPresContext* presContext = PresContext();
 
@@ -5037,7 +5047,7 @@ nsSVGTextFrame2::TransformFrameRectToTextChild(const gfxRect& aRect,
                  (aChildFrame->GetParent(), nsGkAtoms::svgTextFrame2) == this,
                "aChildFrame must be a descendant of this frame");
 
-  UpdateGlyphPositioning(true);
+  UpdateGlyphPositioning();
 
   nsPresContext* presContext = PresContext();
 
@@ -5111,7 +5121,7 @@ nsSVGTextFrame2::TransformFrameRectFromTextChild(const nsRect& aRect,
                  (aChildFrame->GetParent(), nsGkAtoms::svgTextFrame2) == this,
                "aChildFrame must be a descendant of this frame");
 
-  UpdateGlyphPositioning(true);
+  UpdateGlyphPositioning();
 
   nsPresContext* presContext = PresContext();
 

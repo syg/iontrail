@@ -5,13 +5,13 @@
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 this.EXPORTED_SYMBOLS = [ ];
 
-Cu.import("resource:///modules/devtools/gcli.jsm");
+Cu.import("resource://gre/modules/devtools/gcli.jsm");
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 
 XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
                                   "resource:///modules/devtools/gDevTools.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource:///modules/devtools/gDevTools.jsm");
+                                  "resource://gre/modules/devtools/Loader.jsm");
 
 /**
  * 'inspect' command

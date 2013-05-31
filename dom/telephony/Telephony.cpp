@@ -15,16 +15,19 @@
 #include "jsapi.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsDOMClassInfo.h"
 #include "nsNetUtil.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArrayHelpers.h"
+#include "nsThreadUtils.h"
 
 #include "TelephonyCall.h"
 
 #define NS_RILCONTENTHELPER_CONTRACTID "@mozilla.org/ril/content-helper;1"
 
 USING_TELEPHONY_NAMESPACE
+using namespace mozilla::dom;
 
 namespace {
 
@@ -56,8 +59,27 @@ public:
   }
 };
 
+class Telephony::EnumerationAck : public nsRunnable
+{
+  nsRefPtr<Telephony> mTelephony;
+
+public:
+  EnumerationAck(Telephony* aTelephony)
+  : mTelephony(aTelephony)
+  {
+    MOZ_ASSERT(mTelephony);
+  }
+
+  NS_IMETHOD Run()
+  {
+    mTelephony->NotifyCallsChanged(nullptr);
+    return NS_OK;
+  }
+};
+
 Telephony::Telephony()
-: mActiveCall(nullptr), mCallsArray(nullptr), mRooted(false)
+: mActiveCall(nullptr), mCallsArray(nullptr), mRooted(false),
+  mEnumerated(false)
 {
   if (!gTelephonyList) {
     gTelephonyList = new TelephonyList();
@@ -145,13 +167,15 @@ Telephony::NoteDialedCallFromOtherInstance(const nsAString& aNumber)
 nsresult
 Telephony::NotifyCallsChanged(TelephonyCall* aCall)
 {
-  if (aCall->CallState() == nsITelephonyProvider::CALL_STATE_DIALING ||
-      aCall->CallState() == nsITelephonyProvider::CALL_STATE_ALERTING ||
-      aCall->CallState() == nsITelephonyProvider::CALL_STATE_CONNECTED) {
-    NS_ASSERTION(!mActiveCall, "Already have an active call!");
-    mActiveCall = aCall;
-  } else if (mActiveCall && mActiveCall->CallIndex() == aCall->CallIndex()) {
-    mActiveCall = nullptr;
+  if (aCall) {
+    if (aCall->CallState() == nsITelephonyProvider::CALL_STATE_DIALING ||
+        aCall->CallState() == nsITelephonyProvider::CALL_STATE_ALERTING ||
+        aCall->CallState() == nsITelephonyProvider::CALL_STATE_CONNECTED) {
+      NS_ASSERTION(!mActiveCall, "Already have an active call!");
+      mActiveCall = aCall;
+    } else if (mActiveCall && mActiveCall->CallIndex() == aCall->CallIndex()) {
+      mActiveCall = nullptr;
+    }
   }
 
   return DispatchCallEvent(NS_LITERAL_STRING("callschanged"), aCall);
@@ -232,6 +256,8 @@ NS_IMPL_RELEASE_INHERITED(Telephony, nsDOMEventTargetHelper)
 DOMCI_DATA(Telephony, Telephony)
 
 NS_IMPL_ISUPPORTS1(Telephony::Listener, nsITelephonyListener)
+
+// nsIDOMTelephony
 
 NS_IMETHODIMP
 Telephony::Dial(const nsAString& aNumber, nsIDOMTelephonyCall** aResult)
@@ -364,9 +390,23 @@ Telephony::StopTone()
 NS_IMPL_EVENT_HANDLER(Telephony, incoming)
 NS_IMPL_EVENT_HANDLER(Telephony, callschanged)
 
+// EventTarget
+
+void
+Telephony::EventListenerAdded(nsIAtom* aType)
+{
+  if (aType == nsGkAtoms::oncallschanged) {
+    // Fire oncallschanged on the next tick if the calls array is ready.
+    EnqueueEnumerationAck();
+  }
+}
+
+// nsITelephonyListener
+
 NS_IMETHODIMP
 Telephony::CallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
-                            const nsAString& aNumber, bool aIsActive)
+                            const nsAString& aNumber, bool aIsActive,
+                            bool aIsOutgoing, bool aIsEmergency)
 {
   NS_ASSERTION(aCallIndex != kOutgoingPlaceholderCallIndex,
                "This should never happen!");
@@ -399,6 +439,7 @@ Telephony::CallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
       aCallState != nsITelephonyProvider::CALL_STATE_INCOMING &&
       outgoingCall) {
     outgoingCall->UpdateCallIndex(aCallIndex);
+    outgoingCall->UpdateEmergency(aIsEmergency);
     modifiedCall.swap(outgoingCall);
   }
 
@@ -425,7 +466,7 @@ Telephony::CallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
   }
 
   nsRefPtr<TelephonyCall> call =
-    TelephonyCall::Create(this, aNumber, aCallState, aCallIndex);
+    TelephonyCall::Create(this, aNumber, aCallState, aCallIndex, aIsEmergency);
   NS_ASSERTION(call, "This should never fail!");
 
   NS_ASSERTION(mCalls.Contains(call), "Should have auto-added new call!");
@@ -439,8 +480,22 @@ Telephony::CallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
 }
 
 NS_IMETHODIMP
+Telephony::EnumerateCallStateComplete()
+{
+  MOZ_ASSERT(!mEnumerated);
+
+  mEnumerated = true;
+
+  if (NS_FAILED(NotifyCallsChanged(nullptr))) {
+    NS_WARNING("Failed to notify calls changed!");
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 Telephony::EnumerateCallState(uint32_t aCallIndex, uint16_t aCallState,
                               const nsAString& aNumber, bool aIsActive,
+                              bool aIsOutgoing, bool aIsEmergency,
                               bool* aContinue)
 {
   // Make sure we don't somehow add duplicates.
@@ -454,7 +509,7 @@ Telephony::EnumerateCallState(uint32_t aCallIndex, uint16_t aCallState,
   }
 
   nsRefPtr<TelephonyCall> call =
-    TelephonyCall::Create(this, aNumber, aCallState, aCallIndex);
+    TelephonyCall::Create(this, aNumber, aCallState, aCallIndex, aIsEmergency);
   NS_ASSERTION(call, "This should never fail!");
 
   NS_ASSERTION(mCalls.Contains(call), "Should have auto-added new call!");
@@ -503,7 +558,9 @@ nsresult
 Telephony::DispatchCallEvent(const nsAString& aType,
                              nsIDOMTelephonyCall* aCall)
 {
-  MOZ_ASSERT(aCall);
+  // We will notify enumeration being completed by firing oncallschanged.
+  // We only ever have a null call with that event type.
+  MOZ_ASSERT(aCall || aType.EqualsLiteral("callschanged"));
 
   nsCOMPtr<nsIDOMEvent> event;
   NS_NewDOMCallEvent(getter_AddRefs(event), this, nullptr, nullptr);
@@ -515,6 +572,19 @@ Telephony::DispatchCallEvent(const nsAString& aType,
   NS_ENSURE_SUCCESS(rv, rv);
 
   return DispatchTrustedEvent(callEvent);
+}
+
+void
+Telephony::EnqueueEnumerationAck()
+{
+  if (!mEnumerated) {
+    return;
+  }
+
+  nsCOMPtr<nsIRunnable> task = new EnumerationAck(this);
+  if (NS_FAILED(NS_DispatchToCurrentThread(task))) {
+    NS_WARNING("Failed to dispatch to current thread!");
+  }
 }
 
 nsresult

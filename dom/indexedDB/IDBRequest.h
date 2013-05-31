@@ -13,6 +13,7 @@
 #include "nsIIDBOpenDBRequest.h"
 #include "nsDOMEventTargetHelper.h"
 #include "mozilla/dom/indexedDB/IDBWrapperCache.h"
+#include "mozilla/dom/DOMError.h"
 
 class nsIScriptContext;
 class nsPIDOMWindow;
@@ -64,6 +65,8 @@ public:
   }
 #endif
 
+  DOMError* GetError(ErrorResult& aRv);
+
   JSContext* GetJSContext();
 
   void
@@ -106,7 +109,7 @@ protected:
   nsRefPtr<IDBTransaction> mTransaction;
 
   jsval mResultVal;
-  nsCOMPtr<nsIDOMDOMError> mError;
+  nsRefPtr<mozilla::dom::DOMError> mError;
   IndexedDBRequestParentBase* mActorParent;
   nsString mFilename;
 #ifdef MOZ_ENABLE_PROFILER_SPS
@@ -130,13 +133,18 @@ public:
   already_AddRefed<IDBOpenDBRequest>
   Create(IDBFactory* aFactory,
          nsPIDOMWindow* aOwner,
-         JSObject* aScriptOwner,
+         JS::Handle<JSObject*> aScriptOwner,
          JSContext* aCallingCx);
 
   void SetTransaction(IDBTransaction* aTransaction);
 
   // nsIDOMEventTarget
   virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor);
+
+  DOMError* GetError(ErrorResult& aRv)
+  {
+    return IDBRequest::GetError(aRv);
+  }
 
   IDBFactory*
   Factory() const

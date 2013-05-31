@@ -220,7 +220,9 @@ IonBuilder::inlineArray(CallInfo &callInfo)
 
         // Store all values, no need to initialize the length after each as
         // jsop_initelem_array is doing because we do not expect to bailout
-        // because the memory is supposed to be allocated by now.
+        // because the memory is supposed to be allocated by now. There is no
+        // need for a post barrier on these writes, as as the MNewAray will use
+        // the nursery if possible, triggering a minor collection if it can't.
         MConstant *id = NULL;
         for (uint32_t i = 0; i < initLength; i++) {
             id = MConstant::New(Int32Value(i));
@@ -347,6 +349,9 @@ IonBuilder::inlineArrayPush(CallInfo &callInfo)
         value = valueDouble;
     }
 
+    if (NeedsPostBarrier(info(), value))
+        current->add(MPostWriteBarrier::New(callInfo.thisArg(), value));
+
     MArrayPush *ins = MArrayPush::New(callInfo.thisArg(), value);
     current->add(ins);
     current->push(ins);
@@ -449,7 +454,7 @@ IonBuilder::inlineArrayConcat(CallInfo &callInfo)
     }
 
     // Inline the call.
-    RootedObject templateObj(cx, NewDenseEmptyArray(cx, thisType->proto));
+    RootedObject templateObj(cx, NewDenseEmptyArray(cx, thisType->proto, TenuredObject));
     if (!templateObj)
         return InliningStatus_Error;
     templateObj->setType(thisType);
@@ -779,7 +784,7 @@ IonBuilder::inlineStringObject(CallInfo &callInfo)
     callInfo.unwrapArgs();
 
     RootedString emptyString(cx, cx->runtime->emptyString);
-    RootedObject templateObj(cx, StringObject::create(cx, emptyString));
+    RootedObject templateObj(cx, StringObject::create(cx, emptyString, TenuredObject));
     if (!templateObj)
         return InliningStatus_Error;
 
@@ -1180,7 +1185,7 @@ IonBuilder::inlineParallelArrayTail(CallInfo &callInfo,
 
     // Create the MIR to allocate the new parallel array.  Take the type
     // object is taken from the prediction set.
-    RootedObject templateObject(cx, ParallelArrayObject::newInstance(cx));
+    RootedObject templateObject(cx, ParallelArrayObject::newInstance(cx, TenuredObject));
     if (!templateObject)
         return InliningStatus_Error;
     templateObject->setType(typeObject);
@@ -1241,7 +1246,7 @@ IonBuilder::inlineNewDenseArrayForParallelExecution(CallInfo &callInfo)
         return InliningStatus_NotInlined;
     types::TypeObject *typeObject = returnTypes->getTypeObject(0);
 
-    RootedObject templateObject(cx, NewDenseAllocatedArray(cx, 0));
+    RootedObject templateObject(cx, NewDenseAllocatedArray(cx, 0, NULL, TenuredObject));
     if (!templateObject)
         return InliningStatus_Error;
     templateObject->setType(typeObject);

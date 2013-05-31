@@ -122,6 +122,11 @@ public:
 
   virtual bool Lock() MOZ_OVERRIDE { return true; }
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE
+  {
+    return nullptr; // TODO: cf bug 872568
+  }
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "TextureHostShmemD3D11"; }
 #endif
@@ -144,7 +149,8 @@ public:
   }
 protected:
   virtual void UpdateImpl(const SurfaceDescriptor& aSurface,
-                          nsIntRegion* aRegion) MOZ_OVERRIDE;
+                          nsIntRegion* aRegion,
+                          nsIntPoint *aOffset = nullptr) MOZ_OVERRIDE;
 private:
 
   gfx::IntRect GetTileRect(uint32_t aID) const;
@@ -174,13 +180,19 @@ public:
   virtual bool Lock() MOZ_OVERRIDE;
   virtual void Unlock() MOZ_OVERRIDE;
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE
+  {
+    return nullptr; // TODO: cf bug 872568
+  }
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "TextureHostDXGID3D11"; }
 #endif
 
 protected:
   virtual void UpdateImpl(const SurfaceDescriptor& aSurface,
-                          nsIntRegion* aRegion) MOZ_OVERRIDE;
+                          nsIntRegion* aRegion,
+                          nsIntPoint* aOffset = nullptr) MOZ_OVERRIDE;
 private:
   void LockTexture();
   void ReleaseTexture();
@@ -208,13 +220,19 @@ public:
 
   virtual bool IsYCbCrSource() const MOZ_OVERRIDE { return true; }
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE
+  {
+    return nullptr; // TODO: cf bug 872568
+  }
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() MOZ_OVERRIDE { return "TextureImageTextureHostD3D11"; }
 #endif
 
 protected:
   virtual void UpdateImpl(const SurfaceDescriptor& aSurface,
-                          nsIntRegion* aRegion) MOZ_OVERRIDE;
+                          nsIntRegion* aRegion,
+                          nsIntPoint* aOffset = nullptr) MOZ_OVERRIDE;
 
 private:
   RefPtr<ID3D11Device> mDevice;

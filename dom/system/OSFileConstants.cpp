@@ -601,7 +601,7 @@ static dom::ConstantSpec gWinProperties[] =
  * If the field does not exist, create it. If it exists but is not an
  * object, throw a JS error.
  */
-JSObject *GetOrCreateObjectProperty(JSContext *cx, JSObject *aObject,
+JSObject *GetOrCreateObjectProperty(JSContext *cx, JS::Handle<JSObject*> aObject,
                                     const char *aProperty)
 {
   JS::Rooted<JS::Value> val(cx);
@@ -625,7 +625,7 @@ JSObject *GetOrCreateObjectProperty(JSContext *cx, JSObject *aObject,
  *
  * If the nsString is void (i.e. IsVoid is true), do nothing.
  */
-bool SetStringProperty(JSContext *cx, JSObject *aObject, const char *aProperty,
+bool SetStringProperty(JSContext *cx, JS::Handle<JSObject*> aObject, const char *aProperty,
                        const nsString aValue)
 {
   if (aValue.IsVoid()) {
@@ -633,8 +633,8 @@ bool SetStringProperty(JSContext *cx, JSObject *aObject, const char *aProperty,
   }
   JSString* strValue = JS_NewUCStringCopyZ(cx, aValue.get());
   NS_ENSURE_TRUE(strValue, false);
-  JS::Value valValue = STRING_TO_JSVAL(strValue);
-  return JS_SetProperty(cx, aObject, aProperty, &valValue);
+  JS::Rooted<JS::Value> valValue(cx, STRING_TO_JSVAL(strValue));
+  return JS_SetProperty(cx, aObject, aProperty, valValue.address());
 }
 
 /**
@@ -643,7 +643,7 @@ bool SetStringProperty(JSContext *cx, JSObject *aObject, const char *aProperty,
  * This function creates or uses JS object |OS.Constants| to store
  * all its constants.
  */
-bool DefineOSFileConstants(JSContext *cx, JSObject *global)
+bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
 {
   MOZ_ASSERT(gInitialized);
 
@@ -706,15 +706,15 @@ bool DefineOSFileConstants(JSContext *cx, JSObject *global)
       return false;
     }
 
-    JS::Value valVersion = STRING_TO_JSVAL(strVersion);
-    if (!JS_SetProperty(cx, objSys, "Name", &valVersion)) {
+    JS::Rooted<JS::Value> valVersion(cx, STRING_TO_JSVAL(strVersion));
+    if (!JS_SetProperty(cx, objSys, "Name", valVersion.address())) {
       return false;
     }
   }
 
 #if defined(DEBUG)
-  JS::Value valDebug = JSVAL_TRUE;
-  if (!JS_SetProperty(cx, objSys, "DEBUG", &valDebug)) {
+  JS::Rooted<JS::Value> valDebug(cx, JSVAL_TRUE);
+  if (!JS_SetProperty(cx, objSys, "DEBUG", valDebug.address())) {
     return false;
   }
 #endif

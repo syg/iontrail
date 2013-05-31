@@ -30,11 +30,12 @@ public:
 
     JSContext* GetContext() { return mContext; }
 
-    PObjectWrapperChild* GetOrCreateWrapper(JSObject* obj,
+    PObjectWrapperChild* GetOrCreateWrapper(JSObject* obj_,
                                             bool makeGlobal = false)
     {
-        if (!obj) // Don't wrap nothin'!
+        if (!obj_) // Don't wrap nothin'!
             return NULL;
+        JS::RootedObject obj(mContext, obj_);
         PObjectWrapperChild* wrapper;
         while (!mResidentObjectTable.Get(obj, &wrapper)) {
             wrapper = SendPObjectWrapperConstructor(AllocPObjectWrapper(obj),
@@ -54,7 +55,9 @@ protected:
     }
     
     PObjectWrapperChild* AllocPObjectWrapper(const bool&) {
-        return AllocPObjectWrapper(JS_GetGlobalObject(mContext));
+        // This stuff is unused and billm has a patch to delete it.
+        JSAutoRequest ar(mContext);
+        return AllocPObjectWrapper(JS_GetGlobalForScopeChain(mContext));
     }
 
     bool DeallocPObjectWrapper(PObjectWrapperChild* actor) {

@@ -321,8 +321,8 @@ nsGenericHTMLElement::Dataset()
     slots->mDataset = new nsDOMStringMap(this);
   }
 
-  NS_ADDREF(slots->mDataset);
-  return slots->mDataset;
+  nsRefPtr<nsDOMStringMap> ret = slots->mDataset;
+  return ret.forget();
 }
 
 nsresult
@@ -1461,10 +1461,12 @@ nsGenericHTMLElement::MapCommonAttributesInto(const nsMappedAttributes* aAttribu
   }
 
   if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Font)) {
-    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::lang);
-    if (value && value->Type() == nsAttrValue::eString) {
-      aData->ValueForLang()->SetStringValue(value->GetStringValue(),
-                                            eCSSUnit_Ident);
+    nsCSSValue* lang = aData->ValueForLang();
+    if (lang->GetUnit() == eCSSUnit_Null) {
+      const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::lang);
+      if (value && value->Type() == nsAttrValue::eString) {
+        lang->SetStringValue(value->GetStringValue(), eCSSUnit_Ident);
+      }
     }
   }
 
@@ -3122,8 +3124,8 @@ nsGenericHTMLElement::GetItemValue(JSContext* aCx, JSObject* aScope,
   }
 
   if (ItemScope()) {
-    JS::Value v;
-    if (!mozilla::dom::WrapObject(aCx, scope, this, &v)) {
+    JS::Rooted<JS::Value> v(aCx);
+    if (!mozilla::dom::WrapObject(aCx, scope, this, v.address())) {
       aError.Throw(NS_ERROR_FAILURE);
       return JS::UndefinedValue();
     }
@@ -3174,7 +3176,8 @@ nsGenericHTMLElement::SetItemValue(JSContext* aCx, JS::Value aValue,
   }
 
   FakeDependentString string;
-  if (!ConvertJSValueToString(aCx, aValue, &aValue, eStringify, eStringify, string)) {
+  JS::Rooted<JS::Value> value(aCx, aValue);
+  if (!ConvertJSValueToString(aCx, value, &value, eStringify, eStringify, string)) {
     aError.Throw(NS_ERROR_UNEXPECTED);
     return;
   }
@@ -3324,4 +3327,38 @@ bool
 nsGenericHTMLElement::IsEventAttributeName(nsIAtom *aName)
 {
   return nsContentUtils::IsEventAttributeName(aName, EventNameType_HTML);
+}
+
+/**
+ * Construct a URI from a string, as an element.src attribute
+ * would be set to. Helper for the media elements.
+ */
+nsresult
+nsGenericHTMLElement::NewURIFromString(const nsAutoString& aURISpec,
+                                       nsIURI** aURI)
+{
+  NS_ENSURE_ARG_POINTER(aURI);
+
+  *aURI = nullptr;
+
+  nsCOMPtr<nsIDocument> doc = OwnerDoc();
+
+  nsCOMPtr<nsIURI> baseURI = GetBaseURI();
+  nsresult rv = nsContentUtils::NewURIWithDocumentCharset(aURI, aURISpec,
+                                                          doc, baseURI);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  bool equal;
+  if (aURISpec.IsEmpty() &&
+      doc->GetDocumentURI() &&
+      NS_SUCCEEDED(doc->GetDocumentURI()->Equals(*aURI, &equal)) &&
+      equal) {
+    // Assume an element can't point to a fragment of its embedding
+    // document. Fail here instead of returning the recursive URI
+    // and waiting for the subsequent load to fail.
+    NS_RELEASE(*aURI);
+    return NS_ERROR_DOM_INVALID_STATE_ERR;
+  }
+
+  return NS_OK;
 }

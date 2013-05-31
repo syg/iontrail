@@ -1782,7 +1782,7 @@ nsNativeThemeCocoa::GetParentScrollbarFrame(nsIFrame *aFrame)
   do {
     if (scrollbarFrame->GetType() == nsGkAtoms::scrollbarFrame) break;
   } while ((scrollbarFrame = scrollbarFrame->GetParent()));
-  
+
   // We return null if we can't find a parent scrollbar frame
   return scrollbarFrame;
 }
@@ -1790,17 +1790,47 @@ nsNativeThemeCocoa::GetParentScrollbarFrame(nsIFrame *aFrame)
 static bool
 ToolbarCanBeUnified(CGContextRef cgContext, const HIRect& inBoxRect, NSWindow* aWindow)
 {
-  if (![aWindow isKindOfClass:[ToolbarWindow class]] ||
-      [(ToolbarWindow*)aWindow drawsContentsIntoWindowFrame])
+  if (![aWindow isKindOfClass:[ToolbarWindow class]])
     return false;
 
-  float unifiedToolbarHeight = [(ToolbarWindow*)aWindow unifiedToolbarHeight];
-  CGAffineTransform ctm = CGContextGetUserSpaceToDeviceSpaceTransform(cgContext);
-  CGRect deviceRect = CGRectApplyAffineTransform(inBoxRect, ctm);
+  ToolbarWindow* win = (ToolbarWindow*)aWindow;
+  float unifiedToolbarHeight = [win unifiedToolbarHeight];
   return inBoxRect.origin.x == 0 &&
-         deviceRect.size.width >= [aWindow frame].size.width &&
-         inBoxRect.origin.y <= 0.0 &&
-         floor(inBoxRect.origin.y + inBoxRect.size.height) <= unifiedToolbarHeight;
+         inBoxRect.size.width >= [win frame].size.width &&
+         CGRectGetMaxY(inBoxRect) <= unifiedToolbarHeight;
+}
+
+// By default, kCUIWidgetWindowFrame drawing draws rounded corners in the
+// upper corners. Depending on the context type, it fills the background in
+// the corners with black or leaves it transparent. Unfortunately, this corner
+// rounding interacts poorly with the window corner masking we apply during
+// titlebar drawing and results in small remnants of the corner background
+// appearing at the rounded edge.
+// So we draw square corners.
+static void
+DrawNativeTitlebarToolbarWithSquareCorners(CGContextRef aContext, const CGRect& aRect,
+                                           CGFloat aUnifiedHeight, BOOL aIsMain)
+{
+  // We extend the draw rect horizontally and clip away the rounded corners.
+  const CGFloat extendHorizontal = 10;
+  CGRect drawRect = CGRectInset(aRect, -extendHorizontal, 0);
+  if (drawRect.size.width * drawRect.size.height <= CUIDRAW_MAX_AREA) {
+    CGContextSaveGState(aContext);
+    CGContextClipToRect(aContext, aRect);
+
+    CUIDraw([NSWindow coreUIRenderer], drawRect, aContext,
+            (CFDictionaryRef)[NSDictionary dictionaryWithObjectsAndKeys:
+              @"kCUIWidgetWindowFrame", @"widget",
+              @"regularwin", @"windowtype",
+              (aIsMain ? @"normal" : @"inactive"), @"state",
+              [NSNumber numberWithDouble:aUnifiedHeight], @"kCUIWindowFrameUnifiedTitleBarHeightKey",
+              [NSNumber numberWithBool:YES], @"kCUIWindowFrameDrawTitleSeparatorKey",
+              [NSNumber numberWithBool:YES], @"is.flipped",
+              nil],
+            nil);
+
+    CGContextRestoreGState(aContext);
+  }
 }
 
 void
@@ -1809,27 +1839,16 @@ nsNativeThemeCocoa::DrawUnifiedToolbar(CGContextRef cgContext, const HIRect& inB
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
-  float titlebarHeight = [(ToolbarWindow*)aWindow titlebarHeight];
-  float unifiedHeight = titlebarHeight + inBoxRect.size.height;
-
-  BOOL isMain = [aWindow isMainWindow];
-
   CGContextSaveGState(cgContext);
   CGContextClipToRect(cgContext, inBoxRect);
 
-  CGRect drawRect = CGRectOffset(inBoxRect, 0, -titlebarHeight);
-  if (drawRect.size.width * drawRect.size.height <= CUIDRAW_MAX_AREA) {
-    CUIDraw([NSWindow coreUIRenderer], drawRect, cgContext,
-            (CFDictionaryRef)[NSDictionary dictionaryWithObjectsAndKeys:
-              @"kCUIWidgetWindowFrame", @"widget",
-              @"regularwin", @"windowtype",
-              (isMain ? @"normal" : @"inactive"), @"state",
-              [NSNumber numberWithInt:unifiedHeight], @"kCUIWindowFrameUnifiedTitleBarHeightKey",
-              [NSNumber numberWithBool:YES], @"kCUIWindowFrameDrawTitleSeparatorKey",
-              [NSNumber numberWithBool:YES], @"is.flipped",
-              nil],
-            nil);
-  }
+  CGFloat unifiedHeight = std::max([(ToolbarWindow*)aWindow unifiedToolbarHeight],
+                                   inBoxRect.size.height);
+  BOOL isMain = [aWindow isMainWindow];
+  CGFloat titlebarHeight = unifiedHeight - inBoxRect.size.height;
+  CGRect drawRect = CGRectMake(inBoxRect.origin.x, inBoxRect.origin.y - titlebarHeight,
+                               inBoxRect.size.width, inBoxRect.size.height + titlebarHeight);
+  DrawNativeTitlebarToolbarWithSquareCorners(cgContext, drawRect, unifiedHeight, isMain);
 
   CGContextRestoreGState(cgContext);
 
@@ -1871,6 +1890,14 @@ nsNativeThemeCocoa::DrawStatusBar(CGContextRef cgContext, const HIRect& inBoxRec
   CGContextRestoreGState(cgContext);
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
+void
+nsNativeThemeCocoa::DrawNativeTitlebar(CGContextRef aContext, CGRect aTitlebarRect,
+                                       CGFloat aUnifiedHeight, BOOL aIsMain)
+{
+  CGFloat unifiedHeight = std::max(aUnifiedHeight, aTitlebarRect.size.height);
+  DrawNativeTitlebarToolbarWithSquareCorners(aContext, aTitlebarRect, unifiedHeight, aIsMain);
 }
 
 static void
@@ -2135,6 +2162,14 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
     }
       break;
 
+    case NS_THEME_WINDOW_TITLEBAR: {
+      NSWindow* win = NativeWindowForFrame(aFrame);
+      BOOL isMain = [win isMainWindow];
+      float unifiedToolbarHeight = [(ToolbarWindow*)win unifiedToolbarHeight];
+      DrawNativeTitlebar(cgContext, macRect, unifiedToolbarHeight, isMain);
+    }
+      break;
+
     case NS_THEME_TOOLBOX: {
       HIThemeHeaderDrawInfo hdi = { 0, kThemeStateActive, kHIThemeHeaderKindWindow };
       HIThemeDrawHeader(&macRect, &hdi, cgContext, HITHEME_ORIENTATION);
@@ -2307,14 +2342,14 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
             macRect.size.width -= 4;
           }
         }
-        const BOOL isOnTopOfBrightBackground = YES; // TODO: detect this properly
+        const BOOL isOnTopOfDarkBackground = IsDarkBackground(aFrame);
         CUIDraw([NSWindow coreUIRenderer], macRect, cgContext,
                 (CFDictionaryRef)[NSDictionary dictionaryWithObjectsAndKeys:
                   @"kCUIWidgetOverlayScrollBar", @"widget",
                   @"regular", @"size",
                   (isRolledOver ? @"rollover" : @""), @"state",
                   (isHorizontal ? @"kCUIOrientHorizontal" : @"kCUIOrientVertical"), @"kCUIOrientationKey",
-                  (isOnTopOfBrightBackground ? @"" : @"kCUIVariantWhite"), @"kCUIVariantKey",
+                  (isOnTopOfDarkBackground ? @"kCUIVariantWhite" : @""), @"kCUIVariantKey",
                   [NSNumber numberWithBool:YES], @"indiconly",
                   [NSNumber numberWithBool:YES], @"kCUIThumbProportionKey",
                   [NSNumber numberWithBool:YES], @"is.flipped",
@@ -2342,13 +2377,13 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
             nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0 &&
           CheckBooleanAttr(GetParentScrollbarFrame(aFrame), nsGkAtoms::hover)) {
         BOOL isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_TRACK_HORIZONTAL);
-        const BOOL isOnTopOfBrightBackground = YES; // TODO: detect this properly
+        const BOOL isOnTopOfDarkBackground = IsDarkBackground(aFrame);
         CUIDraw([NSWindow coreUIRenderer], macRect, cgContext,
                 (CFDictionaryRef)[NSDictionary dictionaryWithObjectsAndKeys:
                   @"kCUIWidgetOverlayScrollBar", @"widget",
                   @"regular", @"size",
                   (isHorizontal ? @"kCUIOrientHorizontal" : @"kCUIOrientVertical"), @"kCUIOrientationKey",
-                  (isOnTopOfBrightBackground ? @"" : @"kCUIVariantWhite"), @"kCUIVariantKey",
+                  (isOnTopOfDarkBackground ? @"kCUIVariantWhite" : @""), @"kCUIVariantKey",
                   [NSNumber numberWithBool:YES], @"noindicator",
                   [NSNumber numberWithBool:YES], @"kCUIThumbProportionKey",
                   [NSNumber numberWithBool:YES], @"is.flipped",
@@ -2551,9 +2586,9 @@ nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
       if (nsLookAndFeel::GetInt(
             nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0) {
         if (isHorizontal) {
-          aResult->SizeTo(1, 2, 1, 1);
-        } else {
           aResult->SizeTo(2, 1, 1, 1);
+        } else {
+          aResult->SizeTo(1, 1, 1, 2);
         }
       }
 
@@ -2644,7 +2679,7 @@ nsNativeThemeCocoa::GetWidgetOverflow(nsDeviceContext* aContext, nsIFrame* aFram
 }
 
 static const int32_t kRegularScrollbarThumbMinSize = 26;
-static const int32_t kSmallScrollbarThumbMinSize = 19;
+static const int32_t kSmallScrollbarThumbMinSize = 26;
 
 NS_IMETHODIMP
 nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
@@ -2829,6 +2864,29 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
       break;
     }
 
+    case NS_THEME_SCROLLBAR_NON_DISAPPEARING:
+    {
+      int32_t themeMetric = kThemeMetricScrollBarWidth;
+
+      if (aFrame) {
+        nsIFrame* scrollbarFrame = GetParentScrollbarFrame(aFrame);
+        if (scrollbarFrame &&
+            scrollbarFrame->StyleDisplay()->mAppearance ==
+            NS_THEME_SCROLLBAR_SMALL) {
+          // XXX We're interested in the width of non-disappearing scrollbars
+          // to leave enough space for a dropmarker in non-native styled
+          // comboboxes (bug 869314). It isn't clear to me if comboboxes can
+          // ever have small scrollbars.
+          themeMetric = kThemeMetricSmallScrollBarWidth;
+        }
+      }
+
+      SInt32 scrollbarWidth = 0;
+      ::GetThemeMetric(themeMetric, &scrollbarWidth);
+      aResult->SizeTo(scrollbarWidth, scrollbarWidth);
+      break;
+    }
+
     case NS_THEME_SCROLLBAR_BUTTON_UP:
     case NS_THEME_SCROLLBAR_BUTTON_DOWN:
     case NS_THEME_SCROLLBAR_BUTTON_LEFT:
@@ -2961,6 +3019,7 @@ nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* a
 
     case NS_THEME_DIALOG:
     case NS_THEME_WINDOW:
+    case NS_THEME_WINDOW_TITLEBAR:
     case NS_THEME_MENUPOPUP:
     case NS_THEME_MENUITEM:
     case NS_THEME_MENUSEPARATOR:
@@ -3020,6 +3079,7 @@ nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* a
     case NS_THEME_SCROLLBAR_THUMB_VERTICAL:
     case NS_THEME_SCROLLBAR_TRACK_VERTICAL:
     case NS_THEME_SCROLLBAR_TRACK_HORIZONTAL:
+    case NS_THEME_SCROLLBAR_NON_DISAPPEARING:
 
     case NS_THEME_DROPDOWN:
     case NS_THEME_DROPDOWN_BUTTON:
@@ -3068,7 +3128,7 @@ nsNativeThemeCocoa::WidgetIsContainer(uint8_t aWidgetType)
 }
 
 bool
-nsNativeThemeCocoa::ThemeDrawsFocusForWidget(nsPresContext* aPresContext, nsIFrame* aFrame, uint8_t aWidgetType)
+nsNativeThemeCocoa::ThemeDrawsFocusForWidget(uint8_t aWidgetType)
 {
   if (aWidgetType == NS_THEME_DROPDOWN ||
       aWidgetType == NS_THEME_DROPDOWN_TEXTFIELD ||

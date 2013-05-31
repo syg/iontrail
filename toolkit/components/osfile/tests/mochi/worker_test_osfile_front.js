@@ -338,6 +338,28 @@ function test_readall_writeall_file()
   }
   ok(!!exn && exn instanceof TypeError, "writeAtomic fails if tmpPath is not provided");
 
+  // Check that writeAtomic fails when destination path is undefined
+  exn = null;
+  try {
+    let path = undefined;
+    let options = {tmpPath: tmp_file_name};
+    OS.File.writeAtomic(path, readResult.buffer, options);
+  } catch (x) {
+    exn = x;
+  }
+  ok(!!exn && exn instanceof TypeError, "writeAtomic fails if path is undefined");
+
+  // Check that writeAtomic fails when destination path is an empty string
+  exn = null;
+  try {
+    let path = "";
+    let options = {tmpPath: tmp_file_name};
+    OS.File.writeAtomic(path, readResult.buffer, options);
+  } catch (x) {
+    exn = x;
+  }
+  ok(!!exn && exn instanceof TypeError, "writeAtomic fails if path is an empty string");
+
   // Cleanup.
   OS.File.remove(tmp_file_name);
 }
@@ -627,8 +649,10 @@ function test_info() {
   let stop = new Date();
 
   // We round down/up by 1s as file system precision is lower than Date precision
-  let startMs = start.getTime() - 1000;
-  let stopMs  = stop.getTime() + 1000;
+  // (no clear specifications about that, but it seems that this can be a little
+  // over 1 second under ext3 and 2 seconds under FAT)
+  let startMs = start.getTime() - 2500;
+  let stopMs  = stop.getTime() + 2500;
 
   (function() {
     let birth;

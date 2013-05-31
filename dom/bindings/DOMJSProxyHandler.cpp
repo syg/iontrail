@@ -29,8 +29,6 @@ jsid s_length_id = JSID_VOID;
 bool
 DefineStaticJSVals(JSContext* cx)
 {
-  JSAutoRequest ar(cx);
-
   return InternJSString(cx, s_length_id, "length");
 }
 
@@ -181,7 +179,7 @@ DOMProxyHandler::getPropertyDescriptor(JSContext* cx, JS::Handle<JSObject*> prox
 
 bool
 DOMProxyHandler::defineProperty(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
-                                JSPropertyDescriptor* desc)
+                                JSPropertyDescriptor* desc, bool* defined)
 {
   if ((desc->attrs & JSPROP_GETTER) && desc->setter == JS_StrictPropertyStub) {
     return JS_ReportErrorFlagsAndNumber(cx,
@@ -295,8 +293,6 @@ DOMProxyHandler::AppendNamedPropertyIds(JSContext* cx,
 int32_t
 IdToInt32(JSContext* cx, JS::Handle<jsid> id)
 {
-  JSAutoRequest ar(cx);
-
   JS::Value idval;
   double array_index;
   int32_t i;

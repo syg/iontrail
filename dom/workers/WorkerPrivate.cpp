@@ -33,6 +33,7 @@
 #include "js/MemoryMetrics.h"
 #include "nsAlgorithm.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsError.h"
 #include "nsDOMJSUtils.h"
 #include "nsGUIEvent.h"
@@ -204,8 +205,8 @@ struct WorkerStructuredCloneCallbacks
       MOZ_ASSERT(dataArray.isObject());
 
       // Construct the ImageData.
-      JSObject* obj = imagedata::Create(aCx, width, height,
-                                        &dataArray.toObject());
+      JS::Rooted<JSObject*> dataObj(aCx, &dataArray.toObject());
+      JSObject* obj = imagedata::Create(aCx, width, height, dataObj);
       return obj;
     }
 
@@ -1524,7 +1525,7 @@ WorkerRunnable::Dispatch(JSContext* aCx)
 
   JSAutoRequest ar(aCx);
 
-  JSObject* global = JS_GetGlobalForScopeChain(aCx);
+  JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
 
   Maybe<JSAutoCompartment> ac;
   if (global) {

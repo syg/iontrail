@@ -30,6 +30,7 @@
 #include "nsIDOMHTMLScriptElement.h"
 #include "nsIDocShell.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsUnicharUtils.h"
 #include "nsAutoPtr.h"
 #include "nsIXPConnect.h"
@@ -848,14 +849,14 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
     if (aRequest->mOriginPrincipal) {
       options.setOriginPrincipals(nsJSPrincipals::get(aRequest->mOriginPrincipal));
     }
-    rv = context->EvaluateString(aScript, *globalObject->GetGlobalJSObject(),
+    JS::Rooted<JSObject*> global(cx, globalObject->GetGlobalJSObject());
+    rv = context->EvaluateString(aScript, global,
                                  options, /* aCoerceToString = */ false, nullptr);
   }
 
   // Put the old script back in case it wants to do anything else.
   mCurrentScript = oldCurrent;
 
-  JSAutoRequest ar(cx);
   context->SetProcessingScriptTag(oldProcessingScriptTag);
   return rv;
 }

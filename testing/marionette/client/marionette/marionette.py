@@ -94,6 +94,11 @@ class HTMLElement(object):
     def location(self):
         return self.marionette._send_message('getElementPosition', 'value', element=self.id)
 
+    def value_of_css_property(self, property_name):
+        return self.marionette._send_message('getElementValueOfCssProperty', 'value',
+                                             element=self.id,
+                                             propertyName=property_name)
+
 class Actions(object):
     def __init__(self, marionette):
         self.action_chain = []
@@ -195,7 +200,7 @@ class Marionette(object):
                  profile=None, emulator=None, sdcard=None, emulatorBinary=None,
                  emulatorImg=None, emulator_res=None, gecko_path=None,
                  connectToRunningEmulator=False, homedir=None, baseurl=None,
-                 noWindow=False, logcat_dir=None, busybox=None, symbols_path=None):
+                 noWindow=False, logcat_dir=None, busybox=None, symbols_path=None, timeout=None):
         self.host = host
         self.port = self.local_port = port
         self.app = app
@@ -212,6 +217,7 @@ class Marionette(object):
         self.logcat_dir = logcat_dir
         self._test_name = None
         self.symbols_path = symbols_path
+        self.timeout = timeout
 
         if bin:
             port = int(self.port)
@@ -473,10 +479,6 @@ class Marionette(object):
         response = self._send_message('setSearchTimeout', 'ok', value=timeout)
         return response
 
-    def send_mouse_event(self, send):
-        response = self._send_message('sendMouseEvent', 'ok', value=send)
-        return response
-
     @property
     def current_window_handle(self):
         self.window = self._send_message('getWindow', 'value')
@@ -521,6 +523,10 @@ class Marionette(object):
 
     def get_url(self):
         response = self._send_message('getUrl', 'value')
+        return response
+
+    def get_window_type(self):
+        response = self._send_message('getWindowType', 'value')
         return response
 
     def navigate(self, url):

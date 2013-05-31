@@ -209,7 +209,7 @@ EventListenerManager::FinalizeInternal(JSFreeOp* aFop)
 
 void
 EventListenerManager::Add(JSContext* aCx, const jsid& aType,
-                          JSObject* aListener, Phase aPhase,
+                          JS::Handle<JSObject*> aListener, Phase aPhase,
                           bool aWantsUntrusted, ErrorResult& aRv)
 {
   MOZ_ASSERT(aListener);
@@ -244,7 +244,7 @@ EventListenerManager::Add(JSContext* aCx, const jsid& aType,
 
 void
 EventListenerManager::Remove(JSContext* aCx, const jsid& aType,
-                             JSObject* aListener, Phase aPhase,
+                             JS::Handle<JSObject*> aListener, Phase aPhase,
                              bool aClearEmpty)
 {
   MOZ_ASSERT(aListener);
@@ -420,9 +420,9 @@ EventListenerManager::DispatchEvent(JSContext* aCx, const EventTarget& aTarget,
     }
 
     jsval argv[] = { OBJECT_TO_JSVAL(aEvent) };
-    jsval rval = JSVAL_VOID;
+    JS::Rooted<JS::Value> rval(aCx);
     if (!JS_CallFunctionValue(aCx, thisObj, listenerVal, ArrayLength(argv),
-                              argv, &rval)) {
+                              argv, rval.address())) {
       if (!JS_ReportPendingException(aCx)) {
         aRv.Throw(NS_ERROR_FAILURE);
         return false;

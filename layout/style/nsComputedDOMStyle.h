@@ -45,7 +45,7 @@ public:
   GetPropertyCSSValue(const nsAString& aProp, mozilla::ErrorResult& aRv)
     MOZ_OVERRIDE;
   using nsICSSDeclaration::GetPropertyCSSValue;
-  virtual void IndexedGetter(uint32_t aIndex, bool& aFound, nsAString& aPropName);
+  virtual void IndexedGetter(uint32_t aIndex, bool& aFound, nsAString& aPropName) MOZ_OVERRIDE;
 
   enum StyleType {
     eDefaultOnly, // Only includes UA and user sheets
@@ -92,6 +92,8 @@ public:
   virtual nsresult SetCSSDeclaration(mozilla::css::Declaration*) MOZ_OVERRIDE;
   virtual nsIDocument* DocToUpdate() MOZ_OVERRIDE;
   virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) MOZ_OVERRIDE;
+
+  static nsROCSSPrimitiveValue* MatrixToCSSValue(gfx3DMatrix& aMatrix);
 
 private:
   void AssertFlushedPendingReflows() {
@@ -188,13 +190,21 @@ private:
   mozilla::dom::CSSValue* DoGetColor();
   mozilla::dom::CSSValue* DoGetFontFamily();
   mozilla::dom::CSSValue* DoGetFontFeatureSettings();
+  mozilla::dom::CSSValue* DoGetFontKerning();
   mozilla::dom::CSSValue* DoGetFontLanguageOverride();
   mozilla::dom::CSSValue* DoGetFontSize();
   mozilla::dom::CSSValue* DoGetFontSizeAdjust();
   mozilla::dom::CSSValue* DoGetFontStretch();
   mozilla::dom::CSSValue* DoGetFontStyle();
-  mozilla::dom::CSSValue* DoGetFontWeight();
+  mozilla::dom::CSSValue* DoGetFontSynthesis();
   mozilla::dom::CSSValue* DoGetFontVariant();
+  mozilla::dom::CSSValue* DoGetFontVariantAlternates();
+  mozilla::dom::CSSValue* DoGetFontVariantCaps();
+  mozilla::dom::CSSValue* DoGetFontVariantEastAsian();
+  mozilla::dom::CSSValue* DoGetFontVariantLigatures();
+  mozilla::dom::CSSValue* DoGetFontVariantNumeric();
+  mozilla::dom::CSSValue* DoGetFontVariantPosition();
+  mozilla::dom::CSSValue* DoGetFontWeight();
 
   /* Background properties */
   mozilla::dom::CSSValue* DoGetBackgroundAttachment();
@@ -378,7 +388,6 @@ private:
   mozilla::dom::CSSValue* DoGetAnimationIterationCount();
   mozilla::dom::CSSValue* DoGetAnimationPlayState();
 
-#ifdef MOZ_FLEXBOX
   /* CSS Flexbox properties */
   mozilla::dom::CSSValue* DoGetAlignItems();
   mozilla::dom::CSSValue* DoGetAlignSelf();
@@ -388,7 +397,6 @@ private:
   mozilla::dom::CSSValue* DoGetFlexShrink();
   mozilla::dom::CSSValue* DoGetOrder();
   mozilla::dom::CSSValue* DoGetJustifyContent();
-#endif // MOZ_FLEXBOX
 
   /* SVG properties */
   mozilla::dom::CSSValue* DoGetFill();
@@ -431,7 +439,6 @@ private:
   mozilla::dom::CSSValue* DoGetMaskType();
   mozilla::dom::CSSValue* DoGetPaintOrder();
 
-  nsROCSSPrimitiveValue* GetROCSSPrimitiveValue();
   nsDOMCSSValueList* GetROCSSValueList(bool aCommaDelimited);
   void SetToRGBAColor(nsROCSSPrimitiveValue* aValue, nscolor aColor);
   void SetValueToStyleImage(const nsStyleImage& aStyleImage,

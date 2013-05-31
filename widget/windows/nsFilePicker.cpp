@@ -243,10 +243,8 @@ EnsureWindowVisible(HWND hwnd)
     HWND parentHwnd = GetParent(hwnd);
     RECT parentRect;
     GetWindowRect(parentHwnd, &parentRect);
-    BOOL b = SetWindowPos(hwnd, NULL, 
-                          parentRect.left, 
-                          parentRect.top, 0, 0, 
-                          SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+    SetWindowPos(hwnd, NULL, parentRect.left, parentRect.top, 0, 0,
+                 SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
   }
 }
 
@@ -1159,6 +1157,7 @@ nsBaseWinFilePicker::SetDefaultString(const nsAString& aString)
   // Then, we need to replace illegal characters. At this stage, we cannot
   // replace the backslash as the string might represent a file path.
   mDefaultFilePath.ReplaceChar(FILE_ILLEGAL_CHARACTERS, '-');
+  mDefaultFilename.ReplaceChar(FILE_ILLEGAL_CHARACTERS, '-');
 
   return NS_OK;
 }

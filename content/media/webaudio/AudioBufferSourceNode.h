@@ -56,7 +56,7 @@ public:
     duration.Construct(aDuration);
     Start(aWhen, aOffset, duration, aRv);
   }
-  void Stop(double aWhen, ErrorResult& aRv);
+  void Stop(double aWhen, ErrorResult& aRv, bool aShuttingDown = false);
   void NoteOff(double aWhen, ErrorResult& aRv)
   {
     Stop(aWhen, aRv);
@@ -75,6 +75,10 @@ public:
   AudioParam* PlaybackRate() const
   {
     return mPlaybackRate;
+  }
+  AudioParam* Gain() const
+  {
+    return mGain;
   }
   bool Loop() const
   {
@@ -124,6 +128,7 @@ private:
     LOOPSTART,
     LOOPEND,
     PLAYBACKRATE,
+    GAIN,
     DOPPLERSHIFT
   };
 
@@ -133,6 +138,7 @@ private:
                                                double aOffset,
                                                double aDuration);
   static void SendPlaybackRateToStream(AudioNode* aNode);
+  static void SendGainToStream(AudioNode* aNode);
 
 private:
   double mLoopStart;
@@ -141,11 +147,11 @@ private:
   double mDuration;
   nsRefPtr<AudioBuffer> mBuffer;
   nsRefPtr<AudioParam> mPlaybackRate;
+  nsRefPtr<AudioParam> mGain;
   SelfReference<AudioBufferSourceNode> mPlayingRef; // a reference to self while playing
   bool mLoop;
   bool mStartCalled;
   bool mStopped;
-  bool mOffsetAndDurationRemembered;
 };
 
 }

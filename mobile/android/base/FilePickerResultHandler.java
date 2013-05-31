@@ -24,9 +24,11 @@ abstract class FilePickerResultHandler implements ActivityResultHandler {
     private static final String LOGTAG = "GeckoFilePickerResultHandler";
 
     protected final Queue<String> mFilePickerResult;
+    protected final ActivityHandlerHelper.FileResultHandler mHandler;
 
-    protected FilePickerResultHandler(Queue<String> resultQueue) {
+    protected FilePickerResultHandler(Queue<String> resultQueue, ActivityHandlerHelper.FileResultHandler handler) {
         mFilePickerResult = resultQueue;
+        mHandler = handler;
     }
 
     protected String handleActivityResult(int resultCode, Intent data) {
@@ -40,7 +42,7 @@ abstract class FilePickerResultHandler implements ActivityResultHandler {
             return path == null ? "" : path;
         }
         try {
-            ContentResolver cr = GeckoApp.mAppContext.getContentResolver();
+            ContentResolver cr = GeckoAppShell.getContext().getContentResolver();
             Cursor cursor = cr.query(uri, new String[] { OpenableColumns.DISPLAY_NAME },
                                      null, null, null);
             String name = null;
@@ -53,6 +55,8 @@ abstract class FilePickerResultHandler implements ActivityResultHandler {
                     cursor.close();
                 }
             }
+
+            // tmp filenames must be at least 3 characters long. Add a prefix to make sure that happens
             String fileName = "tmp_";
             String fileExt = null;
             int period;
@@ -61,9 +65,10 @@ abstract class FilePickerResultHandler implements ActivityResultHandler {
                 fileExt = "." + GeckoAppShell.getExtensionFromMimeType(mimeType);
             } else {
                 fileExt = name.substring(period);
-                fileName = name.substring(0, period);
+                fileName += name.substring(0, period);
             }
-            File file = File.createTempFile(fileName, fileExt, GeckoLoader.getGREDir(GeckoApp.mAppContext));
+            Log.i(LOGTAG, "Filename: " + fileName + " . " + fileExt);
+            File file = File.createTempFile(fileName, fileExt, GeckoLoader.getGREDir(GeckoAppShell.getContext()));
             FileOutputStream fos = new FileOutputStream(file);
             InputStream is = cr.openInputStream(uri);
             byte[] buf = new byte[4096];

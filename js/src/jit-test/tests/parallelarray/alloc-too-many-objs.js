@@ -12,7 +12,9 @@ function testMap() {
 
   // The disqual occurs because each time we try to run we wind up
   // bailing due to running out of memory or requesting a GC.
-  pints.map(kernel, {mode: "par", expect: "disqualified"});
+  assertParallelExecWillBail(function (m) {
+    pints.map(kernel, m);
+  });
 
   function kernel(v) {
     var x = [];

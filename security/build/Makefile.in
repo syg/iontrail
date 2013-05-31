@@ -141,6 +141,9 @@ DEFAULT_GMAKE_FLAGS += NSINSTALL="$(NSINSTALL)"
 ifeq ($(OS_ARCH),WINNT)
 DEFAULT_GMAKE_FLAGS += INSTALL="$(NSINSTALL) -t"
 endif
+ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_1)
+DEFAULT_GMAKE_FLAGS += OS_DLLFLAGS="-static-libgcc"
+endif
 ifndef MOZ_NATIVE_SQLITE
 ifdef MOZ_FOLD_LIBS
 DEFAULT_GMAKE_FLAGS += SQLITE_LIB_NAME=nss3
@@ -495,4 +498,4 @@ endif # MOZ_FOLD_LIBS
 
 # Work around NSS build system race condition creating certdata.c in
 # security/nss/lib/ckfw/builtins. See bug #836220.
-libs-nss/lib: $(call mkdir_deps,../nss/lib/ckfw/builtins)
+libs-nss/lib$(if $(MOZ_FOLD_LIBS),/ckfw): $(call mkdir_deps,../nss/lib/ckfw/builtins)

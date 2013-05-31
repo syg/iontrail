@@ -20,7 +20,7 @@ class gfxASurface;
 typedef struct _cairo_pattern cairo_pattern_t;
 
 
-class THEBES_API gfxPattern {
+class gfxPattern {
     NS_INLINE_DECL_REFCOUNTING(gfxPattern)
 
 public:
@@ -100,6 +100,10 @@ public:
     bool GetSolidColor(gfxRGBA& aColor);
 
     already_AddRefed<gfxASurface> GetSurface();
+
+    bool IsAzure() { return !mPattern; }
+
+    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetAzureSurface() { return mSourceSurface; }
 
 protected:
     cairo_pattern_t *mPattern;

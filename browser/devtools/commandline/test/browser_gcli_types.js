@@ -49,15 +49,22 @@ function forEachType(options, typeSpec, callback) {
     }
     else if (name === 'delegate') {
       typeSpec.delegateType = function() {
-        return types.getType('string');
+        return types.createType('string');
       };
     }
     else if (name === 'array') {
       typeSpec.subtype = 'string';
     }
 
-    var type = types.getType(typeSpec);
+    var type = types.createType(typeSpec);
     callback(type);
+
+    // Clean up
+    delete typeSpec.name;
+    delete typeSpec.requisition;
+    delete typeSpec.data;
+    delete typeSpec.delegateType;
+    delete typeSpec.subtype;
   });
 }
 
@@ -68,7 +75,8 @@ exports.testDefault = function(options) {
   }
 
   forEachType(options, {}, function(type) {
-    var blank = type.getBlank().value;
+    var context = options.display.requisition.executionContext;
+    var blank = type.getBlank(context).value;
 
     // boolean and array types are exempt from needing undefined blank values
     if (type.name === 'boolean') {

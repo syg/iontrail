@@ -2002,6 +2002,8 @@ class MUnbox : public MUnaryInstruction, public BoxInputsPolicy
         return mode() != Infallible;
     }
     bool congruentTo(MDefinition *const &ins) const {
+        if (!ins->isUnbox() || ins->toUnbox()->mode() != mode())
+            return false;
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -3029,6 +3031,10 @@ class MSqrt
   public:
     INSTRUCTION_HEADER(Sqrt)
     static MSqrt *New(MDefinition *num) {
+        return new MSqrt(num);
+    }
+    static MSqrt *NewAsmJS(MDefinition *num, MIRType type) {
+        JS_ASSERT(type == MIRType_Double);
         return new MSqrt(num);
     }
     MDefinition *num() const {
@@ -6329,6 +6335,27 @@ class MSetPropertyInstruction : public MBinaryInstruction
     }
 };
 
+class MSetElementInstruction
+  : public MTernaryInstruction
+{
+  protected:
+    MSetElementInstruction(MDefinition *object, MDefinition *index, MDefinition *value)
+      : MTernaryInstruction(object, index, value)
+    {
+    }
+
+  public:
+    MDefinition *object() const {
+        return getOperand(0);
+    }
+    MDefinition *index() const {
+        return getOperand(1);
+    }
+    MDefinition *value() const {
+        return getOperand(2);
+    }
+};
+
 class MDeleteProperty
   : public MUnaryInstruction,
     public BoxInputsPolicy
@@ -6404,6 +6431,35 @@ class MSetPropertyCache
     }
 };
 
+class MSetElementCache
+  : public MSetElementInstruction,
+    public MixPolicy<ObjectPolicy<0>, BoxPolicy<1> >
+{
+    bool strict_;
+
+    MSetElementCache(MDefinition *obj, MDefinition *index, MDefinition *value, bool strict)
+      : MSetElementInstruction(obj, index, value),
+        strict_(strict)
+    {
+    }
+
+  public:
+    INSTRUCTION_HEADER(SetElementCache);
+
+    static MSetElementCache *New(MDefinition *obj, MDefinition *index, MDefinition *value,
+                                 bool strict) {
+        return new MSetElementCache(obj, index, value, strict);
+    }
+
+    bool strict() const {
+        return strict_;
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+};
+
 class MCallGetProperty
   : public MUnaryInstruction,
     public BoxInputsPolicy
@@ -6471,13 +6527,12 @@ class MCallGetElement
 };
 
 class MCallSetElement
-  : public MAryInstruction<3>,
+  : public MSetElementInstruction,
     public CallSetElementPolicy
 {
-    MCallSetElement(MDefinition *object, MDefinition *index, MDefinition *value) {
-        setOperand(0, object);
-        setOperand(1, index);
-        setOperand(2, value);
+    MCallSetElement(MDefinition *object, MDefinition *index, MDefinition *value)
+      : MSetElementInstruction(object, index, value)
+    {
     }
 
   public:
@@ -6489,15 +6544,6 @@ class MCallSetElement
 
     TypePolicy *typePolicy() {
         return this;
-    }
-    MDefinition *object() const {
-        return getOperand(0);
-    }
-    MDefinition *index() const {
-        return getOperand(1);
-    }
-    MDefinition *value() const {
-        return getOperand(2);
     }
 };
 
@@ -7027,7 +7073,99 @@ class MGetArgument
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();
-   }
+    }
+};
+
+class MRestCommon
+{
+    unsigned numFormals_;
+    CompilerRootObject templateObject_;
+
+  protected:
+    MRestCommon(unsigned numFormals, JSObject *templateObject)
+      : numFormals_(numFormals),
+        templateObject_(templateObject)
+   { }
+
+  public:
+    unsigned numFormals() const {
+        return numFormals_;
+    }
+    JSObject *templateObject() const {
+        return templateObject_;
+    }
+};
+
+class MRest
+  : public MUnaryInstruction,
+    public MRestCommon,
+    public IntPolicy<0>
+{
+    MRest(MDefinition *numActuals, unsigned numFormals, JSObject *templateObject)
+      : MUnaryInstruction(numActuals),
+        MRestCommon(numFormals, templateObject)
+    {
+        setResultType(MIRType_Object);
+        setResultTypeSet(MakeSingletonTypeSet(templateObject));
+    }
+
+  public:
+    INSTRUCTION_HEADER(Rest);
+
+    static MRest *New(MDefinition *numActuals, unsigned numFormals, JSObject *templateObject) {
+        return new MRest(numActuals, numFormals, templateObject);
+    }
+
+    MDefinition *numActuals() const {
+        return getOperand(0);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+class MParRest
+  : public MBinaryInstruction,
+    public MRestCommon,
+    public IntPolicy<1>
+{
+    MParRest(MDefinition *parSlice, MDefinition *numActuals, unsigned numFormals,
+             JSObject *templateObject)
+      : MBinaryInstruction(parSlice, numActuals),
+        MRestCommon(numFormals, templateObject)
+    {
+        setResultType(MIRType_Object);
+        setResultTypeSet(MakeSingletonTypeSet(templateObject));
+    }
+
+  public:
+    INSTRUCTION_HEADER(ParRest);
+
+    static MParRest *New(MDefinition *parSlice, MDefinition *numActuals, unsigned numFormals,
+                         JSObject *templateObject) {
+        return new MParRest(parSlice, numActuals, numFormals, templateObject);
+    }
+    static MParRest *New(MDefinition *parSlice, MRest *rest) {
+        return new MParRest(parSlice, rest->numActuals(), rest->numFormals(), rest->templateObject());
+    }
+
+    MDefinition *parSlice() const {
+        return getOperand(0);
+    }
+    MDefinition *numActuals() const {
+        return getOperand(1);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
 };
 
 class MParWriteGuard
@@ -7174,6 +7312,37 @@ class MMonitorTypes : public MUnaryInstruction, public BoxInputsPolicy
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+};
+
+// Given a value being written to another object, update the generational store
+// buffer if the value is in the nursery and object is in the tenured heap.
+class MPostWriteBarrier
+  : public MBinaryInstruction,
+    public ObjectPolicy<0>
+{
+    MPostWriteBarrier(MDefinition *obj, MDefinition *value)
+      : MBinaryInstruction(obj, value)
+    {
+        setGuard();
+    }
+
+  public:
+    INSTRUCTION_HEADER(PostWriteBarrier)
+
+    static MPostWriteBarrier *New(MDefinition *obj, MDefinition *value) {
+        return new MPostWriteBarrier(obj, value);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+
+    MDefinition *object() const {
+        return getOperand(0);
+    }
+    MDefinition *value() const {
+        return getOperand(1);
     }
 };
 
@@ -7988,10 +8157,12 @@ bool ElementAccessIsPacked(JSContext *cx, MDefinition *obj);
 bool ElementAccessHasExtraIndexedProperty(JSContext *cx, MDefinition *obj);
 MIRType DenseNativeElementType(JSContext *cx, MDefinition *obj);
 bool PropertyReadNeedsTypeBarrier(JSContext *cx, types::TypeObject *object, PropertyName *name,
-                                  types::StackTypeSet *observed);
+                                  types::StackTypeSet *observed, bool updateObserved = true);
 bool PropertyReadNeedsTypeBarrier(JSContext *cx, MDefinition *obj, PropertyName *name,
                                   types::StackTypeSet *observed);
 bool PropertyReadIsIdempotent(JSContext *cx, MDefinition *obj, PropertyName *name);
+void AddObjectsForPropertyRead(JSContext *cx, MDefinition *obj, PropertyName *name,
+                               types::StackTypeSet *observed);
 bool PropertyWriteNeedsTypeBarrier(JSContext *cx, MBasicBlock *current, MDefinition **pobj,
                                    PropertyName *name, MDefinition **pvalue,
                                    bool canModify = true);

@@ -37,7 +37,7 @@ public:
   NS_DECL_ISUPPORTS
 
   // nsIStyleRuleProcessor (parts)
-  virtual nsRestyleHint HasStateDependentStyle(StateRuleProcessorData* aData);
+  virtual nsRestyleHint HasStateDependentStyle(StateRuleProcessorData* aData) MOZ_OVERRIDE;
   virtual bool HasDocumentStateDependentStyle(StateRuleProcessorData* aData) MOZ_OVERRIDE;
   virtual nsRestyleHint
     HasAttributeDependentStyle(AttributeRuleProcessorData* aData) MOZ_OVERRIDE;
@@ -61,7 +61,6 @@ public:
                   nsCSSProperty aProperty,
                   nsStyleContext* aStyleContext,
                   nsStyleAnimation::Value& aComputedValue);
-  static bool ThrottlingEnabled();
 protected:
   friend struct CommonElementAnimationData; // for ElementDataRemoved
 
@@ -83,7 +82,7 @@ public:
   NS_DECL_ISUPPORTS
 
   // nsIStyleRule implementation
-  virtual void MapRuleInfoInto(nsRuleData* aRuleData);
+  virtual void MapRuleInfoInto(nsRuleData* aRuleData) MOZ_OVERRIDE;
 #ifdef DEBUG
   virtual void List(FILE* out = stdout, int32_t aIndent = 0) const MOZ_OVERRIDE;
 #endif

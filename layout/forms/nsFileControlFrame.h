@@ -35,8 +35,8 @@ public:
   NS_DECL_FRAMEARENA_HELPERS
 
   // nsIFormControlFrame
-  virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue);
-  virtual void SetFocus(bool aOn, bool aRepaint);
+  virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue) MOZ_OVERRIDE;
+  virtual void SetFocus(bool aOn, bool aRepaint) MOZ_OVERRIDE;
 
   virtual nscoord GetMinWidth(nsRenderingContext *aRenderingContext) MOZ_OVERRIDE;
 
@@ -96,7 +96,7 @@ protected:
       : mFrame(aFrame)
     {}
 
-    NS_IMETHOD Run() {
+    NS_IMETHOD Run() MOZ_OVERRIDE {
       nsFileControlFrame* frame = static_cast<nsFileControlFrame*>(mFrame.GetFrame());
       NS_ENSURE_STATE(frame);
 

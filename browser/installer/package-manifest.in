@@ -197,9 +197,6 @@
 @BINPATH@/components/dom_indexeddb.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
-#ifdef MOZ_B2G_RIL
-@BINPATH@/components/dom_mms.xpt
-#endif
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_quota.xpt
@@ -432,6 +429,7 @@
 @BINPATH@/components/satchel.manifest
 @BINPATH@/components/nsFormAutoComplete.js
 @BINPATH@/components/nsFormHistory.js
+@BINPATH@/components/FormHistoryStartup.js
 @BINPATH@/components/nsInputListAutoComplete.js
 @BINPATH@/components/contentSecurityPolicy.manifest
 @BINPATH@/components/contentSecurityPolicy.js
@@ -514,8 +512,6 @@
 @BINPATH@/components/PermissionSettings.manifest
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
-@BINPATH@/components/NavigatorPropertyHelper.js
-@BINPATH@/components/NavigatorPropertyHelper.manifest
 @BINPATH@/components/AlarmsManager.js
 @BINPATH@/components/AlarmsManager.manifest
 @BINPATH@/components/TCPSocket.js

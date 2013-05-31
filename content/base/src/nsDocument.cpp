@@ -35,6 +35,7 @@
 #include "nsIScriptRuntime.h"
 #include "nsCOMArray.h"
 #include "nsDOMClassInfo.h"
+#include "nsCxPusher.h"
 
 #include "nsGUIEvent.h"
 #include "nsAsyncDOMEvent.h"
@@ -137,8 +138,9 @@
 #include "nsIPrompt.h"
 #include "nsIPropertyBag2.h"
 #include "nsIDOMPageTransitionEvent.h"
-#include "nsIDOMStyleSheetAddedEvent.h"
-#include "nsIDOMStyleSheetRemovedEvent.h"
+#include "nsIDOMStyleRuleChangeEvent.h"
+#include "nsIDOMStyleSheetChangeEvent.h"
+#include "nsIDOMStyleSheetApplicableStateChangeEvent.h"
 #include "nsJSUtils.h"
 #include "nsFrameLoader.h"
 #include "nsEscape.h"
@@ -202,6 +204,8 @@
 #include "nsITextControlElement.h"
 #include "nsIDOMNSEditableElement.h"
 #include "nsIEditor.h"
+#include "nsIDOMCSSStyleRule.h"
+#include "mozilla/css/Rule.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1770,32 +1774,36 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   if (tmp->mCSSLoader) {
     tmp->mCSSLoader->TraverseCachedSheets(cb);
   }
+
+  for (uint32_t i = 0; i < tmp->mHostObjectURIs.Length(); ++i) {
+    nsHostObjectProtocolHandler::Traverse(tmp->mHostObjectURIs[i], cb);
+  }
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 
 struct CustomPrototypeTraceArgs {
-  TraceCallback callback;
+  const TraceCallbacks& callbacks;
   void* closure;
 };
 
 
 static PLDHashOperator
-CustomPrototypeTrace(const nsAString& aName, JSObject* aObject, void *aArg)
+CustomPrototypeTrace(const nsAString& aName, JSObject*& aObject, void *aArg)
 {
   CustomPrototypeTraceArgs* traceArgs = static_cast<CustomPrototypeTraceArgs*>(aArg);
   MOZ_ASSERT(aObject, "Protocol object value must not be null");
-  traceArgs->callback(aObject, "mCustomPrototypes entry", traceArgs->closure);
+  traceArgs->callbacks.Trace(&aObject, "mCustomPrototypes entry", traceArgs->closure);
   return PL_DHASH_NEXT;
 }
 
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsDocument)
-  CustomPrototypeTraceArgs customPrototypeArgs = { aCallback, aClosure };
-  tmp->mCustomPrototypes.EnumerateRead(CustomPrototypeTrace, &customPrototypeArgs);
+  CustomPrototypeTraceArgs customPrototypeArgs = { aCallbacks, aClosure };
+  tmp->mCustomPrototypes.Enumerate(CustomPrototypeTrace, &customPrototypeArgs);
   if (tmp->PreservingWrapper()) {
     NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mExpandoAndGeneration.expando);
   }
-  nsINode::Trace(tmp, aCallback, aClosure);
+  NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 
@@ -1872,6 +1880,10 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
 
   if (tmp->mCSSLoader) {
     tmp->mCSSLoader->UnlinkCachedSheets();
+  }
+
+  for (uint32_t i = 0; i < tmp->mHostObjectURIs.Length(); ++i) {
+    nsHostObjectProtocolHandler::RemoveDataEntry(tmp->mHostObjectURIs[i]);
   }
 
   tmp->mInUnlinkOrDeletion = false;
@@ -2071,9 +2083,9 @@ nsDocument::ResetToURI(nsIURI *aURI, nsILoadGroup *aLoadGroup,
       nsNodeUtils::ContentRemoved(this, content, i, previousSibling);
       content->UnbindFromTree();
     }
+    mCachedRootElement = nullptr;
   }
   mInUnlinkOrDeletion = oldVal;
-  mCachedRootElement = nullptr;
 
   mCustomPrototypes.Clear();
 
@@ -2343,6 +2355,16 @@ nsDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   }
 #endif
 
+#ifdef DEBUG
+  {
+    uint32_t appId;
+    nsresult rv = NodePrincipal()->GetAppId(&appId);
+    NS_ENSURE_SUCCESS(rv, rv);
+    MOZ_ASSERT(appId != nsIScriptSecurityManager::UNKNOWN_APP_ID,
+               "Document should never have UNKNOWN_APP_ID");
+  }
+#endif
+
   MOZ_ASSERT(GetReadyStateEnum() == nsIDocument::READYSTATE_UNINITIALIZED,
              "Bad readyState");
   SetReadyStateInternal(READYSTATE_LOADING);
@@ -2478,29 +2500,30 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     }
   }
 
-  // ----- Figure out if we need to apply an app default CSP
+  // Figure out if we need to apply an app default CSP or a CSP from an app manifest
   bool applyAppDefaultCSP = false;
+  bool applyAppManifestCSP = false;
+
   nsIPrincipal* principal = NodePrincipal();
-  uint16_t appStatus = nsIPrincipal::APP_STATUS_NOT_INSTALLED;
+
   bool unknownAppId;
+  uint16_t appStatus = nsIPrincipal::APP_STATUS_NOT_INSTALLED;
+  nsAutoString appManifestCSP;
   if (NS_SUCCEEDED(principal->GetUnknownAppId(&unknownAppId)) &&
       !unknownAppId &&
       NS_SUCCEEDED(principal->GetAppStatus(&appStatus))) {
     applyAppDefaultCSP = ( appStatus == nsIPrincipal::APP_STATUS_PRIVILEGED ||
                            appStatus == nsIPrincipal::APP_STATUS_CERTIFIED);
 
-    // Bug 773981. Allow a per-app policy from the manifest.
-    // Just read the CSP from the manifest into cspHeaderValue.
-    // That way we don't have to change the rest of the function logic
-    if (applyAppDefaultCSP || appStatus == nsIPrincipal::APP_STATUS_INSTALLED) {
-      nsCOMPtr<nsIAppsService> appsService =
-        do_GetService(APPS_SERVICE_CONTRACTID);
-
-      if (appsService)  {
-        uint32_t appId;
-
-        if ( NS_SUCCEEDED(principal->GetAppId(&appId)) ) {
-          appsService->GetCSPByLocalId(appId, cspHeaderValue);
+    if (appStatus != nsIPrincipal::APP_STATUS_NOT_INSTALLED) {
+      nsCOMPtr<nsIAppsService> appsService = do_GetService(APPS_SERVICE_CONTRACTID);
+      if (appsService) {
+        uint32_t appId = 0;
+        if (NS_SUCCEEDED(principal->GetAppId(&appId))) {
+          appsService->GetCSPByLocalId(appId, appManifestCSP);
+          if (!appManifestCSP.IsEmpty()) {
+            applyAppManifestCSP = true;
+          }
         }
       }
     }
@@ -2512,6 +2535,7 @@ nsDocument::InitCSP(nsIChannel* aChannel)
 
   // If there's no CSP to apply, go ahead and return early
   if (!applyAppDefaultCSP &&
+      !applyAppManifestCSP &&
       cspHeaderValue.IsEmpty() &&
       cspROHeaderValue.IsEmpty() &&
       cspOldHeaderValue.IsEmpty() &&
@@ -2550,7 +2574,13 @@ nsDocument::InitCSP(nsIChannel* aChannel)
   // Store the request context for violation reports
   csp->ScanRequestData(httpChannel);
 
-  // ----- process the app default policy, if necessary
+  // The CSP is refined in the following order:
+  // 1. Default app CSP, if applicable
+  // 2. App manifest CSP, if provided
+  // 3. HTTP header CSP, if provided
+  // Note that since each application of refinePolicy is a set intersection,
+  // the order in which multiple CSP's are refined does not matter.
+
   if (applyAppDefaultCSP) {
     nsAdoptingString appCSP;
     if (appStatus ==  nsIPrincipal::APP_STATUS_PRIVILEGED) {
@@ -2564,6 +2594,11 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     if (appCSP)
       // Use the 1.0 CSP parser for apps if the pref to do so is set.
       csp->RefinePolicy(appCSP, chanURI, specCompliantEnabled);
+  }
+
+  if (applyAppManifestCSP) {
+    // Use the 1.0 CSP parser for apps if the pref to do so is set.
+    csp->RefinePolicy(appManifestCSP, chanURI, specCompliantEnabled);
   }
 
   // While we are supporting both CSP 1.0 and the x- headers, the 1.0 headers
@@ -3722,7 +3757,7 @@ nsDocument::AddStyleSheetToStyleSets(nsIStyleSheet* aSheet)
   }
 }
 
-#define DO_STYLESHEET_NOTIFICATION(createFunc, initMethod, concreteInterface, type) \
+#define DO_STYLESHEET_NOTIFICATION(createFunc, concreteInterface, initMethod, type, ...) \
   do {                                                                  \
     nsCOMPtr<nsIDOMEvent> event;                                        \
     nsresult rv = createFunc(getter_AddRefs(event), this,               \
@@ -3739,7 +3774,7 @@ nsDocument::AddStyleSheetToStyleSets(nsIStyleSheet* aSheet)
     nsCOMPtr<concreteInterface> ssEvent(do_QueryInterface(event));      \
     MOZ_ASSERT(ssEvent);                                                \
     ssEvent->initMethod(NS_LITERAL_STRING(type), true, true,            \
-                        cssSheet, aDocumentSheet);                      \
+                        cssSheet, __VA_ARGS__);                         \
     event->SetTrusted(true);                                            \
     event->SetTarget(this);                                             \
     nsRefPtr<nsAsyncDOMEvent> asyncEvent = new nsAsyncDOMEvent(this, event); \
@@ -3751,23 +3786,29 @@ void
 nsDocument::NotifyStyleSheetAdded(nsIStyleSheet* aSheet, bool aDocumentSheet)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleSheetAdded, (this, aSheet, aDocumentSheet));
-  DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleSheetAddedEvent,
-                             InitStyleSheetAddedEvent,
-                             nsIDOMStyleSheetAddedEvent,
-                             "StyleSheetAdded");
+
+  if (StyleSheetChangeEventsEnabled()) {
+    DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleSheetChangeEvent,
+                               nsIDOMStyleSheetChangeEvent,
+                               InitStyleSheetChangeEvent,
+                               "StyleSheetAdded",
+                               aDocumentSheet);
+  }
 }
 
 void
 nsDocument::NotifyStyleSheetRemoved(nsIStyleSheet* aSheet, bool aDocumentSheet)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleSheetRemoved, (this, aSheet, aDocumentSheet));
-  DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleSheetRemovedEvent,
-                             InitStyleSheetRemovedEvent,
-                             nsIDOMStyleSheetRemovedEvent,
-                             "StyleSheetRemoved");
-}
 
-#undef DO_STYLESHEET_NOTIFICATION
+  if (StyleSheetChangeEventsEnabled()) {
+    DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleSheetChangeEvent,
+                               nsIDOMStyleSheetChangeEvent,
+                               InitStyleSheetChangeEvent,
+                               "StyleSheetRemoved",
+                               aDocumentSheet);
+  }
+}
 
 void
 nsDocument::AddStyleSheet(nsIStyleSheet* aSheet)
@@ -3888,6 +3929,14 @@ nsDocument::SetStyleSheetApplicableState(nsIStyleSheet* aSheet,
 
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleSheetApplicableStateChanged,
                                (this, aSheet, aApplicable));
+
+  if (StyleSheetChangeEventsEnabled()) {
+    DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleSheetApplicableStateChangeEvent,
+                               nsIDOMStyleSheetApplicableStateChangeEvent,
+                               InitStyleSheetApplicableStateChangeEvent,
+                               "StyleSheetApplicableStateChanged",
+                               aApplicable);
+  }
 }
 
 // These three functions are a lot like the implementation of the
@@ -4617,30 +4666,59 @@ nsDocument::DocumentStatesChanged(nsEventStates aStateMask)
 }
 
 void
-nsDocument::StyleRuleChanged(nsIStyleSheet* aStyleSheet,
+nsDocument::StyleRuleChanged(nsIStyleSheet* aSheet,
                              nsIStyleRule* aOldStyleRule,
                              nsIStyleRule* aNewStyleRule)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleRuleChanged,
-                               (this, aStyleSheet,
+                               (this, aSheet,
                                 aOldStyleRule, aNewStyleRule));
+
+  if (StyleSheetChangeEventsEnabled()) {
+    nsCOMPtr<css::Rule> rule = do_QueryInterface(aNewStyleRule);
+    DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleRuleChangeEvent,
+                               nsIDOMStyleRuleChangeEvent,
+                               InitStyleRuleChangeEvent,
+                               "StyleRuleChanged",
+                               rule ? rule->GetDOMRule() : nullptr);
+  }
 }
 
 void
-nsDocument::StyleRuleAdded(nsIStyleSheet* aStyleSheet,
+nsDocument::StyleRuleAdded(nsIStyleSheet* aSheet,
                            nsIStyleRule* aStyleRule)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleRuleAdded,
-                               (this, aStyleSheet, aStyleRule));
+                               (this, aSheet, aStyleRule));
+
+  if (StyleSheetChangeEventsEnabled()) {
+    nsCOMPtr<css::Rule> rule = do_QueryInterface(aStyleRule);
+    DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleRuleChangeEvent,
+                               nsIDOMStyleRuleChangeEvent,
+                               InitStyleRuleChangeEvent,
+                               "StyleRuleAdded",
+                               rule ? rule->GetDOMRule() : nullptr);
+  }
 }
 
 void
-nsDocument::StyleRuleRemoved(nsIStyleSheet* aStyleSheet,
+nsDocument::StyleRuleRemoved(nsIStyleSheet* aSheet,
                              nsIStyleRule* aStyleRule)
 {
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleRuleRemoved,
-                               (this, aStyleSheet, aStyleRule));
+                               (this, aSheet, aStyleRule));
+
+  if (StyleSheetChangeEventsEnabled()) {
+    nsCOMPtr<css::Rule> rule = do_QueryInterface(aStyleRule);
+    DO_STYLESHEET_NOTIFICATION(NS_NewDOMStyleRuleChangeEvent,
+                               nsIDOMStyleRuleChangeEvent,
+                               InitStyleRuleChangeEvent,
+                               "StyleRuleRemoved",
+                               rule ? rule->GetDOMRule() : nullptr);
+  }
 }
+
+#undef DO_STYLESHEET_NOTIFICATION
 
 
 //
@@ -4763,7 +4841,7 @@ nsIDocument::CreateElement(const nsAString& aTagName, ErrorResult& rv)
   if (rv.Failed()) {
     return nullptr;
   }
-  return content.forget().get()->AsElement();
+  return dont_AddRef(content.forget().get()->AsElement());
 }
 
 NS_IMETHODIMP
@@ -4800,7 +4878,7 @@ nsIDocument::CreateElementNS(const nsAString& aNamespaceURI,
   if (rv.Failed()) {
     return nullptr;
   }
-  return content.forget().get()->AsElement();
+  return dont_AddRef(content.forget().get()->AsElement());
 }
 
 NS_IMETHODIMP
@@ -5030,7 +5108,7 @@ nsDocument::Register(const nsAString& aName, const JS::Value& aOptions,
                      JSContext* aCx, uint8_t aOptionalArgc,
                      jsval* aConstructor /* out param */)
 {
-  ElementRegistrationOptions options;
+  RootedDictionary<ElementRegistrationOptions> options(aCx);
   if (aOptionalArgc > 0) {
     JSAutoCompartment ac(aCx, GetWrapper());
     JS::Rooted<JS::Value> opts(aCx, aOptions);
@@ -6789,7 +6867,7 @@ nsDocument::GetViewportInfo(uint32_t aDisplayWidth,
     mWidthStrEmpty = widthStr.IsEmpty();
     mValidScaleFloat = !scaleStr.IsEmpty() && NS_SUCCEEDED(scaleErrorCode);
     mValidMaxScale = !maxScaleStr.IsEmpty() && NS_SUCCEEDED(scaleMaxErrorCode);
-  
+
     mViewportType = Specified;
   }
   case Specified:
@@ -6910,7 +6988,7 @@ nsIDocument::CreateEvent(const nsAString& aEventType, ErrorResult& rv) const
     nsEventDispatcher::CreateEvent(const_cast<nsIDocument*>(this),
                                    presContext, nullptr, aEventType,
                                    getter_AddRefs(ev));
-  return ev ? ev.forget().get()->InternalDOMEvent() : nullptr;
+  return ev ? dont_AddRef(ev.forget().get()->InternalDOMEvent()) : nullptr;
 }
 
 void
@@ -7977,6 +8055,17 @@ NotifyPageHide(nsIDocument* aDocument, void* aData)
   return true;
 }
 
+static void
+DispatchFullScreenChange(nsIDocument* aTarget)
+{
+  nsRefPtr<nsAsyncDOMEvent> e =
+    new nsAsyncDOMEvent(aTarget,
+                        NS_LITERAL_STRING("mozfullscreenchange"),
+                        true,
+                        false);
+  e->PostDOMEvent();
+}
+
 void
 nsDocument::OnPageHide(bool aPersisted,
                        EventTarget* aDispatchStartTarget)
@@ -8050,6 +8139,10 @@ nsDocument::OnPageHide(bool aPersisted,
     // so calling CleanupFullscreenState() here will ensure all hidden
     // documents have their fullscreen state reset.
     CleanupFullscreenState();
+
+    // If anyone was listening to this document's state, advertizing the state
+    // change would be the least of the politeness.
+    DispatchFullScreenChange(this);
   }
 }
 
@@ -9201,7 +9294,7 @@ nsDocument::CreateTouchList(nsIVariant* aPoints,
       aPoints->GetAsISupports(getter_AddRefs(data));
       nsCOMPtr<nsIDOMTouch> point = do_QueryInterface(data);
       if (point) {
-        retval->Append(point);
+        retval->Append(static_cast<Touch*>(point.get()));
       }
     } else if (type == nsIDataType::VTYPE_ARRAY) {
       uint16_t valueType;
@@ -9216,7 +9309,7 @@ nsDocument::CreateTouchList(nsIVariant* aPoints,
           nsCOMPtr<nsISupports> supports = dont_AddRef(values[i]);
           nsCOMPtr<nsIDOMTouch> point = do_QueryInterface(supports);
           if (point) {
-            retval->Append(point);
+            retval->Append(static_cast<Touch*>(point.get()));
           }
         }
       }
@@ -9481,17 +9574,6 @@ void
 nsDocument::SetFullscreenRoot(nsIDocument* aRoot)
 {
   mFullscreenRoot = do_GetWeakReference(aRoot);
-}
-
-static void
-DispatchFullScreenChange(nsIDocument* aTarget)
-{
-  nsRefPtr<nsAsyncDOMEvent> e =
-    new nsAsyncDOMEvent(aTarget,
-                        NS_LITERAL_STRING("mozfullscreenchange"),
-                        true,
-                        false);
-  e->PostDOMEvent();
 }
 
 NS_IMETHODIMP

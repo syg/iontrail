@@ -34,7 +34,8 @@ public:
 
 protected:
   virtual void UpdateImpl(const SurfaceDescriptor& aImage,
-                          nsIntRegion *aRegion) MOZ_OVERRIDE
+                          nsIntRegion *aRegion,
+                          nsIntPoint*) MOZ_OVERRIDE
   {
     AutoOpenSurface surf(OPEN_READ_ONLY, aImage);
     mFormat =
@@ -56,6 +57,14 @@ protected:
                                                                            mFormat);
     }
     return true;
+  }
+
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE {
+    if (!mThebesImage) {
+      mThebesImage = mThebesSurface->GetAsImageSurface();
+    }
+    nsRefPtr<gfxImageSurface> result = mThebesImage;
+    return result.forget();
   }
 
   BasicCompositor *mCompositor;

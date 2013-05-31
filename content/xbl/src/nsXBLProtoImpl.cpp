@@ -9,6 +9,7 @@
 #include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIScriptContext.h"
@@ -83,11 +84,10 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aPrototypeBinding,
   if (!targetObjectIsNew)
     return NS_OK;
 
-  JS::Rooted<JSObject*> targetScriptObject(context->GetNativeContext());
-  holder->GetJSObject(targetScriptObject.address());
+  JS::Rooted<JSObject*> targetScriptObject(context->GetNativeContext(),
+                                           holder->GetJSObject());
 
   AutoPushJSContext cx(context->GetNativeContext());
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, targetClassObject);
   AutoVersionChecker avc(cx);
 
@@ -177,8 +177,8 @@ nsXBLProtoImpl::InitTargetObjects(nsXBLPrototypeBinding* aBinding,
   AutoPushJSContext cx(aContext->GetNativeContext());
   JS::Rooted<JSObject*> global(cx, sgo->GetGlobalJSObject());
   nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
-  JS::Value v;
-  rv = nsContentUtils::WrapNative(cx, global, aBoundElement, &v,
+  JS::Rooted<JS::Value> v(cx);
+  rv = nsContentUtils::WrapNative(cx, global, aBoundElement, v.address(),
                                   getter_AddRefs(wrapper));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -261,7 +261,7 @@ nsXBLProtoImpl::LookupMember(JSContext* aCx, nsString& aName,
 }
 
 void
-nsXBLProtoImpl::Trace(TraceCallback aCallback, void *aClosure) const
+nsXBLProtoImpl::Trace(const TraceCallbacks& aCallbacks, void *aClosure)
 {
   // If we don't have a class object then we either didn't compile members
   // or we only have fields, in both cases there are no cycles through our
@@ -272,7 +272,7 @@ nsXBLProtoImpl::Trace(TraceCallback aCallback, void *aClosure) const
 
   nsXBLProtoImplMember *member;
   for (member = mMembers; member; member = member->GetNext()) {
-    member->Trace(aCallback, aClosure);
+    member->Trace(aCallbacks, aClosure);
   }
 }
 

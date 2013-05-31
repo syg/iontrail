@@ -7,10 +7,15 @@ const REMOTE_ENABLED = "devtools.debugger.remote-enabled";
 
 Cu.import("resource:///modules/devtools/gDevTools.jsm", temp);
 let gDevTools = temp.gDevTools;
+
+Cu.import("resource://gre/modules/devtools/Loader.jsm", temp);
 let TargetFactory = temp.devtools.TargetFactory;
 
 Cu.import("resource://gre/modules/devtools/dbg-server.jsm", temp);
 let DebuggerServer = temp.DebuggerServer;
+
+Cu.import("resource:///modules/HUDService.jsm", temp);
+let HUDService = temp.HUDService;
 
 // Import the GCLI test helper
 let testDir = gTestPath.substr(0, gTestPath.lastIndexOf("/"));
@@ -31,11 +36,19 @@ function getProfileInternals(uid) {
   return [win, doc];
 }
 
+function sendFromProfile(uid, msg) {
+  let [win, doc] = getProfileInternals(uid);
+  win.parent.postMessage({ uid: uid, status: msg }, "*");
+}
+
 function loadTab(url, callback) {
   let tab = gBrowser.addTab();
   gBrowser.selectedTab = tab;
-  content.location.assign(url);
+  loadUrl(url, tab, callback);
+}
 
+function loadUrl(url, tab, callback) {
+  content.location.assign(url);
   let browser = gBrowser.getBrowserForTab(tab);
   if (browser.contentDocument.readyState === "complete") {
     callback(tab, browser);
@@ -53,6 +66,17 @@ function loadTab(url, callback) {
 function openProfiler(tab, callback) {
   let target = TargetFactory.forTab(tab);
   gDevTools.showToolbox(target, "jsprofiler").then(callback);
+}
+
+function openConsole(tab, cb=function(){}) {
+  // This function was borrowed from webconsole/test/head.js
+  let target = TargetFactory.forTab(tab);
+
+  gDevTools.showToolbox(target, "webconsole").then(function (toolbox) {
+    let hud = toolbox.getCurrentPanel().hud;
+    hud.jsterm._lazyVariablesView = false;
+    cb(hud);
+  });
 }
 
 function closeProfiler(tab, callback) {

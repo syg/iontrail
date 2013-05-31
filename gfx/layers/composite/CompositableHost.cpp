@@ -68,10 +68,26 @@ CompositableHost::Create(const TextureInfo& aTextureInfo)
   case BUFFER_CONTENT_DIRECT:
     result = new ContentHostDoubleBuffered(aTextureInfo);
     return result;
+  case BUFFER_CONTENT_INC:
+    result = new ContentHostIncremental(aTextureInfo);
+    return result;
   default:
     MOZ_NOT_REACHED("Unknown CompositableType");
     return nullptr;
   }
+}
+
+void
+CompositableHost::DumpTextureHost(FILE* aFile, TextureHost* aTexture)
+{
+  if (!aTexture) {
+    return;
+  }
+  nsRefPtr<gfxImageSurface> surf = aTexture->GetAsSurface();
+  if (!surf) {
+    return;
+  }
+  surf->DumpAsDataURL(aFile ? aFile : stderr);
 }
 
 void

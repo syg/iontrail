@@ -13,7 +13,7 @@ FAIL_ON_WARNINGS := 1
 
 include $(DEPTH)/config/autoconf.mk
 
-CPPSRCS = \
+cppsrcs = \
   TestIncrementalDownload.cpp \
   TestStreamLoader.cpp \
   PropertiesTest.cpp \
@@ -32,7 +32,7 @@ CPPSRCS = \
   TestProtocols.cpp \
   $(NULL)
 
-SIMPLE_PROGRAMS := $(CPPSRCS:.cpp=$(BIN_SUFFIX))
+SIMPLE_PROGRAMS := $(cppsrcs:.cpp=$(BIN_SUFFIX))
 
 # XXX Make this work in libxul builds.
 #SIMPLE_PROGRAMS += \
@@ -59,12 +59,6 @@ LIBS		= $(EXTRA_DSO_LIBS) \
 		  $(NULL)
 
 DEFINES += $(TK_CFLAGS)
-
-DISABLED_XPCSHELL_TESTS = unit
-# FIXME/bug 575918: out-of-process xpcshell is broken on OS X
-ifneq ($(OS_ARCH),Darwin)
-DISABLED_XPCSHELL_TESTS += unit_ipc
-endif
 
 include $(topsrcdir)/config/rules.mk
 

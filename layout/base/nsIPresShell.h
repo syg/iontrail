@@ -121,10 +121,10 @@ typedef struct CapturingContentInfo {
   nsIContent* mContent;
 } CapturingContentInfo;
 
-// bf539e0a-c314-4ea7-ba7c-ebd34e8a4065
+// fac033dd-938d-45bc-aaa5-dc2fa7ef5a40
 #define NS_IPRESSHELL_IID \
-{ 0xbf539e0a, 0xc314, 0x4ea7, \
-  { 0xba, 0x7c, 0xeb, 0xd3, 0x4e, 0x8a, 0x40, 0x65 } }
+{ 0xfac033dd, 0x938d, 0x45bc, \
+  { 0xaa, 0xa5, 0xdc, 0x2f, 0xa7, 0xef, 0x5a, 0x40 } }
 
 // debug VerifyReflow flags
 #define VERIFY_REFLOW_ON                    0x01
@@ -410,11 +410,6 @@ public:
    * Return true if the presshell expects layout flush.
    */
   virtual bool IsLayoutFlushObserver() = 0;
-
-  /**
-   * Reflow the frame model with a reflow reason of eReflowReason_StyleChange
-   */
-  virtual NS_HIDDEN_(void) StyleChangeReflow() = 0;
 
   /**
    * This calls through to the frame manager to get the root frame.
@@ -1234,6 +1229,8 @@ public:
    */
   bool GetIsFirstPaint() const { return mIsFirstPaint; }
 
+  uint32_t GetPresShellId() { return mPresShellId; }
+
   /**
    * Dispatch a mouse move event based on the most recent mouse position if
    * this PresShell is visible. This is used when the contents of the page
@@ -1316,6 +1313,25 @@ public:
     return mFontSizeInflationDisabledInMasterProcess;
   }
 
+  /**
+   * Determine if font size inflation is enabled. This value is cached until
+   * it becomes dirty.
+   *
+   * @returns true, if font size inflation is enabled; false otherwise.
+   */
+  bool FontSizeInflationEnabled();
+
+  /**
+   * Notify the pres shell that an event occurred making the current value of
+   * mFontSizeInflationEnabled invalid. This will schedule a recomputation of
+   * whether font size inflation is enabled on the next call to
+   * FontSizeInflationEnabled().
+   */
+  void NotifyFontSizeInflationEnabledIsDirty()
+  {
+    mFontSizeInflationEnabledIsDirty = true;
+  }
+
   virtual void AddInvalidateHiddenPresShellObserver(nsRefreshDriver *aDriver) = 0;
 
   void InvalidatePresShellIfHidden();
@@ -1342,6 +1358,14 @@ protected:
                                                mozFlushType aFlushType);
   bool RemoveRefreshObserverInternal(nsARefreshObserver* aObserver,
                                        mozFlushType aFlushType);
+
+  /**
+   * Do computations necessary to determine if font size inflation is enabled.
+   * This value is cached after computation, as the computation is somewhat
+   * expensive.
+   */
+  void RecomputeFontSizeInflationEnabled();
+
 public:
   bool AddRefreshObserver(nsARefreshObserver* aObserver,
                             mozFlushType aFlushType) {
@@ -1395,6 +1419,26 @@ public:
   }
 
   void SetMaxLineBoxWidth(nscoord aMaxLineBoxWidth);
+
+  /**
+   * Returns whether or not there is a reflow on zoom event pending. A reflow
+   * on zoom event is a change to the max line box width, followed by a reflow.
+   * This subsequent reflow event should treat all frames as though they resized
+   * horizontally (and thus reflow all their descendants), rather than marking
+   * all frames dirty from the root. This is the way the pres shell indicates
+   * that an hresize reflow should take place during reflow state construction.
+   */
+  bool IsReflowOnZoomPending() {
+    return mReflowOnZoomPending;
+  }
+
+  /**
+   * Clear the flag indicating whether a reflow on zoom event is pending. This
+   * is performed at the very end of DoReflow().
+   */
+  void ClearReflowOnZoomPending() {
+    mReflowOnZoomPending = false;
+  }
 
 protected:
   friend class nsRefreshDriver;
@@ -1485,6 +1529,8 @@ protected:
   bool                      mSuppressInterruptibleReflows : 1;
   bool                      mScrollPositionClampingScrollPortSizeSet : 1;
 
+  uint32_t                  mPresShellId;
+
   // List of subtrees rooted at style scope roots that need to be restyled.
   // When a change to a scoped style sheet is made, we add the style scope
   // root to this array rather than setting mStylesHaveChanged = true, since
@@ -1503,6 +1549,14 @@ protected:
   uint32_t mFontSizeInflationLineThreshold;
   bool mFontSizeInflationForceEnabled;
   bool mFontSizeInflationDisabledInMasterProcess;
+  bool mFontSizeInflationEnabled;
+
+  // Dirty bit indicating that mFontSizeInflationEnabled needs to be recomputed.
+  bool mFontSizeInflationEnabledIsDirty;
+
+  // Flag to indicate whether or not there is a reflow on zoom event pending.
+  // See IsReflowOnZoomPending() for more information.
+  bool mReflowOnZoomPending;
 
   // The maximum width of a line box. Text on a single line that exceeds this
   // width will be wrapped. A value of 0 indicates that no limit is enforced.

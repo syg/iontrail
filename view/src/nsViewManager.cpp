@@ -24,6 +24,7 @@
 #include "nsRefreshDriver.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
+#include "nsLayoutUtils.h"
 
 /**
    XXX TODO XXX
@@ -324,13 +325,17 @@ void nsViewManager::Refresh(nsView *aView, const nsIntRegion& aRegion)
                  "Widgets that we paint must all be display roots");
 
     if (mPresShell) {
-#ifdef DEBUG_INVALIDATIONS
-      printf("--COMPOSITE-- %p\n", mPresShell);
+#ifdef MOZ_DUMP_PAINTING
+      if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+        printf("--COMPOSITE-- %p\n", mPresShell);
+      }
 #endif
       mPresShell->Paint(aView, damageRegion,
                         nsIPresShell::PAINT_COMPOSITE);
-#ifdef DEBUG_INVALIDATIONS
-      printf("--ENDCOMPOSITE--\n");
+#ifdef MOZ_DUMP_PAINTING
+      if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+        printf("--ENDCOMPOSITE--\n");
+      }
 #endif
       mozilla::StartupTimeline::RecordOnce(mozilla::StartupTimeline::FIRST_PAINT);
     }
@@ -385,17 +390,20 @@ void nsViewManager::ProcessPendingUpdatesForView(nsView* aView,
 
       NS_ASSERTION(aView->HasWidget(), "Must have a widget!");
 
-#ifdef DEBUG_INVALIDATIONS
-      printf("---- PAINT START ----PresShell(%p), nsView(%p), nsIWidget(%p)\n", mPresShell, aView, widget);
+#ifdef MOZ_DUMP_PAINTING
+      if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+        printf("---- PAINT START ----PresShell(%p), nsView(%p), nsIWidget(%p)\n", mPresShell, aView, widget);
+      }
 #endif
       nsAutoScriptBlocker scriptBlocker;
       NS_ASSERTION(aView->HasWidget(), "Must have a widget!");
-      aView->GetWidget()->WillPaint();
       SetPainting(true);
       mPresShell->Paint(aView, nsRegion(),
                         nsIPresShell::PAINT_LAYERS);
-#ifdef DEBUG_INVALIDATIONS
-      printf("---- PAINT END ----\n");
+#ifdef MOZ_DUMP_PAINTING
+      if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+        printf("---- PAINT END ----\n");
+      }
 #endif
       aView->SetForcedRepaint(false);
       SetPainting(false);
@@ -630,8 +638,7 @@ void nsViewManager::WillPaintWindow(nsIWidget* aWidget)
   }
 }
 
-bool nsViewManager::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion,
-                                uint32_t aFlags)
+bool nsViewManager::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion)
 {
   if (!aWidget || !mContext)
     return false;

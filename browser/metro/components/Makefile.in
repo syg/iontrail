@@ -28,16 +28,11 @@ EXTRA_COMPONENTS = \
         DownloadManagerUI.js \
         PromptService.js \
         ContentDispatchChooser.js \
-        FormAutoComplete.js \
         LoginManagerPrompter.js \
         $(NULL)
 
 ifdef MOZ_SAFE_BROWSING
 EXTRA_COMPONENTS += SafeBrowsing.js
-endif
-
-ifdef MOZ_UPDATER
-EXTRA_COMPONENTS += UpdatePrompt.js
 endif
 
 include $(topsrcdir)/config/rules.mk
