@@ -25,6 +25,8 @@
 // Safe versions of ARRAY.push(ELEMENT)
 #define ARRAY_PUSH(ARRAY, ELEMENT) \
   callFunction(std_Array_push, ARRAY, ELEMENT);
+#define ARRAY_POP(ARRAY) \
+  callFunction(std_Array_pop, ARRAY);
 #define ARRAY_SLICE(ARRAY, ELEMENT) \
   callFunction(std_Array_slice, ARRAY, ELEMENT);
 
@@ -47,7 +49,9 @@ function ParallelSpewAA(aa) {
 #ifdef DEBUG
   var output = "{";
   for (var i = 0; i < aa.length; i += 2) {
-    output += aa[i] + ": " + aa[i+1];
+    output += aa[i];
+    output += ": ";
+    output += aa[i+1];
     if (i + 2 < aa.length)
       output += ", "
   }
@@ -1390,9 +1394,9 @@ function ParallelArrayToString() {
   do { if (!HaveSameClass(c, Cursor)) ThrowError(JSMSG_PAR_ARRAY_BAD_ARG, "bad Cursor object"); } while(false)
 
 function CursorIndexToOffset(grain, indices) {
-  ParallelSpewAA(["called", "CursorIndexToOffset",
-                  "grain", grain,
-                  "indices", ArrayLikeToString(indices)]);
+  ParallelSpew("(CursorIndexToOffset)" +
+               " grain: " + ArrayLikeToString(grain) + "," +
+               " indices: " + ArrayLikeToString(indices));
   var accum_idx  = 0;
   var accum_prod = 1;
   for (var i = indices.length - 1; i >= 0; i--) {
@@ -1409,11 +1413,11 @@ function CursorIndexToOffset(grain, indices) {
 var Cursor = NewClassPrototype(CURSOR_SLOTS);
 
 Cursor.set = function CursorSet(...args) {
-  ParallelSpewAA(["called", "Cursor.set A",
-                  "args", ArrayLikeToString(args)]);
+  ParallelSpew("(Cursor.set A)" +
+               " args: " + ArrayLikeToString(args));
   CHECK_CURSOR_CLASS(this);
 
-  var v = args.pop();
+  var v = ARRAY_POP(args);
   var grain = CURSOR_GET_GRAIN(this);
 
   if (args.length > grain.length)
@@ -1430,11 +1434,11 @@ Cursor.set = function CursorSet(...args) {
   else
     indexOffset = CursorIndexToOffset(grain, args);
 
-  ParallelSpewAA(["called", "Cursor.set Y",
-                  "bufferOffset", bufferOffset,
-                  "indexOffset", indexOffset,
-                  "sum", bufferOffset + indexOffset,
-                  "v", v]);
+  ParallelSpew("(Cursor.set Y)" +
+               " bufferOffset: " + bufferOffset + "," +
+               " indexOffset: " + indexOffset + "," +
+               " sum: " + (bufferOffset + indexOffset) + "," +
+               " v: " + v);
 
   UnsafeSetElement(buffer, bufferOffset + indexOffset, v);
   CURSOR_SET_USED(this, true);
@@ -1500,11 +1504,11 @@ function MoveCursor(c, offset) {
 function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func, mode)
 {
   mode && mode.spew &&
-    ParallelSpewAA(["called", "PMF A1",
-                    "buffer", ArrayLikeToString(buffer),
-                    "offset", offset,
-                    "frame", ArrayLikeToString(frame),
-                    "grain", ArrayLikeToString(grain)]);
+    ParallelSpew("(PMF A1)" +
+                 " buffer: " + ArrayLikeToString(buffer) + "," +
+                 " offset: " + offset + "," +
+                 " frame: " + ArrayLikeToString(frame) + "," +
+                 " grain: " + ArrayLikeToString(grain));
 
   var computefunc;
   var frame_len;
@@ -1531,7 +1535,7 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   default:
     frame_len = ProductOfArrayRange(frame, 0, frame.length);
     computefunc = isLeaf ? fillN_leaf : fillN_subm;
-    mode && mode.spew && ParallelSpewAA(["called", "MatrixPFill computefunc is fillN"]);
+    mode && mode.spew && ParallelSpew("MatrixPFill computefunc is fillN");
     break;
   }
 
@@ -1540,15 +1544,15 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   var grain_len = ProductOfArrayRange(grain, 0, grain.length);
 
   mode && mode.spew &&
-    ParallelSpewAA(["called", "PMF B",
-                    "buffer", ArrayLikeToString(buffer),
-                    "offset", offset,
-                    "frame", ArrayLikeToString(frame),
-                    "grain", ArrayLikeToString(grain),
-                    "frame_len", frame_len,
-                    "grain_len", grain_len,
-                    "indexStart", indexStart,
-                    "indexEnd", indexEnd]);
+    ParallelSpew("(PMF B)" +
+                 " buffer: " + ArrayLikeToString(buffer) + "," +
+                 " offset: " + offset + "," +
+                 " frame: " + ArrayLikeToString(frame) + "," +
+                 " grain: " + ArrayLikeToString(grain) + "," +
+                 " frame_len: " + frame_len + "," +
+                 " grain_len: " + grain_len + "," +
+                 " indexStart: " + indexStart + "," +
+                 " indexEnd: " + indexEnd);
 
   parallel: for(;;) { // see ParallelArrayBuild() to explain why for(;;) etc
     if (!parexec)
@@ -1568,10 +1572,10 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
   }
 
   mode && mode.spew &&
-    ParallelSpewAA(["called", "MatrixPFill seq fallback",
-                    "frame_len", frame_len,
-                    "indexStart", indexStart,
-                    "indexEnd", indexEnd]);
+    ParallelSpew("(MatrixPFill seq fallback)" +
+                 " frame_len: " + frame_len + "," +
+                 " indexStart: " + indexStart + "," +
+                 " indexEnd: " + indexEnd);
 
   // Sequential fallback:
   ASSERT_SEQUENTIAL_IS_OK(mode);
@@ -1595,24 +1599,24 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
 
   function fill1_leaf(indexStart, indexEnd) {
     mode && mode.spew &&
-      ParallelSpewAA(["called", "fill1_leaf A",
-                      "buffer", ArrayLikeToString(buffer),
-                      "indexStart", indexStart,
-                      "indexEnd", indexEnd]);
+      ParallelSpew("(fill1_leaf A)" +
+                   " buffer: " + ArrayLikeToString(buffer) + "," +
+                   " indexStart: " + indexStart + "," +
+                   " indexEnd: " + indexEnd);
 
     var cursor = NewCursor(buffer, indexStart);
 
     for (var i = indexStart; i < indexEnd; i++) {
       mode && mode.spew &&
-        ParallelSpewAA(["called", "fill1_leaf B",
-                        "i", i]);
+       ParallelSpew("(fill1_leaf B)" +
+                     " i: " + i);
 
       MoveCursor(cursor, i);
       var val = func(i, cursor);
       if (!CURSOR_GET_USED(cursor)) {
         mode && mode.spew &&
-          ParallelSpewAA(["called", "fill1_leaf E",
-                          "val", val]);
+          ParallelSpew("(fill1_leaf E)" +
+                       " val: " + val);
         UnsafeSetElement(buffer, i, val);
       }
     }
@@ -1620,18 +1624,18 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
 
   function fill1_subm(indexStart, indexEnd) {
     mode && mode.spew &&
-      ParallelSpewAA(["called", "fill1_subm A",
-                      "indexStart", indexStart,
-                      "indexEnd", indexEnd]);
+      ParallelSpew("(fill1_subm A)" +
+                   " indexStart: " + indexStart + "," +
+                   " indexEnd: " + indexEnd);
 
     var bufferOffset = indexStart * grain_len;
     var cursor = NewCursor(buffer, bufferOffset, grain);
 
     for (var i = indexStart; i < indexEnd; i++, bufferOffset += grain_len) {
       mode && mode.spew &&
-        ParallelSpewAA(["called", "fill1_subm B",
-                        "bufferOffset", bufferOffset,
-                        "i", i]);
+        ParallelSpew("(fill1_subm B)" +
+                     " bufferOffset: " + bufferOffset + "," +
+                     " i: " + i);
 
       MoveCursor(cursor, bufferOffset);
       var subarray = func(i, cursor);
@@ -1639,9 +1643,9 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
       if (!CURSOR_GET_USED(cursor)) {
         var [subbuffer, suboffset] = IdentifySubbufferAndSuboffset(subarray);
         mode && mode.spew &&
-          ParallelSpewAA(["called", "fill1_subm E",
-                          "subbuffer", ArrayLikeToString(subbuffer),
-                          "suboffset", suboffset]);
+          ParallelSpew("(fill1_subm E)" +
+                       " subbuffer: " + ArrayLikeToString(subbuffer) + "," +
+                       " suboffset: " + suboffset);
         CopyFromSubbuffer(buffer, bufferOffset, subbuffer, suboffset);
       }
     }
@@ -2692,6 +2696,7 @@ SetScriptHints(MatrixGet2,      { cloneAtCallsite: true, inline: true });
 SetScriptHints(MatrixGet3,      { cloneAtCallsite: true, inline: true });
 
 SetScriptHints(MatrixConstructFromGrainFunctionMode, { cloneAtCallsite: true });
+SetScriptHints(MatrixPFill,                          { cloneAtCallsite: true });
 SetScriptHints(MatrixPMap,                           { cloneAtCallsite: true });
 SetScriptHints(MatrixCommonMap,                      { cloneAtCallsite: true });
 SetScriptHints(MatrixDecomposeArgsForMap,            { cloneAtCallsite: true });

@@ -34,6 +34,7 @@ var std_Array_indexOf = ArrayIndexOf;
 var std_Array_isArray = Array.isArray;
 var std_Array_join = Array.prototype.join;
 var std_Array_push = Array.prototype.push;
+var std_Array_pop = Array.prototype.pop;
 var std_Array_shift = Array.prototype.shift;
 var std_Array_slice = Array.prototype.slice;
 var std_Array_sort = Array.prototype.sort;

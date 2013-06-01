@@ -4209,8 +4209,8 @@ class LParRest : public LCallInstructionHelper<1, 2, 3>
     const LAllocation *numActuals() {
         return getOperand(1);
     }
-    MRest *mir() const {
-        return mir_->toRest();
+    MParRest *mir() const {
+        return mir_->toParRest();
     }
 };
 
