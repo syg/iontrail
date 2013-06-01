@@ -528,7 +528,21 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 
       case Type_Handle:
         outReg = regs.takeAny();
-        masm.Push(UndefinedValue());
+        switch (f.outParamRootType) {
+          case VMFunction::RootNone:
+            JS_NOT_REACHED("Handle outparam must have root type");
+            break;
+          case VMFunction::RootObject:
+          case VMFunction::RootString:
+          case VMFunction::RootPropertyName:
+          case VMFunction::RootFunction:
+          case VMFunction::RootCell:
+            masm.reserveStack(sizeof(void *));
+            break;
+          case VMFunction::RootValue:
+            masm.Push(UndefinedValue());
+            break;
+        }
         masm.movq(esp, outReg);
         break;
 
@@ -599,6 +613,25 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Load the outparam and free any allocated stack.
     switch (f.outParam) {
       case Type_Handle:
+        switch (f.outParamRootType) {
+          case VMFunction::RootNone:
+            JS_NOT_REACHED("Handle outparam must have root type");
+            break;
+          case VMFunction::RootObject:
+          case VMFunction::RootString:
+          case VMFunction::RootPropertyName:
+          case VMFunction::RootFunction:
+          case VMFunction::RootCell:
+            masm.loadPtr(Address(esp, 0), ReturnReg);
+            masm.freeStack(sizeof(void *));
+            break;
+          case VMFunction::RootValue:
+            masm.loadValue(Address(esp, 0), JSReturnOperand);
+            masm.freeStack(sizeof(Value));
+            break;
+        }
+        break;
+
       case Type_Value:
         masm.loadValue(Address(esp, 0), JSReturnOperand);
         masm.freeStack(sizeof(Value));

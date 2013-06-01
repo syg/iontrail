@@ -908,8 +908,29 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
         }
     }
 
-    if (f->outParam == Type_Handle)
-        gc::MarkValueRoot(trc, footer->outVp(), "ion-vm-outvp");
+    if (f->outParam == Type_Handle) {
+        switch (f->outParamRootType) {
+          case VMFunction::RootNone:
+            JS_NOT_REACHED("Handle outparam must have root type");
+            break;
+          case VMFunction::RootObject:
+            gc::MarkObjectRoot(trc, reinterpret_cast<JSObject **>(footer->outCell()), "ion-vm-out");
+            break;
+          case VMFunction::RootString:
+          case VMFunction::RootPropertyName:
+            gc::MarkStringRoot(trc, reinterpret_cast<JSString **>(footer->outCell()), "ion-vm-out");
+            break;
+          case VMFunction::RootFunction:
+            gc::MarkObjectRoot(trc, reinterpret_cast<JSFunction **>(footer->outCell()), "ion-vm-out");
+            break;
+          case VMFunction::RootValue:
+            gc::MarkValueRoot(trc, footer->outVp(), "ion-vm-outvp");
+            break;
+          case VMFunction::RootCell:
+            gc::MarkGCThingRoot(trc, footer->outCell(), "ion-vm-out");
+            break;
+        }
+    }
 }
 
 static void
