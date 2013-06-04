@@ -146,10 +146,7 @@ class IonExitFooterFrame
         return function_;
     }
 
-    // These should only be called for function()->outParam == Type_Handle
-    void **outCell() {
-        return reinterpret_cast<void **>(reinterpret_cast<char *>(this) - sizeof(void *));
-    }
+    // This should only be called for function()->outParam == Type_Handle
     Value *outVp() {
         return reinterpret_cast<Value *>(reinterpret_cast<char *>(this) - sizeof(Value));
     }

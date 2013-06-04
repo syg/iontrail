@@ -589,7 +589,7 @@ CodeGenerator::visitIntToString(LIntToString *lir)
         break;
       case ParallelExecution:
         ool = oolCallVM(ParallelIntToStringInfo, lir, (ArgList(), input),
-                        StoreRegisterTo(output));
+                        StoreValueTo(AnyRegister(output)));
         break;
       default:
         JS_NOT_REACHED("No such execution mode");
@@ -630,7 +630,7 @@ CodeGenerator::visitDoubleToString(LDoubleToString *lir)
         break;
       case ParallelExecution:
         ool = oolCallVM(ParallelDoubleToStringInfo, lir, (ArgList(), input),
-                        StoreRegisterTo(output));
+                        StoreValueTo(AnyRegister(output)));
         break;
       default:
         JS_NOT_REACHED("No such execution mode");
@@ -3932,7 +3932,7 @@ CodeGenerator::visitParConcat(LParConcat *lir)
     JS_ASSERT(output == CallTempReg6);
 
     OutOfLineCode *ool = oolCallVM(ParallelConcatStringsInfo, lir, (ArgList(), lhs, rhs),
-                                   StoreRegisterTo(output));
+                                   StoreValueTo(AnyRegister(output)));
     if (!ool)
         return false;
 
@@ -4630,29 +4630,15 @@ CodeGenerator::emitArrayPopShift(LInstruction *lir, const MArrayPopShift *mir, R
 {
     OutOfLineCode *ool;
 
-    switch (gen->info().executionMode()) {
-      case SequentialExecution:
-        if (mir->mode() == MArrayPopShift::Pop) {
-            ool = oolCallVM(ArrayPopDenseInfo, lir, (ArgList(), obj), StoreValueTo(out));
-            if (!ool)
-                return false;
-        } else {
-            JS_ASSERT(mir->mode() == MArrayPopShift::Shift);
-            ool = oolCallVM(ArrayShiftDenseInfo, lir, (ArgList(), obj), StoreValueTo(out));
-            if (!ool)
-                return false;
-        }
-        break;
-
-      case ParallelExecution:
-        // Bail out if we can't stay in the fast path in parallel execution.
-        ool = oolParallelAbort(ParallelBailoutUnsupported, lir);
+    if (mir->mode() == MArrayPopShift::Pop) {
+        ool = oolCallVM(ArrayPopDenseInfo, lir, (ArgList(), obj), StoreValueTo(out));
         if (!ool)
             return false;
-        break;
-
-      default:
-        JS_NOT_REACHED("No such execution mode");
+    } else {
+        JS_ASSERT(mir->mode() == MArrayPopShift::Shift);
+        ool = oolCallVM(ArrayShiftDenseInfo, lir, (ArgList(), obj), StoreValueTo(out));
+        if (!ool)
+            return false;
     }
 
     // VM call if a write barrier is necessary.
