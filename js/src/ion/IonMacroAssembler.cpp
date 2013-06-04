@@ -1200,6 +1200,51 @@ MacroAssembler::convertInt32ValueToDouble(const Address &address, Register scrat
     storeDouble(ScratchFloatReg, address);
 }
 
+void
+MacroAssembler::PushEmptyHandle(VMFunction::RootType rootType)
+{
+    switch (rootType) {
+      case VMFunction::RootNone:
+        JS_NOT_REACHED("Handle must have root type");
+        break;
+      case VMFunction::RootObject:
+      case VMFunction::RootString:
+      case VMFunction::RootPropertyName:
+      case VMFunction::RootFunction:
+      case VMFunction::RootCell:
+        Push(ImmWord((void *)NULL));
+        break;
+      case VMFunction::RootValue:
+        Push(UndefinedValue());
+        break;
+    }
+}
+
+TypedOrValueRegister
+MacroAssembler::loadHandle(VMFunction::RootType rootType, Address src,
+                           Register cellReg, const ValueOperand &valueReg)
+{
+    switch (rootType) {
+      case VMFunction::RootNone:
+        JS_NOT_REACHED("Handle must have root type");
+        return TypedOrValueRegister();
+      case VMFunction::RootObject:
+      case VMFunction::RootFunction:
+        loadPtr(src, cellReg);
+        return TypedOrValueRegister(MIRType_Object, AnyRegister(cellReg));
+      case VMFunction::RootString:
+      case VMFunction::RootPropertyName:
+        loadPtr(src, cellReg);
+        return TypedOrValueRegister(MIRType_String, AnyRegister(cellReg));
+      case VMFunction::RootCell:
+        loadPtr(src, cellReg);
+        return TypedOrValueRegister(MIRType_None, AnyRegister(cellReg));
+      case VMFunction::RootValue:
+        loadValue(src, valueReg);
+        return TypedOrValueRegister(valueReg);
+    }
+}
+
 #ifdef JS_ASMJS
 ABIArgIter::ABIArgIter(const MIRTypeVector &types)
   : gen_(),

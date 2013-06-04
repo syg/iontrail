@@ -52,6 +52,24 @@ ShouldMonitorReturnType(JSFunction *fun)
             !fun->nonLazyScript()->analysis()->ranInference());
 }
 
+/* static */ size_t
+VMFunction::sizeOfRootType(RootType type)
+{
+    switch (type) {
+      case RootNone:
+        JS_NOT_REACHED("Handle must have root type");
+        return 0;
+      case RootObject:
+      case RootString:
+      case RootPropertyName:
+      case RootFunction:
+      case RootCell:
+        return sizeof(void *);
+      case RootValue:
+        return sizeof(Value);
+    }
+}
+
 bool
 InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, Value *rval)
 {

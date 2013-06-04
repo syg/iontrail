@@ -17,6 +17,7 @@
 #include "ion/IonCompartment.h"
 #include "ion/IonInstrumentation.h"
 #include "ion/ParallelFunctions.h"
+#include "ion/VMFunctions.h"
 
 #include "vm/ForkJoin.h"
 
@@ -413,6 +414,10 @@ class MacroAssembler : public MacroAssemblerSpecific
         pushValue(addr);
         framePushed_ += sizeof(Value);
     }
+
+    void PushEmptyHandle(VMFunction::RootType rootType);
+    TypedOrValueRegister loadHandle(VMFunction::RootType rootType, Address src,
+                                    Register cellReg, const ValueOperand &valueReg);
 
     void adjustStack(int amount) {
         if (amount > 0)
