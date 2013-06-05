@@ -280,7 +280,7 @@ struct TypedArray : public BufferView {
 
   public:
     static bool isArrayIndex(JSObject *obj, jsid id, uint32_t *ip = NULL);
-    static void copyTypedArrayElement(JSObject *obj, uint32_t index, Value *vp);
+    static void copyTypedArrayElement(JSObject *obj, uint32_t index, MutableHandleValue vp);
 
     static void neuter(JSObject *tarray);
 

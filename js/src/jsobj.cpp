@@ -4102,7 +4102,7 @@ GetElementPure(JSObject *obj, uint32_t index, Value *vp)
 
     /* Fast-path typed array index accesses. */
     if (obj->isTypedArray() && index < TypedArray::length(obj)) {
-        TypedArray::copyTypedArrayElement(obj, index, vp);
+        TypedArray::copyTypedArrayElement(obj, index, MutableHandleValue::fromMarkedLocation(vp));
         return true;
     }
 

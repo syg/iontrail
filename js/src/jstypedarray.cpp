@@ -3288,11 +3288,10 @@ DataViewObject::fun_setFloat64(JSContext *cx, unsigned argc, Value *vp)
 }
 
 void
-TypedArray::copyTypedArrayElement(JSObject *obj, uint32_t index, Value *vp_)
+TypedArray::copyTypedArrayElement(JSObject *obj, uint32_t index, MutableHandleValue vp)
 {
     JS_ASSERT(index < length(obj));
 
-    MutableHandleValue vp = MutableHandleValue::fromMarkedLocation(vp_);
     switch (type(obj)) {
       case TYPE_INT8:
         TypedArrayTemplate<int8_t>::copyIndexToValue(obj, index, vp);
