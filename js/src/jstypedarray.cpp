@@ -1166,6 +1166,17 @@ TypedArray::isArrayIndex(JSObject *obj, jsid id, uint32_t *ip)
     return false;
 }
 
+inline void
+TypedArray::copyTypedArrayElement(JSObject *obj, uint32_t index, Value *vp)
+{
+    JS_ASSERT(index < length(obj));
+
+    switch (type(obj)) {
+        // TODO
+    }
+    copyIndexToValue(tarray, index, vp);
+}
+
 bool
 js::IsDataView(JSObject* obj)
 {

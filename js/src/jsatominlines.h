@@ -127,12 +127,21 @@ IndexToId(JSContext *cx, uint32_t index, MutableHandleId idp)
 }
 
 inline bool
-IndexToIdNoGC(JSContext *cx, uint32_t index, jsid *idp)
+IndexToIdPure(uint32_t index, jsid *idp)
 {
     if (index <= JSID_INT_MAX) {
         *idp = INT_TO_JSID(index);
         return true;
     }
+
+    return false;
+}
+
+inline bool
+IndexToIdNoGC(JSContext *cx, uint32_t index, jsid *idp)
+{
+    if (IndexToIdPure(index, idp))
+        return true;
 
     return IndexToIdSlow<NoGC>(cx, index, idp);
 }
