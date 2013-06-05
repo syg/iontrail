@@ -1344,18 +1344,6 @@ JSRuntime::setGCMaxMallocBytes(size_t value)
 }
 
 void
-PerThreadData::updateMallocCounter(JS::Zone *zone, size_t nbytes)
-{
-    ptrdiff_t oldCount = gcMallocBytes;
-    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
-    gcMallocBytes = newCount;
-    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0 && !InParallelSection()))
-        runtime_->onTooMuchMalloc();
-    else if (zone)
-        zone->updateMallocCounter(nbytes);
-}
-
-void
 JSRuntime::updateMallocCounter(size_t nbytes)
 {
     updateMallocCounter(NULL, nbytes);

@@ -614,4 +614,16 @@ js::ThreadSafeContext::updateMallocCounter(size_t nbytes)
     perThreadData->updateMallocCounter(zone_, nbytes);
 }
 
+void
+js::PerThreadData::updateMallocCounter(JS::Zone *zone, size_t nbytes)
+{
+    ptrdiff_t oldCount = gcMallocBytes;
+    ptrdiff_t newCount = oldCount - ptrdiff_t(nbytes);
+    gcMallocBytes = newCount;
+    if (JS_UNLIKELY(newCount <= 0 && oldCount > 0 && !InParallelSection()))
+        runtime_->onTooMuchMalloc();
+    else if (zone)
+        zone->updateMallocCounter(nbytes);
+}
+
 #endif /* jscntxtinlines_h___ */
