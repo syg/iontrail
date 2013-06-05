@@ -1560,23 +1560,8 @@ GetPropertyIC::reset()
     hasTypedArrayLengthStub_ = false;
 }
 
-void
-ParallelGetPropertyIC::reset()
-{
-    DispatchIonCache::reset();
-    if (stubbedShapes_)
-        stubbedShapes_->clear();
-}
-
-void
-ParallelGetPropertyIC::destroy()
-{
-    if (stubbedShapes_)
-        js_delete(stubbedShapes_);
-}
-
 bool
-ParallelGetPropertyIC::initStubbedShapes(JSContext *cx)
+ParallelIonCache::initStubbedShapes(JSContext *cx)
 {
     JS_ASSERT(isAllocated());
     if (!stubbedShapes_) {
@@ -1584,6 +1569,22 @@ ParallelGetPropertyIC::initStubbedShapes(JSContext *cx)
         return stubbedShapes_ && stubbedShapes_->init();
     }
     return true;
+}
+
+void
+ParallelIonCache::reset()
+{
+    DispatchIonCache::reset();
+    if (stubbedShapes_)
+        stubbedShapes_->clear();
+}
+
+void
+ParallelIonCache::destroy()
+{
+    DispatchIonCache::destroy();
+    if (stubbedShapes_)
+        js_delete(stubbedShapes_);
 }
 
 bool

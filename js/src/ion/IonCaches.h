@@ -802,30 +802,46 @@ class CallsiteCloneIC : public RepatchIonCache
     static JSObject *update(JSContext *cx, size_t cacheIndex, HandleObject callee);
 };
 
-class ParallelGetPropertyIC : public DispatchIonCache
+class ParallelIonCache : public DispatchIonCache
+{
+  protected:
+    // A set of all objects that are stubbed. Used to detect duplicates in
+    // parallel execution.
+    ShapeSet *stubbedShapes_;
+
+    ParallelIonCache()
+      : stubbedShapes_(NULL)
+    {
+    }
+
+  public:
+    virtual void reset();
+    virtual void destroy();
+
+    bool initStubbedShapes(JSContext *cx);
+    ShapeSet *stubbedShapes() const {
+        JS_ASSERT_IF(stubbedShapes_, stubbedShapes_->initialized());
+        return stubbedShapes_;
+    }
+};
+
+class ParallelGetPropertyIC : public ParallelIonCache
 {
   protected:
     Register object_;
     PropertyName *name_;
     TypedOrValueRegister output_;
 
-    // A set of all objects that are stubbed. Used to detect duplicates in
-    // parallel execution.
-    ShapeSet *stubbedShapes_;
-
    public:
     ParallelGetPropertyIC(Register object, PropertyName *name, TypedOrValueRegister output)
       : object_(object),
         name_(name),
-        output_(output),
-        stubbedShapes_(NULL)
+        output_(output)
     {
     }
 
     CACHE_HEADER(ParallelGetProperty)
 
-    void reset();
-    void destroy();
     void initializeAddCacheState(LInstruction *ins, AddCacheState *addState);
 
     Register object() const {
@@ -836,12 +852,6 @@ class ParallelGetPropertyIC : public DispatchIonCache
     }
     TypedOrValueRegister output() const {
         return output_;
-    }
-
-    bool initStubbedShapes(JSContext *cx);
-    ShapeSet *stubbedShapes() const {
-        JS_ASSERT_IF(stubbedShapes_, stubbedShapes_->initialized());
-        return stubbedShapes_;
     }
 
     bool canAttachReadSlot(LockedJSContext &cx, JSObject *obj, MutableHandleObject holder,
