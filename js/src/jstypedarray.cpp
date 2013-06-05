@@ -1166,17 +1166,6 @@ TypedArray::isArrayIndex(JSObject *obj, jsid id, uint32_t *ip)
     return false;
 }
 
-inline void
-TypedArray::copyTypedArrayElement(JSObject *obj, uint32_t index, Value *vp)
-{
-    JS_ASSERT(index < length(obj));
-
-    switch (type(obj)) {
-        // TODO
-    }
-    copyIndexToValue(tarray, index, vp);
-}
-
 bool
 js::IsDataView(JSObject* obj)
 {
@@ -3296,6 +3285,46 @@ DataViewObject::fun_setFloat64(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     return CallNonGenericMethod<is, setFloat64Impl>(cx, args);
+}
+
+void
+TypedArray::copyTypedArrayElement(JSObject *obj, uint32_t index, Value *vp_)
+{
+    JS_ASSERT(index < length(obj));
+
+    MutableHandleValue vp = MutableHandleValue::fromMarkedLocation(vp_);
+    switch (type(obj)) {
+      case TYPE_INT8:
+        TypedArrayTemplate<int8_t>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_UINT8:
+        TypedArrayTemplate<uint8_t>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_UINT8_CLAMPED:
+        TypedArrayTemplate<uint8_clamped>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_INT16:
+        TypedArrayTemplate<int16_t>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_UINT16:
+        TypedArrayTemplate<uint16_t>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_INT32:
+        TypedArrayTemplate<int32_t>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_UINT32:
+        TypedArrayTemplate<uint32_t>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_FLOAT32:
+        TypedArrayTemplate<float>::copyIndexToValue(obj, index, vp);
+        break;
+      case TYPE_FLOAT64:
+        TypedArrayTemplate<double>::copyIndexToValue(obj, index, vp);
+        break;
+      default:
+        JS_NOT_REACHED("Unknown TypedArray type");
+        break;
+    }
 }
 
 /***

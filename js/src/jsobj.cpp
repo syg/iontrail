@@ -4096,6 +4096,7 @@ GetElementPure(JSObject *obj, uint32_t index, Value *vp)
     if (obj->getOps()->getElement)
         return false;
 
+    jsid id;
     if (!IndexToIdPure(index, &id))
         return false;
 
@@ -4124,7 +4125,7 @@ js::GetObjectElementOperationPure(JSObject *obj, const Value &prop, Value *vp)
     if (!prop.isString() || !prop.toString()->isAtom())
         return false;
 
-    JSAtom *name = &str.toString()->toAtom();
+    JSAtom *name = &prop.toString()->asAtom();
     if (name->isIndex(&index))
         return GetElementPure(obj, index, vp);
 
