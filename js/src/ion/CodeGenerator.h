@@ -283,6 +283,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitParallelGetPropertyIC(OutOfLineUpdateCache *ool, ParallelGetPropertyIC *ic);
     bool visitSetPropertyIC(OutOfLineUpdateCache *ool, SetPropertyIC *ic);
     bool visitGetElementIC(OutOfLineUpdateCache *ool, GetElementIC *ic);
+    bool visitParallelGetElementIC(OutOfLineUpdateCache *ool, ParallelGetElementIC *ic);
     bool visitBindNameIC(OutOfLineUpdateCache *ool, BindNameIC *ic);
     bool visitNameIC(OutOfLineUpdateCache *ool, NameIC *ic);
     bool visitCallsiteCloneIC(OutOfLineUpdateCache *ool, CallsiteCloneIC *ic);
@@ -297,6 +298,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
                              PropertyName *name, TypedOrValueRegister output,
                              bool allowGetters);
+    bool addGetElementCache(LInstruction *ins, Register obj, ConstantOrRegister index,
+                            TypedOrValueRegister output, bool monitoredResult);
     bool checkForParallelBailout(LInstruction *lir);
 
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);

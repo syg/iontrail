@@ -1053,8 +1053,8 @@ bool
 GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                               HandleShape shape)
 {
-    RepatchStubAppender attacher(*this);
     MacroAssembler masm(cx);
+    RepatchStubAppender attacher(*this);
     GenerateReadSlot(cx, masm, attacher, obj, name(), holder, shape, object(), output());
     const char *attachKind = "non idempotent reading";
     if (idempotent())
@@ -1561,7 +1561,7 @@ GetPropertyIC::reset()
 }
 
 bool
-ParallelIonCache::initStubbedShapes(LockedJSContext &cx)
+ParallelIonCache::initStubbedShapes(JSContext *cx)
 {
     JS_ASSERT(isAllocated());
     if (!stubbedShapes_) {
@@ -1579,7 +1579,7 @@ ParallelIonCache::hasOrAddStubbedShape(LockedJSContext &cx, Shape *shape, bool *
     if (!initStubbedShapes(cx))
         return false;
     ShapeSet::AddPtr p = stubbedShapes_->lookupForAdd(shape);
-    if (*alreadyStubbed = !!p)
+    if ((*alreadyStubbed = !!p))
         return true;
     return stubbedShapes_->add(p, shape);
 }
@@ -1603,7 +1603,7 @@ ParallelIonCache::destroy()
 /* static */ bool
 ParallelGetPropertyIC::canAttachReadSlot(LockedJSContext &cx, IonCache &cache,
                                          TypedOrValueRegister output, JSObject *obj,
-                                         MutableHandleObject holder, PropertyName *name,
+                                         PropertyName *name, MutableHandleObject holder,
                                          MutableHandleShape shape)
 {
     // Parallel execution should only cache native objects.
@@ -2197,7 +2197,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
 const size_t GetElementIC::MAX_FAILED_UPDATES = 16;
 
 /* static */ bool
-GetElementIC::canAttachGetProp(JSObject *obj, const Value &idval)
+GetElementIC::canAttachGetProp(JSObject *obj, const Value &idval, jsid id)
 {
     uint32_t dummy;
     return (obj->isNative() &&
@@ -2251,9 +2251,11 @@ GetElementIC::canAttachDenseElement(JSObject *obj, const Value &idval)
 
 static bool
 GenerateDenseElement(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &attacher,
-                     JSObject *obj, Register object, ConstantOrRegister index,
-                     TypedOrValueRegister output)
+                     JSObject *obj, const Value &idval, Register object,
+                     ConstantOrRegister index, TypedOrValueRegister output)
 {
+    JS_ASSERT(GetElementIC::canAttachDenseElement(obj, idval));
+
     Label failures;
 
     // Guard object's shape.
@@ -2309,11 +2311,9 @@ GenerateDenseElement(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher
 bool
 GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval)
 {
-    JS_ASSERT(canAttachDenseElement(obj, idval));
-
-    RepatchStubAppender attacher(*this);
     MacroAssembler masm(cx);
-    if (!GenerateDenseArray(cx, masm, attacher, obj, object(), index(), output()))
+    RepatchStubAppender attacher(*this);
+    if (!GenerateDenseElement(cx, masm, attacher, obj, idval, object(), index(), output()))
         return false;
 
     setHasDenseStub();
@@ -2331,54 +2331,47 @@ GetElementIC::canAttachTypedArrayElement(JSObject *obj, const Value &idval,
         return false;
     }
 
+    // The output register is not yet specialized as a float register, the only
+    // way to accept float typed arrays for now is to return a Value type.
     int arrayType = TypedArray::type(obj);
     bool floatOutput = arrayType == TypedArray::TYPE_FLOAT32 ||
                        arrayType == TypedArray::TYPE_FLOAT64;
     return !floatOutput || output.hasValue();
 }
 
-bool
-GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *obj,
-                                      const Value &idval)
+static void
+GenerateTypedArrayElement(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &attacher,
+                          JSObject *obj, const Value &idval, Register object,
+                          ConstantOrRegister index, TypedOrValueRegister output)
 {
-    JS_ASSERT(obj->isTypedArray());
+    JS_ASSERT(GetElementIC::canAttachTypedArrayElement(obj, idval, output));
 
     Label failures;
-    MacroAssembler masm(cx);
-    RepatchStubAppender attacher(*this);
 
     // The array type is the object within the table of typed array classes.
     int arrayType = TypedArray::type(obj);
 
-    // The output register is not yet specialized as a float register, the only
-    // way to accept float typed arrays for now is to return a Value type.
-    DebugOnly<bool> floatOutput = arrayType == TypedArray::TYPE_FLOAT32 ||
-                                  arrayType == TypedArray::TYPE_FLOAT64;
-    JS_ASSERT_IF(!output().hasValue(), !floatOutput);
-
-    Register tmpReg = output().scratchReg().gpr();
+    Register tmpReg = output.scratchReg().gpr();
     JS_ASSERT(tmpReg != InvalidReg);
 
     // Check that the typed array is of the same type as the current object
     // because load size differ in function of the typed array data width.
-    masm.branchTestObjClass(Assembler::NotEqual, object(), tmpReg, obj->getClass(), &failures);
+    masm.branchTestObjClass(Assembler::NotEqual, object, tmpReg, obj->getClass(), &failures);
 
     // Decide to what type index the stub should be optimized
     Register indexReg = tmpReg;
-    JS_ASSERT(!index().constant());
+    JS_ASSERT(!index.constant());
     if (idval.isString()) {
-        JS_ASSERT(GetIndexFromString(idval.toString()) != UINT32_MAX);
-
         // Part 1: Get the string into a register
         Register str;
-        if (index().reg().hasValue()) {
-            ValueOperand val = index().reg().valueReg();
+        if (index.reg().hasValue()) {
+            ValueOperand val = index.reg().valueReg();
             masm.branchTestString(Assembler::NotEqual, val, &failures);
 
             str = masm.extractString(val, indexReg);
         } else {
-            JS_ASSERT(!index().reg().typedReg().isFloat());
-            str = index().reg().typedReg().gpr();
+            JS_ASSERT(!index.reg().typedReg().isFloat());
+            str = index.reg().typedReg().gpr();
         }
 
         // Part 2: Call to translate the str into index
@@ -2400,53 +2393,59 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
         masm.branch32(Assembler::Equal, indexReg, Imm32(UINT32_MAX), &failures);
 
     } else {
-        JS_ASSERT(idval.isInt32());
-
-        if (index().reg().hasValue()) {
-            ValueOperand val = index().reg().valueReg();
+        if (index.reg().hasValue()) {
+            ValueOperand val = index.reg().valueReg();
             masm.branchTestInt32(Assembler::NotEqual, val, &failures);
 
             // Unbox the index.
             masm.unboxInt32(val, indexReg);
         } else {
-            JS_ASSERT(!index().reg().typedReg().isFloat());
-            indexReg = index().reg().typedReg().gpr();
+            JS_ASSERT(!index.reg().typedReg().isFloat());
+            indexReg = index.reg().typedReg().gpr();
         }
     }
 
     // Guard on the initialized length.
-    Address length(object(), TypedArray::lengthOffset());
+    Address length(object, TypedArray::lengthOffset());
     masm.branch32(Assembler::BelowOrEqual, length, indexReg, &failures);
 
     // Save the object register on the stack in case of failure.
     Label popAndFail;
-    Register elementReg = object();
-    masm.push(object());
+    Register elementReg = object;
+    masm.push(object);
 
     // Load elements vector.
-    masm.loadPtr(Address(object(), TypedArray::dataOffset()), elementReg);
+    masm.loadPtr(Address(object, TypedArray::dataOffset()), elementReg);
 
     // Load the value. We use an invalid register because the destination
     // register is necessary a non double register.
     int width = TypedArray::slotWidth(arrayType);
     BaseIndex source(elementReg, indexReg, ScaleFromElemWidth(width));
-    if (output().hasValue())
-        masm.loadFromTypedArray(arrayType, source, output().valueReg(), true,
+    if (output.hasValue())
+        masm.loadFromTypedArray(arrayType, source, output.valueReg(), true,
                                 elementReg, &popAndFail);
     else
-        masm.loadFromTypedArray(arrayType, source, output().typedReg(),
+        masm.loadFromTypedArray(arrayType, source, output.typedReg(),
                                 elementReg, &popAndFail);
 
-    masm.pop(object());
+    masm.pop(object);
     attacher.jumpRejoin(masm);
 
     // Restore the object before continuing to the next stub.
     masm.bind(&popAndFail);
-    masm.pop(object());
+    masm.pop(object);
     masm.bind(&failures);
 
     attacher.jumpNextStub(masm);
+}
 
+bool
+GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *obj,
+                                      const Value &idval)
+{
+    MacroAssembler masm(cx);
+    RepatchStubAppender attacher(*this);
+    GenerateTypedArrayElement(cx, masm, attacher, obj, idval, object(), index(), output());
     return linkAndAttachStub(cx, masm, attacher, ion, "typed array");
 }
 
@@ -2598,7 +2597,7 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
                 return false;
             attachedStub = true;
         }
-        if (!attachedStub && cache.monitoredResult() && canAttachGetProp(obj, idval)) {
+        if (!attachedStub && cache.monitoredResult() && canAttachGetProp(obj, idval, id)) {
             RootedPropertyName name(cx, JSID_TO_ATOM(id)->asPropertyName());
             if (!cache.attachGetProp(cx, ion, obj, idval, name))
                 return false;
@@ -2646,8 +2645,8 @@ ParallelGetElementIC::attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObje
                                      const Value &idval, PropertyName *name, JSObject *holder,
                                      Shape *shape)
 {
-    DispatchStubPrepender attacher(*this);
     MacroAssembler masm(cx);
+    DispatchStubPrepender attacher(*this);
 
     // Guard on the index value.
     Label failures;
@@ -2664,14 +2663,22 @@ bool
 ParallelGetElementIC::attachDenseElement(LockedJSContext &cx, IonScript *ion, JSObject *obj,
                                          const Value &idval)
 {
-    JS_ASSERT(GetElementIC::canAttachDenseElement(obj, idval));
-
-    DispatchStubPrepender attacher(*this);
     MacroAssembler masm(cx);
-    if (!GenerateDenseArray(cx, masm, attacher, obj, object(), index(), output()))
+    DispatchStubPrepender attacher(*this);
+    if (!GenerateDenseElement(cx, masm, attacher, obj, idval, object(), index(), output()))
         return false;
 
     return linkAndAttachStub(cx, masm, attacher, ion, "parallel dense array");
+}
+
+bool
+ParallelGetElementIC::attachTypedArrayElement(LockedJSContext &cx, IonScript *ion, JSObject *obj,
+                                              const Value &idval)
+{
+    MacroAssembler masm(cx);
+    DispatchStubPrepender attacher(*this);
+    GenerateTypedArrayElement(cx, masm, attacher, obj, idval, object(), index(), output());
+    return linkAndAttachStub(cx, masm, attacher, ion, "parallel typed array");
 }
 
 ParallelResult
@@ -2694,7 +2701,7 @@ ParallelGetElementIC::update(ForkJoinSlice *slice, size_t cacheIndex, HandleObje
 
     // Try to get the element early, as the pure path doesn't need a lock. If
     // we can't do it purely, bail out of parallel execution.
-    if (!GetObjectElementOperationPure(obj, idval, vp))
+    if (!GetObjectElementOperationPure(obj, idval, vp.address()))
         return TP_RETRY_SEQUENTIALLY;
 
     // Avoid unnecessary locking if cannot attach stubs and idempotent.
@@ -2716,10 +2723,10 @@ ParallelGetElementIC::update(ForkJoinSlice *slice, size_t cacheIndex, HandleObje
                 return TP_FATAL;
 
             if (cache.monitoredResult() &&
-                GetElementIC::canAttachGetProp(obj, idval))
+                GetElementIC::canAttachGetProp(obj, idval, id))
             {
                 RootedShape shape(cx);
-                RootedObject object(cx);
+                RootedObject holder(cx);
                 PropertyName *name = JSID_TO_ATOM(id)->asPropertyName();
                 if (ParallelGetPropertyIC::canAttachReadSlot(cx, cache, cache.output(), obj,
                                                              name, &holder, &shape))

@@ -25,7 +25,8 @@ namespace ion {
     _(BindName)                                                 \
     _(Name)                                                     \
     _(CallsiteClone)                                            \
-    _(ParallelGetProperty)
+    _(ParallelGetProperty)                                      \
+    _(ParallelGetElement)
 
 // Forward declarations of Cache kinds.
 #define FORWARD_DECLARE(kind) class kind##IC;
@@ -661,7 +662,7 @@ class GetElementIC : public RepatchIonCache
         hasDenseStub_ = true;
     }
 
-    static bool canAttachGetProp(JSObject *obj, const Value &idval);
+    static bool canAttachGetProp(JSObject *obj, const Value &idval, jsid id);
     static bool canAttachDenseElement(JSObject *obj, const Value &idval);
     static bool canAttachTypedArrayElement(JSObject *obj, const Value &idval,
                                            TypedOrValueRegister output);
@@ -819,7 +820,7 @@ class ParallelIonCache : public DispatchIonCache
     {
     }
 
-    bool initStubbedShapes(LockedJSContext &cx);
+    bool initStubbedShapes(JSContext *cx);
 
   public:
     virtual void reset();
@@ -859,7 +860,7 @@ class ParallelGetPropertyIC : public ParallelIonCache
 
     static bool canAttachReadSlot(LockedJSContext &cx, IonCache &cache,
                                   TypedOrValueRegister output, JSObject *obj,
-                                  MutableHandleObject holder, PropertyName *name,
+                                  PropertyName *name, MutableHandleObject holder,
                                   MutableHandleShape shape);
 
     bool attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj, JSObject *holder,
@@ -905,7 +906,7 @@ class ParallelGetElementIC : public ParallelIonCache
     }
 
     bool attachReadSlot(LockedJSContext &cx, IonScript *ion, JSObject *obj, const Value &idval,
-                        PropertyName *name, JSObject *holder, HandleShape shape);
+                        PropertyName *name, JSObject *holder, Shape *shape);
     bool attachDenseElement(LockedJSContext &cx, IonScript *ion, JSObject *obj, const Value &idval);
     bool attachTypedArrayElement(LockedJSContext &cx, IonScript *ion, JSObject *obj, const Value &idval);
 
