@@ -460,6 +460,7 @@ class DispatchIonCache : public IonCache
     }
 
     virtual void reset();
+    virtual void initializeAddCacheState(LInstruction *ins, AddCacheState *addState);
 
     void emitInitialJump(MacroAssembler &masm, AddCacheState &addState);
     void bindInitialJump(MacroAssembler &masm, AddCacheState &addState);
@@ -846,7 +847,11 @@ class ParallelGetPropertyIC : public ParallelIonCache
 
     CACHE_HEADER(ParallelGetProperty)
 
+#ifdef JS_CPU_X86
+    // x86 lacks a general purpose scratch register for dispatch caches and
+    // must be given one manually.
     void initializeAddCacheState(LInstruction *ins, AddCacheState *addState);
+#endif
 
     Register object() const {
         return object_;
@@ -891,6 +896,11 @@ class ParallelGetElementIC : public ParallelIonCache
     }
 
     CACHE_HEADER(ParallelGetElement)
+
+#ifdef JS_CPU_X86
+    // See note in ParallelGetPropertyIC.
+    void initializeAddCacheState(LInstruction *ins, AddCacheState *addState);
+#endif
 
     Register object() const {
         return object_;
