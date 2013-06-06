@@ -61,6 +61,22 @@ ToAtom(JSContext *cx, const js::Value &v)
     return AtomizeString<allowGC>(cx, str);
 }
 
+inline bool
+ValueToIdPure(const Value &v, jsid *id)
+{
+    int32_t i;
+    if (ValueFitsInInt32(v, &i) && INT_FITS_IN_JSID(i)) {
+        *id = INT_TO_JSID(i);
+        return true;
+    }
+
+    if (!v.isString() || !v.toString()->isAtom())
+        return false;
+
+    *id = AtomToId(&v.toString()->asAtom());
+    return true;
+}
+
 template <AllowGC allowGC>
 inline bool
 ValueToId(JSContext* cx, const Value &v, typename MaybeRooted<jsid, allowGC>::MutableHandleType idp)
