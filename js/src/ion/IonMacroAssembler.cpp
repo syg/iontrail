@@ -554,7 +554,7 @@ MacroAssembler::parNewGCShortString(const Register &result,
                                     const Register &tempReg2,
                                     Label *fail)
 {
-    parNewGCThing(result, threadContextReg, tempReg1, tempReg2, js::gc::FINALIZE_STRING, fail);
+    parNewGCThing(result, threadContextReg, tempReg1, tempReg2, js::gc::FINALIZE_SHORT_STRING, fail);
 }
 
 void
