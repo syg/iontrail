@@ -4,26 +4,28 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "Ion.h"
 #include "IonFrames.h"
+
 #include "jsobj.h"
 #include "jsscript.h"
 #include "jsfun.h"
-#include "BaselineFrame.h"
-#include "BaselineIC.h"
-#include "BaselineJIT.h"
-#include "IonCompartment.h"
-#include "IonFrames-inl.h"
-#include "IonFrameIterator-inl.h"
-#include "Safepoints.h"
-#include "IonSpewer.h"
-#include "IonMacroAssembler.h"
-#include "PcScriptCache.h"
-#include "PcScriptCache-inl.h"
 #include "gc/Marking.h"
-#include "SnapshotReader.h"
-#include "Safepoints.h"
-#include "VMFunctions.h"
+#include "ion/BaselineFrame.h"
+#include "ion/BaselineIC.h"
+#include "ion/BaselineJIT.h"
+#include "ion/Ion.h"
+#include "ion/IonCompartment.h"
+#include "ion/IonMacroAssembler.h"
+#include "ion/IonSpewer.h"
+#include "ion/PcScriptCache.h"
+#include "ion/Safepoints.h"
+#include "ion/SnapshotReader.h"
+#include "ion/VMFunctions.h"
+
+#include "ion/IonFrameIterator-inl.h"
+#include "ion/IonFrames-inl.h"
+#include "ion/PcScriptCache-inl.h"
+#include "vm/Probes-inl.h"
 
 namespace js {
 namespace ion {
@@ -456,10 +458,6 @@ HandleException(ResumeFromException *rfe)
 
     IonSpew(IonSpew_Invalidate, "handling exception");
 
-    // Immediately remove any bailout frame guard that might be left over from
-    // an error in between ConvertFrames and ThunkToInterpreter.
-    js_delete(cx->mainThread().ionActivation->maybeTakeBailout());
-
     // Clear any Ion return override that's been set.
     // This may happen if a callVM function causes an invalidation (setting the
     // override), and then fails, bypassing the bailout handlers that would
@@ -638,7 +636,7 @@ IonActivationIterator::more() const
     return !!activation_;
 }
 
-void
+CalleeToken
 MarkCalleeToken(JSTracer *trc, CalleeToken token)
 {
     switch (GetCalleeTokenTag(token)) {
@@ -646,15 +644,13 @@ MarkCalleeToken(JSTracer *trc, CalleeToken token)
       {
         JSFunction *fun = CalleeTokenToFunction(token);
         MarkObjectRoot(trc, &fun, "ion-callee");
-        JS_ASSERT(fun == CalleeTokenToFunction(token));
-        break;
+        return CalleeToToken(fun);
       }
       case CalleeToken_Script:
       {
         JSScript *script = CalleeTokenToScript(token);
         MarkScriptRoot(trc, &script, "ion-entry");
-        JS_ASSERT(script == CalleeTokenToScript(token));
-        break;
+        return CalleeToToken(script);
       }
       default:
         JS_NOT_REACHED("unknown callee token type");
@@ -691,12 +687,30 @@ MarkActualArguments(JSTracer *trc, const IonFrameIterator &frame)
         gc::MarkValueRoot(trc, &argv[i], "ion-argv");
 }
 
+static inline void
+WriteAllocation(const IonFrameIterator &frame, const LAllocation *a, uintptr_t value)
+{
+    if (a->isGeneralReg()) {
+        Register reg = a->toGeneralReg()->reg();
+        frame.machineState().write(reg, value);
+        return;
+    }
+    if (a->isStackSlot()) {
+        uint32_t slot = a->toStackSlot()->slot();
+        *frame.jsFrame()->slotRef(slot) = value;
+        return;
+    }
+    uint32_t index = a->toArgument()->index();
+    uint8_t *argv = reinterpret_cast<uint8_t *>(frame.jsFrame()->argv());
+    *reinterpret_cast<uintptr_t *>(argv + index) = value;
+}
+
 static void
 MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 {
     IonJSFrameLayout *layout = (IonJSFrameLayout *)frame.fp();
 
-    MarkCalleeToken(trc, layout->calleeToken());
+    layout->replaceCalleeToken(MarkCalleeToken(trc, layout->calleeToken()));
 
     IonScript *ionScript = NULL;
     if (frame.checkInvalidation(&ionScript)) {
@@ -750,7 +764,12 @@ MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 
         Value v = IMPL_TO_JSVAL(layout);
         gc::MarkValueRoot(trc, &v, "ion-torn-value");
-        JS_ASSERT(v == IMPL_TO_JSVAL(layout));
+
+        if (v != IMPL_TO_JSVAL(layout)) {
+            // GC moved the value, replace the stored payload.
+            layout = JSVAL_TO_IMPL(v);
+            WriteAllocation(frame, &payload, layout.s.payload.uintptr);
+        }
     }
 #endif
 }

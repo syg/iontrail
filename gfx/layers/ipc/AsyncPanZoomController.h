@@ -111,7 +111,7 @@ public:
    * { x = 0, y = 0, width = surface.width, height = surface.height }, however
    * there is no hard requirement for this.
    */
-  void UpdateCompositionBounds(const nsIntRect& aCompositionBounds);
+  void UpdateCompositionBounds(const LayerIntRect& aCompositionBounds);
 
   /**
    * We are scrolling a subframe, so disable our machinery until we hit
@@ -202,7 +202,7 @@ public:
    * Sets the CSS page rect, and calculates a new page rect based on the zoom
    * level of the current metrics and the passed in CSS page rect.
    */
-  void SetPageRect(const gfx::Rect& aCSSPageRect);
+  void SetPageRect(const CSSRect& aCSSPageRect);
 
   /**
    * Sets the DPI of the device for use within panning and zooming logic. It is
@@ -223,7 +223,7 @@ public:
    * checkerboard immediately. This includes a bunch of logic, including
    * algorithms to bias painting in the direction of the velocity.
    */
-  static const gfx::Rect CalculatePendingDisplayPort(
+  static const CSSRect CalculatePendingDisplayPort(
     const FrameMetrics& aFrameMetrics,
     const gfx::Point& aVelocity,
     const gfx::Point& aAcceleration,
@@ -243,7 +243,7 @@ public:
    */
   static gfxSize CalculateResolution(const FrameMetrics& aMetrics);
 
-  static gfx::Rect CalculateCompositedRectInCssPixels(const FrameMetrics& aMetrics);
+  static CSSRect CalculateCompositedRectInCssPixels(const FrameMetrics& aMetrics);
 
   /**
    * Send an mozbrowserasyncscroll event.
@@ -568,11 +568,11 @@ private:
   // The last time and offset we fire the mozbrowserasyncscroll event when
   // compositor has sampled the content transform for this frame.
   TimeStamp mLastAsyncScrollTime;
-  gfx::Point mLastAsyncScrollOffset;
+  CSSPoint mLastAsyncScrollOffset;
 
   // The current offset drawn on the screen, it may not be sent since we have
   // throttling policy for mozbrowserasyncscroll event.
-  gfx::Point mCurrentAsyncScrollOffset;
+  CSSPoint mCurrentAsyncScrollOffset;
 
   // The delay task triggered by the throttling mozbrowserasyncscroll event
   // ensures the last mozbrowserasyncscroll event is always been fired.

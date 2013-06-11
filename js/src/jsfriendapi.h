@@ -14,6 +14,8 @@
 #include "jspubtd.h"
 #include "jsprvtd.h"
 
+#include "js/CallArgs.h"
+
 /*
  * This macro checks if the stack pointer has exceeded a given limit. If
  * |tolerance| is non-zero, it returns true only if the stack pointer has
@@ -322,8 +324,9 @@ struct TypeObject {
 };
 
 struct BaseShape {
-    js::Class   *clasp;
-    JSObject    *parent;
+    js::Class *clasp;
+    JSObject *parent;
+    JSObject *_1;
     JSCompartment *compartment;
 };
 
@@ -366,7 +369,8 @@ struct Function {
 };
 
 struct Atom {
-    size_t _;
+    static const size_t LENGTH_SHIFT = 4;
+    size_t lengthAndFlags;
     const jschar *chars;
 };
 
@@ -423,6 +427,10 @@ GetObjectParentMaybeScope(JSObject *obj);
 
 JS_FRIEND_API(JSObject *)
 GetGlobalForObjectCrossCompartment(JSObject *obj);
+
+// For legacy consumers only. This whole concept is going away soon.
+JS_FRIEND_API(JSObject *)
+GetDefaultGlobalForContext(JSContext *cx);
 
 JS_FRIEND_API(void)
 NotifyAnimationActivity(JSObject *obj);
@@ -534,6 +542,13 @@ inline const jschar *
 GetAtomChars(JSAtom *atom)
 {
     return reinterpret_cast<shadow::Atom *>(atom)->chars;
+}
+
+inline size_t
+GetAtomLength(JSAtom *atom)
+{
+    using shadow::Atom;
+    return reinterpret_cast<Atom*>(atom)->lengthAndFlags >> Atom::LENGTH_SHIFT;
 }
 
 inline JSLinearString *
@@ -852,10 +867,10 @@ NukeCrossCompartmentWrappers(JSContext* cx,
                              const CompartmentFilter& targetFilter,
                              NukeReferencesToWindow nukeReferencesToWindow);
 
-/* Specify information about ListBase proxies in the DOM, for use by ICs. */
+/* Specify information about DOMProxy proxies in the DOM, for use by ICs. */
 
 /*
- * The ListBaseShadowsCheck function will be called to check if the property for
+ * The DOMProxyShadowsCheck function will be called to check if the property for
  * id should be gotten from the prototype, or if there is an own property that
  * shadows it.
  * If DoesntShadow is returned then the slot at listBaseExpandoSlot should
@@ -878,21 +893,21 @@ struct ExpandoAndGeneration {
   uint32_t generation;
 };
 
-typedef enum ListBaseShadowsResult {
+typedef enum DOMProxyShadowsResult {
   ShadowCheckFailed,
   Shadows,
   DoesntShadow,
   DoesntShadowUnique
-} ListBaseShadowsResult;
-typedef ListBaseShadowsResult
-(* ListBaseShadowsCheck)(JSContext* cx, JSHandleObject object, JSHandleId id);
+} DOMProxyShadowsResult;
+typedef DOMProxyShadowsResult
+(* DOMProxyShadowsCheck)(JSContext* cx, JSHandleObject object, JSHandleId id);
 JS_FRIEND_API(void)
-SetListBaseInformation(void *listBaseHandlerFamily, uint32_t listBaseExpandoSlot,
-                       ListBaseShadowsCheck listBaseShadowsCheck);
+SetDOMProxyInformation(void *domProxyHandlerFamily, uint32_t domProxyExpandoSlot,
+                       DOMProxyShadowsCheck domProxyShadowsCheck);
 
-void *GetListBaseHandlerFamily();
-uint32_t GetListBaseExpandoSlot();
-ListBaseShadowsCheck GetListBaseShadowsCheck();
+void *GetDOMProxyHandlerFamily();
+uint32_t GetDOMProxyExpandoSlot();
+DOMProxyShadowsCheck GetDOMProxyShadowsCheck();
 
 } /* namespace js */
 
@@ -1060,7 +1075,9 @@ class ArrayBufferBuilder
     }
 
     JSObject* getArrayBuffer(JSContext *cx) {
-        if (capacity_ > length_) {
+        // we need to check for length_ == 0, because nothing may have been
+        // added
+        if (capacity_ > length_ || length_ == 0) {
             if (!setCapacity(length_))
                 return NULL;
         }
@@ -1427,16 +1444,97 @@ JS_FRIEND_API(void *)
 JS_GetDataViewData(JSObject *obj);
 
 /*
+ * A class, expected to be passed by value, which represents the CallArgs for a
+ * JSJitGetterOp.
+ */
+class JSJitGetterCallArgs : protected JS::MutableHandleValue
+{
+  public:
+    explicit JSJitGetterCallArgs(const JS::CallArgs& args)
+      : JS::MutableHandleValue(args.rval())
+    {}
+
+    JS::MutableHandleValue rval() {
+        return *this;
+    }
+};
+
+/*
+ * A class, expected to be passed by value, which represents the CallArgs for a
+ * JSJitSetterOp.
+ */
+class JSJitSetterCallArgs : protected JS::MutableHandleValue
+{
+  public:
+    explicit JSJitSetterCallArgs(const JS::CallArgs& args)
+      : JS::MutableHandleValue(args.handleAt(0))
+    {}
+
+    JS::MutableHandleValue handleAt(unsigned i) {
+        MOZ_ASSERT(i == 0);
+        return *this;
+    }
+
+    unsigned length() const { return 1; }
+
+    // Add get() or maybe hasDefined() as needed
+};
+
+struct JSJitMethodCallArgsTraits;
+
+/*
+ * A class, expected to be passed by reference, which represents the CallArgs
+ * for a JSJitMethodOp.
+ */
+class JSJitMethodCallArgs : protected JS::detail::CallArgsBase<JS::detail::NoUsedRval>
+{
+  private:
+    typedef JS::detail::CallArgsBase<JS::detail::NoUsedRval> Base;
+    friend struct JSJitMethodCallArgsTraits;
+
+  public:
+    explicit JSJitMethodCallArgs(const JS::CallArgs& args) {
+        argv_ = args.array();
+        argc_ = args.length();
+    }
+
+    JS::MutableHandleValue rval() const {
+        return Base::rval();
+    }
+
+    unsigned length() const { return Base::length(); }
+
+    JS::MutableHandleValue handleAt(unsigned i) const {
+        return Base::handleAt(i);
+    }
+
+    bool hasDefined(unsigned i) const {
+        return Base::hasDefined(i);
+    }
+
+    // Add get() as needed
+};
+
+struct JSJitMethodCallArgsTraits
+{
+    static const size_t offsetOfArgv = offsetof(JSJitMethodCallArgs, argv_);
+    static const size_t offsetOfArgc = offsetof(JSJitMethodCallArgs, argc_);
+};
+
+/*
  * This struct contains metadata passed from the DOM to the JS Engine for JIT
  * optimizations on DOM property accessors. Eventually, this should be made
  * available to general JSAPI users, but we are not currently ready to do so.
  */
 typedef bool
-(* JSJitPropertyOp)(JSContext *cx, JSHandleObject thisObj,
-                    void *specializedThis, JS::Value *vp);
+(* JSJitGetterOp)(JSContext *cx, JSHandleObject thisObj,
+                  void *specializedThis, JSJitGetterCallArgs args);
+typedef bool
+(* JSJitSetterOp)(JSContext *cx, JSHandleObject thisObj,
+                  void *specializedThis, JSJitSetterCallArgs args);
 typedef bool
 (* JSJitMethodOp)(JSContext *cx, JSHandleObject thisObj,
-                  void *specializedThis, unsigned argc, JS::Value *vp);
+                  void *specializedThis, const JSJitMethodCallArgs& args);
 
 struct JSJitInfo {
     enum OpType {
@@ -1445,7 +1543,11 @@ struct JSJitInfo {
         Method
     };
 
-    JSJitPropertyOp op;
+    union {
+        JSJitGetterOp getter;
+        JSJitSetterOp setter;
+        JSJitMethodOp method;
+    };
     uint32_t protoID;
     uint32_t depth;
     OpType type;
@@ -1611,6 +1713,31 @@ assertEnteredPolicy(JSContext *cx, JSObject *obj, jsid id);
 #else
 inline void assertEnteredPolicy(JSContext *cx, JSObject *obj, jsid id) {};
 #endif
+
+typedef JSObject *
+(* ObjectMetadataCallback)(JSContext *cx);
+
+/*
+ * Specify a callback to invoke when creating each JS object in the current
+ * compartment, which may return a metadata object to associate with the
+ * object. Objects with different metadata have different shape hierarchies,
+ * so for efficiency, objects should generally try to share metadata objects.
+ */
+JS_FRIEND_API(void)
+SetObjectMetadataCallback(JSContext *cx, ObjectMetadataCallback callback);
+
+/* Manipulate the metadata associated with an object. */
+
+JS_FRIEND_API(bool)
+SetObjectMetadata(JSContext *cx, JSHandleObject obj, JSHandleObject metadata);
+
+JS_FRIEND_API(JSObject *)
+GetObjectMetadata(JSObject *obj);
+
+/* ES5 8.12.8. */
+extern JS_FRIEND_API(JSBool)
+DefaultValue(JSContext *cx, HandleObject obj, JSType hint, MutableHandleValue vp);
+
 
 } /* namespace js */
 

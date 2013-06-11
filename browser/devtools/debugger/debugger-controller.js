@@ -8,7 +8,7 @@
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 const DBG_STRINGS_URI = "chrome://browser/locale/devtools/debugger.properties";
-const NEW_SOURCE_IGNORED_URLS = ["debugger eval code", "self-hosted"];
+const NEW_SOURCE_IGNORED_URLS = ["debugger eval code", "self-hosted", "XStringBundle"];
 const NEW_SOURCE_DISPLAY_DELAY = 200; // ms
 const FETCH_SOURCE_RESPONSE_DELAY = 50; // ms
 const FRAME_STEP_CLEAR_DELAY = 100; // ms
@@ -544,7 +544,7 @@ StackFrames.prototype = {
 
 
     // Watch expressions are evaluated in the context of the topmost frame,
-    // and the results and displayed in the variables view.
+    // and the results are displayed in the variables view.
     if (this.currentWatchExpressions) {
       // Evaluation causes the stack frames to be cleared and active thread to
       // pause, sending a 'clientEvaluated' packed and adding the frames again.
@@ -579,7 +579,7 @@ StackFrames.prototype = {
       this._addFrame(frame);
     }
     if (this.currentFrame == null) {
-      this.selectFrame(0);
+      DebuggerView.StackFrames.selectedDepth = 0;
     }
     if (this.activeThread.moreFrames) {
       DebuggerView.StackFrames.dirty = true;
@@ -639,8 +639,6 @@ StackFrames.prototype = {
 
     // Move the editor's caret to the proper url and line.
     DebuggerView.updateEditor(url, line);
-    // Highlight the stack frame at the specified depth.
-    DebuggerView.StackFrames.highlightFrame(aDepth);
     // Highlight the breakpoint at the specified url and line if it exists.
     DebuggerView.Sources.highlightBreakpoint(url, line);
     // Don't display the watch expressions textbox inputs in the pane.

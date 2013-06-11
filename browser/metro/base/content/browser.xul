@@ -95,8 +95,6 @@
     <command id="cmd_contextUI" oncommand="CommandUpdater.doCommand(this.id);"/>
 
     <!-- screen/display -->
-    <command id="cmd_zoomin" observes="bcast_contentShowing" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_zoomout" observes="bcast_contentShowing" oncommand="CommandUpdater.doCommand(this.id);"/>
     <command id="cmd_lockscreen" oncommand="CommandUpdater.doCommand(this.id);"/>
 
     <command id="cmd_volumeLeft" observes="bcast_contentShowing" oncommand="CommandUpdater.doCommand(this.id);"/>
@@ -143,8 +141,6 @@
     <key id="key_save" key="s" modifiers="accel" command="cmd_savePage"/>
 
     <!-- misc -->
-    <key id="key_zoomin" key="+" modifiers="accel" command="cmd_zoomin"/>
-    <key id="key_zoomout" key="-" modifiers="accel" command="cmd_zoomout"/>
     <key id="key_find" key="f" modifiers="accel" command="cmd_find"/>
     <key id="key_find" key="/" command="cmd_find"/>
     <key id="key_findNext" keycode="VK_F3" command="cmd_findNext"/>
@@ -184,7 +180,7 @@
   <stack id="stack" flex="1">
     <!-- Page Area -->
     <vbox id="page">
-      <vbox id="tray" class="tray-toolbar" visible="true" observes="bcast_windowState" >
+      <vbox id="tray" class="tray-toolbar" observes="bcast_windowState" >
         <!-- Tabs -->
         <hbox id="tabs-container" observes="bcast_windowState">
           <box id="tabs" flex="1"
@@ -197,29 +193,29 @@
         </hbox>
 
         <!-- Start UI -->
-        <hbox id="start-container" flex="1" observes="bcast_windowState" class="meta content-height content-width" onclick="false;">
+        <hbox id="start-container" flex="1" observes="bcast_windowState" class="meta content-height content-width">
           <!-- portrait/landscape/filled view -->
           <hbox id="start" class="start-page" flex="1" observes="bcast_windowState">
-            <scrollbox id="start-scrollbox" orient="horizontal" flex="1">
-            <vbox id="start-topsites" class="meta-section">
-              <label class="meta-section-title" value="&startTopSitesHeader.label;"/>
-              <richgrid id="start-topsites-grid" rows="3" columns="3" seltype="multiple" flex="1"/>
-            </vbox>
-            <vbox id="start-bookmarks" class="meta-section">
-              <label class="meta-section-title" value="&startBookmarksHeader.label;"
-                onclick="PanelUI.show('bookmarks-container');"/>
-              <richgrid id="start-bookmarks-grid" seltype="multiple" flex="1"/>
-            </vbox>
-            <vbox id="start-history" class="meta-section">
-              <label class="meta-section-title" value="&startHistoryHeader.label;"
-                onclick="PanelUI.show('history-container');"/>
-              <richgrid id="start-history-grid" seltype="multiple" flex="1"/>
-            </vbox>
-            <vbox id="start-remotetabs" class="meta-section">
-              <label class="meta-section-title" value="&startRemoteTabsHeader.label;"
-                onclick="PanelUI.show('remotetabs-container');"/>
-              <richgrid id="start-remotetabs-grid" seltype="multiple" flex="1"/>
-            </vbox>
+            <scrollbox id="start-scrollbox" orient="horizontal" observes="bcast_preciseInput" flex="1">
+              <vbox id="start-topsites" class="meta-section">
+                <label class="meta-section-title" value="&startTopSitesHeader.label;"/>
+                <richgrid id="start-topsites-grid" rows="3" columns="3" seltype="multiple" flex="1"/>
+              </vbox>
+              <vbox id="start-bookmarks" class="meta-section">
+                <label class="meta-section-title" value="&startBookmarksHeader.label;"
+                  onclick="PanelUI.show('bookmarks-container');"/>
+                <richgrid id="start-bookmarks-grid" seltype="multiple" flex="1"/>
+              </vbox>
+              <vbox id="start-history" class="meta-section">
+                <label class="meta-section-title" value="&startHistoryHeader.label;"
+                  onclick="PanelUI.show('history-container');"/>
+                <richgrid id="start-history-grid" seltype="multiple" flex="1"/>
+              </vbox>
+              <vbox id="start-remotetabs" class="meta-section">
+                <label class="meta-section-title" value="&startRemoteTabsHeader.label;"
+                  onclick="PanelUI.show('remotetabs-container');"/>
+                <richgrid id="start-remotetabs-grid" seltype="multiple" flex="1"/>
+              </vbox>
             </scrollbox>
           </hbox>
           <!-- snapped view -->
@@ -244,7 +240,7 @@
 
       <!-- Content viewport -->
       <stack id="content-viewport">
-        <deck id="browsers" flex="1"/>
+        <deck id="browsers" flex="1" observes="bcast_preciseInput"/>
         <box id="vertical-scroller" class="scroller" orient="vertical" end="0" top="0"/>
         <box id="horizontal-scroller" class="scroller" orient="horizontal" left="0" bottom="0"/>
       </stack>
@@ -307,8 +303,8 @@
       </deck>
     </vbox>
 
-    <!-- Windows 8 Appbar -->
-    <appbar id="appbar" mousethrough="never" observes="bcast_windowState">
+    <!-- Navbar -->
+    <appbar id="navbar" mousethrough="never" observes="bcast_windowState">
       <hbox id="progress-container" layer="true">
         <hbox id="progress-control" />
       </hbox>
@@ -352,14 +348,13 @@
         <toolbarbutton id="jsshell-button" oncommand="Appbar.onJSShellButton()"/>
 
         <toolbarbutton id="download-button" oncommand="Appbar.onDownloadButton()"/>
-        <toolbarbutton id="zoomout-button" oncommand="Appbar.onZoomOutButton()"/>
-        <toolbarbutton id="zoomin-button" oncommand="Appbar.onZoomInButton()"/>
         <toolbarbutton id="star-button" type="checkbox" oncommand="Appbar.onStarButton()"/>
         <toolbarbutton id="pin-button" type="checkbox" oncommand="Appbar.onPinButton()"/>
         <toolbarbutton id="more-button" onclick="Appbar.onMoreButton(event)"/>
       </toolbar>
     </appbar>
 
+    <!-- Context button bar -->
     <appbar id="contextappbar">
       <toolbar id="contextualactions-tray" flex="1">
         <toolbarbutton id="delete-selected-button" hidden="true" fade="true" oncommand="Appbar.dispatchContextualAction('delete')"/>
@@ -511,6 +506,9 @@
         </hbox>
       </settings>
       <setting pref="signon.rememberSignons" title="&optionsHeader.privacy.passwords.label;" type="bool"/>
+      <settings id="prefs-reporting" label="&optionsHeader.reporting.title;">
+        <setting pref="app.reportCrashes" type="bool" title="&optionsHeader.reporting.crashes.label;" oncommand="BrowserUI.crashReportingPrefChanged(this.value);"/>
+      </settings>
       <settings id="prefs-dnt" label="&doNotTrack.title;">
         <description>&doNotTrack.desc;</description>
         <setting id="prefs-dnt-value" pref="privacy.donottrackheader.value" onpreferencechanged="PreferencesPanelView.onDNTPreferenceChanged()" type="radio" >

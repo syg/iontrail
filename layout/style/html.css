@@ -726,17 +726,27 @@ audio:not([controls]) {
   -moz-transform: translate(0) !important;
 }
 
-video > div {
-  text-align: center;
-  font-weight: bold;
-  font-size: 24px;
+video > .caption-box {
+  position: relative;
   pointer-events: none;
 }
 
-video > div p {
-  color: gold;
-  background-color: rgba(105,105,105,0.4);
+video > div .caption-text {
+  position: absolute;
+  bottom: 24px;
+  padding: 5px;
+  left: 0;
+  right: 0;
+  text-align: center;
   pointer-events: auto;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 20px;
+  color: white;
+  text-shadow:
+    -2px -2px 1px #000,
+    2px -2px 1px #000,
+    -2px 2px 1px #000,
+    2px 2px 1px #000;
 }
 
 /* emulation of non-standard HTML <marquee> tag */

@@ -93,6 +93,8 @@ public:
   virtual nsIDocument* DocToUpdate() MOZ_OVERRIDE;
   virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) MOZ_OVERRIDE;
 
+  static nsROCSSPrimitiveValue* MatrixToCSSValue(gfx3DMatrix& aMatrix);
+
 private:
   void AssertFlushedPendingReflows() {
     NS_ASSERTION(mFlushedPendingReflows,
@@ -325,6 +327,7 @@ private:
   mozilla::dom::CSSValue* DoGetOpacity();
   mozilla::dom::CSSValue* DoGetPointerEvents();
   mozilla::dom::CSSValue* DoGetVisibility();
+  mozilla::dom::CSSValue* DoGetWritingMode();
 
   /* Direction properties */
   mozilla::dom::CSSValue* DoGetDirection();
@@ -437,7 +440,6 @@ private:
   mozilla::dom::CSSValue* DoGetMaskType();
   mozilla::dom::CSSValue* DoGetPaintOrder();
 
-  nsROCSSPrimitiveValue* GetROCSSPrimitiveValue();
   nsDOMCSSValueList* GetROCSSValueList(bool aCommaDelimited);
   void SetToRGBAColor(nsROCSSPrimitiveValue* aValue, nscolor aColor);
   void SetValueToStyleImage(const nsStyleImage& aStyleImage,

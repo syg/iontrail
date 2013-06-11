@@ -51,7 +51,7 @@ public class Favicons {
     private LruCache<String, Bitmap> mFaviconsCache;
     private LruCache<String, Long> mFailedCache;
     private LruCache<String, Integer> mColorCache;
-    private static final String USER_AGENT = GeckoApp.mAppContext.getDefaultUAString();
+    private static final String USER_AGENT = GeckoAppShell.getGeckoInterface().getDefaultUAString();
     private AndroidHttpClient mHttpClient;
 
     public interface OnFaviconLoadedListener {
@@ -139,6 +139,12 @@ public class Favicons {
     }
 
     public Bitmap getFaviconFromMemCache(String pageUrl) {
+        // If for some reason the key is null, simply return null
+        // and avoid an exception on the mem cache (see bug 813546)
+        if (pageUrl == null) {
+            return null;
+        }
+
         return mFaviconsCache.get(pageUrl);
     }
 

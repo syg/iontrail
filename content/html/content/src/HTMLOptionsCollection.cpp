@@ -247,13 +247,12 @@ HTMLOptionsCollection::GetElementAt(uint32_t aIndex)
   return ItemAsOption(aIndex);
 }
 
-static HTMLOptionElement*
-GetNamedItemHelper(nsTArray<nsRefPtr<HTMLOptionElement> > &aElements,
-                   const nsAString& aName)
+HTMLOptionElement*
+HTMLOptionsCollection::GetNamedItem(const nsAString& aName) const
 {
-  uint32_t count = aElements.Length();
+  uint32_t count = mElements.Length();
   for (uint32_t i = 0; i < count; i++) {
-    HTMLOptionElement* content = aElements.ElementAt(i);
+    HTMLOptionElement* content = mElements.ElementAt(i);
     if (content &&
         (content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name, aName,
                               eCaseMatters) ||
@@ -276,7 +275,7 @@ NS_IMETHODIMP
 HTMLOptionsCollection::NamedItem(const nsAString& aName,
                                  nsIDOMNode** aReturn)
 {
-  NS_IF_ADDREF(*aReturn = GetNamedItemHelper(mElements, aName));
+  NS_IF_ADDREF(*aReturn = GetNamedItem(aName));
 
   return NS_OK;
 }
@@ -285,15 +284,14 @@ JSObject*
 HTMLOptionsCollection::NamedItem(JSContext* cx, const nsAString& name,
                                  ErrorResult& error)
 {
-  nsINode* item = GetNamedItemHelper(mElements, name);
+  nsINode* item = GetNamedItem(name);
   if (!item) {
     return nullptr;
   }
   JS::Rooted<JSObject*> wrapper(cx, nsWrapperCache::GetWrapper());
   JSAutoCompartment ac(cx, wrapper);
   JS::Rooted<JS::Value> v(cx);
-  if (!mozilla::dom::WrapObject(cx, wrapper, item, item, nullptr,
-                                v.address())) {
+  if (!mozilla::dom::WrapObject(cx, wrapper, item, item, nullptr, &v)) {
     error.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }

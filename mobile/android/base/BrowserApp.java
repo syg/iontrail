@@ -13,12 +13,16 @@ import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PanZoomController;
+import org.mozilla.gecko.health.BrowserHealthReporter;
+import org.mozilla.gecko.menu.GeckoMenu;
+import org.mozilla.gecko.util.Clipboard;
 import org.mozilla.gecko.util.FloatUtils;
 import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
 import org.mozilla.gecko.widget.AboutHome;
+import org.mozilla.gecko.widget.GeckoActionProvider;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -84,6 +88,9 @@ abstract public class BrowserApp extends GeckoApp
     private static final int READER_ADD_FAILED = 1;
     private static final int READER_ADD_DUPLICATE = 2;
 
+    private static final String STATE_ABOUT_HOME_TOP_PADDING = "abouthome_top_padding";
+    private static final String STATE_DYNAMIC_TOOLBAR_ENABLED = "dynamic_toolbar";
+
     public static BrowserToolbar mBrowserToolbar;
     private AboutHome mAboutHome;
     protected Telemetry.Timer mAboutHomeStartupTimer = null;
@@ -125,6 +132,10 @@ abstract public class BrowserApp extends GeckoApp
     // Stored value of the toolbar height, so we know when it's changed.
     private int mToolbarHeight = 0;
 
+    // Stored value of whether the last metrics change allowed for toolbar
+    // scrolling.
+    private boolean mDynamicToolbarCanScroll = false;
+
     private Integer mPrefObserverId;
 
     // Tag for the AboutHome fragment. The fragment is automatically attached
@@ -134,6 +145,8 @@ abstract public class BrowserApp extends GeckoApp
     private SharedPreferencesHelper mSharedPreferencesHelper;
 
     private OrderedBroadcastHelper mOrderedBroadcastHelper;
+
+    private BrowserHealthReporter mBrowserHealthReporter;
 
     @Override
     public void onTabChanged(Tab tab, Tabs.TabEvents msg, Object data) {
@@ -301,6 +314,16 @@ abstract public class BrowserApp extends GeckoApp
         return super.onKeyDown(keyCode, event);
     }
 
+    void handleReaderListCountRequest() {
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
+            public void run() {
+                final int count = BrowserDB.getReadingListCount(getContentResolver());
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Reader:ListCountReturn", Integer.toString(count)));
+            }
+        });
+    }
+
     void handleReaderAdded(int result, final String title, final String url) {
         if (result != READER_ADD_SUCCESS) {
             if (result == READER_ADD_FAILED) {
@@ -317,6 +340,9 @@ abstract public class BrowserApp extends GeckoApp
             public void run() {
                 BrowserDB.addReadingListItem(getContentResolver(), title, url);
                 showToast(R.string.reading_list_added, Toast.LENGTH_SHORT);
+
+                final int count = BrowserDB.getReadingListCount(getContentResolver());
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Reader:ListCountUpdated", Integer.toString(count)));
             }
         });
     }
@@ -327,6 +353,9 @@ abstract public class BrowserApp extends GeckoApp
             public void run() {
                 BrowserDB.removeReadingListItemWithURL(getContentResolver(), url);
                 showToast(R.string.reading_list_removed, Toast.LENGTH_SHORT);
+
+                final int count = BrowserDB.getReadingListCount(getContentResolver());
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Reader:ListCountUpdated", Integer.toString(count)));
             }
         });
     }
@@ -350,8 +379,7 @@ abstract public class BrowserApp extends GeckoApp
 
         super.onCreate(savedInstanceState);
 
-        RelativeLayout actionBar = (RelativeLayout) getActionBarLayout();
-        mMainLayout.addView(actionBar, 2);
+        RelativeLayout actionBar = (RelativeLayout) findViewById(R.id.browser_toolbar);
 
         ((GeckoApp.MainLayout) mMainLayout).setTouchEventInterceptor(new HideTabsTouchListener());
         ((GeckoApp.MainLayout) mMainLayout).setMotionEventInterceptor(new MotionEventInterceptor() {
@@ -407,6 +435,7 @@ abstract public class BrowserApp extends GeckoApp
         JavaAddonManager.getInstance().init(getApplicationContext());
         mSharedPreferencesHelper = new SharedPreferencesHelper(getApplicationContext());
         mOrderedBroadcastHelper = new OrderedBroadcastHelper(getApplicationContext());
+        mBrowserHealthReporter = new BrowserHealthReporter();
 
         if (AppConstants.MOZ_ANDROID_BEAM && Build.VERSION.SDK_INT >= 14) {
             NfcAdapter nfc = NfcAdapter.getDefaultAdapter(this);
@@ -422,6 +451,11 @@ abstract public class BrowserApp extends GeckoApp
                     }
                 }, this);
             }
+        }
+
+        if (savedInstanceState != null) {
+            mDynamicToolbarEnabled = savedInstanceState.getBoolean(STATE_DYNAMIC_TOOLBAR_ENABLED);
+            mAboutHome.setTopPadding(savedInstanceState.getInt(STATE_ABOUT_HOME_TOP_PADDING));
         }
 
         // Listen to the dynamic toolbar pref
@@ -460,13 +494,14 @@ abstract public class BrowserApp extends GeckoApp
                 mLayerView.getLayerClient().setOnMetricsChangedListener(this);
             }
             setToolbarMargin(0);
+            mAboutHome.setTopPadding(mBrowserToolbar.getLayout().getHeight());
         } else {
             // Immediately show the toolbar when disabling the dynamic
             // toolbar.
             if (mLayerView != null) {
                 mLayerView.getLayerClient().setOnMetricsChangedListener(null);
             }
-            mAboutHome.setPadding(0, 0, 0, 0);
+            mAboutHome.setTopPadding(0);
             if (mBrowserToolbar != null) {
                 mBrowserToolbar.getLayout().scrollTo(0, 0);
             }
@@ -492,7 +527,7 @@ abstract public class BrowserApp extends GeckoApp
     public boolean onContextItemSelected(MenuItem item) {
         switch(item.getItemId()) {
             case R.id.pasteandgo: {
-                String text = GeckoAppShell.getClipboardText();
+                String text = Clipboard.getText();
                 if (!TextUtils.isEmpty(text)) {
                     Tabs.getInstance().loadUrl(text);
                 }
@@ -503,7 +538,7 @@ abstract public class BrowserApp extends GeckoApp
                 return true;
             }
             case R.id.paste: {
-                String text = GeckoAppShell.getClipboardText();
+                String text = Clipboard.getText();
                 if (!TextUtils.isEmpty(text)) {
                     showAwesomebar(AwesomeBar.Target.CURRENT_TAB, text);
                 }
@@ -531,7 +566,7 @@ abstract public class BrowserApp extends GeckoApp
                 if (tab != null) {
                     String url = tab.getURL();
                     if (url != null) {
-                        GeckoAppShell.setClipboardText(url);
+                        Clipboard.setText(url);
                     }
                 }
                 return true;
@@ -620,6 +655,11 @@ abstract public class BrowserApp extends GeckoApp
             mOrderedBroadcastHelper = null;
         }
 
+        if (mBrowserHealthReporter != null) {
+            mBrowserHealthReporter.uninit();
+            mBrowserHealthReporter = null;
+        }
+
         unregisterEventListener("CharEncoding:Data");
         unregisterEventListener("CharEncoding:State");
         unregisterEventListener("Feedback:LastUrl");
@@ -705,6 +745,23 @@ abstract public class BrowserApp extends GeckoApp
             return;
         }
 
+        // If the page has shrunk so that the toolbar no longer scrolls, make
+        // sure the toolbar is visible.
+        if (aMetrics.getPageHeight() < aMetrics.getHeight()) {
+            if (mDynamicToolbarCanScroll) {
+                mDynamicToolbarCanScroll = false;
+                if (!mBrowserToolbar.isVisible()) {
+                    ThreadUtils.postToUiThread(new Runnable() {
+                        public void run() {
+                            mLayerView.getLayerMarginsAnimator().showMargins(false);
+                        }
+                    });
+                }
+            }
+        } else {
+            mDynamicToolbarCanScroll = true;
+        }
+
         final View toolbarLayout = mBrowserToolbar.getLayout();
         final int marginTop = Math.round(aMetrics.marginTop);
         ThreadUtils.postToUiThread(new Runnable() {
@@ -720,8 +777,12 @@ abstract public class BrowserApp extends GeckoApp
             return;
         }
 
+        // Make sure the toolbar is fully hidden or fully shown when the user
+        // lifts their finger. If the page is shorter than the viewport, the
+        // toolbar is always shown.
         ImmutableViewportMetrics metrics = mLayerView.getViewportMetrics();
-        if (metrics.marginTop >= mToolbarHeight / 2) {
+        if (metrics.getPageHeight() < metrics.getHeight()
+              || metrics.marginTop >= mToolbarHeight / 2) {
             mLayerView.getLayerMarginsAnimator().showMargins(false);
         } else {
             mLayerView.getLayerMarginsAnimator().hideMargins(false);
@@ -734,19 +795,12 @@ abstract public class BrowserApp extends GeckoApp
             height = mBrowserToolbar.getLayout().getHeight();
         }
 
-        if (!isDynamicToolbarEnabled() || mAboutHome.getUserVisibleHint()) {
+        if (!isDynamicToolbarEnabled()) {
             // Use aVisibleHeight here so that when the dynamic toolbar is
             // enabled, the padding will animate with the toolbar becoming
             // visible.
-            if (isDynamicToolbarEnabled()) {
-                // When the dynamic toolbar is enabled, set the padding on the
-                // about:home widget directly - this is to avoid resizing the
-                // LayerView, which can cause visible artifacts.
-                mAboutHome.setPadding(0, height, 0, 0);
-            } else {
-                setToolbarMargin(height);
-                height = 0;
-            }
+            setToolbarMargin(height);
+            height = 0;
         } else {
             setToolbarMargin(0);
         }
@@ -816,13 +870,6 @@ abstract public class BrowserApp extends GeckoApp
         // the toolbar state above to make ensure animations happen
         // on the correct order.
         super.onActivityResult(requestCode, resultCode, data);
-    }
-
-    public View getActionBarLayout() {
-        RelativeLayout actionBar = (RelativeLayout) LayoutInflater.from(this).inflate(R.layout.browser_toolbar, null);
-        actionBar.setLayoutParams(new RelativeLayout.LayoutParams(RelativeLayout.LayoutParams.FILL_PARENT,
-                                                                  (int) getResources().getDimension(R.dimen.browser_toolbar_height)));
-        return actionBar;
     }
 
     @Override
@@ -964,7 +1011,7 @@ abstract public class BrowserApp extends GeckoApp
 
                 // Display notification for Mozilla data reporting, if data should be collected.
                 if (AppConstants.MOZ_DATA_REPORTING) {
-                    DataReportingNotification.checkAndNotifyPolicy(BrowserApp.mAppContext);
+                    DataReportingNotification.checkAndNotifyPolicy(GeckoAppShell.getContext());
                 }
 
             } else if (event.equals("Telemetry:Gather")) {
@@ -972,6 +1019,8 @@ abstract public class BrowserApp extends GeckoApp
                 Telemetry.HistogramAdd("PLACES_BOOKMARKS_COUNT", BrowserDB.getCount(getContentResolver(), "bookmarks"));
                 Telemetry.HistogramAdd("FENNEC_FAVICONS_COUNT", BrowserDB.getCount(getContentResolver(), "favicons"));
                 Telemetry.HistogramAdd("FENNEC_THUMBNAILS_COUNT", BrowserDB.getCount(getContentResolver(), "thumbnails"));
+            } else if (event.equals("Reader:ListCountRequest")) {
+                handleReaderListCountRequest();
             } else if (event.equals("Reader:Added")) {
                 final int result = message.getInt("result");
                 final String title = message.getString("title");
@@ -1071,7 +1120,7 @@ abstract public class BrowserApp extends GeckoApp
         }
 
         mTabsPanel.prepareTabsAnimation(mMainLayoutAnimator);
-        mBrowserToolbar.prepareTabsAnimation(areTabsShown());
+        mBrowserToolbar.prepareTabsAnimation(mMainLayoutAnimator, areTabsShown());
 
         // If the tabs layout is animating onto the screen, pin the dynamic
         // toolbar.
@@ -1099,9 +1148,15 @@ abstract public class BrowserApp extends GeckoApp
         }
 
         mTabsPanel.finishTabsAnimation();
-        mBrowserToolbar.finishTabsAnimation(areTabsShown());
 
         mMainLayoutAnimator = null;
+    }
+
+    @Override
+    public void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean(STATE_DYNAMIC_TOOLBAR_ENABLED, mDynamicToolbarEnabled);
+        outState.putInt(STATE_ABOUT_HOME_TOP_PADDING, mAboutHome.getTopPadding());
     }
 
     /* Favicon methods */
@@ -1402,6 +1457,13 @@ abstract public class BrowserApp extends GeckoApp
             mAddonMenuItemsCache.clear();
         }
 
+        // Action providers are available only ICS+.
+        if (Build.VERSION.SDK_INT >= 14) {
+            MenuItem share = mMenu.findItem(R.id.share);
+            GeckoActionProvider provider = new GeckoActionProvider(this);
+            share.setActionProvider(provider);
+        }
+
         return true;
     }
 
@@ -1491,6 +1553,23 @@ abstract public class BrowserApp extends GeckoApp
         String scheme = Uri.parse(url).getScheme();
         share.setEnabled(!(scheme.equals("about") || scheme.equals("chrome") ||
                            scheme.equals("file") || scheme.equals("resource")));
+
+        // Action providers are available only ICS+.
+        if (Build.VERSION.SDK_INT >= 14) {
+            GeckoActionProvider provider = (GeckoActionProvider) share.getActionProvider();
+            if (provider != null) {
+                Intent shareIntent = provider.getIntent();
+
+                if (shareIntent == null) {
+                    shareIntent = GeckoAppShell.getShareIntent(this, url,
+                                                               "text/plain", tab.getDisplayTitle());
+                    provider.setIntent(shareIntent);
+                } else {
+                    shareIntent.putExtra(Intent.EXTRA_TEXT, url);
+                    shareIntent.putExtra(Intent.EXTRA_SUBJECT, tab.getDisplayTitle());
+                }
+            }
+        }
 
         // Disable save as PDF for about:home and xul pages
         saveAsPDF.setEnabled(!(tab.getURL().equals("about:home") ||
@@ -1636,7 +1715,7 @@ abstract public class BrowserApp extends GeckoApp
             @Override
             public void onPostExecute(Boolean shouldShowFeedbackPage) {
                 if (shouldShowFeedbackPage)
-                    Tabs.getInstance().loadUrlInTab("about:feedback");
+                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Feedback:Show", null));
             }
         }).execute();
     }

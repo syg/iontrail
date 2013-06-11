@@ -38,6 +38,7 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsCSSRendering.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsThemeConstants.h"
 #include "nsPIDOMWindow.h"
 #include "nsIBaseWindow.h"
@@ -321,41 +322,19 @@ nsLayoutUtils::Are3DTransformsEnabled()
 }
 
 bool
-nsLayoutUtils::AreOpacityAnimationsEnabled()
-{
-  static bool sAreOpacityAnimationsEnabled;
-  static bool sOpacityPrefCached = false;
-
-  if (!sOpacityPrefCached) {
-    sOpacityPrefCached = true;
-    Preferences::AddBoolVarCache(&sAreOpacityAnimationsEnabled,
-                                 "layers.offmainthreadcomposition.animate-opacity");
-  }
-
-  return sAreOpacityAnimationsEnabled &&
-    gfxPlatform::OffMainThreadCompositingEnabled();
-}
-
-bool
-nsLayoutUtils::AreTransformAnimationsEnabled()
-{
-  static bool sAreTransformAnimationsEnabled;
-  static bool sTransformPrefCached = false;
-
-  if (!sTransformPrefCached) {
-    sTransformPrefCached = true;
-    Preferences::AddBoolVarCache(&sAreTransformAnimationsEnabled,
-                                 "layers.offmainthreadcomposition.animate-transform");
-  }
-
-  return sAreTransformAnimationsEnabled &&
-    gfxPlatform::OffMainThreadCompositingEnabled();
-}
-
-bool
 nsLayoutUtils::AreAsyncAnimationsEnabled()
 {
-  return AreOpacityAnimationsEnabled() || AreTransformAnimationsEnabled();
+  static bool sAreAsyncAnimationsEnabled;
+  static bool sAsyncPrefCached = false;
+
+  if (!sAsyncPrefCached) {
+    sAsyncPrefCached = true;
+    Preferences::AddBoolVarCache(&sAreAsyncAnimationsEnabled,
+                                 "layers.offmainthreadcomposition.async-animations");
+  }
+
+  return sAreAsyncAnimationsEnabled &&
+    gfxPlatform::OffMainThreadCompositingEnabled();
 }
 
 bool
@@ -401,6 +380,22 @@ nsLayoutUtils::GPUImageScalingEnabled()
   }
 
   return sGPUImageScalingEnabled;
+}
+
+bool
+nsLayoutUtils::AnimatedImageLayersEnabled()
+{
+  static bool sAnimatedImageLayersEnabled;
+  static bool sAnimatedImageLayersPrefCached = false;
+
+  if (!sAnimatedImageLayersPrefCached) {
+    sAnimatedImageLayersPrefCached = true;
+    Preferences::AddBoolVarCache(&sAnimatedImageLayersEnabled,
+                                 "layout.animated-image-layers.enabled",
+                                 false);
+  }
+
+  return sAnimatedImageLayersEnabled;
 }
 
 void
@@ -2087,9 +2082,6 @@ nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFram
   }
   if (aFlags & PAINT_NO_COMPOSITE) {
     flags |= nsDisplayList::PAINT_NO_COMPOSITE;
-  }
-  if (aFlags & PAINT_NO_CLEAR_INVALIDATIONS) {
-    flags |= nsDisplayList::PAINT_NO_CLEAR_INVALIDATIONS;
   }
 
   list.PaintRoot(&builder, aRenderingContext, flags);

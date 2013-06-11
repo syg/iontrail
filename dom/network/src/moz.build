@@ -12,3 +12,26 @@ EXPORTS.mozilla.dom.network += [
     'Utils.h',
 ]
 
+CPP_SOURCES += [
+    'Connection.cpp',
+    'TCPSocketChild.cpp',
+    'TCPSocketParent.cpp',
+    'Utils.cpp',
+]
+
+if CONFIG['MOZ_B2G_RIL']:
+    CPP_SOURCES += [
+        'MobileConnection.cpp',
+    ]
+
+EXTRA_COMPONENTS += [
+    'TCPSocket.js',
+    'TCPSocket.manifest',
+    'TCPSocketParentIntermediary.js',
+]
+
+if CONFIG['MOZ_B2G_RIL']:
+    EXTRA_COMPONENTS += [
+        'NetworkStatsManager.js',
+        'NetworkStatsManager.manifest',
+    ]

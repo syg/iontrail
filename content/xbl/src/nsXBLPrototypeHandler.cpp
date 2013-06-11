@@ -9,6 +9,7 @@
 #include "nsXBLPrototypeHandler.h"
 #include "nsXBLPrototypeBinding.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIContent.h"
 #include "nsIAtom.h"
 #include "nsIDOMKeyEvent.h"
@@ -289,7 +290,6 @@ nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
   rv = EnsureEventHandler(boundGlobal, boundContext, onEventAtom, &handler);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  JSAutoRequest ar(cx);
   JS::Rooted<JSObject*> globalObject(cx, boundGlobal->GetGlobalJSObject());
   JS::Rooted<JSObject*> scopeObject(cx, xpc::GetXBLScope(cx, globalObject));
   NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
@@ -380,7 +380,6 @@ nsXBLPrototypeHandler::EnsureEventHandler(nsIScriptGlobalObject* aGlobal,
                                    &argNames);
 
   // Compile the event handler in the xbl scope.
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, scopeObject);
   JS::CompileOptions options(cx);
   options.setFileAndLine(bindingURI.get(), mLineNumber)
@@ -418,7 +417,7 @@ nsXBLPrototypeHandler::DispatchXBLCommand(EventTarget* aTarget, nsIDOMEvent* aEv
   if (aEvent) {
     // See if preventDefault has been set.  If so, don't execute.
     bool preventDefault = false;
-    aEvent->GetPreventDefault(&preventDefault);
+    aEvent->GetDefaultPrevented(&preventDefault);
     if (preventDefault) {
       return NS_OK;
     }

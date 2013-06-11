@@ -91,17 +91,17 @@ public:
       ? mMessageManager->SendSyncMessage(aMessageName, aObject, aCx, aArgc, aRetval)
       : NS_ERROR_NULL_POINTER;
   }
-  NS_IMETHOD GetContent(nsIDOMWindow** aContent);
-  NS_IMETHOD GetDocShell(nsIDocShell** aDocShell);
-  NS_IMETHOD Dump(const nsAString& aStr)
+  NS_IMETHOD GetContent(nsIDOMWindow** aContent) MOZ_OVERRIDE;
+  NS_IMETHOD GetDocShell(nsIDocShell** aDocShell) MOZ_OVERRIDE;
+  NS_IMETHOD Dump(const nsAString& aStr) MOZ_OVERRIDE
   {
     return mMessageManager ? mMessageManager->Dump(aStr) : NS_OK;
   }
-  NS_IMETHOD PrivateNoteIntentionalCrash();
+  NS_IMETHOD PrivateNoteIntentionalCrash() MOZ_OVERRIDE;
   NS_IMETHOD Btoa(const nsAString& aBinaryData,
-                  nsAString& aAsciiBase64String);
+                  nsAString& aAsciiBase64String) MOZ_OVERRIDE;
   NS_IMETHOD Atob(const nsAString& aAsciiString,
-                  nsAString& aBinaryData);
+                  nsAString& aBinaryData) MOZ_OVERRIDE;
 
   NS_IMETHOD AddEventListener(const nsAString& aType,
                               nsIDOMEventListener* aListener,
@@ -115,7 +115,7 @@ public:
   NS_IMETHOD AddEventListener(const nsAString& aType,
                               nsIDOMEventListener* aListener,
                               bool aUseCapture, bool aWantsUntrusted,
-                              uint8_t optional_argc)
+                              uint8_t optional_argc) MOZ_OVERRIDE
   {
     return nsDOMEventTargetHelper::AddEventListener(aType, aListener,
                                                     aUseCapture,
@@ -123,8 +123,8 @@ public:
                                                     optional_argc);
   }
 
-  virtual JSContext* GetJSContextForEventHandlers();
-  virtual nsIPrincipal* GetPrincipal();
+  virtual JSContext* GetJSContextForEventHandlers() MOZ_OVERRIDE;
+  virtual nsIPrincipal* GetPrincipal() MOZ_OVERRIDE;
 
   nsCOMPtr<nsIContentFrameMessageManager> mMessageManager;
   TabChild* mTabChild;
@@ -205,9 +205,9 @@ public:
     virtual bool RecvShow(const nsIntSize& size);
     virtual bool RecvUpdateDimensions(const nsRect& rect, const nsIntSize& size, const ScreenOrientation& orientation);
     virtual bool RecvUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics);
-    virtual bool RecvHandleDoubleTap(const nsIntPoint& aPoint);
-    virtual bool RecvHandleSingleTap(const nsIntPoint& aPoint);
-    virtual bool RecvHandleLongTap(const nsIntPoint& aPoint);
+    virtual bool RecvHandleDoubleTap(const CSSIntPoint& aPoint);
+    virtual bool RecvHandleSingleTap(const CSSIntPoint& aPoint);
+    virtual bool RecvHandleLongTap(const CSSIntPoint& aPoint);
     virtual bool RecvActivate();
     virtual bool RecvDeactivate();
     virtual bool RecvMouseEvent(const nsString& aType,
@@ -306,6 +306,17 @@ public:
 
     bool IsAsyncPanZoomEnabled();
 
+    /** Return a boolean indicating if the page has called preventDefault on
+     *  the event.
+     */
+    bool DispatchMouseEvent(const nsString& aType,
+                            const float&    aX,
+                            const float&    aY,
+                            const int32_t&  aButton,
+                            const int32_t&  aClickCount,
+                            const int32_t&  aModifiers,
+                            const bool&     aIgnoreRootScrollFrame);
+
     /**
      * Signal to this TabChild that it should be made visible:
      * activated widget, retained layer tree, etc.  (Respectively,
@@ -366,13 +377,14 @@ private:
     bool InitRenderingState();
     void DestroyWindow();
     void SetProcessNameToAppName();
+    bool ProcessUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics);
 
     // Call RecvShow(nsIntSize(0, 0)) and block future calls to RecvShow().
     void DoFakeShow();
 
     // Wrapper for nsIDOMWindowUtils.setCSSViewport(). This updates some state
     // variables local to this class before setting it.
-    void SetCSSViewport(float aX, float aY);
+    void SetCSSViewport(const CSSSize& aSize);
 
     // Recalculates the display state, including the CSS
     // viewport. This should be called whenever we believe the
@@ -439,6 +451,8 @@ private:
     // the touch we're tracking.  That is, if touchend or a touchmove
     // that exceeds the gesture threshold doesn't happen.
     CancelableTask* mTapHoldTimer;
+    // Whether we have already received a FileDescriptor for the app package.
+    bool mAppPackageFileDescriptorRecved;
     // At present only 1 of these is really expected.
     nsAutoTArray<nsAutoPtr<CachedFileDescriptorInfo>, 1>
         mCachedFileDescriptorInfos;

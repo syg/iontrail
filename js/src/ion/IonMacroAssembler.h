@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_macro_assembler_h__
+#if !defined(jsion_macro_assembler_h__) && defined(JS_ION)
 #define jsion_macro_assembler_h__
 
 #if defined(JS_CPU_X86)
@@ -415,9 +415,8 @@ class MacroAssembler : public MacroAssemblerSpecific
         framePushed_ += sizeof(Value);
     }
 
-    void PushEmptyHandle(VMFunction::RootType rootType);
-    TypedOrValueRegister loadHandle(VMFunction::RootType rootType, Address src,
-                                    Register cellReg, const ValueOperand &valueReg);
+    void PushEmptyRooted(VMFunction::RootType rootType);
+    void popRooted(VMFunction::RootType rootType, Register cellReg, const ValueOperand &valueReg);
 
     void adjustStack(int amount) {
         if (amount > 0)

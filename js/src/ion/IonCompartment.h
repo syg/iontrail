@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_ion_compartment_h__
+#if !defined(jsion_ion_compartment_h__) && defined(JS_ION)
 #define jsion_ion_compartment_h__
 
 #include "IonCode.h"
@@ -315,8 +315,6 @@ class IonCompartment
     }
 };
 
-class BailoutClosure;
-
 class IonActivation
 {
   private:
@@ -324,7 +322,6 @@ class IonActivation
     JSCompartment *compartment_;
     IonActivation *prev_;
     StackFrame *entryfp_;
-    BailoutClosure *bailout_;
     uint8_t *prevIonTop_;
     JSContext *prevIonJSContext_;
 
@@ -356,23 +353,6 @@ class IonActivation
     void setPrevPc(jsbytecode *pc) {
         JS_ASSERT_IF(pc, !prevpc_);
         prevpc_ = pc;
-    }
-    void setBailout(BailoutClosure *bailout) {
-        JS_ASSERT(!bailout_);
-        bailout_ = bailout;
-    }
-    BailoutClosure *maybeTakeBailout() {
-        BailoutClosure *br = bailout_;
-        bailout_ = NULL;
-        return br;
-    }
-    BailoutClosure *takeBailout() {
-        JS_ASSERT(bailout_);
-        return maybeTakeBailout();
-    }
-    BailoutClosure *bailout() const {
-        JS_ASSERT(bailout_);
-        return bailout_;
     }
     JSCompartment *compartment() const {
         return compartment_;

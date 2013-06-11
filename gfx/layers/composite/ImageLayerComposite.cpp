@@ -10,6 +10,7 @@
 #include "ImageHost.h"
 #include "gfxImageSurface.h"
 #include "gfx2DGlue.h"
+#include "gfxUtils.h"
 
 #include "mozilla/layers/Compositor.h"
 #include "mozilla/layers/CompositorTypes.h" // for TextureInfo
@@ -53,10 +54,10 @@ ImageLayerComposite::Disconnect()
 LayerRenderState
 ImageLayerComposite::GetRenderState()
 {
-  if (!mImageHost) {
-    return LayerRenderState();
+  if (mImageHost) {
+    return mImageHost->GetRenderState();
   }
-  return mImageHost->GetRenderState();
+  return LayerRenderState();
 }
 
 Layer*
@@ -72,6 +73,13 @@ ImageLayerComposite::RenderLayer(const nsIntPoint& aOffset,
   if (!mImageHost) {
     return;
   }
+
+#ifdef MOZ_DUMP_PAINTING
+  if (gfxUtils::sDumpPainting) {
+    nsRefPtr<gfxImageSurface> surf = mImageHost->GetAsSurface();
+    WriteSnapshotToDumpFile(this, surf);
+  }
+#endif
 
   mCompositor->MakeCurrent();
 

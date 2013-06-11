@@ -8,6 +8,7 @@ const {Cc, Ci, Cu} = require("chrome");
 const MAX_ORDINAL = 99;
 let Promise = require("sdk/core/promise");
 let EventEmitter = require("devtools/shared/event-emitter");
+let Telemetry = require("devtools/shared/telemetry");
 
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import("resource://gre/modules/Services.jsm");
@@ -58,6 +59,7 @@ XPCOMUtils.defineLazyGetter(this, "Requisition", function() {
 function Toolbox(target, selectedTool, hostType) {
   this._target = target;
   this._toolPanels = new Map();
+  this._telemetry = new Telemetry();
 
   this._toolRegistered = this._toolRegistered.bind(this);
   this._toolUnregistered = this._toolUnregistered.bind(this);
@@ -191,8 +193,8 @@ Toolbox.prototype = {
   open: function TBOX_open() {
     let deferred = Promise.defer();
 
-    this._host.create().then(function(iframe) {
-      let domReady = function() {
+    this._host.create().then(iframe => {
+      let domReady = () => {
         iframe.removeEventListener("DOMContentLoaded", domReady, true);
 
         this.isReady = true;
@@ -206,15 +208,17 @@ Toolbox.prototype = {
         this._buildButtons();
         this._addKeysToWindow();
 
+        this._telemetry.toolOpened("toolbox");
+
         this.selectTool(this._defaultToolId).then(function(panel) {
           this.emit("ready");
           deferred.resolve();
         }.bind(this));
-      }.bind(this);
+      };
 
       iframe.addEventListener("DOMContentLoaded", domReady, true);
       iframe.setAttribute("src", this._URL);
-    }.bind(this));
+    });
 
     return deferred.promise;
   },
@@ -327,9 +331,7 @@ Toolbox.prototype = {
     let buttons = CommandUtils.createButtons(toolbarSpec, this._target, this.doc, requisition);
 
     let container = this.doc.getElementById("toolbox-buttons");
-    buttons.forEach(function(button) {
-      container.appendChild(button);
-    }.bind(this));
+    buttons.forEach(container.appendChild.bind(container));
   },
 
   /**
@@ -408,6 +410,49 @@ Toolbox.prototype = {
   },
 
   /**
+   * Load a tool with a given id.
+   *
+   * @param {string} id
+   *        The id of the tool to load.
+   */
+  loadTool: function TBOX_loadTool(id) {
+    let deferred = Promise.defer();
+    let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
+
+    if (iframe) {
+      this.once(id + "-ready", () => { deferred.resolve() });
+      return deferred.promise;
+    }
+
+    let definition = gDevTools.getToolDefinitionMap().get(id);
+    iframe = this.doc.createElement("iframe");
+    iframe.className = "toolbox-panel-iframe";
+    iframe.id = "toolbox-panel-iframe-" + id;
+    iframe.setAttribute("flex", 1);
+    iframe.setAttribute("forceOwnRefreshDriver", "");
+    iframe.tooltip = "aHTMLTooltip";
+
+    let vbox = this.doc.getElementById("toolbox-panel-" + id);
+    vbox.appendChild(iframe);
+
+    let onLoad = () => {
+      iframe.removeEventListener("DOMContentLoaded", onLoad, true);
+
+      let built = definition.build(iframe.contentWindow, this);
+      Promise.resolve(built).then((panel) => {
+        this._toolPanels.set(id, panel);
+        this.emit(id + "-ready", panel);
+        gDevTools.emit(id + "-ready", this, panel);
+        deferred.resolve(panel);
+      });
+    };
+
+    iframe.addEventListener("DOMContentLoaded", onLoad, true);
+    iframe.setAttribute("src", definition.url);
+    return deferred.promise;
+  },
+
+  /**
    * Switch to the tool with the given id
    *
    * @param {string} id
@@ -423,6 +468,8 @@ Toolbox.prototype = {
     let tab = this.doc.getElementById("toolbox-tab-" + id);
     tab.setAttribute("selected", "true");
 
+    let prevToolId = this._currentToolId;
+
     if (this._currentToolId == id) {
       // Return the existing panel in order to have a consistent return value.
       return Promise.resolve(this._toolPanels.get(id));
@@ -433,7 +480,12 @@ Toolbox.prototype = {
     }
     let tab = this.doc.getElementById("toolbox-tab-" + id);
 
-    if (!tab) {
+    if (tab) {
+      if (prevToolId) {
+        this._telemetry.toolClosed(prevToolId);
+      }
+      this._telemetry.toolOpened(id);
+    } else {
       throw new Error("No tool found");
     }
 
@@ -455,8 +507,6 @@ Toolbox.prototype = {
     let deck = this.doc.getElementById("toolbox-deck");
     deck.selectedIndex = index;
 
-    let definition = gDevTools.getToolDefinitionMap().get(id);
-
     this._currentToolId = id;
 
     let resolveSelected = panel => {
@@ -467,32 +517,11 @@ Toolbox.prototype = {
 
     let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
     if (!iframe) {
-      iframe = this.doc.createElement("iframe");
-      iframe.className = "toolbox-panel-iframe";
-      iframe.id = "toolbox-panel-iframe-" + id;
-      iframe.setAttribute("flex", 1);
-      iframe.setAttribute("forceOwnRefreshDriver", "");
-      iframe.tooltip = "aHTMLTooltip";
-
-      let vbox = this.doc.getElementById("toolbox-panel-" + id);
-      vbox.appendChild(iframe);
-
-      let boundLoad = function() {
-        iframe.removeEventListener("DOMContentLoaded", boundLoad, true);
-
-        let built = definition.build(iframe.contentWindow, this);
-        Promise.resolve(built).then(function(panel) {
-          this._toolPanels.set(id, panel);
-
-          this.emit(id + "-ready", panel);
-          gDevTools.emit(id + "-ready", this, panel);
-
-          resolveSelected(panel);
-        }.bind(this));
-      }.bind(this);
-
-      iframe.addEventListener("DOMContentLoaded", boundLoad, true);
-      iframe.setAttribute("src", definition.url);
+      this.loadTool(id).then((panel) => {
+        this.emit("select", id);
+        this.emit(id + "-selected", panel);
+        deferred.resolve(panel);
+      });
     } else {
       let panel = this._toolPanels.get(id);
       // only emit 'select' event if the iframe has been loaded
@@ -711,6 +740,8 @@ Toolbox.prototype = {
     }
 
     outstanding.push(this._host.destroy());
+
+    this._telemetry.destroy();
 
     // Targets need to be notified that the toolbox is being torn down, so that
     // remote protocol connections can be gracefully terminated.

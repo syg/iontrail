@@ -19,6 +19,7 @@ import xml.dom.minidom as dom
 
 from manifestparser import TestManifest
 from mozhttpd import MozHttpd
+from telnetlib import Telnet
 
 from marionette import Marionette
 from marionette_test import MarionetteJSTestCase, MarionetteTestCase
@@ -174,7 +175,7 @@ class MarionetteTestRunner(object):
                  es_server=None, rest_server=None, logger=None,
                  testgroup="marionette", noWindow=False, logcat_dir=None,
                  xml_output=None, repeat=0, gecko_path=None, testvars=None,
-                 tree=None, type=None, device=None, symbols_path=None,
+                 tree=None, type=None, device=None, symbols_path=None, timeout=None,
                  **kwargs):
         self.address = address
         self.emulator = emulator
@@ -205,6 +206,7 @@ class MarionetteTestRunner(object):
         self.type = type
         self.device = device
         self.symbols_path = symbols_path
+        self.timeout = timeout
 
         if testvars:
             if not os.path.exists(testvars):
@@ -241,16 +243,12 @@ class MarionetteTestRunner(object):
 
     def start_httpd(self):
         host = moznetwork.get_ip()
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind(("",0))
-        port = s.getsockname()[1]
-        s.close()
-        self.baseurl = 'http://%s:%d/' % (host, port)
-        self.logger.info('running webserver on %s' % self.baseurl)
         self.httpd = MozHttpd(host=host,
-                              port=port,
+                              port=0,
                               docroot=os.path.join(os.path.dirname(__file__), 'www'))
         self.httpd.start()
+        self.baseurl = 'http://%s:%d/' % (host, self.httpd.httpd.server_port)
+        self.logger.info('running webserver on %s' % self.baseurl)
 
     def start_marionette(self):
         assert(self.baseurl is not None)
@@ -265,10 +263,16 @@ class MarionetteTestRunner(object):
                                          app=self.app,
                                          bin=self.bin,
                                          profile=self.profile,
-                                         baseurl=self.baseurl)
+                                         baseurl=self.baseurl,
+                                         timeout=self.timeout)
         elif self.address:
             host, port = self.address.split(':')
-            if self.emulator:
+            try:
+		#establish a telnet connection so we can vertify the data come back
+		tlconnection = Telnet(host, port)
+	    except:
+		raise Exception("could not connect to given marionette host/port")
+	    if self.emulator:
                 self.marionette = Marionette.getMarionetteOrExit(
                                              host=host, port=int(port),
                                              connectToRunningEmulator=True,
@@ -276,11 +280,13 @@ class MarionetteTestRunner(object):
                                              baseurl=self.baseurl,
                                              logcat_dir=self.logcat_dir,
                                              gecko_path=self.gecko_path,
-                                             symbols_path=self.symbols_path)
+                                             symbols_path=self.symbols_path,
+                                             timeout=self.timeout)
             else:
                 self.marionette = Marionette(host=host,
                                              port=int(port),
-                                             baseurl=self.baseurl)
+                                             baseurl=self.baseurl,
+                                             timeout=self.timeout)
         elif self.emulator:
             self.marionette = Marionette.getMarionetteOrExit(
                                          emulator=self.emulator,
@@ -292,7 +298,8 @@ class MarionetteTestRunner(object):
                                          noWindow=self.noWindow,
                                          logcat_dir=self.logcat_dir,
                                          gecko_path=self.gecko_path,
-                                         symbols_path=self.symbols_path)
+                                         symbols_path=self.symbols_path,
+                                         timeout=self.timeout)
         else:
             raise Exception("must specify binary, address or emulator")
 
@@ -636,6 +643,10 @@ class MarionetteTestOptions(OptionParser):
                         dest='symbols_path',
                         action='store',
                         help='absolute path to directory containing breakpad symbols, or the url of a zip file containing symbols')
+        self.add_option('--timeout',
+                        dest='timeout',
+                        type=int,
+                        help='if a --timeout value is given, it will set the default page load timeout, search timeout and script timeout to the given value. If not passed in, it will use the default values of 30000ms for page load, 0ms for search timeout and 10000ms for script timeout')
 
     def verify_usage(self, options, tests):
         if not tests:

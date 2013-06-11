@@ -302,7 +302,7 @@ nsHttpConnection::Activate(nsAHttpTransaction *trans, uint32_t caps, int32_t pri
     nsresult rv;
 
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
-    LOG(("nsHttpConnection::Activate [this=%x trans=%x caps=%x]\n",
+    LOG(("nsHttpConnection::Activate [this=%p trans=%x caps=%x]\n",
          this, trans, caps));
 
     mPriority = pri;
@@ -383,6 +383,13 @@ nsHttpConnection::SetupNPN(uint32_t caps)
                 return;
 
             nsTArray<nsCString> protocolArray;
+
+            // The first protocol is used as the fallback if none of the
+            // protocols supported overlap with the server's list.
+            // In the case of overlap, matching priority is driven by
+            // the order of the server's advertisement.
+            protocolArray.AppendElement(NS_LITERAL_CSTRING("http/1.1"));
+
             if (gHttpHandler->IsSpdyEnabled() &&
                 !(caps & NS_HTTP_DISALLOW_SPDY)) {
                 LOG(("nsHttpConnection::SetupNPN Allow SPDY NPN selection"));
@@ -394,42 +401,11 @@ nsHttpConnection::SetupNPN(uint32_t caps)
                         gHttpHandler->SpdyInfo()->VersionString[1]);
             }
 
-            protocolArray.AppendElement(NS_LITERAL_CSTRING("http/1.1"));
             if (NS_SUCCEEDED(ssl->SetNPNList(protocolArray))) {
                 LOG(("nsHttpConnection::Init Setting up SPDY Negotiation OK"));
                 mNPNComplete = false;
             }
         }
-    }
-}
-
-void
-nsHttpConnection::HandleAlternateProtocol(nsHttpResponseHead *responseHead)
-{
-    // Look for the Alternate-Protocol header. Alternate-Protocol is
-    // essentially a way to rediect future transactions from http to
-    // spdy.
-    //
-
-    if (!gHttpHandler->IsSpdyEnabled() || mUsingSpdyVersion)
-        return;
-
-    const char *val = responseHead->PeekHeader(nsHttp::Alternate_Protocol);
-    if (!val)
-        return;
-
-    // The spec allows redirections to any port, but due to concerns over
-    // silently redirecting to stealth ports we only allow port 443
-    //
-    // Alternate-Protocol: 5678:somethingelse, 443:npn-spdy/2
-
-    uint8_t alternateProtocolVersion;
-    if (NS_SUCCEEDED(gHttpHandler->SpdyInfo()->
-                     GetAlternateProtocolVersionIndex(val,
-                                                      &alternateProtocolVersion))) {
-         LOG(("Connection %p Transaction %p found Alternate-Protocol "
-             "header %s", this, mTransaction.get(), val));
-        gHttpHandler->ConnMgr()->ReportSpdyAlternateProtocol(this);
     }
 }
 
@@ -459,7 +435,7 @@ nsHttpConnection::AddTransaction(nsAHttpTransaction *httpTransaction,
 void
 nsHttpConnection::Close(nsresult reason)
 {
-    LOG(("nsHttpConnection::Close [this=%x reason=%x]\n", this, reason));
+    LOG(("nsHttpConnection::Close [this=%p reason=%x]\n", this, reason));
 
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
@@ -501,7 +477,7 @@ nsHttpConnection::Close(nsresult reason)
 nsresult
 nsHttpConnection::ProxyStartSSL()
 {
-    LOG(("nsHttpConnection::ProxyStartSSL [this=%x]\n", this));
+    LOG(("nsHttpConnection::ProxyStartSSL [this=%p]\n", this));
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
     nsCOMPtr<nsISupports> securityInfo;
@@ -838,9 +814,6 @@ nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction *trans,
     if (!foundKeepAliveMax && mRemainingConnectionUses && !mUsingSpdyVersion)
         --mRemainingConnectionUses;
 
-    if (!mProxyConnectStream)
-        HandleAlternateProtocol(responseHead);
-
     // If we're doing a proxy connect, we need to check whether or not
     // it was successful.  If so, we have to reset the transaction and step-up
     // the socket connection if using SSL. Finally, we have to wake up the
@@ -1090,6 +1063,35 @@ nsHttpConnection::ResumeRecv()
     return NS_ERROR_UNEXPECTED;
 }
 
+
+class nsHttpConnectionForceRecv : public nsRunnable
+{
+public:
+    nsHttpConnectionForceRecv(nsHttpConnection *aConn)
+        : mConn(aConn) {}
+
+    NS_IMETHOD Run()
+    {
+        MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
+
+        if (!mConn->mSocketIn)
+            return NS_OK;
+        return mConn->OnInputStreamReady(mConn->mSocketIn);
+    }
+private:
+    nsRefPtr<nsHttpConnection> mConn;
+};
+
+// trigger an asynchronous read
+nsresult
+nsHttpConnection::ForceRecv()
+{
+    LOG(("nsHttpConnection::ForceRecv [this=%p]\n", this));
+    MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
+
+    return NS_DispatchToCurrentThread(new nsHttpConnectionForceRecv(this));
+}
+
 void
 nsHttpConnection::BeginIdleMonitoring()
 {
@@ -1126,7 +1128,7 @@ nsHttpConnection::EndIdleMonitoring()
 void
 nsHttpConnection::CloseTransaction(nsAHttpTransaction *trans, nsresult reason)
 {
-    LOG(("nsHttpConnection::CloseTransaction[this=%x trans=%x reason=%x]\n",
+    LOG(("nsHttpConnection::CloseTransaction[this=%p trans=%x reason=%x]\n",
         this, trans, reason));
 
     MOZ_ASSERT(trans == mTransaction, "wrong transaction");
@@ -1330,7 +1332,7 @@ nsHttpConnection::OnWriteSegment(char *buf,
 nsresult
 nsHttpConnection::OnSocketReadable()
 {
-    LOG(("nsHttpConnection::OnSocketReadable [this=%x]\n", this));
+    LOG(("nsHttpConnection::OnSocketReadable [this=%p]\n", this));
 
     PRIntervalTime now = PR_IntervalNow();
     PRIntervalTime delta = now - mLastReadTime;
@@ -1438,7 +1440,7 @@ nsHttpConnection::SetupProxyConnect()
 {
     const char *val;
 
-    LOG(("nsHttpConnection::SetupProxyConnect [this=%x]\n", this));
+    LOG(("nsHttpConnection::SetupProxyConnect [this=%p]\n", this));
 
     NS_ENSURE_TRUE(!mProxyConnectStream, NS_ERROR_ALREADY_INITIALIZED);
     MOZ_ASSERT(!mUsingSpdyVersion,

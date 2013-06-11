@@ -71,12 +71,12 @@ static gfxIntSize gAndroidScreenBounds;
 #include "mozilla/Mutex.h"
 #include "nsThreadUtils.h"
 
-
 class ContentCreationNotifier;
 static nsCOMPtr<ContentCreationNotifier> gContentCreationNotifier;
+
 // A helper class to send updates when content processes
 // are created. Currently an update for the screen size is sent.
-class ContentCreationNotifier : public nsIObserver
+class ContentCreationNotifier MOZ_FINAL : public nsIObserver
 {
     NS_DECL_ISUPPORTS
 
@@ -981,13 +981,13 @@ nsWindow::DrawTo(gfxASurface *targetSurface, const nsIntRect &invalidRect)
                     AutoLayerManagerSetup
                       setupLayerManager(this, ctx, mozilla::layers::BUFFER_NONE);
 
-                    mWidgetListener->PaintWindow(this, region, 0);
+                    mWidgetListener->PaintWindow(this, region);
                 }
                 break;
             }
 
             case mozilla::layers::LAYERS_CLIENT: {
-                mWidgetListener->PaintWindow(this, region, 0);
+                mWidgetListener->PaintWindow(this, region);
                 break;
             }
 
@@ -996,7 +996,7 @@ nsWindow::DrawTo(gfxASurface *targetSurface, const nsIntRect &invalidRect)
                 static_cast<mozilla::layers::LayerManagerOGL*>(GetLayerManager(nullptr))->
                     SetClippingRegion(nsIntRegion(boundsRect));
 
-                mWidgetListener->PaintWindow(this, region, 0);
+                mWidgetListener->PaintWindow(this, region);
                 break;
             }
 

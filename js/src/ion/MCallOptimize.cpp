@@ -42,6 +42,8 @@ IonBuilder::inlineNativeCall(CallInfo &callInfo, JSNative native)
         return inlineMathRound(callInfo);
     if (native == js_math_sqrt)
         return inlineMathSqrt(callInfo);
+    if (native == math_atan2)
+        return inlineMathAtan2(callInfo);
     if (native == js_math_max)
         return inlineMathMinMax(callInfo, true /* max */);
     if (native == js_math_min)
@@ -232,7 +234,9 @@ IonBuilder::inlineArray(CallInfo &callInfo)
 
         // Store all values, no need to initialize the length after each as
         // jsop_initelem_array is doing because we do not expect to bailout
-        // because the memory is supposed to be allocated by now.
+        // because the memory is supposed to be allocated by now. There is no
+        // need for a post barrier on these writes, as as the MNewAray will use
+        // the nursery if possible, triggering a minor collection if it can't.
         MConstant *id = NULL;
         for (uint32_t i = 0; i < initLength; i++) {
             id = MConstant::New(Int32Value(i));
@@ -359,6 +363,9 @@ IonBuilder::inlineArrayPush(CallInfo &callInfo)
         value = valueDouble;
     }
 
+    if (NeedsPostBarrier(info(), value))
+        current->add(MPostWriteBarrier::New(callInfo.thisArg(), value));
+
     MArrayPush *ins = MArrayPush::New(callInfo.thisArg(), value);
     current->add(ins);
     current->push(ins);
@@ -461,7 +468,7 @@ IonBuilder::inlineArrayConcat(CallInfo &callInfo)
     }
 
     // Inline the call.
-    RootedObject templateObj(cx, NewDenseEmptyArray(cx, thisType->proto));
+    RootedObject templateObj(cx, NewDenseEmptyArray(cx, thisType->proto, TenuredObject));
     if (!templateObj)
         return InliningStatus_Error;
     templateObj->setType(thisType);
@@ -592,6 +599,32 @@ IonBuilder::inlineMathSqrt(CallInfo &callInfo)
     MSqrt *sqrt = MSqrt::New(callInfo.getArg(0));
     current->add(sqrt);
     current->push(sqrt);
+    return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningStatus
+IonBuilder::inlineMathAtan2(CallInfo &callInfo)
+{
+    if (callInfo.constructing())
+        return InliningStatus_NotInlined;
+
+    if (callInfo.argc() != 2)
+        return InliningStatus_NotInlined;
+
+    if (getInlineReturnType() != MIRType_Double)
+        return InliningStatus_NotInlined;
+
+    MIRType argType0 = callInfo.getArg(0)->type();
+    MIRType argType1 = callInfo.getArg(1)->type();
+
+    if (!IsNumberType(argType0) || !IsNumberType(argType1))
+        return InliningStatus_NotInlined;
+
+    callInfo.unwrapArgs();
+
+    MAtan2 *atan2 = MAtan2::New(callInfo.getArg(0), callInfo.getArg(1));
+    current->add(atan2);
+    current->push(atan2);
     return InliningStatus_Inlined;
 }
 
@@ -791,7 +824,7 @@ IonBuilder::inlineStringObject(CallInfo &callInfo)
     callInfo.unwrapArgs();
 
     RootedString emptyString(cx, cx->runtime->emptyString);
-    RootedObject templateObj(cx, StringObject::create(cx, emptyString));
+    RootedObject templateObj(cx, StringObject::create(cx, emptyString, TenuredObject));
     if (!templateObj)
         return InliningStatus_Error;
 

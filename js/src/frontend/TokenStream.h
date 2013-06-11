@@ -472,6 +472,7 @@ class MOZ_STACK_CLASS TokenStream
     const CharBuffer &getTokenbuf() const { return tokenbuf; }
     const char *getFilename() const { return filename; }
     unsigned getLineno() const { return lineno; }
+    unsigned getColumn() const { return userbuf.addressOfNextRawChar() - linebase - 1; }
     JSVersion versionNumber() const { return VersionNumber(version); }
     JSVersion versionWithFlags() const { return version; }
     bool hadError() const { return !!(flags & TSF_HAD_ERROR); }
@@ -660,8 +661,10 @@ class MOZ_STACK_CLASS TokenStream
         Token lookaheadTokens[maxLookahead];
     };
 
+    void advance(size_t position);
     void tell(Position *);
     void seek(const Position &pos);
+    void seek(const Position &pos, const TokenStream &other);
     void positionAfterLastFunctionKeyword(Position &pos);
 
     size_t positionToOffset(const Position &pos) const {
@@ -752,6 +755,7 @@ class MOZ_STACK_CLASS TokenStream
         SourceCoords(JSContext *cx, uint32_t ln);
 
         void add(uint32_t lineNum, uint32_t lineStartOffset);
+        void fill(const SourceCoords &other);
 
         bool isOnThisLine(uint32_t offset, uint32_t lineNum) const {
             uint32_t lineIndex = lineNumToIndex(lineNum);
@@ -828,7 +832,7 @@ class MOZ_STACK_CLASS TokenStream
             ptr--;
         }
 
-        const jschar *addressOfNextRawChar() {
+        const jschar *addressOfNextRawChar() const {
             JS_ASSERT(ptr);     /* make sure haven't been poisoned */
             return ptr;
         }
@@ -874,7 +878,7 @@ class MOZ_STACK_CLASS TokenStream
     bool matchUnicodeEscapeIdStart(int32_t *c);
     bool matchUnicodeEscapeIdent(int32_t *c);
     bool peekChars(int n, jschar *cp);
-    bool getAtSourceMappingURL(bool isMultiline);
+    bool getSourceMappingURL(bool isMultiline, bool shouldWarnDeprecated);
 
     // |expect| cannot be an EOL char.
     bool matchChar(int32_t expect) {
@@ -934,27 +938,6 @@ class MOZ_STACK_CLASS TokenStream
     SkipRoot            linebaseSkip;
     SkipRoot            prevLinebaseSkip;
 };
-
-struct KeywordInfo {
-    const char  *chars;         /* C string with keyword text */
-    TokenKind   tokentype;
-    JSOp        op;             /* JSOp */
-    JSVersion   version;        /* JSVersion */
-};
-
-/*
- * Returns a KeywordInfo for the specified characters, or NULL if the string is
- * not a keyword.
- */
-const KeywordInfo *
-FindKeyword(const jschar *s, size_t length);
-
-/*
- * Check that str forms a valid JS identifier name. The function does not
- * check if str is a JS keyword.
- */
-bool
-IsIdentifier(JSLinearString *str);
 
 /*
  * Steal one JSREPORT_* bit (see jsapi.h) to tell that arguments to the error

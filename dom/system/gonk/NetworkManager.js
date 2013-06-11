@@ -22,6 +22,14 @@ const DEFAULT_PREFERRED_NETWORK_TYPE = Ci.nsINetworkInterface.NETWORK_TYPE_WIFI;
 XPCOMUtils.defineLazyServiceGetter(this, "gSettingsService",
                                    "@mozilla.org/settingsService;1",
                                    "nsISettingsService");
+XPCOMUtils.defineLazyGetter(this, "ppmm", function() {
+  return Cc["@mozilla.org/parentprocessmessagemanager;1"]
+         .getService(Ci.nsIMessageBroadcaster);
+});
+
+XPCOMUtils.defineLazyServiceGetter(this, "gDNSService",
+                                   "@mozilla.org/network/dns-service;1",
+                                   "nsIDNSService");
 
 const TOPIC_INTERFACE_STATE_CHANGED  = "network-interface-state-changed";
 const TOPIC_INTERFACE_REGISTERED     = "network-interface-registered";
@@ -122,6 +130,13 @@ function isComplete(code) {
   return (type != NETD_COMMAND_PROCEEDING);
 }
 
+function defineLazyRegExp(obj, name, pattern) {
+  obj.__defineGetter__(name, function() {
+    delete obj[name];
+    return obj[name] = new RegExp(pattern);
+  });
+}
+
 /**
  * This component watches for network interfaces changing state and then
  * adjusts routes etc. accordingly.
@@ -129,6 +144,8 @@ function isComplete(code) {
 function NetworkManager() {
   this.networkInterfaces = {};
   Services.obs.addObserver(this, TOPIC_INTERFACE_STATE_CHANGED, true);
+  Services.obs.addObserver(this, TOPIC_INTERFACE_REGISTERED, true);
+  Services.obs.addObserver(this, TOPIC_INTERFACE_UNREGISTERED, true);
   Services.obs.addObserver(this, TOPIC_XPCOM_SHUTDOWN, false);
   Services.obs.addObserver(this, TOPIC_MOZSETTINGS_CHANGED, false);
 
@@ -204,6 +221,12 @@ function NetworkManager() {
       debug("Error reading the 'tethering.wifi.enabled' setting: " + aErrorMessage);
     }
   });
+
+  ppmm.addMessageListener('NetworkInterfaceList:ListInterface', this);
+
+  // Used in resolveHostname().
+  defineLazyRegExp(this, "REGEXP_IPV4", "^\\d{1,3}(?:\\.\\d{1,3}){3}$");
+  defineLazyRegExp(this, "REGEXP_IPV6", "^[\\da-fA-F]{4}(?::[\\da-fA-F]{4}){7}$");
 }
 NetworkManager.prototype = {
   classID:   NETWORKMANAGER_CID,
@@ -273,6 +296,28 @@ NetworkManager.prototype = {
             break;
         }
         break;
+      case TOPIC_INTERFACE_REGISTERED:
+        let regNetwork = subject.QueryInterface(Ci.nsINetworkInterface);
+        debug("Network '" + regNetwork.name + "' registered, adding mmsproxy and/or mmsc route");
+        if (regNetwork.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS) {
+	  let mmsHosts = this.resolveHostname(
+	      [ Services.prefs.getCharPref("ril.mms.mmsproxy"),
+                Services.prefs.getCharPref("ril.mms.mmsc") ]
+	    );
+          this.addHostRouteWithResolve(regNetwork, mmsHosts);
+        }
+        break;
+      case TOPIC_INTERFACE_UNREGISTERED:
+        let unregNetwork = subject.QueryInterface(Ci.nsINetworkInterface);
+        debug("Network '" + regNetwork.name + "' unregistered, removing mmsproxy and/or mmsc route");
+        if (unregNetwork.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS) {
+	  let mmsHosts = this.resolveHostname(
+	      [ Services.prefs.getCharPref("ril.mms.mmsproxy"),
+                Services.prefs.getCharPref("ril.mms.mmsc") ]
+	    );
+          this.removeHostRouteWithResolve(unregNetwork, mmsHosts);
+        }
+        break;
       case TOPIC_MOZSETTINGS_CHANGED:
         let setting = JSON.parse(data);
         this.handle(setting.key, setting.value);
@@ -285,8 +330,42 @@ NetworkManager.prototype = {
       case TOPIC_XPCOM_SHUTDOWN:
         Services.obs.removeObserver(this, TOPIC_XPCOM_SHUTDOWN);
         Services.obs.removeObserver(this, TOPIC_MOZSETTINGS_CHANGED);
+        Services.obs.removeObserver(this, TOPIC_INTERFACE_REGISTERED);
+        Services.obs.removeObserver(this, TOPIC_INTERFACE_UNREGISTERED);
         Services.obs.removeObserver(this, TOPIC_INTERFACE_STATE_CHANGED);
         break;
+    }
+  },
+
+  receiveMessage: function receiveMessage(aMsg) {
+    switch (aMsg.name) {
+      case "NetworkInterfaceList:ListInterface": {
+        let excludeMms = aMsg.json.exculdeMms;
+        let excludeSupl = aMsg.json.exculdeSupl;
+        let interfaces = [];
+
+        for each (let i in this.networkInterfaces) {
+          if ((i.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS && excludeMms) ||
+              (i.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_SUPL && excludeSupl)) {
+            continue;
+          }
+          interfaces.push({
+            state: i.state,
+            type: i.type,
+            name: i.name,
+            dhcp: i.dhcp,
+            ip: i.ip,
+            netmask: i.netmask,
+            broadcast: i.broadcast,
+            gateway: i.gateway,
+            dns1: i.dns1,
+            dns2: i.dns2,
+            httpProxyHost: i.httpProxyHost,
+            httpProxyPort: i.httpProxyPort
+          });
+        }
+        return interfaces;
+      }
     }
   },
 
@@ -523,11 +602,8 @@ NetworkManager.prototype = {
     let options = {
       cmd: "addHostRoute",
       ifname: network.name,
-      dns1: network.dns1,
-      dns2: network.dns2,
       gateway: network.gateway,
-      httpproxy: network.httpProxyHost,
-      mmsproxy: Services.prefs.getCharPref("ril.mms.mmsproxy")
+      hostnames: [network.dns1, network.dns2, network.httpProxyHost]
     };
     this.worker.postMessage(options);
   },
@@ -537,11 +613,57 @@ NetworkManager.prototype = {
     let options = {
       cmd: "removeHostRoute",
       ifname: network.name,
-      dns1: network.dns1,
-      dns2: network.dns2,
       gateway: network.gateway,
-      httpproxy: network.httpProxyHost,
-      mmsproxy: Services.prefs.getCharPref("ril.mms.mmsproxy")
+      hostnames: [network.dns1, network.dns2, network.httpProxyHost]
+    };
+    this.worker.postMessage(options);
+  },
+
+  resolveHostname: function resolveHostname(hosts) {
+    let retval = [];
+
+    for (let hostname of hosts) {
+      try {
+        let uri = Services.io.newURI(hostname, null, null);
+        hostname = uri.host;
+      } catch (e) {}
+
+      if (hostname.match(this.REGEXP_IPV4) ||
+          hostname.match(this.REGEXP_IPV6)) {
+        retval.push(hostname);
+        continue;
+      }
+
+      try {
+        let hostnameIps = gDNSService.resolve(hostname, 0);
+        while (hostnameIps.hasMore()) {
+          retval.push(hostnameIps.getNextAddrAsString());
+          debug("Found IP at: " + JSON.stringify(retval));
+        }
+      } catch (e) {}
+    }
+
+    return retval;
+  },
+
+  addHostRouteWithResolve: function addHostRouteWithResolve(network, hosts) {
+    debug("Going to add host route after dns resolution on " + network.name);
+    let options = {
+      cmd: "addHostRoute",
+      ifname: network.name,
+      gateway: network.gateway,
+      hostnames: hosts
+    };
+    this.worker.postMessage(options);
+  },
+
+  removeHostRouteWithResolve: function removeHostRouteWithResolve(network, hosts) {
+    debug("Going to remove host route after dns resolution on " + network.name);
+    let options = {
+      cmd: "removeHostRoute",
+      ifname: network.name,
+      gateway: network.gateway,
+      hostnames: hosts
     };
     this.worker.postMessage(options);
   },
@@ -874,7 +996,7 @@ NetworkManager.prototype = {
       try {
         let file = new FileUtils.File(KERNEL_NETWORK_ENTRY + "/" +
                                       this.possibleInterface[i]);
-        if (file.IsDirectory()) {
+        if (file.exists()) {
           return this.possibleInterface[i];
         }
       } catch (e) {

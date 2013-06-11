@@ -23,10 +23,12 @@ webidl_files = \
   AudioParam.webidl \
   AudioStreamTrack.webidl \
   AudioProcessingEvent.webidl \
+  BarProp.webidl \
   BatteryManager.webidl \
   BeforeUnloadEvent.webidl \
   BiquadFilterNode.webidl \
   Blob.webidl \
+  CameraManager.webidl \
   CanvasRenderingContext2D.webidl \
   CaretPosition.webidl \
   CDATASection.webidl \
@@ -38,7 +40,6 @@ webidl_files = \
   ClientRect.webidl \
   ClientRectList.webidl \
   ClipboardEvent.webidl \
-  CameraManager.webidl \
   CommandEvent.webidl \
   Comment.webidl \
   CompositionEvent.webidl \
@@ -81,6 +82,7 @@ webidl_files = \
   FileReader.webidl \
   FileReaderSync.webidl \
   FileRequest.webidl \
+  FocusEvent.webidl \
   FormData.webidl \
   Function.webidl \
   GainNode.webidl \
@@ -150,6 +152,7 @@ webidl_files = \
   HTMLTableSectionElement.webidl \
   HTMLTemplateElement.webidl \
   HTMLTextAreaElement.webidl \
+  HTMLTrackElement.webidl \
   HTMLTimeElement.webidl \
   HTMLTitleElement.webidl \
   HTMLUListElement.webidl \
@@ -188,6 +191,7 @@ webidl_files = \
   NotifyPaintEvent.webidl \
   OfflineAudioCompletionEvent.webidl \
   OfflineAudioContext.webidl \
+  OfflineResourceList.webidl \
   PaintRequest.webidl \
   PaintRequestList.webidl \
   PannerNode.webidl \
@@ -315,6 +319,11 @@ webidl_files = \
   Text.webidl \
   TextDecoder.webidl \
   TextEncoder.webidl \
+  TextTrack.webidl \
+  TextTrackCue.webidl \
+  TextTrackCueList.webidl \
+  TextTrackList.webidl \
+  TimeEvent.webidl \
   TimeRanges.webidl \
   Touch.webidl \
   TouchEvent.webidl \
@@ -332,6 +341,7 @@ webidl_files = \
   USSDReceivedEvent.webidl \
   VideoStreamTrack.webidl \
   WaveShaperNode.webidl \
+  WaveTable.webidl \
   Window.webidl \
   XMLDocument.webidl \
   XMLHttpRequest.webidl \

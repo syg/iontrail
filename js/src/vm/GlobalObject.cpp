@@ -19,7 +19,6 @@
 #include "builtin/MapObject.h"
 #include "builtin/Object.h"
 #include "builtin/RegExp.h"
-#include "frontend/BytecodeEmitter.h"
 
 #include "jsobjinlines.h"
 
@@ -230,7 +229,9 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
             js_free(source);
             return NULL;
         }
-        ScriptSourceHolder ssh(ss);
+        JS::RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss));
+        if (!sourceObject)
+            return NULL;
         ss->setSource(source, sourceLen);
 
         CompileOptions options(cx);
@@ -241,7 +242,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
                                                  /* savedCallerFun = */ false,
                                                  options,
                                                  /* staticLevel = */ 0,
-                                                 ss,
+                                                 sourceObject,
                                                  0,
                                                  ss->length()));
         if (!script || !JSScript::fullyInitTrivial(cx, script))

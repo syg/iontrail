@@ -231,7 +231,7 @@ nsDownloadManager::RemoveAllDownloads(nsCOMArray<nsDownload>& aDownloads)
     nsRefPtr<nsDownload> dl = aDownloads[0];
 
     nsresult result = NS_OK;
-    if (dl->IsPaused() && GetQuitBehavior() != QUIT_AND_CANCEL)
+    if (!dl->mPrivate && dl->IsPaused() && GetQuitBehavior() != QUIT_AND_CANCEL)
       aDownloads.RemoveObject(dl);
     else
       result = dl->Cancel();
@@ -2418,7 +2418,6 @@ nsDownloadManager::Observe(nsISupports *aSubject,
     // Upon leaving private browsing mode, cancel all private downloads,
     // remove all trace of them, and then blow away the private database
     // and recreate a blank one.
-    PauseAllDownloads(mCurrentPrivateDownloads, true);
     RemoveAllDownloads(mCurrentPrivateDownloads);
     InitPrivateDB();
   } else if (strcmp(aTopic, "last-pb-context-exiting") == 0) {
@@ -2525,6 +2524,13 @@ nsDownload::~nsDownload()
 {
 }
 
+NS_IMETHODIMP nsDownload::SetSha256Hash(const nsACString& aHash) {
+  MOZ_ASSERT(NS_IsMainThread(), "Must call SetSha256Hash on main thread");
+  // This will be used later to query the application reputation service.
+  mHash = aHash;
+  return NS_OK;
+}
+
 #ifdef MOZ_ENABLE_GIO
 static void gio_set_metadata_done(GObject *source_obj, GAsyncResult *res, gpointer user_data)
 {
@@ -2587,7 +2593,6 @@ nsDownload::SetState(DownloadState aState)
 #endif
     case nsIDownloadManager::DOWNLOAD_FINISHED:
     {
-      // Do what exthandler would have done if necessary
       nsresult rv = ExecuteDesiredAction();
       if (NS_FAILED(rv)) {
         // We've failed to execute the desired action.  As a result, we should
@@ -2929,6 +2934,8 @@ nsDownload::OnStateChange(nsIWebProgress *aWebProgress,
                           nsIRequest *aRequest, uint32_t aStateFlags,
                           nsresult aStatus)
 {
+  MOZ_ASSERT(NS_IsMainThread(), "Must call OnStateChange in main thread");
+
   // We don't want to lose access to our member variables
   nsRefPtr<nsDownload> kungFuDeathGrip = this;
 
@@ -3188,10 +3195,12 @@ nsDownload::Finalize()
 nsresult
 nsDownload::ExecuteDesiredAction()
 {
-  // If we have a temp file and we have resumed, we have to do what the
-  // external helper app service would have done.
-  if (!mTempFile || !WasResumed())
+  // nsExternalHelperAppHandler is the only caller of AddDownload that sets a
+  // tempfile parameter. In this case, execute the desired action according to
+  // the saved mime info.
+  if (!mTempFile) {
     return NS_OK;
+  }
 
   // We need to bail if for some reason the temp file got removed
   bool fileExists;
@@ -3364,10 +3373,6 @@ nsDownload::Cancel()
   // Don't cancel if download is already finished
   if (IsFinished())
     return NS_OK;
-
-  // if the download is fake-paused, we have to resume it so we can cancel it
-  if (IsPaused() && !IsResumable())
-    (void)Resume();
 
   // Have the download cancel its connection
   (void)CancelTransfer();

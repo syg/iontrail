@@ -27,6 +27,7 @@
 #include "nsIInputStream.h"
 #include "nsIMIMEService.h"
 #include "nsIOutputStream.h"
+#include "nsIVolumeService.h"
 #include "nsNetUtil.h"
 
 #define TARGET_SUBDIR "Download/Bluetooth/"
@@ -85,7 +86,7 @@ static const uint32_t kUpdateProgressBase = 50 * 1024;
  */
 static const uint32_t kPutRequestHeaderSize = 6;
 
-StaticAutoPtr<BluetoothOppManager> sInstance;
+StaticRefPtr<BluetoothOppManager> sInstance;
 
 /*
  * FIXME / Bug 806749
@@ -439,6 +440,7 @@ BluetoothOppManager::AfterFirstPut()
   sSentFileLength = 0;
   sWaitingToSendPutFinal = false;
   mSuccessFlag = false;
+  mBodySegmentLength = 0;
 }
 
 void
@@ -450,6 +452,15 @@ BluetoothOppManager::AfterOppConnected()
   mAbortFlag = false;
   mWaitingForConfirmationFlag = true;
   AfterFirstPut();
+  // Get a mount lock to prevent the sdcard from being shared with
+  // the PC while we're doing a OPP file transfer. After OPP transcation
+  // were done, the mount lock will be freed.
+  if (!AcquireSdcardMountLock()) {
+    // If we fail to get a mount lock, abort this transaction
+    // Directly sending disconnect-request is better than abort-request
+    NS_WARNING("BluetoothOPPManager couldn't get a mount lock!");
+    Disconnect();
+  }
 }
 
 void
@@ -460,6 +471,7 @@ BluetoothOppManager::AfterOppDisconnected()
   mConnected = false;
   mLastCommand = 0;
   mPacketLeftLength = 0;
+  mDsFile = nullptr;
 
   ClearQueue();
 
@@ -481,6 +493,11 @@ BluetoothOppManager::AfterOppDisconnected()
     mReadFileThread->Shutdown();
     mReadFileThread = nullptr;
   }
+  // Release the Mount lock if file transfer completed
+  if (mMountLock) {
+    // The mount lock will be implicitly unlocked
+    mMountLock = nullptr;
+  }
 }
 
 void
@@ -493,6 +510,7 @@ BluetoothOppManager::DeleteReceivedFile()
 
   if (mDsFile && mDsFile->mFile) {
     mDsFile->mFile->Remove(false);
+    mDsFile = nullptr;
   }
 }
 
@@ -710,19 +728,22 @@ BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
     ReplyToConnect();
     AfterOppConnected();
     mIsServer = true;
-  } else if (opCode == ObexRequestCode::Disconnect ||
-             opCode == ObexRequestCode::Abort) {
-    // Section 3.3.2 "Disconnect", IrOBEX 1.2
+  } else if (opCode == ObexRequestCode::Abort) {
     // Section 3.3.5 "Abort", IrOBEX 1.2
     // [opcode:1][length:2][Headers:var]
     ParseHeaders(&aMessage->mData[3],
                 receivedLength - 3,
                 &pktHeaders);
-    ReplyToDisconnect();
+    ReplyToDisconnectOrAbort();
+    DeleteReceivedFile();
+  } else if (opCode == ObexRequestCode::Disconnect) {
+    // Section 3.3.2 "Disconnect", IrOBEX 1.2
+    // [opcode:1][length:2][Headers:var]
+    ParseHeaders(&aMessage->mData[3],
+                receivedLength - 3,
+                &pktHeaders);
+    ReplyToDisconnectOrAbort();
     AfterOppDisconnected();
-    if (opCode == ObexRequestCode::Abort) {
-      DeleteReceivedFile();
-    }
     FileTransferComplete();
   } else if (opCode == ObexRequestCode::Put ||
              opCode == ObexRequestCode::PutFinal) {
@@ -768,7 +789,7 @@ BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
 
     // When we cancel the transfer, delete the file and notify complemention
     if (mAbortFlag) {
-      ReplyToPut(mPutFinalFlag, !mAbortFlag);
+      ReplyToPut(mPutFinalFlag, false);
       sSentFileLength += mBodySegmentLength;
       DeleteReceivedFile();
       FileTransferComplete();
@@ -1143,11 +1164,12 @@ BluetoothOppManager::ReplyToConnect()
 }
 
 void
-BluetoothOppManager::ReplyToDisconnect()
+BluetoothOppManager::ReplyToDisconnectOrAbort()
 {
   if (!mConnected) return;
 
-  // Section 3.3.2 "Disconnect", IrOBEX 1.2
+  // Section 3.3.2 "Disconnect" and Section 3.3.5 "Abort", IrOBEX 1.2
+  // The format of response packet of "Disconnect" and "Abort" are the same
   // [opcode:1][length:2][Headers:var]
   uint8_t req[255];
   int index = 3;
@@ -1486,3 +1508,17 @@ BluetoothOppManager::OnUpdateSdpRecords(const nsAString& aDeviceAddress)
   }
 }
 
+NS_IMPL_ISUPPORTS0(BluetoothOppManager)
+
+bool
+BluetoothOppManager::AcquireSdcardMountLock()
+{
+  nsCOMPtr<nsIVolumeService> volumeSrv =
+    do_GetService(NS_VOLUMESERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(volumeSrv, false);
+  nsresult rv;
+  rv = volumeSrv->CreateMountLock(NS_LITERAL_STRING("sdcard"),
+                                  getter_AddRefs(mMountLock));
+  NS_ENSURE_SUCCESS(rv, false);
+  return true;
+}

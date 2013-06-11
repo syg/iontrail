@@ -17,7 +17,6 @@
 #include "jscntxt.h"
 #include "jsfriendapi.h"
 #include "jsfun.h"
-#include "jsinterp.h"
 #include "jsiter.h"
 #include "jsnum.h"
 #include "jsobj.h"
@@ -26,17 +25,18 @@
 #include "ds/Sort.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ForkJoin.h"
+#include "vm/Interpreter.h"
 #include "vm/NumericConversions.h"
 #include "vm/Shape.h"
 #include "vm/StringBuffer.h"
 
 #include "jsatominlines.h"
 #include "jscntxtinlines.h"
-#include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 #include "jsstrinlines.h"
 
 #include "vm/ArgumentsObject-inl.h"
+#include "vm/Interpreter-inl.h"
 #include "vm/ObjectImpl-inl.h"
 
 using namespace js;
@@ -132,26 +132,14 @@ js::StringIsArrayIndex(JSLinearString *str, uint32_t *indexp)
     return false;
 }
 
-Shape *
-js::GetDenseArrayShape(JSContext *cx, HandleObject globalObj)
-{
-    JS_ASSERT(globalObj);
-
-    JSObject *proto = globalObj->global().getOrCreateArrayPrototype(cx);
-    if (!proto)
-        return NULL;
-
-    return EmptyShape::getInitialShape(cx, &ArrayClass, proto, proto->getParent(),
-                                       gc::FINALIZE_OBJECT0);
-}
-
 bool
 DoubleIndexToId(JSContext *cx, double index, MutableHandleId id)
 {
     if (index == uint32_t(index))
         return IndexToId(cx, uint32_t(index), id);
 
-    return ValueToId<CanGC>(cx, DoubleValue(index), id);
+    Value tmp = DoubleValue(index);
+    return ValueToId<CanGC>(cx, HandleValue::fromMarkedLocation(&tmp), id);
 }
 
 /*
@@ -363,7 +351,8 @@ DeletePropertyOrThrow(JSContext *cx, HandleObject obj, double index)
         return true;
 
     RootedId id(cx);
-    if (!ValueToId<CanGC>(cx, NumberValue(index), &id))
+    RootedValue indexv(cx, NumberValue(index));
+    if (!ValueToId<CanGC>(cx, indexv, &id))
         return false;
     return obj->reportNotConfigurable(cx, id, JSREPORT_ERROR);
 }
@@ -905,7 +894,7 @@ array_join_sub(JSContext *cx, CallArgs &args, bool locale)
     // Steps 4 and 5
     RootedString sepstr(cx, NULL);
     if (!locale && args.hasDefined(0)) {
-        sepstr = ToString<CanGC>(cx, args[0]);
+        sepstr = ToString<CanGC>(cx, args.handleAt(0));
         if (!sepstr)
             return false;
     }
@@ -1146,11 +1135,14 @@ InitArrayElements(JSContext *cx, HandleObject obj, uint32_t start, uint32_t coun
     JS_ASSERT(start == MAX_ARRAY_INDEX + 1);
     RootedValue value(cx);
     RootedId id(cx);
+    RootedValue indexv(cx);
     double index = MAX_ARRAY_INDEX + 1;
     do {
         value = *vector++;
-        if (!ValueToId<CanGC>(cx, DoubleValue(index), &id) ||
-            !JSObject::setGeneric(cx, obj, obj, id, &value, true)) {
+        indexv = DoubleValue(index);
+        if (!ValueToId<CanGC>(cx, indexv, &id) ||
+            !JSObject::setGeneric(cx, obj, obj, id, &value, true))
+        {
             return false;
         }
         index += 1;
@@ -2679,7 +2671,7 @@ array_filter(JSContext *cx, unsigned argc, Value *vp)
                 return false;
 
             if (ToBoolean(ag.rval())) {
-                if(!SetArrayElement(cx, arr, to, kValue))
+                if (!SetArrayElement(cx, arr, to, kValue))
                     return false;
                 to++;
             }
@@ -2736,7 +2728,6 @@ static const JSFunctionSpec array_methods[] = {
          {"some",               {NULL, NULL},       1,0, "ArraySome"},
          {"every",              {NULL, NULL},       1,0, "ArrayEvery"},
 
-    JS_FN("iterator",           JS_ArrayIterator,   0,0),
     JS_FS_END
 };
 
@@ -2821,7 +2812,8 @@ js_InitArrayClass(JSContext *cx, HandleObject obj)
     if (!type)
         return NULL;
 
-    RootedShape shape(cx, EmptyShape::getInitialShape(cx, &ArrayClass, TaggedProto(proto), proto->getParent(),
+    RootedShape shape(cx, EmptyShape::getInitialShape(cx, &ArrayClass, TaggedProto(proto),
+                                                      proto->getParent(), NewObjectMetadata(cx),
                                                       gc::FINALIZE_OBJECT0));
 
     RootedObject arrayProto(cx, JSObject::createArray(cx, gc::FINALIZE_OBJECT4, gc::TenuredHeap, shape, type, 0));
@@ -2852,6 +2844,14 @@ js_InitArrayClass(JSContext *cx, HandleObject obj)
     }
 
     if (!DefineConstructorAndPrototype(cx, global, JSProto_Array, ctor, arrayProto))
+        return NULL;
+
+    JSFunction *fun = JS_DefineFunction(cx, arrayProto, "values", JS_ArrayIterator, 0, 0);
+    if (!fun)
+        return NULL;
+
+    RootedValue funval(cx, ObjectValue(*fun));
+    if (!JS_DefineProperty(cx, arrayProto, "iterator", funval, NULL, NULL, 0))
         return NULL;
 
     return arrayProto;
@@ -2890,6 +2890,7 @@ NewArray(JSContext *cx, uint32_t length, JSObject *protoArg, NewObjectKind newKi
 
     NewObjectCache::EntryIndex entry = -1;
     if (newKind == GenericObject &&
+        !cx->compartment->objectMetadataCallback &&
         cache.lookupGlobal(&ArrayClass, cx->global(), allocKind, &entry))
     {
         RootedObject obj(cx, cache.newObjectFromHit(cx, entry, GetInitialHeap(newKind, &ArrayClass)));
@@ -2919,7 +2920,7 @@ NewArray(JSContext *cx, uint32_t length, JSObject *protoArg, NewObjectKind newKi
      * See JSObject::createArray.
      */
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, &ArrayClass, TaggedProto(proto),
-                                                      cx->global(), gc::FINALIZE_OBJECT0));
+                                                      cx->global(), NewObjectMetadata(cx), gc::FINALIZE_OBJECT0));
     if (!shape)
         return NULL;
 

@@ -6,6 +6,9 @@
 #define mozilla_BrowserElementHelpers_h
 
 #include "nsAString.h"
+#include "mozilla/gfx/Point.h"
+#include "mozilla/gfx/Rect.h"
+#include "Units.h"
 
 class nsIDOMWindow;
 class nsIURI;
@@ -14,11 +17,6 @@ namespace mozilla {
 
 namespace dom {
 class TabParent;
-}
-
-namespace gfx{
-struct Rect;
-struct Size;
 }
 
 /**
@@ -109,8 +107,8 @@ public:
    */
   static bool
   DispatchAsyncScrollEvent(dom::TabParent* aTabParent,
-                           const gfx::Rect& aContentRect,
-                           const gfx::Size& aContentSize);
+                           const CSSRect& aContentRect,
+                           const CSSSize& aContentSize);
 };
 
 } // namespace mozilla

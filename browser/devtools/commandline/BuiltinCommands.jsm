@@ -19,6 +19,10 @@ Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource://gre/modules/devtools/gcli.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 
+var require = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools.require;
+let Telemetry = require("devtools/shared/telemetry");
+let telemetry = new Telemetry();
+
 XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
                                   "resource:///modules/devtools/gDevTools.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
@@ -1495,7 +1499,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "AppCacheUtils",
     ],
     returnType: "string",
     exec: function(args, context) {
-      return OS.File.exists(args.srcdir + "/CLOBBER").then(function(exists) {
+      let clobber = OS.Path.join(args.srcdir, "CLOBBER");
+      return OS.File.exists(clobber).then(function(exists) {
         if (exists) {
           let str = Cc["@mozilla.org/supports-string;1"]
                     .createInstance(Ci.nsISupportsString);
@@ -1950,8 +1955,7 @@ gcli.addCommand({
     description: gcli.lookup('paintflashingToggleDesc'),
     manual: gcli.lookup('paintflashingManual'),
     exec: function(args, context) {
-      var gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
-      var window = gBrowser.contentWindow;
+      var window = context.environment.window;
       var wUtils = window.QueryInterface(Ci.nsIInterfaceRequestor).
                    getInterface(Ci.nsIDOMWindowUtils);
       wUtils.paintFlashing = !wUtils.paintFlashing;
@@ -1970,6 +1974,15 @@ gcli.addCommand({
     var target = devtools.TargetFactory.forTab(tab);
     target.off("navigate", fireChange);
     target.once("navigate", fireChange);
+
+    var window = context.environment.window;
+    var wUtils = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDOMWindowUtils);
+    if (wUtils.paintFlashing) {
+      telemetry.toolOpened("paintflashing");
+    } else {
+      telemetry.toolClosed("paintflashing");
+    }
   }
 }(this));
 

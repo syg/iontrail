@@ -28,7 +28,7 @@ typedef Rooted<ArgumentsObject *> RootedArgumentsObject;
 
 /*****************************************************************************/
 
-StaticScopeIter::StaticScopeIter(JSContext *cx, HandleObject objArg)
+StaticScopeIter::StaticScopeIter(JSContext *cx, JSObject *objArg)
   : obj(cx, objArg), onNamedLambda(false)
 {
     JS_ASSERT_IF(obj, obj->isStaticBlock() || obj->isFunction());
@@ -97,20 +97,23 @@ StaticScopeIter::funScript() const
 
 /*****************************************************************************/
 
-Shape *
-js::ScopeCoordinateToStaticScopeShape(JSContext *cx, JSScript *script, jsbytecode *pc)
+static JSObject *
+InnermostStaticScope(JSScript *script, jsbytecode *pc)
 {
     JS_ASSERT(pc >= script->code && pc < script->code + script->length);
     JS_ASSERT(JOF_OPTYPE(*pc) == JOF_SCOPECOORD);
 
     uint32_t blockIndex = GET_UINT32_INDEX(pc + 2 * sizeof(uint16_t));
-    RootedObject innermostStaticScope(cx, NULL);
-    if (blockIndex == UINT32_MAX)
-        innermostStaticScope = script->function();
-    else
-        innermostStaticScope = &script->getObject(blockIndex)->asStaticBlock();
 
-    StaticScopeIter ssi(cx, innermostStaticScope);
+    if (blockIndex == UINT32_MAX)
+        return script->function();
+    return &script->getObject(blockIndex)->asStaticBlock();
+}
+
+Shape *
+js::ScopeCoordinateToStaticScopeShape(JSContext *cx, JSScript *script, jsbytecode *pc)
+{
+    StaticScopeIter ssi(cx, InnermostStaticScope(script, pc));
     ScopeCoordinate sc(pc);
     while (true) {
         if (ssi.hasDynamicScopeObject()) {
@@ -138,6 +141,24 @@ js::ScopeCoordinateName(JSContext *cx, JSScript *script, jsbytecode *pc)
     return JSID_TO_ATOM(id)->asPropertyName();
 }
 
+JSScript *
+js::ScopeCoordinateFunctionScript(JSContext *cx, JSScript *script, jsbytecode *pc)
+{
+    StaticScopeIter ssi(cx, InnermostStaticScope(script, pc));
+    ScopeCoordinate sc(pc);
+    while (true) {
+        if (ssi.hasDynamicScopeObject()) {
+            if (!sc.hops)
+                break;
+            sc.hops--;
+        }
+        ssi++;
+    }
+    if (ssi.type() != StaticScopeIter::FUNCTION)
+        return NULL;
+    return ssi.funScript();
+}
+
 /*****************************************************************************/
 
 /*
@@ -145,16 +166,24 @@ js::ScopeCoordinateName(JSContext *cx, JSScript *script, jsbytecode *pc)
  * The call object must be further initialized to be usable.
  */
 CallObject *
-CallObject::create(JSContext *cx, HandleShape shape, HandleTypeObject type, HeapSlot *slots)
+CallObject::create(JSContext *cx, HandleScript script, HandleShape shape, HandleTypeObject type, HeapSlot *slots)
 {
     gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
     JS_ASSERT(CanBeFinalizedInBackground(kind, &CallClass));
     kind = gc::GetBackgroundAllocKind(kind);
 
-    JSObject *obj = JSObject::create(cx, kind, GetInitialHeap(GenericObject, &CallClass),
-                                     shape, type, slots);
+    gc::InitialHeap heap = script->treatAsRunOnce ? gc::TenuredHeap : gc::DefaultHeap;
+    JSObject *obj = JSObject::create(cx, kind, heap, shape, type, slots);
     if (!obj)
         return NULL;
+
+    if (script->treatAsRunOnce) {
+        RootedObject nobj(cx, obj);
+        if (!JSObject::setSingletonType(cx, nobj))
+            return NULL;
+        return &nobj->asCall();
+    }
+
     return &obj->asCall();
 }
 
@@ -193,12 +222,21 @@ CallObject::createTemplateObject(JSContext *cx, HandleScript script, gc::Initial
 CallObject *
 CallObject::create(JSContext *cx, HandleScript script, HandleObject enclosing, HandleFunction callee)
 {
-    CallObject *callobj = CallObject::createTemplateObject(cx, script, gc::DefaultHeap);
+    gc::InitialHeap heap = script->treatAsRunOnce ? gc::TenuredHeap : gc::DefaultHeap;
+    CallObject *callobj = CallObject::createTemplateObject(cx, script, heap);
     if (!callobj)
         return NULL;
 
     callobj->asScope().setEnclosingScope(enclosing);
     callobj->initFixedSlot(CALLEE_SLOT, ObjectOrNullValue(callee));
+
+    if (script->treatAsRunOnce) {
+        Rooted<CallObject*> ncallobj(cx, callobj);
+        if (!JSObject::setSingletonType(cx, ncallobj))
+            return NULL;
+        return ncallobj;
+    }
+
     return callobj;
 }
 
@@ -236,8 +274,10 @@ CallObject::createForFunction(JSContext *cx, AbstractFramePtr frame)
         return NULL;
 
     /* Copy in the closed-over formal arguments. */
-    for (AliasedFormalIter i(frame.script()); i; i++)
-        callobj->setAliasedVar(i, frame.unaliasedFormal(i.frameIndex(), DONT_CHECK_ALIASING));
+    for (AliasedFormalIter i(frame.script()); i; i++) {
+        callobj->setAliasedVar(cx, i, i->name(),
+                               frame.unaliasedFormal(i.frameIndex(), DONT_CHECK_ALIASING));
+    }
 
     return callobj;
 }
@@ -294,7 +334,7 @@ DeclEnvObject::createTemplateObject(JSContext *cx, HandleFunction fun, gc::Initi
 
     RootedShape emptyDeclEnvShape(cx);
     emptyDeclEnvShape = EmptyShape::getInitialShape(cx, &DeclEnvClass, NULL,
-                                                    cx->global(), FINALIZE_KIND,
+                                                    cx->global(), NULL, FINALIZE_KIND,
                                                     BaseShape::DELEGATE);
     if (!emptyDeclEnvShape)
         return NULL;
@@ -337,7 +377,7 @@ WithObject::create(JSContext *cx, HandleObject proto, HandleObject enclosing, ui
         return NULL;
 
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, &WithClass, TaggedProto(proto),
-                                                      &enclosing->global(), FINALIZE_KIND));
+                                                      &enclosing->global(), NULL, FINALIZE_KIND));
     if (!shape)
         return NULL;
 
@@ -670,7 +710,7 @@ StaticBlockObject::create(JSContext *cx)
         return NULL;
 
     RootedShape emptyBlockShape(cx);
-    emptyBlockShape = EmptyShape::getInitialShape(cx, &BlockClass, NULL, NULL, FINALIZE_KIND,
+    emptyBlockShape = EmptyShape::getInitialShape(cx, &BlockClass, NULL, NULL, NULL, FINALIZE_KIND,
                                                   BaseShape::DELEGATE);
     if (!emptyBlockShape)
         return NULL;
@@ -1180,10 +1220,6 @@ class DebugScopeProxy : public BaseProxyHandler
                     if (action == GET)
                         vp.set(UndefinedValue());
                 }
-
-                if (action == SET)
-                    TypeScript::SetLocal(cx, script, i, vp);
-
             } else {
                 JS_ASSERT(bi->kind() == ARGUMENT);
                 unsigned i = bi.frameIndex();
@@ -1492,7 +1528,8 @@ DebugScopeProxy DebugScopeProxy::singleton;
 DebugScopeObject::create(JSContext *cx, ScopeObject &scope, HandleObject enclosing)
 {
     JS_ASSERT(scope.compartment() == cx->compartment);
-    JSObject *obj = NewProxyObject(cx, &DebugScopeProxy::singleton, ObjectValue(scope),
+    RootedValue priv(cx, ObjectValue(scope));
+    JSObject *obj = NewProxyObject(cx, &DebugScopeProxy::singleton, priv,
                                    NULL /* proto */, &scope.global(), ProxyNotCallable);
     if (!obj)
         return NULL;

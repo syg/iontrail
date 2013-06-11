@@ -59,6 +59,14 @@ protected:
     return true;
   }
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE {
+    if (!mThebesImage) {
+      mThebesImage = mThebesSurface->GetAsImageSurface();
+    }
+    nsRefPtr<gfxImageSurface> result = mThebesImage;
+    return result.forget();
+  }
+
   BasicCompositor *mCompositor;
   RefPtr<SourceSurface> mSurface;
   nsRefPtr<gfxImageSurface> mThebesImage;
@@ -71,7 +79,9 @@ CreateBasicTextureHost(SurfaceDescriptorType aDescriptorType,
                        uint32_t aTextureHostFlags,
                        uint32_t aTextureFlags)
 {
-  MOZ_ASSERT(aDescriptorType == SurfaceDescriptor::TShmem, "We can only support Shmem currently");
+  MOZ_ASSERT(aDescriptorType == SurfaceDescriptor::TShmem ||
+             aDescriptorType == SurfaceDescriptor::TMemoryImage,
+             "We can only support Shmem currently");
   return new TextureSourceBasic();
 }
 

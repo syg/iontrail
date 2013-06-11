@@ -28,6 +28,8 @@
 #include "MediaMetadataManager.h"
 #include "AudioChannelAgent.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/TextTrack.h"
+#include "mozilla/dom/TextTrackList.h"
 #include "mozilla/ErrorResult.h"
 
 // Define to output information on decoding and painting framerate
@@ -40,6 +42,9 @@ namespace mozilla {
 class MediaResource;
 class MediaDecoder;
 }
+
+class nsITimer;
+class nsRange;
 
 namespace mozilla {
 namespace dom {
@@ -92,7 +97,7 @@ public:
   virtual bool ParseAttribute(int32_t aNamespaceID,
                               nsIAtom* aAttribute,
                               const nsAString& aValue,
-                              nsAttrValue& aResult);
+                              nsAttrValue& aResult) MOZ_OVERRIDE;
   // SetAttr override.  C++ is stupid, so have to override both
   // overloaded methods.
   nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
@@ -102,20 +107,20 @@ public:
   }
   virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                            nsIAtom* aPrefix, const nsAString& aValue,
-                           bool aNotify);
+                           bool aNotify) MOZ_OVERRIDE;
   virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttr,
-                             bool aNotify);
+                             bool aNotify) MOZ_OVERRIDE;
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
-                              bool aCompileEventHandlers);
+                              bool aCompileEventHandlers) MOZ_OVERRIDE;
   virtual void UnbindFromTree(bool aDeep = true,
-                              bool aNullParent = true);
-  virtual void DoneCreatingElement();
+                              bool aNullParent = true) MOZ_OVERRIDE;
+  virtual void DoneCreatingElement() MOZ_OVERRIDE;
 
   virtual bool IsHTMLFocusable(bool aWithMouse, bool *aIsFocusable,
-                               int32_t *aTabIndex);
-  virtual int32_t TabIndexDefault();
+                               int32_t *aTabIndex) MOZ_OVERRIDE;
+  virtual int32_t TabIndexDefault() MOZ_OVERRIDE;
 
   /**
    * Call this to reevaluate whether we should start/stop due to our owner
@@ -280,7 +285,7 @@ public:
   virtual void NotifyAudioAvailable(float* aFrameBuffer, uint32_t aFrameBufferLength,
                                     float aTime) MOZ_FINAL MOZ_OVERRIDE;
 
-  virtual bool IsNodeOfType(uint32_t aFlags) const;
+  virtual bool IsNodeOfType(uint32_t aFlags) const MOZ_OVERRIDE;
 
   /**
    * Returns the current load ID. Asynchronous events store the ID that was
@@ -498,8 +503,6 @@ public:
 
   JSObject* MozGetMetadata(JSContext* aCx, ErrorResult& aRv);
 
-  void MozLoadFrom(HTMLMediaElement& aOther, ErrorResult& aRv);
-
   double MozFragmentEnd();
 
   // XPCOM GetMozAudioChannelType() is OK
@@ -509,17 +512,29 @@ public:
     SetHTMLAttr(nsGkAtoms::mozaudiochannel, aValue, aRv);
   }
 
+  TextTrackList* TextTracks() const;
+
+  already_AddRefed<TextTrack> AddTextTrack(TextTrackKind aKind,
+                                           const nsAString& aLabel,
+                                           const nsAString& aLanguage);
+
+  void AddTextTrack(TextTrack* aTextTrack) {
+    mTextTracks->AddTextTrack(aTextTrack);
+  }
+
 protected:
   class MediaLoadListener;
   class StreamListener;
 
-  virtual void GetItemValueText(nsAString& text);
-  virtual void SetItemValueText(const nsAString& text);
+  virtual void GetItemValueText(nsAString& text) MOZ_OVERRIDE;
+  virtual void SetItemValueText(const nsAString& text) MOZ_OVERRIDE;
 
   class WakeLockBoolWrapper {
   public:
     WakeLockBoolWrapper(bool val = false)
       : mValue(val), mCanPlay(true), mOuter(nullptr) {}
+
+    ~WakeLockBoolWrapper();
 
     void SetOuter(HTMLMediaElement* outer) { mOuter = outer; }
     void SetCanPlay(bool aCanPlay);
@@ -530,12 +545,15 @@ protected:
 
     bool operator !() const { return !mValue; }
 
+    static void TimerCallback(nsITimer* aTimer, void* aClosure);
+
   private:
     void UpdateWakeLock();
 
     bool mValue;
     bool mCanPlay;
     HTMLMediaElement* mOuter;
+    nsCOMPtr<nsITimer> mTimer;
   };
 
   /**
@@ -629,11 +647,6 @@ protected:
    * created.
    */
   void AbortExistingLoads();
-
-  /**
-   * Create a URI for the given aURISpec string.
-   */
-  nsresult NewURIFromString(const nsAutoString& aURISpec, nsIURI** aURI);
 
   /**
    * Called when all potential resources are exhausted. Changes network
@@ -789,6 +802,11 @@ protected:
    * Mute or unmute the audio and change the value that the |muted| map.
    */
   void SetMutedInternal(uint32_t aMuted);
+  /**
+   * Update the volume of the output audio stream to match the element's
+   * current mMuted/mVolume state.
+   */
+  void SetVolumeInternal();
 
   /**
    * Suspend (if aPauseForInactiveDocument) or resume element playback and
@@ -865,7 +883,7 @@ protected:
 
   // Points to the child source elements, used to iterate through the children
   // when selecting a resource to load.
-  nsCOMPtr<nsIDOMRange> mSourcePointer;
+  nsRefPtr<nsRange> mSourcePointer;
 
   // Points to the document whose load we're blocking. This is the document
   // we're bound to when loading starts.
@@ -1103,6 +1121,9 @@ protected:
 
   // An agent used to join audio channel service.
   nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
+
+  // List of our attached text track objects.
+  nsRefPtr<TextTrackList> mTextTracks;
 };
 
 } // namespace dom

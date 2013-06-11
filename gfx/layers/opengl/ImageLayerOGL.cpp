@@ -6,7 +6,6 @@
 #include "gfxSharedImageSurface.h"
 
 #include "ImageContainer.h" // for PlanarYCBCRImage
-#include "mozilla/layers/ShmemYCbCrImage.h"
 #include "ipc/AutoOpenSurface.h"
 #include "ImageLayerOGL.h"
 #include "gfxImageSurface.h"
@@ -144,7 +143,7 @@ TextureRecycleBin::GetTexture(TextureType aType, const gfxIntSize& aSize,
   mRecycledTextures[aType].RemoveElementAt(last);
 }
 
-struct THEBES_API ImageOGLBackendData : public ImageBackendData
+struct ImageOGLBackendData : public ImageBackendData
 {
   GLTexture mTexture;
 };

@@ -9,6 +9,7 @@
 // Microsoft's API Name hackery sucks
 #undef CreateEvent
 
+#include "mozilla/StaticPtr.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsCOMArray.h"
@@ -83,8 +84,8 @@ class nsGeolocationRequest
 
   ~nsGeolocationRequest();
 
-  bool Recv__delete__(const bool& allow);
-  void IPDLRelease() { Release(); }
+  virtual bool Recv__delete__(const bool& allow) MOZ_OVERRIDE;
+  virtual void IPDLRelease() MOZ_OVERRIDE { Release(); }
 
   int32_t WatchId() { return mWatchId; }
  private:
@@ -112,7 +113,7 @@ class nsGeolocationService MOZ_FINAL : public nsIGeolocationUpdate, public nsIOb
 public:
 
   static already_AddRefed<nsGeolocationService> GetGeolocationService();
-  static nsRefPtr<nsGeolocationService> sService;
+  static mozilla::StaticRefPtr<nsGeolocationService> sService;
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIGEOLOCATIONUPDATE

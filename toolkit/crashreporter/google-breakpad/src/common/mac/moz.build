@@ -6,3 +6,18 @@
 
 MODULE = 'breakpad_mac_common'
 
+CPP_SOURCES += [
+    'arch_utilities.cc',
+    'bootstrap_compat.cc',
+    'file_id.cc',
+    'macho_id.cc',
+    'macho_reader.cc',
+    'macho_utilities.cc',
+    'macho_walker.cc',
+    'string_utilities.cc',
+]
+
+HOST_LIBRARY_NAME = 'host_breakpad_mac_common_s'
+CMMSRCS += [
+    'MachIPC.mm',
+]

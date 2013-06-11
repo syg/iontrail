@@ -16,8 +16,6 @@ NS_IMPL_ISUPPORTS1(xpcJSWeakReference, xpcIJSWeakReference)
 
 nsresult xpcJSWeakReference::Init(JSContext* cx, const JS::Value& object)
 {
-    JSAutoRequest ar(cx);
-
     if (!object.isObject())
         return NS_OK;
 
@@ -27,7 +25,7 @@ nsresult xpcJSWeakReference::Init(JSContext* cx, const JS::Value& object)
 
     // See if the object is a wrapped native that supports weak references.
     nsISupports* supports =
-        nsXPConnect::GetXPConnect()->GetNativeOfWrapper(cx, obj);
+        nsXPConnect::XPConnect()->GetNativeOfWrapper(cx, obj);
     nsCOMPtr<nsISupportsWeakReference> supportsWeakRef =
         do_QueryInterface(supports);
     if (supportsWeakRef) {
@@ -41,8 +39,7 @@ nsresult xpcJSWeakReference::Init(JSContext* cx, const JS::Value& object)
 
     // See if object is a wrapped JSObject.
     nsRefPtr<nsXPCWrappedJS> wrapped;
-    nsresult rv = nsXPCWrappedJS::GetNewOrUsed(ccx,
-                                               obj,
+    nsresult rv = nsXPCWrappedJS::GetNewOrUsed(obj,
                                                NS_GET_IID(nsISupports),
                                                nullptr,
                                                getter_AddRefs(wrapped));

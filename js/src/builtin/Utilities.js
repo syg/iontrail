@@ -82,9 +82,8 @@ function List() {}
   ListProto.push = std_Array_push;
   ListProto.slice = std_Array_slice;
   ListProto.sort = std_Array_sort;
-  List.prototype = ListProto;
+  MakeConstructible(List, ListProto);
 }
-MakeConstructible(List);
 
 
 /********** Record specification type **********/
@@ -94,7 +93,7 @@ MakeConstructible(List);
 function Record() {
     return std_Object_create(null);
 }
-MakeConstructible(Record);
+MakeConstructible(Record, {});
 
 
 /********** Abstract operations defined in ECMAScript Language Specification **********/

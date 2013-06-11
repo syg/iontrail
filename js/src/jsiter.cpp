@@ -19,7 +19,6 @@
 #include "jscntxt.h"
 #include "jsversion.h"
 #include "jsgc.h"
-#include "jsinterp.h"
 #include "jsobj.h"
 #include "jsopcode.h"
 #include "jsproxy.h"
@@ -28,6 +27,7 @@
 #include "ds/Sort.h"
 #include "gc/Marking.h"
 #include "vm/GlobalObject.h"
+#include "vm/Interpreter.h"
 #include "vm/Shape.h"
 
 #include "jsinferinlines.h"
@@ -378,7 +378,7 @@ NewPropertyIteratorObject(JSContext *cx, unsigned flags)
             return NULL;
 
         Class *clasp = &PropertyIteratorObject::class_;
-        RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, NULL, NULL,
+        RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, NULL, NULL, NewObjectMetadata(cx),
                                                           ITERATOR_FINALIZE_KIND));
         if (!shape)
             return NULL;
@@ -1092,7 +1092,8 @@ SuppressDeletedPropertyHelper(JSContext *cx, HandleObject obj, StringPredicate p
                         RootedObject obj2(cx);
                         RootedShape prop(cx);
                         RootedId id(cx);
-                        if (!ValueToId<CanGC>(cx, StringValue(*idp), &id))
+                        RootedValue idv(cx, StringValue(*idp));
+                        if (!ValueToId<CanGC>(cx, idv, &id))
                             return false;
                         if (!JSObject::lookupGeneric(cx, proto, id, &obj2, &prop))
                             return false;
@@ -1223,7 +1224,8 @@ js_IteratorMore(JSContext *cx, HandleObject iterobj, MutableHandleValue rval)
     if (ni) {
         JS_ASSERT(!ni->isKeyIter());
         RootedId id(cx);
-        if (!ValueToId<CanGC>(cx, StringValue(*ni->current()), &id))
+        RootedValue current(cx, StringValue(*ni->current()));
+        if (!ValueToId<CanGC>(cx, current, &id))
             return false;
         ni->incCursor();
         RootedObject obj(cx, ni->obj);

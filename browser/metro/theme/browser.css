@@ -52,7 +52,7 @@
   position: fixed;
 }
 
-#tray[visible][expanded]:not([viewstate="snapped"]) {
+#tray[expanded]:not([viewstate="snapped"]) {
   transform: none;
 }
 
@@ -287,15 +287,15 @@ documenttab[selected] .documenttab-selection {
 #identity-icon {
   margin: 0;
   padding: 0 @metro_spacing_snormal@;
-  list-style-image: url(chrome://browser/skin/images/identity-icons-generic.png);
+  list-style-image: url("chrome://browser/skin/images/identity-icons-generic.png");
 }
 
 #identity-box-inner.verifiedDomain > #identity-icon {
-  list-style-image: url(chrome://browser/skin/images/locked-hdpi.png);
+  list-style-image: url("chrome://browser/skin/images/identity-icons-https.png");
 }
 
 #identity-box-inner.verifiedIdentity > #identity-icon {
-  list-style-image: url(chrome://browser/skin/images/locked-hdpi.png);
+  list-style-image: url("chrome://browser/skin/images/identity-icons-https-ev.png");
 }
 
 /* Main URL textbox */
@@ -356,9 +356,16 @@ appbar > toolbar > toolbarbutton[disabled] {
   visibility: collapse;
 }
 
-#appbar[startpage],
+#navbar[startpage],
 appbar[visible] {
   transform: none;
+}
+
+#stack[keyboardVisible] > appbar {
+  /* Slow the bottom up transition since it's impossible to match the system's
+     soft keyboard movement. */
+  transition: transform @metro_animation_duration@ @metro_animation_easing@,
+              bottom @appbar_keyboard_slideup_duration@ @metro_animation_easing@;
 }
 
 appbar > toolbar > toolbarbutton {
@@ -394,25 +401,6 @@ appbar > toolbar > toolbarbutton:active {
 }
 
 /* Page-Specific */
-#zoomout-button {
-  -moz-image-region: rect(0px, 120px, 40px, 80px) !important;
-}
-#zoomout-button:hover {
-  -moz-image-region: rect(40px, 120px, 80px, 80px) !important;
-}
-#zoomout-button:active {
-  -moz-image-region: rect(80px, 120px, 120px, 80px) !important;
-}
-
-#zoomin-button {
-  -moz-image-region: rect(0px, 160px, 40px, 120px) !important;
-}
-#zoomin-button:hover {
-  -moz-image-region: rect(40px, 160px, 80px, 120px) !important;
-}
-#zoomin-button:active {
-  -moz-image-region: rect(80px, 160px, 120px, 120px) !important;
-}
 
 #pin-button {
   -moz-image-region: rect(0px, 240px, 40px, 200px) !important;
@@ -561,6 +549,12 @@ flyoutpanel > settings:first-child {
  margin-top: 24pt;
 }
 
+#currentChannel {
+  margin: 0;
+  padding: 0;
+  font-weight: bold;
+}
+
 /* Preferences flyout */
 
 #prefs-flyoutpanel {
@@ -674,8 +668,10 @@ setting[type="radio"] > vbox {
   display: -moz-box;
 }
 
-#start-scrollbox {
-  overflow: hidden;
+#start-scrollbox[input="precise"] {
+  overflow-x: scroll;
+  /* Move scrollbar above toolbar, discount padding added by .meta in #start-container */
+  margin-bottom: calc(@toolbar_height@ - @metro_spacing_normal@);
 }
 
 /* if autocomplete is set, hide both start pages,
@@ -731,6 +727,14 @@ setting[type="radio"] > vbox {
   transition-property: margin-top;
   transition-duration: .3s;
   transition-timing-function: ease-in-out;
+}
+
+#browsers browser {
+  transition: padding-bottom @metro_animation_duration@ @metro_animation_easing@;
+}
+
+#browsers[findbar] browser {
+  padding-bottom: @findbar_height@;
 }
 
 /* Panel UI ---------------------------------------------------------------- */
@@ -881,6 +885,7 @@ setting[type="radio"] > vbox {
   background-position: left 6px center;
 }
 
+#stack[keyboardVisible] > .overlay-button,
 #stack[fullscreen] > .overlay-button,
 #appbar[visible] ~ .overlay-button,
 .overlay-button[disabled] {
@@ -888,6 +893,8 @@ setting[type="radio"] > vbox {
   visibility: collapse;
 }
 
+#stack[keyboardVisible] > #overlay-back:-moz-locale-dir(ltr),
+#stack[keyboardVisible] > #overlay-plus:-moz-locale-dir(rtl),
 #stack[fullscreen] > #overlay-back:-moz-locale-dir(ltr),
 #stack[fullscreen] > #overlay-plus:-moz-locale-dir(rtl),
 #appbar[visible] ~ #overlay-back:-moz-locale-dir(ltr),
@@ -897,6 +904,8 @@ setting[type="radio"] > vbox {
   transform: translateX(-60px);
 }
 
+#stack[keyboardVisible] > #overlay-plus:-moz-locale-dir(ltr),
+#stack[keyboardVisible] > #overlay-back:-moz-locale-dir(rtl),
 #stack[fullscreen] > #overlay-plus:-moz-locale-dir(ltr),
 #stack[fullscreen] > #overlay-back:-moz-locale-dir(rtl),
 #appbar[visible] ~ #overlay-plus:-moz-locale-dir(ltr),
@@ -986,6 +995,10 @@ setting[type="radio"] > vbox {
   min-height: @scroller_thickness@;
   height: @scroller_thickness@;
   min-width: @scroller_minimum@;
+}
+
+#browsers[input="imprecise"] browser {
+  overflow: hidden;
 }
 
 /* Text selection handles */

@@ -345,8 +345,8 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_CURSOR_GRAB                    21
 #define NS_STYLE_CURSOR_GRABBING                22
 #define NS_STYLE_CURSOR_SPINNING                23
-#define NS_STYLE_CURSOR_MOZ_ZOOM_IN             24
-#define NS_STYLE_CURSOR_MOZ_ZOOM_OUT            25
+#define NS_STYLE_CURSOR_ZOOM_IN                 24
+#define NS_STYLE_CURSOR_ZOOM_OUT                25
 #define NS_STYLE_CURSOR_NOT_ALLOWED             26
 #define NS_STYLE_CURSOR_COL_RESIZE              27
 #define NS_STYLE_CURSOR_ROW_RESIZE              28
@@ -363,6 +363,11 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DIRECTION_LTR                  0
 #define NS_STYLE_DIRECTION_RTL                  1
 #define NS_STYLE_DIRECTION_INHERIT              2
+
+// See nsStyleVisibility
+#define NS_STYLE_WRITING_MODE_HORIZONTAL_TB     0
+#define NS_STYLE_WRITING_MODE_VERTICAL_LR       1
+#define NS_STYLE_WRITING_MODE_VERTICAL_RL       2
 
 // See nsStyleDisplay
 #define NS_STYLE_DISPLAY_NONE                   0

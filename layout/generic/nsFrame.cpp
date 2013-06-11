@@ -4929,24 +4929,6 @@ nsIFrame::InvalidateLayer(uint32_t aDisplayItemKey, const nsIntRect* aDamageRect
   return layer;
 }
 
-NS_DECLARE_FRAME_PROPERTY(DeferInvalidatesProperty, nsIFrame::DestroyRegion)
-
-void
-nsIFrame::BeginDeferringInvalidatesForDisplayRoot(const nsRegion& aExcludeRegion)
-{
-  NS_ASSERTION(nsLayoutUtils::GetDisplayRootFrame(this) == this,
-               "Can only call this on display roots");
-  Properties().Set(DeferInvalidatesProperty(), new nsRegion(aExcludeRegion));
-}
-
-void
-nsIFrame::EndDeferringInvalidatesForDisplayRoot()
-{
-  NS_ASSERTION(nsLayoutUtils::GetDisplayRootFrame(this) == this,
-               "Can only call this on display roots");
-  Properties().Delete(DeferInvalidatesProperty());
-}
-
 /**
  * @param aAnyOutlineOrEffects set to true if this frame has any
  * outline, SVG effects or box shadows that mean we need to invalidate
@@ -7289,13 +7271,6 @@ nsFrame::GetFirstLeaf(nsPresContext* aPresContext, nsIFrame **aFrame)
       return;//nothing to do
     *aFrame = child;
   }
-}
-
-/* virtual */ const void*
-nsFrame::StyleDataExternal(nsStyleStructID aSID) const
-{
-  NS_ASSERTION(mStyleContext, "unexpected null pointer");
-  return mStyleContext->StyleData(aSID);
 }
 
 /* virtual */ bool

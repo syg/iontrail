@@ -188,6 +188,8 @@ public:
     eIntID_MenusCanOverlapOSBar,
     // should overlay scrollbars be used?
     eIntID_UseOverlayScrollbars,
+    // allow H and V overlay scrollbars to overlap?
+    eIntID_AllowOverlayScrollbarsOverlap,
     // show/hide scrollbars based on activity
     eIntID_ShowHideScrollbars,
     // skip navigating to disabled menu item?
@@ -363,7 +365,14 @@ public:
      * A Boolean value to determine whether Mac OS X Lion style swipe animations
      * should be used.
      */
-    eIntID_SwipeAnimationEnabled
+    eIntID_SwipeAnimationEnabled,
+
+    /*
+     * A boolean value indicating whether or not the device has a hardware
+     * home button. Used on gaia to determine whether a home button
+     * is shown.
+     */
+    eIntID_PhysicalHomeButton
   };
 
   /**

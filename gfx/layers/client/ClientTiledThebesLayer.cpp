@@ -18,7 +18,7 @@ ClientTiledThebesLayer::ClientTiledThebesLayer(ClientLayerManager* const aManage
   , mContentClient()
 {
   MOZ_COUNT_CTOR(ClientTiledThebesLayer);
-  mPaintData.mLastScrollOffset = gfx::Point(0, 0);
+  mPaintData.mLastScrollOffset = CSSPoint(0, 0);
   mPaintData.mFirstPaint = true;
 }
 
@@ -57,7 +57,8 @@ ClientTiledThebesLayer::BeginPaint()
 
   // Compute the critical display port in layer space.
   mPaintData.mLayerCriticalDisplayPort.SetEmpty();
-  const gfx::Rect& criticalDisplayPort = GetParent()->GetFrameMetrics().mCriticalDisplayPort;
+  const gfx::Rect& criticalDisplayPort =
+    GetParent()->GetFrameMetrics().mCriticalDisplayPort.ToUnknownRect();
   if (!criticalDisplayPort.IsEmpty()) {
     gfxRect transformedCriticalDisplayPort =
       mPaintData.mTransformScreenToLayer.TransformBounds(

@@ -5,6 +5,7 @@
 #ifndef nsIContent_h___
 #define nsIContent_h___
 
+#include "mozilla/Attributes.h"
 #include "nsCaseTreatment.h" // for enum, cannot be forward-declared
 #include "nsIDocument.h"
 
@@ -632,17 +633,6 @@ public:
   virtual bool IsLink(nsIURI** aURI) const = 0;
 
   /**
-   * Get the cached state of the link.  If the state is unknown, 
-   * return eLinkState_Unknown.
-   *
-   * @return The cached link state of the link.
-   */
-  virtual nsLinkState GetLinkState() const
-  {
-    return eLinkState_NotLink;
-  }
-
-  /**
     * Get a pointer to the full href URI (fully resolved and canonicalized,
     * since it's an nsIURI object) for link elements.
     *
@@ -846,9 +836,9 @@ public:
   }
 
   // Overloaded from nsINode
-  virtual already_AddRefed<nsIURI> GetBaseURI() const;
+  virtual already_AddRefed<nsIURI> GetBaseURI() const MOZ_OVERRIDE;
 
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
+  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
 
   virtual bool IsPurple() = 0;
   virtual void RemovePurple() = 0;

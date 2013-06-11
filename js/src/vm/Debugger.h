@@ -172,6 +172,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
         JSSLOT_DEBUG_ENV_PROTO,
         JSSLOT_DEBUG_OBJECT_PROTO,
         JSSLOT_DEBUG_SCRIPT_PROTO,
+        JSSLOT_DEBUG_SOURCE_PROTO,
         JSSLOT_DEBUG_PROTO_STOP,
         JSSLOT_DEBUG_HOOK_START = JSSLOT_DEBUG_PROTO_STOP,
         JSSLOT_DEBUG_HOOK_STOP = JSSLOT_DEBUG_HOOK_START + HookCount,
@@ -215,6 +216,10 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     /* An ephemeral map from JSScript* to Debugger.Script instances. */
     typedef DebuggerWeakMap<EncapsulatedPtrScript, RelocatablePtrObject> ScriptWeakMap;
     ScriptWeakMap scripts;
+
+    /* The map from debuggee source script objects to their Debugger.Source instances. */
+    typedef DebuggerWeakMap<EncapsulatedPtrObject, RelocatablePtrObject> SourceWeakMap;
+    SourceWeakMap sources;
 
     /* The map from debuggee objects to their Debugger.Object instances. */
     typedef DebuggerWeakMap<EncapsulatedPtrObject, RelocatablePtrObject> ObjectWeakMap;
@@ -349,6 +354,12 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     JSObject *newDebuggerScript(JSContext *cx, HandleScript script);
 
     /*
+     * Allocate and initialize a Debugger.Source instance whose referent is
+     * |source|.
+     */
+    JSObject *newDebuggerSource(JSContext *cx, JS::HandleScriptSource source);
+
+    /*
      * Receive a "new script" event from the engine. A new script was compiled
      * or deserialized.
      */
@@ -391,7 +402,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static void sweepAll(FreeOp *fop);
     static void detachAllDebuggersFromGlobal(FreeOp *fop, GlobalObject *global,
                                              GlobalObjectSet::Enum *compartmentEnum);
-    static bool isDebugWrapper(JSObject *o);
     static void findCompartmentEdges(JS::Zone *v, gc::ComponentFinder<JS::Zone> &finder);
 
     static inline JSTrapStatus onEnterFrame(JSContext *cx, AbstractFramePtr frame,
@@ -505,6 +515,13 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
      */
     JSObject *wrapScript(JSContext *cx, HandleScript script);
 
+    /*
+     * Return the Debugger.Source object for |source|, or create a new one if
+     * needed. The context |cx| must be in the debugger compartment; |source|
+     * must be a script source object in a debuggee compartment.
+     */
+    JSObject *wrapSource(JSContext *cx, JS::HandleScriptSource source);
+
   private:
     Debugger(const Debugger &) MOZ_DELETE;
     Debugger & operator=(const Debugger &) MOZ_DELETE;
@@ -611,13 +628,6 @@ Debugger::toJSObjectRef()
     return object;
 }
 
-Debugger *
-Debugger::fromJSObject(JSObject *obj)
-{
-    JS_ASSERT(js::GetObjectClass(obj) == &jsclass);
-    return (Debugger *) obj->getPrivate();
-}
-
 bool
 Debugger::observesEnterFrame() const
 {
@@ -642,29 +652,12 @@ Debugger::observesGlobal(GlobalObject *global) const
     return debuggees.has(global);
 }
 
-bool
-Debugger::observesFrame(AbstractFramePtr frame) const
-{
-    return observesGlobal(&frame.script()->global());
-}
-
 JSTrapStatus
 Debugger::onEnterFrame(JSContext *cx, AbstractFramePtr frame, MutableHandleValue vp)
 {
     if (cx->compartment->getDebuggees().empty())
         return JSTRAP_CONTINUE;
     return slowPathOnEnterFrame(cx, frame, vp);
-}
-
-bool
-Debugger::onLeaveFrame(JSContext *cx, AbstractFramePtr frame, bool ok)
-{
-    /* Traps must be cleared from eval frames, see slowPathOnLeaveFrame. */
-    bool evalTraps = frame.isEvalFrame() &&
-                     frame.script()->hasAnyBreakpointsOrStepMode();
-    if (!cx->compartment->getDebuggees().empty() || evalTraps)
-        ok = slowPathOnLeaveFrame(cx, frame, ok);
-    return ok;
 }
 
 JSTrapStatus

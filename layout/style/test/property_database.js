@@ -2339,7 +2339,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "auto" ],
-		other_values: [ "crosshair", "default", "pointer", "move", "e-resize", "ne-resize", "nw-resize", "n-resize", "se-resize", "sw-resize", "s-resize", "w-resize", "text", "wait", "help", "progress", "copy", "alias", "context-menu", "cell", "not-allowed", "col-resize", "row-resize", "no-drop", "vertical-text", "all-scroll", "nesw-resize", "nwse-resize", "ns-resize", "ew-resize", "none", "-moz-grab", "-moz-grabbing", "-moz-zoom-in", "-moz-zoom-out", "url(foo.png), move", "url(foo.png) 5 7, move", "url(foo.png) 12 3, url(bar.png), no-drop", "url(foo.png), url(bar.png) 7 2, wait", "url(foo.png) 3 2, url(bar.png) 7 9, pointer" ],
+		other_values: [ "crosshair", "default", "pointer", "move", "e-resize", "ne-resize", "nw-resize", "n-resize", "se-resize", "sw-resize", "s-resize", "w-resize", "text", "wait", "help", "progress", "copy", "alias", "context-menu", "cell", "not-allowed", "col-resize", "row-resize", "no-drop", "vertical-text", "all-scroll", "nesw-resize", "nwse-resize", "ns-resize", "ew-resize", "none", "zoom-in", "zoom-out", "-moz-grab", "-moz-grabbing", "-moz-zoom-in", "-moz-zoom-out", "url(foo.png), move", "url(foo.png) 5 7, move", "url(foo.png) 12 3, url(bar.png), no-drop", "url(foo.png), url(bar.png) 7 2, wait", "url(foo.png) 3 2, url(bar.png) 7 9, pointer" ],
 		invalid_values: [ "url(foo.png)", "url(foo.png) 5 5" ]
 	},
 	"direction": {
@@ -2403,7 +2403,7 @@ var gCSSProperties = {
 		  // Gecko-specific system fonts
 		  "-moz-window", "-moz-document", "-moz-desktop", "-moz-info", "-moz-dialog", "-moz-button", "-moz-pull-down-menu", "-moz-list", "-moz-field", "-moz-workspace",
 		],
-		invalid_values: [ "9 fantasy" ]
+		invalid_values: [ "9 fantasy", "-2px fantasy" ]
 	},
 	"font-family": {
 		domProp: "fontFamily",
@@ -4255,6 +4255,22 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 	}
 	gCSSProperties["display"].other_values.push("flex");
 	gCSSProperties["display"].other_values.push("inline-flex");
+}
+
+if (SpecialPowers.getBoolPref("layout.css.vertical-text.enabled")) {
+	var verticalTextProperties = {
+		"writing-mode": {
+			domProp: "writingMode",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "horizontal-tb" ],
+			other_values: [ "vertical-lr", "vertical-rl" ],
+			invalid_values: [ "10px", "30%", "justify", "auto", "1em" ]
+		}
+	};
+	for (var prop in verticalTextProperties) {
+		gCSSProperties[prop] = verticalTextProperties[prop];
+	}
 }
 
 if (SpecialPowers.getBoolPref("layout.css.font-features.enabled")) {

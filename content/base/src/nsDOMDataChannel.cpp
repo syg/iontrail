@@ -29,6 +29,7 @@ extern PRLogModuleInfo* GetDataChannelLog();
 #include "nsError.h"
 #include "nsAutoPtr.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsNetUtil.h"
@@ -122,6 +123,19 @@ NS_IMETHODIMP
 nsDOMDataChannel::GetProtocol(nsAString& aProtocol)
 {
   mDataChannel->GetProtocol(aProtocol);
+  return NS_OK;
+}
+
+uint16_t
+nsDOMDataChannel::Id() const
+{
+  return mDataChannel->GetStream();
+}
+
+NS_IMETHODIMP
+nsDOMDataChannel::GetId(uint16_t *aId)
+{
+  *aId = Id();
   return NS_OK;
 }
 
@@ -360,7 +374,6 @@ nsDOMDataChannel::DoOnMessageAvailable(const nsACString& aData,
   AutoPushJSContext cx(sc->GetNativeContext());
   NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
 
-  JSAutoRequest ar(cx);
   JS::Rooted<JS::Value> jsData(cx);
 
   if (aBinary) {

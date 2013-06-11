@@ -37,29 +37,20 @@ HTMLFieldSetElement::~HTMLFieldSetElement()
 
 // nsISupports
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLFieldSetElement,
-                                                nsGenericHTMLFormElement)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mValidity)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mElements)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLFieldSetElement,
-                                                  nsGenericHTMLFormElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mValidity)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElements)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+NS_IMPL_CYCLE_COLLECTION_INHERITED_2(HTMLFieldSetElement, nsGenericHTMLFormElement,
+                                     mValidity, mElements)
 
 NS_IMPL_ADDREF_INHERITED(HTMLFieldSetElement, Element)
 NS_IMPL_RELEASE_INHERITED(HTMLFieldSetElement, Element)
 
 // QueryInterface implementation for HTMLFieldSetElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLFieldSetElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE2(HTMLFieldSetElement,
-                                   nsIDOMHTMLFieldSetElement,
-                                   nsIConstraintValidation)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLFieldSetElement,
-                                               nsGenericHTMLFormElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLFormElement)
+  NS_INTERFACE_TABLE_INHERITED2(HTMLFieldSetElement,
+                                nsIDOMHTMLFieldSetElement,
+                                nsIConstraintValidation)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLFieldSetElement)
 

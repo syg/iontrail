@@ -40,8 +40,9 @@ interface nsIDOMTouch;
 interface nsIDOMClientRect;
 interface nsIURI;
 interface nsIDOMEventTarget;
+interface nsIRunnable;
 
-[scriptable, uuid(04429978-3417-411b-882b-81cd5cec5ecd)]
+[scriptable, uuid(a806d366-cc52-11e2-bc9a-ba3212c84021)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -193,6 +194,8 @@ interface nsIDOMWindowUtils : nsISupports {
    * Can only be accessed with chrome privileges.
    */
   attribute boolean isFirstPaint;
+
+  void getPresShellId(out uint32_t aPresShellId);
 
   /**
    * Following modifiers are for sent*Event() except sendNative*Event().
@@ -654,6 +657,11 @@ interface nsIDOMWindowUtils : nsISupports {
    * @param aFlushLayout flushes layout if true. Otherwise, no flush occurs.
    */
   void getScrollbarSize(in boolean aFlushLayout, out long aWidth, out long aHeight);
+
+  /**
+   * Returns the given element's bounds without flushing pending layout changes.
+   */
+  nsIDOMClientRect getBoundsWithoutFlushing(in nsIDOMElement aElement);
 
   /**
    * Returns the bounds of the window's currently loaded document. This will
@@ -1369,4 +1377,35 @@ interface nsIDOMWindowUtils : nsISupports {
     * Setting paintFlashing to true will flash newly painted area.
     */
    attribute boolean paintFlashing;
+
+   /**
+    * Allows running of a "synchronous section", in the form of an nsIRunnable
+    * once the event loop has reached a "stable state". We've reached a stable
+    * state when the currently executing task/event has finished, see:
+    * http://www.whatwg.org/specs/web-apps/current-work/multipage/webappapis.html#synchronous-section
+    * In practice this runs aRunnable once the currently executing event
+    * finishes. If called multiple times per task/event, all the runnables will
+    * be executed, in the order in which runInStableState() was called.
+    *
+    * XXX - This can wreak havoc if you're not using this for very simple
+    * purposes, eg testing or setting a flag.
+    */
+   void runInStableState(in nsIRunnable runnable);
+
+   /**
+    * Run the given runnable before the next iteration of the event loop (this
+    * includes native events too). If a nested loop is spawned within the current
+    * event then the runnable will not be run until that loop has terminated.
+    *
+    * XXX - This can wreak havoc if you're not using this for very simple
+    * purposes, eg testing or setting a flag.
+    */
+   void runBeforeNextEvent(in nsIRunnable runnable);
+
+   /*
+    * Returns the value of a given property.  If the property is animated off the
+    * main thread, this function will fetch the correct value from the compositor.
+    */
+   AString getOMTAOrComputedStyle(in nsIDOMNode aNode,
+                                  in AString aProperty);
 };

@@ -380,18 +380,6 @@ nsHttpChannel::Connect()
             LOG(("nsHttpChannel::Connect() STS permissions found\n"));
             return AsyncCall(&nsHttpChannel::HandleAsyncRedirectChannelToHttps);
         }
-
-        // Check for a previous SPDY Alternate-Protocol directive
-        if (gHttpHandler->IsSpdyEnabled() && mAllowSpdy) {
-            nsAutoCString hostPort;
-
-            if (NS_SUCCEEDED(mURI->GetHostPort(hostPort)) &&
-                gHttpHandler->ConnMgr()->GetSpdyAlternateProtocol(hostPort)) {
-                LOG(("nsHttpChannel::Connect() Alternate-Protocol found\n"));
-                return AsyncCall(
-                    &nsHttpChannel::HandleAsyncRedirectChannelToHttps);
-            }
-        }
     }
 
     // ensure that we are using a valid hostname
@@ -3699,7 +3687,7 @@ nsHttpChannel::AddCacheEntryHeaders(nsICacheEntryDescriptor *entry)
 {
     nsresult rv;
 
-    LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%x] begin", this));
+    LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%p] begin", this));
     // Store secure data in memory only
     if (mSecurityInfo)
         entry->SetSecurityInfo(mSecurityInfo);
@@ -3734,7 +3722,7 @@ nsHttpChannel::AddCacheEntryHeaders(nsICacheEntryDescriptor *entry)
             char *val = buf.BeginWriting(); // going to munge buf
             char *token = nsCRT::strtok(val, NS_HTTP_HEADER_SEPS, &val);
             while (token) {
-                LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%x] " \
+                LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%p] " \
                         "processing %s", this, token));
                 if (*token != '*') {
                     nsHttpAtom atom = nsHttp::ResolveAtom(token);
@@ -3743,7 +3731,7 @@ nsHttpChannel::AddCacheEntryHeaders(nsICacheEntryDescriptor *entry)
                     if (val) {
                         // If cookie-header, store a hash of the value
                         if (atom == nsHttp::Cookie) {
-                            LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%x] " \
+                            LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%p] " \
                                     "cookie-value %s", this, val));
                             rv = Hash(val, hash);
                             // If hash failed, store a string not very likely
@@ -3760,7 +3748,7 @@ nsHttpChannel::AddCacheEntryHeaders(nsICacheEntryDescriptor *entry)
                         metaKey = prefix + nsDependentCString(token);
                         entry->SetMetaDataElement(metaKey.get(), val);
                     } else {
-                        LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%x] " \
+                        LOG(("nsHttpChannel::AddCacheEntryHeaders [this=%p] " \
                                 "clearing metadata for %s", this, token));
                         metaKey = prefix + nsDependentCString(token);
                         entry->SetMetaDataElement(metaKey.get(), nullptr);
@@ -4416,20 +4404,6 @@ nsHttpChannel::BeginConnect()
     LOG(("nsHttpChannel::BeginConnect [this=%p]\n", this));
     nsresult rv;
 
-    // notify "http-on-modify-request" observers
-    CallOnModifyRequestObservers();
-
-    // Check to see if we should redirect this channel elsewhere by
-    // nsIHttpChannel.redirectTo API request
-    if (mAPIRedirectToURI) {
-        return AsyncCall(&nsHttpChannel::HandleAsyncAPIRedirect);
-    }
-
-    // If mTimingEnabled flag is not set after OnModifyRequest() then
-    // clear the already recorded AsyncOpen value for consistency.
-    if (!mTimingEnabled)
-        mAsyncOpenTime = TimeStamp();
-
     // Construct connection info object
     nsAutoCString host;
     int32_t port = -1;
@@ -4467,6 +4441,20 @@ nsHttpChannel::BeginConnect()
 
     // check to see if authorization headers should be included
     mAuthProvider->AddAuthorizationHeaders();
+
+    // notify "http-on-modify-request" observers
+    CallOnModifyRequestObservers();
+
+    // Check to see if we should redirect this channel elsewhere by
+    // nsIHttpChannel.redirectTo API request
+    if (mAPIRedirectToURI) {
+        return AsyncCall(&nsHttpChannel::HandleAsyncAPIRedirect);
+    }
+
+    // If mTimingEnabled flag is not set after OnModifyRequest() then
+    // clear the already recorded AsyncOpen value for consistency.
+    if (!mTimingEnabled)
+        mAsyncOpenTime = TimeStamp();
 
     // when proxying only use the pipeline bit if ProxyPipelining() allows it.
     if (!mConnectionInfo->UsingConnect() && mConnectionInfo->UsingHttpProxy()) {
@@ -4553,7 +4541,7 @@ nsHttpChannel::SetupFallbackChannel(const char *aFallbackKey)
 {
     ENSURE_CALLED_BEFORE_CONNECT();
 
-    LOG(("nsHttpChannel::SetupFallbackChannel [this=%x, key=%s]",
+    LOG(("nsHttpChannel::SetupFallbackChannel [this=%p, key=%s]",
          this, aFallbackKey));
     mFallbackChannel = true;
     mFallbackKey = aFallbackKey;
@@ -4882,16 +4870,6 @@ nsHttpChannel::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
         // grab the security info from the connection object; the transaction
         // is guaranteed to own a reference to the connection.
         mSecurityInfo = mTransaction->SecurityInfo();
-    }
-
-    if (!mCachePump && NS_FAILED(mStatus) &&
-        (mLoadFlags & LOAD_REPLACE) && mOriginalURI && mAllowSpdy) {
-        // For sanity's sake we may want to cancel an alternate protocol
-        // redirection involving the original host name
-
-        nsAutoCString hostPort;
-        if (NS_SUCCEEDED(mOriginalURI->GetHostPort(hostPort)))
-            gHttpHandler->ConnMgr()->RemoveSpdyAlternateProtocol(hostPort);
     }
 
     // don't enter this block if we're reading from the cache...

@@ -6,6 +6,7 @@
 #ifndef ScrollbarActivity_h___
 #define ScrollbarActivity_h___
 
+#include "mozilla/Attributes.h"
 #include "nsCOMPtr.h"
 #include "nsIDOMEventListener.h"
 #include "mozilla/TimeStamp.h"
@@ -78,7 +79,7 @@ public:
   void ActivityStarted();
   void ActivityStopped();
 
-  virtual void WillRefresh(TimeStamp aTime);
+  virtual void WillRefresh(TimeStamp aTime) MOZ_OVERRIDE;
 
   static void FadeBeginTimerFired(nsITimer* aTimer, void* aSelf) {
     reinterpret_cast<ScrollbarActivity*>(aSelf)->BeginFade();
@@ -99,7 +100,7 @@ protected:
                                bool* aStoredHoverState);
 
   void SetIsActive(bool aNewActive);
-  void SetIsFading(bool aNewFading);
+  bool SetIsFading(bool aNewFading); // returns false if 'this' was destroyed
 
   void BeginFade();
   void EndFade();
@@ -113,7 +114,7 @@ protected:
   void RegisterWithRefreshDriver();
   void UnregisterFromRefreshDriver();
 
-  void UpdateOpacity(TimeStamp aTime);
+  bool UpdateOpacity(TimeStamp aTime); // returns false if 'this' was destroyed
   void HoveredScrollbar(nsIContent* aScrollbar);
 
   nsRefreshDriver* GetRefreshDriver();

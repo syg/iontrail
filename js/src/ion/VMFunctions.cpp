@@ -6,21 +6,24 @@
 
 #include "Ion.h"
 #include "IonCompartment.h"
-#include "jsinterp.h"
 #include "ion/BaselineFrame-inl.h"
 #include "ion/BaselineIC.h"
 #include "ion/IonFrames.h"
-#include "ion/IonFrames-inl.h" // for GetTopIonJSScript
 
-#include "vm/StringObject-inl.h"
 #include "vm/Debugger.h"
+#include "vm/Interpreter.h"
+#include "vm/StringObject-inl.h"
 
 #include "builtin/ParallelArray.h"
 
-#include "frontend/TokenStream.h"
+#include "frontend/BytecodeCompiler.h"
 
 #include "jsboolinlines.h"
-#include "jsinterpinlines.h"
+
+#include "ion/IonFrames-inl.h" // for GetTopIonJSScript
+
+#include "vm/Interpreter-inl.h"
+#include "vm/StringObject-inl.h"
 
 using namespace js;
 using namespace js::ion;
@@ -44,32 +47,6 @@ VMFunction::addToFunctions()
     functions = this;
 }
 
-static inline bool
-ShouldMonitorReturnType(JSFunction *fun)
-{
-    return fun->isInterpreted() &&
-           (!fun->nonLazyScript()->hasAnalysis() ||
-            !fun->nonLazyScript()->analysis()->ranInference());
-}
-
-/* static */ size_t
-VMFunction::sizeOfRootType(RootType type)
-{
-    switch (type) {
-      case RootNone:
-        JS_NOT_REACHED("Handle must have root type");
-        return 0;
-      case RootObject:
-      case RootString:
-      case RootPropertyName:
-      case RootFunction:
-      case RootCell:
-        return sizeof(void *);
-      case RootValue:
-        return sizeof(Value);
-    }
-}
-
 bool
 InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, Value *rval)
 {
@@ -89,13 +66,6 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
         }
     }
 
-    // TI will return false for monitorReturnTypes, meaning there is no
-    // TypeBarrier or Monitor instruction following this. However, we need to
-    // explicitly monitor if the callee has not been analyzed yet. We special
-    // case this to avoid the cost of ion::GetPcScript if we must take this
-    // path frequently.
-    bool needsMonitor = ShouldMonitorReturnType(fun);
-
     // Data in the argument vector is arranged for a JIT -> JIT call.
     Value thisv = argv[0];
     Value *argvWithoutThis = argv + 1;
@@ -103,16 +73,9 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
     // For constructing functions, |this| is constructed at caller side and we can just call Invoke.
     // When creating this failed / is impossible at caller site, i.e. MagicValue(JS_IS_CONSTRUCTING),
     // we use InvokeConstructor that creates it at the callee side.
-    bool ok;
     if (thisv.isMagic(JS_IS_CONSTRUCTING))
-        ok = InvokeConstructor(cx, ObjectValue(*fun), argc, argvWithoutThis, rval);
-    else
-        ok = Invoke(cx, thisv, ObjectValue(*fun), argc, argvWithoutThis, rval);
-
-    if (ok && needsMonitor)
-        types::TypeScript::Monitor(cx, *rval);
-
-    return ok;
+        return InvokeConstructor(cx, ObjectValue(*fun), argc, argvWithoutThis, rval);
+    return Invoke(cx, thisv, ObjectValue(*fun), argc, argvWithoutThis, rval);
 }
 
 JSObject *
@@ -436,14 +399,10 @@ ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObje
 bool
 CharCodeAt(JSContext *cx, HandleString str, int32_t index, uint32_t *code)
 {
-    JS_ASSERT(index >= 0 &&
-              static_cast<uint32_t>(index) < str->length());
-
-    const jschar *chars = str->getChars(cx);
-    if (!chars)
+    jschar c;
+    if (!str->getChar(cx, index, &c))
         return false;
-
-    *code = chars[index];
+    *code = c;
     return true;
 }
 
@@ -460,13 +419,22 @@ StringFromCharCode(JSContext *cx, int32_t code)
 
 bool
 SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue value,
-            bool strict, bool isSetName)
+            bool strict, int jsop)
 {
     RootedValue v(cx, value);
     RootedId id(cx, NameToId(name));
 
+    if (jsop == JSOP_SETALIASEDVAR) {
+        // Aliased var assigns ignore readonly attributes on the property, as
+        // required for initializing 'const' closure variables.
+        Shape *shape = obj->nativeLookup(cx, name);
+        JS_ASSERT(shape && shape->hasSlot());
+        JSObject::nativeSetSlotWithType(cx, obj, shape, value);
+        return true;
+    }
+
     if (JS_LIKELY(!obj->getOps()->setProperty)) {
-        unsigned defineHow = isSetName ? DNP_UNQUALIFIED : 0;
+        unsigned defineHow = (jsop == JSOP_SETNAME || jsop == JSOP_SETGNAME) ? DNP_UNQUALIFIED : 0;
         return baseops::SetPropertyHelper(cx, obj, obj, id, defineHow, &v, strict);
     }
 
@@ -497,9 +465,10 @@ NewSlots(JSRuntime *rt, unsigned nslots)
 }
 
 JSObject *
-NewCallObject(JSContext *cx, HandleShape shape, HandleTypeObject type, HeapSlot *slots)
+NewCallObject(JSContext *cx, HandleScript script,
+              HandleShape shape, HandleTypeObject type, HeapSlot *slots)
 {
-    return CallObject::create(cx, shape, type, slots);
+    return CallObject::create(cx, script, shape, type, slots);
 }
 
 JSObject *
@@ -599,7 +568,7 @@ GetDynamicName(JSContext *cx, JSObject *scopeChain, JSString *str, Value *vp)
         }
     }
 
-    if (!frontend::IsIdentifier(atom) || frontend::FindKeyword(atom->chars(), atom->length())) {
+    if (!frontend::IsIdentifier(atom) || frontend::IsKeyword(atom)) {
         vp->setUndefined();
         return;
     }
@@ -628,6 +597,20 @@ FilterArguments(JSContext *cx, JSString *str)
     static jschar arguments[] = {'a', 'r', 'g', 'u', 'm', 'e', 'n', 't', 's'};
     return !StringHasPattern(chars, str->length(), arguments, mozilla::ArrayLength(arguments));
 }
+
+#ifdef JSGC_GENERATIONAL
+void
+PostWriteBarrier(JSRuntime *rt, JSObject *obj)
+{
+#ifdef JS_GC_ZEAL
+    /* The jitcode version of IsInsideNursery does not know about the verifier. */
+    if (rt->gcVerifyPostData && rt->gcVerifierNursery.isInside(obj))
+        return;
+#endif
+    JS_ASSERT(!IsInsideNursery(rt, obj));
+    rt->gcStoreBuffer.putWholeObject(obj);
+}
+#endif
 
 uint32_t
 GetIndexFromString(JSString *str)
@@ -746,12 +729,17 @@ InitRestParameter(JSContext *cx, uint32_t length, Value *rest, HandleObject temp
 
         // Fast path: we managed to allocate the array inline; initialize the
         // slots.
-        if (length) {
+        if (length > 0) {
             if (!res->ensureElements(cx, length))
                 return NULL;
             res->setDenseInitializedLength(length);
             res->initDenseElements(0, rest, length);
             res->setArrayLengthInt32(length);
+
+            // Ensure that values in the rest array are represented in the
+            // type of the array.
+            for (unsigned i = 0; i < length; i++)
+                types::AddTypePropertyId(cx, res, JSID_VOID, rest[i]);
         }
         return res;
     }
@@ -760,6 +748,10 @@ InitRestParameter(JSContext *cx, uint32_t length, Value *rest, HandleObject temp
     if (!obj)
         return NULL;
     obj->setType(templateObj->type());
+
+    for (unsigned i = 0; i < length; i++)
+        types::AddTypePropertyId(cx, obj, JSID_VOID, rest[i]);
+
     return obj;
 }
 

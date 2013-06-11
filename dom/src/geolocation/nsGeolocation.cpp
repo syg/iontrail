@@ -33,6 +33,7 @@
 #include "nsISupportsPrimitives.h"
 #include "nsServiceManagerUtils.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIURI.h"
 #include "nsIPermissionManager.h"
 #include "nsIObserverService.h"
@@ -711,7 +712,7 @@ nsGeolocationService::HandleMozsettingChanged(const PRUnichar* aData)
 
     nsDependentString dataStr(aData);
     JS::Rooted<JS::Value> val(cx);
-    if (!JS_ParseJSON(cx, dataStr.get(), dataStr.Length(), val.address()) || !val.isObject()) {
+    if (!JS_ParseJSON(cx, dataStr.get(), dataStr.Length(), &val) || !val.isObject()) {
       return;
     }
 
@@ -937,7 +938,7 @@ nsGeolocationService::StopDevice()
                        NS_LITERAL_STRING("shutdown").get());
 }
 
-nsRefPtr<nsGeolocationService> nsGeolocationService::sService;
+StaticRefPtr<nsGeolocationService> nsGeolocationService::sService;
 
 already_AddRefed<nsGeolocationService>
 nsGeolocationService::GetGeolocationService()

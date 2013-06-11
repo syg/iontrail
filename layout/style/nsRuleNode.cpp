@@ -5243,6 +5243,12 @@ nsRuleNode::ComputeVisibilityData(void* aStartStruct,
               SETDSC_ENUMERATED, parentVisibility->mPointerEvents,
               NS_STYLE_POINTER_EVENTS_AUTO, 0, 0, 0, 0);
 
+  // writing-mode: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForWritingMode(), visibility->mWritingMode,
+              canStoreInRuleTree, SETDSC_ENUMERATED,
+              parentVisibility->mWritingMode,
+              NS_STYLE_WRITING_MODE_HORIZONTAL_TB, 0, 0, 0, 0);
+
   COMPUTE_END_INHERITED(Visibility, visibility)
 }
 
@@ -7201,8 +7207,9 @@ nsRuleNode::ComputeColumnData(void* aStartStruct,
     column->mColumnCount = NS_STYLE_COLUMN_COUNT_AUTO;
   } else if (eCSSUnit_Integer == columnCountValue->GetUnit()) {
     column->mColumnCount = columnCountValue->GetIntValue();
-    // Max 1000 columns - wallpaper for bug 345583.
-    column->mColumnCount = std::min(column->mColumnCount, 1000U);
+    // Max kMaxColumnCount columns - wallpaper for bug 345583.
+    column->mColumnCount = std::min(column->mColumnCount,
+                                    nsStyleColumn::kMaxColumnCount);
   } else if (eCSSUnit_Inherit == columnCountValue->GetUnit()) {
     canStoreInRuleTree = false;
     column->mColumnCount = parent->mColumnCount;

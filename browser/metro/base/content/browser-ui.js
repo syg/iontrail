@@ -43,7 +43,7 @@ let Elements = {};
   ["tray",               "tray"],
   ["toolbar",            "toolbar"],
   ["browsers",           "browsers"],
-  ["appbar",             "appbar"],
+  ["navbar",             "navbar"],
   ["contextappbar",      "contextappbar"],
   ["contentViewport",    "content-viewport"],
   ["progress",           "progress-control"],
@@ -539,6 +539,14 @@ var BrowserUI = {
       focusedElement.blur();
   },
 
+  blurNavBar: function blurNavBar() {
+    if (this._edit.focused) {
+      this._edit.blur();
+      return true;
+    }
+    return false;
+  },
+
   // If the user types in the address bar, cancel pending
   // navbar autohide if set.
   navEditKeyPress: function navEditKeyPress() {
@@ -594,8 +602,6 @@ var BrowserUI = {
       }
       Elements.windowState.setAttribute("viewstate", currViewState);
     }
-    // content navigator helper
-    document.getElementById("content-navigator").contentHasChanged();
   },
 
   _titleChanged: function(aBrowser) {
@@ -619,6 +625,9 @@ var BrowserUI = {
 
   _updateButtons: function _updateButtons() {
     let browser = Browser.selectedBrowser;
+    if (!browser) {
+      return;
+    }
     if (browser.canGoBack) {
       this._back.removeAttribute("disabled");
     } else {
@@ -761,7 +770,7 @@ var BrowserUI = {
     }
 
     // Check content helper
-    let contentHelper = document.getElementById("content-navigator");
+    let contentHelper = Elements.contentNavigator;
     if (contentHelper.isActive) {
       contentHelper.model.hide();
       return;
@@ -974,8 +983,6 @@ var BrowserUI = {
       case "cmd_panel":
       case "cmd_flyout_back":
       case "cmd_sanitize":
-      case "cmd_zoomin":
-      case "cmd_zoomout":
       case "cmd_volumeLeft":
       case "cmd_volumeRight":
       case "cmd_openFile":
@@ -1034,7 +1041,7 @@ var BrowserUI = {
         this._editURI(true);
         break;
       case "cmd_addBookmark":
-        Elements.appbar.show();
+        Elements.navbar.show();
         Appbar.onStarButton(true);
         break;
       case "cmd_bookmarks":
@@ -1077,12 +1084,6 @@ var BrowserUI = {
       case "cmd_panel":
         PanelUI.toggle();
         break;
-      case "cmd_zoomin":
-        Browser.zoom(-1);
-        break;
-      case "cmd_zoomout":
-        Browser.zoom(1);
-        break;
       case "cmd_volumeLeft":
         // Zoom in (portrait) or out (landscape)
         Browser.zoom(Util.isPortrait() ? -1 : 1);
@@ -1098,6 +1099,10 @@ var BrowserUI = {
         this.savePage();
         break;
     }
+  },
+
+  crashReportingPrefChanged: function crashReportingPrefChanged(aState) {
+    CrashReporter.submitReports = aState;
   }
 };
 
@@ -1132,7 +1137,10 @@ var ContextUI = {
    * Context UI state getters & setters
    */
 
-  get isVisible() { return Elements.tray.hasAttribute("visible"); },
+  get isVisible() {
+    return (Elements.navbar.hasAttribute("visible") ||
+            Elements.navbar.hasAttribute("startpage"));
+  },
   get isExpanded() { return Elements.tray.hasAttribute("expanded"); },
   get isExpandable() { return this._expandable; },
 
@@ -1168,14 +1176,9 @@ var ContextUI = {
       this._setIsExpanded(true);
       shown = true;
     }
-    if (!this.isVisible) {
+    if (!Elements.navbar.isShowing) {
       // show the navbar
-      this._setIsVisible(true);
-      shown = true;
-    }
-    if (!Elements.appbar.isShowing) {
-      // show the appbar
-      Elements.appbar.show();
+      Elements.navbar.show();
       shown = true;
     }
 
@@ -1189,13 +1192,12 @@ var ContextUI = {
   // Display the nav bar
   displayNavbar: function displayNavbar() {
     this._clearDelayedTimeout();
-    this._setIsVisible(true, true);
+    Elements.navbar.show();
   },
 
   // Display the toolbar and tabs
   displayTabs: function displayTabs() {
     this._clearDelayedTimeout();
-    this._setIsVisible(true, true);
     this._setIsExpanded(true, true);
   },
 
@@ -1222,11 +1224,7 @@ var ContextUI = {
       this._setIsExpanded(false);
       dismissed = true;
     }
-    if (this.isVisible && !StartUI.isStartURI()) {
-      this._setIsVisible(false);
-      dismissed = true;
-    }
-    if (Elements.appbar.isShowing) {
+    if (Elements.navbar.isShowing) {
       this.dismissAppbar();
       dismissed = true;
     }
@@ -1263,24 +1261,6 @@ var ContextUI = {
   /*******************************************
    * Internal tray state setters
    */
-
-  // url bar state
-  _setIsVisible: function _setIsVisible(aFlag, setSilently) {
-    if (this.isVisible == aFlag)
-      return;
-
-    if (aFlag)
-      Elements.tray.setAttribute("visible", "true");
-    else
-      Elements.tray.removeAttribute("visible");
-
-    if (!aFlag) {
-      content.focus();
-    }
-
-    if (!setSilently)
-      this._fire(aFlag ? "MozContextUIShow" : "MozContextUIDismiss");
-  },
 
   // tab tray state
   _setIsExpanded: function _setIsExpanded(aFlag, setSilently) {
@@ -1407,6 +1387,8 @@ var StartUI = {
     Elements.startUI.addEventListener("autocompletestart", this, false);
     Elements.startUI.addEventListener("autocompleteend", this, false);
     Elements.startUI.addEventListener("contextmenu", this, false);
+    Elements.startUI.addEventListener("click", this, false);
+    Elements.startUI.addEventListener("MozMousePixelScroll", this, false);
 
     this.sections.forEach(function (sectionName) {
       let section = window[sectionName];
@@ -1488,6 +1470,16 @@ var StartUI = {
     }
   },
 
+  onClick: function onClick(aEvent) {
+    // If someone clicks / taps in empty grid space, take away
+    // focus from the nav bar edit so the soft keyboard will hide.
+    if (BrowserUI.blurNavBar()) {
+      // Advanced notice to CAO, so we can shuffle the nav bar in advance
+      // of the keyboard transition.
+      ContentAreaObserver.navBarWillBlur();
+    }
+  },
+
   handleEvent: function handleEvent(aEvent) {
     switch (aEvent.type) {
       case "autocompletestart":
@@ -1500,6 +1492,19 @@ var StartUI = {
         let event = document.createEvent("Events");
         event.initEvent("MozEdgeUICompleted", true, false);
         window.dispatchEvent(event);
+        break;
+      case "click":
+        this.onClick(aEvent);
+        break;
+
+      case "MozMousePixelScroll":
+        let startBox = document.getElementById("start-scrollbox");
+        let [, scrollInterface] = ScrollUtils.getScrollboxFromElement(startBox);
+
+        scrollInterface.scrollBy(aEvent.detail, 0);
+
+        aEvent.preventDefault();
+        aEvent.stopPropagation();
         break;
     }
   }
@@ -1522,6 +1527,11 @@ var FlyoutPanelsUI = {
     AboutPanelUI.init();
     PreferencesPanelView.init();
     SyncPanelUI.init();
+
+    // make sure to hide all flyouts when window is deactivated
+    window.addEventListener("deactivate", function(window) {
+      FlyoutPanelsUI.hide();
+    });
   },
 
   hide: function() {

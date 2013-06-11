@@ -16,6 +16,7 @@ import org.json.JSONObject;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.PointF;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Pair;
@@ -188,7 +189,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
     private void positionAndShowPopup(JSONObject rect, boolean isAutoComplete) {
         // Don't show the form assist popup when using fullscreen VKB
         InputMethodManager imm =
-                (InputMethodManager) GeckoApp.mAppContext.getSystemService(Context.INPUT_METHOD_SERVICE);
+                (InputMethodManager) GeckoAppShell.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm.isFullscreenMode())
             return;
 
@@ -205,7 +206,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
             sValidationMessageHeight = (int) (res.getDimension(R.dimen.validation_message_height));
         }
 
-        ImmutableViewportMetrics viewportMetrics = GeckoApp.mAppContext.getLayerView().getViewportMetrics();
+        ImmutableViewportMetrics viewportMetrics = GeckoAppShell.getLayerView().getViewportMetrics();
         float zoom = viewportMetrics.zoomFactor;
 
         // These values correspond to the input box for which we want to
@@ -216,8 +217,9 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
         int height = 0;
 
         try {
-            left = (int) (rect.getDouble("x") * zoom - viewportMetrics.viewportRectLeft);
-            top = (int) (rect.getDouble("y") * zoom - viewportMetrics.viewportRectTop);
+            PointF offset = viewportMetrics.getMarginOffset();
+            left = (int) (rect.getDouble("x") * zoom - viewportMetrics.viewportRectLeft + offset.x);
+            top = (int) (rect.getDouble("y") * zoom - viewportMetrics.viewportRectTop + offset.y);
             width = (int) (rect.getDouble("w") * zoom);
             height = (int) (rect.getDouble("h") * zoom);
         } catch (JSONException e) {

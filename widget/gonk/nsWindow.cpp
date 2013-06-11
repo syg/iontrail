@@ -99,6 +99,15 @@ public:
             }
         }
 
+        // Notify observers that the screen state has just changed.
+        nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
+        if (observerService) {
+          observerService->NotifyObservers(
+            nullptr, "screen-state-changed",
+            mIsOn ? NS_LITERAL_STRING("on").get() : NS_LITERAL_STRING("off").get()
+          );
+        }
+
         return NS_OK;
     }
 
@@ -227,7 +236,7 @@ nsWindow::DoDraw(void)
 
         listener = gWindowToRedraw->GetWidgetListener();
         if (listener) {
-            listener->PaintWindow(gWindowToRedraw, region, 0);
+            listener->PaintWindow(gWindowToRedraw, region);
         }
     } else if (mozilla::layers::LAYERS_CLIENT == lm->GetBackendType()) {
       // No need to do anything, the compositor will handle drawing
@@ -252,7 +261,7 @@ nsWindow::DoDraw(void)
 
             listener = gWindowToRedraw->GetWidgetListener();
             if (listener) {
-                listener->PaintWindow(gWindowToRedraw, region, 0);
+                listener->PaintWindow(gWindowToRedraw, region);
             }
         }
 
@@ -547,12 +556,17 @@ nsWindow::GetDPI()
 double
 nsWindow::GetDefaultScaleInternal()
 {
-    double rawscale = GetDPI() / 192.0;
-    if (rawscale < 1.25)
-        return 1;
-    else if (rawscale < 1.75)
-        return 1.5;
-    return 2;
+    float dpi = GetDPI();
+    // The mean pixel density for mdpi devices is 160dpi, 240dpi for hdpi,
+    // and 320dpi for xhdpi, respectively.
+    // We'll take the mid-value between these three numbers as the boundary.
+    if (dpi < 200.0) {
+        return 1.0; // mdpi devices.
+    }
+    if (dpi < 280.0) {
+        return 1.5; // hdpi devices.
+    }
+    return 2.0; // xhdpi devices.
 }
 
 LayerManager *

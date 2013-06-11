@@ -23,6 +23,7 @@
 
 #include "nsLayoutStatics.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollectorUtils.h"
@@ -294,8 +295,7 @@ EnableUniversalXPConnect(JSContext *cx)
     XPCWrappedNativeScope *scope = priv->scope;
     if (!scope)
         return true;
-    XPCCallContext ccx(NATIVE_CALLER, cx);
-    return nsXPCComponents::AttachComponentsObject(ccx, scope);
+    return nsXPCComponents::AttachComponentsObject(cx, scope);
 }
 
 JSObject *
@@ -344,7 +344,7 @@ XPCJSRuntime::AssertNoObjectsToTrace(void* aPossibleJSHolder)
 {
     nsScriptObjectTracer* tracer = mJSHolders.Get(aPossibleJSHolder);
     if (tracer && tracer->Trace) {
-        tracer->Trace(aPossibleJSHolder, AssertNoGcThing, nullptr);
+        tracer->Trace(aPossibleJSHolder, TraceCallbackFunc(AssertNoGcThing), nullptr);
     }
 }
 #endif
@@ -368,11 +368,13 @@ XPCJSRuntime::RemoveJSHolder(void* aHolder)
     }
 }
 
+#ifdef DEBUG
 bool
 XPCJSRuntime::TestJSHolder(void* aHolder)
 {
     return mJSHolders.Get(aHolder, nullptr);
 }
+#endif
 
 // static
 void XPCJSRuntime::TraceBlackJS(JSTracer* trc, void* data)
@@ -381,7 +383,7 @@ void XPCJSRuntime::TraceBlackJS(JSTracer* trc, void* data)
 
     // Skip this part if XPConnect is shutting down. We get into
     // bad locking problems with the thread iteration otherwise.
-    if (!self->GetXPConnect()->IsShuttingDown()) {
+    if (!nsXPConnect::XPConnect()->IsShuttingDown()) {
         // Trace those AutoMarkingPtr lists!
         if (AutoMarkingPtr *roots = Get()->mAutoRoots)
             roots->TraceJSAll(trc);
@@ -398,7 +400,7 @@ void XPCJSRuntime::TraceBlackJS(JSTracer* trc, void* data)
     }
 
     dom::TraceBlackJS(trc, JS_GetGCParameter(self->GetJSRuntime(), JSGC_NUMBER),
-                      self->GetXPConnect()->IsShuttingDown());
+                      nsXPConnect::XPConnect()->IsShuttingDown());
 }
 
 // static
@@ -410,16 +412,29 @@ void XPCJSRuntime::TraceGrayJS(JSTracer* trc, void* data)
     self->TraceXPConnectRoots(trc);
 }
 
-static void
-TraceJSObject(void *aScriptThing, const char *name, void *aClosure)
+struct JsGcTracer : public TraceCallbacks
 {
-    JS_CallGenericTracer(static_cast<JSTracer*>(aClosure), aScriptThing, name);
-}
+    virtual void Trace(JS::Value *p, const char *name, void *closure) const MOZ_OVERRIDE {
+        JS_CallValueTracer(static_cast<JSTracer*>(closure), p, name);
+    }
+    virtual void Trace(jsid *p, const char *name, void *closure) const MOZ_OVERRIDE {
+        JS_CallIdTracer(static_cast<JSTracer*>(closure), p, name);
+    }
+    virtual void Trace(JSObject **p, const char *name, void *closure) const MOZ_OVERRIDE {
+        JS_CallObjectTracer(static_cast<JSTracer*>(closure), p, name);
+    }
+    virtual void Trace(JSString **p, const char *name, void *closure) const MOZ_OVERRIDE {
+        JS_CallStringTracer(static_cast<JSTracer*>(closure), p, name);
+    }
+    virtual void Trace(JSScript **p, const char *name, void *closure) const MOZ_OVERRIDE {
+        JS_CallScriptTracer(static_cast<JSTracer*>(closure), p, name);
+    }
+};
 
 static PLDHashOperator
 TraceJSHolder(void *holder, nsScriptObjectTracer *&tracer, void *arg)
 {
-    tracer->Trace(holder, TraceJSObject, arg);
+    tracer->Trace(holder, JsGcTracer(), arg);
 
     return PL_DHASH_NEXT;
 }
@@ -429,7 +444,7 @@ void XPCJSRuntime::TraceXPConnectRoots(JSTracer *trc)
     JSContext *iter = nullptr;
     while (JSContext *acx = JS_ContextIterator(GetJSRuntime(), &iter)) {
         MOZ_ASSERT(js::HasUnrootedGlobal(acx));
-        if (JSObject *global = JS_GetGlobalObject(acx))
+        if (JSObject *global = js::GetDefaultGlobalForContext(acx))
             JS_CallObjectTracer(trc, &global, "XPC global object");
     }
 
@@ -473,8 +488,7 @@ NoteJSHolder(void *holder, nsScriptObjectTracer *&tracer, void *arg)
     Closure *closure = static_cast<Closure*>(arg);
 
     closure->cycleCollectionEnabled = false;
-    tracer->Trace(holder, CheckParticipatesInCycleCollection,
-                  closure);
+    tracer->Trace(holder, TraceCallbackFunc(CheckParticipatesInCycleCollection), closure);
     if (closure->cycleCollectionEnabled)
         closure->cb->NoteNativeRoot(holder, tracer);
 
@@ -543,7 +557,7 @@ XPCJSRuntime::AddXPConnectRoots(nsCycleCollectionNoteRootCallback &cb)
     while ((acx = JS_ContextIterator(GetJSRuntime(), &iter))) {
         // Add the context to the CC graph only if traversing it would
         // end up doing something.
-        JSObject* global = JS_GetGlobalObject(acx);
+        JSObject* global = js::GetDefaultGlobalForContext(acx);
         if (global && xpc_IsGrayGCThing(global)) {
             cb.NoteNativeRoot(acx, nsXPConnect::JSContextParticipant());
         }
@@ -595,9 +609,8 @@ XPCJSRuntime::UnmarkSkippableJSHolders()
 void
 xpc_UnmarkSkippableJSHolders()
 {
-    if (nsXPConnect::GetXPConnect() &&
-        nsXPConnect::GetXPConnect()->GetRuntime()) {
-        nsXPConnect::GetXPConnect()->GetRuntime()->UnmarkSkippableJSHolders();
+    if (nsXPConnect::XPConnect()->GetRuntime()) {
+        nsXPConnect::XPConnect()->GetRuntime()->UnmarkSkippableJSHolders();
     }
 }
 
@@ -616,9 +629,9 @@ DoDeferredRelease(nsTArray<T> &array)
     }
 }
 
-struct DeferredFinalizeFunction
+struct DeferredFinalizeFunctionHolder
 {
-    XPCJSRuntime::DeferredFinalizeFunction run;
+    DeferredFinalizeFunction run;
     void *data;
 };
 
@@ -626,7 +639,7 @@ class XPCIncrementalReleaseRunnable : public nsRunnable
 {
     XPCJSRuntime *runtime;
     nsTArray<nsISupports *> items;
-    nsAutoTArray<DeferredFinalizeFunction, 16> deferredFinalizeFunctions;
+    nsAutoTArray<DeferredFinalizeFunctionHolder, 16> deferredFinalizeFunctions;
     uint32_t finalizeFunctionToRun;
 
     static const PRTime SliceMillis = 10; /* ms */
@@ -667,7 +680,7 @@ XPCIncrementalReleaseRunnable::XPCIncrementalReleaseRunnable(XPCJSRuntime *rt,
 {
     nsLayoutStatics::AddRef();
     this->items.SwapElements(items);
-    DeferredFinalizeFunction *function = deferredFinalizeFunctions.AppendElement();
+    DeferredFinalizeFunctionHolder *function = deferredFinalizeFunctions.AppendElement();
     function->run = ReleaseSliceNow;
     function->data = &this->items;
     for (uint32_t i = 0; i < rt->mDeferredFinalizeFunctions.Length(); ++i) {
@@ -699,7 +712,7 @@ XPCIncrementalReleaseRunnable::ReleaseNow(bool limited)
     TimeStamp started = TimeStamp::Now();
     bool timeout = false;
     do {
-        const DeferredFinalizeFunction &function =
+        const DeferredFinalizeFunctionHolder &function =
             deferredFinalizeFunctions[finalizeFunctionToRun];
         if (limited) {
             bool done = false;
@@ -923,7 +936,7 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, JSBool is
 
             // Skip this part if XPConnect is shutting down. We get into
             // bad locking problems with the thread iteration otherwise.
-            if (!self->GetXPConnect()->IsShuttingDown()) {
+            if (!nsXPConnect::XPConnect()->IsShuttingDown()) {
 
                 // Mark those AutoMarkingPtr lists!
                 if (AutoMarkingPtr *roots = Get()->mAutoRoots)
@@ -965,7 +978,7 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, JSBool is
             // We don't want to sweep the JSClasses at shutdown time.
             // At this point there may be JSObjects using them that have
             // been removed from the other maps.
-            if (!self->GetXPConnect()->IsShuttingDown()) {
+            if (!nsXPConnect::XPConnect()->IsShuttingDown()) {
                 self->mNativeScriptableSharedMap->
                     Enumerate(JSClassSweeper, sweepArg);
             }
@@ -1011,7 +1024,7 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, JSBool is
 
             // Skip this part if XPConnect is shutting down. We get into
             // bad locking problems with the thread iteration otherwise.
-            if (!self->GetXPConnect()->IsShuttingDown()) {
+            if (!nsXPConnect::XPConnect()->IsShuttingDown()) {
                 // Do the marking...
 
                 XPCCallContext* ccxp = XPCJSRuntime::Get()->GetCallContext();
@@ -1649,6 +1662,11 @@ ReportZoneStats(const JS::ZoneStats &zStats,
                       "heap that holds over-sized string headers, in which "
                       "string characters are stored inline.");
 
+    ZCREPORT_GC_BYTES(pathPrefix + NS_LITERAL_CSTRING("gc-heap/lazy-scripts"),
+                      zStats.gcHeapLazyScripts,
+                      "Memory on the garbage-collected JavaScript "
+                      "heap that represents scripts which haven't executed yet.");
+
     ZCREPORT_GC_BYTES(pathPrefix + NS_LITERAL_CSTRING("gc-heap/type-objects"),
                       zStats.gcHeapTypeObjects,
                       "Memory on the garbage-collected JavaScript "
@@ -1659,6 +1677,11 @@ ReportZoneStats(const JS::ZoneStats &zStats,
                       "Memory on the garbage-collected JavaScript "
                       "heap that holds references to executable code pools "
                       "used by the IonMonkey JIT.");
+
+    ZCREPORT_BYTES(pathPrefix + NS_LITERAL_CSTRING("lazy-scripts"),
+                   zStats.lazyScripts,
+                   "Memory holding miscellaneous additional information associated with lazy "
+                   "scripts.");
 
     ZCREPORT_BYTES(pathPrefix + NS_LITERAL_CSTRING("type-objects"),
                    zStats.typeObjects,
@@ -2236,8 +2259,8 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
 
     virtual void initExtraZoneStats(JS::Zone *zone, JS::ZoneStats *zStats) MOZ_OVERRIDE {
         // Get the compartment's global.
-        nsXPConnect *xpc = nsXPConnect::GetXPConnect();
-        JSContext *cx = xpc->GetSafeJSContext();
+        nsXPConnect *xpc = nsXPConnect::XPConnect();
+        AutoSafeJSContext cx;
         JSCompartment *comp = js::GetAnyCompartmentInZone(zone);
         xpc::ZoneStatsExtras *extras = new xpc::ZoneStatsExtras;
         extras->pathPrefix.AssignLiteral("explicit/js-non-window/zones/");
@@ -2269,8 +2292,8 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
         GetCompartmentName(c, cName, true);
 
         // Get the compartment's global.
-        nsXPConnect *xpc = nsXPConnect::GetXPConnect();
-        JSContext *cx = xpc->GetSafeJSContext();
+        nsXPConnect *xpc = nsXPConnect::XPConnect();
+        AutoSafeJSContext cx;
         bool needZone = true;
         RootedObject global(cx, JS_GetGlobalForCompartmentOrNull(cx, c));
         if (global) {
@@ -2632,8 +2655,7 @@ SourceHook(JSContext *cx, JS::Handle<JSScript*> script, jschar **src,
 }
 
 XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
- : mXPConnect(aXPConnect),
-   mJSRuntime(nullptr),
+   : mJSRuntime(nullptr),
    mJSContextStack(new XPCJSContextStack()),
    mCallContext(nullptr),
    mAutoRoots(nullptr),
@@ -2819,22 +2841,21 @@ bool InternStaticDictionaryJSVals(JSContext* aCx);
 JSBool
 XPCJSRuntime::OnJSContextNew(JSContext *cx)
 {
+    // If we were the first cx ever created (like the SafeJSContext), the caller
+    // would have had no way to enter a request. Enter one now before doing the
+    // rest of the cx setup.
+    JSAutoRequest ar(cx);
+
     // if it is our first context then we need to generate our string ids
     if (JSID_IS_VOID(mStrIDs[0])) {
-        JS_SetGCParameterForThread(cx, JSGC_MAX_CODE_CACHE_BYTES, 16 * 1024 * 1024);
-        {
-            // Scope the JSAutoRequest so it goes out of scope before calling
-            // mozilla::dom::binding::DefineStaticJSVals.
-            JSAutoRequest ar(cx);
-            RootedString str(cx);
-            for (unsigned i = 0; i < IDX_TOTAL_COUNT; i++) {
-                str = JS_InternString(cx, mStrings[i]);
-                if (!str || !JS_ValueToId(cx, STRING_TO_JSVAL(str), &mStrIDs[i])) {
-                    mStrIDs[0] = JSID_VOID;
-                    return false;
-                }
-                mStrJSVals[i] = STRING_TO_JSVAL(str);
+        RootedString str(cx);
+        for (unsigned i = 0; i < IDX_TOTAL_COUNT; i++) {
+            str = JS_InternString(cx, mStrings[i]);
+            if (!str || !JS_ValueToId(cx, STRING_TO_JSVAL(str), &mStrIDs[i])) {
+                mStrIDs[0] = JSID_VOID;
+                return false;
             }
+            mStrJSVals[i] = STRING_TO_JSVAL(str);
         }
 
         if (!mozilla::dom::DefineStaticJSVals(cx) ||
@@ -2893,7 +2914,6 @@ XPCJSRuntime::DebugDump(int16_t depth)
     depth--;
     XPC_LOG_ALWAYS(("XPCJSRuntime @ %x", this));
         XPC_LOG_INDENT();
-        XPC_LOG_ALWAYS(("mXPConnect @ %x", mXPConnect));
         XPC_LOG_ALWAYS(("mJSRuntime @ %x", mJSRuntime));
         XPC_LOG_ALWAYS(("mMapLock @ %x", mMapLock));
 
@@ -2982,8 +3002,8 @@ XPCRootSetElem::AddToRootSet(XPCLock *lock, XPCRootSetElem **listHead)
 void
 XPCRootSetElem::RemoveFromRootSet(XPCLock *lock)
 {
-    if (nsXPConnect *xpc = nsXPConnect::GetXPConnect())
-        JS::PokeGC(xpc->GetRuntime()->GetJSRuntime());
+    nsXPConnect *xpc = nsXPConnect::XPConnect();
+    JS::PokeGC(xpc->GetRuntime()->GetJSRuntime());
 
     NS_ASSERTION(mSelfp, "Must be linked");
 
@@ -3023,7 +3043,6 @@ XPCJSRuntime::GetJunkScope()
         AutoSafeJSContext cx;
         SandboxOptions options(cx);
         options.sandboxName.AssignASCII("XPConnect Junk Compartment");
-        JSAutoRequest ac(cx);
         RootedValue v(cx);
         nsresult rv = xpc_CreateSandboxObject(cx, v.address(),
                                               nsContentUtils::GetSystemPrincipal(),
@@ -3043,8 +3062,7 @@ XPCJSRuntime::DeleteJunkScope()
     if(!mJunkScope)
         return;
 
-    JSContext *cx = mJSContextStack->GetSafeJSContext();
-    JSAutoRequest ac(cx);
+    AutoSafeJSContext cx;
     JS_RemoveObjectRoot(cx, &mJunkScope);
     mJunkScope = nullptr;
 }

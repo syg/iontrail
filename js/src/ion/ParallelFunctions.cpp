@@ -4,12 +4,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsinterp.h"
-#include "ParallelFunctions.h"
-#include "IonSpewer.h"
+#include "ion/ParallelFunctions.h"
 
-#include "jsinterpinlines.h"
+#include "ion/IonSpewer.h"
+#include "vm/Interpreter.h"
+
 #include "jscompartmentinlines.h"
+#include "jsstrinlines.h"
+#include "vm/Interpreter-inl.h"
 
 using namespace js;
 using namespace ion;
@@ -428,7 +430,8 @@ ion::ParallelAbort(ParallelBailoutCause cause,
          "(%p:%s:%d at line %d)",
          cause,
          outermostScript, outermostScript->filename(), outermostScript->lineno,
-         currentScript, currentScript->filename(), currentScript->lineno);
+         currentScript, currentScript->filename(), currentScript->lineno,
+         (currentScript ? PCToLineNumber(currentScript, bytecode) : 0));
 
     JS_ASSERT(InParallelSection());
     JS_ASSERT(outermostScript != NULL);
@@ -454,7 +457,7 @@ ion::PropagateParallelAbort(JSScript *outermostScript,
     JS_ASSERT(InParallelSection());
     JS_ASSERT(outermostScript->hasParallelIonScript());
 
-    outermostScript->parallelIonScript()->setHasInvalidatedCallTarget();
+    outermostScript->parallelIonScript()->setHasUncompiledCallTarget();
 
     ForkJoinSlice *slice = ForkJoinSlice::Current();
     if (currentScript)
@@ -508,6 +511,8 @@ ion::InitRestParameter(ForkJoinSlice *slice, uint32_t length, Value *rest,
     JS_ASSERT(res->isArray());
     JS_ASSERT(!res->getDenseInitializedLength());
     JS_ASSERT(res->type() == templateObj->type());
+    // See note in visitRest in ParallelArrayAnalysis.
+    JS_ASSERT(res->type()->unknownProperties());
 
     if (length) {
         JSObject::EnsureDenseResult edr = res->parExtendDenseElements(slice, rest, length);

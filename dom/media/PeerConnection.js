@@ -295,6 +295,11 @@ RTCPeerConnection.prototype = {
     this._pc = Cc["@mozilla.org/peerconnection;1"].
              createInstance(Ci.IPeerConnection);
     this._observer = new PeerConnectionObserver(this);
+    this._winID = this._win.QueryInterface(Ci.nsIInterfaceRequestor)
+                           .getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
+
+    // Add a reference to the PeerConnection to global list (before init).
+    _globalPCList.addPC(this);
 
     // Nothing starts until ICE gathering completes.
     this._queueOrRun({
@@ -302,12 +307,6 @@ RTCPeerConnection.prototype = {
       args: [this._observer, this._win, rtcConfig, Services.tm.currentThread],
       wait: true
     });
-
-    this._winID = this._win.QueryInterface(Ci.nsIInterfaceRequestor)
-                           .getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
-
-    // Add a reference to the PeerConnection to global list.
-    _globalPCList.addPC(this);
   },
 
   _getPC: function() {
@@ -766,9 +765,28 @@ RTCPeerConnection.prototype = {
                                                     sdp: sdp });
   },
 
-  get signalingState()     { return "stable"; }, // not yet implemented
   get iceGatheringState()  { return this._iceGatheringState; },
   get iceConnectionState() { return this._iceConnectionState; },
+
+  // Corresponds to constants in IPeerConnection.idl
+  _signalingStateMap: [
+    'invalid',
+    'stable',
+    'have-local-offer',
+    'have-remote-offer',
+    'have-local-pranswer',
+    'have-remote-pranswer',
+    'closed'
+  ],
+
+  get signalingState() {
+    // checking for our local pc closed indication
+    // before invoking the pc methods.
+    if(this._closed) {
+      return "closed";
+    }
+    return this._signalingStateMap[this._getPC().signalingState];
+  },
 
   changeIceGatheringState: function(state) {
     this._iceGatheringState = state;
@@ -813,6 +831,23 @@ RTCPeerConnection.prototype = {
     if (dict == undefined) {
       dict = {};
     }
+    if (dict.maxRetransmitNum != undefined) {
+      dict.maxRetransmits = dict.maxRetransmitNum;
+      this.reportWarning("Deprecated RTCDataChannelInit dictionary entry maxRetransmitNum used!", null, 0);
+    }
+    if (dict.outOfOrderAllowed != undefined) {
+      dict.ordered = !dict.outOfOrderAllowed; // the meaning is swapped with the name change
+      this.reportWarning("Deprecated RTCDataChannelInit dictionary entry outOfOrderAllowed used!", null, 0);
+    }
+    if (dict.preset != undefined) {
+      dict.negotiated = dict.preset;
+      this.reportWarning("Deprecated RTCDataChannelInit dictionary entry preset used!", null, 0);
+    }
+    if (dict.stream != undefined) {
+      dict.id = dict.stream;
+      this.reportWarning("Deprecated RTCDataChannelInit dictionary entry stream used!", null, 0);
+    }
+
     if (dict.maxRetransmitTime != undefined &&
         dict.maxRetransmitNum != undefined) {
       throw new Components.Exception("Both maxRetransmitTime and maxRetransmitNum cannot be provided");
@@ -974,14 +1009,10 @@ PeerConnectionObserver.prototype = {
     this._dompc._executeNext();
   },
 
-  onStateChange: function(state) {
-    if (state != Ci.IPeerConnectionObserver.kIceState) {
-      return;
-    }
-
-    switch (this._dompc._pc.iceState) {
+  handleIceStateChanges: function(iceState) {
+    switch (iceState) {
       case Ci.IPeerConnection.kIceWaiting:
-        this._dompc.changeIceConnectionState("completed");
+        this._dompc.changeIceConnectionState("new");
         this.callCB(this._dompc.ongatheringchange, "complete");
         this.callCB(this._onicechange, "starting");
         // Now that the PC is ready to go, execute any pending operations.
@@ -1005,7 +1036,33 @@ PeerConnectionObserver.prototype = {
         this.callCB(this._onicechange, "failed");
         break;
       default:
-        // Unknown state!
+        // Unknown ICE state!
+        this._dompc.reportWarning("Unhandled ice state: " + iceState, null, 0);
+        break;
+    }
+  },
+
+  onStateChange: function(state) {
+    switch (state) {
+      case Ci.IPeerConnectionObserver.kSignalingState:
+        this.callCB(this._dompc.onsignalingstatechange,
+                    this._dompc.signalingState);
+        break;
+
+      case Ci.IPeerConnectionObserver.kIceState:
+        this.handleIceStateChanges(this._dompc._pc.iceState);
+        break;
+
+      case Ci.IPeerConnectionObserver.kSdpState:
+        // No-op
+        break;
+
+      case Ci.IPeerConnectionObserver.kSipccState:
+        // No-op
+        break;
+
+      default:
+        this._dompc.reportWarning("Unhandled state type: " + state, null, 0);
         break;
     }
   },

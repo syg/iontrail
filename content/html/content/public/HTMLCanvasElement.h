@@ -6,6 +6,7 @@
 #if !defined(mozilla_dom_HTMLCanvasElement_h)
 #define mozilla_dom_HTMLCanvasElement_h
 
+#include "mozilla/Attributes.h"
 #include "nsIDOMHTMLCanvasElement.h"
 #include "nsGenericHTMLElement.h"
 #include "nsGkAtoms.h"
@@ -15,21 +16,17 @@
 
 #include "nsICanvasElementExternal.h"
 #include "nsLayoutUtils.h"
+#include "mozilla/gfx/Rect.h"
 
 class nsICanvasRenderingContextInternal;
 class nsIDOMFile;
 class nsITimerCallback;
-class nsIPropertyBag;
 
 namespace mozilla {
 
 namespace layers {
 class CanvasLayer;
 class LayerManager;
-}
-
-namespace gfx {
-struct Rect;
 }
 
 namespace dom {
@@ -92,16 +89,8 @@ public:
   }
   already_AddRefed<nsISupports>
   GetContext(JSContext* aCx, const nsAString& aContextId,
-             const Optional<JS::Handle<JS::Value> >& aContextOptions,
-             ErrorResult& aRv)
-  {
-    JS::Value contextOptions = aContextOptions.WasPassed()
-                             ? aContextOptions.Value()
-                             : JS::UndefinedValue();
-    nsCOMPtr<nsISupports> context;
-    aRv = GetContext(aContextId, contextOptions, aCx, getter_AddRefs(context));
-    return context.forget();
-  }
+             JS::Handle<JS::Value> aContextOptions,
+             ErrorResult& aRv);
   void ToDataURL(JSContext* aCx, const nsAString& aType,
                  const Optional<JS::Handle<JS::Value> >& aParams,
                  nsAString& aDataURL, ErrorResult& aRv)
@@ -185,16 +174,16 @@ public:
   /*
    * nsICanvasElementExternal -- for use outside of content/layout
    */
-  NS_IMETHOD_(nsIntSize) GetSizeExternal();
+  NS_IMETHOD_(nsIntSize) GetSizeExternal() MOZ_OVERRIDE;
   NS_IMETHOD RenderContextsExternal(gfxContext *aContext,
                                     gfxPattern::GraphicsFilter aFilter,
-                                    uint32_t aFlags = RenderFlagPremultAlpha);
+                                    uint32_t aFlags = RenderFlagPremultAlpha) MOZ_OVERRIDE;
 
   virtual bool ParseAttribute(int32_t aNamespaceID,
                                 nsIAtom* aAttribute,
                                 const nsAString& aValue,
-                                nsAttrValue& aResult);
-  nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute, int32_t aModType) const;
+                                nsAttrValue& aResult) MOZ_OVERRIDE;
+  nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute, int32_t aModType) const MOZ_OVERRIDE;
 
   // SetAttr override.  C++ is stupid, so have to override both
   // overloaded methods.
@@ -205,8 +194,8 @@ public:
   }
   virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                            nsIAtom* aPrefix, const nsAString& aValue,
-                           bool aNotify);
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+                           bool aNotify) MOZ_OVERRIDE;
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
   nsresult CopyInnerTo(mozilla::dom::Element* aDest);
 
   /*
@@ -229,7 +218,7 @@ public:
 
   nsresult GetContext(const nsAString& aContextId, nsISupports** aContext);
 
-  virtual nsIDOMNode* AsDOMNode() { return this; }
+  virtual nsIDOMNode* AsDOMNode() MOZ_OVERRIDE { return this; }
 
 protected:
   virtual JSObject* WrapNode(JSContext* aCx,
@@ -237,7 +226,7 @@ protected:
 
   nsIntSize GetWidthHeight();
 
-  nsresult UpdateContext(nsIPropertyBag *aNewContextOptions = nullptr);
+  nsresult UpdateContext(JSContext* aCx, JS::Handle<JS::Value> options);
   nsresult ExtractData(const nsAString& aType,
                        const nsAString& aOptions,
                        nsIInputStream** aStream,

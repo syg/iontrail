@@ -13,13 +13,14 @@
 #include "BindingUtils.h"
 
 #include "AccessCheck.h"
+#include "jsfriendapi.h"
 #include "nsContentUtils.h"
+#include "nsIDOMGlobalPropertyInitializer.h"
 #include "nsIXPConnect.h"
 #include "WrapperFactory.h"
 #include "xpcprivate.h"
 #include "XPCQuickStubs.h"
 #include "XrayWrapper.h"
-#include "jsfriendapi.h"
 
 #include "mozilla/dom/HTMLObjectElement.h"
 #include "mozilla/dom/HTMLObjectElementBinding.h"
@@ -583,8 +584,7 @@ NativeInterface2JSObjectAndThrowIfFailed(JSContext* aCx,
                                          bool aAllowNativeWrapper)
 {
   nsresult rv;
-  XPCLazyCallContext lccx(JS_CALLER, aCx, aScope);
-  if (!XPCConvert::NativeInterface2JSObject(lccx, aRetval, NULL, aHelper, aIID,
+  if (!XPCConvert::NativeInterface2JSObject(aRetval, NULL, aHelper, aIID,
                                             NULL, aAllowNativeWrapper, &rv)) {
     // I can't tell if NativeInterface2JSObject throws JS exceptions
     // or not.  This is a sloppy stab at the right semantics; the
@@ -600,8 +600,7 @@ NativeInterface2JSObjectAndThrowIfFailed(JSContext* aCx,
 bool
 TryPreserveWrapper(JSObject* obj)
 {
-  nsISupports* native;
-  if (UnwrapDOMObjectToISupports(obj, native)) {
+  if (nsISupports* native = UnwrapDOMObjectToISupports(obj)) {
     nsWrapperCache* cache = nullptr;
     CallQueryInterface(native, &cache);
     if (cache) {
@@ -655,8 +654,7 @@ VariantToJsval(JSContext* aCx, JS::Handle<JSObject*> aScope,
                nsIVariant* aVariant, JS::Value* aRetval)
 {
   nsresult rv;
-  XPCLazyCallContext lccx(JS_CALLER, aCx, aScope);
-  if (!XPCVariant::VariantDataToJS(lccx, aVariant, &rv, aRetval)) {
+  if (!XPCVariant::VariantDataToJS(aVariant, &rv, aRetval)) {
     // Does it throw?  Who knows
     if (!JS_IsExceptionPending(aCx)) {
       Throw<true>(aCx, NS_FAILED(rv) ? rv : NS_ERROR_UNEXPECTED);
@@ -670,6 +668,7 @@ VariantToJsval(JSContext* aCx, JS::Handle<JSObject*> aScope,
 JSBool
 QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
 {
+  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
   JS::Rooted<JS::Value> thisv(cx, JS_THIS(cx, vp));
   if (thisv.isNull())
     return false;
@@ -683,8 +682,8 @@ QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
       return false;
   }
 
-  nsISupports* native;
-  if (!UnwrapDOMObjectToISupports(obj, native)) {
+  nsISupports* native = UnwrapDOMObjectToISupports(obj);
+  if (!native) {
     return Throw<true>(cx, NS_ERROR_FAILURE);
   }
 
@@ -698,7 +697,7 @@ QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
   }
 
   nsIJSID* iid;
-  xpc_qsSelfRef iidRef;
+  SelfRef iidRef;
   if (NS_FAILED(xpc_qsUnwrapArg<nsIJSID>(cx, argv[0], &iid, &iidRef.ptr,
                                           &argv[0]))) {
     return Throw<true>(cx, NS_ERROR_XPC_BAD_CONVERT_JS);
@@ -712,7 +711,7 @@ QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
       return Throw<true>(cx, rv);
     }
 
-    return WrapObject(cx, origObj, ci, &NS_GET_IID(nsIClassInfo), vp);
+    return WrapObject(cx, origObj, ci, &NS_GET_IID(nsIClassInfo), args.rval());
   }
 
   nsCOMPtr<nsISupports> unused;
@@ -1033,6 +1032,21 @@ XrayResolveNativeProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
 }
 
 bool
+XrayDefineProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
+                   JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
+                   JSPropertyDescriptor* desc, bool* defined)
+{
+  if (!js::IsProxy(obj))
+      return true;
+
+  MOZ_ASSERT(IsDOMProxy(obj), "What kind of proxy is this?");
+
+  DOMProxyHandler* handler =
+    static_cast<DOMProxyHandler*>(js::GetProxyHandler(obj));
+  return handler->defineProperty(cx, wrapper, id, desc, defined);
+}
+
+bool
 XrayEnumerateAttributes(JSContext* cx, JS::Handle<JSObject*> wrapper,
                         JS::Handle<JSObject*> obj,
                         const Prefable<const JSPropertySpec>* attributes,
@@ -1322,7 +1336,7 @@ MainThreadDictionaryBase::ParseJSON(JSContext *aCx,
   }
   return JS_ParseJSON(aCx,
                       static_cast<const jschar*>(PromiseFlatString(aJSON).get()),
-                      aJSON.Length(), aVal.address());
+                      aJSON.Length(), aVal);
 }
 
 static JSString*
@@ -1454,8 +1468,8 @@ ReparentWrapper(JSContext* aCx, JS::HandleObject aObjArg)
     return NS_OK;
   }
 
-  nsISupports* native;
-  if (!UnwrapDOMObjectToISupports(aObj, native)) {
+  nsISupports* native = UnwrapDOMObjectToISupports(aObj);
+  if (!native) {
     return NS_OK;
   }
 
@@ -1635,14 +1649,13 @@ GlobalObject::GlobalObject(JSContext* aCx, JSObject* aObject)
     return;
   }
 
-  JS::Value val;
-  val.setObject(*mGlobalJSObject);
+  JS::Rooted<JS::Value> val(aCx, JS::ObjectValue(*mGlobalJSObject));
 
   // Switch this to UnwrapDOMObjectToISupports once our global objects are
   // using new bindings.
   nsresult rv = xpc_qsUnwrapArg<nsISupports>(aCx, val, &mGlobalObject,
                                              static_cast<nsISupports**>(getter_AddRefs(mGlobalObjectRef)),
-                                             &val);
+                                             val.address());
   if (NS_FAILED(rv)) {
     mGlobalObject = nullptr;
     Throw<true>(aCx, NS_ERROR_XPC_BAD_CONVERT_JS);
@@ -1732,6 +1745,17 @@ ReportLenientThisUnwrappingFailure(JSContext* cx, JS::Handle<JSObject*> obj)
   return true;
 }
 
+bool
+RegisterForDeferredFinalization(DeferredFinalizeStartFunction start,
+                                DeferredFinalizeFunction run)
+{
+  XPCJSRuntime *rt = nsXPConnect::GetRuntimeInstance();
+  NS_ENSURE_TRUE(rt, false);
+
+  rt->RegisterDeferredFinalize(start, run);
+  return true;
+}
+
 // Date implementation methods
 Date::Date() :
   mMsecSinceEpoch(UnspecifiedNaN())
@@ -1760,13 +1784,13 @@ Date::SetTimeStamp(JSContext* cx, JSObject* objArg)
 }
 
 bool
-Date::ToDateObject(JSContext* cx, JS::Value* vp) const
+Date::ToDateObject(JSContext* cx, JS::MutableHandle<JS::Value> rval) const
 {
   JSObject* obj = JS_NewDateObjectMsec(cx, mMsecSinceEpoch);
   if (!obj) {
     return false;
   }
-  *vp = JS::ObjectValue(*obj);
+  rval.set(JS::ObjectValue(*obj));
   return true;
 }
 
@@ -1803,6 +1827,63 @@ GetWindowForJSImplementedObject(JSContext* cx, JS::Handle<JSObject*> obj,
   nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(global.Get()));
   win.forget(window);
   return true;
+}
+
+already_AddRefed<nsPIDOMWindow>
+ConstructJSImplementation(JSContext* aCx, const char* aContractId,
+                          const GlobalObject& aGlobal,
+                          JS::MutableHandle<JSObject*> aObject,
+                          ErrorResult& aRv)
+{
+  // Get the window to use as a parent and for initialization.
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.Get());
+  if (!window) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  // Make sure to have nothing on the JS context stack while creating and
+  // initializing the object, so exceptions from that will get reported
+  // properly, since those are never exceptions that a spec wants to be thrown.
+  {  // Scope for the nsCxPusher
+    nsCxPusher pusher;
+    pusher.PushNull();
+    // Get the XPCOM component containing the JS implementation.
+    nsCOMPtr<nsISupports> implISupports = do_CreateInstance(aContractId);
+    if (!implISupports) {
+      NS_WARNING("Failed to get JS implementation for contract");
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+    // Initialize the object, if it implements nsIDOMGlobalPropertyInitializer.
+    nsCOMPtr<nsIDOMGlobalPropertyInitializer> gpi =
+      do_QueryInterface(implISupports);
+    if (gpi) {
+      JS::Rooted<JS::Value> initReturn(aCx);
+      nsresult rv = gpi->Init(window, initReturn.address());
+      if (NS_FAILED(rv)) {
+        aRv.Throw(rv);
+        return nullptr;
+      }
+      MOZ_ASSERT(initReturn.isUndefined(),
+                 "nsIDOMGlobalPropertyInitializer should return undefined");
+    }
+    // Extract the JS implementation from the XPCOM object.
+    nsCOMPtr<nsIXPConnectWrappedJS> implWrapped =
+      do_QueryInterface(implISupports);
+    MOZ_ASSERT(implWrapped, "Failed to get wrapped JS from XPCOM component.");
+    if (!implWrapped) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+    aObject.set(implWrapped->GetJSObject());
+    if (!aObject) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+  }
+
+  return window.forget();
 }
 
 } // namespace dom

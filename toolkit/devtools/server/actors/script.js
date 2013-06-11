@@ -1253,7 +1253,7 @@ ThreadActor.prototype = {
    *
    * @param aScript Debugger.Script
    *        The source script that will be stored.
-   * @returns true, if the script was added, false otherwise.
+   * @returns a promise of true, if the script was added; of false otherwise.
    */
   _addScript: function TA__addScript(aScript) {
     if (!this._allowSource(aScript.url)) {
@@ -1481,9 +1481,14 @@ ObjectActor.prototype = {
    * Returns a grip for this actor for returning in a protocol message.
    */
   grip: function OA_grip() {
-    let g = { "type": "object",
-              "class": this.obj.class,
-              "actor": this.actorID };
+    let g = {
+      "type": "object",
+      "class": this.obj.class,
+      "actor": this.actorID,
+      "extensible": this.obj.isExtensible(),
+      "frozen": this.obj.isFrozen(),
+      "sealed": this.obj.isSealed()
+    };
 
     // Add additional properties for functions.
     if (this.obj.class === "Function") {
@@ -1780,7 +1785,7 @@ ObjectActor.prototype.requestTypes = {
 
 
 /**
- * Creates a pause-scoped  actor for the specified object.
+ * Creates a pause-scoped actor for the specified object.
  * @see ObjectActor
  */
 function PauseScopedObjectActor()
@@ -2366,13 +2371,18 @@ Object.defineProperty(Debugger.Frame.prototype, "line", {
  * Creates an actor for handling chrome debugging. ChromeDebuggerActor is a
  * thin wrapper over ThreadActor, slightly changing some of its behavior.
  *
+ * @param aConnection object
+ *        The DebuggerServerConnection with which this ChromeDebuggerActor
+ *        is associated. (Currently unused, but required to make this
+ *        constructor usable with addGlobalActor.)
+ *
  * @param aHooks object
  *        An object with preNest and postNest methods for calling when entering
  *        and exiting a nested event loop and also addToParentPool and
  *        removeFromParentPool methods for handling the lifetime of actors that
  *        will outlive the thread, like breakpoints.
  */
-function ChromeDebuggerActor(aHooks)
+function ChromeDebuggerActor(aConnection, aHooks)
 {
   ThreadActor.call(this, aHooks);
 }
@@ -2449,7 +2459,9 @@ function ThreadSources(aThreadActor, aUseSourceMaps,
 
 ThreadSources.prototype = {
   /**
-   * Add a source to the current set of sources.
+   * Return the source actor representing |aURL|, creating one if none
+   * exists already. Returns null if |aURL| is not allowed by the 'allow'
+   * predicate.
    *
    * Right now this takes a URL, but in the future it should
    * take a Debugger.Source. See bug 637572.
@@ -2457,8 +2469,8 @@ ThreadSources.prototype = {
    * @param String aURL
    *        The source URL.
    * @param optional SourceMapConsumer aSourceMap
-   *        The source map that introduced this source.
-   * @returns a SourceActor representing the source or null.
+   *        The source map that introduced this source, if any.
+   * @returns a SourceActor representing the source at aURL or null.
    */
   source: function TS_source(aURL, aSourceMap=null) {
     if (!this._allow(aURL)) {
@@ -2481,7 +2493,12 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Add all of the sources associated with the given script.
+   * Return a promise of an array of source actors representing all the
+   * sources of |aScript|.
+   *
+   * If source map handling is enabled and |aScript| has a source map, then
+   * use it to find all of |aScript|'s *original* sources; return a promise
+   * of an array of source actors for those.
    */
   sourcesForScript: function TS_sourcesForScript(aScript) {
     if (!this._useSourceMaps || !aScript.sourceMapURL) {
@@ -2505,15 +2522,16 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Add the source map for the given script.
+   * Return a promise of a SourceMapConsumer for the source map for
+   * |aScript|; if we already have such a promise extant, return that.
+   * |aScript| must have a non-null sourceMapURL.
    */
   sourceMap: function TS_sourceMap(aScript) {
     if (aScript.url in this._sourceMapsByGeneratedSource) {
       return this._sourceMapsByGeneratedSource[aScript.url];
     }
     dbg_assert(aScript.sourceMapURL);
-    let sourceMapURL = this._normalize(aScript.sourceMapURL,
-                                       aScript.url);
+    let sourceMapURL = this._normalize(aScript.sourceMapURL, aScript.url);
     let map = this._fetchSourceMap(sourceMapURL)
       .then((aSourceMap) => {
         for (let s of aSourceMap.sources) {
@@ -2527,7 +2545,9 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Fetch the source map located at the given url.
+   * Return a promise of a SourceMapConsumer for the source map located at
+   * |aAbsSourceMapURL|, which must be absolute. If there is already such a
+   * promise extant, return it.
    */
   _fetchSourceMap: function TS__fetchSourceMap(aAbsSourceMapURL) {
     if (aAbsSourceMapURL in this._sourceMaps) {
@@ -2549,7 +2569,7 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Returns a promise for the location in the original source if the source is
+   * Returns a promise of the location in the original source if the source is
    * source mapped, otherwise a promise of the same location.
    *
    * TODO bug 637572: take/return a column
@@ -2580,6 +2600,11 @@ ThreadSources.prototype = {
   /**
    * Returns a promise of the location in the generated source corresponding to
    * the original source and line given.
+   *
+   * When we pass a script S representing generated code to |sourceMap|,
+   * above, that returns a promise P. The process of resolving P populates
+   * the tables this function uses; thus, it won't know that S's original
+   * source URLs map to S until P is resolved.
    *
    * TODO bug 637572: take/return a column
    */
@@ -2660,6 +2685,7 @@ function isNotNull(aThing) {
  * @param aURL String
  *        The URL we will request.
  * @returns Promise
+ *        A promise of the document at that URL, as a string.
  *
  * XXX: It may be better to use nsITraceableChannel to get to the sources
  * without relying on caching when we can (not for eval, etc.):

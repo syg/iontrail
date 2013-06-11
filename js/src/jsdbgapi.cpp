@@ -17,7 +17,6 @@
 #include "jscntxt.h"
 #include "jsfun.h"
 #include "jsgc.h"
-#include "jsinterp.h"
 #include "jsobj.h"
 #include "jsopcode.h"
 #include "jsscript.h"
@@ -25,8 +24,9 @@
 #include "jswatchpoint.h"
 #include "jswrapper.h"
 
-#include "frontend/BytecodeEmitter.h"
+#include "frontend/SourceNotes.h"
 #include "vm/Debugger.h"
+#include "vm/Interpreter.h"
 #include "vm/Shape.h"
 
 #ifdef JS_ASMJS
@@ -36,9 +36,10 @@
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
 #include "jsobjinlines.h"
-#include "jsinterpinlines.h"
 #include "jsscriptinlines.h"
 
+#include "vm/Debugger-inl.h"
+#include "vm/Interpreter-inl.h"
 #include "vm/Stack-inl.h"
 
 using namespace js;
@@ -311,7 +312,8 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id_,
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_CANT_WATCH_PROP);
         return false;
     } else {
-        if (!ValueToId<CanGC>(cx, IdToValue(id), &propid))
+        RootedValue val(cx, IdToValue(id));
+        if (!ValueToId<CanGC>(cx, val, &propid))
             return false;
     }
 
@@ -1022,8 +1024,9 @@ class AutoPropertyDescArray
 };
 
 static const char *
-FormatValue(JSContext *cx, const Value &v, JSAutoByteString &bytes)
+FormatValue(JSContext *cx, const Value &vArg, JSAutoByteString &bytes)
 {
+    RootedValue v(cx, vArg);
     JSString *str = ToString<CanGC>(cx, v);
     if (!str)
         return NULL;

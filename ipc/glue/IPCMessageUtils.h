@@ -788,10 +788,28 @@ struct ParamTraits<nsIntSize>
   }
 };
 
-template<>
-struct ParamTraits<mozilla::gfx::Point>
+template<class T>
+struct ParamTraits< mozilla::gfx::PointTyped<T> >
 {
-  typedef mozilla::gfx::Point paramType;
+  typedef mozilla::gfx::PointTyped<T> paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.x);
+    WriteParam(msg, param.y);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->x) &&
+            ReadParam(msg, iter, &result->y));
+  }
+};
+
+template<class T>
+struct ParamTraits< mozilla::gfx::IntPointTyped<T> >
+{
+  typedef mozilla::gfx::IntPointTyped<T> paramType;
 
   static void Write(Message* msg, const paramType& param)
   {
@@ -824,10 +842,32 @@ struct ParamTraits<mozilla::gfx::Size>
   }
 };
 
-template<>
-struct ParamTraits<mozilla::gfx::Rect>
+template<class T>
+struct ParamTraits< mozilla::gfx::RectTyped<T> >
 {
-  typedef mozilla::gfx::Rect paramType;
+  typedef mozilla::gfx::RectTyped<T> paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.x);
+    WriteParam(msg, param.y);
+    WriteParam(msg, param.width);
+    WriteParam(msg, param.height);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->x) &&
+            ReadParam(msg, iter, &result->y) &&
+            ReadParam(msg, iter, &result->width) &&
+            ReadParam(msg, iter, &result->height));
+  }
+};
+
+template<class T>
+struct ParamTraits< mozilla::gfx::IntRectTyped<T> >
+{
+  typedef mozilla::gfx::IntRectTyped<T> paramType;
 
   static void Write(Message* msg, const paramType& param)
   {
@@ -1044,6 +1084,7 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
     WriteParam(aMsg, aParam.mZoom);
     WriteParam(aMsg, aParam.mDevPixelsPerCSSPixel);
     WriteParam(aMsg, aParam.mMayHaveTouchListeners);
+    WriteParam(aMsg, aParam.mPresShellId);
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
@@ -1059,7 +1100,8 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
             ReadParam(aMsg, aIter, &aResult->mResolution) &&
             ReadParam(aMsg, aIter, &aResult->mZoom) &&
             ReadParam(aMsg, aIter, &aResult->mDevPixelsPerCSSPixel) &&
-            ReadParam(aMsg, aIter, &aResult->mMayHaveTouchListeners));
+            ReadParam(aMsg, aIter, &aResult->mMayHaveTouchListeners) &&
+            ReadParam(aMsg, aIter, &aResult->mPresShellId));
   }
 };
 

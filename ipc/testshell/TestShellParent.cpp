@@ -92,7 +92,7 @@ TestShellCommandParent::RunCallback(const nsString& aResponse)
 
   JSAutoRequest ar(mCx);
 
-  JS::Rooted<JSObject*> global(mCx, JS_GetGlobalObject(mCx));
+  JS::Rooted<JSObject*> global(mCx, JS_GetGlobalForObject(mCx, mCallback.ToJSObject()));
   NS_ENSURE_TRUE(global, JS_FALSE);
 
   JSAutoCompartment ac(mCx, global);
@@ -100,11 +100,11 @@ TestShellCommandParent::RunCallback(const nsString& aResponse)
   JSString* str = JS_NewUCStringCopyN(mCx, aResponse.get(), aResponse.Length());
   NS_ENSURE_TRUE(str, JS_FALSE);
 
-  JS::Value argv[] = { STRING_TO_JSVAL(str) };
-  unsigned argc = ArrayLength(argv);
+  JS::Rooted<JS::Value> strVal(mCx, JS::StringValue(str));
 
-  JS::Value rval;
-  JSBool ok = JS_CallFunctionValue(mCx, global, mCallback, argc, argv, &rval);
+  JS::Rooted<JS::Value> rval(mCx);
+  JSBool ok = JS_CallFunctionValue(mCx, global, mCallback, 1, strVal.address(),
+				   rval.address());
   NS_ENSURE_TRUE(ok, JS_FALSE);
 
   return JS_TRUE;

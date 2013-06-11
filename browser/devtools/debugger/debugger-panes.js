@@ -17,7 +17,6 @@ function SourcesView() {
   this._onEditorUnload = this._onEditorUnload.bind(this);
   this._onEditorSelection = this._onEditorSelection.bind(this);
   this._onEditorContextMenu = this._onEditorContextMenu.bind(this);
-  this._onSourceMouseDown = this._onSourceMouseDown.bind(this);
   this._onSourceSelect = this._onSourceSelect.bind(this);
   this._onSourceClick = this._onSourceClick.bind(this);
   this._onBreakpointClick = this._onBreakpointClick.bind(this);
@@ -48,7 +47,6 @@ create({ constructor: SourcesView, proto: MenuContainer.prototype }, {
 
     window.addEventListener("Debugger:EditorLoaded", this._onEditorLoad, false);
     window.addEventListener("Debugger:EditorUnloaded", this._onEditorUnload, false);
-    this.node.addEventListener("mousedown", this._onSourceMouseDown, false);
     this.node.addEventListener("select", this._onSourceSelect, false);
     this.node.addEventListener("click", this._onSourceClick, false);
     this._cbPanel.addEventListener("popupshowing", this._onConditionalPopupShowing, false);
@@ -56,6 +54,8 @@ create({ constructor: SourcesView, proto: MenuContainer.prototype }, {
     this._cbPanel.addEventListener("popuphiding", this._onConditionalPopupHiding, false);
     this._cbTextbox.addEventListener("input", this._onConditionalTextboxInput, false);
     this._cbTextbox.addEventListener("keypress", this._onConditionalTextboxKeyPress, false);
+
+    this.autoFocusOnSelection = false;
 
     // Show an empty label by default.
     this.empty();
@@ -69,7 +69,6 @@ create({ constructor: SourcesView, proto: MenuContainer.prototype }, {
 
     window.removeEventListener("Debugger:EditorLoaded", this._onEditorLoad, false);
     window.removeEventListener("Debugger:EditorUnloaded", this._onEditorUnload, false);
-    this.node.removeEventListener("mousedown", this._onSourceMouseDown, false);
     this.node.removeEventListener("select", this._onSourceSelect, false);
     this.node.removeEventListener("click", this._onSourceClick, false);
     this._cbPanel.removeEventListener("popupshowing", this._onConditionalPopupShowing, false);
@@ -626,17 +625,6 @@ create({ constructor: SourcesView, proto: MenuContainer.prototype }, {
     let offset = DebuggerView.editor.getOffsetAtLocation(x, y);
     let line = DebuggerView.editor.getLineAtOffset(offset);
     this._editorContextMenuLineNumber = line;
-  },
-
-  /**
-   * The mouse down listener for the sources container.
-   */
-  _onSourceMouseDown: function(e) {
-    let item = this.getItemForElement(e.target);
-    if (item) {
-      // The container is not empty and we clicked on an actual item.
-      this.selectedItem = item;
-    }
   },
 
   /**

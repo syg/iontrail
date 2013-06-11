@@ -7,12 +7,14 @@
 #ifndef VideoUtils_h
 #define VideoUtils_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "mozilla/CheckedInt.h"
 
 #include "nsRect.h"
 #include "nsIThreadManager.h"
 #include "nsThreadUtils.h"
+#include "prtime.h"
 
 using mozilla::CheckedInt64;
 using mozilla::CheckedUint64;
@@ -115,7 +117,7 @@ class ShutdownThreadEvent : public nsRunnable
 public:
   ShutdownThreadEvent(nsIThread* aThread) : mThread(aThread) {}
   ~ShutdownThreadEvent() {}
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() MOZ_OVERRIDE {
     mThread->Shutdown();
     mThread = nullptr;
     return NS_OK;
@@ -160,6 +162,9 @@ static const int64_t USECS_PER_S = 1000000;
 
 // Number of microseconds per millisecond.
 static const int64_t USECS_PER_MS = 1000;
+
+// Converts seconds to milliseconds.
+#define SECONDS_TO_MS(s) ((s) / PR_MSEC_PER_SEC)
 
 // The maximum height and width of the video. Used for
 // sanitizing the memory allocation of the RGB buffer.

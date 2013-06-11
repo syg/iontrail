@@ -19,6 +19,7 @@
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/dom/ipc/Blob.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 
 #include "AsyncConnectionHelper.h"
 #include "DatabaseInfo.h"
@@ -526,7 +527,7 @@ IndexedDBDatabaseParent::HandleDatabaseEvent(nsIDOMEvent* aEvent,
   nsresult rv;
 
   if (aType.EqualsLiteral(VERSIONCHANGE_EVT_STR)) {
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
+    AutoSafeJSContext cx;
     NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
 
     nsCOMPtr<nsIIDBVersionChangeEvent> changeEvent = do_QueryInterface(aEvent);

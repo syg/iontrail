@@ -134,6 +134,7 @@ CompositorParent::CompositorParent(nsIWidget* aWidget,
                                    int aSurfaceWidth, int aSurfaceHeight)
   : mWidget(aWidget)
   , mCurrentCompositeTask(NULL)
+  , mIsTesting(false)
   , mPaused(false)
   , mUseExternalSurfaceSize(aUseExternalSurfaceSize)
   , mEGLSurfaceSize(aSurfaceWidth, aSurfaceHeight)
@@ -423,12 +424,6 @@ CompositorParent::ScheduleComposition()
 }
 
 void
-CompositorParent::SetTransformation(float aScale, nsIntPoint aScrollOffset)
-{
-  mCompositionManager->SetTransformation(aScale, aScrollOffset);
-}
-
-void
 CompositorParent::Composite()
 {
   NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
@@ -451,7 +446,8 @@ CompositorParent::Composite()
     }
   }
 
-  bool requestNextFrame = mCompositionManager->TransformShadowTree(mLastCompose);
+  TimeStamp time = mIsTesting ? mTestTime : mLastCompose;
+  bool requestNextFrame = mCompositionManager->TransformShadowTree(time);
   if (requestNextFrame) {
     ScheduleComposition();
   }
@@ -543,6 +539,9 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
   mLayerManager->SetRoot(root);
   if (root) {
     SetShadowProperties(root);
+    if (mIsTesting) {
+      mCompositionManager->TransformShadowTree(mTestTime);
+    }
   }
   ScheduleComposition();
   LayerManagerComposite *layerComposite = mLayerManager->AsLayerManagerComposite();
@@ -648,6 +647,19 @@ CompositorParent* CompositorParent::RemoveCompositor(uint64_t id)
   CompositorParent *retval = it->second;
   sCompositorMap->erase(it);
   return retval;
+}
+
+/* static */ void
+CompositorParent::SetTimeAndSampleAnimations(TimeStamp aTime, bool aIsTesting)
+{
+  if (!sCompositorMap) {
+    return;
+  }
+  for (CompositorMap::iterator it = sCompositorMap->begin(); it != sCompositorMap->end(); ++it) {
+    it->second->mIsTesting = aIsTesting;
+    it->second->mTestTime = aTime;
+    it->second->mCompositionManager->TransformShadowTree(aTime);
+  }
 }
 
 typedef map<uint64_t, CompositorParent::LayerTreeState> LayerTreeMap;

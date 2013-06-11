@@ -886,11 +886,13 @@ const int32_t nsCSSProps::kCursorKTable[] = {
   eCSSKeyword_ns_resize, NS_STYLE_CURSOR_NS_RESIZE,
   eCSSKeyword_ew_resize, NS_STYLE_CURSOR_EW_RESIZE,
   eCSSKeyword_none, NS_STYLE_CURSOR_NONE,
+  eCSSKeyword_zoom_in, NS_STYLE_CURSOR_ZOOM_IN,
+  eCSSKeyword_zoom_out, NS_STYLE_CURSOR_ZOOM_OUT,
   // -moz- prefixed vendor specific
   eCSSKeyword__moz_grab, NS_STYLE_CURSOR_GRAB,
   eCSSKeyword__moz_grabbing, NS_STYLE_CURSOR_GRABBING,
-  eCSSKeyword__moz_zoom_in, NS_STYLE_CURSOR_MOZ_ZOOM_IN,
-  eCSSKeyword__moz_zoom_out, NS_STYLE_CURSOR_MOZ_ZOOM_OUT,
+  eCSSKeyword__moz_zoom_in, NS_STYLE_CURSOR_ZOOM_IN,
+  eCSSKeyword__moz_zoom_out, NS_STYLE_CURSOR_ZOOM_OUT,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1566,6 +1568,13 @@ const int32_t nsCSSProps::kWordWrapKTable[] = {
   eCSSKeyword_normal, NS_STYLE_WORDWRAP_NORMAL,
   eCSSKeyword_break_word, NS_STYLE_WORDWRAP_BREAK_WORD,
   eCSSKeyword_UNKNOWN,-1
+};
+
+const int32_t nsCSSProps::kWritingModeKTable[] = {
+  eCSSKeyword_horizontal_tb, NS_STYLE_WRITING_MODE_HORIZONTAL_TB,
+  eCSSKeyword_vertical_lr, NS_STYLE_WRITING_MODE_VERTICAL_LR,
+  eCSSKeyword_vertical_rl, NS_STYLE_WRITING_MODE_VERTICAL_RL,
+  eCSSKeyword_UNKNOWN, -1
 };
 
 const int32_t nsCSSProps::kHyphensKTable[] = {

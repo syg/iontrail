@@ -43,7 +43,7 @@ struct FPSState;
  * This is the LayerManager used for OpenGL 2.1 and OpenGL ES 2.0.
  * This should be used only on the main thread.
  */
-class THEBES_API LayerManagerOGL : public LayerManager
+class LayerManagerOGL : public LayerManager
 {
   typedef mozilla::gl::GLContext GLContext;
   typedef mozilla::gl::ShaderProgramType ProgramType;
@@ -449,8 +449,6 @@ public:
   virtual void Destroy() = 0;
 
   virtual Layer* GetLayer() = 0;
-
-  virtual LayerRenderState GetRenderState() { return LayerRenderState(); }
 
   virtual void RenderLayer(int aPreviousFrameBuffer,
                            const nsIntPoint& aOffset) = 0;

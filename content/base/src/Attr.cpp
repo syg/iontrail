@@ -66,9 +66,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Attr)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAttrMap)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Attr)
-  nsINode::Trace(tmp, aCallback, aClosure);
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
+NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(Attr)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Attr)
   nsINode::Unlink(tmp);
@@ -102,10 +100,9 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 // QueryInterface implementation for Attr
 NS_INTERFACE_TABLE_HEAD(Attr)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_NODE_INTERFACE_TABLE5(Attr, nsIDOMAttr, nsIAttribute, nsIDOMNode,
-                           nsIDOMEventTarget, EventTarget)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(Attr)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIAttribute)
+  NS_INTERFACE_TABLE6(Attr, nsINode, nsIDOMAttr, nsIAttribute, nsIDOMNode,
+                      nsIDOMEventTarget, EventTarget)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(Attr)
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsISupportsWeakReference,
                                  new nsNodeSupportsWeakRefTearoff(this))
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsIDOMXPathNSResolver,
@@ -369,12 +366,6 @@ Attr::IndexOf(const nsINode* aPossibleChild) const
 nsresult
 Attr::InsertChildAt(nsIContent* aKid, uint32_t aIndex,
                               bool aNotify)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-nsresult
-Attr::AppendChildTo(nsIContent* aKid, bool aNotify)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

@@ -7,7 +7,7 @@
 /*
  * JS object implementation.
  */
-#include "jsobj.h"
+#include "jsobjinlines.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -23,11 +23,9 @@
 #include "jscntxt.h"
 #include "jsfun.h"
 #include "jsgc.h"
-#include "jsinterp.h"
 #include "jsiter.h"
 #include "jsnum.h"
 #include "jsopcode.h"
-#include "jsprobes.h"
 #include "jsprototypes.h"
 #include "jsproxy.h"
 #include "jsscript.h"
@@ -35,11 +33,11 @@
 #include "jsdbgapi.h"
 #include "jswatchpoint.h"
 #include "jswrapper.h"
-
-#include "frontend/TokenStream.h"
+#include "frontend/BytecodeCompiler.h"
 #include "gc/Marking.h"
 #include "ion/BaselineJIT.h"
 #include "js/MemoryMetrics.h"
+#include "vm/Interpreter.h"
 #include "vm/Shape.h"
 
 #include "jsatominlines.h"
@@ -49,9 +47,11 @@
 #include "jsobjinlines.h"
 #include "jsscriptinlines.h"
 #include "jstypedarrayinlines.h"
-
+#include "builtin/Iterator-inl.h"
 #include "vm/BooleanObject-inl.h"
 #include "vm/NumberObject-inl.h"
+#include "vm/Probes-inl.h"
+#include "vm/RegExpStatics-inl.h"
 #include "vm/Shape-inl.h"
 #include "vm/StringObject-inl.h"
 
@@ -1115,6 +1115,7 @@ JSObject::sealOrFreeze(JSContext *cx, HandleObject obj, ImmutabilityType it)
         RootedShape last(cx, EmptyShape::getInitialShape(cx, obj->getClass(),
                                                          obj->getTaggedProto(),
                                                          obj->getParent(),
+                                                         obj->getMetadata(),
                                                          obj->numFixedSlots(),
                                                          obj->lastProperty()->getObjectFlags()));
         if (!last)
@@ -1246,7 +1247,7 @@ NewObject(JSContext *cx, Class *clasp, types::TypeObject *type_, JSObject *paren
     RootedTypeObject type(cx, type_);
 
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(type->proto),
-                                                      parent, kind));
+                                                      parent, NewObjectMetadata(cx), kind));
     if (!shape)
         return NULL;
 
@@ -1287,7 +1288,9 @@ js::NewObjectWithGivenProto(JSContext *cx, js::Class *clasp,
     NewObjectCache &cache = cx->runtime->newObjectCache;
 
     NewObjectCache::EntryIndex entry = -1;
-    if (proto.isObject() && newKind == GenericObject &&
+    if (proto.isObject() &&
+        newKind == GenericObject &&
+        !cx->compartment->objectMetadataCallback &&
         (!parent || parent == proto.toObject()->getParent()) && !proto.toObject()->isGlobal())
     {
         if (cache.lookupProto(clasp, proto.toObject(), allocKind, &entry)) {
@@ -1345,7 +1348,11 @@ js::NewObjectWithClassProtoCommon(JSContext *cx, js::Class *clasp, JSObject *pro
     NewObjectCache &cache = cx->runtime->newObjectCache;
 
     NewObjectCache::EntryIndex entry = -1;
-    if (parentArg->isGlobal() && protoKey != JSProto_Null && newKind == GenericObject) {
+    if (parentArg->isGlobal() &&
+        protoKey != JSProto_Null &&
+        newKind == GenericObject &&
+        !cx->compartment->objectMetadataCallback)
+    {
         if (cache.lookupGlobal(clasp, &parentArg->asGlobal(), allocKind, &entry)) {
             JSObject *obj = cache.newObjectFromHit(cx, entry, GetInitialHeap(newKind, clasp));
             if (obj)
@@ -1387,7 +1394,10 @@ js::NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc
     NewObjectCache &cache = cx->runtime->newObjectCache;
 
     NewObjectCache::EntryIndex entry = -1;
-    if (parent == type->proto->getParent() && newKind == GenericObject) {
+    if (parent == type->proto->getParent() &&
+        newKind == GenericObject &&
+        !cx->compartment->objectMetadataCallback)
+    {
         if (cache.lookupType(&ObjectClass, type, allocKind, &entry)) {
             JSObject *obj = cache.newObjectFromHit(cx, entry, GetInitialHeap(newKind, &ObjectClass));
             if (obj)
@@ -1493,10 +1503,13 @@ CreateThisForFunctionWithType(JSContext *cx, HandleTypeObject type, JSObject *pa
          */
         gc::AllocKind kind = type->newScript->allocKind;
         RootedObject res(cx, NewObjectWithType(cx, type, parent, kind, newKind));
-        if (res) {
-            RootedShape shape(cx, type->newScript->shape);
-            JS_ALWAYS_TRUE(JSObject::setLastProperty(cx, res, shape));
-        }
+        if (!res)
+            return NULL;
+        RootedObject metadata(cx, res->getMetadata());
+        RootedShape shape(cx, type->newScript->shape);
+        JS_ALWAYS_TRUE(JSObject::setLastProperty(cx, res, shape));
+        if (metadata && !JSObject::setMetadata(cx, res, metadata))
+            return NULL;
         return res;
     }
 
@@ -1522,8 +1535,6 @@ js::CreateThisForFunctionWithProto(JSContext *cx, HandleObject callee, JSObject 
 
     if (res && cx->typeInferenceEnabled()) {
         JSScript *script = callee->toFunction()->nonLazyScript();
-        if (!script->ensureHasTypes(cx))
-            return NULL;
         TypeScript::SetThis(cx, script, types::Type::ObjectType(res));
     }
 
@@ -1551,8 +1562,6 @@ js::CreateThisForFunction(JSContext *cx, HandleObject callee, bool newType)
         JSObject::clear(cx, nobj);
 
         JSScript *calleeScript = callee->toFunction()->nonLazyScript();
-        if (!calleeScript->ensureHasTypes(cx))
-            return NULL;
         TypeScript::SetThis(cx, calleeScript, types::Type::ObjectType(nobj));
 
         return nobj;
@@ -1863,7 +1872,7 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *aArg, JSObject *bArg,
         if (!a->generateOwnShape(cx))
             return false;
     } else {
-        reserved.newbshape = EmptyShape::getInitialShape(cx, aClass, aProto, a->getParent(),
+        reserved.newbshape = EmptyShape::getInitialShape(cx, aClass, aProto, a->getParent(), a->getMetadata(),
                                                          b->tenuredGetAllocKind());
         if (!reserved.newbshape)
             return false;
@@ -1872,7 +1881,7 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *aArg, JSObject *bArg,
         if (!b->generateOwnShape(cx))
             return false;
     } else {
-        reserved.newashape = EmptyShape::getInitialShape(cx, bClass, bProto, b->getParent(),
+        reserved.newashape = EmptyShape::getInitialShape(cx, bClass, bProto, b->getParent(), b->getMetadata(),
                                                          a->tenuredGetAllocKind());
         if (!reserved.newashape)
             return false;
@@ -3559,6 +3568,11 @@ LookupPropertyWithFlagsInline(JSContext *cx,
                               typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
                               typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp)
 {
+    /* NB: The logic of this procedure is implicitly reflected in IonBuilder.cpp's
+     *     |CanEffectlesslyCallLookupGenericOnObject| logic.
+     *     If this changes, please remember to update the logic there as well.
+     */
+
     /* Search scopes starting with obj and following the prototype link. */
     typename MaybeRooted<JSObject*, allowGC>::RootType current(cx, obj);
 
@@ -3636,6 +3650,10 @@ baseops::LookupProperty(JSContext *cx,
                         typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
                         typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp)
 {
+    /* NB: The logic of this procedure is implicitly reflected in IonBuilder.cpp's
+     *     |CanEffectlesslyCallLookupGenericOnObject| logic.
+     *     If this changes, please remember to update the logic there as well.
+     */
     return LookupPropertyWithFlagsInline<allowGC>(cx, obj, id, cx->resolveFlags, objp, propp);
 }
 
@@ -4632,7 +4650,7 @@ MaybeCallMethod(JSContext *cx, HandleObject obj, HandleId id, MutableHandleValue
     return Invoke(cx, ObjectValue(*obj), vp, 0, NULL, vp.address());
 }
 
-JSBool
+JS_FRIEND_API(JSBool)
 js::DefaultValue(JSContext *cx, HandleObject obj, JSType hint, MutableHandleValue vp)
 {
     JS_ASSERT(hint == JSTYPE_NUMBER || hint == JSTYPE_STRING || hint == JSTYPE_VOID);

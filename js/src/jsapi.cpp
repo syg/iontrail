@@ -36,7 +36,6 @@
 #include "jsexn.h"
 #include "jsfun.h"
 #include "jsgc.h"
-#include "jsinterp.h"
 #include "jsiter.h"
 #include "jslock.h"
 #include "jsmath.h"
@@ -62,11 +61,14 @@
 #include "builtin/RegExp.h"
 #include "builtin/ParallelArray.h"
 #include "frontend/BytecodeCompiler.h"
+#include "frontend/FullParseHandler.h"  // for JS_BufferIsCompileableUnit
+#include "frontend/Parser.h" // for JS_BufferIsCompileableUnit
 #include "gc/Marking.h"
 #include "gc/Memory.h"
 #include "ion/AsmJS.h"
 #include "js/CharacterEncoding.h"
 #include "vm/Debugger.h"
+#include "vm/Interpreter.h"
 #include "vm/NumericConversions.h"
 #include "vm/Shape.h"
 #include "vm/StringBuffer.h"
@@ -75,10 +77,10 @@
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
-#include "jsinterpinlines.h"
 #include "jsobjinlines.h"
 #include "jsscriptinlines.h"
 
+#include "vm/Interpreter-inl.h"
 #include "vm/ObjectImpl-inl.h"
 #include "vm/RegExpObject-inl.h"
 #include "vm/RegExpStatics-inl.h"
@@ -286,6 +288,7 @@ JS_ConvertArgumentsVA(JSContext *cx, unsigned argc, jsval *argv, const char *for
     double d;
     JSString *str;
     RootedObject obj(cx);
+    RootedValue val(cx);
 
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
@@ -345,7 +348,8 @@ JS_ConvertArgumentsVA(JSContext *cx, unsigned argc, jsval *argv, const char *for
             break;
           case 'S':
           case 'W':
-            str = ToString<CanGC>(cx, *sp);
+            val = *sp;
+            str = ToString<CanGC>(cx, val);
             if (!str)
                 return JS_FALSE;
             *sp = STRING_TO_JSVAL(str);
@@ -898,6 +902,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     numGrouping(0),
 #endif
     mathCache_(NULL),
+    activeCompilations(0),
     trustedPrincipals_(NULL),
     wrapObjectCallback(TransparentObjectWrapper),
     sameCompartmentWrapObjectCallback(NULL),
@@ -914,11 +919,10 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     parallelWarmup(0),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     useHelperThreads_(useHelperThreads),
-    requestedHelperThreadCount(-1),
+    requestedHelperThreadCount(-1)
 #ifdef DEBUG
-    enteredPolicy(NULL),
+    , enteredPolicy(NULL)
 #endif
-    rngNonce(0)
 {
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
     JS_INIT_CLIST(&onNewGlobalObjectWatchers);
@@ -1781,12 +1785,6 @@ JS_RefreshCrossCompartmentWrappers(JSContext *cx, JSObject *objArg)
     return RemapAllWrappersForObject(cx, obj, obj);
 }
 
-JS_PUBLIC_API(JSObject *)
-JS_GetGlobalObject(JSContext *cx)
-{
-    return cx->maybeDefaultCompartmentObject();
-}
-
 JS_PUBLIC_API(void)
 JS_SetGlobalObject(JSContext *cx, JSObject *obj)
 {
@@ -2546,6 +2544,36 @@ JS_CallGenericTracer(JSTracer *trc, void *gcthingArg, const char *name)
 }
 
 JS_PUBLIC_API(void)
+JS_CallHeapValueTracer(JSTracer *trc, JS::Heap<JS::Value> *valuep, const char *name)
+{
+    MarkValueUnbarriered(trc, valuep->unsafeGet(), name);
+}
+
+JS_PUBLIC_API(void)
+JS_CallHeapIdTracer(JSTracer *trc, JS::Heap<jsid> *idp, const char *name)
+{
+    MarkIdUnbarriered(trc, idp->unsafeGet(), name);
+}
+
+JS_PUBLIC_API(void)
+JS_CallHeapObjectTracer(JSTracer *trc, JS::Heap<JSObject *> *objp, const char *name)
+{
+    MarkObjectUnbarriered(trc, objp->unsafeGet(), name);
+}
+
+JS_PUBLIC_API(void)
+JS_CallHeapStringTracer(JSTracer *trc, JS::Heap<JSString *> *strp, const char *name)
+{
+    MarkStringUnbarriered(trc, strp->unsafeGet(), name);
+}
+
+JS_PUBLIC_API(void)
+JS_CallHeapScriptTracer(JSTracer *trc, JS::Heap<JSScript *> *scriptp, const char *name)
+{
+    MarkScriptUnbarriered(trc, scriptp->unsafeGet(), name);
+}
+
+JS_PUBLIC_API(void)
 JS_TracerInit(JSTracer *trc, JSRuntime *rt, JSTraceCallback callback)
 {
     InitTracer(trc, rt, callback);
@@ -2589,6 +2617,10 @@ JS_GetTraceThingInfo(char *buf, size_t bufsize, JSTracer *trc, void *thing,
 
       case JSTRACE_SCRIPT:
         name = "script";
+        break;
+
+      case JSTRACE_LAZY_SCRIPT:
+        name = "lazyscript";
         break;
 
       case JSTRACE_IONCODE:
@@ -2662,6 +2694,7 @@ JS_GetTraceThingInfo(char *buf, size_t bufsize, JSTracer *trc, void *thing,
             break;
           }
 
+          case JSTRACE_LAZY_SCRIPT:
           case JSTRACE_IONCODE:
           case JSTRACE_SHAPE:
           case JSTRACE_BASE_SHAPE:
@@ -4913,6 +4946,11 @@ JS_CloneFunctionObject(JSContext *cx, JSObject *funobjArg, JSObject *parentArg)
      * script, we cannot clone it without breaking the compiler's assumptions.
      */
     RootedFunction fun(cx, funobj->toFunction());
+    if (fun->isInterpretedLazy()) {
+        AutoCompartment ac(cx, funobj);
+        if (!fun->getOrCreateScript(cx))
+            return NULL;
+    }
     if (fun->isInterpreted() && (fun->nonLazyScript()->enclosingStaticScope() ||
         (fun->nonLazyScript()->compileAndGo && !parent->isGlobal())))
     {
@@ -5276,10 +5314,13 @@ JS::CompileOptions::CompileOptions(JSContext *cx)
       utf8(false),
       filename(NULL),
       lineno(1),
+      column(0),
+      element(NullPtr()),
       compileAndGo(cx->hasOption(JSOPTION_COMPILE_N_GO)),
       forEval(false),
       noScriptRval(cx->hasOption(JSOPTION_NO_SCRIPT_RVAL)),
       selfHostingMode(false),
+      canLazilyParse(true),
       sourcePolicy(SAVE_SOURCE)
 {
 }
@@ -5418,20 +5459,17 @@ JS_BufferIsCompilableUnit(JSContext *cx, JSObject *objArg, const char *utf8, siz
         CompileOptions options(cx);
         options.setCompileAndGo(false);
         Parser<frontend::FullParseHandler> parser(cx, options, chars, length,
-                                                  /* foldConstants = */ true);
-        if (parser.init()) {
-            older = JS_SetErrorReporter(cx, NULL);
-            if (!parser.parse(obj) &&
-                parser.tokenStream.isUnexpectedEOF()) {
-                /*
-                 * We ran into an error. If it was because we ran out of
-                 * source, we return false so our caller knows to try to
-                 * collect more buffered source.
-                 */
-                result = JS_FALSE;
-            }
-            JS_SetErrorReporter(cx, older);
+                                                  /* foldConstants = */ true, NULL, NULL);
+        older = JS_SetErrorReporter(cx, NULL);
+        if (!parser.parse(obj) && parser.tokenStream.isUnexpectedEOF()) {
+            /*
+             * We ran into an error. If it was because we ran out of
+             * source, we return false so our caller knows to try to
+             * collect more buffered source.
+             */
+            result = JS_FALSE;
         }
+        JS_SetErrorReporter(cx, older);
     }
     js_free(chars);
     JS_RestoreExceptionState(cx, exnState);
@@ -6347,17 +6385,13 @@ JS_Stringify(JSContext *cx, jsval *vp, JSObject *replacerArg, jsval space,
 }
 
 JS_PUBLIC_API(JSBool)
-JS_ParseJSON(JSContext *cx, const jschar *chars, uint32_t len, jsval *vp)
+JS_ParseJSON(JSContext *cx, const jschar *chars, uint32_t len, JS::MutableHandleValue vp)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
     RootedValue reviver(cx, NullValue()), value(cx);
-    if (!ParseJSONWithReviver(cx, JS::StableCharPtr(chars, len), len, reviver, &value))
-        return false;
-
-    *vp = value;
-    return true;
+    return ParseJSONWithReviver(cx, JS::StableCharPtr(chars, len), len, reviver, vp);
 }
 
 JS_PUBLIC_API(JSBool)

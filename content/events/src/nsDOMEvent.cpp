@@ -161,6 +161,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMEvent)
       case NS_MUTATION_EVENT:
         static_cast<nsMutationEvent*>(tmp->mEvent)->mRelatedNode = nullptr;
         break;
+      case NS_FOCUS_EVENT:
+        static_cast<nsFocusEvent*>(tmp->mEvent)->relatedTarget = nullptr;
+        break;
       default:
         break;
     }
@@ -202,6 +205,11 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMEvent)
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->mRelatedNode");
         cb.NoteXPCOMChild(
           static_cast<nsMutationEvent*>(tmp->mEvent)->mRelatedNode);
+        break;
+      case NS_FOCUS_EVENT:
+        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->relatedTarget");
+        cb.NoteXPCOMChild(
+          static_cast<nsFocusEvent*>(tmp->mEvent)->relatedTarget);
         break;
       default:
         break;
@@ -349,7 +357,6 @@ nsDOMEvent::Initialize(nsISupports* aOwner, JSContext* aCx, JSObject* aObj,
     mOwner = w;
   }
 
-  JSAutoRequest ar(aCx);
   JSString* jsstr = JS_ValueToString(aCx, aArgs[0]);
   if (!jsstr) {
     return NS_ERROR_DOM_SYNTAX_ERR;
@@ -1219,6 +1226,17 @@ const char* nsDOMEvent::GetEventName(uint32_t aEventType)
   // arrays in nsEventListenerManager too, since the events for which
   // this is a problem generally *are* created by nsDOMEvent.)
   return nullptr;
+}
+
+bool
+nsDOMEvent::GetPreventDefault() const
+{
+  if (mOwner) {
+    if (nsIDocument* doc = mOwner->GetExtantDoc()) {
+      doc->WarnOnceAbout(nsIDocument::eGetPreventDefault);
+    }
+  }
+  return DefaultPrevented();
 }
 
 NS_IMETHODIMP

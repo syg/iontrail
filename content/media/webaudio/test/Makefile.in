@@ -12,6 +12,7 @@ include $(DEPTH)/config/autoconf.mk
 
 MOCHITEST_FILES := \
   webaudio.js \
+  layouttest-glue.js \
   test_bug808374.html \
   test_bug827541.html \
   test_bug839753.html \
@@ -23,6 +24,8 @@ MOCHITEST_FILES := \
   test_bug867104.html \
   test_bug867174.html \
   test_bug867203.html \
+  test_bug875221.html \
+  test_bug875402.html \
   test_analyserNode.html \
   test_AudioBuffer.html \
   test_AudioContext.html \
@@ -31,12 +34,12 @@ MOCHITEST_FILES := \
   test_audioParamExponentialRamp.html \
   test_audioParamLinearRamp.html \
   test_audioParamSetCurveAtTime.html \
+  test_audioParamSetCurveAtTimeZeroDuration.html \
   test_audioParamSetTargetAtTime.html \
+  test_audioParamSetValueAtTime.html \
   test_audioParamTimelineDestinationOffset.html \
   test_audioBufferSourceNode.html \
   test_audioBufferSourceNodeEnded.html \
-  test_audioBufferSourceNodeGain.html \
-  test_audioBufferSourceNodeGainInLoop.html \
   test_audioBufferSourceNodeLazyLoopParam.html \
   test_audioBufferSourceNodeLoop.html \
   test_audioBufferSourceNodeLoopStartEnd.html \
@@ -50,22 +53,28 @@ MOCHITEST_FILES := \
   test_channelSplitterNodeWithVolume.html \
   test_currentTime.html \
   test_delayNode.html \
+  test_delayNodeSmallMaxDelay.html \
   test_delayNodeWithGain.html \
-  test_delayNodeWithGainAlternate.html \
   test_dynamicsCompressorNode.html \
   test_gainNode.html \
   test_gainNodeInLoop.html \
+  test_maxChannelCount.html \
   test_mediaDecoding.html \
   test_mixingRules.html \
   test_nodeToParamConnection.html \
   test_OfflineAudioContext.html \
+  test_offlineDestinationChannelCountLess.html \
+  test_offlineDestinationChannelCountMore.html \
   test_pannerNode.html \
+  test_pannerNode_equalPower.html \
   test_scriptProcessorNode.html \
   test_scriptProcessorNodeChannelCount.html \
+  test_scriptProcessorNodeZeroInputOutput.html \
   test_singleSourceDest.html \
   test_waveShaper.html \
   test_waveShaperNoCurve.html \
   test_waveShaperZeroLengthCurve.html \
+  test_waveTable.html \
   ting.ogg \
   ting-expected.wav \
   ting-dualchannel44.1.ogg \

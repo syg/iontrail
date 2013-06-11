@@ -388,7 +388,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Call the target function.
     // Note that this code assumes the function is JITted.
-    masm.movq(Operand(rax, offsetof(JSFunction, u.i.script_)), rax);
+    masm.movq(Operand(rax, JSFunction::offsetOfNativeOrScript()), rax);
     masm.loadBaselineOrIonRaw(rax, rax, mode, NULL);
     masm.call(rax);
     uint32_t returnOffset = masm.currentOffset();
@@ -528,7 +528,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 
       case Type_Handle:
         outReg = regs.takeAny();
-        masm.PushEmptyHandle(f.outParamRootType);
+        masm.PushEmptyRooted(f.outParamRootType);
         masm.movq(esp, outReg);
         break;
 
@@ -599,8 +599,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Load the outparam and free any allocated stack.
     switch (f.outParam) {
       case Type_Handle:
-        masm.loadHandle(f.outParamRootType, Address(esp, 0), ReturnReg, JSReturnOperand);
-        masm.freeStack(VMFunction::sizeOfRootType(f.outParamRootType));
+        masm.popRooted(f.outParamRootType, ReturnReg, JSReturnOperand);
         break;
 
       case Type_Value:

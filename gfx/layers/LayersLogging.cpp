@@ -6,7 +6,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "LayersLogging.h"
-#include "nsPrintfCString.h"
 
 using namespace mozilla::gfx;
 
@@ -96,32 +95,12 @@ AppendToString(nsACString& s, const nsIntPoint& p,
 }
 
 nsACString&
-AppendToString(nsACString& s, const Point& p,
-               const char* pfx, const char* sfx)
-{
-  s += pfx;
-  s += nsPrintfCString("(x=%f, y=%f)", p.x, p.y);
-  return s += sfx;
-}
-
-nsACString&
 AppendToString(nsACString& s, const nsIntRect& r,
                const char* pfx, const char* sfx)
 {
   s += pfx;
   s += nsPrintfCString(
     "(x=%d, y=%d, w=%d, h=%d)",
-    r.x, r.y, r.width, r.height);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const Rect& r,
-               const char* pfx, const char* sfx)
-{
-  s += pfx;
-  s.AppendPrintf(
-    "(x=%f, y=%f, w=%f, h=%f)",
     r.x, r.y, r.width, r.height);
   return s += sfx;
 }

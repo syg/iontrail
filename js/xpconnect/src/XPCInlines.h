@@ -40,13 +40,6 @@ XPCCallContext::IsValid() const
     return mState != INIT_FAILED;
 }
 
-inline nsXPConnect*
-XPCCallContext::GetXPConnect() const
-{
-    CHECK_STATE(HAVE_CONTEXT);
-    return mXPC;
-}
-
 inline XPCJSRuntime*
 XPCCallContext::GetRuntime() const
 {
@@ -94,22 +87,6 @@ XPCCallContext::GetPrevCallContext() const
 {
     CHECK_STATE(HAVE_CONTEXT);
     return mPrevCallContext;
-}
-
-inline JSObject*
-XPCCallContext::GetScopeForNewJSObjects() const
-{
-    CHECK_STATE(HAVE_SCOPE);
-    return mScopeForNewJSObjects;
-}
-
-inline void
-XPCCallContext::SetScopeForNewJSObjects(JSObject *scope)
-{
-    NS_ABORT_IF_FALSE(mState == HAVE_CONTEXT, "wrong call context state");
-    NS_ABORT_IF_FALSE(js::IsObjectInContextCompartment(scope, mJSContext), "wrong compartment");
-    mScopeForNewJSObjects = scope;
-    mState = HAVE_SCOPE;
 }
 
 inline JSObject*
@@ -601,7 +578,7 @@ xpc_ForcePropertyResolve(JSContext* cx, JSObject* obj, jsid id)
 inline jsid
 GetRTIdByIndex(JSContext *cx, unsigned index)
 {
-  XPCJSRuntime *rt = nsXPConnect::FastGetXPConnect()->GetRuntime();
+  XPCJSRuntime *rt = nsXPConnect::XPConnect()->GetRuntime();
   return rt->GetStringID(index);
 }
 
@@ -617,27 +594,6 @@ void ThrowBadResult(nsresult result, XPCCallContext& ccx)
 {
     XPCThrower::ThrowBadResult(NS_ERROR_XPC_NATIVE_RETURNED_FAILURE,
                                result, ccx);
-}
-
-inline void
-XPCLazyCallContext::SetWrapper(XPCWrappedNative* wrapper,
-                               XPCWrappedNativeTearOff* tearoff)
-{
-    mWrapper = wrapper;
-    mTearOff = tearoff;
-    if (mTearOff)
-        mFlattenedJSObject = mTearOff->GetJSObject();
-    else
-        mFlattenedJSObject = mWrapper->GetFlatJSObject();
-}
-inline void
-XPCLazyCallContext::SetWrapper(JSObject* flattenedJSObject)
-{
-    NS_ASSERTION(IS_SLIM_WRAPPER_OBJECT(flattenedJSObject),
-                 "What kind of object is this?");
-    mWrapper = nullptr;
-    mTearOff = nullptr;
-    mFlattenedJSObject = flattenedJSObject;
 }
 
 /***************************************************************************/

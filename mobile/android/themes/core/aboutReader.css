@@ -7,10 +7,12 @@ html {
 }
 
 body {
-  margin-top: 20px;
-  margin-bottom: 20px;
-  -moz-transition-property: background-color, color;
-  -moz-transition-duration: 0.7s;
+  padding: 20px;
+  transition-property: background-color, color;
+  transition-duration: 0.4s;
+  max-width: 35em;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .light {
@@ -44,13 +46,25 @@ body {
   display: none;
 }
 
-.header > .domain {
+.domain,
+.credits {
+  font-family: "Open Sans", sans-serif;
+}
+
+.domain {
   margin-top: 10px;
   padding-bottom: 10px;
-  border-bottom: 2px solid; 
+  color: #00acff !important;
+  text-decoration: none;
+}
+
+.domain-border {
+  border-bottom: 1.5px solid #777777;
+  width: 50%;
 }
 
 .header > h1 {
+  font-size: 2.625em;
   font-weight: 300;
   line-height: 1.1em;
   width: 100%;
@@ -58,6 +72,10 @@ body {
   margin-top: 32px;
   margin-bottom: 16px;
   padding: 0px;
+}
+
+.serif > .header > h1 {
+  font-weight: 700;
 }
 
 .header > .credits {
@@ -93,23 +111,23 @@ body {
 }
 
 .font-size1 > .header > h1 {
-  font-size: 25px;
-}
-
-.font-size2 > .header > h1 {
   font-size: 27px;
 }
 
-.font-size3 > .header > h1 {
+.font-size2 > .header > h1 {
   font-size: 29px;
 }
 
-.font-size4 > .header > h1 {
+.font-size3 > .header > h1 {
   font-size: 31px;
 }
 
-.font-size5 > .header > h1 {
+.font-size4 > .header > h1 {
   font-size: 33px;
+}
+
+.font-size5 > .header > h1 {
+  font-size: 35px;
 }
 
 /* This covers caption, domain, and credits
@@ -119,35 +137,35 @@ body {
 .font-size1 > .content figcaption,
 .font-size1 > .header > .domain,
 .font-size1 > .header > .credits {
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .font-size2 > .content .wp-caption-text,
 .font-size2 > .content figcaption,
 .font-size2 > .header > .domain,
 .font-size2 > .header > .credits {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .font-size3 > .content .wp-caption-text,
 .font-size3 > .content figcaption,
 .font-size3 > .header > .domain,
 .font-size3 > .header > .credits {
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .font-size4 > .content .wp-caption-text,
 .font-size4 > .content figcaption,
 .font-size4 > .header > .domain,
 .font-size4 > .header > .credits {
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .font-size5 > .content .wp-caption-text,
 .font-size5 > .content figcaption,
 .font-size5 > .header > .domain,
 .font-size5 > .header > .credits {
-  font-size: 17px;
+  font-size: 19px;
 }
 
 .content {
@@ -163,14 +181,14 @@ body {
 .light > .content a:visited,
 .light > .content a:hover,
 .light > .content a:active {
-  color: #ee6700 !important;
+  color: #00acff !important;
 }
 
 .dark > .content a,
 .dark > .content a:visited,
 .dark > .content a:hover,
 .dark > .content a:active {
-  color: #ff9400 !important;
+  color: #00acff !important;
 }
 
 .content * {
@@ -218,6 +236,7 @@ body {
 .content .caption,
 .content .wp-caption-text,
 .content figcaption {
+  font-family: "Open Sans", sans-serif;
   margin: 0px !important;
   padding-top: 4px !important;
 }
@@ -281,33 +300,33 @@ body {
 
 .font-size1-sample,
 .font-size1 > .content {
-  font-size: 12px !important;
+  font-size: 14px !important;
 }
 
 .font-size2-sample,
 .font-size2 > .content {
-  font-size: 14px !important;
+  font-size: 16px !important;
 }
 
 .font-size3-sample,
 .font-size3 > .content {
-  font-size: 16px !important;
+  font-size: 18px !important;
 }
 
 .font-size4-sample,
 .font-size4 > .content {
-  font-size: 18px !important;
+  font-size: 20px !important;
 }
 
 .font-size5-sample,
 .font-size5 > .content {
-  font-size: 20px !important;
+  font-size: 22px !important;
 }
 
 .toolbar {
   font-family: "Droid Sans",helvetica,arial,clean,sans-serif;
-  -moz-transition-property: visibility, opacity;
-  -moz-transition-duration: 0.7s;
+  transition-property: visibility, opacity;
+  transition-duration: 0.7s;
   visibility: visible;
   opacity: 1.0;
   position: fixed;
@@ -321,8 +340,8 @@ body {
 }
 
 .toolbar-hidden {
-  -moz-transition-property: visibility, opacity;
-  -moz-transition-duration: 0.7s;
+  transition-property: visibility, opacity;
+  transition-duration: 0.7s;
   visibility: hidden;
   opacity: 0.0;
 }
@@ -483,8 +502,12 @@ body {
   background-image: url('chrome://browser/skin/images/reader-toggle-off-icon-mdpi.png');
 }
 
+.list-button.on {
+  background-image: url('chrome://browser/skin/images/reader-list-on-icon-mdpi.png');
+}
+
 .list-button {
-  background-image: url('chrome://browser/skin/images/reader-list-icon-mdpi.png');
+  background-image: url('chrome://browser/skin/images/reader-list-off-icon-mdpi.png');
 }
 
 .share-button {
@@ -516,8 +539,12 @@ body {
     background-image: url('chrome://browser/skin/images/reader-toggle-off-icon-hdpi.png');
   }
 
+  .list-button.on {
+    background-image: url('chrome://browser/skin/images/reader-list-on-icon-hdpi.png');
+  }
+
   .list-button {
-    background-image: url('chrome://browser/skin/images/reader-list-icon-hdpi.png');
+    background-image: url('chrome://browser/skin/images/reader-list-off-icon-hdpi.png');
   }
 
   .share-button {
@@ -550,8 +577,12 @@ body {
     background-image: url('chrome://browser/skin/images/reader-toggle-off-icon-xhdpi.png');
   }
 
+  .list-button.on {
+    background-image: url('chrome://browser/skin/images/reader-list-on-icon-xhdpi.png');
+  }
+
   .list-button {
-    background-image: url('chrome://browser/skin/images/reader-list-icon-xhdpi.png');
+    background-image: url('chrome://browser/skin/images/reader-list-off-icon-xhdpi.png');
   }
 
   .share-button {

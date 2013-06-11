@@ -393,6 +393,26 @@ PeerConnectionMedia::AddRemoteStream(nsRefPtr<RemoteSourceStreamInfo> aInfo,
   return NS_OK;
 }
 
+nsresult
+PeerConnectionMedia::AddRemoteStreamHint(int aIndex, bool aIsVideo)
+{
+  if (aIndex < 0 ||
+      static_cast<unsigned int>(aIndex) >= mRemoteSourceStreams.Length()) {
+    return NS_ERROR_ILLEGAL_VALUE;
+  }
+
+  RemoteSourceStreamInfo *pInfo = mRemoteSourceStreams.ElementAt(aIndex);
+  MOZ_ASSERT(pInfo);
+
+  if (aIsVideo) {
+    pInfo->mTrackTypeHints |= DOMMediaStream::HINT_CONTENTS_VIDEO;
+  } else {
+    pInfo->mTrackTypeHints |= DOMMediaStream::HINT_CONTENTS_AUDIO;
+  }
+
+  return NS_OK;
+}
+
 
 void
 PeerConnectionMedia::IceGatheringCompleted(NrIceCtx *aCtx)

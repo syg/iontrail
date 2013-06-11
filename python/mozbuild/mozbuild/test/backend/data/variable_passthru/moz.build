@@ -7,3 +7,19 @@ XPIDL_MODULE = 'module_name'
 XPIDL_FLAGS = ['-Idir1', '-Idir2', '-Idir3']
 
 ASFILES = ['bar.s', 'foo.asm']
+
+DEFINES = ['-Dbar', '-Dfoo']
+
+EXTRA_COMPONENTS = ['bar.js', 'foo.js']
+
+HOST_CSRCS = ['bar.c', 'foo.c']
+
+HOST_LIBRARY_NAME = 'host_bar'
+
+SIMPLE_PROGRAMS = ['bar.x', 'foo.x']
+
+CSRCS += ['bar.c', 'foo.c']
+
+CMMSRCS = ['bar.mm', 'foo.mm']
+
+SSRCS = ['bar.S', 'foo.S']

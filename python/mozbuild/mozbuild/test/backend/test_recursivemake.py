@@ -142,6 +142,37 @@ class TestRecursiveMakeBackend(BackendTester):
                 'ASFILES += bar.s',
                 'ASFILES += foo.asm',
             ],
+            'CMMSRCS': [
+                'CMMSRCS += bar.mm',
+                'CMMSRCS += foo.mm',
+            ],
+            'CSRCS': [
+                'CSRCS += bar.c',
+                'CSRCS += foo.c',
+            ],
+            'DEFINES': [
+                'DEFINES += -Dbar',
+                'DEFINES += -Dfoo',
+            ],
+            'EXTRA_COMPONENTS': [
+                'EXTRA_COMPONENTS += bar.js',
+                'EXTRA_COMPONENTS += foo.js',
+            ],
+            'HOST_CSRCS': [
+                'HOST_CSRCS += bar.c',
+                'HOST_CSRCS += foo.c',
+            ],
+            'HOST_LIBRARY_NAME': [
+                'HOST_LIBRARY_NAME := host_bar',
+            ],
+            'SIMPLE_PROGRAMS': [
+                'SIMPLE_PROGRAMS += bar.x',
+                'SIMPLE_PROGRAMS += foo.x',
+            ],
+            'SSRCS': [
+                'SSRCS += bar.S',
+                'SSRCS += foo.S',
+            ],
             'XPIDL_FLAGS': [
                 'XPIDL_FLAGS += -Idir1',
                 'XPIDL_FLAGS += -Idir2',

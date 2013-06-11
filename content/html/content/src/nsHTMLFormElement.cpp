@@ -171,6 +171,7 @@ ShouldBeInElements(nsIFormControl* aFormControl)
   case NS_FORM_BUTTON_SUBMIT :
   case NS_FORM_INPUT_BUTTON :
   case NS_FORM_INPUT_CHECKBOX :
+  case NS_FORM_INPUT_COLOR :
   case NS_FORM_INPUT_EMAIL :
   case NS_FORM_INPUT_FILE :
   case NS_FORM_INPUT_HIDDEN :
@@ -300,14 +301,15 @@ DOMCI_NODE_DATA(HTMLFormElement, nsHTMLFormElement)
 
 // QueryInterface implementation for nsHTMLFormElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHTMLFormElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE4(nsHTMLFormElement,
-                                   nsIDOMHTMLFormElement,
-                                   nsIForm,
-                                   nsIWebProgressListener,
-                                   nsIRadioGroupContainer)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(nsHTMLFormElement,
-                                               nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLFormElement)
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED4(nsHTMLFormElement,
+                                nsIDOMHTMLFormElement,
+                                nsIForm,
+                                nsIWebProgressListener,
+                                nsIRadioGroupContainer)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(HTMLFormElement)
+NS_ELEMENT_INTERFACE_MAP_END
 
 
 // nsIDOMHTMLFormElement
@@ -2554,7 +2556,7 @@ nsFormControlList::NamedItem(JSContext* cx, const nsAString& name,
   JS::Rooted<JSObject*> wrapper(cx, nsWrapperCache::GetWrapper());
   JSAutoCompartment ac(cx, wrapper);
   JS::Rooted<JS::Value> v(cx);
-  if (!mozilla::dom::WrapObject(cx, wrapper, item, v.address())) {
+  if (!mozilla::dom::WrapObject(cx, wrapper, item, &v)) {
     error.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }

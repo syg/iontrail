@@ -37,14 +37,13 @@
 #include "jsdtoa.h"
 #include "jsobj.h"
 #include "jsstr.h"
-
 #include "vm/GlobalObject.h"
 #include "vm/NumericConversions.h"
 #include "vm/StringBuffer.h"
 
 #include "jsatominlines.h"
 #include "jsobjinlines.h"
-
+#include "jsstrinlines.h"
 #include "vm/NumberObject-inl.h"
 #include "vm/String-inl.h"
 
@@ -174,6 +173,24 @@ ComputeAccurateBinaryBaseInteger(const jschar *start, const jschar *end, int bas
     return value;
 }
 
+double
+js::ParseDecimalNumber(const JS::TwoByteChars chars)
+{
+    MOZ_ASSERT(chars.length() > 0);
+    uint64_t dec = 0;
+    RangedPtr<jschar> s = chars.start(), end = chars.end();
+    do {
+        jschar c = *s;
+        MOZ_ASSERT('0' <= c && c <= '9');
+        uint8_t digit = c - '0';
+        uint64_t next = dec * 10 + digit;
+        MOZ_ASSERT(next < DOUBLE_INTEGRAL_PRECISION_LIMIT,
+                   "next value won't be an integrally-precise double");
+        dec = next;
+    } while (++s < end);
+    return static_cast<double>(dec);
+}
+
 bool
 js::GetPrefixInteger(JSContext *cx, const jschar *start, const jschar *end, int base,
                      const jschar **endp, double *dp)
@@ -250,28 +267,28 @@ num_isFinite(JSContext *cx, unsigned argc, Value *vp)
 static JSBool
 num_parseFloat(JSContext *cx, unsigned argc, Value *vp)
 {
-    JSString *str;
-    double d;
-    const jschar *bp, *end, *ep;
+    CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (argc == 0) {
-        vp->setDouble(js_NaN);
+    if (args.length() == 0) {
+        args.rval().setDouble(js_NaN);
         return JS_TRUE;
     }
-    str = ToString<CanGC>(cx, vp[2]);
+    JSString *str = ToString<CanGC>(cx, args.handleAt(0));
     if (!str)
         return JS_FALSE;
-    bp = str->getChars(cx);
+    const jschar *bp = str->getChars(cx);
     if (!bp)
         return JS_FALSE;
-    end = bp + str->length();
+    const jschar *end = bp + str->length();
+    const jschar *ep;
+    double d;
     if (!js_strtod(cx, bp, end, &ep, &d))
         return JS_FALSE;
     if (ep == bp) {
-        vp->setDouble(js_NaN);
+        args.rval().setDouble(js_NaN);
         return JS_TRUE;
     }
-    vp->setNumber(d);
+    args.rval().setDouble(d);
     return JS_TRUE;
 }
 
@@ -323,7 +340,7 @@ js::num_parseInt(JSContext *cx, unsigned argc, Value *vp)
     }
 
     /* Step 1. */
-    RootedString inputString(cx, ToString<CanGC>(cx, args[0]));
+    RootedString inputString(cx, ToString<CanGC>(cx, args.handleAt(0)));
     if (!inputString)
         return false;
     args[0].setString(inputString);

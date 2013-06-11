@@ -87,8 +87,12 @@ interface HTMLMediaElement : HTMLElement {
   // tracks
   //readonly attribute AudioTrackList audioTracks;
   //readonly attribute VideoTrackList videoTracks;
-  //readonly attribute TextTrackList textTracks;
-  //TextTrack addTextTrack(DOMString kind, optional DOMString label, optional DOMString language);
+  [Pref="media.webvtt.enabled"]
+  readonly attribute TextTrackList textTracks;
+  [Pref="media.webvtt.enabled"]
+  TextTrack addTextTrack(TextTrackKind kind,
+                         optional DOMString label = "",
+                         optional DOMString language = "");
 };
 
 // Mozilla extensions:
@@ -122,15 +126,6 @@ partial interface HTMLMediaElement {
   // player interfaces to display the song title, artist, etc.
   [Throws]
   object? mozGetMetadata();
-
-  // Mozilla extension: load data from another media element. This is like
-  // load() but we don't run the resource selection algorithm; instead
-  // we just set our source to other's currentSrc. This is optimized
-  // so that this element will get access to all of other's cached/
-  // buffered data. In fact any future data downloaded by this element or
-  // other will be sharable by both elements.
-  [Throws]
-  void mozLoadFrom(HTMLMediaElement other);
 
   // Mozilla extension: provides access to the fragment end time if
   // the media element has a fragment URI for the currentSrc, otherwise

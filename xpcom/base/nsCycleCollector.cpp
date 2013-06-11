@@ -160,6 +160,9 @@ using namespace mozilla;
 
 #define DEFAULT_SHUTDOWN_COLLECTIONS 5
 
+// One to do the freeing, then another to detect there is no more work to do.
+#define NORMAL_SHUTDOWN_COLLECTIONS 2
+
 #if defined(XP_WIN)
 // Defined in nsThreadManager.cpp.
 extern DWORD gTLSThreadIDIndex;
@@ -1659,7 +1662,9 @@ private:
             NS_ConvertUTF16toUTF8(mFilenameIdentifier).get());
 
         // Get the log directory either from $MOZ_CC_LOG_DIRECTORY or from
-        // the fallback directories in OpenTempFile.
+        // the fallback directories in OpenTempFile.  We don't use an nsCOMPtr
+        // here because OpenTempFile uses an in/out param and getter_AddRefs
+        // wouldn't work.
         nsIFile* logFile = nullptr;
         if (char* env = PR_GetEnv("MOZ_CC_LOG_DIRECTORY")) {
             NS_NewNativeLocalFile(nsCString(env), /* followLinks = */ true,
@@ -1671,7 +1676,7 @@ private:
           return nullptr;
         }
 
-        return logFile;
+        return dont_AddRef(logFile);
     }
 
     FILE *mStream;
@@ -1885,7 +1890,6 @@ GCGraphBuilder::AddNode(void *s, nsCycleCollectionParticipant *aParticipant)
 {
     PtrToNodeEntry *e = static_cast<PtrToNodeEntry*>(PL_DHashTableOperate(&mPtrToNodeMap, s, PL_DHASH_ADD));
     if (!e) {
-        NS_WARNING("Hash table add in GCGraphBuilder::AddNode failed");
         return nullptr;
     }
 
@@ -2537,6 +2541,7 @@ nsCycleCollector::nsCycleCollector(CCThreadingModel aModel) :
 
 nsCycleCollector::~nsCycleCollector()
 {
+    NS_ASSERTION(!mRunner, "Destroying cycle collector without destroying its runner, may leak");
     NS_UnregisterMemoryMultiReporter(mReporter);
 }
 
@@ -2752,6 +2757,8 @@ nsCycleCollector::ShutdownCollect(nsICycleCollectorListener *aListener)
         return;
 
     for (uint32_t i = 0; i < DEFAULT_SHUTDOWN_COLLECTIONS; ++i) {
+        NS_WARN_IF_FALSE(i < NORMAL_SHUTDOWN_COLLECTIONS, "Extra shutdown CC");
+
         // Synchronous cycle collection. Always force a JS GC beforehand.
         FixGrayBits(true);
         if (aListener && NS_FAILED(aListener->Begin()))
@@ -2939,6 +2946,21 @@ nsCycleCollector::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
     // - mParams: because it only contains scalars.
 }
 
+// This is our special sentinel value that tells us that we've shut
+// down this thread's CC.
+static nsCycleCollector* const kSentinelCollector = (nsCycleCollector*)1;
+
+inline bool
+CollectorIsShutDown(nsCycleCollector* aCollector)
+{
+    return aCollector == kSentinelCollector;
+}
+
+inline bool
+HaveCollector(nsCycleCollector* aCollector)
+{
+    return aCollector && !CollectorIsShutDown(aCollector);
+}
 
 ////////////////////////////////////////////////////////////////////////
 // Module public API (exported in nsCycleCollector.h)
@@ -2959,15 +2981,45 @@ nsCycleCollector_forgetJSRuntime()
 {
     nsCycleCollector *collector = sCollector.get();
 
-    if (collector == (nsCycleCollector*)1) {
-        // This is our special sentinel value that tells us that we've shut
-        // down this thread's CC.
+    if (CollectorIsShutDown(collector)) {
         return;
     }
 
     if (collector)
         collector->ForgetJSRuntime();
 }
+
+void
+cyclecollector::AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer)
+{
+    nsCycleCollector *collector = sCollector.get();
+
+    MOZ_ASSERT(HaveCollector(collector));
+
+    collector->JSRuntime()->AddJSHolder(aHolder, aTracer);
+}
+
+void
+cyclecollector::RemoveJSHolder(void* aHolder)
+{
+    nsCycleCollector *collector = sCollector.get();
+
+    MOZ_ASSERT(HaveCollector(collector));
+
+    collector->JSRuntime()->RemoveJSHolder(aHolder);
+}
+
+#ifdef DEBUG
+bool
+cyclecollector::TestJSHolder(void* aHolder)
+{
+    nsCycleCollector *collector = sCollector.get();
+
+    MOZ_ASSERT(HaveCollector(collector));
+
+    return collector->JSRuntime()->TestJSHolder(aHolder);
+}
+#endif
 
 nsPurpleBufferEntry*
 NS_CycleCollectorSuspect2(void *n, nsCycleCollectionParticipant *cp)
@@ -2978,9 +3030,7 @@ NS_CycleCollectorSuspect2(void *n, nsCycleCollectionParticipant *cp)
         MOZ_CRASH();
     }
 
-    if (collector == (nsCycleCollector*)1) {
-        // This is our special sentinel value that tells us that we've shut
-        // down this thread's CC.
+    if (CollectorIsShutDown(collector)) {
         return nullptr;
     }
 
@@ -2992,9 +3042,7 @@ nsCycleCollector_suspectedCount()
 {
     nsCycleCollector *collector = sCollector.get();
 
-    if (collector == (nsCycleCollector*)1) {
-        // This is our special sentinel value that tells us that we've shut
-        // down this thread's CC.
+    if (CollectorIsShutDown(collector)) {
         return 0;
     }
 
@@ -3110,6 +3158,6 @@ nsCycleCollector_shutdown()
         delete collector;
         // We want to be able to distinguish never having a collector from
         // having a shutdown collector.
-        sCollector.set(reinterpret_cast<nsCycleCollector*>(1));
+        sCollector.set(kSentinelCollector);
     }
 }

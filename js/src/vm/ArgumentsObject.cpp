@@ -6,9 +6,9 @@
 
 #include "jsgc.h"
 #include "jsinfer.h"
-#include "jsinterp.h"
 
 #include "vm/GlobalObject.h"
+#include "vm/Interpreter.h"
 #include "vm/Stack.h"
 #include "vm/Xdr.h"
 
@@ -30,25 +30,13 @@ CopyStackFrameArguments(const AbstractFramePtr frame, HeapValue *dst, unsigned t
 {
     JS_ASSERT_IF(frame.isStackFrame(), !frame.asStackFrame()->runningInIon());
 
-    unsigned numActuals = frame.numActualArgs();
-    unsigned numFormals = frame.callee()->nargs;
-    JS_ASSERT(numActuals <= totalArgs);
-    JS_ASSERT(numFormals <= totalArgs);
-    JS_ASSERT(Max(numActuals, numFormals) == totalArgs);
+    JS_ASSERT(Max(frame.numActualArgs(), frame.numFormalArgs()) == totalArgs);
 
-    /* Copy formal arguments. */
-    Value *src = frame.formals();
-    Value *end = src + numFormals;
+    /* Copy arguments. */
+    Value *src = frame.argv();
+    Value *end = src + totalArgs;
     while (src != end)
         (dst++)->init(*src++);
-
-    /* Copy actual argument which are not contignous. */
-    if (numFormals < numActuals) {
-        src = frame.actuals() + numFormals;
-        end = src + (numActuals - numFormals);
-        while (src != end)
-            (dst++)->init(*src++);
-    }
 }
 
 /* static */ void
@@ -199,7 +187,7 @@ ArgumentsObject::create(JSContext *cx, HandleScript script, HandleFunction calle
         return NULL;
 
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(proto),
-                                                      proto->getParent(), FINALIZE_KIND,
+                                                      proto->getParent(), NewObjectMetadata(cx), FINALIZE_KIND,
                                                       BaseShape::INDEXED));
     if (!shape)
         return NULL;
@@ -352,12 +340,9 @@ ArgSetter(JSContext *cx, HandleObject obj, HandleId id, JSBool strict, MutableHa
     if (JSID_IS_INT(id)) {
         unsigned arg = unsigned(JSID_TO_INT(id));
         if (arg < argsobj.initialLength() && !argsobj.isElementDeleted(arg)) {
-            argsobj.setElement(arg, vp);
-            if (arg < script->function()->nargs) {
-                if (!script->ensureHasTypes(cx))
-                    return false;
+            argsobj.setElement(cx, arg, vp);
+            if (arg < script->function()->nargs)
                 types::TypeScript::SetArgument(cx, script, arg, vp);
-            }
             return true;
         }
     } else {
@@ -478,7 +463,7 @@ StrictArgSetter(JSContext *cx, HandleObject obj, HandleId id, JSBool strict, Mut
     if (JSID_IS_INT(id)) {
         unsigned arg = unsigned(JSID_TO_INT(id));
         if (arg < argsobj->initialLength()) {
-            argsobj->setElement(arg, vp);
+            argsobj->setElement(cx, arg, vp);
             return true;
         }
     } else {

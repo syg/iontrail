@@ -76,9 +76,14 @@ protected:
                                 const bool& isFirstPaint) MOZ_OVERRIDE;
 
   virtual bool RecvClearCachedResources() MOZ_OVERRIDE;
+  virtual bool RecvGetOpacity(PLayerParent* aParent,
+                              float* aOpacity) MOZ_OVERRIDE;
+  virtual bool RecvGetTransform(PLayerParent* aParent,
+                                gfx3DMatrix* aTransform) MOZ_OVERRIDE;
 
   virtual PGrallocBufferParent*
-  AllocPGrallocBuffer(const gfxIntSize& aSize, const gfxContentType& aContent,
+  AllocPGrallocBuffer(const gfxIntSize& aSize,
+                      const uint32_t& aFormat, const uint32_t& aUsage,
                       MaybeMagicGrallocBufferHandle* aOutHandle) MOZ_OVERRIDE;
   virtual bool
   DeallocPGrallocBuffer(PGrallocBufferParent* actor) MOZ_OVERRIDE;

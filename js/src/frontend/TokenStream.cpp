@@ -32,6 +32,7 @@
 #include "jsopcode.h"
 #include "jsscript.h"
 
+#include "frontend/BytecodeCompiler.h"
 #include "frontend/Parser.h"
 #include "frontend/TokenStream.h"
 #include "js/CharacterEncoding.h"
@@ -49,6 +50,13 @@ using mozilla::PodAssign;
 using mozilla::PodCopy;
 using mozilla::PodZero;
 
+struct KeywordInfo {
+    const char  *chars;         /* C string with keyword text */
+    TokenKind   tokentype;
+    JSOp        op;             /* JSOp */
+    JSVersion   version;        /* JSVersion */
+};
+
 static const KeywordInfo keywords[] = {
 #define KEYWORD_INFO(keyword, name, type, op, version) \
     {js_##keyword##_str, type, op, version},
@@ -56,13 +64,17 @@ static const KeywordInfo keywords[] = {
 #undef KEYWORD_INFO
 };
 
-const KeywordInfo *
-frontend::FindKeyword(const jschar *s, size_t length)
+/*
+ * Returns a KeywordInfo for the specified characters, or NULL if the string is
+ * not a keyword.
+ */
+static const KeywordInfo *
+FindKeyword(const jschar *s, size_t length)
 {
     JS_ASSERT(length != 0);
 
     register size_t i;
-    const struct KeywordInfo *kw;
+    const KeywordInfo *kw;
     const char *chars;
 
 #define JSKW_LENGTH()           length
@@ -113,6 +125,12 @@ frontend::IsIdentifier(JSLinearString *str)
     return true;
 }
 
+bool
+frontend::IsKeyword(JSLinearString *str)
+{
+    return FindKeyword(str->chars(), str->length()) != NULL;
+}
+
 TokenStream::SourceCoords::SourceCoords(JSContext *cx, uint32_t ln)
   : lineStartOffsets_(cx), initialLineNum_(ln), lastLineIndex_(0)
 {
@@ -156,6 +174,22 @@ TokenStream::SourceCoords::add(uint32_t lineNum, uint32_t lineStartOffset)
         // than checking it hasn't mysteriously changed).
         JS_ASSERT(lineStartOffsets_[lineIndex] == lineStartOffset);
     }
+}
+
+JS_ALWAYS_INLINE void
+TokenStream::SourceCoords::fill(const TokenStream::SourceCoords &other)
+{
+    JS_ASSERT(lineStartOffsets_.back() == MAX_PTR);
+    JS_ASSERT(other.lineStartOffsets_.back() == MAX_PTR);
+
+    if (lineStartOffsets_.length() >= other.lineStartOffsets_.length())
+        return;
+
+    uint32_t sentinelIndex = lineStartOffsets_.length() - 1;
+    lineStartOffsets_[sentinelIndex] = other.lineStartOffsets_[sentinelIndex];
+
+    for (size_t i = sentinelIndex + 1; i < other.lineStartOffsets_.length(); i++)
+        (void)lineStartOffsets_.append(other.lineStartOffsets_[i]);
 }
 
 JS_ALWAYS_INLINE uint32_t
@@ -251,9 +285,9 @@ TokenStream::TokenStream(JSContext *cx, const CompileOptions &options,
     lookahead(),
     lineno(options.lineno),
     flags(),
-    linebase(base),
+    linebase(base - options.column),
     prevLinebase(NULL),
-    userbuf(cx, base, length),
+    userbuf(cx, base - options.column, length + options.column), // See comment below
     filename(options.filename),
     sourceMap(NULL),
     listenerTSData(),
@@ -268,6 +302,12 @@ TokenStream::TokenStream(JSContext *cx, const CompileOptions &options,
     linebaseSkip(cx, &linebase),
     prevLinebaseSkip(cx, &prevLinebase)
 {
+    // Column numbers are computed as offsets from the current line's base, so the
+    // initial line's base must be included in the buffer. linebase and userbuf
+    // were adjusted above, and if we are starting tokenization part way through
+    // this line then adjust the next character.
+    userbuf.setAddressOfNextRawChar(base);
+
     if (originPrincipals)
         JS_HoldPrincipals(originPrincipals);
 
@@ -502,6 +542,19 @@ TokenStream::TokenBuf::findEOLMax(const jschar *p, size_t max)
 }
 
 void
+TokenStream::advance(size_t position)
+{
+    const jschar *end = userbuf.base() + position;
+    while (userbuf.addressOfNextRawChar() < end)
+        getChar();
+
+    Token *cur = &tokens[cursor];
+    cur->pos.begin = userbuf.addressOfNextRawChar() - userbuf.base();
+    cur->type = TOK_ERROR;
+    lookahead = 0;
+}
+
+void
 TokenStream::tell(Position *pos)
 {
     pos->buf = userbuf.addressOfNextRawChar();
@@ -528,6 +581,13 @@ TokenStream::seek(const Position &pos)
     tokens[cursor] = pos.currentToken;
     for (unsigned i = 0; i < lookahead; i++)
         tokens[(cursor + 1 + i) & ntokensMask] = pos.lookaheadTokens[i];
+}
+
+void
+TokenStream::seek(const Position &pos, const TokenStream &other)
+{
+    srcCoords.fill(other.srcCoords);
+    seek(pos);
 }
 
 void
@@ -623,6 +683,7 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
     err.report.filename = filename;
     err.report.originPrincipals = originPrincipals;
     err.report.lineno = srcCoords.lineNum(offset);
+    err.report.column = srcCoords.columnIndex(offset);
 
     err.argumentsType = (flags & JSREPORT_UC) ? ArgumentsAreUnicode : ArgumentsAreASCII;
 
@@ -796,21 +857,24 @@ CharsMatch(const jschar *p, const char *q) {
 }
 
 bool
-TokenStream::getAtSourceMappingURL(bool isMultiline)
+TokenStream::getSourceMappingURL(bool isMultiline, bool shouldWarnDeprecated)
 {
-    /* Match comments of the form "//@ sourceMappingURL=<url>" or
-     * "/\* //@ sourceMappingURL=<url> *\/"
+    /* Match comments of the form "//# sourceMappingURL=<url>" or
+     * "/\* //# sourceMappingURL=<url> *\/"
      *
-     * To avoid a crashing bug in IE, several JavaScript transpilers
-     * wrap single line comments containing a source mapping URL
-     * inside a multiline comment to avoid a crashing bug in IE. To
-     * avoid potentially expensive lookahead and backtracking, we
-     * only check for this case if we encounter an '@' character.
+     * To avoid a crashing bug in IE, several JavaScript transpilers wrap single
+     * line comments containing a source mapping URL inside a multiline
+     * comment. To avoid potentially expensive lookahead and backtracking, we
+     * only check for this case if we encounter a '#' character.
      */
     jschar peeked[18];
     int32_t c;
 
     if (peekChars(18, peeked) && CharsMatch(peeked, " sourceMappingURL=")) {
+        if (shouldWarnDeprecated && !reportWarning(JSMSG_DEPRECATED_SOURCE_MAP)) {
+            return false;
+        }
+
         skipChars(18);
         tokenbuf.clear();
 
@@ -1539,8 +1603,11 @@ TokenStream::getTokenInternal()
          * Look for a single-line comment.
          */
         if (matchChar('/')) {
-            if (matchChar('@') && !getAtSourceMappingURL(false))
-                goto error;
+            c = peekChar();
+            if (c == '@' || c == '#') {
+                if (!getSourceMappingURL(false, getChar() == '@'))
+                    goto error;
+            }
 
   skipline:
             /* Optimize line skipping if we are not in an HTML comment. */
@@ -1565,8 +1632,10 @@ TokenStream::getTokenInternal()
             unsigned linenoBefore = lineno;
             while ((c = getChar()) != EOF &&
                    !(c == '*' && matchChar('/'))) {
-                if (c == '@' && !getAtSourceMappingURL(true))
-                   goto error;
+                if (c == '@' || c == '#') {
+                    if (!getSourceMappingURL(true, c == '@'))
+                        goto error;
+                }
             }
             if (c == EOF) {
                 reportError(JSMSG_UNTERMINATED_COMMENT);

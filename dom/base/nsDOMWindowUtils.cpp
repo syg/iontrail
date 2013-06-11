@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/PLayerTransactionChild.h"
 #include "nsIDocShell.h"
 #include "nsPresContext.h"
 #include "nsDOMClassInfoID.h"
@@ -62,7 +64,6 @@
 #include "nsIIOService.h"
 
 #include "mozilla/dom/Element.h"
-#include "mozilla/dom/indexedDB/FileInfo.h"
 #include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "GeckoProfiler.h"
@@ -72,11 +73,22 @@
 #include "nsViewportInfo.h"
 #include "nsIFormControl.h"
 #include "nsIScriptError.h"
+#include "nsIAppShell.h"
+#include "nsWidgetsCID.h"
+#include "FrameLayerBuilder.h"
+#include "nsDisplayList.h"
+#include "nsROCSSPrimitiveValue.h"
+
+#ifdef XP_WIN
+#undef GetClassName
+#endif
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
 using namespace mozilla::widget;
+
+static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
 
 DOMCI_DATA(WindowUtils, nsDOMWindowUtils)
 
@@ -513,6 +525,21 @@ nsDOMWindowUtils::GetIsFirstPaint(bool *aIsFirstPaint)
   nsIPresShell* presShell = GetPresShell();
   if (presShell) {
     *aIsFirstPaint = presShell->GetIsFirstPaint();
+    return NS_OK;
+  }
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetPresShellId(uint32_t *aPresShellId)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsIPresShell* presShell = GetPresShell();
+  if (presShell) {
+    *aPresShellId = presShell->GetPresShellId();
     return NS_OK;
   }
   return NS_ERROR_FAILURE;
@@ -1513,6 +1540,35 @@ nsDOMWindowUtils::GetScrollbarSize(bool aFlushLayout, int32_t* aWidth,
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::GetBoundsWithoutFlushing(nsIDOMElement *aElement,
+                                           nsIDOMClientRect** aResult)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsresult rv;
+  nsCOMPtr<nsIContent> content = do_QueryInterface(aElement, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsRefPtr<nsClientRect> rect = new nsClientRect(window);
+  nsIFrame* frame = content->GetPrimaryFrame();
+
+  if (frame) {
+    nsRect r = nsLayoutUtils::GetAllInFlowRectsUnion(frame,
+               nsLayoutUtils::GetContainingBlockForClientRect(frame),
+               nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
+    rect->SetLayoutRect(r);
+  }
+
+  rect.forget(aResult);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::GetRootBounds(nsIDOMClientRect** aResult)
 {
   if (!nsContentUtils::IsCallerChrome()) {
@@ -1981,7 +2037,7 @@ nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
     msg = NS_CONTENT_COMMAND_PASTE_TRANSFERABLE;
   else
     return NS_ERROR_FAILURE;
- 
+
   nsContentCommandEvent event(true, msg, widget);
   if (msg == NS_CONTENT_COMMAND_PASTE_TRANSFERABLE) {
     event.mTransferable = aTransferable;
@@ -2352,7 +2408,9 @@ nsDOMWindowUtils::AdvanceTimeAndRefresh(int64_t aMilliseconds)
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  GetPresContext()->RefreshDriver()->AdvanceTimeAndRefresh(aMilliseconds);
+  nsRefreshDriver* driver = GetPresContext()->RefreshDriver();
+  driver->AdvanceTimeAndRefresh(aMilliseconds);
+  CompositorParent::SetTimeAndSampleAnimations(driver->MostRecentRefresh(), true);
 
   return NS_OK;
 }
@@ -2364,7 +2422,9 @@ nsDOMWindowUtils::RestoreNormalRefresh()
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  GetPresContext()->RefreshDriver()->RestoreNormalRefresh();
+  nsRefreshDriver* driver = GetPresContext()->RefreshDriver();
+  driver->RestoreNormalRefresh();
+  CompositorParent::SetTimeAndSampleAnimations(driver->MostRecentRefresh(), false);
 
   return NS_OK;
 }
@@ -2807,28 +2867,15 @@ nsDOMWindowUtils::GetFileReferences(const nsAString& aDatabaseName,
     indexedDB::IndexedDatabaseManager::Get();
 
   if (mgr) {
-    nsRefPtr<indexedDB::FileManager> fileManager =
-      mgr->GetFileManager(origin, aDatabaseName);
-
-    if (fileManager) {
-      nsRefPtr<indexedDB::FileInfo> fileInfo = fileManager->GetFileInfo(aId);
-
-      if (fileInfo) {
-        fileInfo->GetReferences(aRefCnt, aDBRefCnt, aSliceRefCnt);
-
-        if (*aRefCnt != -1) {
-          // We added an extra temp ref, so account for that accordingly.
-          (*aRefCnt)--;
-        }
-
-        *aResult = true;
-        return NS_OK;
-      }
-    }
+    rv = mgr->BlockAndGetFileReferences(origin, aDatabaseName, aId, aRefCnt,
+                                        aDBRefCnt, aSliceRefCnt, aResult);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  else {
+    *aRefCnt = *aDBRefCnt = *aSliceRefCnt = -1;
+    *aResult = false;
   }
 
-  *aRefCnt = *aDBRefCnt = *aSliceRefCnt = -1;
-  *aResult = false;
   return NS_OK;
 }
 
@@ -3305,3 +3352,89 @@ nsDOMWindowUtils::DispatchEventToChromeOnly(nsIDOMEventTarget* aTarget,
   aTarget->DispatchEvent(aEvent, aRetVal);
   return NS_OK;
 }
+
+NS_IMETHODIMP
+nsDOMWindowUtils::RunInStableState(nsIRunnable *runnable)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIAppShell> appShell(do_GetService(kAppShellCID));
+  if (!appShell) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  return appShell->RunInStableState(runnable);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::RunBeforeNextEvent(nsIRunnable *runnable)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIAppShell> appShell(do_GetService(kAppShellCID));
+  if (!appShell) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  return appShell->RunBeforeNextEvent(runnable);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetOMTAOrComputedStyle(nsIDOMNode* aNode,
+                                         const nsAString& aProperty,
+                                         nsAString& aResult)
+{
+  aResult.Truncate();
+  ErrorResult rv;
+  nsCOMPtr<Element> element = do_QueryInterface(aNode);
+  if (!element) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  nsRefPtr<nsROCSSPrimitiveValue> cssValue = nullptr;
+  nsIFrame* frame = element->GetPrimaryFrame();
+  if (frame && nsLayoutUtils::AreAsyncAnimationsEnabled()) {
+    if (aProperty.EqualsLiteral("opacity")) {
+      Layer* layer = FrameLayerBuilder::GetDedicatedLayer(frame, nsDisplayItem::TYPE_OPACITY);
+      if (layer) {
+        float value;
+        ShadowLayerForwarder* forwarder = layer->Manager()->AsShadowForwarder();
+        if (forwarder) {
+          forwarder->GetShadowManager()->SendGetOpacity(layer->AsShadowableLayer()->GetShadow(), &value);
+          cssValue = new nsROCSSPrimitiveValue;
+          cssValue->SetNumber(value);
+        }
+      }
+    } else if (aProperty.EqualsLiteral("transform")) {
+      Layer* layer = FrameLayerBuilder::GetDedicatedLayer(frame, nsDisplayItem::TYPE_TRANSFORM);
+      if (layer) {
+        gfx3DMatrix matrix;
+        ShadowLayerForwarder* forwarder = layer->Manager()->AsShadowForwarder();
+        if (forwarder) {
+          forwarder->GetShadowManager()->SendGetTransform(layer->AsShadowableLayer()->GetShadow(), &matrix);
+          cssValue = nsComputedDOMStyle::MatrixToCSSValue(matrix);
+        }
+      }
+    }
+  }
+
+  if (cssValue) {
+    nsString text;
+    cssValue->GetCssText(text, rv);
+    aResult.Assign(text);
+    return rv.ErrorCode();
+  }
+
+  nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(element);
+  nsCOMPtr<nsIDOMCSSStyleDeclaration> style;
+  nsresult res = element->GetCurrentDoc()->GetWindow()->
+    GetComputedStyle(elem, aProperty, getter_AddRefs(style));
+  NS_ENSURE_SUCCESS(res, res);
+
+  return style->GetPropertyValue(aProperty, aResult);
+}
+

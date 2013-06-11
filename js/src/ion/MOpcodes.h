@@ -55,6 +55,7 @@ namespace ion {
     _(MinMax)                                                               \
     _(Abs)                                                                  \
     _(Sqrt)                                                                 \
+    _(Atan2)                                                                \
     _(Pow)                                                                  \
     _(PowHalf)                                                              \
     _(Random)                                                               \
@@ -104,10 +105,12 @@ namespace ion {
     _(FunctionEnvironment)                                                  \
     _(TypeBarrier)                                                          \
     _(MonitorTypes)                                                         \
+    _(PostWriteBarrier)                                                     \
     _(GetPropertyCache)                                                     \
     _(GetPropertyPolymorphic)                                               \
     _(SetPropertyPolymorphic)                                               \
     _(GetElementCache)                                                      \
+    _(SetElementCache)                                                      \
     _(BindNameCache)                                                        \
     _(GuardShape)                                                           \
     _(GuardObjectType)                                                      \
@@ -155,6 +158,7 @@ namespace ion {
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
     _(GetArgument)                                                          \
+    _(RunOncePrologue)                                                      \
     _(Rest)                                                                 \
     _(Floor)                                                                \
     _(Round)                                                                \

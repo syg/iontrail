@@ -21,7 +21,6 @@
 #include "ion/IonCompartment.h"
 #endif
 #include "js/RootingAPI.h"
-#include "vm/Debugger.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
@@ -42,6 +41,7 @@ JSCompartment::JSCompartment(Zone *zone)
     lastCodeRelease(0),
     analysisLifoAlloc(ANALYSIS_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
     data(NULL),
+    objectMetadataCallback(NULL),
     lastAnimationTime(0),
     regExps(rt),
     propertyTree(thisForCtor()),
@@ -97,9 +97,6 @@ JSCompartment::init(JSContext *cx)
 
     if (!regExps.init(cx))
         return false;
-
-    if (cx)
-        InitRandom(cx->runtime, &rngState);
 
     enumerators = NativeIterator::allocateSentinel(cx);
     if (!enumerators)
@@ -379,7 +376,7 @@ JSCompartment::wrapId(JSContext *cx, jsid *idp)
     if (!wrap(cx, &value))
         return false;
     RootedId id(cx);
-    if (!ValueToId<CanGC>(cx, value.get(), &id))
+    if (!ValueToId<CanGC>(cx, value, &id))
         return false;
 
     *idp = id;
@@ -519,7 +516,6 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         sweepInitialShapeTable();
         sweepNewTypeObjectTable(newTypeObjects);
         sweepNewTypeObjectTable(lazyTypeObjects);
-        sweepBreakpoints(fop);
         sweepCallsiteClones();
 
         if (global_ && IsObjectAboutToBeFinalized(global_.unsafeGet()))
@@ -755,36 +751,6 @@ JSCompartment::clearTraps(FreeOp *fop)
         JSScript *script = i.get<JSScript>();
         if (script->compartment() == this && script->hasAnyBreakpointsOrStepMode())
             script->clearTraps(fop);
-    }
-}
-
-void
-JSCompartment::sweepBreakpoints(FreeOp *fop)
-{
-    gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_TABLES_BREAKPOINT);
-
-    if (rt->debuggerList.isEmpty())
-        return;
-
-    for (CellIterUnderGC i(zone(), FINALIZE_SCRIPT); !i.done(); i.next()) {
-        JSScript *script = i.get<JSScript>();
-        if (script->compartment() != this || !script->hasAnyBreakpointsOrStepMode())
-            continue;
-        bool scriptGone = IsScriptAboutToBeFinalized(&script);
-        JS_ASSERT(script == i.get<JSScript>());
-        for (unsigned i = 0; i < script->length; i++) {
-            BreakpointSite *site = script->getBreakpointSite(script->code + i);
-            if (!site)
-                continue;
-            // nextbp is necessary here to avoid possibly reading *bp after
-            // destroying it.
-            Breakpoint *nextbp;
-            for (Breakpoint *bp = site->firstBreakpoint(); bp; bp = nextbp) {
-                nextbp = bp->nextInSite();
-                if (scriptGone || IsObjectAboutToBeFinalized(&bp->debugger->toJSObjectRef()))
-                    bp->destroy(fop);
-            }
-        }
     }
 }
 

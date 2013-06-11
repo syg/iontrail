@@ -402,7 +402,7 @@ nsJSIID::NewResolve(nsIXPConnectWrappedNative *wrapper,
     const nsIID* iid;
     mInfo->GetIIDShared(&iid);
 
-    iface = XPCNativeInterface::GetNewOrUsed(ccx, iid);
+    iface = XPCNativeInterface::GetNewOrUsed(iid);
 
     if (!iface)
         return NS_OK;
@@ -437,7 +437,7 @@ nsJSIID::Enumerate(nsIXPConnectWrappedNative *wrapper,
     const nsIID* iid;
     mInfo->GetIIDShared(&iid);
 
-    iface = XPCNativeInterface::GetNewOrUsed(ccx, iid);
+    iface = XPCNativeInterface::GetNewOrUsed(iid);
 
     if (!iface)
         return NS_OK;
@@ -531,8 +531,9 @@ nsJSIID::HasInstance(nsIXPConnectWrappedNative *wrapper,
         } else if (IsDOMObject(obj)) {
               // Not all DOM objects implement nsISupports. But if they don't,
               // there's nothing to do in this HasInstance hook.
-              if (!UnwrapDOMObjectToISupports(obj, identity))
-                  return NS_OK;;
+              identity = UnwrapDOMObjectToISupports(obj);
+              if (!identity)
+                  return NS_OK;
               nsCOMPtr<nsISupports> supp;
               identity->QueryInterface(*iid, getter_AddRefs(supp));
               *bp = supp;
@@ -556,10 +557,10 @@ nsJSIID::HasInstance(nsIXPConnectWrappedNative *wrapper,
         XPCCallContext ccx(JS_CALLER, cx);
 
         AutoMarkingNativeInterfacePtr iface(ccx);
-        iface = XPCNativeInterface::GetNewOrUsed(ccx, iid);
+        iface = XPCNativeInterface::GetNewOrUsed(iid);
 
         nsresult findResult = NS_OK;
-        if (iface && other_wrapper->FindTearOff(ccx, iface, false, &findResult))
+        if (iface && other_wrapper->FindTearOff(iface, false, &findResult))
             *bp = true;
         if (NS_FAILED(findResult) && findResult != NS_ERROR_NO_INTERFACE)
             rv = findResult;
@@ -714,10 +715,7 @@ static void
 GetWrapperObject(MutableHandleObject obj)
 {
     obj.set(NULL);
-    nsXPConnect* xpc = nsXPConnect::GetXPConnect();
-    if (!xpc)
-        return;
-
+    nsXPConnect* xpc = nsXPConnect::XPConnect();
     nsAXPCNativeCallContext *ccxp = NULL;
     xpc->GetCurrentNativeCallContext(&ccxp);
     if (!ccxp)
@@ -742,11 +740,7 @@ nsJSCID::CreateInstance(const JS::Value& iidval, JSContext* cx,
         return NS_ERROR_UNEXPECTED;
     }
 
-    // Do the security check if necessary
-    XPCContext* xpcc = XPCContext::GetXPCContext(cx);
-
-    nsIXPCSecurityManager* sm;
-    sm = xpcc->GetAppropriateSecurityManager(nsIXPCSecurityManager::HOOK_CREATE_INSTANCE);
+    nsIXPCSecurityManager* sm = nsXPConnect::XPConnect()->GetDefaultSecurityManager();
     if (sm && NS_FAILED(sm->CanCreateInstance(cx, mDetails.ID()))) {
         NS_ERROR("how are we not being called from chrome here?");
         return NS_OK;
@@ -769,7 +763,7 @@ nsJSCID::CreateInstance(const JS::Value& iidval, JSContext* cx,
     if (NS_FAILED(rv) || !inst)
         return NS_ERROR_XPC_CI_RETURNED_FAILURE;
 
-    rv = nsXPConnect::GetXPConnect()->WrapNativeToJSVal(cx, obj, inst, nullptr, iid, true, retval, nullptr);
+    rv = nsXPConnect::XPConnect()->WrapNativeToJSVal(cx, obj, inst, nullptr, iid, true, retval, nullptr);
     if (NS_FAILED(rv) || JSVAL_IS_PRIMITIVE(*retval))
         return NS_ERROR_XPC_CANT_CREATE_WN;
     return NS_OK;
@@ -789,11 +783,8 @@ nsJSCID::GetService(const JS::Value& iidval, JSContext* cx,
         return NS_ERROR_UNEXPECTED;
     }
 
-    // Do the security check if necessary
-    XPCContext* xpcc = XPCContext::GetXPCContext(cx);
-
     nsIXPCSecurityManager* sm;
-    sm = xpcc->GetAppropriateSecurityManager(nsIXPCSecurityManager::HOOK_GET_SERVICE);
+    sm = nsXPConnect::XPConnect()->GetDefaultSecurityManager();
     if (sm && NS_FAILED(sm->CanCreateInstance(cx, mDetails.ID()))) {
         NS_ASSERTION(JS_IsExceptionPending(cx),
                      "security manager vetoed GetService without setting exception");
@@ -818,7 +809,7 @@ nsJSCID::GetService(const JS::Value& iidval, JSContext* cx,
 
     RootedObject instJSObj(cx);
     nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
-    rv = nsXPConnect::GetXPConnect()->WrapNative(cx, obj, srvc, *iid, getter_AddRefs(holder));
+    rv = nsXPConnect::XPConnect()->WrapNative(cx, obj, srvc, *iid, getter_AddRefs(holder));
     if (NS_FAILED(rv) || !holder ||
         // Assign, not compare
         !(instJSObj = holder->GetJSObject()))
@@ -895,7 +886,7 @@ xpc_NewIDObject(JSContext *cx, HandleObject jsobj, const nsID& aID)
     nsCOMPtr<nsIJSID> iid =
             dont_AddRef(static_cast<nsIJSID*>(nsJSID::NewID(aID)));
     if (iid) {
-        nsXPConnect* xpc = nsXPConnect::GetXPConnect();
+        nsXPConnect* xpc = nsXPConnect::XPConnect();
         if (xpc) {
             nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
             nsresult rv = xpc->WrapNative(cx, jsobj,

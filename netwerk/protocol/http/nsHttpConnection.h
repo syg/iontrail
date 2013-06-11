@@ -120,6 +120,9 @@ public:
     nsresult ResumeRecv();
     int64_t  MaxBytesRead() {return mMaxBytesRead;}
 
+    friend class nsHttpConnectionForceRecv;
+    nsresult ForceRecv();
+
     static NS_METHOD ReadFromStream(nsIInputStream *, void *, const char *,
                                     uint32_t, uint32_t, uint32_t *);
 
@@ -173,10 +176,6 @@ private:
     // has had a chance to happen
     bool     EnsureNPNComplete();
     void     SetupNPN(uint32_t caps);
-
-    // Inform the connection manager of any SPDY Alternate-Protocol
-    // redirections
-    void     HandleAlternateProtocol(nsHttpResponseHead *);
 
     // Start the Spdy transaction handler when NPN indicates spdy/*
     void     StartSpdy(uint8_t versionLevel);

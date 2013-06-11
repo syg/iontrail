@@ -91,13 +91,8 @@ nsDOMUIEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
   return e.forget();
 }
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsDOMUIEvent, nsDOMEvent)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mView)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsDOMUIEvent, nsDOMEvent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mView)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+NS_IMPL_CYCLE_COLLECTION_INHERITED_1(nsDOMUIEvent, nsDOMEvent,
+                                     mView)
 
 NS_IMPL_ADDREF_INHERITED(nsDOMUIEvent, nsDOMEvent)
 NS_IMPL_RELEASE_INHERITED(nsDOMUIEvent, nsDOMEvent)
@@ -182,29 +177,6 @@ nsDOMUIEvent::InitUIEvent(const nsAString& typeArg,
 }
 
 // ---- nsDOMNSUIEvent implementation -------------------
-nsIntPoint
-nsDOMUIEvent::GetPagePoint()
-{
-  if (mPrivateDataDuplicated) {
-    return mPagePoint;
-  }
-
-  nsIntPoint pagePoint = GetClientPoint();
-
-  // If there is some scrolling, add scroll info to client point.
-  if (mPresContext && mPresContext->GetPresShell()) {
-    nsIPresShell* shell = mPresContext->GetPresShell();
-    nsIScrollableFrame* scrollframe = shell->GetRootScrollFrameAsScrollable();
-    if (scrollframe) {
-      nsPoint pt = scrollframe->GetScrollPosition();
-      pagePoint += nsIntPoint(nsPresContext::AppUnitsToIntCSSPixels(pt.x),
-                              nsPresContext::AppUnitsToIntCSSPixels(pt.y));
-    }
-  }
-
-  return pagePoint;
-}
-
 NS_IMETHODIMP
 nsDOMUIEvent::GetPageX(int32_t* aPageX)
 {

@@ -170,6 +170,7 @@
 @BINPATH@/components/dom_system_gonk.xpt
 @BINPATH@/components/dom_icc.xpt
 @BINPATH@/components/dom_cellbroadcast.xpt
+@BINPATH@/components/dom_wappush.xpt
 #endif
 #ifdef MOZ_B2G_FM
 @BINPATH@/components/dom_fm.xpt
@@ -197,9 +198,6 @@
 @BINPATH@/components/dom_payment.xpt
 @BINPATH@/components/dom_push.xpt
 @BINPATH@/components/dom_json.xpt
-#ifdef MOZ_B2G_RIL
-@BINPATH@/components/dom_mms.xpt
-#endif
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_messages.xpt
 @BINPATH@/components/dom_power.xpt
@@ -474,6 +472,8 @@
 @BINPATH@/components/DOMWifiManager.manifest
 @BINPATH@/components/NetworkStatsManager.js
 @BINPATH@/components/NetworkStatsManager.manifest
+@BINPATH@/components/NetworkInterfaceListService.manifest
+@BINPATH@/components/NetworkInterfaceListService.js
 #endif
 #ifdef MOZ_B2G_FM
 @BINPATH@/components/DOMFMRadioChild.js
@@ -600,7 +600,7 @@
 #endif
 
 ; [Layout Engine Resources]
-; Style Sheets, Graphics and other Resources used by the layout engine. 
+; Style Sheets, Graphics and other Resources used by the layout engine.
 @BINPATH@/res/EditorOverride.css
 @BINPATH@/res/contenteditable.css
 @BINPATH@/res/designmode.css

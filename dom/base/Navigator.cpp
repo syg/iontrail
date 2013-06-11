@@ -1437,8 +1437,9 @@ Navigator::EnsureMessagesManager()
   NS_ENSURE_TRUE(gpi, NS_ERROR_FAILURE);
 
   // We don't do anything with the return value.
-  JS::Value prop_val = JSVAL_VOID;
-  rv = gpi->Init(window, &prop_val);
+  AutoJSContext cx;
+  JS::Rooted<JS::Value> prop_val(cx);
+  rv = gpi->Init(window, prop_val.address());
   NS_ENSURE_SUCCESS(rv, rv);
 
   mMessagesManager = messageManager.forget();
@@ -1501,7 +1502,7 @@ Navigator::GetMozTime(nsIDOMMozTimeManager** aTime)
 //*****************************************************************************
 
 NS_IMETHODIMP
-Navigator::GetMozCameras(nsIDOMCameraManager** aCameraManager)
+Navigator::GetMozCameras(nsISupports** aCameraManager)
 {
   if (!mCameraManager) {
     nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
@@ -1515,7 +1516,7 @@ Navigator::GetMozCameras(nsIDOMCameraManager** aCameraManager)
     NS_ENSURE_TRUE(mCameraManager, NS_OK);
   }
 
-  nsRefPtr<nsDOMCameraManager> cameraManager = mCameraManager;
+  nsCOMPtr<nsIObserver> cameraManager = mCameraManager.get();
   cameraManager.forget(aCameraManager);
 
   return NS_OK;

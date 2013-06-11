@@ -29,6 +29,8 @@ const { defer, resolve, reject, all } = Promise;
 
 Cu.import("resource://gre/modules/devtools/SourceMap.jsm");
 
+loadSubScript.call(this, "resource://gre/modules/devtools/DevToolsUtils.js");
+
 function dumpn(str) {
   if (wantLogging) {
     dump("DBG-SERVER: " + str + "\n");
@@ -114,7 +116,7 @@ var DebuggerServer = {
 
     this.xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
     this.initTransport(aAllowConnectionCallback);
-    this.addActors("resource://gre/modules/devtools/server/actors/script.js");
+    this.addActors("resource://gre/modules/devtools/server/actors/root.js");
 
     this._initialized = true;
   },
@@ -150,15 +152,20 @@ var DebuggerServer = {
    * method returns, the debugger server must be initialized again before use.
    */
   destroy: function DS_destroy() {
-    if (Object.keys(this._connections).length == 0) {
-      this.closeListener();
-      this.globalActorFactories = {};
-      this.tabActorFactories = {};
-      delete this._allowConnection;
-      this._transportInitialized = false;
-      this._initialized = false;
-      dumpn("Debugger server is shut down.");
+    if (!this._initialized) {
+      return;
     }
+
+    for (let connID of Object.getOwnPropertyNames(this._connections)) {
+      this._connections[connID].close();
+    }
+    this.closeListener();
+    this.globalActorFactories = {};
+    this.tabActorFactories = {};
+    delete this._allowConnection;
+    this._transportInitialized = false;
+    this._initialized = false;
+    dumpn("Debugger server is shut down.");
   },
 
   /**
@@ -178,12 +185,15 @@ var DebuggerServer = {
    */
   addBrowserActors: function DS_addBrowserActors() {
     this.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
+    this.addActors("resource://gre/modules/devtools/server/actors/script.js");
+    this.addGlobalActor(this.ChromeDebuggerActor, "chromeDebugger");
     this.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
     this.addActors("resource://gre/modules/devtools/server/actors/gcli.js");
     if ("nsIProfiler" in Ci)
       this.addActors("resource://gre/modules/devtools/server/actors/profiler.js");
 
     this.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
+    this.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
   },
 
   /**
@@ -259,7 +269,24 @@ var DebuggerServer = {
     let serverTransport = new LocalDebuggerTransport;
     let clientTransport = new LocalDebuggerTransport(serverTransport);
     serverTransport.other = clientTransport;
-    this._onConnection(serverTransport);
+    let connection = this._onConnection(serverTransport);
+
+    // I'm putting this here because I trust you.
+    //
+    // There are times, when using a local connection, when you're going
+    // to be tempted to just get direct access to the server.  Resist that
+    // temptation!  If you succumb to that temptation, you will make the
+    // fine developers that work on Fennec and Firefox OS sad.  They're
+    // professionals, they'll try to act like they understand, but deep
+    // down you'll know that you hurt them.
+    //
+    // This reference allows you to give in to that temptation.  There are
+    // times this makes sense: tests, for example, and while porting a
+    // previously local-only codebase to the remote protocol.
+    //
+    // But every time you use this, you will feel the shame of having
+    // used a property that starts with a '_'.
+    clientTransport._serverConnection = connection;
 
     return clientTransport;
   },
@@ -311,6 +338,8 @@ var DebuggerServer = {
     conn.addActor(conn.rootActor);
     aTransport.send(conn.rootActor.sayHello());
     aTransport.ready();
+
+    return conn;
   },
 
   /**
@@ -330,7 +359,11 @@ var DebuggerServer = {
    * 'actor', since that would break the protocol.
    *
    * @param aFunction function
-   *        The constructor function for this request type.
+   *        The constructor function for this request type. This expects to be
+   *        called as a constructor (i.e. with 'new'), and passed two
+   *        arguments: the DebuggerServerConnection, and the BrowserTabActor
+   *        with which it will be associated.
+   *
    * @param aName string [optional]
    *        The name of the new request type. If this is not present, the
    *        actorPrefix property of the constructor prototype is used.
@@ -371,7 +404,11 @@ var DebuggerServer = {
    * protocol.
    *
    * @param aFunction function
-   *        The constructor function for this request type.
+   *        The constructor function for this request type. This expects to be
+   *        called as a constructor (i.e. with 'new'), and passed two
+   *        arguments: the DebuggerServerConnection, and the BrowserRootActor
+   *        with which it will be associated.
+   *
    * @param aName string [optional]
    *        The name of the new request type. If this is not present, the
    *        actorPrefix property of the constructor prototype is used.
@@ -426,7 +463,7 @@ ActorPool.prototype = {
    *
    * @param aActor object
    *        The actor implementation.  If the object has a
-   *        'disconnected' property, it will be called when the actor
+   *        'disconnect' property, it will be called when the actor
    *        pool is cleaned up.
    */
   addActor: function AP_addActor(aActor) {
@@ -514,6 +551,10 @@ DebuggerServerConnection.prototype = {
 
   _transport: null,
   get transport() { return this._transport },
+
+  close: function() {
+    this._transport.close();
+  },
 
   send: function DSC_send(aPacket) {
     this.transport.send(aPacket);

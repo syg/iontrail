@@ -39,6 +39,7 @@
 #include "nsThreadUtils.h"
 #include "nsIScrollableFrame.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/Preferences.h"
 #include <algorithm>
@@ -137,25 +138,16 @@ ImageDocument::~ImageDocument()
 }
 
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ImageDocument, MediaDocument)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImageContent)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(ImageDocument, MediaDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mImageContent)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_INHERITED_1(ImageDocument, MediaDocument,
+                                     mImageContent)
 
 NS_IMPL_ADDREF_INHERITED(ImageDocument, MediaDocument)
 NS_IMPL_RELEASE_INHERITED(ImageDocument, MediaDocument)
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(ImageDocument)
-  NS_HTML_DOCUMENT_INTERFACE_TABLE_BEGIN(ImageDocument)
-    NS_INTERFACE_TABLE_ENTRY(ImageDocument, nsIImageDocument)
-    NS_INTERFACE_TABLE_ENTRY(ImageDocument, imgINotificationObserver)
-    NS_INTERFACE_TABLE_ENTRY(ImageDocument, nsIDOMEventListener)
-  NS_OFFSET_AND_INTERFACE_TABLE_END
-  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_INTERFACE_MAP_END_INHERITING(MediaDocument)
+  NS_INTERFACE_TABLE_INHERITED3(ImageDocument, nsIImageDocument,
+                                imgINotificationObserver, nsIDOMEventListener)
+NS_INTERFACE_TABLE_TAIL_INHERITING(MediaDocument)
 
 
 nsresult

@@ -24,6 +24,7 @@ XPIDL_SOURCES += [
     'nsILoadContext.idl',
     'nsIMarkupDocumentViewer.idl',
     'nsIPrivacyTransitionObserver.idl',
+    'nsIReflowObserver.idl',
     'nsIRefreshURI.idl',
     'nsIScrollable.idl',
     'nsITextScroll.idl',
@@ -45,5 +46,20 @@ EXPORTS += [
 EXPORTS.mozilla += [
     'IHistory.h',
     'LoadContext.h',
+]
+
+CPP_SOURCES += [
+    'LoadContext.cpp',
+    'SerializedLoadContext.cpp',
+    'nsAboutRedirector.cpp',
+    'nsDSURIContentListener.cpp',
+    'nsDefaultURIFixup.cpp',
+    'nsDocShell.cpp',
+    'nsDocShellEditorData.cpp',
+    'nsDocShellEnumerator.cpp',
+    'nsDocShellLoadInfo.cpp',
+    'nsDocShellTransferableHooks.cpp',
+    'nsDownloadHistory.cpp',
+    'nsWebNavigationInfo.cpp',
 ]
 

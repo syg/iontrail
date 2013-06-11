@@ -57,7 +57,6 @@ PARALLEL_DIRS += [
     'quota',
     'settings',
     'mobilemessage',
-    'mms',
     'src',
     'time',
     'locales',
@@ -72,6 +71,7 @@ PARALLEL_DIRS += [
     'workers',
     'camera',
     'audiochannel',
+    'wappush'
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':

@@ -12,32 +12,20 @@ const Cr = Components.results;
 const INCLUDE_DESC = 0x01;
 const INCLUDE_NAME = 0x02;
 const INCLUDE_CUSTOM = 0x04;
+const NAME_FROM_SUBTREE_RULE = 0x08;
 
 const UTTERANCE_DESC_FIRST = 0;
 
-// Read and observe changes to a setting for utterance order.
-let gUtteranceOrder;
-let prefsBranch = Cc['@mozilla.org/preferences-service;1']
-  .getService(Ci.nsIPrefService).getBranch('accessibility.accessfu.');
-let observeUtterance = function observeUtterance(aSubject, aTopic, aData) {
-  try {
-    gUtteranceOrder = prefsBranch.getIntPref('utterance');
-  } catch (x) {
-    gUtteranceOrder = UTTERANCE_DESC_FIRST;
-  }
-};
-// Set initial gUtteranceOrder.
-observeUtterance();
-prefsBranch.addObserver('utterance', observeUtterance, false);
+Cu.import('resource://gre/modules/accessibility/Utils.jsm');
+
+let gUtteranceOrder = new PrefCache('accessibility.accessfu.utterance');
 
 var gStringBundle = Cc['@mozilla.org/intl/stringbundle;1'].
   getService(Ci.nsIStringBundleService).
   createBundle('chrome://global/locale/AccessFu.properties');
 
-
 this.EXPORTED_SYMBOLS = ['UtteranceGenerator'];
 
-Cu.import('resource://gre/modules/accessibility/Utils.jsm');
 
 /**
  * Generates speech utterances from objects, actions and state changes.
@@ -87,16 +75,31 @@ this.UtteranceGenerator = {
       utterance.push.apply(utterance,
         UtteranceGenerator.genForObject(aAccessible));
     };
+    let ignoreSubtree = function ignoreSubtree(aAccessible) {
+      let roleString = Utils.AccRetrieval.getStringRole(aAccessible.role);
+      let nameRule = UtteranceGenerator.roleRuleMap[roleString] || 0;
+      // Ignore subtree if the name is explicit and the role's name rule is the
+      // NAME_FROM_SUBTREE_RULE.
+      return (nameRule & NAME_FROM_SUBTREE_RULE) &&
+        (Utils.getAttributes(aAccessible)['explicit-name'] === 'true');
+    };
+    let utteranceOrder = gUtteranceOrder.value || UTTERANCE_DESC_FIRST;
 
-    if (gUtteranceOrder === UTTERANCE_DESC_FIRST) {
+    if (utteranceOrder === UTTERANCE_DESC_FIRST) {
       aContext.newAncestry.forEach(addUtterance);
       addUtterance(aContext.accessible);
-      aContext.subtreePreorder.forEach(addUtterance);
+      [addUtterance(node) for
+        (node of aContext.subtreeGenerator(true, ignoreSubtree))];
     } else {
-      aContext.subtreePostorder.forEach(addUtterance);
+      [addUtterance(node) for
+        (node of aContext.subtreeGenerator(false, ignoreSubtree))];
       addUtterance(aContext.accessible);
       aContext.newAncestry.reverse().forEach(addUtterance);
     }
+
+    // Clean up the white space.
+    let trimmed;
+    utterance = [trimmed for (word of utterance) if (trimmed = word.trim())];
 
     return utterance;
   },
@@ -109,7 +112,7 @@ this.UtteranceGenerator = {
    * @return {Array} Two string array. The first string describes the object
    *    and its states. The second string is the object's name. Whether the
    *    object's description or it's role is included is determined by
-   *    {@link verbosityRoleMap}.
+   *    {@link roleRuleMap}.
    */
   genForObject: function genForObject(aAccessible) {
     let roleString = Utils.AccRetrieval.getStringRole(aAccessible.role);
@@ -117,7 +120,7 @@ this.UtteranceGenerator = {
     let func = this.objectUtteranceFunctions[roleString] ||
       this.objectUtteranceFunctions.defaultFunc;
 
-    let flags = this.verbosityRoleMap[roleString] || 0;
+    let flags = this.roleRuleMap[roleString] || 0;
 
     if (aAccessible.childCount == 0)
       flags |= INCLUDE_NAME;
@@ -193,29 +196,35 @@ this.UtteranceGenerator = {
               aIsEditing ? 'editingMode' : 'navigationMode')];
   },
 
-  verbosityRoleMap: {
+  roleRuleMap: {
     'menubar': INCLUDE_DESC,
     'scrollbar': INCLUDE_DESC,
     'grip': INCLUDE_DESC,
     'alert': INCLUDE_DESC | INCLUDE_NAME,
     'menupopup': INCLUDE_DESC,
-    'menuitem': INCLUDE_DESC,
-    'tooltip': INCLUDE_DESC,
+    'menuitem': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'tooltip': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'columnheader': NAME_FROM_SUBTREE_RULE,
+    'rowheader': NAME_FROM_SUBTREE_RULE,
+    'column': NAME_FROM_SUBTREE_RULE,
+    'row': NAME_FROM_SUBTREE_RULE,
     'application': INCLUDE_NAME,
     'document': INCLUDE_NAME,
     'grouping': INCLUDE_DESC | INCLUDE_NAME,
     'toolbar': INCLUDE_DESC,
     'table': INCLUDE_DESC | INCLUDE_NAME,
-    'link': INCLUDE_DESC,
+    'link': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'helpballoon': NAME_FROM_SUBTREE_RULE,
     'list': INCLUDE_DESC | INCLUDE_NAME,
-    'listitem': INCLUDE_DESC,
+    'listitem': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
     'outline': INCLUDE_DESC,
-    'outlineitem': INCLUDE_DESC,
-    'pagetab': INCLUDE_DESC,
+    'outlineitem': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'pagetab': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
     'graphic': INCLUDE_DESC,
-    'pushbutton': INCLUDE_DESC,
-    'checkbutton': INCLUDE_DESC,
-    'radiobutton': INCLUDE_DESC,
+    'pushbutton': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'checkbutton': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'radiobutton': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'buttondropdown': NAME_FROM_SUBTREE_RULE,
     'combobox': INCLUDE_DESC,
     'droplist': INCLUDE_DESC,
     'progressbar': INCLUDE_DESC,
@@ -224,15 +233,20 @@ this.UtteranceGenerator = {
     'diagram': INCLUDE_DESC,
     'animation': INCLUDE_DESC,
     'equation': INCLUDE_DESC,
-    'buttonmenu': INCLUDE_DESC,
+    'buttonmenu': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'buttondropdowngrid': NAME_FROM_SUBTREE_RULE,
     'pagetablist': INCLUDE_DESC,
     'canvas': INCLUDE_DESC,
-    'check menu item': INCLUDE_DESC,
-    'label': INCLUDE_DESC,
+    'check menu item': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'label': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
     'password text': INCLUDE_DESC,
     'popup menu': INCLUDE_DESC,
-    'radio menu item': INCLUDE_DESC,
-    'toggle button': INCLUDE_DESC,
+    'radio menu item': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'table column header': NAME_FROM_SUBTREE_RULE,
+    'table row header': NAME_FROM_SUBTREE_RULE,
+    'tear off menu item': NAME_FROM_SUBTREE_RULE,
+    'toggle button': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'parent menuitem': NAME_FROM_SUBTREE_RULE,
     'header': INCLUDE_DESC,
     'footer': INCLUDE_DESC,
     'entry': INCLUDE_DESC | INCLUDE_NAME,
@@ -241,7 +255,14 @@ this.UtteranceGenerator = {
     'heading': INCLUDE_DESC,
     'calendar': INCLUDE_DESC | INCLUDE_NAME,
     'combobox list': INCLUDE_DESC,
-    'combobox option': INCLUDE_DESC,
+    'combobox option': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
+    'listbox option': NAME_FROM_SUBTREE_RULE,
+    'listbox rich option': NAME_FROM_SUBTREE_RULE,
+    'gridcell': NAME_FROM_SUBTREE_RULE,
+    'check rich option': NAME_FROM_SUBTREE_RULE,
+    'term': NAME_FROM_SUBTREE_RULE,
+    'definition': NAME_FROM_SUBTREE_RULE,
+    'key': NAME_FROM_SUBTREE_RULE,
     'image map': INCLUDE_DESC,
     'option': INCLUDE_DESC,
     'listbox': INCLUDE_DESC,
@@ -325,10 +346,16 @@ this.UtteranceGenerator = {
   },
 
   _addName: function _addName(utterance, aAccessible, aFlags) {
-    let name = (aFlags & INCLUDE_NAME) ? (aAccessible.name || '') : '';
+    let name;
+    if (Utils.getAttributes(aAccessible)['explicit-name'] === 'true' ||
+      (aFlags & INCLUDE_NAME)) {
+      name = aAccessible.name;
+    }
+
     if (name) {
-      utterance[gUtteranceOrder === UTTERANCE_DESC_FIRST ?
-        "push" : "unshift"](name);
+      let utteranceOrder = gUtteranceOrder.value || UTTERANCE_DESC_FIRST;
+      utterance[utteranceOrder === UTTERANCE_DESC_FIRST ?
+        'push' : 'unshift'](name);
     }
   },
 
@@ -347,7 +374,11 @@ this.UtteranceGenerator = {
       stateUtterances.push(gStringBundle.GetStringFromName('stateUnavailable'));
     }
 
-    if (aStates.base & Ci.nsIAccessibleStates.STATE_CHECKABLE) {
+    // Don't utter this in Jelly Bean, we let TalkBack do it for us there.
+    // This is because we expose the checked information on the node itself.
+    // XXX: this means the checked state is always appended to the end, regardless
+    // of the utterance ordering preference.
+    if (Utils.AndroidSdkVersion < 16 && aStates.base & Ci.nsIAccessibleStates.STATE_CHECKABLE) {
       let stateStr = (aStates.base & Ci.nsIAccessibleStates.STATE_CHECKED) ?
         'stateChecked' : 'stateNotChecked';
       stateUtterances.push(gStringBundle.GetStringFromName(stateStr));
@@ -365,6 +396,10 @@ this.UtteranceGenerator = {
 
     if (aStates.base & Ci.nsIAccessibleStates.STATE_TRAVERSED) {
       stateUtterances.push(gStringBundle.GetStringFromName('stateTraversed'));
+    }
+
+    if (aStates.base & Ci.nsIAccessibleStates.STATE_HASPOPUP) {
+      stateUtterances.push(gStringBundle.GetStringFromName('stateHasPopup'));
     }
 
     return stateUtterances;

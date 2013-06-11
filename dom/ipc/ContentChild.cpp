@@ -251,7 +251,7 @@ void SystemMessageHandledObserver::Init()
         mozilla::services::GetObserverService();
 
     if (os) {
-        os->AddObserver(this, "SystemMessageManager:HandleMessageDone",
+        os->AddObserver(this, "handle-system-messages-done",
                         /* ownsWeak */ false);
     }
 }
@@ -950,12 +950,17 @@ ContentChild::ProcessingError(Result what)
         QuickExit();
 
     case MsgNotKnown:
+        NS_RUNTIMEABORT("aborting because of MsgNotKnown");
     case MsgNotAllowed:
+        NS_RUNTIMEABORT("aborting because of MsgNotAllowed");
     case MsgPayloadError:
+        NS_RUNTIMEABORT("aborting because of MsgPayloadError");
     case MsgProcessingError:
+        NS_RUNTIMEABORT("aborting because of MsgProcessingError");
     case MsgRouteError:
+        NS_RUNTIMEABORT("aborting because of MsgRouteError");
     case MsgValueError:
-        NS_RUNTIMEABORT("aborting because of fatal error");
+        NS_RUNTIMEABORT("aborting because of MsgValueError");
 
     default:
         NS_RUNTIMEABORT("not reached");

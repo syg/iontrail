@@ -774,36 +774,20 @@ public:
   virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext) = 0;
 
   /**
-   * Get the style data associated with this frame.  This returns a
-   * const style struct pointer that should never be modified.  See
-   * |nsStyleContext::StyleData| for more information.
-   *
-   * The use of the typesafe functions below is preferred to direct use
-   * of this function.
-   */
-  virtual const void* StyleDataExternal(nsStyleStructID aSID) const = 0;
-
-  /**
    * Define typesafe getter functions for each style struct by
    * preprocessing the list of style structs.  These functions are the
    * preferred way to get style data.  The macro creates functions like:
    *   const nsStyleBorder* StyleBorder();
    *   const nsStyleColor* StyleColor();
+   *
+   * Callers outside of libxul should use nsIDOMWindow::GetComputedStyle()
+   * instead of these accessors.
    */
-
-#ifdef _IMPL_NS_LAYOUT
   #define STYLE_STRUCT(name_, checkdata_cb_)                                  \
     const nsStyle##name_ * Style##name_ () const {                            \
       NS_ASSERTION(mStyleContext, "No style context found!");                 \
       return mStyleContext->Style##name_ ();                                  \
     }
-#else
-  #define STYLE_STRUCT(name_, checkdata_cb_)                                  \
-    const nsStyle##name_ * Style##name_ () const {                            \
-      return static_cast<const nsStyle##name_*>(                              \
-                            StyleDataExternal(eStyleStruct_##name_));         \
-    }
-#endif
   #include "nsStyleStructList.h"
   #undef STYLE_STRUCT
 
@@ -2142,24 +2126,6 @@ public:
   { return mParent && mParent->GetType() == nsGkAtoms::flexContainerFrame; }
 
   /**
-   * This must only be called on frames that are display roots (see
-   * nsLayoutUtils::GetDisplayRootFrame). This causes all invalidates
-   * reaching this frame to be performed asynchronously off an event,
-   * instead of being applied to the widget immediately. Also,
-   * invalidation of areas in aExcludeRegion is ignored completely
-   * for invalidates with INVALIDATE_EXCLUDE_CURRENT_PAINT specified.
-   * These can't be nested; two invocations of
-   * BeginDeferringInvalidatesForDisplayRoot for a frame must have a
-   * EndDeferringInvalidatesForDisplayRoot between them.
-   */
-  void BeginDeferringInvalidatesForDisplayRoot(const nsRegion& aExcludeRegion);
-
-  /**
-   * Cancel the most recent BeginDeferringInvalidatesForDisplayRoot.
-   */
-  void EndDeferringInvalidatesForDisplayRoot();
-
-  /**
    * Mark this frame as using active layers. This marking will time out
    * after a short period. This call does no immediate invalidation,
    * but when the mark times out, we'll invalidate the frame's overflow
@@ -2277,6 +2243,12 @@ public:
    * The view manager flush will update the layer tree, repaint any 
    * invalid areas in the layer tree and schedule a layer tree
    * composite operation to display the layer tree.
+   *
+   * In general it is not necessary for frames to call this when they change.
+   * For example, changes that result in a reflow will have this called for
+   * them by PresContext::DoReflow when the reflow begins. Style changes that 
+   * do not trigger a reflow should have this called for them by
+   * DoApplyRenderingChangeToTree.
    *
    * @param aFlags PAINT_COMPOSITE_ONLY : No changes have been made
    * that require a layer tree update, so only schedule a layer

@@ -8,6 +8,7 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.gfx.BitmapUtils;
+import org.mozilla.gecko.health.BrowserHealthRecorder;
 import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.StringUtils;
 import org.mozilla.gecko.util.ThreadUtils;
@@ -44,6 +45,8 @@ import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.TabWidget;
 import android.widget.Toast;
+
+import org.json.JSONObject;
 
 import java.net.URLEncoder;
 
@@ -106,6 +109,7 @@ public class AwesomeBar extends GeckoActivity
                 resultIntent.putExtra(URL_KEY, text);
                 resultIntent.putExtra(TARGET_KEY, mTarget);
                 resultIntent.putExtra(SEARCH_KEY, engine.name);
+                recordSearch(engine.identifier, "barsuggest");
                 finishWithResult(resultIntent);
             }
 
@@ -388,6 +392,28 @@ public class AwesomeBar extends GeckoActivity
         finishWithResult(resultIntent);
     }
 
+    /**
+     * Record in Health Report that a search has occurred.
+     *
+     * @param identifier
+     *        a search identifier, such as "partnername". Can be null.
+     * @param where
+     *        where the search was initialized; one of the values in
+     *        {@link BrowserHealthRecorder#SEARCH_LOCATIONS}.
+     */
+    private static void recordSearch(String identifier, String where) {
+        Log.i(LOGTAG, "Recording search: " + identifier + ", " + where);
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", BrowserHealthRecorder.EVENT_SEARCH);
+            message.put("location", where);
+            message.put("identifier", identifier);
+            GeckoAppShell.getEventDispatcher().dispatchEvent(message);
+        } catch (Exception e) {
+            Log.w(LOGTAG, "Error recording search.", e);
+        }
+    }
+
     private void openUserEnteredAndFinish(final String url) {
         final int index = url.indexOf(' ');
 
@@ -414,6 +440,9 @@ public class AwesomeBar extends GeckoActivity
                 final String searchUrl = (keywordUrl != null)
                                        ? keywordUrl.replace("%s", URLEncoder.encode(keywordSearch))
                                        : url;
+                if (keywordUrl != null) {
+                    recordSearch(null, "barkeyword");
+                }
                 openUrlAndFinish(searchUrl, "", true);
             }
         });
@@ -681,7 +710,7 @@ public class AwesomeBar extends GeckoActivity
                 break;
             }
             case R.id.remove_bookmark: {
-                (new UiAsyncTask<Void, Void, Void>(ThreadUtils.getBackgroundHandler()) {
+                (new UiAsyncTask<Void, Void, Integer>(ThreadUtils.getBackgroundHandler()) {
                     private boolean mInReadingList;
 
                     @Override
@@ -690,18 +719,25 @@ public class AwesomeBar extends GeckoActivity
                     }
 
                     @Override
-                    public Void doInBackground(Void... params) {
+                    public Integer doInBackground(Void... params) {
                         BrowserDB.removeBookmark(getContentResolver(), id);
-                        return null;
+                        Integer count = mInReadingList ?
+                            BrowserDB.getReadingListCount(getContentResolver()) : 0;
+
+                        return count;
                     }
 
                     @Override
-                    public void onPostExecute(Void result) {
+                    public void onPostExecute(Integer aCount) {
                         int messageId = R.string.bookmark_removed;
                         if (mInReadingList) {
                             messageId = R.string.reading_list_removed;
 
                             GeckoEvent e = GeckoEvent.createBroadcastEvent("Reader:Remove", url);
+                            GeckoAppShell.sendEventToGecko(e);
+
+                            // Delete from Awesomebar context menu can alter reading list bookmark count
+                            e = GeckoEvent.createBroadcastEvent("Reader:ListCountUpdated", Integer.toString(aCount));
                             GeckoAppShell.sendEventToGecko(e);
                         }
 
@@ -732,7 +768,7 @@ public class AwesomeBar extends GeckoActivity
                 }
 
                 Bitmap bitmap = null;
-                if (b != null) {
+                if (b != null && b.length > 0) {
                     bitmap = BitmapUtils.decodeByteArray(b);
                 }
 

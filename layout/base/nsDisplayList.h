@@ -454,11 +454,11 @@ public:
    * Notifies the builder that a particular themed widget exists
    * at the given rectangle within the currently built display list.
    * For certain appearance values (currently only
-   * NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR and NS_THEME_TOOLBAR) this gets
-   * called during every display list construction, for every themed widget of
-   * the right type within the display list, except for themed widgets which
-   * are transformed or have effects applied to them (e.g. CSS opacity or
-   * filters).
+   * NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR, NS_THEME_TOOLBAR and
+   * NS_THEME_WINDOW_TITLEBAR) this gets called during every display list
+   * construction, for every themed widget of the right type within the
+   * display list, except for themed widgets which are transformed or have
+   * effects applied to them (e.g. CSS opacity or filters).
    *
    * @param aWidgetType the -moz-appearance value for the themed widget
    * @param aRect the device-pixel rect relative to the widget's displayRoot
@@ -1478,8 +1478,7 @@ public:
     PAINT_USE_WIDGET_LAYERS = 0x01,
     PAINT_FLUSH_LAYERS = 0x02,
     PAINT_EXISTING_TRANSACTION = 0x04,
-    PAINT_NO_COMPOSITE = 0x08,
-    PAINT_NO_CLEAR_INVALIDATIONS = 0x10
+    PAINT_NO_COMPOSITE = 0x08
   };
   void PaintRoot(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx,
                  uint32_t aFlags) const;
@@ -2011,7 +2010,7 @@ protected:
   bool IsSingleFixedPositionImage(nsDisplayListBuilder* aBuilder,
                                   const nsRect& aClipRect,
                                   gfxRect* aDestRect);
-  nsRect GetBoundsInternal();
+  nsRect GetBoundsInternal(nsDisplayListBuilder* aBuilder);
 
   void PaintInternal(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx,
                      const nsRect& aBounds, nsRect* aClipRect);
@@ -2073,7 +2072,7 @@ public:
 
   NS_DISPLAY_DECL_NAME("BackgroundColor", TYPE_BACKGROUND_COLOR)
 #ifdef MOZ_DUMP_PAINTING
-  virtual void WriteDebugInfo(FILE *aOutput) {
+  virtual void WriteDebugInfo(FILE *aOutput) MOZ_OVERRIDE {
     fprintf(aOutput, "(rgba %d,%d,%d,%d)", 
             NS_GET_R(mColor), NS_GET_G(mColor),
             NS_GET_B(mColor), NS_GET_A(mColor));
@@ -2408,7 +2407,7 @@ public:
   }
   NS_DISPLAY_DECL_NAME("Opacity", TYPE_OPACITY)
 #ifdef MOZ_DUMP_PAINTING
-  virtual void WriteDebugInfo(FILE *aOutput) {
+  virtual void WriteDebugInfo(FILE *aOutput) MOZ_OVERRIDE {
     fprintf(aOutput, "(opacity %f)", mFrame->StyleDisplay()->mOpacity);
   }
 #endif

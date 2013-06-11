@@ -581,9 +581,9 @@ static void updateVideoPref( unsigned int event, line_t line_id, callid_t call_i
  *    digits - memory to return the first param
  *  Returns:
  */
-void getDigits(string_t data, char *digits) {
+static void getDigits(string_t data, char *digits, unsigned int buffer_length) {
    char *endptr;
-   int len=0;
+   unsigned int len=0;
 
    digits[0]=0;
 
@@ -593,6 +593,11 @@ void getDigits(string_t data, char *digits) {
            len = endptr - data;
        } else {
            len = strlen(data);
+       }
+
+       /* prevent len from writing past buffer size */
+       if (len >= buffer_length) {
+        len = buffer_length - 1;
        }
 
        if ( len) {
@@ -692,7 +697,7 @@ processSessionEvent (line_t line_id, callid_t call_id, unsigned int event, sdp_d
            break;
          case CC_FEATURE_DIALSTR:
              if (CheckAndGetAvailableLine(&line_id, &call_id) == TRUE) {
-                 getDigits(data, digits);
+                 getDigits(data, digits, sizeof(digits));
                  if (strlen(digits) == 0) {
                     //if dial string is empty then go offhook
                     cc_offhook(CC_SRC_UI, call_id, line_id);
@@ -779,7 +784,7 @@ processSessionEvent (line_t line_id, callid_t call_id, unsigned int event, sdp_d
                  break;
              }
 
-             getDigits(data,digits);
+             getDigits(data, digits, sizeof(digits));
 
              dp_int_init_dialing_data(line_id, call_id);
              dp_int_dial_immediate(line_id, call_id, TRUE,
@@ -890,7 +895,7 @@ processSessionEvent (line_t line_id, callid_t call_id, unsigned int event, sdp_d
 		     }// DON'T ADD BREAK HERE. EVENT IS PASSED BELOW
 	 case CC_FEATURE_B2BCONF:
 	 case CC_FEATURE_XFER:
-		     getDigits(data,digits);
+		     getDigits(data, digits, sizeof(digits));
 		     if ( strlen(digits)) {
 			cc_feature_data_t ftr_data;
 			CCAPP_DEBUG(DEB_F_PREFIX"conf: sid=%s.", DEB_F_PREFIX_ARGS(SIP_CC_PROV, fname),data);
@@ -1411,7 +1416,9 @@ static void ccappUpdateSessionData (session_update_t *sessUpd)
         //Populate the session hash data the first time.
         memset(data, 0, sizeof(session_data_t));
         data->sess_id = sessUpd->sessionID;
-				data->state = call_state;
+        data->state = call_state;
+        data->fsm_state =
+            sessUpd->update.ccSessionUpd.data.state_data.fsm_state;
         data->line = sessUpd->update.ccSessionUpd.data.state_data.line_id;
         if (sessUpd->eventID == CALL_NEWCALL ||
             sessUpd->eventID == CREATE_OFFER ||
@@ -1501,8 +1508,12 @@ static void ccappUpdateSessionData (session_update_t *sessUpd)
                 if (createdSessionData == FALSE) {
                     return;
                 }
-                data->state = sessUpd->update.ccSessionUpd.data.state_data.state;
-				data->line = sessUpd->update.ccSessionUpd.data.state_data.line_id;
+                data->state =
+                    sessUpd->update.ccSessionUpd.data.state_data.state;
+                data->line =
+                    sessUpd->update.ccSessionUpd.data.state_data.line_id;
+                data->fsm_state =
+                    sessUpd->update.ccSessionUpd.data.state_data.fsm_state;
                 break;
             default:
                 break;
@@ -1567,6 +1578,8 @@ static void ccappUpdateSessionData (session_update_t *sessUpd)
                 data->state = sessUpd->update.ccSessionUpd.data.state_data.state;
             }
             data->line = sessUpd->update.ccSessionUpd.data.state_data.line_id;
+            data->fsm_state =
+                sessUpd->update.ccSessionUpd.data.state_data.fsm_state;
             sessUpd->update.ccSessionUpd.data.state_data.attr = data->attr;
             sessUpd->update.ccSessionUpd.data.state_data.inst = data->inst;
 
@@ -1624,8 +1637,10 @@ static void ccappUpdateSessionData (session_update_t *sessUpd)
 		ccsnap_gen_callEvent(CCAPI_CALL_EV_GCID, CREATE_CALL_HANDLE_FROM_SESSION_ID(sessUpd->sessionID));
 		break;
 	case CALL_NEWCALL:
-	    data->state = sessUpd->update.ccSessionUpd.data.state_data.state;
+        data->state = sessUpd->update.ccSessionUpd.data.state_data.state;
         data->line = sessUpd->update.ccSessionUpd.data.state_data.line_id;
+        data->fsm_state =
+            sessUpd->update.ccSessionUpd.data.state_data.fsm_state;
         data->attr = sessUpd->update.ccSessionUpd.data.state_data.attr;
         data->inst = sessUpd->update.ccSessionUpd.data.state_data.inst;
         return;
@@ -1797,6 +1812,8 @@ static void ccappUpdateSessionData (session_update_t *sessUpd)
     case REMOTE_STREAM_ADD:
         data->cause = sessUpd->update.ccSessionUpd.data.state_data.cause;
         data->state = sessUpd->update.ccSessionUpd.data.state_data.state;
+        data->fsm_state =
+            sessUpd->update.ccSessionUpd.data.state_data.fsm_state;
         data->media_stream_track_id = sessUpd->update.ccSessionUpd.data.state_data.media_stream_track_id;
         data->media_stream_id = sessUpd->update.ccSessionUpd.data.state_data.media_stream_id;
         strlib_free(data->status);
@@ -2150,7 +2167,8 @@ void ccappFeatureUpdated (feature_update_t *featUpd) {
 
         break;
     case DEVICE_FEATURE_MWILAMP:
-        g_deviceInfo.mwi_lamp = featUpd->update.ccFeatUpd.data.state_data.state;
+        g_deviceInfo.mwi_lamp =
+          featUpd->update.ccFeatUpd.data.mwi_status.status;
 	ccsnap_gen_deviceEvent(CCAPI_DEVICE_EV_MWI_LAMP, CC_DEVICE_ID);
         break;
     case DEVICE_FEATURE_BLF:

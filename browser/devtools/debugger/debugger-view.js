@@ -612,10 +612,9 @@ ListWidget.prototype = {
   removeAllItems: function() {
     let parent = this._parent;
     let list = this._list;
-    let firstChild;
 
-    while ((firstChild = list.firstChild)) {
-      list.removeChild(firstChild);
+    while (list.hasChildNodes()) {
+      list.firstChild.remove();
     }
     parent.scrollTop = 0;
     parent.scrollLeft = 0;
@@ -891,8 +890,7 @@ create({ constructor: ResultsPanelContainer, proto: MenuContainer.prototype }, {
    * @param string aDescription
    *        An optional description of the item.
    */
-  _createItemView:
-  function RPC__createItemView(aElementNode, aAttachment, aLabel, aValue, aDescription) {
+  _createItemView: function(aElementNode, aAttachment, aLabel, aValue, aDescription) {
     let labelsGroup = document.createElement("hbox");
     if (aDescription) {
       let preLabelNode = document.createElement("label");

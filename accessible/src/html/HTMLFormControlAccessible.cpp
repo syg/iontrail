@@ -12,8 +12,10 @@
 #include "Relation.h"
 #include "Role.h"
 #include "States.h"
+#include "TreeWalker.h"
 
 #include "nsContentList.h"
+#include "nsCxPusher.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "nsIAccessibleRelation.h"
 #include "nsIDOMNSEditableElement.h"
@@ -402,7 +404,7 @@ HTMLTextFieldAccessible::NativeState()
 
   // Expose autocomplete state if it has associated autocomplete list.
   if (mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::list))
-    return state | states::SUPPORTS_AUTOCOMPLETION;
+    return state | states::SUPPORTS_AUTOCOMPLETION | states::HASPOPUP;
 
   // No parent can mean a fake widget created for XUL textbox. If accessible
   // is unattached from tree then we don't care.
@@ -450,13 +452,9 @@ HTMLTextFieldAccessible::GetActionName(uint8_t aIndex, nsAString& aName)
 NS_IMETHODIMP
 HTMLTextFieldAccessible::DoAction(uint8_t aIndex)
 {
-  if (aIndex == 0) {
-    HTMLInputElement* element = HTMLInputElement::FromContent(mContent);
-    if (element)
-      return element->Focus();
+  if (aIndex == 0)
+    return TakeFocus();
 
-    return NS_ERROR_FAILURE;
-  }
   return NS_ERROR_INVALID_ARG;
 }
 
@@ -477,6 +475,22 @@ HTMLTextFieldAccessible::GetEditor() const
   editableElt->GetEditor(getter_AddRefs(editor));
 
   return editor.forget();
+}
+
+void
+HTMLTextFieldAccessible::CacheChildren()
+{
+  // XXX: textarea shouldn't contain anything but text leafs. Currently it may
+  // contain a trailing fake HTML br element added for layout needs. We don't
+  // need to expose it since it'd be confusing for AT.
+  TreeWalker walker(this, mContent);
+  Accessible* child = nullptr;
+  while ((child = walker.NextChild())) {
+    if (child->IsTextLeaf())
+      AppendChild(child);
+    else
+      Document()->UnbindFromDocument(child);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

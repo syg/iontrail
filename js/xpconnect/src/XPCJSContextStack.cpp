@@ -70,7 +70,7 @@ XPCJSContextStack::Push(JSContext *cx)
         // compartment that's same-origin with the current one, we can skip it.
         nsIScriptSecurityManager* ssm = XPCWrapper::GetSecurityManager();
         if ((e.cx == cx) && ssm) {
-            RootedObject defaultGlobal(cx, JS_GetGlobalObject(cx));
+            RootedObject defaultGlobal(cx, js::GetDefaultGlobalForContext(cx));
             nsIPrincipal *currentPrincipal =
               GetCompartmentPrincipal(js::GetContextCompartment(cx));
             nsIPrincipal *defaultPrincipal = GetObjectPrincipal(defaultGlobal);
@@ -147,10 +147,7 @@ XPCJSContextStack::GetSafeJSContext()
     if (NS_FAILED(rv))
         return NULL;
 
-    nsRefPtr<nsXPConnect> xpc = nsXPConnect::GetXPConnect();
-    if (!xpc)
-        return NULL;
-
+    nsXPConnect* xpc = nsXPConnect::XPConnect();
     XPCJSRuntime* xpcrt = xpc->GetRuntime();
     if (!xpcrt)
         return NULL;

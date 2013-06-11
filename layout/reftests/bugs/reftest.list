@@ -1570,7 +1570,7 @@ skip-if(B2G) fails-if(Android) random-if(layersGPUAccelerated) fails-if(/^Window
 == 582037-1b.html 582037-1-ref.html
 skip-if(B2G) == 582037-2a.html 582037-2-ref.html
 skip-if(B2G) == 582037-2b.html 582037-2-ref.html
-asserts(0-13) == 582146-1.html about:blank
+asserts(1-2) == 582146-1.html about:blank
 skip-if(B2G) == 582476-1.svg 582476-1-ref.svg
 == 584400-dash-length.svg 584400-dash-length-ref.svg
 == 584699-1.html 584699-1-ref.html
@@ -1641,7 +1641,7 @@ fuzzy-if(d2d,5,1) == 622585-1.html 622585-1-ref.html # bug 789402
 == 630835-1.html about:blank
 == 631352-1.html 631352-1-ref.html
 skip-if(B2G) fails-if(Android) == 632423-1.html 632423-1-ref.html
-skip-if(Android||B2G) == 632781-verybig.html 632781-ref.html
+skip-if(Android||B2G) random-if(/^Windows\x20NT\x205\.1/.test(http.oscpu)) == 632781-verybig.html 632781-ref.html
 == 632781-normalsize.html 632781-ref.html
 fails-if(Android) == 633344-1.html 633344-1-ref.html
 fails-if(Android) == 634232-1.html 634232-1-ref.html

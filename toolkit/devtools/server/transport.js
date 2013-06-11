@@ -7,62 +7,6 @@
 "use strict";
 Components.utils.import("resource://gre/modules/NetUtil.jsm");
 
-/* Turn the error e into a string, without fail. */
-function safeErrorString(aError) {
-  try {
-    var s = aError.toString();
-    if (typeof s === "string")
-      return s;
-  } catch (ee) { }
-
-  return "<failed trying to find error description>";
-}
-
-/**
- * Given a handler function that may throw, return an infallible handler
- * function that calls the fallible handler, and logs any exceptions it
- * throws.
- *
- * @param aHandler function
- *      A handler function, which may throw.
- * @param aName string
- *      A name for aHandler, for use in error messages. If omitted, we use
- *      aHandler.name.
- *
- * (SpiderMonkey does generate good names for anonymous functions, but we
- * don't have a way to get at them from JavaScript at the moment.)
- */
-function makeInfallible(aHandler, aName) {
-  if (!aName)
-    aName = aHandler.name;
-
-  return function (/* arguments */) {
-    try {
-      return aHandler.apply(this, arguments);
-    } catch (ex) {
-      let msg = "Handler function ";
-      if (aName) {
-        msg += aName + " ";
-      }
-      msg += "threw an exception: " + safeErrorString(ex);
-      if (ex.stack) {
-        msg += "\nCall stack:\n" + ex.stack;
-      }
-
-      dump(msg + "\n");
-
-      if (Cu.reportError) {
-        /*
-         * Note that the xpcshell test harness registers an observer for
-         * console messages, so when we're running tests, this will cause
-         * the test to quit.
-         */
-        Cu.reportError(msg);
-      }
-    }
-  }
-}
-
 /**
  * An adapter that handles data transfers between the debugger client and
  * server. It can work with both nsIPipe and nsIServerSocket transports so
@@ -173,7 +117,10 @@ DebuggerTransport.prototype = {
   onStopRequest:
   makeInfallible(function DT_onStopRequest(aRequest, aContext, aStatus) {
     this.close();
-    this.hooks.onClosed(aStatus);
+    if (this.hooks) {
+      this.hooks.onClosed(aStatus);
+      this.hooks = null;
+    }
   }, "DebuggerTransport.prototype.onStopRequest"),
 
   onDataAvailable:
@@ -292,7 +239,10 @@ LocalDebuggerTransport.prototype = {
       delete this.other;
       other.close();
     }
-    this.hooks.onClosed();
+    if (this.hooks) {
+      this.hooks.onClosed();
+      this.hooks = null;
+    }
   },
 
   /**

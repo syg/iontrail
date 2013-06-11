@@ -19,7 +19,7 @@
  * JS operation bytecodes.
  */
 typedef enum JSOp {
-#define OPDEF(op,val,name,token,length,nuses,ndefs,prec,format) \
+#define OPDEF(op,val,name,token,length,nuses,ndefs,format) \
     op = val,
 #include "jsopcode.tbl"
 #undef OPDEF
@@ -209,7 +209,6 @@ struct JSCodeSpec {
     int8_t              length;         /* length including opcode byte */
     int8_t              nuses;          /* arity, -1 if variadic */
     int8_t              ndefs;          /* number of stack results */
-    uint8_t             prec;           /* operator precedence */
     uint32_t            format;         /* immediate operand format */
 
     uint32_t type() const { return JOF_TYPE(format); }
@@ -426,6 +425,44 @@ GetBytecodeLength(jsbytecode *pc)
     return js_GetVariableBytecodeLength(pc);
 }
 
+static inline bool
+BytecodeIsPopped(jsbytecode *pc)
+{
+    jsbytecode *next = pc + GetBytecodeLength(pc);
+    return JSOp(*next) == JSOP_POP;
+}
+
+static inline bool
+BytecodeFlowsToBitop(jsbytecode *pc)
+{
+    // Look for simple bytecode for integer conversions like (x | 0) or (x & -1).
+    jsbytecode *next = pc + GetBytecodeLength(pc);
+    if (*next == JSOP_BITOR || *next == JSOP_BITAND)
+        return true;
+    if (*next == JSOP_INT8 && GET_INT8(next) == -1) {
+        next += GetBytecodeLength(next);
+        if (*next == JSOP_BITAND)
+            return true;
+        return false;
+    }
+    if (*next == JSOP_ONE) {
+        next += GetBytecodeLength(next);
+        if (*next == JSOP_NEG) {
+            next += GetBytecodeLength(next);
+            if (*next == JSOP_BITAND)
+                return true;
+        }
+        return false;
+    }
+    if (*next == JSOP_ZERO) {
+        next += GetBytecodeLength(next);
+        if (*next == JSOP_BITOR)
+            return true;
+        return false;
+    }
+    return false;
+}
+
 extern bool
 IsValidBytecodeOffset(JSContext *cx, JSScript *script, size_t offset);
 
@@ -447,6 +484,12 @@ inline bool
 IsLocalOp(JSOp op)
 {
     return JOF_OPTYPE(op) == JOF_LOCAL;
+}
+
+inline bool
+IsAliasedVarOp(JSOp op)
+{
+    return JOF_OPTYPE(op) == JOF_SCOPECOORD;
 }
 
 inline bool

@@ -36,6 +36,9 @@ const TextureFlags NewTile            = 0x10;
 const TextureFlags HostRelease        = 0x20;
 // The texture is part of a component-alpha pair
 const TextureFlags ComponentAlpha     = 0x40;
+// The shared resources are owned by client
+const TextureFlags OwnByClient        = 0x80;
+
 
 /**
  * The kind of memory held by the texture client/host pair. This will
@@ -46,7 +49,7 @@ enum TextureClientType
 {
   TEXTURE_CONTENT,            // dynamically drawn content
   TEXTURE_SHMEM,              // shared memory
-  TEXTURE_YCBCR,              // ShmemYCbCrImage
+  TEXTURE_YCBCR,              // YCbCr in a shmem
   TEXTURE_SHARED_GL,          // GLContext::SharedTextureHandle
   TEXTURE_SHARED_GL_EXTERNAL, // GLContext::SharedTextureHandle, the ownership of
                               // the SurfaceDescriptor passed to the texture

@@ -28,11 +28,62 @@ add_task(function test_download_construction()
   // Checks the generated DownloadSource and DownloadTarget properties.
   do_check_true(download.source.uri.equals(TEST_SOURCE_URI));
   do_check_eq(download.target.file, targetFile);
+  do_check_true(download.source.referrer === null);
 
   // Starts the download and waits for completion.
   yield download.start();
 
   yield promiseVerifyContents(targetFile, TEST_DATA_SHORT);
+});
+
+/**
+ * Checks the referrer for downloads.
+ */
+add_task(function test_download_referrer()
+{
+  let source_path = "/test_download_referrer.txt";
+  let source_uri = NetUtil.newURI(HTTP_BASE + source_path);
+  let target_uri = getTempFile(TEST_TARGET_FILE_NAME);
+
+  function cleanup() {
+    gHttpServer.registerPathHandler(source_path, null);
+  }
+
+  do_register_cleanup(cleanup);
+
+  gHttpServer.registerPathHandler(source_path, function (aRequest, aResponse) {
+    aResponse.setHeader("Content-Type", "text/plain", false);
+
+    do_check_true(aRequest.hasHeader("Referer"));
+    do_check_eq(aRequest.getHeader("Referer"), TEST_REFERRER_URI.spec);
+  });
+  let download = yield Downloads.createDownload({
+    source: { uri: source_uri, referrer: TEST_REFERRER_URI },
+    target: { file: target_uri },
+    saver: { type: "copy" },
+  });
+  do_check_true(download.source.referrer.equals(TEST_REFERRER_URI));
+  yield download.start();
+
+  download = yield Downloads.createDownload({
+    source: { uri: source_uri, referrer: TEST_REFERRER_URI, isPrivate: true },
+    target: { file: target_uri },
+    saver: { type: "copy" },
+  });
+  do_check_true(download.source.referrer.equals(TEST_REFERRER_URI));
+  yield download.start();
+
+  // Test the download still works for non-HTTP channel with referrer.
+  source_uri = NetUtil.newURI("data:text/html,<html><body></body></html>");
+  download = yield Downloads.createDownload({
+    source: { uri: source_uri, referrer: TEST_REFERRER_URI },
+    target: { file: target_uri },
+    saver: { type: "copy" },
+  });
+  do_check_true(download.source.referrer.equals(TEST_REFERRER_URI));
+  yield download.start();
+
+  cleanup();
 });
 
 /**
@@ -677,6 +728,56 @@ add_task(function test_download_error_restart()
   yield promiseVerifyContents(download.target.file, TEST_DATA_SHORT);
 });
 
+/**
+ * Executes download in both public and private modes.
+ */
+add_task(function test_download_public_and_private()
+{
+  let source_path = "/test_download_public_and_private.txt";
+  let source_uri = NetUtil.newURI(HTTP_BASE + source_path);
+  let testCount = 0;
+
+  // Apply pref to allow all cookies.
+  Services.prefs.setIntPref("network.cookie.cookieBehavior", 0);
+
+  function cleanup() {
+    Services.prefs.clearUserPref("network.cookie.cookieBehavior");
+    Services.cookies.removeAll();
+    gHttpServer.registerPathHandler(source_path, null);
+  }
+  do_register_cleanup(cleanup);
+
+  gHttpServer.registerPathHandler(source_path, function (aRequest, aResponse) {
+    aResponse.setHeader("Content-Type", "text/plain", false);
+
+    if (testCount == 0) {
+      // No cookies should exist for first public download.
+      do_check_false(aRequest.hasHeader("Cookie"));
+      aResponse.setHeader("Set-Cookie", "foobar=1", false);
+      testCount++;
+    } else if (testCount == 1) {
+      // The cookie should exists for second public download.
+      do_check_true(aRequest.hasHeader("Cookie"));
+      do_check_eq(aRequest.getHeader("Cookie"), "foobar=1");
+      testCount++;
+    } else if (testCount == 2)  {
+      // No cookies should exist for first private download.
+      do_check_false(aRequest.hasHeader("Cookie"));
+    }
+  });
+
+  let targetFile = getTempFile(TEST_TARGET_FILE_NAME);
+  yield Downloads.simpleDownload(source_uri, targetFile);
+  yield Downloads.simpleDownload(source_uri, targetFile);
+  let download = yield Downloads.createDownload({
+    source: { uri: source_uri, isPrivate: true },
+    target: { file: targetFile },
+    saver: { type: "copy" },
+  });
+  yield download.start();
+
+  cleanup();
+});
 
 /**
  * Checks the startTime gets updated even after a restart.
@@ -698,3 +799,77 @@ add_task(function test_download_cancel_immediately_restart_and_check_startTime()
   yield download.start();
   do_check_true(download.startTime.getTime() > startTime.getTime());
 });
+
+/**
+ * Executes download with content-encoding.
+ */
+add_task(function test_download_with_content_encoding()
+{
+  let source_path = "/test_download_with_content_encoding.txt";
+  let source_uri = NetUtil.newURI(HTTP_BASE + source_path);
+
+  function cleanup() {
+    gHttpServer.registerPathHandler(source_path, null);
+  }
+  do_register_cleanup(cleanup);
+
+  gHttpServer.registerPathHandler(source_path, function (aRequest, aResponse) {
+    aResponse.setHeader("Content-Type", "text/plain", false);
+    aResponse.setHeader("Content-Encoding", "gzip", false);
+    aResponse.setHeader("Content-Length",
+                        "" + TEST_DATA_SHORT_GZIP_ENCODED.length, false);
+
+    let bos =  new BinaryOutputStream(aResponse.bodyOutputStream);
+    bos.writeByteArray(TEST_DATA_SHORT_GZIP_ENCODED,
+                       TEST_DATA_SHORT_GZIP_ENCODED.length);
+  });
+
+  let download = yield Downloads.createDownload({
+    source: { uri: source_uri },
+    target: { file: getTempFile(TEST_TARGET_FILE_NAME) },
+    saver: { type: "copy" },
+  });
+  yield download.start();
+
+  do_check_eq(download.progress, 100);
+  do_check_eq(download.totalBytes, TEST_DATA_SHORT_GZIP_ENCODED.length);
+
+  // Ensure the content matches the decoded test data.
+  yield promiseVerifyContents(download.target.file, TEST_DATA_SHORT);
+});
+
+/**
+ * Cancels and restarts a download sequentially with content-encoding.
+ */
+add_task(function test_download_cancel_midway_restart_with_content_encoding()
+{
+  let download = yield promiseSimpleDownload(TEST_INTERRUPTIBLE_GZIP_URI);
+
+  // The first time, cancel the download midway.
+  let deferResponse = deferNextResponse();
+  try {
+    let deferCancel = Promise.defer();
+    download.onchange = function () {
+      if (!download.stopped && !download.canceled &&
+          download.currentBytes == TEST_DATA_SHORT_GZIP_ENCODED_FIRST.length) {
+        deferCancel.resolve(download.cancel());
+      }
+    };
+    download.start();
+    yield deferCancel.promise;
+  } finally {
+    deferResponse.resolve();
+  }
+
+  do_check_true(download.stopped);
+
+  // The second time, we'll provide the entire interruptible response.
+  download.onchange = null;
+  yield download.start()
+
+  do_check_eq(download.progress, 100);
+  do_check_eq(download.totalBytes, TEST_DATA_SHORT_GZIP_ENCODED.length);
+
+  yield promiseVerifyContents(download.target.file, TEST_DATA_SHORT);
+});
+

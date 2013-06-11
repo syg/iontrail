@@ -416,7 +416,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Call the target function.
     // Note that this code assumes the function is JITted.
-    masm.ma_ldr(DTRAddr(r1, DtrOffImm(offsetof(JSFunction, u.i.script_))), r3);
+    masm.ma_ldr(DTRAddr(r1, DtrOffImm(JSFunction::offsetOfNativeOrScript())), r3);
     masm.loadBaselineOrIonRaw(r3, r3, mode, NULL);
     masm.ma_callIonHalfPush(r3);
 
@@ -629,7 +629,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
       case Type_Handle:
         outReg = r4;
         regs.take(outReg);
-        masm.PushEmptyHandle(f.outParamRootType);
+        masm.PushEmptyRooted(f.outParamRootType);
         masm.ma_mov(sp, outReg);
         break;
 
@@ -659,11 +659,11 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
             argDisp += sizeof(void *);
             break;
           case VMFunction::DoubleByValue:
-            JS_NOT_REACHED("VMCalls with double-size value arguments is not supported.");
-            masm.passABIArg(MoveOperand(argsBase, argDisp));
-            argDisp += sizeof(void *);
-            masm.passABIArg(MoveOperand(argsBase, argDisp));
-            argDisp += sizeof(void *);
+            // Values should be passed by reference, not by value, so we
+            // assert that the argument is a double-precision float.
+            JS_ASSERT(f.argPassedInFloatReg(explicitArg));
+            masm.passABIArg(MoveOperand(argsBase, argDisp, MoveOperand::FLOAT));
+            argDisp += sizeof(double);
             break;
           case VMFunction::WordByRef:
             masm.passABIArg(MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE));
@@ -701,8 +701,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Load the outparam and free any allocated stack.
     switch (f.outParam) {
       case Type_Handle:
-        masm.loadHandle(f.outParamRootType, Address(sp, 0), ReturnReg, JSReturnOperand);
-        masm.freeStack(VMFunction::sizeOfRootType(f.outParamRootType));
+        masm.popRooted(f.outParamRootType, ReturnReg, JSReturnOperand);
         break;
 
       case Type_Value:
@@ -745,8 +744,14 @@ IonRuntime::generatePreBarrier(JSContext *cx, MIRType type)
 {
     MacroAssembler masm(cx);
 
-    RegisterSet save = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
-                                   FloatRegisterSet(FloatRegisters::VolatileMask));
+    RegisterSet save;
+    if (cx->runtime->jitSupportsFloatingPoint) {
+        save = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
+                           FloatRegisterSet(FloatRegisters::VolatileMask));
+    } else {
+        save = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
+                           FloatRegisterSet());
+    }
     masm.PushRegsInMask(save);
 
     JS_ASSERT(PreBarrierReg == r1);

@@ -56,6 +56,8 @@ this.Downloads = {
    *        {
    *          source: {
    *            uri: The nsIURI for the download source.
+   *            isPrivate: Indicates whether the download originated from a
+   *                       private window.
    *          },
    *          target: {
    *            file: The nsIFile for the download target.
@@ -77,6 +79,12 @@ this.Downloads = {
 
       download.source = new DownloadSource();
       download.source.uri = aProperties.source.uri;
+      if ("isPrivate" in aProperties.source) {
+        download.source.isPrivate = aProperties.source.isPrivate;
+      }
+      if ("referrer" in aProperties.source) {
+        download.source.referrer = aProperties.source.referrer;
+      }
       download.target = new DownloadTarget();
       download.target.file = aProperties.target.file;
 
@@ -150,6 +158,69 @@ this.Downloads = {
     return Promise.resolve(this._publicDownloadList);
   },
   _publicDownloadList: null,
+
+  /**
+   * Retrieves the DownloadList object for downloads that were started from
+   * a private browsing window.
+   *
+   * This method always retrieves a reference to the same download list.
+   *
+   * @return {Promise}
+   * @resolves The DownloadList object for private downloads.
+   * @rejects JavaScript exception.
+   */
+  getPrivateDownloadList: function D_getPrivateDownloadList()
+  {
+    if (!this._privateDownloadList) {
+      this._privateDownloadList = new DownloadList();
+    }
+    return Promise.resolve(this._privateDownloadList);
+  },
+  _privateDownloadList: null,
+
+  /**
+   * Returns the system downloads directory asynchronously.
+   *   Mac OSX:
+   *     User downloads directory
+   *   XP/2K:
+   *     My Documents/Downloads
+   *   Vista and others:
+   *     User downloads directory
+   *   Linux:
+   *     XDG user dir spec, with a fallback to Home/Downloads
+   *   Android:
+   *     standard downloads directory i.e. /sdcard
+   *
+   * @return {Promise}
+   * @resolves The nsIFile of downloads directory.
+   */
+  getSystemDownloadsDirectory: function D_getSystemDownloadsDirectory() {
+    return DownloadIntegration.getSystemDownloadsDirectory();
+  },
+
+  /**
+   * Returns the preferred downloads directory based on the user preferences
+   * in the current profile asynchronously.
+   *
+   * @return {Promise}
+   * @resolves The nsIFile of downloads directory.
+   */
+  getUserDownloadsDirectory: function D_getUserDownloadsDirectory() {
+    return DownloadIntegration.getUserDownloadsDirectory();
+  },
+
+  /**
+   * Returns the temporary directory where downloads are placed before the
+   * final location is chosen, or while the document is opened temporarily
+   * with an external application. This may or may not be the system temporary
+   * directory, based on the platform asynchronously.
+   *
+   * @return {Promise}
+   * @resolves The nsIFile of downloads directory.
+   */
+  getTemporaryDownloadsDirectory: function D_getTemporaryDownloadsDirectory() {
+    return DownloadIntegration.getTemporaryDownloadsDirectory();
+  },
 
   /**
    * Constructor for a DownloadError object.  When you catch an exception during

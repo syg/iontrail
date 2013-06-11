@@ -379,7 +379,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Call the target function.
     // Note that this assumes the function is JITted.
-    masm.movl(Operand(eax, offsetof(JSFunction, u.i.script_)), eax);
+    masm.movl(Operand(eax, JSFunction::offsetOfNativeOrScript()), eax);
     masm.loadBaselineOrIonRaw(eax, eax, mode, NULL);
     masm.call(eax);
     uint32_t returnOffset = masm.currentOffset();
@@ -545,7 +545,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 
       case Type_Handle:
         outReg = regs.takeAny();
-        masm.PushEmptyHandle(f.outParamRootType);
+        masm.PushEmptyRooted(f.outParamRootType);
         masm.movl(esp, outReg);
         break;
 
@@ -575,6 +575,8 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
                 argDisp += sizeof(void *);
                 break;
               case VMFunction::DoubleByValue:
+                // We don't pass doubles in float registers on x86, so no need
+                // to check for argPassedInFloatReg.
                 masm.passABIArg(MoveOperand(argsBase, argDisp));
                 argDisp += sizeof(void *);
                 masm.passABIArg(MoveOperand(argsBase, argDisp));
@@ -619,8 +621,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Load the outparam and free any allocated stack.
     switch (f.outParam) {
       case Type_Handle:
-        masm.loadHandle(f.outParamRootType, Address(esp, 0), ReturnReg, JSReturnOperand);
-        masm.freeStack(VMFunction::sizeOfRootType(f.outParamRootType));
+        masm.popRooted(f.outParamRootType, ReturnReg, JSReturnOperand);
         break;
 
       case Type_Value:

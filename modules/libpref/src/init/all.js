@@ -152,6 +152,9 @@ pref("media.cache_size", 512000);
 // Master HTML5 media volume scale.
 pref("media.volume_scale", "1.0");
 
+// Timeout for wakelock release
+pref("media.wakelock_timeout", 2000);
+
 #ifdef MOZ_WMF
 pref("media.windows-media-foundation.enabled", true);
 pref("media.windows-media-foundation.use-dxva", true);
@@ -202,6 +205,8 @@ pref("media.peerconnection.noise", 1);
 pref("media.navigator.enabled", true);
 #endif
 #endif
+// TextTrack support
+pref("media.webvtt.enabled", false);
 
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.recognition.enable", false);
@@ -749,11 +754,11 @@ pref("dom.experimental_forms", false);
 // Don't enable <input type=range> yet:
 pref("dom.experimental_forms_range", true);
 
+// Don't enable <input type=color> yet:
+pref("dom.forms.color", false);
+
 // Enables system messages and activities
 pref("dom.sysmsg.enabled", false);
-
-// Allocation Threshold for Workers
-pref("dom.workers.mem.gc_allocation_threshold_mb", 30);
 
 // Parsing perf prefs. For now just mimic what the old code did.
 #ifndef XP_WIN
@@ -1007,11 +1012,12 @@ pref("network.http.spdy.enabled.v3", true);
 pref("network.http.spdy.chunk-size", 4096);
 pref("network.http.spdy.timeout", 180);
 pref("network.http.spdy.coalesce-hostnames", true);
-pref("network.http.spdy.use-alternate-protocol", true);
 pref("network.http.spdy.persistent-settings", false);
 pref("network.http.spdy.ping-threshold", 58);
 pref("network.http.spdy.ping-timeout", 8);
 pref("network.http.spdy.send-buffer-size", 131072);
+pref("network.http.spdy.allow-push", true);
+pref("network.http.spdy.push-allowance", 65536);
 
 pref("network.http.diagnostics", false);
 
@@ -1761,6 +1767,9 @@ pref("layout.css.scope-pseudo.enabled", false);
 #else
 pref("layout.css.scope-pseudo.enabled", true);
 #endif
+
+// Is support for CSS vertical text enabled?
+pref("layout.css.vertical-text.enabled", false);
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -3952,6 +3961,11 @@ pref("webgl.default-no-alpha", false);
 pref("webgl.force-layers-readback", false);
 pref("webgl.lose-context-on-heap-minimize", false);
 pref("webgl.can-lose-context-in-foreground", true);
+pref("webgl.max-warnings-per-context", 32);
+#ifdef MOZ_WIDGET_GONK
+pref("gfx.gralloc.fence-with-readpixels", false);
+#endif
+
 
 // Stagefright prefs
 pref("stagefright.force-enabled", false);
@@ -3987,9 +4001,7 @@ pref("layers.offmainthreadcomposition.enabled", false);
 // use with tests.
 pref("layers.offmainthreadcomposition.testing.enabled", false);
 // Whether to animate simple opacity and transforms on the compositor
-pref("layers.offmainthreadcomposition.animate-opacity", false);
-pref("layers.offmainthreadcomposition.animate-transform", false);
-pref("layers.offmainthreadcomposition.log-animations", false);
+pref("layers.offmainthreadcomposition.async-animations", false);
 
 #ifdef MOZ_X11
 #ifdef MOZ_WIDGET_GTK2
@@ -4069,6 +4081,9 @@ pref("dom.event.handling-user-input-time-limit", 1000);
  
 //3D Transforms
 pref("layout.3d-transforms.enabled", true);
+
+// Whether we should layerize all animated images (if otherwise possible).
+pref("layout.animated-image-layers.enabled", false);
 
 pref("dom.vibrator.enabled", true);
 pref("dom.vibrator.max_vibrate_ms", 10000);

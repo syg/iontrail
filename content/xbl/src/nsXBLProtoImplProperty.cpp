@@ -10,6 +10,7 @@
 #include "nsXBLProtoImplProperty.h"
 #include "nsUnicharUtils.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsReadableUtils.h"
 #include "nsIScriptContext.h"
 #include "nsJSUtils.h"
@@ -212,7 +213,6 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
     nsDependentString getter(mGetterText->GetText());
     if (!getter.IsEmpty()) {
       AutoPushJSContext cx(aContext->GetNativeContext());
-      JSAutoRequest ar(cx);
       JSAutoCompartment ac(cx, aClassObject);
       JS::CompileOptions options(cx);
       options.setFileAndLine(functionUri.get(), mGetterText->GetLineNumber())
@@ -260,7 +260,6 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
     nsDependentString setter(mSetterText->GetText());
     if (!setter.IsEmpty()) {
       AutoPushJSContext cx(aContext->GetNativeContext());
-      JSAutoRequest ar(cx);
       JSAutoCompartment ac(cx, aClassObject);
       JS::CompileOptions options(cx);
       options.setFileAndLine(functionUri.get(), mSetterText->GetLineNumber())
@@ -296,19 +295,19 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
 #ifdef DEBUG
   mIsCompiled = NS_SUCCEEDED(rv);
 #endif
-  
+
   return rv;
 }
 
 void
-nsXBLProtoImplProperty::Trace(TraceCallback aCallback, void *aClosure) const
+nsXBLProtoImplProperty::Trace(const TraceCallbacks& aCallbacks, void *aClosure)
 {
   if (mJSAttributes & JSPROP_GETTER) {
-    aCallback(mJSGetterObject, "mJSGetterObject", aClosure);
+    aCallbacks.Trace(&mJSGetterObject, "mJSGetterObject", aClosure);
   }
 
   if (mJSAttributes & JSPROP_SETTER) {
-    aCallback(mJSSetterObject, "mJSSetterObject", aClosure);
+    aCallbacks.Trace(&mJSSetterObject, "mJSSetterObject", aClosure);
   }
 }
 

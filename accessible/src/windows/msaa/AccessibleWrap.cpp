@@ -847,7 +847,7 @@ AccessibleWrap::accNavigate(
   VariantInit(pvarEndUpAt);
 
   Accessible* navAccessible = nullptr;
-  uint32_t xpRelation = 0;
+  int32_t xpRelation = -1;
 
   switch(navDir) {
     case NAVDIR_FIRSTCHILD:
@@ -919,6 +919,9 @@ AccessibleWrap::accNavigate(
     case NAVRELATION_DESCRIPTION_FOR:
       xpRelation = nsIAccessibleRelation::RELATION_DESCRIPTION_FOR;
       break;
+    case NAVRELATION_NODE_PARENT_OF:
+      xpRelation = nsIAccessibleRelation::RELATION_NODE_PARENT_OF;
+      break;
 
     default:
       return E_INVALIDARG;
@@ -926,7 +929,7 @@ AccessibleWrap::accNavigate(
 
   pvarEndUpAt->vt = VT_EMPTY;
 
-  if (xpRelation) {
+  if (xpRelation >= 0) {
     Relation rel = RelationByType(xpRelation);
     navAccessible = rel.Next();
   }
@@ -1251,6 +1254,10 @@ AccessibleWrap::get_states(AccessibleStates *aStates)
     *aStates |= IA2_STATE_TRANSIENT;
   if (state & states::VERTICAL)
     *aStates |= IA2_STATE_VERTICAL;
+  if (state & states::CHECKED)
+    *aStates |= IA2_STATE_CHECKABLE;
+  if (state & states::PINNED)
+    *aStates |= IA2_STATE_PINNED;
 
   return S_OK;
 

@@ -54,6 +54,7 @@ class OfflineRenderSuccessCallback;
 class PannerNode;
 class ScriptProcessorNode;
 class WaveShaperNode;
+class WaveTable;
 
 class AudioContext MOZ_FINAL : public nsDOMEventTargetHelper,
                                public EnableWebAudioCheck
@@ -105,7 +106,7 @@ public:
 
   float SampleRate() const
   {
-    return float(IdealAudioRate());
+    return mSampleRate;
   }
 
   double CurrentTime() const;
@@ -178,6 +179,10 @@ public:
   already_AddRefed<BiquadFilterNode>
   CreateBiquadFilter();
 
+  already_AddRefed<WaveTable>
+  CreateWaveTable(const Float32Array& aRealData, const Float32Array& aImagData,
+                  ErrorResult& aRv);
+
   void DecodeAudioData(const ArrayBuffer& aBuffer,
                        DecodeSuccessCallback& aSuccessCallback,
                        const Optional<OwningNonNull<DecodeErrorCallback> >& aFailureCallback);
@@ -186,7 +191,6 @@ public:
   void StartRendering();
   IMPL_EVENT_HANDLER(complete)
 
-  uint32_t GetRate() const { return IdealAudioRate(); }
   bool IsOffline() const { return mIsOffline; }
 
   MediaStreamGraph* Graph() const;
@@ -196,6 +200,8 @@ public:
   void UnregisterScriptProcessorNode(ScriptProcessorNode* aNode);
   void UpdatePannerSource();
 
+  uint32_t MaxChannelCount() const;
+
   JSContext* GetJSContext() const;
 
 private:
@@ -204,6 +210,9 @@ private:
   friend struct ::mozilla::WebAudioDecodeJob;
 
 private:
+  // Note that it's important for mSampleRate to be initialized before
+  // mDestination, as mDestination's constructor needs to access it!
+  const float mSampleRate;
   nsRefPtr<AudioDestinationNode> mDestination;
   nsRefPtr<AudioListener> mListener;
   MediaBufferDecoder mDecoder;
@@ -216,6 +225,8 @@ private:
   // Hashset containing all ScriptProcessorNodes in order to stop them.
   // These are all weak pointers.
   nsTHashtable<nsPtrHashKey<ScriptProcessorNode> > mScriptProcessorNodes;
+  // Number of channels passed in the OfflineAudioContext ctor.
+  uint32_t mNumberOfChannels;
   bool mIsOffline;
 };
 

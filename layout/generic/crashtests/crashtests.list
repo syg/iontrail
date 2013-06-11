@@ -24,7 +24,7 @@ load 321224.xul
 load 322780-1.xul
 load 323381-1.html
 load 323381-2.html
-asserts-if(gtk2Widget,14-15) load 323386-1.html # Bug 575011
+asserts-if(gtk2Widget,5) load 323386-1.html # Bug 575011
 load 323389-1.html
 load 323389-2.html
 load 323493-1.html
@@ -306,8 +306,8 @@ load 465651-1.html
 load 467137-1.html
 load 467213-1.html
 load 467487-1.html
-asserts(6-10) load 467493-1.html
-asserts(4-9) load 467493-2.html
+load 467493-1.html
+load 467493-2.html
 load 467875-1.xhtml
 load 467914-1.html
 load 468207-1.html
@@ -375,8 +375,8 @@ load 534366-2.html
 load 536692-1.xhtml
 load 541277-1.html
 load 541277-2.html
-asserts(3) load 541714-1.html
-asserts(3-8) load 541714-2.html
+load 541714-1.html
+load 541714-2.html
 load 542136-1.html
 load 545571-1.html
 load 547338.xul
@@ -425,7 +425,6 @@ load 655462-1.html
 load 656130-1.html
 load 656130-2.html
 load 660416.html
-load 660451-1.html
 load 665853.html
 load text-overflow-form-elements.html
 load text-overflow-iframe.html
@@ -447,6 +446,7 @@ load 700031.xhtml
 load 718516.html
 load 723108.html
 load 724978.xhtml
+load 730559.html
 load first-letter-638937.html
 load first-letter-638937-2.html
 load 734777.html
@@ -455,7 +455,6 @@ test-pref(layout.css.flexbox.enabled,true) load 737313-2.html
 test-pref(layout.css.flexbox.enabled,true) load 737313-3.html
 load 747688.html
 load 750066.html
-asserts(0-10000) load 756241.html
 test-pref(font.size.inflation.emPerLine,15) asserts(1-100) load font-inflation-762332.html # bug 762332
 load 762902.html
 load 762764-1.html
@@ -497,3 +496,4 @@ test-pref(layout.css.flexbox.enabled,true) load 854263-1.html
 test-pref(layout.css.flexbox.enabled,true) load 862947-1.html
 needs-focus pref(accessibility.browsewithcaret,true) load 868906.html
 test-pref(layout.css.flexbox.enabled,true) load 866547-1.html
+asserts(1-4) test-pref(layout.css.flexbox.enabled,true) load 876074-1.html # bug 876749

@@ -29,6 +29,7 @@
 #include "prmjtime.h"
 
 #include "ds/LifoAlloc.h"
+#include "frontend/ParseMaps.h"
 #include "gc/Nursery.h"
 #include "gc/Statistics.h"
 #include "gc/StoreBuffer.h"
@@ -638,8 +639,6 @@ struct MallocProvider
 namespace gc {
 class MarkingValidator;
 } // namespace gc
-
-class JS_FRIEND_API(AutoEnterPolicy);
 
 typedef Vector<JS::Zone *, 1, SystemAllocPolicy> ZoneVector;
 
@@ -1277,6 +1276,16 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     js::ConservativeGCData conservativeGC;
 
+    /* Pool of maps used during parse/emit. */
+    js::frontend::ParseMapPool parseMapPool;
+
+    /*
+     * Count of currently active compilations.
+     * When there are compilations active for the context, the GC must not
+     * purge the ParseMapPool.
+     */
+    unsigned activeCompilations;
+
   private:
     JSPrincipals        *trustedPrincipals_;
   public:
@@ -1448,16 +1457,6 @@ struct JSRuntime : public JS::shadow::Runtime,
   public:
     js::AutoEnterPolicy *enteredPolicy;
 #endif
-
-  private:
-    /*
-     * Used to ensure that compartments created at the same time get different
-     * random number sequences. See js::InitRandom.
-     */
-    uint64_t rngNonce;
-
-  public:
-    uint64_t nextRNGNonce() { return rngNonce++; }
 };
 
 /* Common macros to access thread-local caches in JSRuntime. */
@@ -1618,7 +1617,7 @@ struct JSContext : js::ThreadSafeContext,
     unsigned            options_;            /* see jsapi.h for JSOPTION_* */
 
   public:
-    int32_t             reportGranularity;  /* see jsprobes.h */
+    int32_t             reportGranularity;  /* see vm/Probes.h */
 
     js::AutoResolving   *resolvingList;
 
@@ -1700,11 +1699,6 @@ struct JSContext : js::ThreadSafeContext,
     /* Wrap cx->exception for the current compartment. */
     void wrapPendingException();
 
-  private:
-    /* Lazily initialized pool of maps used during parse/emit. */
-    js::frontend::ParseMapPool *parseMapPool_;
-
-  public:
     /* State for object and array toSource conversion. */
     js::ObjectSet       cycleDetectorSet;
 
@@ -1721,13 +1715,6 @@ struct JSContext : js::ThreadSafeContext,
     inline js::RegExpStatics *regExpStatics();
 
   public:
-    js::frontend::ParseMapPool &parseMapPool() {
-        JS_ASSERT(parseMapPool_);
-        return *parseMapPool_;
-    }
-
-    inline bool ensureParseMapPool();
-
     /*
      * The default script compilation version can be set iff there is no code running.
      * This typically occurs via the JSAPI right after a context is constructed.
@@ -1849,8 +1836,6 @@ struct JSContext : js::ThreadSafeContext,
         js_ReportAllocationOverflow(this);
     }
 
-    void purge();
-
     bool isExceptionPending() {
         return throwing;
     }
@@ -1876,13 +1861,6 @@ struct JSContext : js::ThreadSafeContext,
      */
     bool stackIterAssertionEnabled;
 #endif
-
-    /*
-     * Count of currently active compilations.
-     * When there are compilations active for the context, the GC must not
-     * purge the ParseMapPool.
-     */
-    unsigned activeCompilations;
 
     /*
      * See JS_SetTrustedPrincipals in jsapi.h.

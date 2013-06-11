@@ -53,8 +53,6 @@ public:
   bool IsSynthesizedForTests() const { return mIsSynthesizedForTests; }
 
   bool MatchesNativeContext(nsIWidget* aWidget) const;
-  bool MatchesEventTarget(nsPresContext* aPresContext,
-                          nsINode* aNode) const;
 
   /**
    * SynthesizeCommit() dispatches compositionupdate, text and compositionend
@@ -111,7 +109,7 @@ private:
                                nsINode* aEventTarget,
                                uint32_t aEventMessage,
                                const nsAString& aData);
-    NS_IMETHOD Run();
+    NS_IMETHOD Run() MOZ_OVERRIDE;
 
   private:
     nsRefPtr<nsPresContext> mPresContext;
@@ -158,7 +156,6 @@ public:
   index_type IndexOf(nsPresContext* aPresContext, nsINode* aNode);
 
   TextComposition* GetCompositionFor(nsIWidget* aWidget);
-  TextComposition* GetCompositionFor(nsPresContext* aPresContext);
   TextComposition* GetCompositionFor(nsPresContext* aPresContext,
                                      nsINode* aNode);
   TextComposition* GetCompositionInContent(nsPresContext* aPresContext,

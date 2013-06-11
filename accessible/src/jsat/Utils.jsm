@@ -8,10 +8,13 @@ const Cu = Components.utils;
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 
-Cu.import('resource://gre/modules/Services.jsm');
-Cu.import('resource://gre/modules/Geometry.jsm');
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, 'Services',
+  'resource://gre/modules/Services.jsm');
+XPCOMUtils.defineLazyModuleGetter(this, 'Rect',
+  'resource://gre/modules/Geometry.jsm');
 
-this.EXPORTED_SYMBOLS = ['Utils', 'Logger', 'PivotContext'];
+this.EXPORTED_SYMBOLS = ['Utils', 'Logger', 'PivotContext', 'PrefCache'];
 
 this.Utils = {
   _buildAppMap: {
@@ -179,6 +182,21 @@ this.Utils = {
     let extState = {};
     aAccessible.getState(state, extState);
     return [state.value, extState.value];
+  },
+
+  getAttributes: function getAttributes(aAccessible) {
+    let attributesEnum = aAccessible.attributes.enumerate();
+    let attributes = {};
+
+    // Populate |attributes| object with |aAccessible|'s attribute key-value
+    // pairs.
+    while (attributesEnum.hasMoreElements()) {
+      let attribute = attributesEnum.getNext().QueryInterface(
+        Ci.nsIPropertyElement);
+      attributes[attribute.key] = attribute.value;
+    }
+
+    return attributes;
   },
 
   getVirtualCursor: function getVirtualCursor(aDocument) {
@@ -365,44 +383,41 @@ PivotContext.prototype = {
   /*
    * Traverse the accessible's subtree in pre or post order.
    * It only includes the accessible's visible chidren.
+   * Note: needSubtree is a function argument that can be used to determine
+   * whether aAccessible's subtree is required.
    */
-  _traverse: function _traverse(aAccessible, preorder) {
-    let list = [];
+  _traverse: function _traverse(aAccessible, aPreorder, aStop) {
+    if (aStop && aStop(aAccessible)) {
+      return;
+    }
     let child = aAccessible.firstChild;
     while (child) {
       let state = {};
       child.getState(state, {});
       if (!(state.value & Ci.nsIAccessibleStates.STATE_INVISIBLE)) {
-        let traversed = _traverse(child, preorder);
-        // Prepend or append a child, based on traverse order.
-        traversed[preorder ? "unshift" : "push"](child);
-        list.push.apply(list, traversed);
+        if (aPreorder) {
+          yield child;
+          [yield node for (node of this._traverse(child, aPreorder, aStop))];
+        } else {
+          [yield node for (node of this._traverse(child, aPreorder, aStop))];
+          yield child;
+        }
       }
       child = child.nextSibling;
     }
-    return list;
   },
 
   /*
-   * This is a flattened list of the accessible's subtree in preorder.
+   * A subtree generator function, used to generate a flattened
+   * list of the accessible's subtree in pre or post order.
    * It only includes the accessible's visible chidren.
+   * @param {boolean} aPreorder A flag for traversal order. If true, traverse
+   * in preorder; if false, traverse in postorder.
+   * @param {function} aStop An optional function, indicating whether subtree
+   * traversal should stop.
    */
-  get subtreePreorder() {
-    if (!this._subtreePreOrder)
-      this._subtreePreOrder = this._traverse(this._accessible, true);
-
-    return this._subtreePreOrder;
-  },
-
-  /*
-   * This is a flattened list of the accessible's subtree in postorder.
-   * It only includes the accessible's visible chidren.
-   */
-  get subtreePostorder() {
-    if (!this._subtreePostOrder)
-      this._subtreePostOrder = this._traverse(this._accessible, false);
-
-    return this._subtreePostOrder;
+  subtreeGenerator: function subtreeGenerator(aPreorder, aStop) {
+    return this._traverse(this._accessible, aPreorder, aStop);
   },
 
   get bounds() {
@@ -426,4 +441,55 @@ PivotContext.prototype = {
       return true;
     }
   }
+};
+
+this.PrefCache = function PrefCache(aName, aCallback, aRunCallbackNow) {
+  this.name = aName;
+  this.callback = aCallback;
+
+  let branch = Services.prefs;
+  this.value = this._getValue(branch);
+
+  if (this.callback && aRunCallbackNow) {
+    try {
+      this.callback(this.name, this.value);
+    } catch (x) {
+      Logger.logException(x);
+    }
+  }
+
+  branch.addObserver(aName, this, true);
+};
+
+PrefCache.prototype = {
+  _getValue: function _getValue(aBranch) {
+    if (!this.type) {
+      this.type = aBranch.getPrefType(this.name);
+    }
+
+    switch (this.type) {
+      case Ci.nsIPrefBranch.PREF_STRING:
+        return aBranch.getCharPref(this.name);
+      case Ci.nsIPrefBranch.PREF_INT:
+        return aBranch.getIntPref(this.name);
+      case Ci.nsIPrefBranch.PREF_BOOL:
+        return aBranch.getBoolPref(this.name);
+      default:
+        return null;
+    }
+  },
+
+  observe: function observe(aSubject, aTopic, aData) {
+    this.value = this._getValue(aSubject.QueryInterface(Ci.nsIPrefBranch));
+    if (this.callback) {
+      try {
+        this.callback(this.name, this.value);
+      } catch (x) {
+        Logger.logException(x);
+      }
+    }
+  },
+
+  QueryInterface : XPCOMUtils.generateQI([Ci.nsIObserver,
+                                          Ci.nsISupportsWeakReference])
 };

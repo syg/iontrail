@@ -21,6 +21,7 @@ namespace mozilla {
 namespace layers {
 
 class TextureImageTextureHostOGL;
+class CompositorOGL;
 
 /*
  * TextureHost implementations for the OpenGL backend.
@@ -130,6 +131,8 @@ public:
   }
 
   virtual bool Lock() MOZ_OVERRIDE;
+
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
 
   // textureSource
   void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE
@@ -272,7 +275,6 @@ public:
     {
       return mTexImage->GetWrapMode();
     }
-
   };
 
   // TextureSource implementation
@@ -295,6 +297,8 @@ public:
     }
     return mYTexture->GetSize();
   }
+
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "YCbCrTextureHostOGL"; }
@@ -380,6 +384,8 @@ public:
 
   virtual gfx3DMatrix GetTextureTransform() MOZ_OVERRIDE;
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "SharedTextureHostOGL"; }
 #endif
@@ -463,6 +469,8 @@ public:
              gfxASurface::CONTENT_COLOR;
   }
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "SurfaceStreamHostOGL"; }
 #endif
@@ -524,6 +532,8 @@ public:
                                 nsIntRegion* aRegion = nullptr)
   { MOZ_ASSERT(false, "Tiles should not use this path"); }
 
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "TiledTextureHostOGL"; }
 #endif
@@ -559,22 +569,11 @@ class GrallocTextureHostOGL
   , public TextureSourceOGL
 {
 public:
-  GrallocTextureHostOGL()
-    : mGL(nullptr)
-    , mTextureTarget(0)
-    , mGLTexture(0)
-    , mEGLImage(0)
-  {
-  }
+  GrallocTextureHostOGL();
 
   ~GrallocTextureHostOGL();
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
-
-  virtual GLuint GetTextureHandle()
-  {
-    return mGLTexture;
-  }
 
   virtual void UpdateImpl(const SurfaceDescriptor& aImage,
                           nsIntRegion* aRegion = nullptr,
@@ -606,6 +605,8 @@ public:
   }
 
   bool IsValid() const MOZ_OVERRIDE;
+
+  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "GrallocTextureHostOGL"; }
@@ -640,13 +641,16 @@ public:
     DeleteTextures();
   }
 
+  virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
+
 private:
+  gl::GLContext* gl() const;
+
   void DeleteTextures();
 
-  RefPtr<gl::GLContext> mGL;
+  RefPtr<CompositorOGL> mCompositor;
   android::sp<android::GraphicBuffer> mGraphicBuffer;
   GLenum mTextureTarget;
-  GLuint mGLTexture;
   EGLImage mEGLImage;
 };
 #endif

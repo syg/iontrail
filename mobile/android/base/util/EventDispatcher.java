@@ -53,12 +53,22 @@ public final class EventDispatcher {
     }
 
     public String dispatchEvent(String message) {
+        try {
+            JSONObject json = new JSONObject(message);
+            return dispatchEvent(json);
+        } catch (Exception e) {
+            Log.e(LOGTAG, "dispatchEvent: malformed JSON.", e);
+        }
+
+        return "";
+    }
+
+    public String dispatchEvent(JSONObject json) {
         // {
         //   "type": "value",
         //   "event_specific": "value",
         //   ...
         try {
-            JSONObject json = new JSONObject(message);
             JSONObject gecko = json.has("gecko") ? json.getJSONObject("gecko") : null;
             if (gecko != null) {
                 json = gecko;
@@ -85,7 +95,7 @@ public final class EventDispatcher {
             for (GeckoEventListener listener : listeners) {
                 listener.handleMessage(type, json);
                 if (listener instanceof GeckoEventResponder) {
-                    String newResponse = ((GeckoEventResponder)listener).getResponse();
+                    String newResponse = ((GeckoEventResponder)listener).getResponse(json);
                     if (response != null && newResponse != null) {
                         Log.e(LOGTAG, "Received two responses for message of type " + type);
                     }

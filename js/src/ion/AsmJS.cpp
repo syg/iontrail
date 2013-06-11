@@ -11,12 +11,14 @@
 #include "ion/AsmJS.h"
 #include "ion/AsmJSModule.h"
 
+#include "jsobjinlines.h"
 #include "frontend/ParseNode-inl.h"
 
 using namespace js;
 using namespace js::frontend;
 using namespace mozilla;
 
+#include "ion/PerfSpewer.h"
 #include "ion/CodeGenerator.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
@@ -275,10 +277,16 @@ FunctionStatementList(ParseNode *fn)
 }
 
 static inline ParseNode *
-FunctionLastStatementOrNull(ParseNode *fn)
+FunctionLastReturnStatementOrNull(ParseNode *fn)
 {
-    ParseNode *list = FunctionStatementList(fn);
-    return list->pn_count == 0 ? NULL : list->last();
+    ParseNode *listIter = ListHead(FunctionStatementList(fn));
+    ParseNode *lastReturn = NULL;
+    while (listIter) {
+        if (listIter->isKind(PNK_RETURN))
+            lastReturn = listIter;
+        listIter = listIter->pn_next;
+    }
+    return lastReturn;
 }
 
 static inline bool
@@ -2570,7 +2578,14 @@ SkipUseAsmDirective(ModuleCompiler &m, ParseNode **stmtIter)
     if (StringAtom(expr) != m.cx()->names().useAsm)
         return m.fail(firstStatement, "\"use asm\" precludes other directives");
 
-    *stmtIter = NextNode(firstStatement);
+    *stmtIter = NextNonEmptyStatement(firstStatement);
+    if (*stmtIter
+        && IsExpressionStatement(*stmtIter)
+        && ExpressionStatementExpr(*stmtIter)->isKind(PNK_STRING))
+    {
+        return m.fail(*stmtIter, "\"use asm\" precludes other directives");
+    }
+
     return true;
 }
 
@@ -2852,7 +2867,7 @@ CheckArguments(ModuleCompiler &m, ParseNode *fn, MIRTypeVector *argTypes, ParseN
 static bool
 CheckReturnType(ModuleCompiler &m, ParseNode *fn, RetType *returnType)
 {
-    ParseNode *stmt = FunctionLastStatementOrNull(fn);
+    ParseNode *stmt = FunctionLastReturnStatementOrNull(fn);
     if (!stmt || !stmt->isKind(PNK_RETURN) || !UnaryKid(stmt)) {
         *returnType = RetType::Void;
         return true;
@@ -3341,6 +3356,28 @@ CheckMathAbs(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type
 }
 
 static bool
+CheckMathSqrt(FunctionCompiler &f, ParseNode *call, MDefinition **def, Type *type)
+{
+    if (CallArgListLength(call) != 1)
+        return f.fail(call, "Math.sqrt must be passed 1 argument");
+
+    ParseNode *arg = CallArgList(call);
+
+    MDefinition *argDef;
+    Type argType;
+    if (!CheckExpr(f, arg, Use::ToNumber, &argDef, &argType))
+        return false;
+
+    if (argType.isDoublish()) {
+        *def = f.unary<MSqrt>(argDef, MIRType_Double);
+        *type = Type::Double;
+        return true;
+    }
+
+    return f.failf(call, "%s is not a subtype of doublish", argType.toChars());
+}
+
+static bool
 CheckCallArgs(FunctionCompiler &f, ParseNode *callNode, Use use, FunctionCompiler::Args *args)
 {
     f.startCallArgs(args);
@@ -3540,7 +3577,7 @@ CheckMathBuiltinCall(FunctionCompiler &f, ParseNode *callNode, AsmJSMathBuiltin 
       case AsmJSMathBuiltin_floor: arity = 1; callee = UnaryMathFunCast(floor);      break;
       case AsmJSMathBuiltin_exp:   arity = 1; callee = UnaryMathFunCast(exp);        break;
       case AsmJSMathBuiltin_log:   arity = 1; callee = UnaryMathFunCast(log);        break;
-      case AsmJSMathBuiltin_sqrt:  arity = 1; callee = UnaryMathFunCast(sqrt);       break;
+      case AsmJSMathBuiltin_sqrt:  return CheckMathSqrt(f, callNode, def, type);
       case AsmJSMathBuiltin_pow:   arity = 2; callee = BinaryMathFunCast(ecmaPow);   break;
       case AsmJSMathBuiltin_atan2: arity = 2; callee = BinaryMathFunCast(ecmaAtan2); break;
     }
@@ -3829,7 +3866,7 @@ CheckMultiply(FunctionCompiler &f, ParseNode *star, MDefinition **def, Type *typ
         if (!IsValidIntMultiplyConstant(lhs) && !IsValidIntMultiplyConstant(rhs))
             return f.fail(star, "one arg to int multiply must be a small (-2^20, 2^20) int literal");
         *def = f.mul(lhsDef, rhsDef, MIRType_Int32, MMul::Integer);
-        *type = Type::Signed;
+        *type = Type::Intish;
         return true;
     }
 
@@ -3954,7 +3991,7 @@ CheckComparison(FunctionCompiler &f, ParseNode *comp, MDefinition **def, Type *t
         return false;
 
     if ((lhsType.isSigned() && rhsType.isSigned()) || (lhsType.isUnsigned() && rhsType.isUnsigned())) {
-        MCompare::CompareType compareType = lhsType.isUnsigned()
+        MCompare::CompareType compareType = (lhsType.isUnsigned() && rhsType.isUnsigned())
                                             ? MCompare::Compare_UInt32
                                             : MCompare::Compare_Int32;
         *def = f.compare(lhsDef, rhsDef, comp->getOp(), compareType);
@@ -4353,6 +4390,7 @@ CheckSwitchRange(FunctionCompiler &f, ParseNode *stmt, int32_t *low, int32_t *hi
 
     *low = *high = i;
 
+    ParseNode *initialStmt = stmt;
     for (stmt = NextNode(stmt); stmt && stmt->isKind(PNK_CASE); stmt = NextNode(stmt)) {
         int32_t i = 0;
         if (!CheckCaseExpr(f, CaseExpr(stmt), &i))
@@ -4364,7 +4402,7 @@ CheckSwitchRange(FunctionCompiler &f, ParseNode *stmt, int32_t *low, int32_t *hi
 
     int64_t i64 = (int64_t(*high) - int64_t(*low)) + 1;
     if (i64 > 128*1024*1024)
-        return f.fail(stmt, "all switch statements generate tables; this table would be too big");
+        return f.fail(initialStmt, "all switch statements generate tables; this table would be too big");
 
     *tableLength = int32_t(i64);
     return true;
@@ -4559,7 +4597,7 @@ CheckVariableDecls(ModuleCompiler &m, FunctionCompiler::LocalMap *locals, ParseN
 {
     ParseNode *stmt = *stmtIter;
 
-    for (; stmt && stmt->isKind(PNK_VAR); stmt = NextNode(stmt)) {
+    for (; stmt && stmt->isKind(PNK_VAR); stmt = NextNonEmptyStatement(stmt)) {
         for (ParseNode *var = VarListHead(stmt); var; var = NextNode(var)) {
             if (!CheckVariableDecl(m, var, locals))
                 return false;
@@ -4600,7 +4638,8 @@ CheckFunctionBody(ModuleCompiler &m, ModuleCompiler::Func &func, LifoAlloc &lifo
     // Memory for the objects is provided by the LifoAlloc argument,
     // which may be explicitly tracked by the caller.
     MIRGraph *graph = lifo.new_<MIRGraph>(tempAlloc);
-    CompileInfo *info = lifo.new_<CompileInfo>(locals.count());
+    CompileInfo *info = lifo.new_<CompileInfo>(locals.count(),
+                                               SequentialExecution);
     MIRGenerator *mirGen = lifo.new_<MIRGenerator>(m.cx()->compartment, tempAlloc, graph, info);
     JS_ASSERT(tempAlloc && graph && info && mirGen);
 
@@ -4886,10 +4925,14 @@ CheckFunctionBodiesParallel(ModuleCompiler &m)
 }
 #endif // JS_PARALLEL_COMPILATION
 
-static RegisterSet AllRegs = RegisterSet(GeneralRegisterSet(Registers::AllMask),
-                                         FloatRegisterSet(FloatRegisters::AllMask));
-static RegisterSet NonVolatileRegs = RegisterSet(GeneralRegisterSet(Registers::NonVolatileMask),
-                                                 FloatRegisterSet(FloatRegisters::NonVolatileMask));
+// All registers except the stack pointer.
+static const RegisterSet AllRegsExceptSP =
+    RegisterSet(GeneralRegisterSet(Registers::AllMask &
+                                   ~(uint32_t(1) << Registers::StackPointer)),
+                FloatRegisterSet(FloatRegisters::AllMask));
+static const RegisterSet NonVolatileRegs =
+    RegisterSet(GeneralRegisterSet(Registers::NonVolatileMask),
+                FloatRegisterSet(FloatRegisters::NonVolatileMask));
 
 static void
 LoadAsmJSActivationIntoRegister(MacroAssembler &masm, Register reg)
@@ -5470,12 +5513,12 @@ GenerateStackOverflowExit(ModuleCompiler &m, Label *throwLabel)
 
 // The operation-callback exit is called from arbitrarily-interrupted asm.js
 // code. That means we must first save *all* registers and restore *all*
-// registers when we resume. The address to resume to (assuming that
-// js_HandleExecutionInterrupt doesn't indicate that the execution should be
-// aborted) is stored in AsmJSActivation::resumePC_. Unfortunately, loading
-// this requires a scratch register which we don't have after restoring all
-// registers. To hack around this, push the resumePC on the stack so that it
-// can be popped directly into PC.
+// registers (except the stack pointer) when we resume. The address to resume to
+// (assuming that js_HandleExecutionInterrupt doesn't indicate that the
+// execution should be aborted) is stored in AsmJSActivation::resumePC_.
+// Unfortunately, loading this requires a scratch register which we don't have
+// after restoring all registers. To hack around this, push the resumePC on the
+// stack so that it can be popped directly into PC.
 static void
 GenerateOperationCallbackExit(ModuleCompiler &m, Label *throwLabel)
 {
@@ -5490,7 +5533,7 @@ GenerateOperationCallbackExit(ModuleCompiler &m, Label *throwLabel)
     masm.push(Imm32(0));            // space for resumePC
     masm.pushFlags();               // after this we are safe to use sub
     masm.setFramePushed(0);         // set to zero so we can use masm.framePushed() below
-    masm.PushRegsInMask(AllRegs);   // save all GP/FP registers
+    masm.PushRegsInMask(AllRegsExceptSP); // save all GP/FP registers (except SP)
 
     Register activation = ABIArgGenerator::NonArgReturnVolatileReg1;
     Register scratch = ABIArgGenerator::NonArgReturnVolatileReg2;
@@ -5527,7 +5570,7 @@ GenerateOperationCallbackExit(ModuleCompiler &m, Label *throwLabel)
     masm.mov(ABIArgGenerator::NonVolatileReg, StackPointer);
 
     // Restore the machine state to before the interrupt.
-    masm.PopRegsInMask(AllRegs);  // restore all GP/FP registers
+    masm.PopRegsInMask(AllRegsExceptSP); // restore all GP/FP registers (except SP)
     masm.popFlags();              // after this, nothing that sets conditions
     masm.ret();                   // pop resumePC into PC
 #else

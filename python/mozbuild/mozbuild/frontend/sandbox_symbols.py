@@ -66,6 +66,24 @@ VARIABLES = {
         This variable contains a list of files to invoke the assembler on.
         """),
 
+    'CMMSRCS': (StrictOrderingOnAppendList, list, [],
+        """Sources to compile with the Objective C/C++ compiler.
+
+        This variable contains a list of objective-C++ sources to compile.
+        """),
+
+    'CSRCS': (StrictOrderingOnAppendList, list, [],
+        """C code source files.
+
+        This variable contains a list of C source files to compile.
+        """),
+
+    'DEFINES': (StrictOrderingOnAppendList, list, [],
+        """Compiler defines to declare.
+
+        Command line -D flags passed to the compiler.
+        """),
+
     'DIRS': (list, list, [],
         """Child directories to descend into looking for build frontend files.
 
@@ -80,6 +98,18 @@ VARIABLES = {
         delimiters.
         """),
 
+    'EXTRA_COMPONENTS': (StrictOrderingOnAppendList, list, [],
+        """Additional component files to distribute.
+
+       This variable contains a list of files to copy into $(FINAL_TARGET)/components/.
+        """),
+
+    'HOST_CSRCS': (StrictOrderingOnAppendList, list, [],
+        """C source files to compile with the host compiler.
+
+        This variable contains a list of C source files to compile.
+        """),
+
     'PARALLEL_DIRS': (list, list, [],
         """A parallel version of DIRS.
 
@@ -87,6 +117,22 @@ VARIABLES = {
         from recursive makefiles can be made. Once the build system has been
         converted to not use Makefile's for the build frontend, this will
         likely go away.
+        """),
+
+    'HOST_LIBRARY_NAME': (unicode, unicode, "",
+        """Name of target library generated when cross compiling.
+        """),
+
+    'SIMPLE_PROGRAMS': (StrictOrderingOnAppendList, list, [],
+        """Generate a list of binaries from source.
+
+        A list of sources, one per program, to compile & link with libs into standalone programs.
+        """),
+
+    'SSRCS': (StrictOrderingOnAppendList, list, [],
+        """Assembly source files.
+
+        This variable contains a list of files to invoke the assembler on.
         """),
 
     'TOOL_DIRS': (list, list, [],
@@ -182,6 +228,13 @@ VARIABLES = {
         If the configuration token 'BIN_SUFFIX' is set, its value will be
         automatically appended to PROGRAM. If PROGRAM already ends with
         BIN_SUFFIX, PROGRAM will remain unchanged.
+        """),
+
+    'CPP_SOURCES': (list, list, [],
+        """C++ source file list.
+
+        This is a list of C++ files to be compiled. Entries must be files that
+        exist. These generally have .cpp, .cc, or .cxx extensions.
         """),
 
     # IDL Generation.

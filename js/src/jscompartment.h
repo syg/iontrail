@@ -65,6 +65,7 @@ struct CrossCompartmentKey
         ObjectWrapper,
         StringWrapper,
         DebuggerScript,
+        DebuggerSource,
         DebuggerObject,
         DebuggerEnvironment
     };
@@ -180,6 +181,8 @@ struct JSCompartment
     js::types::TypeCompartment   types;
 
     void                         *data;
+
+    js::ObjectMetadataCallback   objectMetadataCallback;
 
   private:
     js::WrapperMap               crossCompartmentWrappers;

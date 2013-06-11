@@ -73,8 +73,6 @@ public:
 
   LayerManagerComposite* GetLayerManager() { return mLayerManager; }
 
-  void SetTransformation(float aScale, nsIntPoint aScrollOffset);
-
   void AsyncRender();
 
   // Can be called from any thread
@@ -163,6 +161,15 @@ public:
    */
   static const LayerTreeState* GetIndirectShadowTree(uint64_t aId);
 
+  /**
+   * Tell all CompositorParents to update their last refresh to aTime and sample
+   * animations at this time stamp.  If aIsTesting is true, the
+   * CompositorParents will become "paused" and continue sampling animations at
+   * this time stamp until this function is called again with aIsTesting set to
+   * false.
+   */
+  static void SetTimeAndSampleAnimations(TimeStamp aTime, bool aIsTesting);
+
 protected:
   virtual PLayerTransactionParent*
     AllocPLayerTransaction(const LayersBackend& aBackendHint,
@@ -233,6 +240,8 @@ private:
   nsIWidget* mWidget;
   CancelableTask *mCurrentCompositeTask;
   TimeStamp mLastCompose;
+  TimeStamp mTestTime;
+  bool mIsTesting;
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
   TimeStamp mExpectedComposeTime;
 #endif

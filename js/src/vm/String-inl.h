@@ -7,18 +7,15 @@
 #ifndef String_inl_h__
 #define String_inl_h__
 
+#include "vm/String.h"
+
 #include "mozilla/PodOperations.h"
 
 #include "jscntxt.h"
-#include "jsprobes.h"
-
 #include "gc/Marking.h"
-#include "String.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
-#include "gc/Barrier-inl.h"
-#include "gc/StoreBuffer.h"
 
 namespace js {
 
@@ -440,10 +437,10 @@ inline JSLinearString *
 js::StaticStrings::getUnitStringForElement(JSContext *cx, JSString *str, size_t index)
 {
     JS_ASSERT(index < str->length());
-    const jschar *chars = str->getChars(cx);
-    if (!chars)
+
+    jschar c;
+    if (!str->getChar(cx, index, &c))
         return NULL;
-    jschar c = chars[index];
     if (c < UNIT_STATIC_LIMIT)
         return getUnit(c);
     return js_NewDependentString(cx, str, index, 1);

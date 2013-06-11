@@ -23,6 +23,7 @@
 #include "mozilla/dom/ContentParent.h"
 #include "nsContentUtils.h"
 #include "nsTArrayHelpers.h"
+#include "nsCxPusher.h"
 
 namespace mozilla {
 namespace dom {
@@ -32,8 +33,6 @@ static JSObject*
 MmsAttachmentDataToJSObject(JSContext* aContext,
                             const MmsAttachmentData& aAttachment)
 {
-  JSAutoRequest ar(aContext);
-
   JS::Rooted<JSObject*> obj(aContext, JS_NewObject(aContext, nullptr, nullptr, nullptr));
   NS_ENSURE_TRUE(obj, nullptr);
 
@@ -77,8 +76,6 @@ GetParamsFromSendMmsMessageRequest(JSContext* aCx,
                                    const SendMmsMessageRequest& aRequest,
                                    JS::Value* aParam)
 {
-  JSAutoRequest ar(aCx);
-
   JS::Rooted<JSObject*> paramsObj(aCx, JS_NewObject(aCx, nullptr, nullptr, nullptr));
   NS_ENSURE_TRUE(paramsObj, false);
 
@@ -148,6 +145,7 @@ SmsParent::SmsParent()
   }
 
   obs->AddObserver(this, kSmsReceivedObserverTopic, false);
+  obs->AddObserver(this, kSmsRetrievingObserverTopic, false);
   obs->AddObserver(this, kSmsSendingObserverTopic, false);
   obs->AddObserver(this, kSmsSentObserverTopic, false);
   obs->AddObserver(this, kSmsFailedObserverTopic, false);
@@ -164,6 +162,7 @@ SmsParent::ActorDestroy(ActorDestroyReason why)
   }
 
   obs->RemoveObserver(this, kSmsReceivedObserverTopic);
+  obs->RemoveObserver(this, kSmsRetrievingObserverTopic);
   obs->RemoveObserver(this, kSmsSendingObserverTopic);
   obs->RemoveObserver(this, kSmsSentObserverTopic);
   obs->RemoveObserver(this, kSmsFailedObserverTopic);
@@ -183,6 +182,17 @@ SmsParent::Observe(nsISupports* aSubject, const char* aTopic,
     }
 
     unused << SendNotifyReceivedMessage(msgData);
+    return NS_OK;
+  }
+
+  if (!strcmp(aTopic, kSmsRetrievingObserverTopic)) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
+      NS_ERROR("Got a 'sms-retrieving' topic without a valid message!");
+      return NS_OK;
+    }
+
+    unused << SendNotifyRetrievingMessage(msgData);
     return NS_OK;
   }
 

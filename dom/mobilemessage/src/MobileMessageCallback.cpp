@@ -5,6 +5,7 @@
 
 #include "MobileMessageCallback.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIDOMMozSmsMessage.h"
 #include "nsIDOMMozMmsMessage.h"
 #include "nsIScriptGlobalObject.h"
@@ -58,7 +59,6 @@ MobileMessageCallback::NotifySuccess(nsISupports *aMessage)
   JS::Rooted<JSObject*> global(cx, scriptContext->GetNativeGlobal());
   NS_ENSURE_TRUE(global, NS_ERROR_FAILURE);
 
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, global);
 
   JS::Rooted<JS::Value> wrappedMessage(cx);
@@ -135,11 +135,11 @@ MobileMessageCallback::NotifyMessageDeleted(bool *aDeleted, uint32_t aSize)
   NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
 
   JS::Rooted<JSObject*> deleteArrayObj(cx, JS_NewArrayObject(cx, aSize, NULL));
-  JS::Value jsValTrue = BOOLEAN_TO_JSVAL(1);
-  JS::Value jsValFalse = BOOLEAN_TO_JSVAL(0);
+  JS::Rooted<JS::Value> jsValTrue(cx, JS::BooleanValue(true));
+  JS::Rooted<JS::Value> jsValFalse(cx, JS::BooleanValue(false));
   for (uint32_t i = 0; i < aSize; i++) {
     JS_SetElement(cx, deleteArrayObj, i,
-                  aDeleted[i] ? &jsValTrue : &jsValFalse);
+                  aDeleted[i] ? jsValTrue.address() : jsValFalse.address());
   }
 
   JS::Rooted<JS::Value> deleteArrayVal(cx, JS::ObjectValue(*deleteArrayObj));

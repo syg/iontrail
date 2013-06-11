@@ -181,10 +181,11 @@ nsHttpHandler::nsHttpHandler()
     , mSpdyV2(true)
     , mSpdyV3(true)
     , mCoalesceSpdy(true)
-    , mUseAlternateProtocol(false)
     , mSpdyPersistentSettings(false)
+    , mAllowSpdyPush(true)
     , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize)
+    , mSpdyPushAllowance(32768)
     , mSpdyPingThreshold(PR_SecondsToInterval(58))
     , mSpdyPingTimeout(PR_SecondsToInterval(8))
     , mConnectTimeout(90000)
@@ -200,7 +201,7 @@ nsHttpHandler::nsHttpHandler()
     gHttpLog = PR_NewLogModule("nsHttp");
 #endif
 
-    LOG(("Creating nsHttpHandler [this=%x].\n", this));
+    LOG(("Creating nsHttpHandler [this=%p].\n", this));
 
     MOZ_ASSERT(!gHttpHandler, "HTTP handler already created!");
     gHttpHandler = this;
@@ -208,7 +209,7 @@ nsHttpHandler::nsHttpHandler()
 
 nsHttpHandler::~nsHttpHandler()
 {
-    LOG(("Deleting nsHttpHandler [this=%x]\n", this));
+    LOG(("Deleting nsHttpHandler [this=%p]\n", this));
 
     // make sure the connection manager is shutdown
     if (mConnMgr) {
@@ -1115,13 +1116,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mCoalesceSpdy = cVar;
     }
 
-    if (PREF_CHANGED(HTTP_PREF("spdy.use-alternate-protocol"))) {
-        rv = prefs->GetBoolPref(HTTP_PREF("spdy.use-alternate-protocol"),
-                                &cVar);
-        if (NS_SUCCEEDED(rv))
-            mUseAlternateProtocol = cVar;
-    }
-
     if (PREF_CHANGED(HTTP_PREF("spdy.persistent-settings"))) {
         rv = prefs->GetBoolPref(HTTP_PREF("spdy.persistent-settings"),
                                 &cVar);
@@ -1157,6 +1151,22 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         if (NS_SUCCEEDED(rv))
             mSpdyPingTimeout =
                 PR_SecondsToInterval((uint16_t) clamped(val, 0, 0x7fffffff));
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("spdy.allow-push"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("spdy.allow-push"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mAllowSpdyPush = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("spdy.push-allowance"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("spdy.push-allowance"), &val);
+        if (NS_SUCCEEDED(rv)) {
+            mSpdyPushAllowance =
+                static_cast<uint32_t>
+                (clamped(val, 1024, static_cast<int32_t>(ASpdySession::kInitialRwin)));
+        }
     }
 
     // The amount of seconds to wait for a spdy ping response before

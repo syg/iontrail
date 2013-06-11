@@ -8,6 +8,7 @@
 
 #include "BluetoothHfpManager.h"
 
+#include "BluetoothA2dpManager.h"
 #include "BluetoothReplyRunnable.h"
 #include "BluetoothService.h"
 #include "BluetoothSocket.h"
@@ -30,7 +31,21 @@
 #define MOZSETTINGS_CHANGED_ID "mozsettings-changed"
 #define MOBILE_CONNECTION_ICCINFO_CHANGED "mobile-connection-iccinfo-changed"
 #define MOBILE_CONNECTION_VOICE_CHANGED "mobile-connection-voice-changed"
-#define BLUETOOTH_SCO_STATUS_CHANGED "bluetooth-sco-status-changed"
+
+/**
+ * BRSF bitmask of AG supported features. See 4.34.1 "Bluetooth Defined AT
+ * Capabilities" in Bluetooth hands-free profile 1.6
+ */
+#define BRSF_BIT_THREE_WAY_CALLING         1
+#define BSRF_BIT_EC_NR_FUNCTION            (1 << 1)
+#define BRSF_BIT_VOICE_RECOGNITION         (1 << 2)
+#define BRSF_BIT_IN_BAND_RING_TONE         (1 << 3)
+#define BRSF_BIT_ATTACH_NUM_TO_VOICE_TAG   (1 << 4)
+#define BRSF_BIT_ABILITY_TO_REJECT_CALL    (1 << 5)
+#define BRSF_BIT_ENHANCED_CALL_STATUS      (1 << 6)
+#define BRSF_BIT_ENHANCED_CALL_CONTROL     (1 << 7)
+#define BRSF_BIT_EXTENDED_ERR_RESULT_CODES (1 << 8)
+#define BRSF_BIT_CODEC_NEGOTIATION         (1 << 9)
 
 /**
  * These constants are used in result code such as +CLIP and +CCWA. The value
@@ -47,7 +62,7 @@ using namespace mozilla::ipc;
 USING_BLUETOOTH_NAMESPACE
 
 namespace {
-  StaticAutoPtr<BluetoothHfpManager> gBluetoothHfpManager;
+  StaticRefPtr<BluetoothHfpManager> gBluetoothHfpManager;
   StaticRefPtr<BluetoothHfpManagerObserver> sHfpObserver;
   bool gInShutdown = false;
   static const char kHfpCrlf[] = "\xd\xa";
@@ -58,7 +73,7 @@ namespace {
 
   // Wait for 2 seconds for Dialer processing event 'BLDN'. '2' seconds is a
   // magic number. The mechanism should be revised once we can get call history.
-  static int sWaitingForProcessingBLDNInterval = 2000; //unit: ms
+  static int sWaitingForDialingInterval = 2000; //unit: ms
 } // anonymous namespace
 
 /* CallState for sCINDItems[CINDType::CALL].value
@@ -276,8 +291,8 @@ private:
   {
     MOZ_ASSERT(gBluetoothHfpManager);
 
-    if (!gBluetoothHfpManager->mBLDNProcessed) {
-      gBluetoothHfpManager->mBLDNProcessed = true;
+    if (!gBluetoothHfpManager->mDialingRequestProcessed) {
+      gBluetoothHfpManager->mDialingRequestProcessed = true;
       gBluetoothHfpManager->SendLine("ERROR");
     }
   }
@@ -307,18 +322,14 @@ public:
       return;
     }
 
-    nsAutoCString ringMsg(kHfpCrlf);
-    ringMsg.AppendLiteral("RING");
-    ringMsg.AppendLiteral(kHfpCrlf);
+    nsAutoCString ringMsg("RING");
     gBluetoothHfpManager->SendLine(ringMsg.get());
 
     if (!mNumber.IsEmpty()) {
-      nsAutoCString clipMsg(kHfpCrlf);
-      clipMsg.AppendLiteral("+CLIP: \"");
+      nsAutoCString clipMsg("+CLIP: \"");
       clipMsg.Append(NS_ConvertUTF16toUTF8(mNumber).get());
       clipMsg.AppendLiteral("\",");
       clipMsg.AppendInt(mType);
-      clipMsg.AppendLiteral(kHfpCrlf);
       gBluetoothHfpManager->SendLine(clipMsg.get());
     }
 
@@ -354,7 +365,6 @@ BluetoothHfpManager::BluetoothHfpManager()
 void
 BluetoothHfpManager::ResetCallArray()
 {
-  mCurrentCallIndex = 0;
   mCurrentCallArray.Clear();
   // Append a call object at the beginning of mCurrentCallArray since call
   // index from RIL starts at 1.
@@ -375,7 +385,14 @@ BluetoothHfpManager::Reset()
   mCMEE = false;
   mCMER = false;
   mReceiveVgsFlag = false;
-  mBLDNProcessed = true;
+  mDialingRequestProcessed = true;
+
+  // We disable BSIR by default as it requires OEM implement BT SCO + SPEAKER
+  // output audio path in audio driver. OEM can enable BSIR by setting
+  // mBSIR=true here.
+  //
+  // Please see Bug 878728 for more information.
+  mBSIR = false;
 
   ResetCallArray();
 }
@@ -509,7 +526,7 @@ BluetoothHfpManager::NotifyDialer(const nsAString& aCommand)
 }
 
 void
-BluetoothHfpManager::NotifyAudioManager(const nsAString& aAddress)
+BluetoothHfpManager::NotifyAudioManager(bool aStatus)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -517,9 +534,12 @@ BluetoothHfpManager::NotifyAudioManager(const nsAString& aAddress)
     do_GetService("@mozilla.org/observer-service;1");
   NS_ENSURE_TRUE_VOID(obs);
 
-  if (NS_FAILED(obs->NotifyObservers(nullptr,
+  nsAutoString data;
+  data.AppendInt(aStatus);
+
+  if (NS_FAILED(obs->NotifyObservers(this,
                                      BLUETOOTH_SCO_STATUS_CHANGED,
-                                     aAddress.BeginReading()))) {
+                                     data.BeginReading()))) {
     NS_WARNING("Failed to notify bluetooth-sco-status-changed observsers!");
   }
 }
@@ -539,7 +559,7 @@ BluetoothHfpManager::HandleVolumeChanged(const nsAString& aData)
     return NS_OK;
   }
 
-  JS::Value val;
+  JS::Rooted<JS::Value> val(cx);
   if (!JS_ParseJSON(cx, aData.BeginReading(), aData.Length(), &val)) {
     return JS_ReportPendingException(cx) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
   }
@@ -716,7 +736,15 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
   // For more information, please refer to 4.34.1 "Bluetooth Defined AT
   // Capabilities" in Bluetooth hands-free profile 1.6
   if (msg.Find("AT+BRSF=") != -1) {
-    SendCommand("+BRSF: ", 97);
+    uint32_t brsf = BRSF_BIT_THREE_WAY_CALLING |
+                    BRSF_BIT_ABILITY_TO_REJECT_CALL |
+                    BRSF_BIT_ENHANCED_CALL_STATUS;
+
+    if (mBSIR) {
+      brsf |= BRSF_BIT_IN_BAND_RING_TONE;
+    }
+
+    SendCommand("+BRSF: ", brsf);
   } else if (msg.Find("AT+CIND=?") != -1) {
     // Asking for CIND range
     SendCommand("+CIND: ", 0);
@@ -882,15 +910,19 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
     os->NotifyObservers(nullptr, "bluetooth-volume-change", data.get());
   } else if ((msg.Find("AT+BLDN") != -1) || (msg.Find("ATD>") != -1)) {
     // Dialer app of FFOS v1 does not have plan to support Memory Dailing.
-    // However, in order to pass Bluetooth HFP certification, we have to
-    // make a call when we receive AT command 'ATD>n'. The solution here
-    // is firing a 'BLDN' event to Dialer to do 'Last Number Redial'.
-    mBLDNProcessed = false;
-    NotifyDialer(NS_LITERAL_STRING("BLDN"));
+    // However, in order to pass Bluetooth HFP certification, we still have to
+    // make a call when we receive AT command 'ATD>n'.
+    mDialingRequestProcessed = false;
+
+    if (msg.Find("AT+BLDN") != -1) {
+      NotifyDialer(NS_LITERAL_STRING("BLDN"));
+    } else {
+      NotifyDialer(NS_ConvertUTF8toUTF16(msg));
+    }
 
     MessageLoop::current()->
       PostDelayedTask(FROM_HERE, new RespondToBLDNTask(),
-                      sWaitingForProcessingBLDNInterval);
+                      sWaitingForDialingInterval);
 
     // Don't send response 'OK' here because we'll respond later in either
     // RespondToBLDNTask or HandleCallStateChanged()
@@ -1085,6 +1117,10 @@ BluetoothHfpManager::Disconnect()
     mSocket->Disconnect();
     mSocket = nullptr;
   }
+
+  BluetoothA2dpManager* a2dp = BluetoothA2dpManager::Get();
+  NS_ENSURE_TRUE_VOID(a2dp);
+  a2dp->Disconnect();
 }
 
 bool
@@ -1102,7 +1138,7 @@ BluetoothHfpManager::SendLine(const char* aMessage)
 }
 
 bool
-BluetoothHfpManager::SendCommand(const char* aCommand, uint8_t aValue)
+BluetoothHfpManager::SendCommand(const char* aCommand, uint32_t aValue)
 {
   if (!IsConnected()) {
     NS_WARNING("Trying to SendCommand() without a SLC");
@@ -1110,7 +1146,6 @@ BluetoothHfpManager::SendCommand(const char* aCommand, uint8_t aValue)
   }
 
   nsAutoCString message;
-  int value = aValue;
   message += aCommand;
 
   if (!strcmp(aCommand, "+CIEV: ")) {
@@ -1181,7 +1216,11 @@ BluetoothHfpManager::SendCommand(const char* aCommand, uint8_t aValue)
           message.AppendInt(3);
           break;
         case nsITelephonyProvider::CALL_STATE_INCOMING:
-          message.AppendInt((i == mCurrentCallIndex) ? 4 : 5);
+          if (!FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
+            message.AppendInt(4);
+          } else {
+            message.AppendInt(5);
+          }
           break;
         default:
           NS_WARNING("Not handling call status for CLCC");
@@ -1196,7 +1235,7 @@ BluetoothHfpManager::SendCommand(const char* aCommand, uint8_t aValue)
     }
     return rv;
   } else {
-    message.AppendInt(value);
+    message.AppendInt(aValue);
   }
 
   return SendLine(message.get());
@@ -1212,6 +1251,35 @@ BluetoothHfpManager::UpdateCIND(uint8_t aType, uint8_t aValue, bool aSend)
       SendCommand("+CIEV: ", aType);
     }
   }
+}
+
+uint32_t
+BluetoothHfpManager::FindFirstCall(uint16_t aState)
+{
+  uint32_t callLength = mCurrentCallArray.Length();
+
+  for (uint32_t i = 1; i < callLength; ++i) {
+    if (mCurrentCallArray[i].mState == aState) {
+      return i;
+    }
+  }
+
+  return 0;
+}
+
+uint32_t
+BluetoothHfpManager::GetNumberOfCalls(uint16_t aState)
+{
+  uint32_t num = 0;
+  uint32_t callLength = mCurrentCallArray.Length();
+
+  for (uint32_t i = 1; i < callLength; ++i) {
+    if (mCurrentCallArray[i].mState == aState) {
+      ++num;
+    }
+  }
+
+  return num;
 }
 
 void
@@ -1243,17 +1311,18 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
 
   nsRefPtr<nsRunnable> sendRingTask;
   nsString address;
-  uint32_t callArrayLength = mCurrentCallArray.Length();
-  uint32_t index = 1;
 
   switch (aCallState) {
     case nsITelephonyProvider::CALL_STATE_HELD:
-      sCINDItems[CINDType::CALLHELD].value = CallHeldState::ONHOLD_ACTIVE;
+      if (!FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
+        sCINDItems[CINDType::CALLHELD].value = CallHeldState::ONHOLD_NOACTIVE;
+      } else {
+        sCINDItems[CINDType::CALLHELD].value = CallHeldState::ONHOLD_ACTIVE;
+      }
       SendCommand("+CIEV: ", CINDType::CALLHELD);
       break;
     case nsITelephonyProvider::CALL_STATE_INCOMING:
-
-      if (mCurrentCallIndex) {
+      if (FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
         if (mCCWA) {
           nsAutoCString ccwaMsg("+CCWA: \"");
           ccwaMsg.Append(NS_ConvertUTF16toUTF8(aNumber));
@@ -1266,6 +1335,11 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
         // Start sending RING indicator to HF
         sStopSendingRingFlag = false;
         UpdateCIND(CINDType::CALLSETUP, CallSetupState::INCOMING, aSend);
+
+        if (mBSIR) {
+          // Setup audio connection for in-band ring tone
+          ConnectSco();
+        }
 
         nsAutoString number(aNumber);
         if (!mCLIP) {
@@ -1280,9 +1354,9 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
       }
       break;
     case nsITelephonyProvider::CALL_STATE_DIALING:
-      if (!mBLDNProcessed) {
+      if (!mDialingRequestProcessed) {
         SendLine("OK");
-        mBLDNProcessed = true;
+        mDialingRequestProcessed = true;
       }
 
       UpdateCIND(CINDType::CALLSETUP, CallSetupState::OUTGOING, aSend);
@@ -1296,7 +1370,6 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
       ConnectSco();
       break;
     case nsITelephonyProvider::CALL_STATE_CONNECTED:
-      mCurrentCallIndex = aCallIndex;
       switch (prevCallState) {
         case nsITelephonyProvider::CALL_STATE_INCOMING:
         case nsITelephonyProvider::CALL_STATE_DISCONNECTED:
@@ -1308,29 +1381,26 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
           UpdateCIND(CINDType::CALL, CallState::IN_PROGRESS, aSend);
           UpdateCIND(CINDType::CALLSETUP, CallSetupState::NO_CALLSETUP, aSend);
           break;
-        case nsITelephonyProvider::CALL_STATE_HELD:
-          // Check whether to update CINDType::CALLHELD or not
-          while (index < callArrayLength) {
-            if (index == mCurrentCallIndex) {
-              index++;
-              continue;
-            }
-
-            uint16_t state = mCurrentCallArray[index].mState;
-            // If there's another call on hold or other calls exist, no need to
-            // update CINDType::CALLHELD
-            if (state != nsITelephonyProvider::CALL_STATE_DISCONNECTED) {
-              break;
-            }
-            index++;
-          }
-
-          if (index == callArrayLength) {
-            UpdateCIND(CINDType::CALLHELD, CallHeldState::NO_CALLHELD, aSend);
-          }
-          break;
         default:
           NS_WARNING("Not handling state changed");
+      }
+
+      // = Handle callheld separately =
+      // Besides checking if there is still held calls, another thing we
+      // need to consider is the state change when receiving AT+CHLD=2.
+      // Assume that there is one active call(c1) and one call on hold(c2).
+      // We got AT+CHLD=2, which swaps active/held position. The first
+      // action would be c2 -> ACTIVE, then c1 -> HELD. When we get the
+      // CallStateChanged event of c2 becoming ACTIVE, we enter here.
+      // However we can't send callheld=0 at this time because we should
+      // see c2 -> ACTIVE + c1 -> HELD as one operation. That's the reason
+      // why I added the GetNumberOfCalls() condition check.
+      if (GetNumberOfCalls(nsITelephonyProvider::CALL_STATE_CONNECTED) == 1) {
+        if (FindFirstCall(nsITelephonyProvider::CALL_STATE_HELD)) {
+          UpdateCIND(CINDType::CALLHELD, CallHeldState::ONHOLD_ACTIVE, aSend);
+        } else if (prevCallState == nsITelephonyProvider::CALL_STATE_HELD) {
+          UpdateCIND(CINDType::CALLHELD, CallHeldState::NO_CALLHELD, aSend);
+        }
       }
       break;
     case nsITelephonyProvider::CALL_STATE_DISCONNECTED:
@@ -1351,30 +1421,25 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
             UpdateCIND(CINDType::CALL, CallState::NO_CALL, aSend);
           }
           break;
-        case nsITelephonyProvider::CALL_STATE_HELD:
-          UpdateCIND(CINDType::CALLHELD, CallHeldState::NO_CALLHELD, aSend);
-          break;
         default:
           NS_WARNING("Not handling state changed");
       }
 
-      if (aCallIndex == mCurrentCallIndex) {
-        // Find the first non-disconnected call (like connected, held),
-        // and update mCurrentCallIndex
-        while (index < callArrayLength) {
-          if (mCurrentCallArray[index].mState !=
-              nsITelephonyProvider::CALL_STATE_DISCONNECTED) {
-            mCurrentCallIndex = index;
-            break;
-          }
-          index++;
-        }
+      // Handle held calls separately
+      if (!FindFirstCall(nsITelephonyProvider::CALL_STATE_HELD)) {
+        UpdateCIND(CINDType::CALLHELD, CallHeldState::NO_CALLHELD, aSend);
+      } else if (!FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
+        UpdateCIND(CINDType::CALLHELD, CallHeldState::ONHOLD_NOACTIVE, aSend);
+      } else {
+        UpdateCIND(CINDType::CALLHELD, CallHeldState::ONHOLD_ACTIVE, aSend);
+      }
 
+      // -1 is necessary because call 0 is an invalid (padding) call object.
+      if (mCurrentCallArray.Length() - 1 ==
+          GetNumberOfCalls(nsITelephonyProvider::CALL_STATE_DISCONNECTED)) {
         // There is no call, close Sco and clear mCurrentCallArray
-        if (index == callArrayLength) {
-          DisconnectSco();
-          ResetCallArray();
-        }
+        DisconnectSco();
+        ResetCallArray();
       }
       break;
     default:
@@ -1437,6 +1502,10 @@ BluetoothHfpManager::OnConnectSuccess(BluetoothSocket* aSocket)
   NotifyStatusChanged(NS_LITERAL_STRING("bluetooth-hfp-status-changed"));
 
   ListenSco();
+
+  BluetoothA2dpManager* a2dp = BluetoothA2dpManager::Get();
+  NS_ENSURE_TRUE_VOID(a2dp);
+  a2dp->Connect(mDeviceAddress);
 }
 
 void
@@ -1565,7 +1634,7 @@ BluetoothHfpManager::OnScoConnectSuccess()
     mScoRunnable = nullptr;
   }
 
-  NotifyAudioManager(mDeviceAddress);
+  NotifyAudioManager(true);
   NotifyStatusChanged(NS_LITERAL_STRING("bluetooth-sco-status-changed"));
 
   mScoSocketStatus = mScoSocket->GetConnectionStatus();
@@ -1589,7 +1658,7 @@ BluetoothHfpManager::OnScoDisconnect()
 {
   if (mScoSocketStatus == SocketConnectionStatus::SOCKET_CONNECTED) {
     ListenSco();
-    NotifyAudioManager(EmptyString());
+    NotifyAudioManager(false);
     NotifyStatusChanged(NS_LITERAL_STRING("bluetooth-sco-status-changed"));
   }
 }
@@ -1694,3 +1763,6 @@ BluetoothHfpManager::IsScoConnected()
   }
   return false;
 }
+
+NS_IMPL_ISUPPORTS0(BluetoothHfpManager)
+

@@ -12,13 +12,13 @@
 #include "IonCode.h"
 #include "CompileInfo.h"
 #include "jsinfer.h"
-#include "jsinterp.h"
+
+#include "vm/Interpreter.h"
 
 namespace js {
 namespace ion {
 
 class TempAllocator;
-class ParallelCompileContext; // in ParallelArrayAnalysis.h
 
 // Possible register allocators which may be used.
 enum IonRegisterAllocator {
@@ -102,12 +102,6 @@ struct IonOptions
     // Default: 1,000
     uint32_t usesBeforeCompile;
 
-    // How many invocations or loop iterations are needed before functions
-    // are compiled when JM is disabled.
-    //
-    // Default: 40
-    uint32_t usesBeforeCompileNoJaeger;
-
     // How many invocations or loop iterations are needed before calls
     // are inlined, as a fraction of usesBeforeCompile.
     //
@@ -183,7 +177,7 @@ struct IonOptions
 
     void setEagerCompilation() {
         eagerCompilation = true;
-        usesBeforeCompile = usesBeforeCompileNoJaeger = 0;
+        usesBeforeCompile = 0;
         baselineUsesBeforeCompile = 0;
 
         parallelCompilation = false;
@@ -204,7 +198,6 @@ struct IonOptions
         parallelCompilation(false),
         baselineUsesBeforeCompile(10),
         usesBeforeCompile(1000),
-        usesBeforeCompileNoJaeger(40),
         usesBeforeInliningFactor(.125),
         osrPcMismatchesBeforeRecompile(6000),
         frequentBailoutThreshold(10),
@@ -285,6 +278,8 @@ MethodStatus CompileFunctionForBaseline(JSContext *cx, HandleScript script, Abst
                                         bool isConstructing);
 MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, uint32_t numActualArgs);
 
+MethodStatus CanEnterInParallel(JSContext *cx, HandleScript script);
+
 enum IonExecStatus
 {
     // The method call had to be aborted due to a stack limit check. This
@@ -296,11 +291,7 @@ enum IonExecStatus
     IonExec_Error,
 
     // The method call succeeed and returned a value.
-    IonExec_Ok,
-
-    // A guard triggered in IonMonkey and we must resume execution in
-    // the interpreter.
-    IonExec_Bailout
+    IonExec_Ok
 };
 
 static inline bool
@@ -310,7 +301,6 @@ IsErrorStatus(IonExecStatus status)
 }
 
 IonExecStatus Cannon(JSContext *cx, StackFrame *fp);
-IonExecStatus SideCannon(JSContext *cx, StackFrame *fp, jsbytecode *pc);
 
 // Used to enter Ion from C++ natives like Array.map. Called from FastInvokeGuard.
 IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgs &args);
@@ -340,9 +330,12 @@ CodeGenerator *CompileBackEnd(MIRGenerator *mir, MacroAssembler *maybeMasm = NUL
 void AttachFinishedCompilations(JSContext *cx);
 void FinishOffThreadBuilder(IonBuilder *builder);
 
-static inline bool IsEnabled(JSContext *cx)
+static inline bool
+IsEnabled(JSContext *cx)
 {
-    return cx->hasOption(JSOPTION_ION) && cx->typeInferenceEnabled();
+    return cx->hasOption(JSOPTION_ION) &&
+        cx->hasOption(JSOPTION_BASELINE) &&
+        cx->typeInferenceEnabled();
 }
 
 void ForbidCompilation(JSContext *cx, JSScript *script);

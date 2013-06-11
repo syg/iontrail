@@ -10,6 +10,7 @@
 #include "mozilla/layers/PLayerTransaction.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/Telemetry.h"
+#include "CompositableHost.h"
 
 #include "ImageLayers.h"
 #include "ImageContainer.h"
@@ -284,14 +285,21 @@ CreateCSSValueList(const InfallibleTArray<TransformFunction>& aFunctions)
       {
         float x = aFunctions[i].get_SkewX().x();
         arr = nsStyleAnimation::AppendTransformFunction(eCSSKeyword_skewx, resultTail);
-        arr->Item(1).SetFloatValue(x, eCSSUnit_Number);
+        arr->Item(1).SetFloatValue(x, eCSSUnit_Radian);
         break;
       }
       case TransformFunction::TSkewY:
       {
         float y = aFunctions[i].get_SkewY().y();
         arr = nsStyleAnimation::AppendTransformFunction(eCSSKeyword_skewy, resultTail);
-        arr->Item(1).SetFloatValue(y, eCSSUnit_Number);
+        arr->Item(1).SetFloatValue(y, eCSSUnit_Radian);
+        break;
+      }
+      case TransformFunction::TSkew:
+      {
+        arr = nsStyleAnimation::AppendTransformFunction(eCSSKeyword_skew, resultTail);
+        arr->Item(1).SetFloatValue(aFunctions[i].get_Skew().x(), eCSSUnit_Radian);
+        arr->Item(2).SetFloatValue(aFunctions[i].get_Skew().y(), eCSSUnit_Radian);
         break;
       }
       case TransformFunction::TTransformMatrix:
@@ -485,8 +493,7 @@ Layer::SnapTransformTranslation(const gfx3DMatrix& aTransform,
 
   gfxMatrix matrix2D;
   gfx3DMatrix result;
-  if (!(mContentFlags & CONTENT_DISABLE_TRANSFORM_SNAPPING) &&
-      mManager->IsSnappingEffectiveTransforms() &&
+  if (mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
       !matrix2D.HasNonTranslation() &&
       matrix2D.HasNonIntegerTranslation()) {
@@ -518,8 +525,7 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
 
   gfxMatrix matrix2D;
   gfx3DMatrix result;
-  if (!(mContentFlags & CONTENT_DISABLE_TRANSFORM_SNAPPING) &&
-      mManager->IsSnappingEffectiveTransforms() &&
+  if (mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
       gfxSize(1.0, 1.0) <= aSnapRect.Size() &&
       matrix2D.PreservesAxisAlignedRectangles()) {
@@ -981,6 +987,9 @@ static nsACString& PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite);
 template <typename T>
 void WriteSnapshotLinkToDumpFile(T* aObj, FILE* aFile)
 {
+  if (!aObj) {
+    return;
+  }
   nsCString string(aObj->Name());
   string.Append("-");
   string.AppendInt((uint64_t)aObj);
@@ -1029,6 +1038,9 @@ Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
     fprintf(aFile, ">");
   }
   DumpSelf(aFile, aPrefix);
+  if (AsLayerComposite() && AsLayerComposite()->GetCompositableHost()) {
+    AsLayerComposite()->GetCompositableHost()->Dump(aFile, aPrefix, aDumpHtml);
+  }
   if (aDumpHtml) {
     fprintf(aFile, "</a>");
   }
@@ -1036,7 +1048,7 @@ Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
   if (Layer* mask = GetMaskLayer()) {
     nsAutoCString pfx(aPrefix);
     pfx += "  Mask layer: ";
-    mask->Dump(aFile, pfx.get());
+    mask->Dump(aFile, pfx.get(), aDumpHtml);
   }
 
   if (Layer* kid = GetFirstChild()) {
@@ -1045,7 +1057,7 @@ Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
     if (aDumpHtml) {
       fprintf(aFile, "<ul>");
     }
-    kid->Dump(aFile, pfx.get());
+    kid->Dump(aFile, pfx.get(), aDumpHtml);
     if (aDumpHtml) {
       fprintf(aFile, "</ul>");
     }

@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_bytecode_analyzer_h__
+#if !defined(jsion_bytecode_analyzer_h__) && defined(JS_ION)
 #define jsion_bytecode_analyzer_h__
 
 // This file declares the data structures for building a MIRGraph from a
@@ -339,9 +339,11 @@ class IonBuilder : public MIRGenerator
 
     bool invalidatedIdempotentCache();
 
+    bool hasStaticScopeObject(ScopeCoordinate sc, MutableHandleObject pcall);
     bool loadSlot(MDefinition *obj, Shape *shape, MIRType rvalType,
                   bool barrier, types::StackTypeSet *types);
-    bool storeSlot(MDefinition *obj, Shape *shape, MDefinition *value, bool needsBarrier);
+    bool storeSlot(MDefinition *obj, Shape *shape, MDefinition *value, bool needsBarrier,
+                   MIRType slotType = MIRType_None);
 
     // jsop_getprop() helpers.
     bool getPropTryArgumentsLength(bool *emitted);
@@ -381,8 +383,8 @@ class IonBuilder : public MIRGenerator
     bool jsop_dup2();
     bool jsop_loophead(jsbytecode *pc);
     bool jsop_compare(JSOp op);
-    bool jsop_getgname(HandlePropertyName name);
-    bool jsop_setgname(HandlePropertyName name);
+    bool getStaticName(HandleObject staticObject, HandlePropertyName name, bool *psucceeded);
+    bool setStaticName(HandleObject staticObject, HandlePropertyName name);
     bool jsop_getname(HandlePropertyName name);
     bool jsop_intrinsic(HandlePropertyName name);
     bool jsop_bindname(PropertyName *name);
@@ -406,6 +408,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_arguments_length();
     bool jsop_arguments_getelem();
     bool jsop_arguments_setelem(MDefinition *object, MDefinition *index, MDefinition *value);
+    bool jsop_runonce();
     bool jsop_rest();
     bool jsop_not();
     bool jsop_getprop(HandlePropertyName name);
@@ -461,6 +464,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineMathFloor(CallInfo &callInfo);
     InliningStatus inlineMathRound(CallInfo &callInfo);
     InliningStatus inlineMathSqrt(CallInfo &callInfo);
+    InliningStatus inlineMathAtan2(CallInfo &callInfo);
     InliningStatus inlineMathMinMax(CallInfo &callInfo, bool max);
     InliningStatus inlineMathPow(CallInfo &callInfo);
     InliningStatus inlineMathRandom(CallInfo &callInfo);
@@ -783,6 +787,8 @@ class CallInfo
 };
 
 bool TypeSetIncludes(types::TypeSet *types, MIRType input, types::TypeSet *inputTypes);
+
+bool NeedsPostBarrier(CompileInfo &info, MDefinition *value);
 
 } // namespace ion
 } // namespace js

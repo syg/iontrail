@@ -8,14 +8,14 @@
 #define jscntxtinlines_h___
 
 #include "jscntxt.h"
+
 #include "jscompartment.h"
 #include "jsfriendapi.h"
-#include "jsinterp.h"
-#include "jsprobes.h"
 #include "jsgc.h"
-
 #include "builtin/Object.h" // For js::obj_construct
 #include "frontend/ParseMaps.h"
+#include "vm/Interpreter.h"
+#include "vm/Probes.h"
 #include "vm/RegExpObject.h"
 
 #include "jsgcinlines.h"
@@ -110,6 +110,9 @@ NewObjectCache::fillType(EntryIndex entry, Class *clasp, js::types::TypeObject *
 inline JSObject *
 NewObjectCache::newObjectFromHit(JSContext *cx, EntryIndex entry_, js::gc::InitialHeap heap)
 {
+    // The new object cache does not account for metadata attached via callbacks.
+    JS_ASSERT(!cx->compartment->objectMetadataCallback);
+
     JS_ASSERT(unsigned(entry_) < mozilla::ArrayLength(entries));
     Entry *entry = &entries[entry_];
 
@@ -444,8 +447,10 @@ inline bool
 CallSetter(JSContext *cx, HandleObject obj, HandleId id, StrictPropertyOp op, unsigned attrs,
            unsigned shortid, JSBool strict, MutableHandleValue vp)
 {
-    if (attrs & JSPROP_SETTER)
-        return InvokeGetterOrSetter(cx, obj, CastAsObjectJsval(op), 1, vp.address(), vp.address());
+    if (attrs & JSPROP_SETTER) {
+        RootedValue opv(cx, CastAsObjectJsval(op));
+        return InvokeGetterOrSetter(cx, obj, opv, 1, vp.address(), vp.address());
+    }
 
     if (attrs & JSPROP_GETTER)
         return js_ReportGetterOnlyAssignment(cx);
@@ -515,15 +520,6 @@ JSContext::setPendingException(js::Value v) {
     this->throwing = true;
     this->exception = v;
     js::assertSameCompartment(this, v);
-}
-
-inline bool
-JSContext::ensureParseMapPool()
-{
-    if (parseMapPool_)
-        return true;
-    parseMapPool_ = js_new<js::frontend::ParseMapPool>(this);
-    return parseMapPool_;
 }
 
 inline js::PropertyTree&

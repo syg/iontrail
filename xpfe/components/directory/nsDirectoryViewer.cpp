@@ -51,6 +51,7 @@
 #include "nsIDocument.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 
 using namespace mozilla;
 
@@ -167,20 +168,19 @@ nsHTTPIndex::OnFTPControlLog(bool server, const char *msg)
 
     nsString unicodeMsg;
     unicodeMsg.AssignWithConversion(msg);
-    JSAutoRequest ar(cx);
     JSString* jsMsgStr = JS_NewUCStringCopyZ(cx, (jschar*) unicodeMsg.get());
     NS_ENSURE_TRUE(jsMsgStr, NS_ERROR_OUT_OF_MEMORY);
 
     params[0] = BOOLEAN_TO_JSVAL(server);
     params[1] = STRING_TO_JSVAL(jsMsgStr);
 
-    JS::Value val;
+    JS::Rooted<JS::Value> val(cx);
     JS_CallFunctionName(cx,
                         global,
                         "OnFTPControlLog",
                         2,
                         params,
-                        &val);
+                        val.address());
     return NS_OK;
 }
 
@@ -261,7 +261,6 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     JS::Rooted<JS::Value> jslistener(cx, OBJECT_TO_JSVAL(jsobj));
 
     // ...and stuff it into the global context
-    JSAutoRequest ar(cx);
     bool ok = JS_SetProperty(cx, global, "HTTPIndex", jslistener.address());
     NS_ASSERTION(ok, "unable to set Listener property");
     if (!ok)

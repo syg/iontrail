@@ -11,6 +11,7 @@
 #include "nsIScriptContext.h"
 #include "nsPIDOMWindow.h"
 #include "nsJSUtils.h"
+#include "nsCxPusher.h"
 #include "nsIScriptSecurityManager.h"
 #include "xpcprivate.h"
 
@@ -89,10 +90,7 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
     cx = nsContentUtils::GetSafeJSContext();
   }
 
-  // Victory!  We have a JSContext.  Now do the things we need a JSContext for.
-  mAr.construct(cx);
-
-  // And go ahead and stick our callable in a Rooted, to make sure it can't go
+  // Go ahead and stick our callable in a Rooted, to make sure it can't go
   // gray again.  We can do this even though we're not in the right compartment
   // yet, because Rooted<> does not care about compartments.
   mRootedCallable.construct(cx, aCallback);
@@ -193,14 +191,9 @@ CallbackObjectHolderBase::ToXPCOMCallback(CallbackObject* aCallback,
   JS::Rooted<JSObject*> callback(cx, aCallback->Callback());
 
   JSAutoCompartment ac(cx, callback);
-  XPCCallContext ccx(NATIVE_CALLER, cx);
-  if (!ccx.IsValid()) {
-    return nullptr;
-  }
-
   nsRefPtr<nsXPCWrappedJS> wrappedJS;
   nsresult rv =
-    nsXPCWrappedJS::GetNewOrUsed(ccx, callback, aIID,
+    nsXPCWrappedJS::GetNewOrUsed(callback, aIID,
                                  nullptr, getter_AddRefs(wrappedJS));
   if (NS_FAILED(rv) || !wrappedJS) {
     return nullptr;
