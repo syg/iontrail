@@ -233,6 +233,7 @@ inline bool
 SetIntrinsicOperation(JSContext *cx, JSScript *script, jsbytecode *pc, HandleValue val)
 {
     RootedPropertyName name(cx, script->getName(pc));
+    JS_ASSERT(cx->runtime()->isSelfHostingGlobal(cx->global()));
     return cx->global()->setIntrinsicValue(cx, name, val);
 }
 

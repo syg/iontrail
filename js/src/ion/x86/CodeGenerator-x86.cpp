@@ -665,7 +665,15 @@ DispatchIonCache::initializeAddCacheState(LInstruction *ins, AddCacheState *addS
 }
 
 void
-GetPropertyParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
+DispatchIonCache::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
+{
+    // On x86, where there is no general purpose scratch register available,
+    // child cache classes must manually specify a dispatch scratch register.
+    JS_NOT_REACHED("x86 needs manual assignment of dispatchScratch");
+}
+
+void
+ParallelGetPropertyIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
 {
     // We don't have a scratch register, but only use the temp if we needed
     // one, it's BogusTemp otherwise.
@@ -678,6 +686,18 @@ GetPropertyParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addS
 
 void
 GetElementParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
+{
+    // We don't have a scratch register, but only use the temp if we needed
+    // one, it's BogusTemp otherwise.
+    JS_ASSERT(ins->isGetElementCacheV() || ins->isGetElementCacheT());
+    if (ins->isGetElementCacheV() || ins->toGetElementCacheT()->temp()->isBogusTemp())
+        addState->dispatchScratch = output_.scratchReg().gpr();
+    else
+        addState->dispatchScratch = ToRegister(ins->toGetElementCacheT()->temp());
+}
+
+void
+ParallelGetElementIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
 {
     // We don't have a scratch register, but only use the temp if we needed
     // one, it's BogusTemp otherwise.

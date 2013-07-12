@@ -79,7 +79,9 @@ function assertAlmostEq(v1, v2) {
 }
 
 function assertStructuralEq(e1, e2) {
-    if (e1 instanceof ParallelArray && e2 instanceof ParallelArray) {
+    if (e1 instanceof Matrix && e2 instanceof Matrix) {
+      assertEqMatrix(e1, e2);
+    } else if (e1 instanceof ParallelArray && e2 instanceof ParallelArray) {
       assertEqParallelArray(e1, e2);
     } else if (e1 instanceof Array && e2 instanceof ParallelArray) {
       assertEqParallelArrayArray(e2, e1);
@@ -125,10 +127,7 @@ function assertEqArray(a, b) {
     }
 }
 
-function assertEqParallelArray(a, b) {
-  assertEq(a instanceof ParallelArray, true);
-  assertEq(b instanceof ParallelArray, true);
-
+function assertEqParallelGettableStructure(a, b) {
   var shape = a.shape;
   assertEqArray(shape, b.shape);
 
@@ -154,6 +153,20 @@ function assertEqParallelArray(a, b) {
       throw e;
     }
   } while (bump(iv));
+}
+
+function assertEqMatrix(a, b) {
+  assertEq(a instanceof Matrix, true);
+  assertEq(b instanceof Matrix, true);
+
+  assertEqParallelGettableStructure(a, b);
+}
+
+function assertEqParallelArray(a, b) {
+  assertEq(a instanceof ParallelArray, true);
+  assertEq(b instanceof ParallelArray, true);
+
+  assertEqParallelGettableStructure(a, b);
 }
 
 // Checks that whenever we execute this in parallel mode,
@@ -313,3 +326,66 @@ function assertParallelModesCommute(modes, opFunction) {
         assertStructuralEq(expected, r);
     });
 }
+
+function viewToSource2d(view, width, height, payload) {
+  var i=0;
+  var ret = "[";
+  var matrixNeedsNewline = false;
+  for (var row=0; row < height; row++) {
+    if (matrixNeedsNewline)
+      ret += ",\n ";
+    ret += "[";
+    var rowNeedsComma = false;
+    for (var x=0; x < width; x++) {
+      if (rowNeedsComma)
+        ret += ", ";
+      if (payload == 1) {
+        var val = view(i);
+        if (val !== undefined)
+          ret += val;
+        i++;
+      } else {
+        var entryNeedsComma = false;
+        ret += "(";
+        for (var k=0; k < payload; k++) {
+          // Might be inefficient (does JavaScript have
+          // StringBuffers?, or use them internally, like Tamarin?)
+          if (entryNeedsComma)
+            ret += ", ";
+          var val = view(i);
+          if (val !== undefined)
+            ret += val;
+          entryNeedsComma = true;
+          i++;
+        }
+        ret += ")";
+      }
+      rowNeedsComma = true;
+    }
+    ret += "]";
+    matrixNeedsNewline = true;
+  }
+  ret += "]";
+  return ret;
+}
+
+function dbprint(x) {
+  // print(x);
+}
+
+Matrix.prototype.toSource =
+  function toSource() {
+    var self = this;
+    var slen = self.shape.length;
+    if (slen == 1) {
+      return "[" + this.buffer.join(",") + "]";
+    } else {
+      var w = self.shape[0];
+      var h = self.shape[1];
+      var p = 1;
+      for (var i = 2; i < slen; i++) {
+        p *= self.shape[i];
+      }
+      return viewToSource2d(function (j) { dbprint("view("+j+")"); return self.buffer[self.offset+j];}, w, h, p );
+    }
+  };

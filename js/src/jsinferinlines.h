@@ -478,6 +478,9 @@ GetClassForProtoKey(JSProtoKey key)
       case JSProto_ParallelArray:
         return &ParallelArrayObject::class_;
 
+      case JSProto_Matrix:
+        return &MatrixObject::class_;
+
       default:
         MOZ_ASSUME_UNREACHABLE("Bad proto key");
     }

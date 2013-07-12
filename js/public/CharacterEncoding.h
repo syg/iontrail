@@ -13,6 +13,8 @@
 
 #include "jspubtd.h"
 
+namespace js { class ThreadSafeContext; }
+
 namespace JS {
 
 /*
