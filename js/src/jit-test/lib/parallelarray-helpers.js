@@ -115,6 +115,19 @@ function assertEqParallelArrayArray(a, b) {
   }
 }
 
+function assertEqMatrixArraylike(a, b) {
+  assertEq(a.shape.length, 1);
+  assertEq(a.shape[0], b.length);
+  for (var i = 0, l = a.shape[0]; i < l; i++) {
+    try {
+      assertStructuralEq(a.get(i), b[i]);
+    } catch (e) {
+      print("...in index ", i, " of ", l);
+      throw e;
+    }
+  }
+}
+
 function assertEqArray(a, b) {
     assertEq(a.length, b.length);
     for (var i = 0, l = a.length; i < l; i++) {
@@ -160,6 +173,20 @@ function assertEqMatrix(a, b) {
   assertEq(b instanceof Matrix, true);
 
   assertEqParallelGettableStructure(a, b);
+}
+
+function assertEqMatrixArray(a, b) {
+  assertEq(a instanceof Matrix, true);
+  assertEq(b instanceof Array, true);
+
+  assertEqMatrixArraylike(a, b);
+}
+
+function assertEqMatrixTypedArray(a, b, WhichTypedArray) {
+  assertEq(a instanceof Matrix, true);
+  assertEq(b instanceof WhichTypedArray, true);
+
+  assertEqMatrixArraylike(a, b);
 }
 
 function assertEqParallelArray(a, b) {

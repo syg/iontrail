@@ -1620,7 +1620,7 @@ function MatrixPFill(parexec, buffer, offset, shape, frame, grain, valtype, func
     var ret = (chunkEnd == info[SLICE_END(sliceId)]);
     // ret = undefined;
     // return chunkEnd == info[SLICE_END(sliceId)];
-    mode && mode.print && mode.print({ret:ret, where:"MatrixReduce", depth:depth, func:func, mode:mode, self:self});
+    mode && mode.print && mode.print({ret:ret, where:"MatrixPFill", depth:depth, func:func, mode:mode, self:self});
     return ret;
   }
 
