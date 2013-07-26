@@ -343,7 +343,7 @@ function testScatter(opFunction, cmpFunction) {
 // in `modes`, returns the same value each time.
 function assertParallelModesCommute(modes, opFunction) {
   var expected = undefined;
-  var acc = opFunction(modes[0]);
+  var acc = opFunction({ mode: modes[0] });
   assertParallelExecSucceeds(
     opFunction,
     function(r) {
