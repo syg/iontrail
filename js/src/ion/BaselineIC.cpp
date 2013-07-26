@@ -8210,11 +8210,12 @@ DoCreateRestParameter(JSContext *cx, BaselineFrame *frame, ICRest_Fallback *stub
     unsigned numFormals = frame->numFormalArgs() - 1;
     unsigned numActuals = frame->numActualArgs();
     unsigned numRest = numActuals > numFormals ? numActuals - numFormals : 0;
-    Value *rest = frame->argv() + numFormals;
+    Value *srest = frame->argv() + numFormals;
 
-    JSObject *obj = NewDenseCopiedArray(cx, numRest, rest, NULL);
+    RootedObject obj(cx, NewDenseCopiedArray(cx, numRest, rest, NULL));
     if (!obj)
         return false;
+    types::FixRestArgumentsType(cx, obj);
     res.setObject(*obj);
     return true;
 }

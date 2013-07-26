@@ -213,7 +213,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(LoadElementHole)
     MAYBE_WRITE_GUARDED_OP(StoreElement, elements)
     WRITE_GUARDED_OP(StoreElementHole, elements)
-    UNSAFE_OP(ArrayPopShift)
+    WRITE_GUARDED_OP(ArrayPopShift, object)
     UNSAFE_OP(ArrayPush)
     SAFE_OP(LoadTypedArrayElement)
     SAFE_OP(LoadTypedArrayElementHole)
