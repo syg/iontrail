@@ -8210,7 +8210,7 @@ DoCreateRestParameter(JSContext *cx, BaselineFrame *frame, ICRest_Fallback *stub
     unsigned numFormals = frame->numFormalArgs() - 1;
     unsigned numActuals = frame->numActualArgs();
     unsigned numRest = numActuals > numFormals ? numActuals - numFormals : 0;
-    Value *srest = frame->argv() + numFormals;
+    Value *rest = frame->argv() + numFormals;
 
     RootedObject obj(cx, NewDenseCopiedArray(cx, numRest, rest, NULL));
     if (!obj)
